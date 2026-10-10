@@ -1,0 +1,5 @@
+import type { Home } from './home';
+export type DataKind='REAL'|'DEMO'|'UNAVAILABLE';
+export type HomeView={pending:number|string;projects:number|string;knowledge:number|string;agent:string;today:string[];review:string[];projectList:string[];knowledgeList:string[];source:DataKind};
+const strings=(v:unknown)=>Array.isArray(v)?v.map(x=>typeof x==='string'?x:JSON.stringify(x)):[];
+export function adaptHome(home:Home|null):HomeView{if(!home)return{pending:'—',projects:'—',knowledge:'—',agent:'—',today:[],review:[],projectList:[],knowledgeList:[],source:'UNAVAILABLE'};const h=home as Record<string,unknown>;const projects=strings(h.projects),knowledge=strings(h.knowledge),review=strings(h.review??h.waiting_for_me),today=strings(h.today);return{pending:typeof h.pending_count==='number'?h.pending_count:review.length||'—',projects:Array.isArray(h.projects)?projects.length:'—',knowledge:Array.isArray(h.knowledge)?knowledge.length:'—',agent:typeof h.agent_status==='string'?h.agent_status:'—',today,review,projectList:projects,knowledgeList:knowledge,source:'REAL'}}
