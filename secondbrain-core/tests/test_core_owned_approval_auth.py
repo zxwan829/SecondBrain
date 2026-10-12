@@ -82,6 +82,7 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
             "SB_KNOWLEDGE_ROOT": str(self.knowledge),
             "SB_PROMOTE_STATE_ROOT": str(self.root / "app-state"),
             "SB_DASHBOARD_ORIGINS": "https://testserver",
+            "SB_CORE_ALLOWED_HOSTS": "testserver",
             "SB_PROMOTE_UNLOCK_SECRET_FILE": str(self.secret_file),
         }
         app_state = self.root / "app-state"
@@ -100,6 +101,8 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(allowed.headers.get("access-control-allow-origin"), "https://testserver")
         self.assertEqual(allowed.headers.get("access-control-allow-credentials"), "true")
         self.assertNotIn("access-control-allow-origin", denied.headers)
+        bad_host = client.get("/health", headers={"Host": "attacker.invalid"})
+        self.assertEqual(bad_host.status_code, 400)
         client.close()
 
     def test_unlocked_browser_can_approve_directly_and_retry_idempotently(self):

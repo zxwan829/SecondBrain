@@ -3,6 +3,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .modules.review_promote.core_auth import CorePromoteAuth
 from .modules.review_promote.http import create_core_router
@@ -15,6 +16,9 @@ def create_app():
     approval_root = os.environ["SB_PROMOTE_STATE_ROOT"]
     audit_path = os.path.join(approval_root, "audit.jsonl")
     origins = [value.strip().rstrip("/") for value in os.environ["SB_DASHBOARD_ORIGINS"].split(",") if value.strip()]
+    allowed_hosts = [value.strip().lower() for value in os.environ["SB_CORE_ALLOWED_HOSTS"].split(",") if value.strip()]
+    if not allowed_hosts or any("*" in host for host in allowed_hosts):
+        raise RuntimeError("Core requires a nonempty exact Host allowlist")
     secret_file = os.environ["SB_PROMOTE_UNLOCK_SECRET_FILE"]
     ttl = int(os.environ.get("SB_PROMOTE_SESSION_TTL", "3600"))
 
@@ -36,6 +40,7 @@ def create_app():
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
                        allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.include_router(create_core_router(service, review_root, auth), prefix="/api/promote")
 
     @app.get("/health")

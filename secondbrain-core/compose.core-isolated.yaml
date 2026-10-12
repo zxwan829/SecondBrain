@@ -20,6 +20,7 @@ services:
       SB_PROMOTE_STATE_ROOT: /var/lib/secondbrain-core
       SB_PROMOTE_UNLOCK_SECRET_FILE: /run/secrets/promote_unlock
       SB_DASHBOARD_ORIGINS: ${SB_DASHBOARD_ORIGINS:?set exact Dashboard origin}
+      SB_CORE_ALLOWED_HOSTS: ${SB_CORE_ALLOWED_HOSTS:?set exact Core Host}
       SB_TRUSTED_PROXY_IPS: ${SB_TRUSTED_PROXY_IPS:?set exact DSM proxy peer IP}
       SB_PROMOTE_SESSION_TTL: "3600"
     volumes:
