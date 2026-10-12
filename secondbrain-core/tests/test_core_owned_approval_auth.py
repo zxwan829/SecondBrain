@@ -55,6 +55,7 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         body = dict(self.body, user_id="owner", session={"provider": "basic", "verified": True}, approved=True)
         response = self.client.post("/api/promote/review/approve", json=body, headers=self.headers)
         self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers).status_code, 401)
         self.assertFalse((self.knowledge / "approved.md").exists())
         self.assertEqual(list((self.state / "approvals").iterdir()), [])
 
@@ -106,6 +107,7 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         self.assertIn("httponly", login.headers["set-cookie"].lower())
         self.assertIn("secure", login.headers["set-cookie"].lower())
+        self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers).status_code, 200)
         first = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
         second = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
         self.assertEqual(first.status_code, 200, first.text)

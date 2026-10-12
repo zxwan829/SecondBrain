@@ -55,7 +55,8 @@ def create_core_router(service, review_root, auth):
     review_root = Path(review_root)
 
     @router.get("/review/items")
-    def list_review_items():
+    def list_review_items(request: Request):
+        auth.require_owner(request)
         items = []
         for current, dirs, files in os.walk(review_root, followlinks=False):
             dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(current, d)))
