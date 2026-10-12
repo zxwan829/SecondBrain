@@ -105,8 +105,11 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
     def test_unlocked_browser_can_approve_directly_and_retry_idempotently(self):
         login = self.unlock()
         self.assertEqual(login.status_code, 200, login.text)
-        self.assertIn("httponly", login.headers["set-cookie"].lower())
-        self.assertIn("secure", login.headers["set-cookie"].lower())
+        cookie = login.headers["set-cookie"].lower()
+        self.assertIn("httponly", cookie)
+        self.assertIn("secure", cookie)
+        self.assertIn("samesite=strict", cookie)
+        self.assertIn("path=/api/promote", cookie)
         self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers).status_code, 200)
         first = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
         second = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
