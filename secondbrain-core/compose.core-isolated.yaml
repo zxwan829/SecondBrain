@@ -1,0 +1,43 @@
+# Candidate only: not a production Compose file and not applied.
+# Candidate HTTPS topology: DSM's existing reverse proxy terminates TLS and
+# forwards directly to Core. Keep the upstream bound to NAS loopback.
+services:
+  secondbrain-core:
+    build: .
+    read_only: true
+    user: "${CORE_UID:?set DSM-verified service UID}:${CORE_GID:?set DSM-verified service GID}"
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    ports:
+      - "127.0.0.1:9120:8000"
+    environment:
+      SB_REVIEW_ROOT: /secondbrain/10-Review
+      SB_KNOWLEDGE_ROOT: /secondbrain/20-Knowledge
+      SB_PROMOTE_STATE_ROOT: /var/lib/secondbrain-core
+      SB_PROMOTE_UNLOCK_SECRET_FILE: /run/secrets/promote_unlock
+      SB_DASHBOARD_ORIGINS: ${SB_DASHBOARD_ORIGINS:?set exact Dashboard origin}
+      SB_TRUSTED_PROXY_IPS: ${SB_TRUSTED_PROXY_IPS:?set exact DSM proxy peer IP}
+      SB_PROMOTE_SESSION_TTL: "3600"
+    volumes:
+      - type: bind
+        source: ${SECONDBRAIN_ROOT:?set SecondBrain NAS root}
+        target: /secondbrain
+        read_only: true
+      - type: bind
+        source: ${KNOWLEDGE_ROOT:?set Knowledge NAS root}
+        target: /secondbrain/20-Knowledge
+        read_only: false
+      - type: bind
+        source: ${CORE_STATE_ROOT:?set Core-only state directory}
+        target: /var/lib/secondbrain-core
+        read_only: false
+      - type: bind
+        source: ${CORE_UNLOCK_SECRET_FILE:?provision privately outside Hermes}
+        target: /run/secrets/promote_unlock
+        read_only: true
+
+# Required corresponding Hermes mount change is a separate production diff:
+# replace its current 20-Knowledge RW bind with a RO bind. Do not apply here.

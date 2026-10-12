@@ -13,9 +13,14 @@ Dashboard host; NAS files remain the data source of truth.
   the same Core process. The previous cross-container polling queue is not used
   by this Core path. The approval store must remain private to Core and outside
   ordinary Hermes file-tool roots.
-- The router factory can be mounted under the existing Hermes plugin route
-  prefix. Its tests simulate `request.state.session`; they do not prove the
-  production Hermes middleware contract or NAS mount isolation.
+- `secondbrain_core.app` exposes only the direct Core API. A user unlocks
+  Promote with a Core-only secret, then approves through a short-lived,
+  HttpOnly/Secure/SameSite cookie. Origin is exact, CORS is allowlisted, and
+  the secret and sessions never pass through Hermes. The unlock secret is a
+  provisioned file (0600 or stricter); it is not stored in source or Compose.
+- Hermes-authenticated approval router code remains only for historical test
+  compatibility and must not be mounted by the production plugin. Core's app
+  factory does not register it or accept Hermes `request.state.session`.
 
 ## Module boundaries
 
@@ -28,26 +33,28 @@ native retrieval. Dashboard remains the existing plugin and FE-4 UI.
 ## Production boundary and blocker
 
 Core must be the only service with Knowledge RW and private approval storage.
-Ordinary Hermes must have no Knowledge RW mount and no access to Core's private
-approval state. Do not treat the simulated FastAPI session in isolated tests as
-proof that the production Hermes plugin can validate the login session. The
-actual Hermes auth middleware/context and a non-bypassable Dashboard-to-Core
-request path remain BLOCKED pending integration evidence. No Compose or
-production service change was made.
+Hermes must lose its current Knowledge RW mount. Runtime evidence showed the
+Hermes container is root and receives Basic Auth credentials in its own
+environment, so Agent/Shell share that security boundary; Hermes cookie
+forwarding and `/api/auth/me` are not an approval trust anchor. The Core-owned
+unlock path passed isolated HTTP tests. HTTPS ingress, exact DSM proxy trust,
+service UID/ACLs, and production mount isolation remain BLOCKED pending actual
+NAS test-directory verification and approved deployment. No production
+Compose, service, Dashboard, mount, or data was changed.
+
+## Isolated deployment candidate
+
+`compose.core-isolated.yaml` is a candidate only. It keeps the Core upstream
+bound to NAS loopback for the built-in DSM HTTPS reverse proxy; the browser
+must call Core directly through that HTTPS endpoint, never through Hermes.
+Set only the exact trusted DSM proxy peer in `SB_TRUSTED_PROXY_IPS` and route
+via the same HTTPS site as Dashboard so Secure/SameSite cookies work. The NAS
+responded on HTTPS ports 443 and 5001 during CORE-2, but route, certificate
+hostname, proxy peer address, and DSM ACL were not established. The candidate
+therefore cannot yet be promoted to production.
 
 ## Tests
 
 Run the existing Promote regression suite from `../promote-worker` with the
 isolated Python environment; Core-specific service/router tests are in
 `tests/`. Tests use temporary directories only.
-
-## Canonical source and recovery
-
-The NAS project assets are `web-app/secondbrain-core/` and the sibling
-`web-app/promote-worker/` compatibility source and tests. `CORE-0.bundle` in
-this directory is a Git bundle rooted at `web-app`; it contains both source
-directories and their tests. Restore a working checkout with
-`git clone /path/to/CORE-0.bundle core0-baseline`. The legacy Promote patch files
-are historical candidates and are not production-ready. Create a new verified
-bundle after each accepted source milestone; do not use the Codex temporary
-workspace as the only source copy.

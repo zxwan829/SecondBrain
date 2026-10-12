@@ -159,7 +159,12 @@ class ApprovalFileStore:
         return record
 
     def approve(self, request, body, review_root):
-        approver = require_dashboard_operator(request)
+        return self.approve_as(require_dashboard_operator(request), body, review_root)
+
+    def approve_as(self, approver, body, review_root):
+        """Create approval only after an upstream/Core auth adapter verifies owner."""
+        if not isinstance(approver, str) or not approver:
+            raise DashboardAuthorizationError("A verified approver identity is required")
         request_id = body.get("request_id")
         review_path = body.get("review_path")
         review_sha256 = body.get("review_sha256")

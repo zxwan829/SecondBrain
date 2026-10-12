@@ -7,7 +7,10 @@ name = "secondbrain-core"
 version = "0.1.0.dev0"
 description = "SecondBrain modular monolith business service foundation"
 requires-python = ">=3.9"
-dependencies = ["fastapi>=0.100"]
+dependencies = ["fastapi>=0.100", "uvicorn>=0.23"]
+
+[project.optional-dependencies]
+test = ["httpx>=0.24", "pytest>=7"]
 
 [tool.setuptools.packages.find]
 where = ["."]

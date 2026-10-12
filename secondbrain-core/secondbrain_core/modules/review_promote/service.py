@@ -29,3 +29,13 @@ class PromoteService:
             body.get("request_id"), body.get("review_path"), body.get("review_sha256")
         )
         return {**accepted, **result}
+
+    def approve_and_promote_as(self, approver_subject, body, review_root=None):
+        """Promote after a trusted Core-local adapter has authenticated the owner."""
+        if review_root is None:
+            review_root = self.worker.review_root
+        accepted = self.approvals.approve_as(approver_subject, body, str(review_root))
+        result = self.worker.promote(
+            body.get("request_id"), body.get("review_path"), body.get("review_sha256")
+        )
+        return {**accepted, **result}
