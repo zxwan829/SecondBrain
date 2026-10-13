@@ -29,7 +29,7 @@ Hermes Dashboard Shell → SecondBrain Dashboard Plugin → 认证 API/薄适配
 
 ## Core 目标架构与当前状态
 
-经批准的方向为 **Hermes + SecondBrain Core 模块化单体**。Hermes 继续承载登录会话、Agent Runtime、原生 Chat 与 Dashboard 插件宿主；SecondBrain Core 作为单一模块化应用承载领域规则、用例和受控文件数据操作，由 Dashboard 直接调用必要的 Core API。Core service 已在现有 SecondBrain Compose Project 中运行 healthy。Review 只读列表/详情的代码改为同源 Hermes 插件 API，并逐请求验证 Hermes 已验证 Session；本次实现尚未部署，生产仍按当前 Environment-Baseline 状态运行。按 D068，Hermes 与 Core 正式归属 Container Manager 现有同一个 SecondBrain Compose Project，Core 作为新增 service；两个容器仍保持独立权限、挂载和认证边界。`compose.core-isolated.yaml` 仅为隔离测试候选，不能作为独立正式项目部署。V1 完整可用前不进行商业发行包、代码/数据/密钥/环境参数化整理。
+经批准的方向为 **Hermes + SecondBrain Core 模块化单体**。Hermes 继续承载登录会话、Agent Runtime、原生 Chat 与 Dashboard 插件宿主；SecondBrain Core 作为单一模块化应用承载领域规则、用例和受控文件数据操作，由 Dashboard 直接调用必要的 Core API。Core service 最近一次已记录在现有 SecondBrain Compose Project 中 healthy；最新只读 Docker 查询因 socket 权限拒绝而未能复核运行时身份/挂载。D071 同源 Hermes Session 只读 Review API 已在正式 FE-4 v0.2.4 部署，并完成用户 HTTPS Edge 列表及详情验收；Core 写入/审批尚未正式部署。按 D068，Hermes 与 Core 正式归属 Container Manager 现有同一个 SecondBrain Compose Project，Core 作为新增 service；两个容器仍保持独立权限、挂载和认证边界。`compose.core-isolated.yaml` 仅为隔离测试候选，不能作为独立正式项目部署。V1 完整可用前不进行商业发行包、代码/数据/密钥/环境参数化整理。
 
 Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、Journal、Projects、Calendar。模块共享一个应用进程/部署单元并通过显式接口协作；不新增独立数据库、LLM、n8n、第二 Runtime 或独立管理后台。只有已实现模块建立代码，不创建空占位包。
 
@@ -37,15 +37,15 @@ Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、
 
 **CORE-1/2 身份与审批边界（CORE-2 隔离实现，未部署）：** Hermes v0.21.5 Basic Auth 中间件验证 session 后写入进程内 `request.state.session`，`/api/auth/me` 返回该身份；但生产 Hermes 以 root 运行、Basic Auth 密码在容器环境中且普通 Agent/Shell 共用该进程边界，因此 Hermes Cookie 转发或 Core 回查都不能证明是本人审批。v0.21.7 RC 的 `/api/auth/me` 在 loopback 模式可返回 token 校验后的合成 `user_id=local`、`provider=loopback`，该身份绝不能提升为人工批准。
 
-经 CORE-2 核验，Promote/审批保留 Core 独立单人授权：未来用户须单独解锁 Core，之后由浏览器直接向 Core 提交审批；凭据和 HttpOnly/Secure/SameSite 短期 session 不经过 Hermes。D071 将 Review 只读列表/详情改为复用 Hermes 已验证 Dashboard Session，浏览器通过同源 Hermes 插件 API 访问，不调用 Core 解锁接口。Core 仅信任 Core 自己签发且保存在内存中的 session，严格校验 HTTPS、精确 Dashboard Origin/CORS、Review 路径与 SHA-256，审计主体记为 `owner`。Core HTTP app 不注册旧 Hermes-session router；普通 Agent 提供的 `user_id`、session、`approved=true` 均不起授权作用。详细实现和测试见 `web-app/secondbrain-core/`。
+经 CORE-2 核验，Hermes 与 Agent Runtime 共用的执行/凭据边界不足以单独证明“用户亲自批准”；原 Core 独立短期认证机制已在隔离测试中验证，但 D073 明确要求 Dashboard 有效会话内**不输入第二套 Core 密码**。当前可信统一审批授权机制**尚未设计完成/验证/部署**；不得简单转发 Hermes Session、相信客户端 `approved=true`、移除 Core 验证，或把用户明确点击等同于不可伪造的机器证明。Dashboard 复用 Hermes Session 的只读 Review 已部署，Core 受控写入仍关闭。必须先取得可核实的运行权限证据，设计与验证 Agent 无法代签的受控审批边界，单独授权后才允许生产写入。D067/D072 的二次解锁方案为历史选项，被 D073 的产品要求取代；保留历史实现，不删除安全校验。
 
-**CORE-4 DSM HTTPS 入口（已配置，浏览器与生产审批联调未收口）：** 复用现有 `zxwan520.com` / `*.zxwan520.com` 证书，新增 `zxwan520.com:63012` → `192.168.3.27:9119` Dashboard 规则及 `zxwan520.com:63013` → `127.0.0.1:9120` Core 预留规则。两者绑定 `SecondBrain LAN-only` profile（允许 `192.168.3.0/24`，拒绝其余 IPv4 与 IPv6），不启用 HSTS；Dashboard 原 HTTP 入口保留。规则按主机+端口，不支持本次已验证的路径转发。Mac 局部解析下 TLS 验证通过：Dashboard 返回 302 登录重定向；临时回显测试曾证明 Core 代理链可达。当前 Compose 中 Core service healthy；Promote 仍关闭、Knowledge 仍为 RO。63013 仅为 LAN-only Core HTTPS 入口，不代表生产 Promote 已启用。临时回显服务的 Origin/Cookie 测试通过，但不是正式 Core 浏览器审批联调。用户已报告在真实 Edge 登录并访问 Dashboard HTTPS；Dashboard Review 完整列表/详情的最新部署版本仍待用户解锁验收。DSM profile 配置与绑定已核实；NAS loopback 请求返回 302，不能作为非 LAN 拒绝测试。路由器静态配置及活动 nftables 未发现 63012/63013 DNAT。
+**CORE-4 DSM HTTPS 入口（已配置，浏览器与生产审批联调未收口）：** 复用现有 `zxwan520.com` / `*.zxwan520.com` 证书，新增 `zxwan520.com:63012` → `192.168.3.27:9119` Dashboard 规则及 `zxwan520.com:63013` → `127.0.0.1:9120` Core 预留规则。两者绑定 `SecondBrain LAN-only` profile（允许 `192.168.3.0/24`，拒绝其余 IPv4 与 IPv6），不启用 HSTS；Dashboard 原 HTTP 入口保留。规则按主机+端口，不支持本次已验证的路径转发。Mac 局部解析下 TLS 验证通过：Dashboard 返回 302 登录重定向；临时回显测试曾证明 Core 代理链可达。当前 Compose 中 Core service healthy；Promote 仍关闭、Knowledge 仍为 RO。63013 仅为 LAN-only Core HTTPS 入口，不代表生产 Promote 已启用。临时回显服务的 Origin/Cookie 测试通过，但不是正式 Core 浏览器审批联调。用户已报告在真实 Edge 登录并访问 Dashboard HTTPS；D071 Dashboard Review 列表/详情已由用户在 HTTPS Edge 实际验收，无 Core 二次解锁。DSM profile 配置与绑定已核实；NAS loopback 请求返回 302，不能作为非 LAN 拒绝测试。路由器静态配置及活动 nftables 未发现 63012/63013 DNAT。
 
 Core 启动将 Uvicorn `X-Forwarded-*` 信任限制到 `SB_TRUSTED_PROXY_IPS`；应用校验精确 `SB_CORE_ALLOWED_HOSTS`。本次临时回显发现 DSM 保留客户端可影响的 `X-Forwarded-For` 和 `X-Forwarded-Host`，但将 `X-Forwarded-Proto` 设为 `https`；客户端伪造 Host 得到 404。Core 必须只信任可信本地代理连接，并拒绝或安全解析可伪造的转发头；不得以这些头授予权限。
 
-**Core 文件边界（Compose 已配置，生产切换未验收）：** 现有 SecondBrain Compose 已增加 Core service：Review、Knowledge RO；Core 私有 state/secret；Promote 当前关闭。该配置不给 Core Knowledge 写权限；Core service 当前 healthy，但 Promote 仍关闭。计划的正式边界为 Hermes Knowledge RO、Core Knowledge RW、Core 独占审批凭据；生产 Hermes 当前仍保留 Knowledge RW，切换受阻。`compose.core-isolated.yaml` 仅为隔离测试候选，不能独立部署。Core 配置 UID 1026/GID 100；此前隔离目录测试中，Hermes root 在 RO mount 下写入失败，Core UID 1026 可按模拟授权写 Knowledge/state，这不是生产切换验收。
+**Core 文件边界（Compose 已配置，生产切换未验收）：** 现有 SecondBrain Compose 已增加 Core service：Review、Knowledge RO；Core 私有 state/secret；Promote 当前关闭。该配置不给 Core Knowledge 写权限；Core service 最近记录为 healthy，但 Promote 仍关闭，本轮未重验运行态。计划的正式边界为 Hermes Knowledge RO、Core Knowledge RW、Core 独占审批凭据；生产 Compose 仍声明 Hermes Knowledge RW，既有运行证据验证过该风险；本轮实时 Docker 查询受 socket 权限阻断，未执行权限变更。`compose.core-isolated.yaml` 仅为隔离测试候选，不能独立部署。Core 配置 UID 1026/GID 100；此前隔离目录测试中，Hermes root 在 RO mount 下写入失败，Core UID 1026 可按模拟授权写 Knowledge/state，这不是生产切换验收。
 
-生产 Promote 仍 **BLOCKED**：需完成浏览器 HTTPS 访问、非 LAN 来源拒绝验证、Core 实际代理头安全处理及生产挂载隔离准备；之后再单独批准生产切换。不得以恢复 Hermes Knowledge RW 作为常规回滚。
+生产 Promote 仍 **BLOCKED**：需取得 Docker 受控只读运行证据，落实 Hermes Knowledge RW 收口、Core 未来独占写入、可信统一审批授权与实际代理头/HTTPS 安全验证；之后再单独批准生产切换。不得以恢复 Hermes Knowledge RW 作为常规回滚。
 
 ## 数据区域与写入生命周期
 
@@ -58,6 +58,9 @@ Core 启动将 Uvicorn `X-Forwarded-*` 信任限制到 `SB_TRUSTED_PROXY_IPS`；
 生产 Hermes 当前仍有 Knowledge RW mount，普通 `write_file` 可绕过 Promote；Core service healthy 但挂载为 RO、Promote 关闭。生产 Knowledge 写权切换仍 **BLOCKED**，生产身份/审批与容器文件权限隔离须按 00-CURRENT 完成后另行批准。Journal 目标规则支持专用新增/追加，但生产挂载尚未开放。状态以 00-CURRENT 为准。
 
 ## Universal Capture
+
+微信与 Web App 均是 UC v1.1 定义的 V1 输入渠道，统一流入 Raw→Review；生产微信端到端接入未验证。当前唯一 Runtime 路线为 Hermes；OpenClaw 已由 D073 退出当前候选。微信聊天与附件具体交互在实现前依据正式规格和可用能力界定，不擅自视为已完成。
+
 
 输入、元数据、失败/重试与验收以 canonical `Universal-Capture-Business-Spec.md` 为准。V1 MUST 输入是文本、URL/Web、PDF、Image/Screenshot、Audio/Voice；原始证据需保留，输出到 Review 并等待人工批准。Office 文件、Video、通用二进制及语义检索/去重等按规格延期。禁止把架构摘要作为第二份业务契约。
 
