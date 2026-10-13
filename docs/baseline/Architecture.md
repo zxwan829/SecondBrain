@@ -43,9 +43,9 @@ Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、
 
 Core 启动将 Uvicorn `X-Forwarded-*` 信任限制到 `SB_TRUSTED_PROXY_IPS`；应用校验精确 `SB_CORE_ALLOWED_HOSTS`。本次临时回显发现 DSM 保留客户端可影响的 `X-Forwarded-For` 和 `X-Forwarded-Host`，但将 `X-Forwarded-Proto` 设为 `https`；客户端伪造 Host 得到 404。Core 必须只信任可信本地代理连接，并拒绝或安全解析可伪造的转发头；不得以这些头授予权限。
 
-**Core 文件边界（Compose 已配置，生产写入切换未验收）：** 2026-10-13 运行时核验确认 Core `1026:100`、Review/Knowledge RO、Core state RW、secret RO、`SB_PROMOTE_ENABLED=false` 且 healthy；Hermes 当前 root + Knowledge RW 风险已被实时挂载确认。当前只准备 Hermes 权限收窄，Core Knowledge 在本阶段继续 RO。`compose.core-isolated.yaml` 仅为隔离测试候选，不能独立部署。此前隔离目录测试中，Hermes root 在 RO mount 下写入失败，Core UID 1026 可按模拟授权写 Knowledge/state，这不是生产切换验收。
+**Core 文件边界（Compose 已配置，Core 生产写入关闭）：** 2026-10-13 运行时核验确认 Core `1026:100`、Review/Knowledge RO、Core state RW、secret RO、`SB_PROMOTE_ENABLED=false` 且 healthy。Hermes Knowledge RW 子挂载已按批准范围移除，仅通过 `/secondbrain` RO 读取；三个捕获路径仍 RW，精确 safe-root 及终端 RO 写拒绝均已实测。Core Knowledge 在本阶段保持 RO。`compose.core-isolated.yaml` 仅为隔离测试候选，不能独立部署。此前隔离目录测试中，Hermes root 在 RO mount 下写入失败，Core UID 1026 可按模拟授权写 Knowledge/state，这不是生产切换验收。
 
-生产 Promote 仍 **BLOCKED**：Docker 受控只读运行证据已取得，实时确认 Hermes root + Knowledge RW 子挂载；Core 为 `1026:100`、Knowledge/Review RO、state RW、secret RO 且 Promote=false；Private 未挂载。下一步仅准备并经单独确认后实施 Hermes 权限收窄；Core Knowledge RW、可信统一审批授权与实际代理头/HTTPS 安全验证仍未完成，之后须另行授权生产切换。不得以恢复 Hermes Knowledge RW 作为常规回滚。
+生产 Promote 仍 **BLOCKED**：Hermes 权限收窄已部署并验证；Core 为 `1026:100`、Knowledge/Review RO、state RW、secret RO 且 Promote=false；Private 未挂载。Core Knowledge RW、可信统一审批授权与实际代理头/HTTPS 安全验证仍未完成，生产 Promote 部署须另行授权。Hermes 重建后 Dashboard 原生 Chat 在两个浏览器标签持续重连，虽 Health 200、Gateway Running，仍是待单独排查的功能异常。不得以恢复 Hermes Knowledge RW 作为常规回滚。
 
 ## 数据区域与写入生命周期
 
@@ -55,7 +55,7 @@ Core 启动将 Uvicorn `X-Forwarded-*` 信任限制到 `SB_TRUSTED_PROXY_IPS`；
 - `30-Projects`、`40-Memory`、`50-Journal`、`90-Archive`：各自业务区，普通 Agent 无通用根目录 RW。
 - 基本知识流：Input → Raw → Review → 用户批准 → Promote → Knowledge。失败需保留可恢复的原始/Review 证据。
 
-生产 Hermes 当前仍有 Knowledge RW mount，普通 `write_file` 可绕过 Promote；Core service healthy 但挂载为 RO、Promote 关闭。生产 Knowledge 写权切换仍 **BLOCKED**，生产身份/审批与容器文件权限隔离须按 00-CURRENT 完成后另行批准。Journal 目标规则支持专用新增/追加，但生产挂载尚未开放。状态以 00-CURRENT 为准。
+Hermes 当前无 Knowledge RW mount；普通 `write_file`/`patch` 被 safe-root 拒绝，terminal 写入受 RO mount 拒绝。Core service healthy 但 Knowledge 仍 RO、Promote 关闭；生产 Promote 仍因统一审批授权及 Core 写权限部署未完成而 **BLOCKED**。Journal 目标规则支持专用新增/追加，但生产挂载尚未开放。状态以 00-CURRENT 为准。
 
 ## Universal Capture
 

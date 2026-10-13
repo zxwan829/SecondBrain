@@ -35,10 +35,9 @@ type: environment-baseline
 | `/volume1/SecBR/SecondBrain` | `/secondbrain` | RO |
 | `/volume1/SecBR/SecondBrain/00-Inbox` | `/secondbrain-write/00-Inbox` | RW |
 | `/volume1/SecBR/SecondBrain/10-Review` | `/secondbrain-write/10-Review` | RW |
-| `/volume1/SecBR/SecondBrain/20-Knowledge` | `/secondbrain-write/20-Knowledge` | RW |
 | `/volume1/SecBR/KnowledgeAssets/00-Inbox` | `/knowledge-assets/00-Inbox` | RW |
 
-运行值 `HERMES_WRITE_SAFE_ROOT=/secondbrain-write:/knowledge-assets/00-Inbox`。Knowledge 实际 RW 与普通 write_file 可直接写入已由 0B/0C 核实；Hermes 仍保持该 RW 子挂载，尚未收窄。
+**2026-10-13 生产权限收窄后：** Hermes Knowledge 仅经 `/secondbrain` RO 根路径读取；不再挂载 Knowledge RW 子路径。`HERMES_WRITE_SAFE_ROOT=/secondbrain-write/00-Inbox:/secondbrain-write/10-Review:/knowledge-assets/00-Inbox`。Hermes root 与 terminal 仍可用，但文件工具白名单和 RO bind mount 双重限制 Knowledge 写入。
 
 ### 2026-10-13 阶段 B 首次普通 SSH 只读复核（历史）
 
@@ -55,14 +54,17 @@ type: environment-baseline
 - NAS 当前 Compose 只读核对与实时 Docker inspect 一致：Hermes 四个业务 bind mount 和 safe-root 如表，Core `user: 1026:100`、Promote false、Review/Knowledge RO、state RW、secret RO。Core 健康状态与 Environment 既有记录一致。Hermes image 标签为 `latest`，运行版本与记录的 v0.21.5 build 一致。
 - Hermes v0.21.5 容器内实际 `agent/file_safety.py` 的 `get_safe_write_roots()` 源码按 `os.pathsep` 拆分并规范化路径；对候选三路径值做了单进程环境覆盖解析测试，返回的三个 root 与预期一致，未改运行容器环境。该 guard 只用于文件写工具，不构成 terminal 沙箱；正式边界必须由 RO bind mount 强制。未执行会写入 Knowledge 的测试文件探针。
 
-### 阶段 B 最小生产 Compose 差异（仅方案，未应用）
+### 2026-10-13 Hermes Knowledge 权限收窄部署
 
-本轮授权范围仅为收紧 Hermes；保持 Core 当前实际边界不变：Knowledge RO、Review RO、Core state RW、unlock secret RO、`SB_PROMOTE_ENABLED=false`。候选差异只有两处：
+按 Environment-Baseline 最小方案实施，仅变更 Hermes 服务的两项 Compose 设置。部署前备份位于 `/volume1/docker/secondbrain/rollback/hermes-knowledge-ro-20261013-221912/`：原 `compose.yaml`、`.env`、Hermes/Core inspect 元数据、Hermes 版本和非敏感运行配置摘要；目录 `0700 root:root`，文件 `0600 root:root`。备份逐文件 `cmp` 及 SHA-256 核对通过；`.env` 内容未输出或写入 Git。**原 Compose 快照包含被移除的 Knowledge RW 子挂载，严禁直接复制回生产路径或直接用它重建容器。**快照仅用于取回其他配置；任何恢复操作必须先编辑/过滤，确保该 RW 子挂载缺席且写安全根仍是三个精确捕获目录，然后校验配置并仅重建 Hermes。
 
-1. Hermes 删除 `/volume1/SecBR/SecondBrain/20-Knowledge:/secondbrain-write/20-Knowledge:rw` bind mount；保留 Inbox、Review、KnowledgeAssets Inbox 捕获挂载。
-2. 将 `HERMES_WRITE_SAFE_ROOT` 改为 `/secondbrain-write/00-Inbox:/secondbrain-write/10-Review:/knowledge-assets/00-Inbox`。Hermes v0.21.5 实际源码确认 Unix 多路径以冒号拆分；由于 safe-root 不是 terminal 边界，Knowledge RO mount 是强制隔离关键。
+实际差异：移除 `/volume1/SecBR/SecondBrain/20-Knowledge:/secondbrain-write/20-Knowledge:rw`；`HERMES_WRITE_SAFE_ROOT` 收窄为 `/secondbrain-write/00-Inbox:/secondbrain-write/10-Review:/knowledge-assets/00-Inbox`。部署前以 Hermes v0.21.5 实际解析函数核实冒号分隔得到三个独立写根。Compose 原子更新后 `docker compose config -q` 通过，模式及 owner/group 保持不变；只执行 `up -d --no-deps --force-recreate --pull never hermes`，未拉取镜像、未重建 Core 或其他容器。
 
-切换前将 `/volume1/docker/secondbrain/compose.yaml`、相关 `.env`（仅受控快照，不输出或提交秘密）及当前容器 inspect 元数据保存到带时间戳的本地/ NAS 回滚目录，并核对文件可读、哈希及恢复命令；不修改生产。经下一次确认后才应用，仅重建 Hermes，不升级镜像、不动 Core。失败时恢复其他 Compose/配置字段并保留 Knowledge RW 子挂载删除与 safe-root 收窄；**不得恢复 Hermes Knowledge RW**。异常时保持 `/secondbrain` RO 和该 Knowledge 子挂载缺席，停用 Hermes 写入捕获并排查。生产验收须分别证明：普通 write_file/patch 写 Knowledge 被 safe-root 拒绝；terminal 对 RO Knowledge mount 写入被拒；Daily Capture、Universal Capture Raw→Review、Dashboard Review 列表/详情正常；Core 仍 healthy、Knowledge/Review RO、`SB_PROMOTE_ENABLED=false`、Private 未挂载。变更提交和离线检查不等于部署或用户验收。
+部署后实时 inspect：Hermes running，v0.21.5/build `749220ef` 及镜像 ID 未变；Knowledge RW mount 缺席，`/secondbrain` RO；三个捕获挂载仍 RW，运行 safe-root 与目标完全一致。普通文件 `write_file` 与 `patch_replace` 对 Knowledge 均在调用后端前被 safe-root 拒绝；终端 `touch` 在 RO Knowledge 上返回 `Read-only file system`，探针文件不存在。Core 仍 healthy、UID/GID `1026:100`、Knowledge/Review RO、state RW、secret RO、`SB_PROMOTE_ENABLED=false`；Private 未挂载。没有更改 Core、PBR、NAS 网络或业务文件。
+
+回归通过：Hermes Daily Capture 将唯一测试样本写入 Inbox；Universal Capture 将测试样本写入 KnowledgeAssets Inbox Raw 并生成 Review；Dashboard 真实 Review 列表由 8 条增至 9 条，测试项详情及正文正确显示；之后仅删除三个独立测试样本，确认原有 Review 数量恢复为 8，未触碰既有业务文件。两 Edge Dashboard 页面可加载；但同会话原生 Chat 页面在 Hermes 重建后持续显示“Chat connection interrupted / Reconnecting”，Gateway health 200、状态 Running，日志未见对应 ERROR/Exception。该 Chat UI 连接异常尚未定位；未在本授权范围内重启 Gateway、改反代/网络或扩大排障。此项需单独跟进，不能标记为全面用户验收。
+
+异常回退原则：恢复捕获功能时只能恢复此前安全的 Inbox/Review/KnowledgeAssets 捕获设置，绝不恢复 Hermes Knowledge RW。若不能在此约束内恢复功能，停止并报告。回滚快照保留供核对；之后如需实际回退，必须逐项过滤 Compose，保持 Knowledge 子挂载删除与精确 safe-root。
 
 ## Dashboard / FE-4
 

@@ -494,3 +494,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - NAS 主机 `stat` 显示 SecondBrain 根、Inbox、Review、Knowledge POSIX mode `0777`、owner `1026:100`；synoacltool 显示 Review/Knowledge ACL 允许 Joe 与 administrators RWX，无 Everyone ACE。SSH 用户主机级对 Review/Knowledge 可读可写。Core state 为 `1026:100`、mode `0700`。主机访问证据不替代 Docker mount 限制或 Hermes 普通文件工具测试。
 - D072 选择保留 Core 独立短时授权：Dashboard 的 Hermes Session 只用于 Review 读取；明确用户点击后浏览器直连 Core，Core Cookie/secret、精确 HTTPS Origin、摘要绑定和服务端固定 owner 主体负责批准。Hermes 与 Agent Runtime 共享执行边界，故 Session 不足以证明用户动作；在无新增可信人类确认因子的条件下，无法同时免第二次口令并排除 Agent 伪造，维持现有 Core 解锁是最小替代方案。
 - 最小候选差异和回滚见 Environment-Baseline 的阶段 B 条目。部署门禁：取得受控只读运行容器证据；验证 Hermes v0.21.5 对三个精确写根的解析及写入拒绝；确认 Core 1026:100 对 Knowledge/state 可写、Review 只读、secret 只读、Private 未挂载；之后独立批准生产 Compose 切换及 HTTPS Dashboard 浏览器验收。当前未部署、未启用 Promote、未用户验收。
+
+# 2026-10-13 Hermes Knowledge 权限收窄生产部署
+
+- 按用户授权，仅修改生产 Compose 中 Hermes 的两项设置：删除 `20-Knowledge` RW 子挂载；将 `HERMES_WRITE_SAFE_ROOT` 精确收窄至 Inbox、Review、KnowledgeAssets Inbox。部署前快照保存在 `/volume1/docker/secondbrain/rollback/hermes-knowledge-ro-20261013-221912/`，包含 Compose、受限 `.env`、Hermes/Core inspect 元数据和运行时摘要；目录/文件权限分别为 `0700/0600 root:root`，内容比较及 SHA-256 校验通过。秘密未输出、未入 Git。
+- Hermes v0.21.5 多路径解析经实际源码函数验证；Compose 校验通过。只重建 Hermes，使用 `--pull never`；未改 Core、PBR、网络或其他容器，镜像 ID 未变。运行时 Knowledge 仅 RO 根挂载；safe-root 准确，三个捕获路径 RW。普通文件工具两类写入均在后端执行前拒绝 Knowledge；terminal 写探针返回 `Read-only file system` 且无探针文件。
+- Core 保持 healthy，身份 `1026:100`，Knowledge/Review RO、state RW、secret RO、`SB_PROMOTE_ENABLED=false`；Private 未挂载。未启用或部署 Promote。
+- 回归：Daily Capture 成功；Universal Capture Raw 与 Review 成功；Dashboard Review 列表由 8→9、测试详情/正文可读；仅清理三个专用测试样本，原列表恢复 8。浏览器中 Dashboard 页面正常，但原生 Chat 两标签持续“Reconnecting”；Health 200、Gateway Running，当前未定位。未重启 Gateway 或改网络，需单独跟进。权限收窄和 Review/Capture 回归通过，不代表 Chat 或整体 V1 用户验收。
+- 回滚快照保留。若恢复配置，必须过滤掉 Knowledge RW 子挂载并维持三个精确写根；不得以放回 Hermes Knowledge RW 作为恢复方案。若捕获功能无法在该安全边界内恢复则停止并升级处理。
