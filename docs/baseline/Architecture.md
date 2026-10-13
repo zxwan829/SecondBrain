@@ -29,7 +29,7 @@ Hermes Dashboard Shell → SecondBrain Dashboard Plugin → 认证 API/薄适配
 
 ## Core 目标架构与当前状态
 
-经批准的方向为 **Hermes + SecondBrain Core 模块化单体**。Hermes 继续承载登录会话、Agent Runtime、原生 Chat 与 Dashboard 插件宿主；SecondBrain Core 作为单一模块化应用承载领域规则、用例和受控文件数据操作，由 Dashboard 直接调用必要的 Core API。Core service 已在现有 SecondBrain Compose Project 中运行 healthy；Dashboard 只读 Review 视图及 Core 列表/详情 API 已部署，完整列表与详情仍待用户在 Edge 解锁验收。按 D068，Hermes 与 Core 正式归属 Container Manager 现有同一个 SecondBrain Compose Project，Core 作为新增 service；两个容器仍保持独立权限、挂载和认证边界。`compose.core-isolated.yaml` 仅为隔离测试候选，不能作为独立正式项目部署。V1 完整可用前不进行商业发行包、代码/数据/密钥/环境参数化整理。
+经批准的方向为 **Hermes + SecondBrain Core 模块化单体**。Hermes 继续承载登录会话、Agent Runtime、原生 Chat 与 Dashboard 插件宿主；SecondBrain Core 作为单一模块化应用承载领域规则、用例和受控文件数据操作，由 Dashboard 直接调用必要的 Core API。Core service 已在现有 SecondBrain Compose Project 中运行 healthy。Review 只读列表/详情的代码改为同源 Hermes 插件 API，并逐请求验证 Hermes 已验证 Session；本次实现尚未部署，生产仍按当前 Environment-Baseline 状态运行。按 D068，Hermes 与 Core 正式归属 Container Manager 现有同一个 SecondBrain Compose Project，Core 作为新增 service；两个容器仍保持独立权限、挂载和认证边界。`compose.core-isolated.yaml` 仅为隔离测试候选，不能作为独立正式项目部署。V1 完整可用前不进行商业发行包、代码/数据/密钥/环境参数化整理。
 
 Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、Journal、Projects、Calendar。模块共享一个应用进程/部署单元并通过显式接口协作；不新增独立数据库、LLM、n8n、第二 Runtime 或独立管理后台。只有已实现模块建立代码，不创建空占位包。
 
@@ -37,7 +37,7 @@ Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、
 
 **CORE-1/2 身份与审批边界（CORE-2 隔离实现，未部署）：** Hermes v0.21.5 Basic Auth 中间件验证 session 后写入进程内 `request.state.session`，`/api/auth/me` 返回该身份；但生产 Hermes 以 root 运行、Basic Auth 密码在容器环境中且普通 Agent/Shell 共用该进程边界，因此 Hermes Cookie 转发或 Core 回查都不能证明是本人审批。v0.21.7 RC 的 `/api/auth/me` 在 loopback 模式可返回 token 校验后的合成 `user_id=local`、`provider=loopback`，该身份绝不能提升为人工批准。
 
-经 CORE-2 核验，Promote 改用 Core 独立单人授权：用户先在 Dashboard 解锁 Core，之后由浏览器直接向 Core 提交审批；凭据和 HttpOnly/Secure/SameSite 短期 session 不经过 Hermes。Core 仅信任 Core 自己签发且保存在内存中的 session，严格校验 HTTPS、精确 Dashboard Origin/CORS、Review 路径与 SHA-256，审计主体记为 `owner`。Core HTTP app 不注册旧 Hermes-session router；普通 Agent 提供的 `user_id`、session、`approved=true` 均不起授权作用。详细实现和测试见 `web-app/secondbrain-core/`。
+经 CORE-2 核验，Promote/审批保留 Core 独立单人授权：未来用户须单独解锁 Core，之后由浏览器直接向 Core 提交审批；凭据和 HttpOnly/Secure/SameSite 短期 session 不经过 Hermes。D071 将 Review 只读列表/详情改为复用 Hermes 已验证 Dashboard Session，浏览器通过同源 Hermes 插件 API 访问，不调用 Core 解锁接口。Core 仅信任 Core 自己签发且保存在内存中的 session，严格校验 HTTPS、精确 Dashboard Origin/CORS、Review 路径与 SHA-256，审计主体记为 `owner`。Core HTTP app 不注册旧 Hermes-session router；普通 Agent 提供的 `user_id`、session、`approved=true` 均不起授权作用。详细实现和测试见 `web-app/secondbrain-core/`。
 
 **CORE-4 DSM HTTPS 入口（已配置，浏览器与生产审批联调未收口）：** 复用现有 `zxwan520.com` / `*.zxwan520.com` 证书，新增 `zxwan520.com:63012` → `192.168.3.27:9119` Dashboard 规则及 `zxwan520.com:63013` → `127.0.0.1:9120` Core 预留规则。两者绑定 `SecondBrain LAN-only` profile（允许 `192.168.3.0/24`，拒绝其余 IPv4 与 IPv6），不启用 HSTS；Dashboard 原 HTTP 入口保留。规则按主机+端口，不支持本次已验证的路径转发。Mac 局部解析下 TLS 验证通过：Dashboard 返回 302 登录重定向；临时回显测试曾证明 Core 代理链可达。当前 Compose 中 Core service healthy；Promote 仍关闭、Knowledge 仍为 RO。63013 仅为 LAN-only Core HTTPS 入口，不代表生产 Promote 已启用。临时回显服务的 Origin/Cookie 测试通过，但不是正式 Core 浏览器审批联调。用户已报告在真实 Edge 登录并访问 Dashboard HTTPS；Dashboard Review 完整列表/详情的最新部署版本仍待用户解锁验收。DSM profile 配置与绑定已核实；NAS loopback 请求返回 302，不能作为非 LAN 拒绝测试。路由器静态配置及活动 nftables 未发现 63012/63013 DNAT。
 

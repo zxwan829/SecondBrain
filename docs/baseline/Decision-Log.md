@@ -308,3 +308,8 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 日常项目工作副本继续通过 Synology Drive 在 NAS 与已配置 Mac 之间双向同步；治理文档按需另走 NAS → SSH 读取 → 当前 Mac 发布脚本 → Google Drive 桌面客户端的单向发布路径，禁止用 Mac 可能过时的副本覆盖 NAS。目标统一为 `我的云端硬盘/Project Doc/<项目目录>/`。发布使用项目 Markdown 白名单，仅增量更新、不主动删除；桌面客户端云端上传异步，本地发布成功不等于云端确认。
 
 实现状态须与决策分开陈述：本次核实到的脚本仍在 `SecondBrain V1/tools/sync-chatgpt-live.sh`，SecondBrain 配置内嵌脚本；指定 `_Shared/tools/publish-docs.sh` 和独立多项目配置文件尚不存在。
+## D071 — 2026-10-13 Review 只读复用 Hermes Dashboard Session
+
+**决策：** Dashboard 用户登录后，Review 列表与详情自动复用 Hermes 已验证的 Basic Auth Session。浏览器只调用同源 Hermes 插件 API；插件后端必须逐请求验证宿主注入的 `request.state.session`、有效期、认证模式及精确同源 Origin。不得以客户端登录标记、自报身份/请求头或未认证 Core API 作为授权。Review 读取保持只读；Promote 继续独立关闭，Knowledge RO、Private 隔离及 Hermes Knowledge RW 既有安全债不变。
+
+**实现边界：** Hermes 插件服务端直接提供只读 Review API；不新增认证系统、数据库或跨服务信任头。Core 独立授权仍只属于未来 Promote/审批路径，不要求 Review 用户重复输入 Core 口令。代码/针对性测试完成不等于已部署；生产部署须另行批准。

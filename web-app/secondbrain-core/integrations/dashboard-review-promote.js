@@ -1,7 +1,6 @@
 /* Additive Review view for the existing FE-4 plugin. Promote stays disabled. */
 (() => {
-  const DASHBOARD_ORIGIN = "https://zxwan520.com:63012";
-  const CORE = "https://zxwan520.com:63013/api/promote";
+  const DASHBOARD_API = "/api/plugins/secondbrain";
   const STYLE_ID = "sb-core-review-style";
   const DIALOG_ID = "sb-core-review-dialog";
   if (window.__SB_CORE_REVIEW_VIEW__) return;
@@ -13,23 +12,20 @@
   let detailTitleNode;
   let detailMetaNode;
   let detailContentNode;
-  let unlockFormNode;
-  let passphraseNode;
   let locked = true;
 
   const text = (zh, en) => localStorage.getItem("secondbrain.locale") === "en" ? en : zh;
 
   async function request(path, options = {}) {
-    const response = await fetch(CORE + path, {
+    const response = await fetch(DASHBOARD_API + path, {
       credentials: "include",
-      mode: "cors",
       ...options,
       headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     });
     let payload = {};
     try { payload = await response.json(); } catch {}
     if (!response.ok) {
-      const error = new Error(payload.detail || ("Core HTTP " + response.status));
+      const error = new Error(payload.detail || ("Dashboard HTTP " + response.status));
       error.status = response.status;
       throw error;
     }
@@ -49,7 +45,6 @@
       "#" + DIALOG_ID + " button{border:1px solid #394a73;background:#192448;color:#e4ebff;border-radius:8px;padding:8px 11px;cursor:pointer}" +
       "#" + DIALOG_ID + " button:disabled{opacity:.48;cursor:not-allowed}" +
       "#" + DIALOG_ID + " .sb-core-status{color:#aab9d7;min-height:22px;margin:12px 0}" +
-      "#" + DIALOG_ID + " .sb-core-unlock{display:flex;gap:8px;margin:10px 0 16px}" +
       "#" + DIALOG_ID + " input{flex:1;min-width:0;border:1px solid #35466c;border-radius:8px;background:#080f22;color:#eef3ff;padding:9px 10px}" +
       "#" + DIALOG_ID + " .sb-core-list{display:grid;grid-template-columns:minmax(220px,.8fr) minmax(0,1.2fr);gap:16px}" +
       "#" + DIALOG_ID + " .sb-core-rows{border-top:1px solid #2a3858;max-height:52vh;overflow:auto}" +
@@ -74,26 +69,21 @@
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-labelledby", "sb-core-title");
-    overlay.innerHTML = '<section class="sb-core-panel"><header class="sb-core-head"><h2 id="sb-core-title"></h2><div><button type="button" data-lock hidden></button> <button type="button" data-close></button></div></header><p class="sb-core-status" aria-live="polite"></p><form class="sb-core-unlock"><input type="password" autocomplete="current-password" required><button type="submit"></button></form><p class="sb-core-note"></p><div class="sb-core-list"><div class="sb-core-rows" role="list"></div><article class="sb-core-detail"><h3></h3><small class="sb-core-detail-meta"></small><pre class="sb-core-content"></pre></article></div></section>';
+    overlay.innerHTML = '<section class="sb-core-panel"><header class="sb-core-head"><h2 id="sb-core-title"></h2><div><button type="button" data-refresh hidden></button> <button type="button" data-close></button></div></header><p class="sb-core-status" aria-live="polite"></p><p class="sb-core-note"></p><div class="sb-core-list"><div class="sb-core-rows" role="list"></div><article class="sb-core-detail"><h3></h3><small class="sb-core-detail-meta"></small><pre class="sb-core-content"></pre></article></div></section>';
     overlay.querySelector("h2").textContent = text("待审核 · Review", "Review queue");
     overlay.querySelector("[data-close]").textContent = text("关闭", "Close");
-    overlay.querySelector("[data-lock]").textContent = text("锁定 Core", "Lock Core");
-    overlay.querySelector(".sb-core-unlock button").textContent = text("解锁 Core", "Unlock Core");
-    overlay.querySelector(".sb-core-unlock input").placeholder = text("Core 专属解锁口令", "Core-only passphrase");
+    overlay.querySelector("[data-refresh]").textContent = text("刷新列表", "Refresh");
     overlay.querySelector(".sb-core-note").textContent = text(
-      "Review 内容通过 Core 会话读取；Promote 当前关闭，本视图仅供查看。",
-      "Review content is read through the Core session. Promote is disabled; this view is read-only."
+      "Review 内容通过已登录的 Hermes Dashboard 会话读取；Promote 当前关闭，本视图仅供查看。",
+      "Review content uses your authenticated Hermes Dashboard session. Promote is disabled; this view is read-only."
     );
     statusNode = overlay.querySelector(".sb-core-status");
     listNode = overlay.querySelector(".sb-core-rows");
     detailTitleNode = overlay.querySelector(".sb-core-detail h3");
     detailMetaNode = overlay.querySelector(".sb-core-detail-meta");
     detailContentNode = overlay.querySelector(".sb-core-content");
-    unlockFormNode = overlay.querySelector(".sb-core-unlock");
-    passphraseNode = overlay.querySelector(".sb-core-unlock input");
     overlay.querySelector("[data-close]").addEventListener("click", () => { overlay.hidden = true; });
-    overlay.querySelector("[data-lock]").addEventListener("click", lockCore);
-    unlockFormNode.addEventListener("submit", unlock);
+    overlay.querySelector("[data-refresh]").addEventListener("click", loadItems);
     document.body.appendChild(overlay);
     setLocked(true);
     return overlay;
@@ -103,12 +93,11 @@
     locked = value;
     const dialog = document.getElementById(DIALOG_ID);
     if (!dialog) return;
-    unlockFormNode.hidden = value;
-    dialog.querySelector("[data-lock]").hidden = value;
+    dialog.querySelector("[data-refresh]").hidden = value;
     if (value) {
       items = [];
       renderItems();
-      detailTitleNode.textContent = text("解锁后选择条目", "Unlock Core to select an item");
+      detailTitleNode.textContent = text("登录后选择条目", "Sign in to select an item");
       detailMetaNode.textContent = "";
       detailContentNode.textContent = "";
     }
@@ -119,7 +108,7 @@
     listNode.replaceChildren();
     if (!items.length) {
       const empty = document.createElement("p");
-      empty.textContent = locked ? text("解锁后加载 Review 列表。", "Unlock Core to load the Review list.") : text("暂无待审核条目", "No Review items");
+      empty.textContent = locked ? text("请登录 Dashboard 后加载 Review 列表。", "Sign in to Dashboard to load the Review list.") : text("暂无待审核条目", "No Review items");
       listNode.appendChild(empty);
       return;
     }
@@ -142,18 +131,14 @@
   }
 
   async function loadItems() {
-    if (location.origin !== DASHBOARD_ORIGIN) {
-      statusNode.textContent = text("请通过 Dashboard HTTPS 入口使用 Core。", "Open this page through the Dashboard HTTPS endpoint.");
-      return;
-    }
-    statusNode.textContent = text("正在读取 Core Review…", "Loading Core Review…");
+    statusNode.textContent = text("正在读取 Review…", "Loading Review…");
     try {
       const data = await request("/review/items");
       items = Array.isArray(data.items) ? data.items : [];
       setLocked(false);
       statusNode.textContent = text(
-        "已连接 Core · " + items.length + " 条真实 Review · Promote 关闭",
-        "Connected to Core · " + items.length + " real Review items · Promote disabled"
+        "已连接 Dashboard · " + items.length + " 条真实 Review · Promote 关闭",
+        "Connected to Dashboard · " + items.length + " real Review items · Promote disabled"
       );
       renderItems();
       if (items.length) await loadDetail(items[0], listNode.firstElementChild);
@@ -162,8 +147,8 @@
       renderItems();
       setLocked(true);
       statusNode.textContent = error.status === 401
-        ? text("请先输入 Core 解锁口令。", "Unlock Core to continue.")
-        : error.message || text("Core 连接失败", "Core connection failed");
+        ? text("请先登录 Hermes Dashboard。", "Sign in to Hermes Dashboard to continue.")
+        : error.message || text("Review 读取失败", "Could not load Review");
     }
   }
 
@@ -181,39 +166,13 @@
       detailContentNode.textContent = detail.content || "";
     } catch (error) {
       detailMetaNode.textContent = error.status === 401
-        ? text("Core 会话已失效，请重新解锁。", "Core session expired; unlock again.")
+        ? text("Dashboard 会话已失效，请重新登录。", "Dashboard session expired; sign in again.")
         : error.message || text("无法读取条目详情", "Could not load the item detail");
       if (error.status === 401) setLocked(true);
     }
   }
 
-  async function unlock(event) {
-    event.preventDefault();
-    if (location.origin !== DASHBOARD_ORIGIN) return;
-    const button = unlockFormNode.querySelector("button");
-    button.disabled = true;
-    const passphrase = passphraseNode.value;
-    passphraseNode.value = "";
-    try {
-      await request("/auth/unlock", { method: "POST", body: JSON.stringify({ passphrase }) });
-      await loadItems();
-    } catch (error) {
-      statusNode.textContent = error.message || text("解锁失败", "Unlock failed");
-    } finally {
-      passphraseNode.value = "";
-      button.disabled = false;
-    }
-  }
-
-  async function lockCore() {
-    try {
-      await request("/auth/lock", { method: "POST", body: "{}" });
-      setLocked(true);
-      statusNode.textContent = text("Core 已锁定。", "Core locked.");
-    } catch (error) {
-      statusNode.textContent = error.message || text("锁定失败", "Could not lock Core");
-    }
-  }
+  // Hermes session authentication is enforced by the plugin API on every read.
 
   async function openReview() {
     const dialog = makeDialog();
@@ -222,7 +181,6 @@
   }
 
   function attach() {
-    if (location.origin !== DASHBOARD_ORIGIN) return;
     const card = document.getElementById("waiting");
     const header = card && card.querySelector(".module-title");
     if (header) {

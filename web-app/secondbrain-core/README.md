@@ -21,6 +21,9 @@ Dashboard host; NAS files remain the data source of truth.
 - Hermes-authenticated approval router code remains only for historical test
   compatibility and must not be mounted by the production plugin. Core's app
   factory does not register it or accept Hermes `request.state.session`.
+- Read-only Review browsing uses the same-origin Hermes plugin API, which
+  verifies the host-injected Dashboard session on each request. It does not
+  use the Core unlock secret; Core-owned authorization remains for Promote.
 
 ## Module boundaries
 

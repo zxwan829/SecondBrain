@@ -427,3 +427,9 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - ChatGPT 负责架构/任务/决策/验收标准，Codex 负责实施、测试、Git、授权部署与反馈。GitHub Push 不代表部署；授权部署由 Mac 经 SSH 传入 NAS，NAS 不需访问 GitHub。旧 NAS 开发目录、治理快照、Google Drive 文档镜像、旧发布流程及本地迁移备份已清理。
 - 更正迁移过程记录：2026-10-12 “NAS-first Google Drive 文档发布路径收口”和“公共文档发布脚本迁移”仅描述当时路径核查/流程试行，后续均已由 GitHub 权威文档体系取代并退役，不是当前正式发布方式。保留历史作为迁移记录，不复活其操作指引。
 - Codex workspace-write 沙箱下 GitHub 与 NAS 网络访问已验证；权限审批与生产变更授权边界继续有效。仅更新治理文档，未修改业务规格、代码、NAS、Docker 或 Synology Drive 配置。
+
+# 2026-10-13 D071 Hermes Session 只读 Review 集成（源码，待部署）
+
+- 新增 Dashboard 插件 Review 列表/详情只读 API；后端逐请求验证 Hermes 注入的 Basic Auth `request.state.session`、session 有效期、`auth_required` 与精确同源 Origin。客户端身份字段/请求头不构成授权。Review 文件读取拒绝路径穿越、符号链接和非普通文件。
+- 固定 FE-4 视觉不变，新增版本化 `index-20261013-review.js`：Dashboard 登录后通过同源插件 API 自动读取，不再请求 Core 解锁；列表与详情均仍受服务端验证。未增加 Core API、认证系统或数据库。
+- 针对性用例 5/5 通过：有效会话列表/详情、缺失/过期会话、loopback/关闭认证模式、跨 Origin、路径穿越/符号链接。Promote 仍关闭；未触及 Knowledge、Private、Hermes 挂载、NAS、容器或家庭网络。源码实现和测试不代表生产部署；部署需用户另行批准。
