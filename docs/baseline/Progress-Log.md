@@ -483,5 +483,14 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - Core 审批状态按 Review 相对路径与 SHA-256 版本持久化，支持 pending、deferred、approved、promoting、promoted、failed；Review 变更后自动呈现为新版本 pending。新增 Core 会话保护的暂缓接口和状态回读。
 - 入库仍使用现有不可覆盖原子创建。审批记录先持久化；失败标记可见，同一 request_id 可重试。目标已创建但审计失败时，重试核对目标哈希并补审计；审计日志仅尾部未完成行会在锁内修复，完整损坏记录仍 fail-closed。Review 原件不移动、不删除。
 - 移除旧 Hermes Session 直接写入 Router/Service 路径，避免被误挂载绕过 Core 独立授权。Core 仍使用 Core 自有短时会话；消除第二次解锁需要后续设计可验证的一次性用户确认凭据，普通 Agent 不得能签发。Dashboard 页面仍只读，FE-4 未改；保留原本地 `referrerPolicy: same-origin` 差异。
-- 生产权限候选仍要求移除 Hermes `20-Knowledge` RW 子挂载及 `/secondbrain-write` 写安全根，保留 RO 根挂载与 Inbox/Review 必需写入；Core UID 1026:100 独占 Knowledge 与私有审批/审计状态 RW。候选 Compose 明确 `SB_PROMOTE_ENABLED=false`。无生产配置或 NAS 改动。
+- 生产权限候选要求移除 Hermes `20-Knowledge` RW 子挂载，将 Hermes 写安全根收窄为 Inbox、Review、KnowledgeAssets Inbox 三个精确目录，并保留 `/secondbrain` RO 根挂载；Core UID 1026:100 独占 Knowledge 与私有审批/审计状态 RW。候选 Compose 明确 `SB_PROMOTE_ENABLED=false`。无生产配置或 NAS 改动。
 - 离线验证：Core 审批/认证与 HTTP 测试 15 项通过（使用 `/private/tmp` 隔离依赖）；覆盖审计写失败重试、审计尾部中断恢复、版本化暂缓、身份伪造拒绝、Origin/HTTPS 与重复提交。生产部署及用户验收未执行。
+
+## 2026-10-13 Review → Promote 阶段 B 只读权限核验与授权方案
+
+- GitHub `main`、本地 `HEAD` 均为阶段 A 提交 `2144f23`；工作区只保留未跟踪 `typescript`，本轮未碰该文件。`00-CURRENT.md` 原 NOW 项仍停留在“先检查并实现”，据此更新为阶段 A 已实现/测试、未部署，阶段 B 权限切换受阻。
+- NAS SSH 只读成功，账户 Joe `1026:100`（administrators 组）。当前生产 Compose 声明 Hermes `HERMES_WRITE_SAFE_ROOT=/secondbrain-write:/knowledge-assets/00-Inbox`，Inbox/Review/Knowledge/KnowledgeAssets Inbox mounts 均 RW；Core `user 1026:100`、根文件系统 RO、Review/Knowledge RO、state RW、secret RO、Promote false。无生产 Compose/容器/服务修改。
+- NAS `/var/run/docker.sock` 为 `root:root 0660`，SSH 用户读写均拒绝；Docker ps/inspect/exec 返回 socket permission denied。本轮未 sudo，故实际运行容器 mounts、有效 UID/env 与 Core 容器内 Knowledge 写权限未核实。
+- NAS 主机 `stat` 显示 SecondBrain 根、Inbox、Review、Knowledge POSIX mode `0777`、owner `1026:100`；synoacltool 显示 Review/Knowledge ACL 允许 Joe 与 administrators RWX，无 Everyone ACE。SSH 用户主机级对 Review/Knowledge 可读可写。Core state 为 `1026:100`、mode `0700`。主机访问证据不替代 Docker mount 限制或 Hermes 普通文件工具测试。
+- D072 选择保留 Core 独立短时授权：Dashboard 的 Hermes Session 只用于 Review 读取；明确用户点击后浏览器直连 Core，Core Cookie/secret、精确 HTTPS Origin、摘要绑定和服务端固定 owner 主体负责批准。Hermes 与 Agent Runtime 共享执行边界，故 Session 不足以证明用户动作；在无新增可信人类确认因子的条件下，无法同时免第二次口令并排除 Agent 伪造，维持现有 Core 解锁是最小替代方案。
+- 最小候选差异和回滚见 Environment-Baseline 的阶段 B 条目。部署门禁：取得受控只读运行容器证据；验证 Hermes v0.21.5 对三个精确写根的解析及写入拒绝；确认 Core 1026:100 对 Knowledge/state 可写、Review 只读、secret 只读、Private 未挂载；之后独立批准生产 Compose 切换及 HTTPS Dashboard 浏览器验收。当前未部署、未启用 Promote、未用户验收。

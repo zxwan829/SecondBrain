@@ -277,7 +277,7 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 
 ## D066 — 2026-10-12 Hermes + SecondBrain Core Modular Monolith (PLANNED)
 
-经批准的目标方向为 Hermes + SecondBrain Core 模块化单体：Hermes 保留登录会话、Agent Runtime、Dashboard/Chat 宿主能力；SecondBrain Core 承载 SecondBrain 领域规则和受控业务用例，通过适配接口集成。当前只记录方向，不冻结尚未设计的模块/API/部署细节。无新数据库、LLM、n8n、独立管理后台或第二 Agent Runtime。状态：PLANNED、未实现、未部署；CORE-0 尚未开始。生产系统不因本决策变更。
+经批准的目标方向为 Hermes + SecondBrain Core 模块化单体：Hermes 保留登录会话、Agent Runtime、Dashboard/Chat 宿主能力；SecondBrain Core 承载 SecondBrain 领域规则和受控业务用例，通过适配接口集成。当前只记录方向，不冻结尚未设计的模块/API/部署细节。无新数据库、LLM、n8n、独立管理后台或第二 Agent Runtime。CORE-0 及 Review/Promote 阶段 A 已在 GitHub `main` 提交 `2144f23` 实现并通过 15 项本地隔离测试，尚未部署；阶段 B 实时容器核验因 Docker socket 权限不足受阻。生产系统不因本决策变更。
 
 
 ## D067 — 2026-10-12 Promote 使用 Core 独立单人授权
@@ -286,7 +286,7 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 
 **决策：** Hermes 登录继续用于 Dashboard；正式 Promote 必须单独解锁 SecondBrain Core。解锁和审批由浏览器直接发给 Core，不经 Hermes 转发。Core 校验私有用户凭据、HTTPS、精确 Origin、短期 Core session 和 Review 内容摘要；普通 Agent 不得获得 Core secret、session 或 Knowledge RW。Promote Worker 是唯一 Knowledge 业务写入路径。
 
-**状态与取舍：** Core-only 解锁、HTTP 路由与隔离测试通过；NAS 已有 HTTPS 443/5001 响应，但 DSM 路由、证书匹配、反向代理 peer 和实际 ACL/UID 未核验。生产应用仍 BLOCKED。该方案不引入数据库、SSO、多用户体系或新代理容器。
+**状态与取舍：** Core-only 解锁、HTTP 路由与隔离测试通过；既有 NAS 证据核验过 DSM 路由、代理 peer 与临时 ACL/UID，但当前实际容器挂载尚未重验。2026-10-13 只读复核直接核实生产 Compose 声明，但 NAS Docker socket `root:root 0660` 拒绝 SSH 用户 `1026:100`，未执行提权；实际 ACL metadata 可读，运行时身份/mount/写权限仍 BLOCKED。该方案不引入数据库、SSO、多用户体系或新代理容器。
 
 
 ## D068 — 2026-10-12 Hermes 与 Core 共用现有 SecondBrain Compose Project
@@ -313,3 +313,11 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 **决策：** Dashboard 用户登录后，Review 列表与详情自动复用 Hermes 已验证的 Basic Auth Session。浏览器只调用同源 Hermes 插件 API；插件后端必须逐请求验证宿主注入的 `request.state.session`、有效期、认证模式及精确同源 Origin。不得以客户端登录标记、自报身份/请求头或未认证 Core API 作为授权。Review 读取保持只读；Promote 继续独立关闭，Knowledge RO、Private 隔离及 Hermes Knowledge RW 既有安全债不变。
 
 **实现边界：** Hermes 插件服务端直接提供只读 Review API；不新增认证系统、数据库或跨服务信任头。Core 独立授权仍只属于未来 Promote/审批路径，不要求 Review 用户重复输入 Core 口令。代码/针对性测试完成不等于已部署；生产部署须另行批准。
+
+## D072 — 2026-10-13 Review → Promote 阶段 B 授权与权限切换
+
+**审批授权：** Hermes 服务端可在受保护插件 API 中逐请求验证已认证且未过期的 Dashboard Session，适用于 Review 只读访问。该 Session 不单独证明用户审批：Hermes 与 Agent Runtime 共用执行/凭据边界，Agent 可处在相同已登录权限上下文。不得将 Hermes cookie/session、浏览器字段或 `approved=true` 转发为 Core 授权，也不得让 Hermes 插件签发 Agent 可调用的批准凭据。
+
+**采用的最小方案：** 保留 D067 Core-only 解锁与短期 HttpOnly/Secure/SameSite Core session。Review 继续用 D071 Hermes Session 读取；Dashboard 仅在用户明确点「批准入库」并再次确认后，由浏览器直连 Core HTTPS Origin。Core 锁定时先要求现有 Core 解锁口令；Core 服务端验证自己的 session、HTTPS、精确 Origin 与 Review 文件 SHA-256，主体固定为 `owner`，再写 Core 私有审批/状态并由 Promote Worker 写 Knowledge。暂缓决定也由相同 Core 身份保护。此流程保留第二次解锁；在当前 Hermes/Agent 权限模型下，免第二次解锁而又保证 Agent 不能伪造“用户点击”，需要额外可信人类确认因子或隔离签发者，均超出既有组件与本阶段最小方案。不得通过削弱 Core 认证实现免登录。
+
+**权限切换：** 基于生产 Compose 文件的最小候选是 Hermes 移除 `20-Knowledge` RW bind、将 `HERMES_WRITE_SAFE_ROOT` 从父目录收窄到 Inbox、Review、KnowledgeAssets Inbox 三个明确路径；Core 将 Knowledge bind 从 RO 改 RW，继续使用 UID/GID `1026:100`、Review RO、Core state RW、unlock secret RO、Promote false。保持 Private 不挂载。NAS 运行容器/mount/UID 当前仍待受控只读核验；Compose 文字和主机 ACL 不等同容器运行证据。生产变更须另行批准，回退只将 Core Knowledge 改回 RO 并关停 Promote，不能恢复 Hermes Knowledge RW。

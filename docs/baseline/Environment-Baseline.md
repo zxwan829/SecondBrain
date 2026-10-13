@@ -40,6 +40,22 @@ type: environment-baseline
 
 运行值 `HERMES_WRITE_SAFE_ROOT=/secondbrain-write:/knowledge-assets/00-Inbox`。Knowledge 实际 RW 与普通 write_file 可直接写入已由 0B/0C 核实；Hermes 仍保持该 RW 子挂载，尚未收窄。
 
+### 2026-10-13 阶段 B SSH 只读复核
+
+- SSH `secondbrain-nas` 成功；登录账户为 Joe UID/GID `1026:100`，附加组 `administrators`。NAS 当前 `/volume1/docker/secondbrain/compose.yaml` 的只读文本显示：Hermes 服务 `hermes` 的 `HERMES_WRITE_SAFE_ROOT` 仍是 `/secondbrain-write:/knowledge-assets/00-Inbox`，`00-Inbox`、`10-Review`、`20-Knowledge` 三个 SecondBrain 子挂载及 KnowledgeAssets Inbox 均声明 RW；生产 Compose 中未找到 `Private` 路径。Core 服务 `secondbrain-core` 声明 `user: 1026:100`、只读根文件系统；Review、Knowledge bind mount 为只读，Core state 为 RW，Core unlock secret 为只读，`SB_PROMOTE_ENABLED=false`。
+- **实时容器检查受阻：** NAS `/var/run/docker.sock` 为 `root:root`、mode `0660`；SSH 用户对 socket 的 `test -r` / `test -w` 均为 no。普通 `/usr/local/bin/docker ps/inspect/exec` 返回 `permission denied while trying to connect to the Docker daemon socket`。未 sudo，也未查询运行容器实际挂载、环境值、有效进程 UID 或容器内访问结果。Compose 声明显示 unlock secret 从 `/volume1/docker/secondbrain/core-secrets/promote_unlock` 只读挂至 Core `/run/secrets/promote_unlock`，Hermes service 未声明此挂载；Core state 从 `core-state` 提供。Compose 未匹配到 Private 路径。以上是静态配置，不是运行容器证明。
+- 直接 `stat`：SecondBrain 根、Inbox、Review、Knowledge 目录当前 POSIX mode 均显示 `0777`、owner `1026:100`；`synoacltool -get` 对 Review/Knowledge 显示 ACL owner Joe 具有 RWX、`administrators` 组具有 RWX，并有 Joe 继承的只读 ACE；输出中无 Everyone ACE。NAS shell 当前 SSH 用户对 Review、Knowledge 的主机级 `test -r/-w` 均为 yes。此为 SSH 用户/宿主权限证据，不能推断容器 bind mount 的有效权限。
+- `/volume1/docker/secondbrain/core-state` 存在，mode `0700`、owner `1026:100`；`synoacltool` 报告此路径使用 Linux mode（没有 DSM ACL）。它与当前 Core Compose 声明的私有状态目录相符，但 Docker socket 阻断了运行时挂载核对。以上证据由本次只读 SSH 命令取得；未改 NAS 文件、ACL、容器或服务。
+
+### 阶段 B 最小生产 Compose 差异（仅方案，未应用）
+
+基于 NAS 当前 Compose 文本，切换候选只需两处权限收紧：
+
+1. Hermes 删除 `/volume1/SecBR/SecondBrain/20-Knowledge:/secondbrain-write/20-Knowledge:rw` bind mount；保留 Inbox、Review、KnowledgeAssets Inbox 捕获挂载。将 `HERMES_WRITE_SAFE_ROOT` 从父目录授权收紧为三个明确路径：`/secondbrain-write/00-Inbox:/secondbrain-write/10-Review:/knowledge-assets/00-Inbox`。部署前须通过 Hermes v0.21.5 配置/隔离验证确认多个嵌套根目录的解析语义。
+2. Core 将 `/volume1/SecBR/SecondBrain/20-Knowledge` 到 `/knowledge` 的 bind mount 从 `read_only: true` 改为 `read_only: false`；保持 Core `user: "1026:100"`、只读容器根文件系统、Review RO、state RW、unlock secret RO 及 `SB_PROMOTE_ENABLED: "false"`。不要挂载 Private。
+
+回退候选：关闭 Promote 保持 false，将 Core Knowledge mount 改回 RO；保留 Core state、approval、audit 及已生成 Knowledge 文件供核对。Hermes Knowledge RW 不作为回退。生产切换前需取得 Docker 运行时只读证据，确认 UID/挂载/环境状态、NAS ACL 与 Hermes 文件工具拒绝写入；随后还需单独授权部署，再做容器重建、健康检查、权限拒绝测试和浏览器验证。
+
 ## Dashboard / FE-4
 
 - 正式插件 `secondbrain`：`/volume1/docker/secondbrain/hermes/data/plugins/secondbrain/dashboard/`，路由 `/secondbrain`；测试插件 `secondbrain-fe-test` 使用独立目录、身份和回滚资产。Hermes 原生 Chat `/chat`。生产 Dashboard 可通过 `http://192.168.3.27:9119` 访问，另有 DSM LAN-only HTTPS `https://zxwan520.com:63012` 入口。
@@ -51,7 +67,7 @@ type: environment-baseline
 
 - DSM 7.4.1 使用现有 Let's Encrypt `zxwan520.com` / `*.zxwan520.com` 证书（核验有效期 2026-09-25 至 2026-12-24）。现有 host+port 反代规则上新增两条 SecondBrain 规则：Dashboard `https://zxwan520.com:63012` → `http://192.168.3.27:9119`；Core `https://zxwan520.com:63013` → `http://127.0.0.1:9120`。两条均绑定 `SecondBrain LAN-only` Access Control profile；Dashboard 原 HTTP 入口仍保留。
 - AccessControl.json 中 `SecondBrain LAN-only` 的实际规则为允许 `192.168.3.0/24`，拒绝 `0.0.0.0/0` 和 `::/0`；ReverseProxy.json 确认两条规则均绑定其 profile。两条规则采用同一 HTTPS 主机、不同端口，不是同源（Origin 含端口），因此 Core 仍需精确 CORS Origin 与 credentials。
-- `10-Review`、`20-Knowledge` 的 POSIX owner 均为 Joe UID 1026/GID 100、mode 700；DSM ACL owner Joe 有写权限，administrators 组有写权限。临时项目测试目录复制了 ACL，并核实 Core 对应的 Joe UID 读写规则；未验证 administrators ACE。隔离 Docker 测试：root + Knowledge RO 写入被拒；Core `1026:100` 可读 Review/secret、写 Knowledge/state、不能写 Review；模拟 Hermes 未挂载 Core secret/state。临时目录已清理，未改真实 ACL/数据。
+- 既有隔离 Docker 测试中，root + Knowledge RO 写入被拒；Core `1026:100` 可读 Review/secret、写 Knowledge/state、不能写 Review；模拟 Hermes 未挂载 Core secret/state。临时目录已清理，未改真实 ACL/数据。2026-10-13 新鲜 NAS `stat` 实测 Review/Knowledge mode 为 `0777`（并非历史记录的 700），当前 DSM ACL ACE 见上文；本轮 Docker socket 被拒，未重验容器身份与实际 mount。
 - 正式项目 `/volume1/docker/secondbrain/compose.yaml` 中 Core service 仍属于现有 SecondBrain Project。配置 UID 1026:100；Review、Knowledge 为 RO；state RW、Core-only secret RO；Promote=false。DSM 反向代理实际对端从 Core 访问日志确认为 172.18.0.1，`SB_TRUSTED_PROXY_IPS` 现仅设该精确地址；Host allowlist 仍 zxwan520.com。Compose 回退副本 `compose.yaml.pre-review-proxy-20261012` 保留；本次从新构建上下文仅更新 Core，Hermes 仅因 Dashboard API 文件变更而重启。
 - Mac 局部 curl --resolve 验证 Core TLS/健康 200；锁定态列表与详情均 401，非法 Origin 403。通过 63013 HTTPS 提交伪造 X-Forwarded-Host 或 X-Forwarded-Proto 未绕过会话校验。新静态 Review 入口可由 NAS 插件目录提供；未解锁读取 Review 内容。用户此前报告真实 Edge Dashboard 登录成功；Codex 可控标准 Edge 仍遇公网 DNS 路径拒绝，最新完整列表/详情需用户在真实 Edge 中刷新并解锁确认。
 

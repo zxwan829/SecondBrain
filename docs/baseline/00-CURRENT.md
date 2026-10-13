@@ -21,23 +21,23 @@ type: project-status
 - Hermes：生产 v0.21.5 / build 749220ef，镜像按不可变 digest 固定。运行事实与部署回退入口见 Environment-Baseline。
 - Universal Capture：生产 Skill v0.1.3；已验收文本 Raw→Review，不自动 Promote。V1 MUST 还包括 URL/Web、PDF、Image/Screenshot、Audio/Voice，均未实现/验收。见 [Universal-Capture-Business-Spec.md](Universal-Capture-Business-Spec.md)。
 - Dashboard FE-4：正式版已部署，Mac/PC 与 iPhone 视觉已接受；整体 ACCEPTED WITH KNOWN ISSUES。业务 API 部分真实、部分未连接/不可用；正式 iPhone Safari 独立回归仍缺证据。模块与验收细节见 Progress-Log。
-- Hermes + SecondBrain Core 遵循 D066/D067/D068；Core 已在现有 SecondBrain 项目运行 healthy。D071 v0.2.4 后端与只读 Review 前端已部署并完成用户正式 HTTPS Edge 验收：FE-4 正常、Review 列表 8 条、详情正文可读，无 Core 二次解锁；Promote 仍关闭、Knowledge RO、Private 未挂载。D071 只读阶段已收口；下一阶段为 Review→Promote 审批闭环。
+- Hermes + SecondBrain Core 遵循 D066/D067/D068；Core 最近一次已记录状态为现有 SecondBrain 项目内 healthy。阶段 A Core 状态持久化、暂缓决定和失败恢复已实现并提交 GitHub `main`（`2144f23`），15 项离线测试通过；**未部署**。D071 v0.2.4 只读 Review 前端和 FE-4 基线未改，正式 HTTPS Edge 验收仍成立。生产 Promote 仍关闭；本轮 NAS Compose/ACL 只读检查完成，但容器 Docker socket 对 SSH 用户拒绝访问，当前运行挂载/UID/环境值未能复核，详见 Environment-Baseline。
 
 ## 主要安全与实施边界
 
 - Private 保持隔离；正式 Knowledge 必须由用户确认后 Promote，普通 Agent 不得直接写入。
-- **生产差距仍存在：** Hermes 仍以 root 运行并持有正式 Knowledge RW；Core Promote 禁用且 Knowledge RO。DSM 63012/63013 为 LAN-only HTTPS 入口；Core 只信任已由访问日志核实的 DSM peer 172.18.0.1。未登录列表/详情返回 401，非法 Origin 返回 403。正式写入切换仍 BLOCKED；不得把 Hermes Knowledge RW 作为常规回滚。
+- **生产差距仍存在：** NAS 当前生产 Compose 声明 Hermes 的 `20-Knowledge` 为 RW，Core 的 `20-Knowledge` 为 RO 且 `SB_PROMOTE_ENABLED=false`；Hermes 写安全根包含 Inbox、Review 与 Knowledge 的父路径。本轮 SSH 用户 UID 1026 无 Docker socket 访问权，故以上是 NAS Compose 声明及既有运行基线，未确认当前容器实际状态。生产写入切换仍 BLOCKED；不得把 Hermes Knowledge RW 作为常规回滚。
 - `50-Journal` 无生产直接写入挂载。已决定的 Journal 新增/追加规则是目标能力，当前 **NOT IMPLEMENTED**；不得将其写成已上线。
 - 施工期 unrestricted sudoers 安全债为 OPEN；NAS 生产服务变更及正式部署仍需按现有安全流程维护。
 - 旧治理文档发布/同步脚本属于迁移前流程，不再作为正式文档发布渠道；当前正式版本以 GitHub Monorepo 历史为准。NAS 和 Google Drive 中的旧副本不应覆盖仓库。
 
 ## 唯一执行入口：NOW / BLOCKED / DEFERRED
 
-- **NOW — Review→Promote 审批闭环：** 先检查并复用现有 Core Promote 实现，处理 Hermes 对正式 Knowledge 的 RW 安全债，再实现用户批准后入库。当前 Promote 仍关闭，Knowledge RO；不得提前开放生产写入。
+- **NOW — Review→Promote 阶段 B：** 阶段 A Core 实现已提交并测试，未部署。已选定保留 D067 Core 独立短时授权：Dashboard 明确点击后浏览器直连 Core；Core 锁定时须用现有 Core 解锁口令，之后每次写入仍需明确确认。免第二次解锁在当前 Hermes 与 Agent 共用认证/执行边界下无法满足用户确认与防伪造要求。生产权限切换前须补齐实时容器证据，并执行 Hermes RW 移除/Core RW 独占的单独部署验收；本快照没有生产切换授权。
 - **NOW — V1 Capture：** 按冻结规格实现并验收 URL/Web、PDF、图片/截图、语音输入；保留原始证据、Review 与人工 Promote 流程。
 - **NOW — Dashboard：** 补齐当前未连接的真实业务模块，并完成正式 iPhone Safari 功能回归；不得把 DEMO/UNAVAILABLE 标成真实数据。
 - **COMPLETE — D071 只读 Review：** v0.2.4 已部署；用户已通过正式 HTTPS Edge 验收 FE-4、8 条真实 Review 列表与详情正文。无需 Core 二次解锁；无 Promote 按钮或 Knowledge 写入。
-- **BLOCKED — 生产 Promote 写入：** Core 当前 healthy，但 `SB_PROMOTE_ENABLED=false` 且 Knowledge 挂载为 RO；Hermes 仍以 root 运行并持有正式 Knowledge RW。解除条件：移除 Hermes Knowledge RW、验证 Core 独占 Knowledge 写权与审批凭据、修复可信代理头/HTTPS 审批链并确认可执行回退；之后仍需用户批准生产切换。不得以恢复 Hermes Knowledge RW 作为常规回滚。
+- **BLOCKED — 生产 Promote 写入：** 本轮 Docker socket `/var/run/docker.sock` 为 `root:root 0660`，SSH 用户 `1026:100` 无读写权限；未使用 sudo。故当前容器挂载、运行 UID、运行环境和 Core 有效 Knowledge 权限均待核。解除条件：取得受控只读运行证据，落实并验证 Hermes RW 移除/Core Knowledge RW 独占、Core 审批状态目录 ACL 与 HTTPS/代理边界，确认可回退；之后仍需单独用户批准正式部署/启用。不得以恢复 Hermes Knowledge RW 作为常规回滚。
 - **DEFERRED — V1 前收口：** 在宣布 V1 DONE 前，复核并收口临时 unrestricted sudoers。
 - **DEFERRED — 访问与发布：** V1 基本可用后再完成 Agent/Dashboard 公网直接访问，复核 DSM 63012/63013 规则及 ACL；不要求 WireGuard，也不为 SecondBrain 专门改造 AdGuard。
 - **DEFERRED — 商业化整理：** V1 完整可用后，再统一处理产品代码与个人数据分离、密钥/环境参数化、发行包、安装和迁移标准化。
