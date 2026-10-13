@@ -280,7 +280,7 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 经批准的目标方向为 Hermes + SecondBrain Core 模块化单体：Hermes 保留登录会话、Agent Runtime、Dashboard/Chat 宿主能力；SecondBrain Core 承载 SecondBrain 领域规则和受控业务用例，通过适配接口集成。当前只记录方向，不冻结尚未设计的模块/API/部署细节。无新数据库、LLM、n8n、独立管理后台或第二 Agent Runtime。CORE-0 及 Review/Promote 阶段 A 已在 GitHub `main` 提交 `2144f23` 实现并通过 15 项本地隔离测试，尚未部署；阶段 B 实时容器核验因 Docker socket 权限不足受阻。生产系统不因本决策变更。
 
 
-## D067 — 2026-10-12 Promote 使用 Core 独立单人授权
+## D067 — 2026-10-12 Promote 使用 Core 独立单人授权（认证产品要求由 D073 取代）
 
 **背景：** 生产 Hermes 容器以 root 运行，Basic Auth 登录凭据在其环境边界，普通 Agent/Shell 与 Hermes 共享该容器权限；v0.21.5 `request.state.session` 只在 Hermes 进程内可信。v0.21.7 RC 的 loopback `/api/auth/me` 可返回 token 校验后的 `local` 合成身份，不代表用户审批。
 
@@ -314,10 +314,23 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 
 **实现边界：** Hermes 插件服务端直接提供只读 Review API；不新增认证系统、数据库或跨服务信任头。Core 独立授权仍只属于未来 Promote/审批路径，不要求 Review 用户重复输入 Core 口令。代码/针对性测试完成不等于已部署；生产部署须另行批准。
 
-## D072 — 2026-10-13 Review → Promote 阶段 B 授权与权限切换
+## D072 — 2026-10-13 Review → Promote 阶段 B 授权与权限切换（原二次口令方案 SUPERSEDED by D073）
 
 **审批授权：** Hermes 服务端可在受保护插件 API 中逐请求验证已认证且未过期的 Dashboard Session，适用于 Review 只读访问。该 Session 不单独证明用户审批：Hermes 与 Agent Runtime 共用执行/凭据边界，Agent 可处在相同已登录权限上下文。不得将 Hermes cookie/session、浏览器字段或 `approved=true` 转发为 Core 授权，也不得让 Hermes 插件签发 Agent 可调用的批准凭据。
 
 **采用的最小方案：** 保留 D067 Core-only 解锁与短期 HttpOnly/Secure/SameSite Core session。Review 继续用 D071 Hermes Session 读取；Dashboard 仅在用户明确点「批准入库」并再次确认后，由浏览器直连 Core HTTPS Origin。Core 锁定时先要求现有 Core 解锁口令；Core 服务端验证自己的 session、HTTPS、精确 Origin 与 Review 文件 SHA-256，主体固定为 `owner`，再写 Core 私有审批/状态并由 Promote Worker 写 Knowledge。暂缓决定也由相同 Core 身份保护。此流程保留第二次解锁；在当前 Hermes/Agent 权限模型下，免第二次解锁而又保证 Agent 不能伪造“用户点击”，需要额外可信人类确认因子或隔离签发者，均超出既有组件与本阶段最小方案。不得通过削弱 Core 认证实现免登录。
 
 **权限切换：** 基于生产 Compose 文件的最小候选是 Hermes 移除 `20-Knowledge` RW bind、将 `HERMES_WRITE_SAFE_ROOT` 从父目录收窄到 Inbox、Review、KnowledgeAssets Inbox 三个明确路径；Core 将 Knowledge bind 从 RO 改 RW，继续使用 UID/GID `1026:100`、Review RO、Core state RW、unlock secret RO、Promote false。保持 Private 不挂载。NAS 运行容器/mount/UID 当前仍待受控只读核验；Compose 文字和主机 ACL 不等同容器运行证据。生产变更须另行批准，回退只将 Core Knowledge 改回 RO 并关停 Promote，不能恢复 Hermes Knowledge RW。
+
+
+## D073 — 2026-10-13 V1 统一入口、Hermes 主线与审批免二次口令
+
+**V1 项目入口：** `docs/baseline/00-CURRENT.md` 为新会话快速掌握 V1 完整范围、已确定架构、每项 MUST 的状态、缺口与优先顺序的统一索引。正式业务行为仍由各 Business Specification 定义；运行环境细节留 Environment-Baseline，历史留 Progress-Log；不新增平行的治理文件。回答“V1 还差什么”须完整核对矩阵，不仅看 NOW。
+
+**Runtime 选择：** 用户明确不再考虑 OpenClaw；Hermes 是唯一当前实施主线，保留 D005/D021 历史但 OpenClaw 不再是当前备选或微信接入前置方案。未来除非用户重新决策，不主动展开 OpenClaw 路线。
+
+**审批产品要求：** Dashboard 登录会话有效期间，Review 查看、批准与暂缓不得要求第二套 Core 密码；批准仍需用户明确点击确认，普通 Hermes Agent 不得伪造批准或直接写入 Knowledge。此产品要求取代 D067/D072 要求用户再次输入 Core 密码的做法，但**不代表已找到可信的统一会话授权机制**；旧 Core 独立认证实现仍作为未投产的历史/隔离方案保留，禁止删除或绕过现有认证来伪装达标。须先证明 Agent 无法冒充真实用户批准、形成独立权限边界并测试，再另行批准生产部署。
+
+**最新执行事实：** Codex 本轮只读 Docker inspect/exec 因 NAS `/var/run/docker.sock` 权限被拒而停止，未 sudo、未修改 socket/组/ACL、未改生产、未开始新的审批授权链施工。静态 Compose 与既有 Knowledge RW 证据不等于本轮运行时核验。权限收口待通过现有授权渠道取得受控只读容器证据后继续；不恢复 Hermes Knowledge RW 作为回滚。阶段 A 代码 `2144f23` 通过 15 项离线测试、尚未生产部署；阶段 B 文档 `c3a9131` 已 Push。
+
+**范围边界：** 微信与 Web App 为 Universal Capture V1 输入渠道，按 UC v1.1 汇入统一 Raw→Review；微信详细消息类型/聊天行为在实施前按实际 Hermes 能力确认。WorkBuddy、n8n 当前未列为已冻结 V1 MUST，不在未确认前擅自取消或加入。完整 MUST 以 Web App V1 与 UC V1.1 正式规格及 CURRENT 矩阵为准。
