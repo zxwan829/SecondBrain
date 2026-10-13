@@ -1,0 +1,54 @@
+# SUPERSEDED by D066 / CORE-0: historical plugin route candidate; use the Core router factory after host auth integration is verified.
+--- a/dashboard/plugin_api.py
++++ b/dashboard/plugin_api.py
+@@ -1 +1,4 @@
+-from fastapi import APIRouter
++import hashlib
++import os
++import sys
++from fastapi import APIRouter, HTTPException, Request
+@@ -6,0 +10,6 @@
++_HELPER_DIR = ROOT/'30-Projects'/'SecondBrain V1'/'web-app'/'promote-worker'
++if str(_HELPER_DIR) not in sys.path:
++ sys.path.insert(0, str(_HELPER_DIR))
++from dashboard_approval import (ApprovalFileStore, ApprovalRequestError,
++                                DashboardAuthorizationError, _read_review)
++REVIEW_ROOT = ROOT/'10-Review'
+@@ -44,0 +54,37 @@
++
++
++@router.get('/review/items')
++def list_review_items():
++    items = []
++    for current, dirs, files in os.walk(REVIEW_ROOT, followlinks=False):
++        dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(current, d)))
++        for name in sorted(files):
++            if not name.lower().endswith('.md'):
++                continue
++            absolute = os.path.join(current, name)
++            if os.path.islink(absolute):
++                continue
++            relative = os.path.relpath(absolute, REVIEW_ROOT).replace(os.sep, '/')
++            try:
++                content = _read_review(str(REVIEW_ROOT), relative)
++            except ApprovalRequestError:
++                continue
++            title = next((line[2:].strip() for line in content.decode('utf-8', errors='replace').splitlines()
++                          if line.startswith('# ')), Path(name).stem)
++            items.append({'review_path': relative,
++                          'review_sha256': hashlib.sha256(content).hexdigest(),
++                          'target_filename': name, 'title': title})
++    return {'status': 'ok', 'items': items}
++
++
++@router.post('/review/approve')
++def approve_review(request: Request, body: dict):
++    queue_dir = os.environ.get('SECONDBRAIN_APPROVAL_QUEUE', '')
++    if not queue_dir:
++        raise HTTPException(status_code=503, detail='Approval queue is not configured')
++    try:
++        return ApprovalFileStore(queue_dir).approve(request, body, str(REVIEW_ROOT))
++    except DashboardAuthorizationError as exc:
++        raise HTTPException(status_code=403, detail=str(exc))
++    except ApprovalRequestError as exc:
++        raise HTTPException(status_code=409, detail=str(exc))
