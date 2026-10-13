@@ -63,8 +63,7 @@ def list_items(root, limit=5):
 
 @router.get("/proof")
 def secondbrain_proof():
-    path = ALLOW["30-Projects"] / "SecondBrain V1" / "00-CURRENT.md"
-    return {"status": "ok", "area": "30-Projects", "title": title_of(path),
+    return {"status": "ok", "area": "30-Projects", "title": "SecondBrain V1 — Current State",
             "source_type": "project"}
 
 

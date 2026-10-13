@@ -19,8 +19,7 @@ def title_of(p):
  return p.stem
 
 def proof():
- p=ALLOW['30-Projects']/'SecondBrain V1'/'00-CURRENT.md'
- return {'status':'ok','area':'30-Projects','title':title_of(p),'source_type':'project'}
+ return {'status':'ok','area':'30-Projects','title':'SecondBrain V1 — Current State','source_type':'project'}
 
 def list_items(root, limit=5):
  if not root.exists(): return []

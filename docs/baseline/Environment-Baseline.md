@@ -11,12 +11,13 @@ type: environment-baseline
 ## NAS / 数据路径
 
 - Synology DS920+, DSM 7.4.1 Build 90080；NAS LAN `192.168.3.27`，iStoreOS `192.168.3.2`。家庭网关、PBR、WireGuard、DNS 是稳定生产环境，不属 SecondBrain 随手修改范围。
-- NAS 运行项目和数据区：`/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/`、`/volume1/SecBR/SecondBrain/`、`/volume1/SecBR/KnowledgeAssets/`、Private `/volume1/SecBR/Private/`。此处是历史环境快照，不代表 NAS 是代码或正式文档源。
+- NAS 运行数据区：`/volume1/SecBR/SecondBrain/`、`/volume1/SecBR/KnowledgeAssets/`、Private `/volume1/SecBR/Private/`。SecondBrain 开发源码和正式项目文档只来自 GitHub；NAS 部署构建副本位于 `/volume1/docker/secondbrain/core-source/`。
 - 迁移前 Mac `/Users/joe/SecondBrain/`、Synology Drive 与 Google Drive 的路径及发布目标记录仅供理解旧流程；不再要求开发机依赖 Synology Drive 或从 NAS 读取项目规则。
 
 ## Hermes Runtime
 
 - Compose：`/volume1/docker/secondbrain/compose.yaml`；项目根 `/volume1/docker/secondbrain/`；容器 `secondbrain-hermes`。
+- Core build context：`/volume1/docker/secondbrain/core-source/`，按 GitHub Monorepo `main` 部署；旧 `/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/` 不再作为源码或构建目录。
 - Production Hermes v0.21.5 / build `749220ef`；镜像 `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`；已核验运行 image ID `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`。当前 Runtime 默认模型 `zai-org/GLM-4.5-Air`；最终长期默认未冻结。
 - Hermes 数据/配置：`/volume1/docker/secondbrain/hermes/data/`、`config.yaml`；Hermes CLI `/opt/hermes/.venv/bin/hermes`。
 - Dashboard 监听容器端口 `9119`，宿主仅绑定 `192.168.3.27:9119`，LAN HTTP URL `http://192.168.3.27:9119`；DSM HTTPS `https://zxwan520.com:63012` 保留 LAN-only 入口。Basic Auth secret 在 `/volume1/docker/secondbrain/.env`，权限 600。不得把凭据写入文档。
@@ -58,8 +59,8 @@ type: environment-baseline
 
 ## 治理安全写入与同步
 
-- NAS 安全写入：`/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/tools/safe-governance-write.sh`；按 NAS 当前 SHA-256 校验版本后原子更新。每次提交先创建并验证 9 份活动 Markdown 的完整快照，固定目录为 `/volume1/SecBR/.governance-recovery/SecondBrain V1/`，仅滚动清理超过数量限制的受管且验证有效快照，最多保留 10 份。
-- 旧恢复点整理结果与清理范围见 `Progress-Log.md`；新快照恢复目录位于 NAS 独立路径，不参与项目同步。
+- NAS `safe-governance-write.sh`、Live Mirror 和 Google Drive 项目文档发布流程已退役；正式文档以 GitHub 历史为准，不再从 NAS 发布或回写。
+- 旧治理快照目录 `/volume1/SecBR/.governance-recovery/SecondBrain V1/` 随旧文档流程清理。业务数据与生产容器回滚资产保留在各自运行/数据位置。
 - 迁移前核验时，Synology Drive 曾双向同步本地 `/Users/joe/SecondBrain/` 与 NAS `/SecondBrain/`；该历史配置不是新 GitHub 开发工作流的一部分。迁移前快照目录在当时位于同步根之外。
 - 迁移前的发布脚本及其配置曾通过 NAS SSH 读取项目 Markdown 并复制到 Google Drive；该流程现已废弃，不作为正式文档同步或发布机制。记录此事实仅用于理解历史自动化；不得将旧脚本误认为当前权威源链路。迁移前曾记录旧项目脚本路径及共享脚本状态，具体现状需在部署任务中另行核验。
 - NAS 专用 SSH key 已配置；NAS SCP/SFTP subsystem 曾不可用，普通 SSH 可用于有界核验/传输。连接失败不改 NAS SSH/权限来绕过。
