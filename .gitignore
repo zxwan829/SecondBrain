@@ -53,3 +53,38 @@ backups/
 
 # OS/editor noise
 .DS_Store
+*.p8
+*.ppk
+*token*.txt
+*token*.json
+*secret*.json
+*secret*.yaml
+*secret*.yml
+*credential*.json
+*credential*.yaml
+*credential*.yml
+*credential*.txt
+
+# Local migration snapshots and environment-specific copies (keep on disk, do not publish)
+migration-conflicts/
+**/migration-conflicts/
+**/migration-conflicts/**
+
+# Local archives, editor backups, and generated metadata
+*.bak
+*.bak-*
+*.bak.*
+*.backup
+*.backup.*
+*.orig
+*.old
+*.tmp
+*.egg-info/
+*.tsbuildinfo
+.cache/
+coverage/
+
+# Ephemeral frontend packages and local dependency installation metadata
+**/dist-hermes-test/
+**/dist-fe4/
+**/node_modules/
