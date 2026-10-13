@@ -1,7 +1,16 @@
-import { mkdir, copyFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, copyFile, writeFile, readFile, appendFile, readdir, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 await mkdir('dist-hermes-test/dashboard', { recursive: true });
 const files = await readdir('dist/assets');
-await copyFile(`dist/assets/${files.find((x) => x.endsWith('.js'))}`, 'dist-hermes-test/dashboard/index-fe-test.js');
+const entry = 'dist-hermes-test/dashboard/index-fe-test.js';
+await copyFile(`dist/assets/${files.find((x) => x.endsWith('.js'))}`, entry);
+const addonPath = resolve(fileURLToPath(new URL('../../secondbrain-plugin/dashboard/review-addon.js', import.meta.url)));
+const addon = await readFile(addonPath, 'utf8');
+if (!addon.startsWith('/* Additive Review view for the existing FE-4 plugin. Promote stays disabled. */')) {
+  throw new Error('D071 Review addon source marker missing');
+}
+await appendFile(entry, `\n${addon}`);
 await copyFile('src/styles/app.css', 'dist-hermes-test/dashboard/style-fe-test.css');
 const packagedAssets = 'dist-hermes-test/dashboard/assets';
 await rm(packagedAssets, { recursive: true, force: true });

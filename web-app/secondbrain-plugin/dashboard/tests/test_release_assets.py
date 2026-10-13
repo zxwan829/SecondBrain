@@ -11,8 +11,19 @@ REVIEW_MARKER = b"/* Additive Review view for the existing FE-4 plugin. Promote 
 
 
 class DashboardReleaseAssetTests(unittest.TestCase):
+    def test_review_addon_source_is_idempotent_scoped_and_self_cleaning(self):
+        addon = (DASHBOARD / "review-addon.js").read_text()
+        self.assertIn('const root = document.getElementById("root") || document.documentElement;', addon)
+        self.assertIn("if (button.textContent !== buttonText) button.textContent = buttonText;", addon)
+        self.assertIn("if (attach()) stopObserving();", addon)
+        self.assertIn('document.addEventListener("pagehide", stopObserving, { once: true });', addon)
+        self.assertNotIn("new MutationObserver(attach)", addon)
+        self.assertNotIn("observe(document.documentElement, { childList: true, subtree: true })", addon)
+        self.assertIn('request("/review/items")', addon)
+        self.assertIn('request("/review/items/" + safePath)', addon)
+
     def test_review_bundle_preserves_accepted_fe4_base_byte_for_byte(self):
-        bundle = (DASHBOARD / "index-20261013-fe4-review.js").read_bytes()
+        bundle = (DASHBOARD / "index-20261014-fe4-review.js").read_bytes()
         marker_at = bundle.index(REVIEW_MARKER)
         self.assertEqual(bundle[marker_at - 1:marker_at], b"\n")
         fe4_base = bundle[:marker_at - 1]
@@ -25,10 +36,15 @@ class DashboardReleaseAssetTests(unittest.TestCase):
         self.assertEqual(fe4_base.count(b"register(`secondbrain`,"), 1)
 
     def test_review_addon_is_single_and_hooks_the_fe4_review_controls(self):
-        bundle = (DASHBOARD / "index-20261013-fe4-review.js").read_bytes()
+        bundle = (DASHBOARD / "index-20261014-fe4-review.js").read_bytes()
         addon = bundle[bundle.index(REVIEW_MARKER):]
+        source = (DASHBOARD / "review-addon.js").read_bytes()
+        self.assertEqual(addon, source)
         self.assertEqual(addon.count(b"__SB_CORE_REVIEW_VIEW__"), 2)
-        self.assertEqual(addon.count(b"new MutationObserver(attach)"), 1)
+        self.assertEqual(addon.count(b"new MutationObserver("), 1)
+        self.assertIn(b"button.textContent !== buttonText", addon)
+        self.assertIn(b"observer?.disconnect()", addon)
+        self.assertIn(b"observe(root, { childList: true, subtree: true })", addon)
         self.assertIn(b"document.getElementById(\"waiting\")", addon)
         self.assertIn(b"querySelectorAll(\".nav-item\")", addon)
         self.assertIn(b"/review/items", addon)
@@ -37,8 +53,8 @@ class DashboardReleaseAssetTests(unittest.TestCase):
 
     def test_manifest_references_combined_bundle_and_existing_api_css(self):
         manifest = json.loads((DASHBOARD / "manifest.json").read_text())
-        self.assertEqual(manifest["version"], "0.2.3")
-        self.assertEqual(manifest["entry"], "index-20261013-fe4-review.js")
+        self.assertEqual(manifest["version"], "0.2.4")
+        self.assertEqual(manifest["entry"], "index-20261014-fe4-review.js")
         self.assertEqual(manifest["css"], "style-20261010-v3.css")
         self.assertEqual(manifest["api"], "plugin_api.py")
         self.assertTrue((DASHBOARD / manifest["entry"]).is_file())

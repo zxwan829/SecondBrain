@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "package:test-plugin": "npm run build && node scripts/package-test-plugin.mjs",
+    "package:review-bundle": "node scripts/package-review-bundle.mjs",
     "validate:manifest": "node scripts/validate-manifest.mjs",
     "verify:bundle": "node scripts/verify-bundle.mjs",
     "verify:fe25": "node scripts/verify-fe25.mjs"

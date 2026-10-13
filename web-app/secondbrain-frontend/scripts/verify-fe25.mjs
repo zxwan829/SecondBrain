@@ -122,13 +122,22 @@ const React = {
 };
 React.default = React;
 const windowMock = { __HERMES_PLUGIN_SDK__: { React, hooks: React }, __HERMES_PLUGINS__: { register: (name, component) => registrations.push({ name, component }) }, location: { pathname: '/secondbrain-fe-test', search: '' }, __SB_IMMERSIVE_TRACE__: undefined };
+const observerTargets = [];
+class MutationObserver {
+  constructor(callback) { this.callback = callback; }
+  observe(target, options) { observerTargets.push({ target, options }); }
+  disconnect() {}
+}
+const observerRoot = {};
 const documentMock = {
   documentElement: { lang: 'zh-CN' },
   body: { dataset: {}, getAttribute: () => null, setAttribute() {}, removeAttribute() {} },
   head: { appendChild() {} },
-  getElementById: () => ({ scrollIntoView() {} }),
-  createElement: () => ({ dataset: {}, remove() {} }),
+  getElementById: (id) => id === 'root' ? observerRoot : null,
+  createElement: () => ({ dataset: {}, remove() {}, addEventListener() {} }),
   querySelector: () => null,
+  querySelectorAll: () => [],
+  addEventListener() {},
 };
 const context = {
   window: windowMock,
@@ -136,6 +145,7 @@ const context = {
   __HERMES_PLUGINS__: windowMock.__HERMES_PLUGINS__,
   React,
   document: documentMock,
+  MutationObserver,
   location: windowMock.location,
   URLSearchParams,
   localStorage: { getItem: () => storedLocale, setItem: (key, value) => { if (key === 'secondbrain.locale') storedLocale = value; } },
@@ -144,6 +154,8 @@ const context = {
   console,
 };
 vm.runInNewContext(bundle, context, { filename: manifest.entry });
+assert.equal(observerTargets.length, 1, 'Review addon installs one observer');
+assert.equal(observerTargets[0].target, observerRoot, 'Review observer is scoped to plugin root');
 const registered = registrations.find((item) => item.name === manifest.name);
 assert.ok(registered, 'Hermes SDK registration runs');
 stateCursor = 0;

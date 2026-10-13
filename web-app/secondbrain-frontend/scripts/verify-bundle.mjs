@@ -24,13 +24,30 @@ const React = {
   useMemo: (factory) => factory(),
 };
 React.default = React;
-const document = { documentElement: { lang: 'en' }, body: { dataset: {} }, querySelector: () => null, getElementById: () => ({ }), createElement: () => ({ set textContent(_) {}, appendChild() {}, remove() {} }), head: { appendChild() {} } };
-const context = { window: { __HERMES_PLUGIN_SDK__: { React, hooks: React }, __HERMES_PLUGINS__: { register: (name, component) => registrations.push({ name, component }) } }, __HERMES_PLUGIN_SDK__: { React, hooks: React }, document, location: { pathname: '/secondbrain-fe-test', search: '' }, URLSearchParams, localStorage: { getItem: () => null, setItem: () => {} }, navigator: { clipboard: { writeText: async () => {} } }, console, fetch: async () => ({ ok: true, json: async () => ({}) }) };
+const observed = [];
+class MutationObserver {
+  constructor(callback) { this.callback = callback; this.disconnected = false; }
+  observe(target, options) { observed.push({ target, options, observer: this }); }
+  disconnect() { this.disconnected = true; }
+}
+const root = { id: 'root' };
+const document = {
+  documentElement: { lang: 'en' }, body: { dataset: {} }, head: { appendChild() {} },
+  querySelector: () => null, querySelectorAll: () => [],
+  getElementById: (id) => id === 'root' ? root : null,
+  createElement: () => ({ dataset: {}, set textContent(_) {}, appendChild() {}, remove() {} }),
+  addEventListener() {},
+};
+const context = { window: { __HERMES_PLUGIN_SDK__: { React, hooks: React }, __HERMES_PLUGINS__: { register: (name, component) => registrations.push({ name, component }) } }, __HERMES_PLUGIN_SDK__: { React, hooks: React }, document, MutationObserver, location: { pathname: '/secondbrain-fe-test', search: '' }, URLSearchParams, localStorage: { getItem: () => null, setItem: () => {} }, navigator: { clipboard: { writeText: async () => {} } }, console, fetch: async () => ({ ok: true, json: async () => ({}) }) };
 vm.runInNewContext(bundle, context, { filename: manifest.entry });
 const registration = registrations.find((item) => item.name === manifest.name);
 if (!registration) throw new Error('plugin did not register');
 const rendered = registration.component();
 if (!rendered || rendered.type !== 'main') throw new Error('component did not render');
+if (observed.length !== 1 || observed[0].target !== root || observed[0].options.childList !== true || observed[0].options.subtree !== true) {
+  throw new Error('Review observer must be scoped to the plugin root');
+}
 console.log('Bundle execution PASS');
 console.log('Component render PASS');
+console.log('Review observer scope PASS');
 console.log(`PNG resource packaging PASS (${new Set(assetRefs).size} referenced assets)`);

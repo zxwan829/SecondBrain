@@ -76,3 +76,9 @@ type: environment-baseline
 - D071 后端 API 已部署并保留。由于 v0.2.3 前端页面持续 Loading，正式 manifest 当前恢复到回滚快照 `d071-20261013-01/manifest.json`：v0.2.1，entry `index-20261012-review-page.js`，CSS `style-20261010-v3.css`。FE-4 JS SHA-256 `6cf72d312adac4c7f4b483f777618c6c040fa9a0f140c5d8f459758add5642fe`；CSS SHA-256 `9de0d0d52b2c7117ea16719d01bca616abdf57bd81548a7ba56d5007cce89990`。
 - 切换前 v0.2.3 manifest 保存在 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/d071-20261013-fe4rollback-02/manifest-before.json`。当前 D071 `plugin_api.py` 未回滚，SHA-256 `e648afa1a53a2b6c0fd601344bdddfee1e3ade0b1ed97d614ca0692561ec73d3`。D071 前端集成暂缓，用户 Edge 验收未完成。
 - Hermes 插件清单缓存刷新后，健康 200、插件清单返回 v0.2.1 并指向 FE-4 资源。匿名静态资源请求被重定向到登录页，资源 HTTP 返回体/MIME 和浏览器视觉仍需登录态 Edge 验收；不能据本地 MIME 映射等同证明生产浏览器已成功渲染。
+
+## D071 Loading 隔离验证（2026-10-13）
+
+- 正式生产仍为 manifest v0.2.1 + `index-20261012-review-page.js`；D071 API 保留。修复版 v0.2.4 候选 `index-20261014-fe4-review.js` SHA-256 `acd77192393c4ea74a3b55cde61c596bfb0257510b20df91c8073bd1a761fcb4`，FE-4 固定前缀哈希未变；尚未部署。
+- `secondbrain-fe-test` 仅更新隔离 JS/CSS，无 Hermes 重启。测试 JS SHA-256 `4300d65cf33cd1dc3e7e112b7230767c413dcb57e066d00e4c97873504582a1e`，CSS SHA-256 `8db124f950e13cb3b9dc5c2cc377f79ad1df8434934dbe1247bfa35714a94bb2`。新 Edge 标签在 LAN HTTP 上实际渲染 FE-4 与隔离 Review 挂点；Review API 因 HTTP Origin 不匹配而按策略拒绝。DSM HTTPS 63012 从自动化浏览器不可达，故仍待可用 Edge 会话验收。
+- Hermes v0.21.5 health 200；Core running、`SB_PROMOTE_ENABLED=false`、Knowledge RO、Private 未挂载。
