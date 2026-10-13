@@ -1,0 +1,55 @@
+# Local credentials and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.token
+id_rsa
+id_ed25519
+secrets/
+**/secrets/
+.aws/
+
+# Dependencies and generated builds
+node_modules/
+**/node_modules/
+dist/
+dist-*/
+**/dist/
+**/dist-*/
+
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.venv/
+venv/
+
+# Runtime data, databases, and logs
+runtime-data/
+**/runtime-data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+**/logs/
+
+# Local backups and exported Git history
+backups/
+**/backups/
+*.bundle
+
+# OS/editor noise
+.DS_Store

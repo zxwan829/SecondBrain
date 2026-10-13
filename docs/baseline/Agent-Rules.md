@@ -1,0 +1,64 @@
+---
+created: 2026-09-28
+updated: 2026-10-12
+status: current
+type: agent-rules
+---
+# Agent Rules
+
+适用于 ChatGPT 的规划及 Codex、Hermes、OpenClaw 等获准工具的执行。NAS 项目目录是正式 SoT；Mac 是 Synology Drive 工作镜像，Google Drive 是 Live Mirror。
+
+**最高项目管理优先级：敏捷优先、功能优先、成本优先。** SecondBrain V1 是个人使用的中小型项目，以尽快交付完整、稳定、可用的业务功能为目标；控制基础风险，接受合理工程取舍，小步持续交付。成本包括时间、Codex Token/模型额度、工具调用、计算资源和维护复杂度。不得为未来商业化提前建设当前不需要的系统。
+
+## 最小读取与 FAST-EXEC
+
+1. 项目任务先读 `AGENTS.md` 入口与 `00-CURRENT.md`。仅在涉及架构、实际环境、业务规则时再读 `Architecture.md`、`Environment-Baseline.md` 或对应 Business Specification。
+2. `Decision-Log.md` 与 `Progress-Log.md` 默认按决策号、主题或日期检索，不全文加载。历史留在 Progress-Log；其他文档仅引用。
+3. **FAST-EXEC：** 锁定本轮业务目标、影响范围、验收和禁项；已定架构不重议，非必要改进记待办。批量完成同类工作，开发期只跑针对性检查；输入未变的成功结果可复用，完成后集中做一次必要集成验证，不重复无关全量回归。
+4. **按风险投入工程步骤：** 低风险小改直接实现并做最小检查，不另建测试环境、专项备份或 Bundle；中风险模块复用现有环境，相关测试加一次集成验证；真实数据、权限、认证、公网暴露等高风险操作，保留必要授权、针对性保护、回退和部署后核验，不省略 Promote 人工审批。
+5. **控制执行成本：** Token、额度和时间均为项目成本；确定性小任务优先低成本工具，复杂架构由 ChatGPT 规划，Codex 聚焦实施与核验。不重复研究已确认事项、读取大文件、测试或同步。非关键问题约 10–15 分钟无进展时重新评估投入，可记录后继续不依赖它的主线；这是提醒阈值，不是硬性超时。有限定位与重试，不扩大权限绕过失败。
+6. **集中收尾：** 实现与必要验证完成后集中更新必要文档。治理文档经 NAS `safe-governance-write.sh` 写入并通过自身校验，即视为本轮文档交付完成；不等待或轮询 Synology Drive。Google Drive 文档按需单向发布：发布脚本必须通过现有 SSH 从 NAS 读取正式源文件，不得从可能尚未同步的 Mac 工作副本发布；只处理项目配置的 Markdown 白名单，对 Google Drive 桌面客户端现存目标做增量更新，不主动删除云端文件。桌面客户端上传为异步；本地复制/脚本成功不等于云端已确认，未取得云端证据应标记为待同步。日常不做 NAS、Mac、Drive 三端逐文件哈希对账；仅在同步故障、冲突、恢复、迁移或重要异常时针对性核验。简洁报告实际修改、测试、发布/部署、同步状态、阻塞和下一步，并区分已实现、已测试、已部署及用户验收。
+
+### FAST-PATCH（小型修改）
+
+对范围明确、低风险的小型修复，只读相关文件，直接做最小改动并运行一项针对性检查；不另建测试环境、专项备份或 Bundle，不顺带重构、全量扫描或重复测试。若涉及架构、权限、业务契约、生产边界，或任务明确要求更完整验证，则按任务要求执行，不使用 FAST-PATCH 缩减验证。
+
+## Source of Truth 与环境
+
+- 正式项目：`/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/`；数据 SoT：`/volume1/SecBR/SecondBrain/` 和 `/volume1/SecBR/KnowledgeAssets/`。Mac 工作副本及 Google Drive 都是镜像，不可反向覆盖 NAS SoT。
+- 历史资料只用于追溯；冲突按 `00-CURRENT.md`、相关业务规格及后续决策处理，不凭旧聊天或备份恢复旧状态。
+- 重要命令必须明确执行节点：Mac、NAS SSH、iStoreOS 或 Container。网络、权限、容器/服务变更须在授权范围内；不因失败擅自 `sudo`、`chmod`、`chown`、修改 ACL、网络或 sudoers。
+
+## 数据与安全底线
+
+- Private (`/volume1/SecBR/Private`) 默认不扫描、不读取、不索引、不摘要、不写入日志；仅在用户明确要求的任务中按最小范围处理。
+- 原始资料与正式资料不得因 Agent 判断而自动删除；覆盖、批量移动/改名、删除和权限变更属于高风险操作，须明确授权并可恢复。
+- Universal Capture 遵循对应正式规格：保存原始证据，写入 Raw/Review，核验真实落盘，不自动 Promote；Human Approval 是进入正式 Knowledge 的前置条件。
+- Daily Capture 的触发和输出细则以当前 Hermes Skill `/volume1/docker/secondbrain/hermes/data/skills/daily-capture/SKILL.md` 为准；这是低摩擦写入 00-Inbox 的路径，不复制成第二套规则。
+- Journal 的目标规则允许新增与按日期追加、保留原始表达；普通 Agent 不得未经授权删除、覆盖或改写既有 Journal。生产 Journal 写入尚未开放，见 00-CURRENT。
+- 运行时权限必须按 Environment-Baseline 与 CURRENT 实际证据描述。规范目标不能冒充生产已 enforced：当前 Hermes Knowledge RW 风险和 Promote 生产阻塞以 CURRENT 为准。
+- Private 及其他区域权限、实际 mount、write-safe 环境值均以最新核验的环境证据为准；未核验不得推断。
+
+## 当前写入策略
+
+- 普通 Capture 目标为 `/secondbrain-write/00-Inbox`、`/secondbrain-write/10-Review` 及 `/knowledge-assets/00-Inbox`（按对应任务授权）。正式区域写入遵循各自受控流程。
+- 正式 Knowledge 只允许用户确认后的 Promote Worker 写入。普通 Agent/通用 `write_file` 不应拥有 Knowledge 写权；**当前生产 mount 尚未收口，该要求是目标规则而非现状**。在独立 Worker 和审批记录隔离验收前不得启用生产 Promote。
+- `30-Projects`、`40-Memory`、`50-Journal`、`90-Archive` 不授予普通 Agent 通用 RW；Journal 仅可在未来通过专用新增/追加边界开放。
+- 不把 `/secondbrain` 根目录改为 RW；禁止扩大根目录写安全范围来绕过模块边界。
+
+## 开发、文档与部署
+
+- 中大型开发下发时确定同步文档范围；记录决策、阶段结果、测试、阻塞和下一步。小修免强制文档；同步失败如实报告。详见 Decision-Log 中 D065。
+- 代码、Skill、部署脚本、模板和配置样例应进入项目资产；避免无理由写死个人环境。Hermes 是 Runtime/适配层，不替代 SecondBrain 业务 SoT。
+- 项目文档以 NAS 为 Source of Truth，写入必须使用 `tools/safe-governance-write.sh`，由写入器校验候选、当前版本并保留九文档恢复点。写入成功即完成本轮文档交付；Mac 由 Synology Drive 现有机制同步，Google Drive 按上述 Live Mirror 规则处理。禁止直接截断写入、以空文件代表删除或把损坏源传播到镜像。
+- 部署按项目现行快照、哈希、验收与回滚要求执行；Build、Deploy、运行验证和用户验收分开报告。不得为恢复功能把 Hermes Knowledge RW 当作常规回滚。
+
+## Hermes Upstream First
+
+- 优先复用当前受支持 Hermes 上游能力；Core 不重复实现 Hermes Runtime、Chat、Skills、Gateway 或 Dashboard 宿主。
+- Hermes 版本差异集中在适配层；升级前先按目标稳定版本验证接口与安全边界。
+- 不为减少集成工作降低必要安全边界；生产 Knowledge 写权仍只属于经过用户审批的 Core Promote。
+
+## SecondBrain 产品原则
+
+SecondBrain 是单人自用私人系统：业务优先、风险适度、优先复用现有能力，兼顾稳定性、维护成本与效率；不默认增加商业 SaaS 级反自动化或多用户体系。必要底线是 Private 隔离、Knowledge 人工 Promote、重要资料防误删/误覆盖、关键操作可追溯可恢复。

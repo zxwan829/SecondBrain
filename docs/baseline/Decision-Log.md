@@ -1,0 +1,310 @@
+---
+created: 2026-09-30
+updated: 2026-10-10
+status: current
+type: decision-log
+---
+# Decision Log
+
+保留历史决策；失效决定标记 SUPERSEDED。
+
+## Compatibility aliases for reused legacy IDs
+
+D047–D049 were reused for unrelated decisions in the historical log. Preserve every original number and entry, but use these unique aliases in new citations:
+
+| Legacy ID | Unique citation alias | Decision |
+|---|---|---|
+| D047 | `D047-MODEL` | Model Strategy Not Frozen |
+| D047 | `D047-WEBAPP-SPEC` | Web App / Personal OS V1 Business Specification |
+| D047 | `D047-WEBAPP-DATA` | SecondBrain Web App Data Boundary |
+| D048 | `D048-HERMES-CANARY` | Hermes 0.21.6 Conditional Evaluation |
+| D048 | `D048-WEBAPP-PHASE0` | SecondBrain Web App Phase 0 Architecture |
+| D049 | `D049-SKILL-SSOT` | Skill Single-Source Deferred |
+| D049 | `D049-UC-SCOPE` | Universal Capture V1 Scope Expansion |
+
+Keep legacy numeric headings for compatibility; never cite a duplicated legacy number without its alias. D053's original scope remains historical and is superseded for attachment MUST scope by `D049-UC-SCOPE` and Universal Capture Business Specification v1.1.
+
+- D001 数据与 Agent 解耦。
+- D002 /volume1/SecBR 为统一 Shared Folder。
+- D003 Private 归入 SecBR，默认不授权 Agent/MCP。
+- D004 Docker 继续使用 /volume1/docker。
+- D005 Hermes 主选，OpenClaw 备选，DeepSeek Harness 实验。
+- D006 不新增 CaptureInbox。
+- D007 长期知识先 Review，再人工确认。
+- D008 KnowledgeAssets 原始证据不因知识卡而删除。
+- D009 Home.md 是 Obsidian 工作台，不是统一 Web 入口。
+- D010 DS920+ 不承担重型本地推理。
+- D011 六份文档：SUPERSEDED（2026-09-30）；Data-Flow/Properties-Schema 有效内容并入 Architecture。
+- D012 /secondbrain RO，Inbox/Review/Knowledge 独立 RW namespace。
+- D013 Dashboard LAN-only：192.168.3.27:9119，Basic Auth。
+- D014 Portal：SUPERSEDED（2026-09-30），退役。
+- D015 Skill Content 属于 SecondBrain Core；Hermes 为 Runtime/Adapter。
+- D016 Agent Independence Audit：SUPERSEDED（2026-09-30），可移植性提升为开发期约束。
+- D017 Staging 退役，正式项目目录为治理来源。
+- D018 Home/Portal 分工：SUPERSEDED（2026-09-30）；Home 保留，Portal 退役，SecondBrain Dashboard 为剩余方向。
+- D019 Portability/Packaging/Deployment Kit 为开发期硬约束；核心逻辑不得写死个人环境。
+- D020 本次收敛为六份候选文档。
+
+本次重基线：Technical-Debt 的当前问题并入 CURRENT，架构决策并入本文件，纯未来设想删除。
+
+
+## D021–D029 — 2026-10-07 Architecture Alignment
+
+- D021 Hermes 继续作为当前 Agent Platform；暂不迁移 OpenClaw、AnythingLLM、Dify、Letta、Khoj 等平台。
+- D022 V1 范围保持 Universal Capture、Knowledge Retrieval、SecondBrain Dashboard 三项。
+- D023 Knowledge Retrieval 采用 native search_files/read_file → QMD lexical → QMD semantic/hybrid → 更重基础设施的渐进路线；后一层须由真实 benchmark 证明必要，默认不使用 RAG / Vector DB / Qdrant。
+- D024 Core Skill 开发采用 SecondBrain 业务规格 → Hermes authoring/learning → Codex audit → Human Approval；Codex 不再默认作为 Skill 作者。
+- D025 Core Skill 单一真源仍为目标；下一 Hermes stable 后验证 external_dirs / create_dir / skill_manage / write_approval；验证通过才迁移生产 Skill，不预建 Adapter / rsync 层。
+- D026 Open Second Brain 与 Obsidian Second Brain 仅作为方法论参考，不成为 V1 技术依赖。
+- D027 Codex App-Server 继续作为候选 Runtime，等待 stable 与独立 Canary。
+- D028 Hermes Desktop 是可选客户端，不属于 SecondBrain V1 关键依赖；Browser Dashboard 可独立完成 V1 管理。
+- D029 Hermes 生产升级采用 stable-only；新稳定版先做 capability / regression / security diff，不追 main / canary。
+
+## D030 — 2026-10-07
+
+Knowledge Retrieval 采用渐进式实施：当前 V0 直接基于 Hermes 已确认可调用的 search_files + read_file。只有 benchmark 证明存在真实召回或检索质量问题，才评估 QMD；不因功能更高级而提前引入 QMD / RAG / Vector DB / Qdrant。
+
+## D031 — 2026-10-07
+
+当前 v0.21.5 的 Skill 实施路径为：
+
+SecondBrain Business Specification
+→ Hermes skill_manage
+→ Codex Technical Audit
+→ Human Approval
+
+当前不依赖 /learn。
+
+skills.write_approval 将先独立验证后再作为生产审批闸门使用。
+
+Core Skill 单一真源迁移继续等待下一 Hermes stable，当前不迁移、不建立 rsync / Adapter 双副本体系。
+
+## D032 — 2026-10-09
+
+Skill staging 验证规则：
+
+- skill_manage 返回 staged=true 不能单独作为 staging 成功依据。
+- staging 成功至少必须同时满足：
+  1. 对应 pending JSON 实际存在；
+  2. pending payload / diff 可以读取。
+- 如果 staged=true 但 pending JSON 不存在，应视为 staging failure。
+- pending 目录可写性属于 Skill approval gate 的必要运行条件。
+- 不允许通过直接写 production skills 绕过审批门。
+
+## D033 — 2026-10-09
+
+knowledge-retrieval 首次真实 staging 审计通过：pending JSON、payload 与 diff 均可读取，production 尚未上线。该 Skill 允许目录仅限 20-Knowledge、30-Projects、40-Memory、50-Journal，并保持只读。批准前仍建议微调冲突处理和输出模板，避免日期机械覆盖与不必要的冗长标签。
+
+## D034 — 2026-10-09
+
+- 50-Journal 升级为 SecondBrain 时间轴层，可承载日记、心情、草稿、随手记、不完整记录、日程、待办和当天事项结果。
+- 不新增 60-Tasks 或其他 Tasks 根目录；Schedule / Todo 纳入 50-Journal 的日期文件。
+- 规划方向为 50-Journal/YYYY-MM-DD.md，同日可同时承载计划、待办、实际记录和随手记，具体 schema 留待 Schedule / Journal Skill 阶段确定。
+- 明确日程执行意图不走 Inbox → Review → Promote，直接进入对应日期 Journal。
+- Journal 内容可由人工或 Agent 判断后进入 Review，但不自动成为正式 Knowledge。
+
+## D035 — 2026-10-09
+
+Skill production preflight 在请求 Human Approval 前必须至少验证：
+
+1. pending JSON 实际存在且可读；
+2. pending payload 可审计；
+3. frontmatter name 存在且符合目标 Skill；
+4. description 为单句、不超过 60 字符并以句号结尾；
+5. operation 类型与预期一致；
+6. production 状态符合预期；
+7. 不得只依赖 staged=true 判断成功。
+
+Human Approval 后必须验证 production 实际落地、最终内容、对应 pending 清除，并清理废弃 pending。
+
+正式知识检索必须忠实于 SecondBrain 正式 SoT。若回答与现实状态不一致，应优先修复正式资料，不要求 Agent 用 session memory 偷偷覆盖正式记录。
+
+## D036 — 2026-10-09
+
+SecondBrain 采用 Zero-learning-cost / Low-friction 产品原则：自然语言是默认界面，内部复杂度由系统吸收；仅高风险或不可逆动作需要明确确认。
+
+## D037 — 2026-10-09
+
+Knowledge Retrieval V0 完成生产验收，继续使用 Hermes 原生 search_files + read_file。正式检索范围固定为 20-Knowledge、30-Projects、40-Memory、50-Journal；Fast Path、fresh-read 和历史目录排除规则属于正式业务边界。
+
+## D038 — 2026-10-09
+
+Hermes v0.21.5 / build 749220ef 无原生 Skill routing、query matcher 或 preload。当前不修改源码、不自建路由器、不增加 MCP/服务/复杂脚本；约 25 秒检索延迟作为 V0 已知限制，后续等待官方能力再评估。
+
+## D039 — 2026-10-09
+
+重要 Skill Business Specification 必须作为项目资产持久保存；不得依赖 session、state.db 或历史 conversation 恢复正式规则。检索与 Agent 工作流优先最短可信路径，避免无必要的重复工具调用。
+
+
+## D040 — 2026-10-09
+
+施工期临时使用较宽 root 权限以降低开发摩擦；这是临时开发措施，不是生产权限模型。SecondBrain V1 完成前强制收口并恢复项目级受限权限。
+
+
+## D041 — 2026-10-09（SUPERSEDED IN PART by 2026-10-10 clean retest）
+本条保留为当时阶段事实；其中 Qwen/GLM 结论已被后续测试部分推翻。
+
+模型筛选与 Universal Capture 实测收口：DeepSeek-V4-Flash Raw/Review 均实际落盘 PASS，约 44 秒、约 ¥0.10，作为关键写入 workflow 主力。Qwen Skill/write_file 表面正常但 Raw/Review 未落盘，保留作轻任务备用；GLM 实际落盘验证 FAIL，保留备用。Step 遇 SiliconFlow HTTP 429/TPM limit，Hunyuan 返回 Function call is not supported，Ling 延迟过高，三者实验 profile 删除。
+
+
+## D042 — 2026-10-10 Model Retest Correction
+
+D041 is SUPERSEDED IN PART by the 2026-10-10 clean retests. Qwen Universal Capture 0.1.2 successfully landed Raw and Review; its remaining issue is extra terminal/date behavior and slower tool discipline, not write failure. GLM-4.5-Air and DeepSeek-V4-Flash both passed clean skill_view + write_file ×2 workflows without approval interruption.
+
+## D043 — 2026-10-10 Cost-per-Success Strategy
+
+Model selection uses cost per successful task. Qwen enters the default-model candidate set because its successful sample was materially cheaper. Before promotion, run one clean Qwen retest with unnecessary terminal removed through native Hermes toolset/profile boundaries. Do not delete GLM or DeepSeek profiles.
+
+## D044 — 2026-10-10 Hermes 0.21.6 Canary Policy
+
+Production remains Hermes v0.21.5 / build 749220ef and stable-only. Evaluate v0.21.6 only in an independent Canary with separate data, port, state.db/session store, and test write scope. The Canary is planned and has not been executed.
+
+## D045 — 2026-10-10 Skill Single-Source Canary Gate
+
+Core Skill single-source status is READY FOR CANARY VALIDATION. Validate external_dirs, discovery, skill_view, staging, write_approval, and execution in the v0.21.6 Canary first. Production Skills remain unchanged; do not create rsync, Adapter, loader, or router infrastructure. Any production migration requires a test Skill, then one-by-one migration with hash and behavior verification.
+
+## D046 — 2026-10-10 Production Image Pinning Risk
+
+Environment records the production image as nousresearch/hermes-agent:latest, which can drift from the stable-only policy. First verify the running image ID/digest, then evaluate pinning Compose to the verified v0.21.5 digest. This decision records a follow-up only; Compose was not changed.
+
+## D047 — 2026-10-10 Model Strategy Not Frozen (`D047-MODEL`)
+Qwen3.5-35B-A3B 为低成本默认候选但需一次 Hermes 原生工具边界下的干净 Fast Path 复测；GLM-4.5-Air 为低摩擦日常候选；DeepSeek-V4-Flash 为复杂/高可靠任务主力与兜底。最终日常默认模型保持 NOT YET FROZEN。运行时当前默认值与战略默认分开记录。
+
+## D048 — 2026-10-10 Hermes 0.21.6 Conditional Evaluation (`D048-HERMES-CANARY`)
+Production 继续 v0.21.5 / build 749220ef，V1 主线不因 0.21.6 阻塞。0.21.6 先做轻量 capability/security/release diff；仅在明确安全问题、真实缺口、可删除自研工作的明显原生能力或 v0.21.5 真实阻塞时启动针对性 Canary。不得因新 stable 自动升级。
+
+## D049 — 2026-10-10 Skill Single-Source Deferred (`D049-SKILL-SSOT`)
+Business Specification/Core Skill 继续为 Source of Truth，Hermes 为 Runtime。状态调整为 READY FOR FUTURE STABLE VALIDATION / DEFERRED；当前生产 Skill 不迁移，不单独启动升级工程，不建立 rsync / Adapter / 自研 loader。待下一次已有 Hermes 升级理由时顺带验证。
+
+## D050 — 2026-10-10 Hermes v0.21.5 Model-Scoped Tool Boundary NO-GO
+
+v0.21.5 toolset hard filtering is effective, but its scope is Agent/session/platform/global rather than model/profile. Qwen cannot be restricted independently while preserving GLM/DeepSeek behavior. Do not adopt global/platform workarounds, custom Router, permission middleware, or source patches. Qwen clean retest is DEFERRED / BLOCKED BY MISSING NATIVE MODEL-SCOPED TOOL ROUTING, not FAIL. Re-evaluate when upstream provides model/profile-scoped routing or when another real upgrade reason exists.
+
+## D051 — 2026-10-10 Current Construction Model = GLM-4.5-Air
+
+GLM-4.5-Air passed real Universal Capture Fast Path and a minimal no-tool inference. The user selected GLM-4.5-Air as the current V1 construction model; the production runtime default was switched and verified. DeepSeek-V4-Flash remains the complex/high-reliability fallback, Qwen remains a low-cost candidate, and the final long-term default remains NOT YET FROZEN. The v0.21.5 Qwen-only tool restriction is NO-GO, so no further model test is planned absent real data, provider-cost, or upstream capability change.
+
+
+## D052 — 2026-10-10 Universal Capture V1 Productization Blocked Pending Formal Business Specification (HISTORICAL; blocker resolved by D053)
+
+Universal Capture v0/0.1.2 已完成三模型 Raw/Review 双文件验收；现有 Skill 覆盖绝对路径、成功校验、partial-success 与 Human Approval 边界。排除 Private 后未能定位唯一正式 Business Specification，因此产品化实现 BLOCKED。不得以旧副本、session、state.db 或历史对话替代 Source of Truth；先确认并批准唯一 Business Specification，再按 MUST/S SHOULD/DEFERRED 矩阵实施。本决策不修改 Runtime、Skill 或业务数据。
+
+## D053 — 2026-10-10 Universal Capture V1 Business Specification v1.0 Frozen (HISTORICAL; attachment scope superseded by D049-UC-SCOPE / Spec v1.1)
+
+> Status: the v1.0 freeze and its attachment-DEFERRED list are historical. Canonical scope is Universal Capture Business Specification v1.1; D049-UC-SCOPE moved URL/Web, PDF, Image/Screenshot, and Audio/Voice to V1 MUST.
+
+The canonical `Universal-Capture-Business-Spec.md` is the Source of Truth for Universal Capture V1 business behavior. V1 MUST, SHOULD, and DEFERRED scope is frozen: text-first Raw/Review capture, collision-safe retry, verified success, explicit partial failure, and Human Approval before Promote. Web/PDF/Office/image/OCR/audio/video/generic attachments, semantic deduplication, QMD/RAG/vector, mandatory association, complex tagging, and transactional rollback remain deferred. Production Skill v0.1.2 and Runtime are unchanged; any alignment requires a separate minimal review and approval.
+
+## D047 — Web App / Personal OS V1 Business Specification (`D047-WEBAPP-SPEC`)
+
+- SecondBrain Web App / Personal OS is the user-facing product entry point.
+- Home owns the dynamic AI workspace visual direction; it does not define every page layout.
+- Navigation and page modules must be extensible; Home and Calendar are aggregation layers.
+- Books, People, and Personal Events are reserved future modules.
+- SecondBrain remains SoT and Hermes remains Runtime; no second formal knowledge database or duplicate Agent Runtime.
+- Canonical specification: `SecondBrain-Web-App-V1-Business-Spec.md` v1.0.
+- Next step: Web App Phase 0 native capability + security audit.
+
+## D048 — SecondBrain Web App Phase 0 Architecture (`D048-WEBAPP-PHASE0`)
+
+SecondBrain Web App V1 will reuse Hermes Dashboard as host shell and plugin platform. SecondBrain owns the product UI/module architecture. Business data access uses a minimal authenticated Thin Adapter rather than Hermes user-plugin Python backend as the long-term business backend. This is an OPTION B-derived architecture: one SecondBrain Main UI Plugin plus native Hermes Chat/session/status APIs. Independent frontend is deferred unless future evidence shows shell/plugin constraints. Hermes upgrade and Canary are not required.
+
+## D049 — Universal Capture V1 Scope Expansion (`D049-UC-SCOPE`)
+
+Universal Capture V1 scope is expanded to URL/Web, PDF, Image/Screenshot, and Audio/Voice. Original evidence remains the source artifact; extraction/OCR/transcript is derived. Office documents, video, and generic binaries remain deferred. WeChat and Web App converge into one Universal Capture pipeline. This governance change does not implement the attachment pipeline or alter the accepted v0.1.3 text pipeline.
+
+
+## D047 — SecondBrain Web App Data Boundary (2026-10-10) (`D047-WEBAPP-DATA`)
+
+Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web App business data layer. Web App data access requires an authenticated semantic API and explicit server-side allowlist; Private is excluded by server policy. The current Hermes user-plugin backend is an AUTH BRIDGE / PROOF implementation only, not the final business backend. Tablet/Mobile validation is carried into Phase 2 as tooling-related validation debt, not an observed UI failure.
+
+
+## D054 — 2026-10-11 Hermes Dashboard Plugin 为当前实施架构
+
+背景：Phase 0–2 文档仍把 Plan A/B/C 记为待评估方向。选择：按实际 FE-3/FE-4 实施冻结 Hermes Dashboard Plugin + React/TypeScript/Vite + Hermes SDK 宿主生命周期，Home API 经认证 Adapter 访问。取舍：复用原生插件与宿主能力，不复制 Gemini React root、不引入第二份 React、不使用全局 Tailwind Preflight；早期 Plan A/B/C 记录保留为历史。结果：Plan A 已实施；独立 Portal 与平行 Runtime 不在当前架构中。
+
+## D055 — 2026-10-11 测试与正式插件隔离
+
+背景：需要在已验收测试基准上发布正式版而保持快速回退。选择：`secondbrain-fe-test` 与 `secondbrain` 使用独立身份、manifest、入口、资源、路由和快照。取舍：保留重复发布资产以获得隔离与回滚能力，不以测试 manifest 覆盖正式身份。结果：FE-4 正式版部署，FE 测试版保留；隔离以 NAS 插件路径和哈希为证。
+
+## D056 — 2026-10-11 Gemini 视觉来源与业务功能来源分离
+
+背景：Gemini 导出 Dashboard 含硬编码展示数据与独立 React 入口。选择：只移植已批准视觉；业务、权限、数据、双语和 Chat 生命周期以 SecondBrain/Hermes 为准。取舍：不复制演示记录、不复制 React root；缺乏可信业务来源时显示 DEMO 或 UNAVAILABLE。结果：适配 `/api/plugins/secondbrain/home`，真实语义不完整模块不伪装为 REAL。
+
+## D057 — 2026-10-11 REAL / DEMO / UNAVAILABLE 数据语义
+
+背景：API 返回值存在不代表其业务含义可靠。选择：REAL 仅用于真实且语义可信的数据；DEMO 必须明确标记；来源/字段缺失或不可信时用 UNAVAILABLE。取舍：宁可保留缺项，也不伪造 Projects、Agent、Review/Knowledge 状态或性能指标。结果：Today REAL 空状态、Review REAL 5 条但元数据不完整、Knowledge REAL 2 条但元数据不完整、Projects/Agent UNAVAILABLE、Brief/Activity 未接入、趋势/Donut/天气 DEMO、写入关闭。
+
+## D058 — 2026-10-11 冻结已验收 PC 与 iPhone 视觉基准
+
+背景：FE-3 Mac/PC 与 iPhone 视觉以及 iPhone KPI 星球定位已获用户验收。选择：正式发布沿用 FE-3 测试版视觉基准；平台专属变更须使用隔离媒体查询。取舍：不扩大为重设计，不让桌面/移动端共用定位意外回退。结果：PC/Mac 与 iPhone V1 视觉 ACCEPTED；已知轻微视觉瑕疵仍 DEFERRED。
+
+## D059 — 2026-10-11 正式发布快照、哈希和可执行回滚
+
+背景：正式发布不得依赖测试版身份覆盖或不可复原的原地改写。选择：发布前保留快照，核验 manifest、固定入口 bundle、CSS 与资产 SHA256，并保存可执行回滚脚本。取舍：增加发布检查步骤以保持可审计与快速恢复。结果：FE-4 快照位于 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/fe4-20261011-155631/`；rollback.sh 存在且 executable；正式资源 SHA 已记录在 Environment-Baseline。
+
+## D060 — 2026-10-11 FAST-PATCH 与正式发布分级
+
+背景：重复完整架构审查拖慢低风险局部修改，但正式发布仍需完整控制。选择：低风险局部修改采用 FAST-PATCH：最小 diff、受影响类型/构建/视口验证、快照/哈希/隔离、简短报告；正式发布核对身份、真实语义、回滚和 BUILD/DEPLOY/BROWSER/USER ACCEPTANCE 分层。取舍：复用未变输入的既有成功证据，不省略变化相关检查。结果：规则记录在 Agent-Rules；未改变数据权限边界。
+
+## D061 — 2026-10-11 Dashboard 滚动性能专项延期
+
+背景：滚动卡顿的 Paint/FPS/Long Task 优化前后量化未完成。选择：保留已完成的安全清理（移除 11 张卡片常驻 `will-change`）并将 FE-3.2 滚动与 iPhone 性能量化标为 DEFERRED。取舍：不以推测优化已解决滚动问题，不删除已验收图表、AI 主视觉、Hover 或模块。结果：需要用户重新排期并采集可比基线后再关闭。
+
+## D062 — 2026-10-11 FE-4 部署成功不等于 SecondBrain V1 完成
+
+背景：正式 `/secondbrain` 已上线且用户认可总体体验，但接口仍部分缺失。选择：分别跟踪部署、视觉接受、API 覆盖、Safari 功能回归及 V1 Definition of Done。取舍：接受当前正式前端价值，同时不对缺失的 Projects/Agent/Brief/Activity 和写入能力作虚假完成声明。结果：FE-4 DEPLOYED；SecondBrain V1 NOT DONE；总体状态为 ACCEPTED WITH KNOWN ISSUES。
+
+## D063 — 2026-10-12 个人自用、业务优先、风险适度与 Promote 隔离
+
+**决策：** SecondBrain 按单人自用、非公开系统设计。优先满足业务需求并平衡稳定性、维护成本和开发效率；复用现有 Hermes 登录会话，允许本人用脚本/自动化调用已授权接口，不新增不必要的人机识别、反自动化或多用户体系。
+
+**安全底线：** Promote 必须有用户明确确认；普通 Hermes Agent 不得直接修改正式 Knowledge；Private 持续隔离；重要资料具备防误删/误覆盖、审计和恢复能力。审批由服务端校验当前 Hermes 会话、同源来源和 Review 内容版本；Worker 只接受服务端生成的审批记录，不接受 Agent 声称的批准状态。
+
+**状态与取舍：** Security-1B Worker 核心及隔离测试完成；1C-0 会话身份来源核验完成；1C-1 确认个人自用风险模型；1C-2 本地 HTTP 路由集成测试通过。生产审批队列的跨进程文件权限隔离与独立 Worker 部署尚未实现/验证，因此审批接口和 Worker 尚不具备生产启用条件。保留现有文本 Capture、Dashboard 读取路径；生产切换须另行批准并先移除普通 Hermes 的 Knowledge RW，再部署隔离审批队列和 Worker。
+
+
+## D064 — 2026-10-12 Journal 低摩擦新增与追加
+
+**决策：** `50-Journal` 用于随手记、备忘录、碎片化想法、日常记录，以及用户明确要求保存的语音转文字。Journal 新增和按日期追加无需人工审批；即使内容不完整或缺乏上下文，也允许保留原样。AI 可补充必要时间、来源和轻量元数据，但必须保留用户原始表达。
+
+**安全边界：** 普通 Agent 未获明确授权不得删除、覆盖或擅自改写已有 Journal 内容。Journal 不是 Knowledge；升级为正式长期知识仍须经过 Review 和用户批准。当前生产 `50-Journal` 未开放直接写入挂载，因此该决策是目标规则，不表示功能已上线。后续只增加 Journal 专用新增/追加路径，不扩大 SecondBrain 根目录 RW 权限。
+
+## D065 — 2026-10-12 中大型开发的代码与文档同步推进
+
+背景：阶段实施若与项目治理记录脱节，会使已实现能力、测试证据、阻塞和下一步失真。决策：中大型开发在任务下发时同步确定文档更新范围；重大决策、阶段结果、测试结果和剩余问题随阶段及时记录。小型修改与临时排查不强制更新治理文档。ChatGPT 主导架构、方案、拆解和验收标准；Codex 负责实施、核验、测试及报告。文档同步失败必须准确报告，不得将阶段标记为全部完成。此决策沿用既有 NAS SoT → Mac 工作副本 → Google Drive Live Mirror 流程。
+
+
+## D066 — 2026-10-12 Hermes + SecondBrain Core Modular Monolith (PLANNED)
+
+经批准的目标方向为 Hermes + SecondBrain Core 模块化单体：Hermes 保留登录会话、Agent Runtime、Dashboard/Chat 宿主能力；SecondBrain Core 承载 SecondBrain 领域规则和受控业务用例，通过适配接口集成。当前只记录方向，不冻结尚未设计的模块/API/部署细节。无新数据库、LLM、n8n、独立管理后台或第二 Agent Runtime。状态：PLANNED、未实现、未部署；CORE-0 尚未开始。生产系统不因本决策变更。
+
+
+## D067 — 2026-10-12 Promote 使用 Core 独立单人授权
+
+**背景：** 生产 Hermes 容器以 root 运行，Basic Auth 登录凭据在其环境边界，普通 Agent/Shell 与 Hermes 共享该容器权限；v0.21.5 `request.state.session` 只在 Hermes 进程内可信。v0.21.7 RC 的 loopback `/api/auth/me` 可返回 token 校验后的 `local` 合成身份，不代表用户审批。
+
+**决策：** Hermes 登录继续用于 Dashboard；正式 Promote 必须单独解锁 SecondBrain Core。解锁和审批由浏览器直接发给 Core，不经 Hermes 转发。Core 校验私有用户凭据、HTTPS、精确 Origin、短期 Core session 和 Review 内容摘要；普通 Agent 不得获得 Core secret、session 或 Knowledge RW。Promote Worker 是唯一 Knowledge 业务写入路径。
+
+**状态与取舍：** Core-only 解锁、HTTP 路由与隔离测试通过；NAS 已有 HTTPS 443/5001 响应，但 DSM 路由、证书匹配、反向代理 peer 和实际 ACL/UID 未核验。生产应用仍 BLOCKED。该方案不引入数据库、SSO、多用户体系或新代理容器。
+
+
+## D068 — 2026-10-12 Hermes 与 Core 共用现有 SecondBrain Compose Project
+
+正式部署时，Hermes 与 SecondBrain Core 必须归属群晖 Container Manager 现有的同一个 SecondBrain Compose Project；Core 作为新增 service，不另建独立生产项目。容器仍保持各自权限、挂载与认证边界。独立 Compose 仅作为隔离测试候选，正式部署须适配现有项目。SecondBrain V1 完整可用后，再统一整理产品代码、数据、密钥和环境参数化及商业发行包；此前不提前开展。
+
+
+## D069 — 2026-10-12 SecondBrain V1 轻量敏捷开发与执行成本优先
+
+**决策：** SecondBrain V1 按个人使用的中小型项目管理，最高优先级为敏捷、功能和成本；控制基础风险，接受合理工程取舍，以持续交付可运行、可体验、可验收的业务功能作为进度依据。成本包含开发时间、Codex Token/模型额度、工具调用、计算资源和维护复杂度。
+
+**执行分工与流程：** ChatGPT 负责复杂技术设计、控制方案复杂度和任务拆解；Codex 负责高效实施、最小必要验证及反馈。按低/中/高风险安排检查、集成验证、授权、保护和回退；高风险数据与权限边界仍须严格验证，不得绕过人工 Promote。约 10–15 分钟无进展时重新评估非关键排查的投入，不视为硬性超时。
+
+**取舍：** 优先 MVP、小步交付，不为未来商业化提前建设系统；V1 基本可用后再推进公网访问，完整可用后再整理商业发行包及全面代码/数据/密钥/环境分离。D068 的同一 Compose Project 约束继续有效，本决策不重复定义。
+
+
+## D070 — 2026-10-12 NAS 正式文档单向发布至 Google Drive
+
+日常项目工作副本继续通过 Synology Drive 在 NAS 与已配置 Mac 之间双向同步；治理文档按需另走 NAS → SSH 读取 → 当前 Mac 发布脚本 → Google Drive 桌面客户端的单向发布路径，禁止用 Mac 可能过时的副本覆盖 NAS。目标统一为 `我的云端硬盘/Project Doc/<项目目录>/`。发布使用项目 Markdown 白名单，仅增量更新、不主动删除；桌面客户端云端上传异步，本地发布成功不等于云端确认。
+
+实现状态须与决策分开陈述：本次核实到的脚本仍在 `SecondBrain V1/tools/sync-chatgpt-live.sh`，SecondBrain 配置内嵌脚本；指定 `_Shared/tools/publish-docs.sh` 和独立多项目配置文件尚不存在。
