@@ -77,8 +77,10 @@ type: environment-baseline
 - 切换前 v0.2.3 manifest 保存在 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/d071-20261013-fe4rollback-02/manifest-before.json`。当前 D071 `plugin_api.py` 未回滚，SHA-256 `e648afa1a53a2b6c0fd601344bdddfee1e3ade0b1ed97d614ca0692561ec73d3`。D071 前端集成暂缓，用户 Edge 验收未完成。
 - Hermes 插件清单缓存刷新后，健康 200、插件清单返回 v0.2.1 并指向 FE-4 资源。匿名静态资源请求被重定向到登录页，资源 HTTP 返回体/MIME 和浏览器视觉仍需登录态 Edge 验收；不能据本地 MIME 映射等同证明生产浏览器已成功渲染。
 
-## D071 Loading 隔离验证（2026-10-13）
+## D071 v0.2.4 部署状态与 Loading 隔离验证（2026-10-13）
 
-- 正式生产仍为 manifest v0.2.1 + `index-20261012-review-page.js`；D071 API 保留。修复版 v0.2.4 候选 `index-20261014-fe4-review.js` SHA-256 `acd77192393c4ea74a3b55cde61c596bfb0257510b20df91c8073bd1a761fcb4`，FE-4 固定前缀哈希未变；尚未部署。
+- 正式生产 manifest 已为 v0.2.4，entry `index-20261014-fe4-review.js`，CSS 继续为 `style-20261010-v3.css`。正式 manifest SHA-256 `aed54f754d447b1812583c4659966be9f66521897a03ba6895a87e53d0ff39fb`；新 JS SHA-256 `acd77192393c4ea74a3b55cde61c596bfb0257510b20df91c8073bd1a761fcb4`。FE-4 固定前缀仍为 78,453 bytes / SHA-256 `6cf72d312adac4c7f4b483f777618c6c040fa9a0f140c5d8f459758add5642fe`；原 FE-4 JS、CSS 与 D071 `plugin_api.py` 哈希均保持不变。
+- 切换前 v0.2.1 manifest 的独立回滚副本保存在 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/d071-20261013-pre-v024/manifest.json`，SHA-256 `173b069c7ff293a0b3e1c97bad2f7b6139fd42e23a4fe11cda6cc916f3243c1d`；既有快照 `d071-20261013-01/manifest.json` 与旧版 bundle 均保留。只需恢复该 manifest 并刷新 Hermes 插件清单即可回滚前端，D071 API 不变。
+- 部署后 `/api/dashboard/plugins` 返回 v0.2.4 与新 entry，`/api/health` 返回 200；匿名 rescan 返回 401，因此仅重启 `secondbrain-hermes` 一次刷新插件缓存，未重启 Core。匿名 Review API 返回 401（预期安全拒绝）；已登录 Edge 上的 Review 列表/详情和跨站浏览器验收仍待用户完成。用户已在全新 Edge 标签验收 FE-4 视觉与首页真实数据。
 - `secondbrain-fe-test` 仅更新隔离 JS/CSS，无 Hermes 重启。测试 JS SHA-256 `4300d65cf33cd1dc3e7e112b7230767c413dcb57e066d00e4c97873504582a1e`，CSS SHA-256 `8db124f950e13cb3b9dc5c2cc377f79ad1df8434934dbe1247bfa35714a94bb2`。新 Edge 标签在 LAN HTTP 上实际渲染 FE-4 与隔离 Review 挂点；Review API 因 HTTP Origin 不匹配而按策略拒绝。DSM HTTPS 63012 从自动化浏览器不可达，故仍待可用 Edge 会话验收。
-- Hermes v0.21.5 health 200；Core running、`SB_PROMOTE_ENABLED=false`、Knowledge RO、Private 未挂载。
+- Hermes v0.21.5 health 200；Core running、`SB_PROMOTE_ENABLED=false`、Knowledge RO、Private 未挂载。生产部署后再次核对这些状态未变化。
