@@ -23,6 +23,8 @@ services:
       SB_CORE_ALLOWED_HOSTS: ${SB_CORE_ALLOWED_HOSTS:?set exact Core Host}
       SB_TRUSTED_PROXY_IPS: ${SB_TRUSTED_PROXY_IPS:?set exact DSM proxy peer IP}
       SB_PROMOTE_SESSION_TTL: "3600"
+      # Stage A and deployment preflight stay fail-closed by default.
+      SB_PROMOTE_ENABLED: "false"
     volumes:
       - type: bind
         source: ${REVIEW_ROOT:?set Review NAS path}
@@ -42,5 +44,7 @@ services:
         read_only: true
 
 # Required corresponding Hermes mount change is a separate production diff:
-# remove its current 20-Knowledge RW submount, leaving the existing SecondBrain
-# RO mount in place. Do not apply here.
+# remove the 20-Knowledge RW submount and remove `/secondbrain-write` from
+# HERMES_WRITE_SAFE_ROOT; retain the existing RO `/secondbrain` mount plus the
+# separately scoped Inbox/Review capture mounts. This candidate does not encode
+# or apply that production change.

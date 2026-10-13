@@ -19,6 +19,7 @@
   async function request(path, options = {}) {
     const response = await fetch(DASHBOARD_API + path, {
       credentials: "include",
+      referrerPolicy: "same-origin",
       ...options,
       headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     });

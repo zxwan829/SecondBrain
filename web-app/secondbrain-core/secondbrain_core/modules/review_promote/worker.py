@@ -110,7 +110,16 @@ def _read_all(fd):
 def _read_audit(fd):
     os.lseek(fd, 0, os.SEEK_SET)
     entries = []
-    for line in _read_all(fd).splitlines():
+    payload = _read_all(fd)
+    # A process or filesystem error may leave only the last append incomplete.
+    # Repair that torn tail while holding the caller's exclusive flock; any
+    # malformed complete line remains a hard stop for manual investigation.
+    if payload and not payload.endswith(b"\n"):
+        last_complete = payload.rfind(b"\n") + 1
+        os.ftruncate(fd, last_complete)
+        os.fsync(fd)
+        payload = payload[:last_complete]
+    for line in payload.splitlines():
         try:
             entries.append(json.loads(line.decode("utf-8")))
         except Exception as exc:

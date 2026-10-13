@@ -28,24 +28,6 @@ class DashboardAuthorizationError(ApprovalRequestError):
     pass
 
 
-def require_dashboard_operator(request):
-    """Require a verified gated Hermes session and exact same-origin request."""
-    if getattr(request.app.state, "auth_required", False) is not True:
-        raise DashboardAuthorizationError("Hermes authenticated dashboard mode is required")
-    session = getattr(request.state, "session", None)
-    user_id = getattr(session, "user_id", "") if session else ""
-    provider = getattr(session, "provider", "") if session else ""
-    if not user_id or provider != "basic":
-        raise DashboardAuthorizationError("A verified Basic Auth dashboard session is required")
-    if getattr(session, "expires_at", 0) <= datetime.now(timezone.utc).timestamp():
-        raise DashboardAuthorizationError("Dashboard session has expired")
-    origin = request.headers.get("origin", "")
-    expected_origin = str(request.base_url).rstrip("/")
-    if not origin or origin.rstrip("/") != expected_origin:
-        raise DashboardAuthorizationError("Same-origin request required")
-    return user_id
-
-
 def _read_review(review_root, review_path):
     try:
         parts = _validate_relative_review_path(review_path)
@@ -158,8 +140,18 @@ class ApprovalFileStore:
             raise ApprovalRequestError("Approval record identity or state mismatch")
         return record
 
-    def approve(self, request, body, review_root):
-        return self.approve_as(require_dashboard_operator(request), body, review_root)
+    def has_version(self, review_path, review_sha256):
+        directory_fd = _open_dir_chain(self.directory)
+        try:
+            for name in os.listdir(directory_fd):
+                if not name.endswith(".json"):
+                    continue
+                record = self.read(name[:-5])
+                if record and record.get("review_path") == review_path and record.get("review_sha256") == review_sha256:
+                    return True
+            return False
+        finally:
+            os.close(directory_fd)
 
     def approve_as(self, approver, body, review_root):
         """Create approval only after an upstream/Core auth adapter verifies owner."""
@@ -198,3 +190,96 @@ class FileApprovalSource:
     def get_approved(self, request_id):
         record = self.store.read(request_id)
         return SimpleNamespace(**record) if record else None
+
+
+class ReviewDecisionStore:
+    """Durable decisions keyed by the exact Review path and content digest."""
+    STATES = {"pending", "deferred", "approved", "promoting", "promoted", "failed"}
+
+    def __init__(self, directory):
+        if not os.path.isabs(directory):
+            raise ApprovalRequestError("Decision directory must be an absolute provisioned path")
+        self.directory = os.path.abspath(directory)
+
+    @staticmethod
+    def version_key(review_path, review_sha256):
+        if not isinstance(review_sha256, str) or not _SHA256.fullmatch(review_sha256):
+            raise ApprovalRequestError("Invalid Review content digest")
+        try:
+            _validate_relative_review_path(review_path)
+        except PromotionError as exc:
+            raise ApprovalRequestError(str(exc)) from exc
+        return hashlib.sha256((review_path + "\0" + review_sha256).encode("utf-8")).hexdigest()
+
+    def _read_dir_fd(self):
+        return _open_dir_chain(self.directory)
+
+    def get(self, review_path, review_sha256):
+        key = self.version_key(review_path, review_sha256)
+        directory_fd = self._read_dir_fd()
+        try:
+            try:
+                fd = os.open(key + ".json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            except FileNotFoundError:
+                return {"status": "pending", "review_path": review_path, "review_sha256": review_sha256}
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise ApprovalRequestError("Decision record must be a regular file")
+                chunks = []
+                while True:
+                    chunk = os.read(fd, 65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                record = json.loads(b"".join(chunks).decode("utf-8"))
+            finally:
+                os.close(fd)
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            raise ApprovalRequestError("Decision record is unreadable or malformed") from exc
+        finally:
+            os.close(directory_fd)
+        if record.get("review_path") != review_path or record.get("review_sha256") != review_sha256:
+            raise ApprovalRequestError("Decision record version mismatch")
+        return record
+
+    def set(self, review_path, review_sha256, status, **fields):
+        if status not in self.STATES:
+            raise ApprovalRequestError("Unsupported Review decision state")
+        key = self.version_key(review_path, review_sha256)
+        directory_fd = self._read_dir_fd()
+        temp_name = ".decision-" + secrets.token_hex(16)
+        fd = None
+        try:
+            current = self.get(review_path, review_sha256)
+            updated_at = datetime.now(timezone.utc).isoformat()
+            record = {**current, **fields, "review_path": review_path,
+                      "review_sha256": review_sha256, "status": status,
+                      "updated_at": updated_at}
+            history = list(current.get("history", []))
+            event = {"status": status, "updated_at": updated_at}
+            for field_name in ("request_id", "approver_subject", "decided_by", "error_code"):
+                if fields.get(field_name) is not None:
+                    event[field_name] = fields[field_name]
+            history.append(event)
+            record["history"] = history
+            fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                         getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory_fd)
+            payload = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
+            os.close(fd)
+            fd = None
+            os.replace(temp_name, key + ".json", src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            os.fsync(directory_fd)
+            return record
+        finally:
+            if fd is not None:
+                os.close(fd)
+            try:
+                os.unlink(temp_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+            os.close(directory_fd)

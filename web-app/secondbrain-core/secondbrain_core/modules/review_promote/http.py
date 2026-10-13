@@ -6,7 +6,7 @@ import re
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from .approval import ApprovalRequestError, DashboardAuthorizationError, _read_review
+from .approval import ApprovalRequestError, _read_review
 from .core_auth import CorePromoteAuth
 
 
@@ -25,47 +25,6 @@ def _review_status(content):
         if match:
             return match.group(2).strip()
     return "unknown"
-
-
-def create_router(service, review_root):
-    router = APIRouter()
-    review_root = Path(review_root)
-
-    @router.get("/review/items")
-    def list_review_items():
-        items = []
-        for current, dirs, files in os.walk(review_root, followlinks=False):
-            dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(current, d)))
-            for name in sorted(files):
-                absolute = os.path.join(current, name)
-                if not name.lower().endswith(".md") or os.path.islink(absolute):
-                    continue
-                relative = os.path.relpath(absolute, review_root).replace(os.sep, "/")
-                try:
-                    content = _read_review(str(review_root), relative)
-                except ApprovalRequestError:
-                    continue
-                title = next((line[2:].strip() for line in content.decode("utf-8", errors="replace").splitlines()
-                              if line.startswith("# ")), Path(name).stem)
-                items.append({"review_path": relative,
-                              "review_sha256": hashlib.sha256(content).hexdigest(),
-                              "target_filename": name, "title": title,
-                              "status": _review_status(content)})
-        return {"status": "ok", "items": items}
-
-    @router.post("/review/approve")
-    def approve_review(request: Request, body: dict):
-        try:
-            return service.approve_and_promote(request, body, str(review_root))
-        except DashboardAuthorizationError as exc:
-            raise HTTPException(status_code=403, detail=str(exc))
-        except ApprovalRequestError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-        except Exception as exc:
-            # Service errors fail closed; keep the original Review available.
-            raise HTTPException(status_code=409, detail=str(exc))
-
-    return router
 
 
 def create_core_router(service, review_root, auth, *, promote_enabled=True):
@@ -93,7 +52,8 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True):
                 items.append({"review_path": relative,
                               "review_sha256": hashlib.sha256(content).hexdigest(),
                               "target_filename": name, "title": title,
-                              "status": _review_status(content)})
+                              "status": _review_status(content),
+                              "decision": service.get_decision(relative, hashlib.sha256(content).hexdigest())})
         return {"status": "ok", "items": items}
 
     @router.get("/review/items/{review_path:path}")
@@ -106,10 +66,11 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True):
         decoded = content.decode("utf-8", errors="replace")
         title = next((line[2:].strip() for line in decoded.splitlines() if line.startswith("# ")),
                      Path(review_path).name)
+        digest = hashlib.sha256(content).hexdigest()
         return {"status": _review_status(content), "review_path": review_path,
-                "review_sha256": hashlib.sha256(content).hexdigest(),
+                "review_sha256": digest,
                 "target_filename": Path(review_path).name, "title": title,
-                "content": decoded}
+                "content": decoded, "decision": service.get_decision(review_path, digest)}
 
     @router.post("/auth/unlock")
     def unlock(request: Request, response: Response, body: dict):
@@ -139,5 +100,13 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True):
             raise HTTPException(status_code=409, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=409, detail=str(exc))
+
+    @router.post("/review/defer")
+    def defer_review(request: Request, body: dict):
+        approver = auth.require_owner(request)
+        try:
+            return service.defer(body.get("review_path"), body.get("review_sha256"), approver)
+        except ApprovalRequestError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return router

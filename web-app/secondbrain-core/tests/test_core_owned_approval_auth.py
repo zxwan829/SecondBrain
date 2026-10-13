@@ -17,7 +17,7 @@ from secondbrain_core.modules.review_promote.service import PromoteService
 
 class CoreOwnedApprovalAuthTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
         self.root = Path(self.temp.name)
         self.review, self.knowledge, self.state = [self.root / n for n in ("review", "knowledge", "state")]
         for path in (self.review, self.knowledge, self.state):
@@ -131,6 +131,65 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertTrue((self.knowledge / "approved.md").is_file())
         audit = (self.state / "audit.jsonl").read_text()
         self.assertIn('"approver_subject":"owner"', audit)
+        self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers)
+                         .json()["items"][0]["decision"]["status"], "promoted")
+        history = self.client.get("/api/promote/review/items/candidate.md", headers=self.headers)
+        self.assertEqual([event["status"] for event in history.json()["decision"]["history"]],
+                         ["approved", "promoting", "promoted"])
+        cannot_defer = self.client.post("/api/promote/review/defer", json={
+            "review_path": self.body["review_path"], "review_sha256": self.body["review_sha256"]
+        }, headers=self.headers)
+        self.assertEqual(cannot_defer.status_code, 409)
+
+    def test_audit_failure_after_file_creation_is_visible_and_retry_reconciles(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        from secondbrain_core.modules.review_promote import worker
+        original = worker._append_audit
+        calls = {"count": 0}
+
+        def fail_once(fd, record):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise OSError("simulated audit storage failure")
+            return original(fd, record)
+
+        with patch("secondbrain_core.modules.review_promote.worker._append_audit", side_effect=fail_once):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+            self.assertEqual(failed.status_code, 409)
+            self.assertTrue((self.knowledge / "approved.md").is_file())
+            state = self.client.get("/api/promote/review/items", headers=self.headers).json()["items"][0]["decision"]
+            self.assertEqual(state["status"], "failed")
+            retry = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(retry.status_code, 200, retry.text)
+        self.assertEqual(retry.json()["status"], "already_promoted")
+        self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 1)
+        self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers)
+                         .json()["items"][0]["decision"]["status"], "promoted")
+
+    def test_defer_is_persisted_per_review_version_and_does_not_write_knowledge(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        deferred = self.client.post("/api/promote/review/defer", json={
+            "review_path": self.body["review_path"],
+            "review_sha256": self.body["review_sha256"],
+        }, headers=self.headers)
+        self.assertEqual(deferred.status_code, 200, deferred.text)
+        self.assertEqual(deferred.json()["status"], "deferred")
+        detail = self.client.get("/api/promote/review/items/candidate.md", headers=self.headers)
+        self.assertEqual(detail.json()["decision"]["status"], "deferred")
+        self.assertFalse((self.knowledge / "approved.md").exists())
+        changed = self.content + b"changed\n"
+        (self.review / "candidate.md").write_bytes(changed)
+        changed_detail = self.client.get("/api/promote/review/items/candidate.md", headers=self.headers)
+        self.assertEqual(changed_detail.json()["decision"]["status"], "pending")
+
+    def test_torn_audit_tail_is_repaired_on_retry(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        (self.state / "audit.jsonl").write_bytes(b'{"event":"interrupted"')
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        audit_lines = (self.state / "audit.jsonl").read_text().splitlines()
+        self.assertEqual(len(audit_lines), 1)
+        self.assertIn('"event":"promoted"', audit_lines[0])
 
     def test_review_list_and_detail_are_owner_only_and_return_real_content_and_state(self):
         self.assertEqual(self.unlock().status_code, 200)
