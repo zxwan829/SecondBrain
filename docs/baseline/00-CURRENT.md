@@ -21,7 +21,7 @@ type: project-status
 - Hermes：生产 v0.21.5 / build 749220ef，镜像按不可变 digest 固定。运行事实与部署回退入口见 Environment-Baseline。
 - Universal Capture：生产 Skill v0.1.3；已验收文本 Raw→Review，不自动 Promote。V1 MUST 还包括 URL/Web、PDF、Image/Screenshot、Audio/Voice，均未实现/验收。见 [Universal-Capture-Business-Spec.md](Universal-Capture-Business-Spec.md)。
 - Dashboard FE-4：正式版已部署，Mac/PC 与 iPhone 视觉已接受；整体 ACCEPTED WITH KNOWN ISSUES。业务 API 部分真实、部分未连接/不可用；正式 iPhone Safari 独立回归仍缺证据。模块与验收细节见 Progress-Log。
-- Hermes + SecondBrain Core 遵循 D066/D067/D068；Core 已在现有 SecondBrain 项目运行 healthy。D071 Review API 保持原样；正式 manifest v0.2.3 已切至以已验收 FE-4 JS 原始字节为基底的修正版 bundle，FE-4 CSS 未改。健康与未认证拒绝已核验；用户仍需在 Edge 完成最终视觉及 Review 列表/详情验收。Promote 仍关闭、Knowledge RO，无正式知识写入。
+- Hermes + SecondBrain Core 遵循 D066/D067/D068；Core 已在现有 SecondBrain 项目运行 healthy。D071 后端 Review API 已部署并保持原样；因 v0.2.3 页面持续 Loading，正式 manifest 已恢复到已验收 FE-4 bundle（v0.2.1），FE-4 CSS 未改，D071 前端集成暂缓。Hermes 健康、Promote 仍关闭、Knowledge RO；Private 未挂载。用户 Edge 视觉验收尚未完成。
 
 ## 主要安全与实施边界
 
@@ -33,10 +33,10 @@ type: project-status
 
 ## 唯一执行入口：NOW / BLOCKED / DEFERRED
 
-- **NOW — Core Review：** D071 同源 Hermes Session 只读认证代码已部署；待用户在已登录 Dashboard 验收 Review 列表与详情；不执行 Promote。
+- **NOW — Core Review：** D071 同源 Hermes Session 只读认证后端已部署；前端入口暂时回到已验收 FE-4。待用户在 Edge 验收 FE-4 页面；D071 Review UI 暂缓，不执行 Promote。
 - **NOW — V1 Capture：** 按冻结规格实现并验收 URL/Web、PDF、图片/截图、语音输入；保留原始证据、Review 与人工 Promote 流程。
 - **NOW — Dashboard：** 补齐当前未连接的真实业务模块，并完成正式 iPhone Safari 功能回归；不得把 DEMO/UNAVAILABLE 标成真实数据。
-- **BLOCKED — 当前生产 Review 验收：** D071 服务端与 bundle 已部署。Codex 可控 Edge 标准配置此前因系统 DNS 指向公网 IP 而连接拒绝；用户需在可用的局域网 HTTPS Edge 会话刷新 Dashboard 并验收 Review 列表与详情，不改系统 DNS。
+- **BLOCKED — 当前生产 Review 验收：** D071 后端已部署；D071 前端集成暂缓，正式 manifest 已回到原 FE-4 入口。用户需在已登录 Edge 刷新 Dashboard 并确认 FE-4 页面恢复；D071 Review 列表/详情验收待后续前端修复，不改系统 DNS。
 - **BLOCKED — 生产 Promote 写入：** Core 当前 healthy，但 `SB_PROMOTE_ENABLED=false` 且 Knowledge 挂载为 RO；Hermes 仍以 root 运行并持有正式 Knowledge RW。解除条件：移除 Hermes Knowledge RW、验证 Core 独占 Knowledge 写权与审批凭据、修复可信代理头/HTTPS 审批链并确认可执行回退；之后仍需用户批准生产切换。不得以恢复 Hermes Knowledge RW 作为常规回滚。
 - **DEFERRED — V1 前收口：** 在宣布 V1 DONE 前，复核并收口临时 unrestricted sudoers。
 - **DEFERRED — 访问与发布：** V1 基本可用后再完成 Agent/Dashboard 公网直接访问，复核 DSM 63012/63013 规则及 ACL；不要求 WireGuard，也不为 SecondBrain 专门改造 AdGuard。
@@ -52,7 +52,7 @@ type: project-status
 | 区域 | 状态 | 当前解释 |
 |---|---|---|
 | Dashboard Home / Today | PARTIAL / REAL | Today 真实空状态；只读首页已部署。 |
-| Review / Knowledge | REAL / gated | 用户已确认首页 5 条真实待审核；生产当前的 Core 解锁列表/详情尚未完成用户验收；新的 Hermes Session 方案仅在 GitHub 源码中实现，待批准部署；正式 Knowledge 仍 RO。 |
+| Review / Knowledge | REAL / gated | D071 Hermes Session Review 后端已部署；前端集成暂缓，正式 Dashboard manifest 当前指向 FE-4 已验收入口；用户验收未完成；正式 Knowledge 仍 RO。 |
 | Projects | UNAVAILABLE | 当前数据响应不构成可信业务项目列表。 |
 | Agent health | UNAVAILABLE | 未接入可信实时状态来源。 |
 | Daily Brief / Activity | NOT CONNECTED | 当前无真实模块数据接口。 |

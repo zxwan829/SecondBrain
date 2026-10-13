@@ -44,7 +44,7 @@ type: environment-baseline
 
 - 正式插件 `secondbrain`：`/volume1/docker/secondbrain/hermes/data/plugins/secondbrain/dashboard/`，路由 `/secondbrain`；测试插件 `secondbrain-fe-test` 使用独立目录、身份和回滚资产。Hermes 原生 Chat `/chat`。生产 Dashboard 可通过 `http://192.168.3.27:9119` 访问，另有 DSM LAN-only HTTPS `https://zxwan520.com:63012` 入口。
 - Home API `GET /api/plugins/secondbrain/home`；认证插件 API 在 Hermes Dashboard 会话下运行。Private 与 00-Inbox 由正式 API 拒绝。业务写入仍受受控流程约束。
-- 正式 manifest v0.2.3 指向 `index-20261013-fe4-review.js`（SHA-256 `10039c5ec25a2a23cff8fa94f844acc529aeef3cd603fa8297f6afe46b8f3b92`）。该 bundle 以原始 FE-4 `index-20261012-review-page.js` 字节为前缀（78,453 bytes；SHA-256 `6cf72d312adac4c7f4b483f777618c6c040fa9a0f140c5d8f459758add5642fe`），再附加 D071 Review UI。manifest SHA-256 `bcc33a703b9ba3c1e4ea3088c4eca3ebbc7a36e05f73e73cacfe25b1b6dfd0f1`；插件 API SHA-256 `e648afa1a53a2b6c0fd601344bdddfee1e3ade0b1ed97d614ca0692561ec73d3`；CSS 保持原 SHA-256 `9de0d0d52b2c7117ea16719d01bca616abdf57bd81548a7ba56d5007cce89990`。修复前 v0.2.2 manifest 快照位于 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/d071-20261013-fe4fix-01/manifest.json`（SHA-256 `655300ebd2f3f664f8b611e6bfec5f0abbf98bd24e92d26c899fece2e7b604f4`）。若需恢复纯 FE-4 前端，切换为 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/d071-20261013-01/manifest.json` 指向的既有 FE-4 bundle；只回退 manifest，保留当前 D071 `plugin_api.py`。旧版和初版 D071 bundle 均保留。
+- 曾部署 manifest v0.2.3 指向 `index-20261013-fe4-review.js`（SHA-256 `10039c5ec25a2a23cff8fa94f844acc529aeef3cd603fa8297f6afe46b8f3b92`）。该 bundle 以原始 FE-4 `index-20261012-review-page.js` 字节为前缀（78,453 bytes；SHA-256 `6cf72d312adac4c7f4b483f777618c6c040fa9a0f140c5d8f459758add5642fe`），再附加 D071 Review UI。v0.2.3 manifest SHA-256 `bcc33a703b9ba3c1e4ea3088c4eca3ebbc7a36e05f73e73cacfe25b1b6dfd0f1`；插件 API SHA-256 `e648afa1a53a2b6c0fd601344bdddfee1e3ade0b1ed97d614ca0692561ec73d3`；CSS SHA-256 `9de0d0d52b2c7117ea16719d01bca616abdf57bd81548a7ba56d5007cce89990`。v0.2.3 前端在生产持续 Loading，已按下文记录回退到原 FE-4 入口。部署前 v0.2.2 manifest 快照 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/d071-20261013-fe4fix-01/manifest.json`（SHA-256 `655300ebd2f3f664f8b611e6bfec5f0abbf98bd24e92d26c899fece2e7b604f4`）仍保留；所有版本化 bundle 与 D071 后端均保留。
 - 正式回滚目录 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/fe4-20261011-155631/`，包含 `rollback.sh` 和被替换资源快照。部署前应重新确认回滚文件存在和目标版本。
 
 ## DSM HTTPS / CORE-4 入口与隔离基线
@@ -70,3 +70,9 @@ type: environment-baseline
 ## 重验触发条件
 
 只有命令失败、Hermes 镜像/版本/容器重建、Compose/挂载/网络变化或正式部署后，才重新核验对应环境事实。Private 内容和认证秘密不属于本基线。
+
+## D071 前端状态（2026-10-13）
+
+- D071 后端 API 已部署并保留。由于 v0.2.3 前端页面持续 Loading，正式 manifest 当前恢复到回滚快照 `d071-20261013-01/manifest.json`：v0.2.1，entry `index-20261012-review-page.js`，CSS `style-20261010-v3.css`。FE-4 JS SHA-256 `6cf72d312adac4c7f4b483f777618c6c040fa9a0f140c5d8f459758add5642fe`；CSS SHA-256 `9de0d0d52b2c7117ea16719d01bca616abdf57bd81548a7ba56d5007cce89990`。
+- 切换前 v0.2.3 manifest 保存在 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/d071-20261013-fe4rollback-02/manifest-before.json`。当前 D071 `plugin_api.py` 未回滚，SHA-256 `e648afa1a53a2b6c0fd601344bdddfee1e3ade0b1ed97d614ca0692561ec73d3`。D071 前端集成暂缓，用户 Edge 验收未完成。
+- Hermes 插件清单缓存刷新后，健康 200、插件清单返回 v0.2.1 并指向 FE-4 资源。匿名静态资源请求被重定向到登录页，资源 HTTP 返回体/MIME 和浏览器视觉仍需登录态 Edge 验收；不能据本地 MIME 映射等同证明生产浏览器已成功渲染。
