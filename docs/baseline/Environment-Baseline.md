@@ -11,8 +11,10 @@ type: environment-baseline
 ## NAS / 数据路径
 
 - Synology DS920+, DSM 7.4.1 Build 90080；NAS LAN `192.168.3.27`，iStoreOS `192.168.3.2`。家庭网关、PBR、WireGuard、DNS 是稳定生产环境，不属 SecondBrain 随手修改范围。
-- NAS 运行数据区：`/volume1/SecBR/SecondBrain/`、`/volume1/SecBR/KnowledgeAssets/`、Private `/volume1/SecBR/Private/`。SecondBrain 开发源码和正式项目文档只来自 GitHub；NAS 部署构建副本位于 `/volume1/docker/secondbrain/core-source/`。
-- 迁移前 Mac `/Users/joe/SecondBrain/`、Synology Drive 与 Google Drive 的路径及发布目标记录仅供理解旧流程；不再要求开发机依赖 Synology Drive 或从 NAS 读取项目规则。
+- iMac 唯一正式开发克隆：`/Users/joe/Documents/Codex/SecondBrain`；MBA 使用独立 Clone。私有 GitHub `zxwan829/SecondBrain` 是唯一代码和正式项目文档源。Codex 当前采用 workspace-write 沙箱，GitHub/NAS 网络访问已验证正常；仍须遵守权限审批和生产操作授权边界。
+- NAS Docker 正式目录：`/volume1/docker/secondbrain/`；Core build context：`/volume1/docker/secondbrain/core-source/`。NAS 业务数据位于 `/volume1/SecBR/SecondBrain/`、`/volume1/SecBR/KnowledgeAssets/`，Private 位于 `/volume1/SecBR/Private/`。NAS 只负责 Docker 运行、配置和业务数据，不作为开发环境或文档源。
+- Obsidian 知识库位于 Mac `/Users/joe/SecondBrain/` 并通过 Synology Drive 与 NAS 双向同步。其用途是笔记、知识与个人资料，不是代码或正式开发文档来源。客户端曾显示已为最新；实际双向文件传播尚未单独验收。历史 SynologyDrive `stopped` 状态报告尚未确认为套件故障。
+- 迁移前旧 NAS SecondBrain V1 开发目录、治理快照、Google Drive 项目文档镜像、旧发布流程及本地迁移备份已清理；有效生产部署与回滚资产仍保留在 Docker 正式目录中。GitHub Push 不代表部署；按授权由 Mac SSH 传入部署内容，NAS 无需直接访问 GitHub。
 
 ## Hermes Runtime
 
@@ -60,9 +62,9 @@ type: environment-baseline
 
 ## 治理安全写入与同步
 
-- NAS `safe-governance-write.sh`、Live Mirror 和 Google Drive 项目文档发布流程已退役；旧项目目录与仅存于 `/volume1/SecBR/.governance-recovery/SecondBrain V1/` 的文档快照已清理。正式文档以 GitHub 历史为准，不再从 NAS 发布或回写。
-- 本轮未更改 Synology Drive 客户端或任务配置。客户端配置仍指向本地 `/Users/joe/SecondBrain/`，一个连接保持关联；NAS `SynologyDrive` 套件状态报告为 stopped，因此本轮未确认实时传播状态。本轮仅删除同步根下已迁入 GitHub 的 `30-Projects/SecondBrain V1/` 子目录，`30-Projects/_Shared` 与其他知识/业务目录保留。
-- 迁移前的发布脚本及配置曾通过 NAS SSH 读取项目 Markdown 并复制到 Google Drive；该流程已废弃，不作为正式文档同步或发布机制。历史记录不代表当前仍有发布入口。
+- NAS `safe-governance-write.sh`、Live Mirror 和 Google Drive 项目文档发布流程已退役；旧项目目录与专属治理快照已清理。正式文档以 GitHub 历史为准，不再从 NAS 发布或回写。旧迁移记录中关于 NAS-first Google Drive 发布脚本“正式采用/迁移”的条目已被此退役状态取代，不代表仍有活动发布入口。
+- Synology Drive 保持既有客户端和同步任务关系，未重建任务、修改共享目录或权限。客户端配置指向本地 `/Users/joe/SecondBrain/`，曾显示已为最新；实际双向文件传播尚未单独验收。历史 `SynologyDrive stopped` 是套件状态报告，未确认是套件真实停止还是检测不准确，不据此宣称同步故障。
+- 本地迁移备份已按迁移清理完成；NAS 生产回滚镜像、正式插件/Skills 和仍有运行用途的恢复资产保留，具体回滚路径见上文。
 - NAS 专用 SSH key 已配置；NAS SCP/SFTP subsystem 曾不可用，普通 SSH 可用于有界核验/传输。连接失败不改 NAS SSH/权限来绕过。
 
 ## 重验触发条件

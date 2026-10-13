@@ -14,10 +14,12 @@ type: architecture
 
 ## 开发仓库与职责边界
 
-- GitHub 私有 Monorepo 是 SecondBrain 代码与正式项目基线文档的唯一权威源；iMac、MBA 各自 clone 并独立开发，通过 Git Commit / Push / Pull 协作。开发与本地测试不依赖 NAS 在线。
-- NAS 负责 Docker 服务、业务数据与运行配置。NAS 上的 Obsidian SecondBrain 库仅用于笔记、知识内容和适合阅读的项目资料，不保存开发代码，也不作为基线文档源。
-- 代码和文档的正式修改在 Git 仓库中完成。NAS 部署与生产数据操作分开执行，必须取得用户明确授权；部署状态和运行事实仍按需记录在 Environment-Baseline / CURRENT。
-- 原 NAS/Synology Drive/Google Drive 同步描述反映迁移前流程，只用于理解历史环境，不再定义当前开发、版本管理或正式文档发布机制。
+- 私有 GitHub Monorepo `zxwan829/SecondBrain` 是 SecondBrain 代码与正式项目文档的唯一权威源。iMac 在 `/Users/joe/Documents/Codex/SecondBrain` 开发；MBA 使用自己的独立 Clone。开发和本地测试不依赖 NAS 在线。
+- NAS 仅负责 Docker 服务、运行配置和业务数据。Docker 项目根为 `/volume1/docker/secondbrain/`，Core 构建上下文为 `/volume1/docker/secondbrain/core-source/`；业务数据位于 `/volume1/SecBR/SecondBrain/` 与 `/volume1/SecBR/KnowledgeAssets/`。
+- Obsidian 知识库继续由 Synology Drive 在 Mac 与 NAS 间双向同步，仅承载知识库、笔记、个人资料和适合阅读的参考资料，不承载源码或正式开发文档。实际双向文件传播尚未单独验收，客户端“已为最新”状态不能替代传播测试。
+- ChatGPT 负责架构设计、任务分解、技术决策和验收标准；Codex 负责实施、测试、Git 操作、按授权部署及执行反馈。标准流程为 ChatGPT 读取 GitHub 状态并规划，Codex 开发测试、更新必要文档、Commit / Push，随后 ChatGPT 读取最新结果。
+- GitHub Push 不会自动部署到 NAS；NAS 不要求直连 GitHub。取得部署授权后，由 Mac 通过 SSH 传入部署内容并验证运行。开发、构建、部署和生产数据操作保持分离。
+- 迁移前 NAS / Synology Drive / Google Drive 项目文档镜像、旧 NAS 治理写入与发布流程、旧开发目录及治理快照均已退役/清理，不定义当前版本管理或文档发布机制。有效运行事实与回滚资产见 Environment-Baseline。
 
 ## 当前运行架构（已部署）
 

@@ -11,7 +11,11 @@ type: project-status
 
 ## 当前结论
 
-- **开发权威源：** SecondBrain GitHub 私有 Monorepo 管理代码与正式基线文档；iMac、MBA 独立开发并通过 Git 协作。NAS 负责 Docker 与业务数据，Obsidian 库负责笔记/知识及可阅读资料。此项职责变更不改变下述已核验的生产运行事实。
+- **开发权威源：** 私有 GitHub Monorepo `zxwan829/SecondBrain` 是代码与正式项目文档的唯一权威源。iMac 正式开发克隆为 `/Users/joe/Documents/Codex/SecondBrain`；MBA 后续使用独立 Clone，不依赖 NAS 开发环境。ChatGPT 负责架构设计、任务分解、技术决策和验收标准；Codex 负责代码实施、测试、Git 操作、按授权部署及执行反馈。日常闭环为：ChatGPT 读取 GitHub 状态并制定方案 → Codex 开发、测试、更新必要文档并 Commit / Push → ChatGPT 读取最新结果。
+- **开发与部署分离：** GitHub Push 不代表 NAS 已部署。NAS 不需要访问 GitHub；按授权由 Mac 通过 SSH 传入部署内容并验证运行。NAS Docker 正式目录为 `/volume1/docker/secondbrain/`，Core 构建源码目录为 `/volume1/docker/secondbrain/core-source/`；业务数据仍在 `/volume1/SecBR/SecondBrain/` 与 `/volume1/SecBR/KnowledgeAssets/`。
+- **Obsidian / Synology Drive：** Obsidian 知识库仍通过 Synology Drive 在 Mac `/Users/joe/SecondBrain/` 与 NAS 之间双向同步，用于知识库、笔记及个人资料，不是代码或正式开发文档来源。客户端此前显示已为最新；实际双向文件传播尚未单独验收。历史 `SynologyDrive stopped` 报告不是已确认故障结论。
+- **旧迁移资产：** 旧 NAS SecondBrain V1 开发目录、治理快照、Google Drive 文档镜像、旧发布流程和本地迁移备份已清理；有效生产状态、安全边界及回滚资产见本文件和 Environment-Baseline。
+- **Codex 执行环境：** 当前 workspace-write 沙箱下 GitHub 与 NAS 网络访问已验证正常。保留必要权限审批和生产操作边界；网络可达不等于获得生产变更授权。
 
 - SecondBrain V1：**NOT DONE**。正式 Hermes Dashboard `/secondbrain` 已部署；前端与部分真实只读 API 已运行，模块完整性、Universal Capture V1 附件链路及安全收口仍未完成。
 - Hermes：生产 v0.21.5 / build 749220ef，镜像按不可变 digest 固定。运行事实与部署回退入口见 Environment-Baseline。
