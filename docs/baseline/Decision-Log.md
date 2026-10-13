@@ -320,7 +320,7 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 
 **采用的最小方案：** 保留 D067 Core-only 解锁与短期 HttpOnly/Secure/SameSite Core session。Review 继续用 D071 Hermes Session 读取；Dashboard 仅在用户明确点「批准入库」并再次确认后，由浏览器直连 Core HTTPS Origin。Core 锁定时先要求现有 Core 解锁口令；Core 服务端验证自己的 session、HTTPS、精确 Origin 与 Review 文件 SHA-256，主体固定为 `owner`，再写 Core 私有审批/状态并由 Promote Worker 写 Knowledge。暂缓决定也由相同 Core 身份保护。此流程保留第二次解锁；在当前 Hermes/Agent 权限模型下，免第二次解锁而又保证 Agent 不能伪造“用户点击”，需要额外可信人类确认因子或隔离签发者，均超出既有组件与本阶段最小方案。不得通过削弱 Core 认证实现免登录。
 
-**权限切换：** 基于生产 Compose 文件的最小候选是 Hermes 移除 `20-Knowledge` RW bind、将 `HERMES_WRITE_SAFE_ROOT` 从父目录收窄到 Inbox、Review、KnowledgeAssets Inbox 三个明确路径；Core 将 Knowledge bind 从 RO 改 RW，继续使用 UID/GID `1026:100`、Review RO、Core state RW、unlock secret RO、Promote false。保持 Private 不挂载。NAS 运行容器/mount/UID 当前仍待受控只读核验；Compose 文字和主机 ACL 不等同容器运行证据。生产变更须另行批准，回退只将 Core Knowledge 改回 RO 并关停 Promote，不能恢复 Hermes Knowledge RW。
+**权限切换：** Hermes 候选为移除 `20-Knowledge` RW bind、将 `HERMES_WRITE_SAFE_ROOT` 从父目录收窄到 Inbox、Review、KnowledgeAssets Inbox 三个明确路径；Core Knowledge RW 属后续独立写入阶段，不在当前 Hermes 权限收口范围。保持 Core UID/GID `1026:100`、Review/Knowledge RO、Core state RW、unlock secret RO、Promote false，Private 不挂载。生产变更须另行确认，回退不得恢复 Hermes Knowledge RW。
 
 
 ## D073 — 2026-10-13 V1 统一入口、Hermes 主线与审批免二次口令
@@ -331,6 +331,6 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 
 **审批产品要求：** Dashboard 登录会话有效期间，Review 查看、批准与暂缓不得要求第二套 Core 密码；批准仍需用户明确点击确认，普通 Hermes Agent 不得伪造批准或直接写入 Knowledge。此产品要求取代 D067/D072 要求用户再次输入 Core 密码的做法，但**不代表已找到可信的统一会话授权机制**；旧 Core 独立认证实现仍作为未投产的历史/隔离方案保留，禁止删除或绕过现有认证来伪装达标。须先证明 Agent 无法冒充真实用户批准、形成独立权限边界并测试，再另行批准生产部署。
 
-**最新执行事实：** Codex 本轮只读 Docker inspect/exec 因 NAS `/var/run/docker.sock` 权限被拒而停止，未 sudo、未修改 socket/组/ACL、未改生产、未开始新的审批授权链施工。静态 Compose 与既有 Knowledge RW 证据不等于本轮运行时核验。权限收口待通过现有授权渠道取得受控只读容器证据后继续；不恢复 Hermes Knowledge RW 作为回滚。阶段 A 代码 `2144f23` 通过 15 项离线测试、尚未生产部署；阶段 B 文档 `c3a9131` 已 Push。
+**执行事实：** 此前普通 SSH Docker inspect/exec 因 `/var/run/docker.sock` 权限拒绝而停止。2026-10-13 后续经现有非交互 `sudo -n` 只读授权成功核实运行容器：Hermes v0.21.5 以 root 运行、Knowledge RW 子挂载与宽父级 safe-root 仍在；Core `1026:100`、Knowledge/Review RO、state RW、secret RO、Promote false；Private 未挂载。未修改生产。Hermes 权限收窄候选和验证/回滚计划已记录在 Environment-Baseline，待用户下一次确认后才可实施。阶段 A 代码 `2144f23` 通过 15 项离线测试、尚未生产部署。
 
 **范围边界：** 微信与 Web App 为 Universal Capture V1 输入渠道，按 UC v1.1 汇入统一 Raw→Review；微信详细消息类型/聊天行为在实施前按实际 Hermes 能力确认。WorkBuddy、n8n 当前未列为已冻结 V1 MUST，不在未确认前擅自取消或加入。完整 MUST 以 Web App V1 与 UC V1.1 正式规格及 CURRENT 矩阵为准。

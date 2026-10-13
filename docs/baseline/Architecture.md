@@ -29,7 +29,7 @@ Hermes Dashboard Shell → SecondBrain Dashboard Plugin → 认证 API/薄适配
 
 ## Core 目标架构与当前状态
 
-经批准的方向为 **Hermes + SecondBrain Core 模块化单体**。Hermes 继续承载登录会话、Agent Runtime、原生 Chat 与 Dashboard 插件宿主；SecondBrain Core 作为单一模块化应用承载领域规则、用例和受控文件数据操作，由 Dashboard 直接调用必要的 Core API。Core service 最近一次已记录在现有 SecondBrain Compose Project 中 healthy；最新只读 Docker 查询因 socket 权限拒绝而未能复核运行时身份/挂载。D071 同源 Hermes Session 只读 Review API 已在正式 FE-4 v0.2.4 部署，并完成用户 HTTPS Edge 列表及详情验收；Core 写入/审批尚未正式部署。按 D068，Hermes 与 Core 正式归属 Container Manager 现有同一个 SecondBrain Compose Project，Core 作为新增 service；两个容器仍保持独立权限、挂载和认证边界。`compose.core-isolated.yaml` 仅为隔离测试候选，不能作为独立正式项目部署。V1 完整可用前不进行商业发行包、代码/数据/密钥/环境参数化整理。
+经批准的方向为 **Hermes + SecondBrain Core 模块化单体**。Hermes 继续承载登录会话、Agent Runtime、原生 Chat 与 Dashboard 插件宿主；SecondBrain Core 作为单一模块化应用承载领域规则、用例和受控文件数据操作，由 Dashboard 直接调用必要的 Core API。2026-10-13 一次性非交互 sudo 只读查询确认两个服务均在现有 Compose Project 运行，Core healthy；Hermes running。D071 同源 Hermes Session 只读 Review API 已在正式 FE-4 v0.2.4 部署，并完成用户 HTTPS Edge 列表及详情验收；Core 写入/审批尚未正式部署。按 D068，Hermes 与 Core 正式归属 Container Manager 现有同一个 SecondBrain Compose Project，Core 作为新增 service；两个容器仍保持独立权限、挂载和认证边界。`compose.core-isolated.yaml` 仅为隔离测试候选，不能作为独立正式项目部署。V1 完整可用前不进行商业发行包、代码/数据/密钥/环境参数化整理。
 
 Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、Journal、Projects、Calendar。模块共享一个应用进程/部署单元并通过显式接口协作；不新增独立数据库、LLM、n8n、第二 Runtime 或独立管理后台。只有已实现模块建立代码，不创建空占位包。
 
@@ -43,9 +43,9 @@ Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、
 
 Core 启动将 Uvicorn `X-Forwarded-*` 信任限制到 `SB_TRUSTED_PROXY_IPS`；应用校验精确 `SB_CORE_ALLOWED_HOSTS`。本次临时回显发现 DSM 保留客户端可影响的 `X-Forwarded-For` 和 `X-Forwarded-Host`，但将 `X-Forwarded-Proto` 设为 `https`；客户端伪造 Host 得到 404。Core 必须只信任可信本地代理连接，并拒绝或安全解析可伪造的转发头；不得以这些头授予权限。
 
-**Core 文件边界（Compose 已配置，生产切换未验收）：** 现有 SecondBrain Compose 已增加 Core service：Review、Knowledge RO；Core 私有 state/secret；Promote 当前关闭。该配置不给 Core Knowledge 写权限；Core service 最近记录为 healthy，但 Promote 仍关闭，本轮未重验运行态。计划的正式边界为 Hermes Knowledge RO、Core Knowledge RW、Core 独占审批凭据；生产 Compose 仍声明 Hermes Knowledge RW，既有运行证据验证过该风险；本轮实时 Docker 查询受 socket 权限阻断，未执行权限变更。`compose.core-isolated.yaml` 仅为隔离测试候选，不能独立部署。Core 配置 UID 1026/GID 100；此前隔离目录测试中，Hermes root 在 RO mount 下写入失败，Core UID 1026 可按模拟授权写 Knowledge/state，这不是生产切换验收。
+**Core 文件边界（Compose 已配置，生产写入切换未验收）：** 2026-10-13 运行时核验确认 Core `1026:100`、Review/Knowledge RO、Core state RW、secret RO、`SB_PROMOTE_ENABLED=false` 且 healthy；Hermes 当前 root + Knowledge RW 风险已被实时挂载确认。当前只准备 Hermes 权限收窄，Core Knowledge 在本阶段继续 RO。`compose.core-isolated.yaml` 仅为隔离测试候选，不能独立部署。此前隔离目录测试中，Hermes root 在 RO mount 下写入失败，Core UID 1026 可按模拟授权写 Knowledge/state，这不是生产切换验收。
 
-生产 Promote 仍 **BLOCKED**：需取得 Docker 受控只读运行证据，落实 Hermes Knowledge RW 收口、Core 未来独占写入、可信统一审批授权与实际代理头/HTTPS 安全验证；之后再单独批准生产切换。不得以恢复 Hermes Knowledge RW 作为常规回滚。
+生产 Promote 仍 **BLOCKED**：Docker 受控只读运行证据已取得，实时确认 Hermes root + Knowledge RW 子挂载；Core 为 `1026:100`、Knowledge/Review RO、state RW、secret RO 且 Promote=false；Private 未挂载。下一步仅准备并经单独确认后实施 Hermes 权限收窄；Core Knowledge RW、可信统一审批授权与实际代理头/HTTPS 安全验证仍未完成，之后须另行授权生产切换。不得以恢复 Hermes Knowledge RW 作为常规回滚。
 
 ## 数据区域与写入生命周期
 

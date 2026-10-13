@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 Dashboard 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。Promote、附件采集、微信实际接入以及 Web App 多个真实业务模块尚未完成生产验收。2026-10-13 最新 Codex 检查在 NAS Docker socket 权限处停止，仅确认 SSH 身份无 Docker socket 访问权；未取得运行时挂载证据、未修改生产、未启动本轮审批授权开发。
+**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。Promote、附件采集、微信实际接入以及 Web App 多个真实业务模块尚未完成生产验收。2026-10-13 通过现有非交互 sudo 只读查询取得 Hermes/Core 运行时挂载、身份和环境证据；确认 Hermes Knowledge RW 风险仍在，未修改生产、未部署 Promote 或启动统一审批授权开发。
 
 ## 2. 已确定的架构与边界（接手项目必须先知）
 
@@ -85,7 +85,7 @@ source: GitHub SecondBrain Monorepo
 
 | 事项 | 当前状态 | V1 收口要求 |
 |---|---|---|
-| Hermes Knowledge 直接写风险 | BLOCKED：最新已知 Compose 仍声明 RW；Codex 正在收口 | 普通 Agent 文件工具实测不能写 Knowledge；Review/Inbox Capture 不回退 |
+| Hermes Knowledge 直接写风险 | VERIFIED RISK：实时容器确认 Hermes root + Knowledge RW 子挂载，safe root 覆盖该路径；权限收窄方案已准备，生产配置未改 | 移除 RW 子挂载并收窄 safe roots 后，实测普通文件工具与终端均不能写 Knowledge；Review/Inbox Capture 不回退 |
 | Core 写权限与审批认证 | BLOCKED：Promote=false，Knowledge RO；免二次口令方案待验证 | 仅受控 Core 执行用户确认后的正式入库；测试失败恢复与不可伪造审批 |
 | Private | 已有禁止挂载/访问的设计与生产静态证据 | 生产与 API 验证拒绝，不读取 Private 内容 |
 | 多端与数据同步 | PARTIAL | 核实 Web App 桌面/iPad/手机主要动作及 Obsidian Mac↔NAS 文件实际双向传播 |
@@ -95,7 +95,7 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| P0 | Hermes Knowledge RW 收口 + Dashboard 会话内免第二密码 + 安全审批 | 运行时拒绝普通 Agent 写 Knowledge；用户通过 HTTPS 实际批准/暂缓；Core 审计/写入准确 | Docker 只读 inspect 权限、可信审批隔离、生产授权；**Codex 本轮已在只读核验失败后停止，没有生产变更或审批代码施工** |
+| P0 | Hermes Knowledge RW 收口 + Dashboard 会话内免第二密码 + 安全审批 | 运行时拒绝普通 Agent 写 Knowledge；用户通过 HTTPS 实际批准/暂缓；Core 审计/写入准确 | Docker 只读运行证据已由一次性 `sudo -n` 取得；Hermes 权限收窄仍待下一次生产变更确认；可信审批隔离仍待设计与验证；Core 写权限和 Promote 保持关闭 |
 | P1 | Universal Capture 多类型处理 + 微信/Web 输入渠道 | 每个 MUST 输入类型真实 Raw/Review 成功且失败可核对；微信端到端有效 | Hermes 微信集成方法仍需确证，不以 OpenClaw 作为路线 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
