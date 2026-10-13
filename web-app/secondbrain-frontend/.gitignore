@@ -1,0 +1,6 @@
+node_modules/
+dist/
+dist-hermes-test/
+.env*
+*.pem
+*.key
