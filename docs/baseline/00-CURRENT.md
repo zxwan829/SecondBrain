@@ -21,7 +21,7 @@ type: project-status
 - Hermes：生产 v0.21.5 / build 749220ef，镜像按不可变 digest 固定。运行事实与部署回退入口见 Environment-Baseline。
 - Universal Capture：生产 Skill v0.1.3；已验收文本 Raw→Review，不自动 Promote。V1 MUST 还包括 URL/Web、PDF、Image/Screenshot、Audio/Voice，均未实现/验收。见 [Universal-Capture-Business-Spec.md](Universal-Capture-Business-Spec.md)。
 - Dashboard FE-4：正式版已部署，Mac/PC 与 iPhone 视觉已接受；整体 ACCEPTED WITH KNOWN ISSUES。业务 API 部分真实、部分未连接/不可用；正式 iPhone Safari 独立回归仍缺证据。模块与验收细节见 Progress-Log。
-- Hermes + SecondBrain Core 遵循 D066/D067/D068；Core 已在现有 SecondBrain 项目运行 healthy。Dashboard FE-4 视觉保持不变。D071 的 Hermes Session 只读 Review API 与版本化前端 bundle 已在 GitHub 源码中实现并通过针对性测试，尚未部署；生产仍按 Environment-Baseline 的 Core 独立解锁路径运行。Promote 仍关闭、Knowledge RO，无正式知识写入。
+- Hermes + SecondBrain Core 遵循 D066/D067/D068；Core 已在现有 SecondBrain 项目运行 healthy。Dashboard FE-4 视觉保持不变。D071 的 Hermes Session 只读 Review API 与版本化前端 bundle 已部署至生产；Hermes Basic Auth Session 契约及未认证/跨站拒绝已核验，用户仍需在 Edge 完成已登录 Review 列表与详情验收。Promote 仍关闭、Knowledge RO，无正式知识写入。
 
 ## 主要安全与实施边界
 
@@ -33,10 +33,10 @@ type: project-status
 
 ## 唯一执行入口：NOW / BLOCKED / DEFERRED
 
-- **NOW — Core Review：** D071 同源 Hermes Session 只读认证代码已完成；待用户另行批准生产部署。部署后通过已登录 Dashboard 验收 Review 列表与详情；不执行 Promote。
+- **NOW — Core Review：** D071 同源 Hermes Session 只读认证代码已部署；待用户在已登录 Dashboard 验收 Review 列表与详情；不执行 Promote。
 - **NOW — V1 Capture：** 按冻结规格实现并验收 URL/Web、PDF、图片/截图、语音输入；保留原始证据、Review 与人工 Promote 流程。
 - **NOW — Dashboard：** 补齐当前未连接的真实业务模块，并完成正式 iPhone Safari 功能回归；不得把 DEMO/UNAVAILABLE 标成真实数据。
-- **BLOCKED — 当前生产 Review 验收：** 生产仍运行旧的 Core 解锁路径；D071 代码未部署。Codex 可控 Edge 标准配置此前因系统 DNS 指向公网 IP 而连接拒绝；生产验收应在批准部署后由可用的局域网 HTTPS Edge 会话完成，不改系统 DNS。
+- **BLOCKED — 当前生产 Review 验收：** D071 服务端与 bundle 已部署。Codex 可控 Edge 标准配置此前因系统 DNS 指向公网 IP 而连接拒绝；用户需在可用的局域网 HTTPS Edge 会话刷新 Dashboard 并验收 Review 列表与详情，不改系统 DNS。
 - **BLOCKED — 生产 Promote 写入：** Core 当前 healthy，但 `SB_PROMOTE_ENABLED=false` 且 Knowledge 挂载为 RO；Hermes 仍以 root 运行并持有正式 Knowledge RW。解除条件：移除 Hermes Knowledge RW、验证 Core 独占 Knowledge 写权与审批凭据、修复可信代理头/HTTPS 审批链并确认可执行回退；之后仍需用户批准生产切换。不得以恢复 Hermes Knowledge RW 作为常规回滚。
 - **DEFERRED — V1 前收口：** 在宣布 V1 DONE 前，复核并收口临时 unrestricted sudoers。
 - **DEFERRED — 访问与发布：** V1 基本可用后再完成 Agent/Dashboard 公网直接访问，复核 DSM 63012/63013 规则及 ACL；不要求 WireGuard，也不为 SecondBrain 专门改造 AdGuard。

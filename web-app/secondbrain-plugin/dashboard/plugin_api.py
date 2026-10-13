@@ -4,11 +4,14 @@ import re
 import stat
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter()
 ROOT = Path('/secondbrain')
 REVIEW_ROOT = ROOT / '10-Review'
+# Exact public origin from the production Dashboard HTTPS reverse-proxy rule.
+DASHBOARD_ORIGIN = 'https://zxwan520.com:63012'
 ALLOW = {
  '10-Review': ROOT/'10-Review', '20-Knowledge': ROOT/'20-Knowledge',
  '30-Projects': ROOT/'30-Projects', '40-Memory': ROOT/'40-Memory',
@@ -27,9 +30,25 @@ def require_dashboard_session(request):
     if getattr(session, 'expires_at', 0) <= datetime.now(timezone.utc).timestamp():
         raise HTTPException(status_code=401, detail='Dashboard session expired')
     origin = request.headers.get('origin', '').rstrip('/')
-    expected_origin = str(request.base_url).rstrip('/')
-    if not origin or origin != expected_origin:
-        raise HTTPException(status_code=403, detail='Same-origin request required')
+    if origin:
+        # Compare against the public TLS origin. request.base_url can reflect the
+        # internal HTTP hop when DSM terminates TLS before Hermes.
+        if origin != DASHBOARD_ORIGIN:
+            raise HTTPException(status_code=403, detail='Same-origin request required')
+    else:
+        # Fetch does not guarantee Origin on same-origin GET. Accept browser
+        # metadata that identifies the exact same-origin fetch; never use it as
+        # identity, which still comes only from Hermes' verified session above.
+        fetch_site = request.headers.get('sec-fetch-site', '').lower()
+        referer = request.headers.get('referer', '')
+        try:
+            parsed_referer = urlsplit(referer)
+            referer_origin = f'{parsed_referer.scheme}://{parsed_referer.netloc}'
+        except ValueError:
+            referer_origin = ''
+        if fetch_site == 'cross-site' or (
+                fetch_site != 'same-origin' and referer_origin != DASHBOARD_ORIGIN):
+            raise HTTPException(status_code=403, detail='Same-origin request required')
     return user_id
 
 

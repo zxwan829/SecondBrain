@@ -3,7 +3,7 @@
   "label": "SecondBrain",
   "description": "SecondBrain Web App Phase 1 minimum skeleton",
   "icon": "Brain",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "tab": {
     "path": "/secondbrain",
     "position": "end"

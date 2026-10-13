@@ -44,7 +44,7 @@ type: environment-baseline
 
 - 正式插件 `secondbrain`：`/volume1/docker/secondbrain/hermes/data/plugins/secondbrain/dashboard/`，路由 `/secondbrain`；测试插件 `secondbrain-fe-test` 使用独立目录、身份和回滚资产。Hermes 原生 Chat `/chat`。生产 Dashboard 可通过 `http://192.168.3.27:9119` 访问，另有 DSM LAN-only HTTPS `https://zxwan520.com:63012` 入口。
 - Home API `GET /api/plugins/secondbrain/home`；认证插件 API 在 Hermes Dashboard 会话下运行。Private 与 00-Inbox 由正式 API 拒绝。业务写入仍受受控流程约束。
-- 正式 manifest 已指向只读 Review 入口 index-20261012-review.js（SHA-256 22bb5bfad7b0394bbdf852203081901d63fb88e3b945a2e9cbccd84202bb85ed）；manifest SHA-256 7b6bbd306f416d66e18d2ea87cbec2b224149ea0c6f46c886a957eeae97c5349。FE-4 主包与 CSS 保持原样；回退 manifest 为 manifest.json.pre-review-20261012，旧版本化 JS 保留。
+- 正式 manifest v0.2.2 指向只读 Review 入口 index-20261013-review.js（SHA-256 `deb6839c0e5343676e3999f5df2b6d100b201233fd047af2153fa9c77cc1a962`）；manifest SHA-256 `655300ebd2f3f664f8b611e6bfec5f0abbf98bd24e92d26c899fece2e7b604f4`；插件 API SHA-256 `e648afa1a53a2b6c0fd601344bdddfee1e3ade0b1ed97d614ca0692561ec73d3`。FE-4 主包与 CSS 保持原样；D071 回滚点见 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/d071-20261013-01/`，FE-4 原回滚 manifest 与旧版本化 JS 也保留。
 - 正式回滚目录 `/volume1/docker/secondbrain/hermes/data/secondbrain-fe4-rollback/fe4-20261011-155631/`，包含 `rollback.sh` 和被替换资源快照。部署前应重新确认回滚文件存在和目标版本。
 
 ## DSM HTTPS / CORE-4 入口与隔离基线
