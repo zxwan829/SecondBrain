@@ -1,7 +1,7 @@
 ---
 created: 2026-09-30
-updated: 2026-10-12
-source: NAS project SoT
+updated: 2026-10-13
+source: GitHub SecondBrain Monorepo
 status: current
 type: project-status
 ---
@@ -10,6 +10,8 @@ type: project-status
 本文件是当前状态快照；项目历史见 [Progress-Log.md](Progress-Log.md)，架构见 [Architecture.md](Architecture.md)，环境事实见 [Environment-Baseline.md](Environment-Baseline.md)。业务范围以专项 Business Specification 为准，决策按 [Decision-Log.md](Decision-Log.md) 编号/主题检索。
 
 ## 当前结论
+
+- **开发权威源：** SecondBrain GitHub 私有 Monorepo 管理代码与正式基线文档；iMac、MBA 独立开发并通过 Git 协作。NAS 负责 Docker 与业务数据，Obsidian 库负责笔记/知识及可阅读资料。此项职责变更不改变下述已核验的生产运行事实。
 
 - SecondBrain V1：**NOT DONE**。正式 Hermes Dashboard `/secondbrain` 已部署；前端与部分真实只读 API 已运行，模块完整性、Universal Capture V1 附件链路及安全收口仍未完成。
 - Hermes：生产 v0.21.5 / build 749220ef，镜像按不可变 digest 固定。运行事实与部署回退入口见 Environment-Baseline。
@@ -22,8 +24,8 @@ type: project-status
 - Private 保持隔离；正式 Knowledge 必须由用户确认后 Promote，普通 Agent 不得直接写入。
 - **生产差距仍存在：** Hermes 仍以 root 运行并持有正式 Knowledge RW；Core Promote 禁用且 Knowledge RO。DSM 63012/63013 为 LAN-only HTTPS 入口；Core 只信任已由访问日志核实的 DSM peer 172.18.0.1。未登录列表/详情返回 401，非法 Origin 返回 403。正式写入切换仍 BLOCKED；不得把 Hermes Knowledge RW 作为常规回滚。
 - `50-Journal` 无生产直接写入挂载。已决定的 Journal 新增/追加规则是目标能力，当前 **NOT IMPLEMENTED**；不得将其写成已上线。
-- 施工期 unrestricted sudoers 安全债为 OPEN；NAS 传输及正式发布流程仍需按现有记录维护。
-- 治理文档发布方向为 NAS SSH 读取 → 当前 Mac 脚本 → Google Drive 桌面客户端；本地脚本成功不代表云端同步完成。当前实际脚本路径与配置状态见 Environment-Baseline。
+- 施工期 unrestricted sudoers 安全债为 OPEN；NAS 生产服务变更及正式部署仍需按现有安全流程维护。
+- 旧治理文档发布/同步脚本属于迁移前流程，不再作为正式文档发布渠道；当前正式版本以 GitHub Monorepo 历史为准。NAS 和 Google Drive 中的旧副本不应覆盖仓库。
 
 ## 唯一执行入口：NOW / BLOCKED / DEFERRED
 
@@ -60,7 +62,7 @@ type: project-status
 
 ## 按需读取
 
-- 常规任务：Codex 工作区的 `AGENTS.md` 发现入口与本文件；NAS 项目规则正文为 `Agent-Rules.md`。
+- 常规任务：Git 工作区根目录的 `AGENTS.md` 发现入口与本文件；本仓库的 `Agent-Rules.md` 是项目执行规则。
 - 架构变更：Architecture.md；路径、容器、版本或回退：Environment-Baseline.md。
 - 业务行为：对应 Business Specification；历史问题/测试证据：Progress-Log.md；具体决定：Decision-Log.md 中按编号或主题检索。
 - 不全文加载历史日志、归档快照或其他项目内容；Private 不属于本项目审计范围。

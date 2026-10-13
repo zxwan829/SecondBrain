@@ -1,18 +1,18 @@
 ---
 created: 2026-09-28
-updated: 2026-10-12
+updated: 2026-10-13
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
 
-仅记录已核验且仍有运维价值的环境事实。生产配置变更、容器重建或版本变化后更新；历史阶段过程与测试叙述放在 Progress-Log。不可从此处读取到的秘密不得记录。
+本文件记录已核验且仍有运维价值的生产环境事实，不定义代码或正式文档的权威源。代码与正式基线文档由 SecondBrain GitHub Monorepo 管理；iMac、MBA 各自开发。NAS 负责 Docker、业务数据与运行配置；Obsidian 库负责笔记、知识及可阅读资料。生产配置变更、容器重建或版本变化后更新；历史阶段过程与测试叙述放在 Progress-Log。不可从此处读取到的秘密不得记录。文中路径、内网地址、服务拓扑、Drive 标识和版本信息属于内部运维资料；推送私有 GitHub 前应确认仓库访问成员范围合适，禁止加入真实凭据或环境文件。
 
 ## NAS / 数据路径
 
 - Synology DS920+, DSM 7.4.1 Build 90080；NAS LAN `192.168.3.27`，iStoreOS `192.168.3.2`。家庭网关、PBR、WireGuard、DNS 是稳定生产环境，不属 SecondBrain 随手修改范围。
-- 正式项目：`/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/`。数据区：`/volume1/SecBR/SecondBrain/`、`/volume1/SecBR/KnowledgeAssets/`、Private `/volume1/SecBR/Private/`。
-- 当前 Mac 工作副本：`/Users/joe/SecondBrain/30-Projects/SecondBrain V1/`，由 Synology Drive 与 NAS 双向同步；其他 Mac（iMac、MBA 或新增设备）须各自配置 Synology Drive 与 NAS SSH 访问。Google Drive 桌面客户端当前挂载为 `~/Library/CloudStorage/GoogleDrive-<账户>/我的云端硬盘/`；正式目标为 `Project Doc/SecondBrain V1 Live/`，Drive 文件夹 ID `1LeHoAmFrPSyfBBZfufDCvH49TKRnoNp6`。
+- NAS 运行项目和数据区：`/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/`、`/volume1/SecBR/SecondBrain/`、`/volume1/SecBR/KnowledgeAssets/`、Private `/volume1/SecBR/Private/`。此处是历史环境快照，不代表 NAS 是代码或正式文档源。
+- 迁移前 Mac `/Users/joe/SecondBrain/`、Synology Drive 与 Google Drive 的路径及发布目标记录仅供理解旧流程；不再要求开发机依赖 Synology Drive 或从 NAS 读取项目规则。
 
 ## Hermes Runtime
 
@@ -60,8 +60,8 @@ type: environment-baseline
 
 - NAS 安全写入：`/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/tools/safe-governance-write.sh`；按 NAS 当前 SHA-256 校验版本后原子更新。每次提交先创建并验证 9 份活动 Markdown 的完整快照，固定目录为 `/volume1/SecBR/.governance-recovery/SecondBrain V1/`，仅滚动清理超过数量限制的受管且验证有效快照，最多保留 10 份。
 - 旧恢复点整理结果与清理范围见 `Progress-Log.md`；新快照恢复目录位于 NAS 独立路径，不参与项目同步。
-- Synology Drive 当前任务继续双向同步本地 `/Users/joe/SecondBrain/` 与 NAS `/SecondBrain/`；新快照目录位于该同步根之外。此任务未修改。
-- 当前唯一核实的发布脚本：`/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/tools/sync-chatgpt-live.sh`（Mac 镜像同路径）；未发现 `/volume1/SecBR/SecondBrain/30-Projects/_Shared/tools/publish-docs.sh` 或独立配置文件。SecondBrain 配置内嵌 `load_project`：NAS 源 `/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/`，目标子目录 `SecondBrain V1 Live/`，白名单为六份治理 Markdown 与两份 Business Specification。命令：`tools/sync-chatgpt-live.sh --project secondbrain-v1 --dry-run` 检查，去掉 `--dry-run` 执行本地发布；SSH 使用当前 Mac `~/.ssh/config` 的 `secondbrain-nas` 别名（可用 `SECONDBRAIN_NAS_SSH_TARGET` 覆盖）。脚本自动识别唯一 Google Drive Desktop `CloudStorage` 挂载；必须预先存在目标文件夹。只增量复制白名单文件、不删除云端内容、不用 rclone。桌面客户端将本机复制异步上传；脚本成功只证明本地发布完成，不证明云端已同步。旧项目脚本路径保留但发布逻辑已更新；共享目录脚本尚未实现。
+- 迁移前核验时，Synology Drive 曾双向同步本地 `/Users/joe/SecondBrain/` 与 NAS `/SecondBrain/`；该历史配置不是新 GitHub 开发工作流的一部分。迁移前快照目录在当时位于同步根之外。
+- 迁移前的发布脚本及其配置曾通过 NAS SSH 读取项目 Markdown 并复制到 Google Drive；该流程现已废弃，不作为正式文档同步或发布机制。记录此事实仅用于理解历史自动化；不得将旧脚本误认为当前权威源链路。迁移前曾记录旧项目脚本路径及共享脚本状态，具体现状需在部署任务中另行核验。
 - NAS 专用 SSH key 已配置；NAS SCP/SFTP subsystem 曾不可用，普通 SSH 可用于有界核验/传输。连接失败不改 NAS SSH/权限来绕过。
 
 ## 重验触发条件

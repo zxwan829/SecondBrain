@@ -8,7 +8,8 @@
     "build": "vite build",
     "package:test-plugin": "npm run build && node scripts/package-test-plugin.mjs",
     "validate:manifest": "node scripts/validate-manifest.mjs",
-    "verify:bundle": "node scripts/verify-bundle.mjs"
+    "verify:bundle": "node scripts/verify-bundle.mjs",
+    "verify:fe25": "node scripts/verify-fe25.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

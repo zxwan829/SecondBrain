@@ -7,5 +7,5 @@ declare global {
 
 const sdk = window.__HERMES_PLUGIN_SDK__;
 if (sdk && window.__HERMES_PLUGINS__) {
-  window.__HERMES_PLUGINS__.register('secondbrain-fe-test', App);
+  window.__HERMES_PLUGINS__.register(__SB_PLUGIN_ID__, App);
 }

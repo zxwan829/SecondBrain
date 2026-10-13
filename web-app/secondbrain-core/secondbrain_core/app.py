@@ -21,6 +21,11 @@ def create_app():
         raise RuntimeError("Core requires a nonempty exact Host allowlist")
     secret_file = os.environ["SB_PROMOTE_UNLOCK_SECRET_FILE"]
     ttl = int(os.environ.get("SB_PROMOTE_SESSION_TTL", "3600"))
+    # Fail closed: a deployment must explicitly enable final Knowledge writes.
+    promote_enabled_value = os.environ.get("SB_PROMOTE_ENABLED", "false").strip().lower()
+    if promote_enabled_value not in {"true", "false"}:
+        raise RuntimeError("SB_PROMOTE_ENABLED must be true or false")
+    promote_enabled = promote_enabled_value == "true"
 
     state_info = os.stat(approval_root, follow_symlinks=False)
     if (not os.path.isdir(approval_root) or os.path.islink(approval_root)
@@ -41,7 +46,8 @@ def create_app():
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
                        allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
-    app.include_router(create_core_router(service, review_root, auth), prefix="/api/promote")
+    app.include_router(create_core_router(service, review_root, auth,
+                                          promote_enabled=promote_enabled), prefix="/api/promote")
 
     @app.get("/health")
     def health():

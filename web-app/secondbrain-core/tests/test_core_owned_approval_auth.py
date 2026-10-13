@@ -56,6 +56,7 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         response = self.client.post("/api/promote/review/approve", json=body, headers=self.headers)
         self.assertEqual(response.status_code, 401)
         self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers).status_code, 401)
+        self.assertEqual(self.client.get("/api/promote/review/items/candidate.md", headers=self.headers).status_code, 401)
         self.assertFalse((self.knowledge / "approved.md").exists())
         self.assertEqual(list((self.state / "approvals").iterdir()), [])
 
@@ -90,6 +91,13 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         with patch.dict(os.environ, env):
             app = create_app()
         client = TestClient(app, base_url="https://testserver")
+        unlocked = client.post("/api/promote/auth/unlock",
+                               json={"passphrase": self.unlock_secret.decode("ascii")},
+                               headers={"Origin": "https://testserver"})
+        self.assertEqual(unlocked.status_code, 200)
+        self.assertEqual(client.get("/api/promote/status",
+                                   headers={"Origin": "https://testserver"}).json(),
+                         {"status": "ok", "promote_enabled": False})
         allowed = client.options("/api/promote/auth/unlock", headers={
             "Origin": "https://testserver",
             "Access-Control-Request-Method": "POST",
@@ -124,6 +132,18 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         audit = (self.state / "audit.jsonl").read_text()
         self.assertIn('"approver_subject":"owner"', audit)
 
+    def test_review_list_and_detail_are_owner_only_and_return_real_content_and_state(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        listing = self.client.get("/api/promote/review/items", headers=self.headers)
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["items"][0]["status"], "pending")
+        detail = self.client.get("/api/promote/review/items/candidate.md", headers=self.headers)
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["content"], self.content.decode())
+        self.assertEqual(detail.json()["review_sha256"], self.body["review_sha256"])
+        self.assertEqual(detail.json()["status"], "pending")
+        self.assertEqual(self.client.get("/api/promote/review/items/missing.md", headers=self.headers).status_code, 404)
+
     def test_review_change_invalidates_approved_digest(self):
         self.assertEqual(self.unlock().status_code, 200)
         changed = dict(self.body, review_sha256="0" * 64)
@@ -137,6 +157,23 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(locked.status_code, 200)
         response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
         self.assertEqual(response.status_code, 401)
+
+    def test_promote_disabled_blocks_approval_without_creating_records(self):
+        app = FastAPI()
+        app.include_router(create_core_router(self.service, self.review, self.auth,
+                                              promote_enabled=False), prefix="/api/promote")
+        client = TestClient(app, base_url="https://testserver")
+        self.assertEqual(client.post("/api/promote/auth/unlock",
+                                     json={"passphrase": self.unlock_secret.decode("ascii")},
+                                     headers=self.headers).status_code, 200)
+        self.assertEqual(client.get("/api/promote/status", headers=self.headers).json(),
+                         {"status": "ok", "promote_enabled": False})
+        response = client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 423)
+        self.assertFalse((self.knowledge / "approved.md").exists())
+        self.assertEqual(list((self.state / "approvals").iterdir()), [])
+        self.assertFalse((self.state / "audit.jsonl").exists())
+        client.close()
 
 
 if __name__ == "__main__":

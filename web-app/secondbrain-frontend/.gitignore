@@ -4,3 +4,6 @@ dist-hermes-test/
 .env*
 *.pem
 *.key
+
+# Safe example configuration may be committed; real local env files stay ignored.
+!.env.example

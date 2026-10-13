@@ -2,11 +2,29 @@
 import hashlib
 import os
 from pathlib import Path
+import re
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from .approval import ApprovalRequestError, DashboardAuthorizationError, _read_review
 from .core_auth import CorePromoteAuth
+
+
+def _review_status(content):
+    """Expose the declared Review state without interpreting arbitrary YAML."""
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return "unknown"
+    if not lines or lines[0].strip() != "---":
+        return "unknown"
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        match = re.match(r"^(review_status|status):\s*['\"]?([^'\"]+)['\"]?\s*$", line)
+        if match:
+            return match.group(2).strip()
+    return "unknown"
 
 
 def create_router(service, review_root):
@@ -31,7 +49,8 @@ def create_router(service, review_root):
                               if line.startswith("# ")), Path(name).stem)
                 items.append({"review_path": relative,
                               "review_sha256": hashlib.sha256(content).hexdigest(),
-                              "target_filename": name, "title": title})
+                              "target_filename": name, "title": title,
+                              "status": _review_status(content)})
         return {"status": "ok", "items": items}
 
     @router.post("/review/approve")
@@ -49,7 +68,7 @@ def create_router(service, review_root):
     return router
 
 
-def create_core_router(service, review_root, auth):
+def create_core_router(service, review_root, auth, *, promote_enabled=True):
     """Router for direct browser→Core approval; never trusts Hermes state/headers."""
     router = APIRouter()
     review_root = Path(review_root)
@@ -73,8 +92,24 @@ def create_core_router(service, review_root, auth):
                               if line.startswith("# ")), Path(name).stem)
                 items.append({"review_path": relative,
                               "review_sha256": hashlib.sha256(content).hexdigest(),
-                              "target_filename": name, "title": title})
+                              "target_filename": name, "title": title,
+                              "status": _review_status(content)})
         return {"status": "ok", "items": items}
+
+    @router.get("/review/items/{review_path:path}")
+    def get_review_item(request: Request, review_path: str):
+        auth.require_owner(request)
+        try:
+            content = _read_review(str(review_root), review_path)
+        except ApprovalRequestError as exc:
+            raise HTTPException(status_code=404, detail="Review item not found") from exc
+        decoded = content.decode("utf-8", errors="replace")
+        title = next((line[2:].strip() for line in decoded.splitlines() if line.startswith("# ")),
+                     Path(review_path).name)
+        return {"status": _review_status(content), "review_path": review_path,
+                "review_sha256": hashlib.sha256(content).hexdigest(),
+                "target_filename": Path(review_path).name, "title": title,
+                "content": decoded}
 
     @router.post("/auth/unlock")
     def unlock(request: Request, response: Response, body: dict):
@@ -88,9 +123,16 @@ def create_core_router(service, review_root, auth):
         auth.clear_session_cookie(response)
         return {"status": "locked"}
 
+    @router.get("/status")
+    def promote_status(request: Request):
+        auth.require_owner(request)
+        return {"status": "ok", "promote_enabled": promote_enabled}
+
     @router.post("/review/approve")
     def approve_review(request: Request, body: dict):
         approver = auth.require_owner(request)
+        if not promote_enabled:
+            raise HTTPException(status_code=423, detail="Promote is disabled pending production write approval")
         try:
             return service.approve_and_promote_as(approver, body, str(review_root))
         except ApprovalRequestError as exc:

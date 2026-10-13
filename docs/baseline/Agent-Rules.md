@@ -1,12 +1,12 @@
 ---
 created: 2026-09-28
-updated: 2026-10-12
+updated: 2026-10-13
 status: current
 type: agent-rules
 ---
 # Agent Rules
 
-适用于 ChatGPT 的规划及 Codex、Hermes、OpenClaw 等获准工具的执行。NAS 项目目录是正式 SoT；Mac 是 Synology Drive 工作镜像，Google Drive 是 Live Mirror。
+适用于 ChatGPT 的规划及 Codex、Hermes、OpenClaw 等获准工具的执行。SecondBrain 私有 GitHub Monorepo 是代码与正式项目基线文档的唯一权威源；iMac 与 MBA 各自使用本地 Git clone，通过 Commit / Push / Pull 共享变更。NAS 负责 Docker 服务与业务数据，Obsidian SecondBrain 库保存笔记、知识和适合阅读的项目资料，不作为开发代码或正式基线文档源头。
 
 **最高项目管理优先级：敏捷优先、功能优先、成本优先。** SecondBrain V1 是个人使用的中小型项目，以尽快交付完整、稳定、可用的业务功能为目标；控制基础风险，接受合理工程取舍，小步持续交付。成本包括时间、Codex Token/模型额度、工具调用、计算资源和维护复杂度。不得为未来商业化提前建设当前不需要的系统。
 
@@ -16,8 +16,8 @@ type: agent-rules
 2. `Decision-Log.md` 与 `Progress-Log.md` 默认按决策号、主题或日期检索，不全文加载。历史留在 Progress-Log；其他文档仅引用。
 3. **FAST-EXEC：** 锁定本轮业务目标、影响范围、验收和禁项；已定架构不重议，非必要改进记待办。批量完成同类工作，开发期只跑针对性检查；输入未变的成功结果可复用，完成后集中做一次必要集成验证，不重复无关全量回归。
 4. **按风险投入工程步骤：** 低风险小改直接实现并做最小检查，不另建测试环境、专项备份或 Bundle；中风险模块复用现有环境，相关测试加一次集成验证；真实数据、权限、认证、公网暴露等高风险操作，保留必要授权、针对性保护、回退和部署后核验，不省略 Promote 人工审批。
-5. **控制执行成本：** Token、额度和时间均为项目成本；确定性小任务优先低成本工具，复杂架构由 ChatGPT 规划，Codex 聚焦实施与核验。不重复研究已确认事项、读取大文件、测试或同步。非关键问题约 10–15 分钟无进展时重新评估投入，可记录后继续不依赖它的主线；这是提醒阈值，不是硬性超时。有限定位与重试，不扩大权限绕过失败。
-6. **集中收尾：** 实现与必要验证完成后集中更新必要文档。治理文档经 NAS `safe-governance-write.sh` 写入并通过自身校验，即视为本轮文档交付完成；不等待或轮询 Synology Drive。Google Drive 文档按需单向发布：发布脚本必须通过现有 SSH 从 NAS 读取正式源文件，不得从可能尚未同步的 Mac 工作副本发布；只处理项目配置的 Markdown 白名单，对 Google Drive 桌面客户端现存目标做增量更新，不主动删除云端文件。桌面客户端上传为异步；本地复制/脚本成功不等于云端已确认，未取得云端证据应标记为待同步。日常不做 NAS、Mac、Drive 三端逐文件哈希对账；仅在同步故障、冲突、恢复、迁移或重要异常时针对性核验。简洁报告实际修改、测试、发布/部署、同步状态、阻塞和下一步，并区分已实现、已测试、已部署及用户验收。
+5. **控制执行成本：** Token、额度和时间均为项目成本；确定性小任务优先低成本工具，复杂架构由 ChatGPT 规划，Codex 聚焦实施与核验。不重复研究已确认事项、读取大文件或测试。非关键问题约 10–15 分钟无进展时重新评估投入，可记录后继续不依赖它的主线；这是提醒阈值，不是硬性超时。有限定位与重试，不扩大权限绕过失败。
+6. **集中收尾：** 实现与必要验证完成后集中更新必要文档，并与代码一同提交到本地 Git 仓库。通过 GitHub 分享仓库变更；不得从 NAS / Synology Drive 或旧镜像回写仓库。NAS 部署是独立操作，只有用户明确授权后才能进行。简洁报告实际修改、测试、提交、部署、阻塞和下一步，并区分已实现、已测试、已部署及用户验收。
 
 ### FAST-PATCH（小型修改）
 
@@ -25,9 +25,11 @@ type: agent-rules
 
 ## Source of Truth 与环境
 
-- 正式项目：`/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/`；数据 SoT：`/volume1/SecBR/SecondBrain/` 和 `/volume1/SecBR/KnowledgeAssets/`。Mac 工作副本及 Google Drive 都是镜像，不可反向覆盖 NAS SoT。
-- 历史资料只用于追溯；冲突按 `00-CURRENT.md`、相关业务规格及后续决策处理，不凭旧聊天或备份恢复旧状态。
-- 重要命令必须明确执行节点：Mac、NAS SSH、iStoreOS 或 Container。网络、权限、容器/服务变更须在授权范围内；不因失败擅自 `sudo`、`chmod`、`chown`、修改 ACL、网络或 sudoers。
+- **代码和正式项目文档：** 本 GitHub 私有 Monorepo。iMac、MBA 是平等且可离线工作的开发克隆；以 Git 提交历史共享变更。NAS / Synology Drive 上的旧代码副本不再是权威源，也不得反向覆盖仓库。
+- **运行与业务数据：** NAS 负责 Docker 服务、SecondBrain 业务数据及运行配置。部署所需环境值和真实凭据留在受控运行环境，不提交到仓库。
+- **Obsidian：** NAS 上的 SecondBrain 库保存笔记、知识内容和适合阅读的项目资料，不存放开发源代码或作为项目基线文档发布机制。
+- 冲突按仓库中 `00-CURRENT.md`、相关业务规格及后续 Git 决策处理，不凭旧聊天或备份恢复当前状态。
+- 重要命令必须明确执行节点：开发机、NAS SSH、iStoreOS 或 Container。网络、权限、容器/服务变更须在授权范围内；不因失败擅自 `sudo`、`chmod`、`chown`、修改 ACL、网络或 sudoers。
 
 ## 数据与安全底线
 
@@ -48,10 +50,10 @@ type: agent-rules
 
 ## 开发、文档与部署
 
-- 中大型开发下发时确定同步文档范围；记录决策、阶段结果、测试、阻塞和下一步。小修免强制文档；同步失败如实报告。详见 Decision-Log 中 D065。
-- 代码、Skill、部署脚本、模板和配置样例应进入项目资产；避免无理由写死个人环境。Hermes 是 Runtime/适配层，不替代 SecondBrain 业务 SoT。
-- 项目文档以 NAS 为 Source of Truth，写入必须使用 `tools/safe-governance-write.sh`，由写入器校验候选、当前版本并保留九文档恢复点。写入成功即完成本轮文档交付；Mac 由 Synology Drive 现有机制同步，Google Drive 按上述 Live Mirror 规则处理。禁止直接截断写入、以空文件代表删除或把损坏源传播到镜像。
-- 部署按项目现行快照、哈希、验收与回滚要求执行；Build、Deploy、运行验证和用户验收分开报告。不得为恢复功能把 Hermes Knowledge RW 当作常规回滚。
+- 中大型开发下发时确定需要更新的文档范围；记录决策、阶段结果、测试、阻塞和下一步。小修免强制文档；资料未能更新时如实报告。详见 Decision-Log 中 D065。
+- 代码、Skill、部署脚本、模板和无秘密的配置样例应进入项目资产；避免无理由写死个人环境。真实凭据、密钥、令牌、环境文件、运行数据、构建产物和本地备份不得提交。Hermes 是 Runtime/适配层，不替代 SecondBrain 业务 SoT。
+- 正式项目文档与代码在同一 Monorepo 中维护；文档更新通过 Git 版本管理并在必要时与代码一同提交。Google Drive、Synology Drive 或 NAS 不负责开发文档同步，也不应被用于覆盖 GitHub 权威版本。旧的 NAS 安全写入器和 Live Mirror 流程只作为历史运维背景，不是当前开发流程。
+- 部署按项目现行快照、哈希、验收与回滚要求执行；Build、Deploy、运行验证和用户验收分开报告。任何正式 NAS 部署均须先取得用户授权。不得为恢复功能把 Hermes Knowledge RW 当作常规回滚。
 
 ## Hermes Upstream First
 

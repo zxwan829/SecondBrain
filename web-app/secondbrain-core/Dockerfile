@@ -4,6 +4,9 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY secondbrain_core ./secondbrain_core
 RUN pip install --no-cache-dir . uvicorn
+# NAS source directories may be owner-only; make the copied Python package
+# readable/traversable by the non-root runtime without changing NAS modes.
+RUN chmod -R a+rX /app/secondbrain_core
 USER 10001:10001
 EXPOSE 8000
 CMD ["python", "-m", "secondbrain_core"]

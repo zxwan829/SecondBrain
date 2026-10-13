@@ -1,3 +1,5 @@
-# SecondBrain workspace agent entry
+# SecondBrain project guidance
 
-Before changing SecondBrain V1, read the canonical project rules in `/Users/joe/SecondBrain/30-Projects/SecondBrain V1/Agent-Rules.md` and the current state in `00-CURRENT.md`. The NAS project directory `/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1` is the authority; Mac and Drive copies are sync mirrors. This file is only an automatic discovery pointer, not a second rules source.
+This repository is the canonical source for SecondBrain application code, development tooling, and approved project baseline documents. Read `docs/baseline/00-CURRENT.md` for current project status and consult `Agent-Rules.md` and the relevant baseline or business specification for task-specific rules. Do not use NAS or Synology Drive copies as code or documentation authorities.
+
+Develop on a local Git clone; iMac and MBA are independent development machines that share reviewed changes through the private GitHub repository using normal Git commit, push, and pull. Prefer local tests and do not require GitHub Actions or PR review. NAS hosts Docker services and business data; Obsidian stores notes, knowledge, and readable project references, not development source. Any formal NAS deployment requires explicit user authorization.

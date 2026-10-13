@@ -1,0 +1,16 @@
+{
+  "name": "secondbrain",
+  "label": "SecondBrain",
+  "description": "SecondBrain Web App Phase 1 minimum skeleton",
+  "icon": "Brain",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/secondbrain",
+    "position": "end"
+  },
+  "entry": "index-20261010-v3.js",
+  "css": "style-20261010-v3.css",
+  "api": "plugin_api.py",
+  "slots": [],
+  "integrity": ""
+}

@@ -1,0 +1,22 @@
+:root{--bg:#0b0e14;--surface:#151a24;--line:#293245;--text:#edf2fb;--muted:#9ba8bd;--accent:#78a9ff}*{box-sizing:border-box}.sb-shell{display:flex;min-height:78vh;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif}.sb-nav{width:210px;flex:0 0 210px;padding:20px 14px;border-right:1px solid var(--line);background:#10141d}.sb-nav h1{font-size:20px;margin:0 0 18px}.sb-nav button{display:block;width:100%;margin:5px 0;padding:10px 12px;text-align:left;border:0;background:transparent;color:var(--muted);border-radius:8px}.sb-nav button.active,.sb-nav button:hover{background:#23304a;color:#fff}.sb-main{flex:1;min-width:0;padding:24px}.sb-top{display:flex;align-items:center;gap:12px;color:var(--muted);margin-bottom:20px}.sb-top strong{display:block;color:var(--text);font-size:18px}.sb-top small{display:block}.hamb{display:none;background:var(--surface);border:1px solid var(--line);color:var(--text);padding:8px;border-radius:8px}.sb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;max-width:1100px}.sb-hero{grid-column:1/-1;padding:24px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,#182238,#121720)}.sb-hero h2{margin:0 0 8px;font-size:28px}.sb-hero p,.sb-card p{color:var(--muted)}.proof{color:#8de2b0}.sb-card{padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--surface);min-width:0}.sb-card-head{display:flex;justify-content:space-between;gap:8px;align-items:center}.sb-card h3{margin:0;font-size:15px}.sb-status{font-size:11px;color:var(--accent);text-transform:uppercase}.sb-actions{grid-column:1/-1;display:flex;gap:10px;flex-wrap:wrap}.sb-actions button{padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:#1b2434;color:var(--text)}.sb-actions button:disabled{opacity:.5}@media(max-width:900px){.sb-nav{width:170px;flex-basis:170px}.sb-grid{grid-template-columns:1fr}}@media(max-width:600px){.sb-shell{display:block}.sb-nav{display:none;position:absolute;z-index:2;width:220px;height:100%;box-shadow:10px 0 30px #000}.sb-nav.open{display:block}.sb-main{padding:14px}.hamb{display:inline-block}.sb-grid{display:block}.sb-card,.sb-hero,.sb-actions{margin-bottom:12px}.sb-actions{display:grid}.sb-actions button{width:100%}}
+body.secondbrain-immersive #app-sidebar{display:none!important}
+body.secondbrain-immersive .app-shell{grid-template-columns:1fr!important}
+body.secondbrain-immersive main{margin-left:0!important}
+
+
+/* Phase 2B-0.1: route-scoped full-bleed host integration */
+body.secondbrain-immersive{margin:0!important;background:var(--bg)!important}
+body.secondbrain-immersive #root{width:100%!important;min-height:100vh!important;background:var(--bg)!important}
+body.secondbrain-immersive #root header[role="banner"]{display:none!important}
+body.secondbrain-immersive #root main>div.relative{padding:0!important}
+body.secondbrain-immersive #root main>div.relative>div.w-full{padding-bottom:0!important}
+body.secondbrain-immersive .sb-shell{width:100%!important;min-height:100vh!important;margin:0!important;max-width:none!important;border-radius:0!important}
+body.secondbrain-immersive .sb-main{padding:28px clamp(18px,3vw,48px)!important}
+@media(max-width:600px){
+  body.secondbrain-immersive .sb-main{padding:14px!important}
+}
+
+
+
+/* Phase 2B-0.5: lightweight bilingual UI */
+.sb-nav-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:18px}.sb-nav-head h1{margin:0}.sb-locale{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:7px;background:var(--surface);white-space:nowrap}.sb-locale button{border:0;background:transparent;color:var(--muted);font-size:11px;padding:4px 6px;border-radius:5px;cursor:pointer}.sb-locale button.active{background:#2b3b59;color:#fff}.sb-top{position:relative}.sb-locale-desktop{margin-left:auto;display:inline-flex}.sb-top>.sb-locale-desktop{margin-left:auto}@media(max-width:600px){.sb-locale-desktop{display:none}.sb-nav-head .sb-locale{display:inline-flex}.sb-nav-head{align-items:center}.sb-nav{overflow-y:auto}}

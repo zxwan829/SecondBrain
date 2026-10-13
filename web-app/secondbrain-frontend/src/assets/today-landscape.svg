@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1720" height="400" viewBox="0 0 1720 400" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="twilightSky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#07101f"/>
+      <stop offset=".42" stop-color="#101a35"/>
+      <stop offset=".72" stop-color="#30243f"/>
+      <stop offset="1" stop-color="#17243b"/>
+    </linearGradient>
+    <radialGradient id="horizonGlow" cx="50%" cy="65%" r="48%">
+      <stop offset="0" stop-color="#e69ab8" stop-opacity=".58"/>
+      <stop offset=".34" stop-color="#a974aa" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#8d79bd" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="lakeSurface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#17283f"/>
+      <stop offset=".38" stop-color="#102137"/>
+      <stop offset="1" stop-color="#081321"/>
+    </linearGradient>
+    <linearGradient id="lakeReflection" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#df91b2" stop-opacity=".5"/>
+      <stop offset=".42" stop-color="#9b6e9a" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#315175" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1720" height="400" fill="url(#twilightSky)"/>
+  <rect width="1720" height="296" fill="url(#horizonGlow)"/>
+  <path d="M0 263 112 220 206 242 334 176 450 235 560 205 692 253 805 190 927 236 1050 170 1170 234 1282 205 1400 244 1528 184 1640 225 1720 198V300H0Z" fill="#18253e" opacity=".78"/>
+  <path d="M0 278 135 234 260 270 388 206 520 269 646 222 782 276 914 211 1037 269 1168 214 1290 274 1426 222 1555 270 1664 224 1720 247V306H0Z" fill="#111d33"/>
+  <path d="M0 291 166 257 291 285 424 244 565 289 696 250 835 292 964 248 1102 286 1236 244 1375 290 1510 250 1632 284 1720 260V316H0Z" fill="#0b1729"/>
+  <path d="M0 292H1720V400H0Z" fill="url(#lakeSurface)"/>
+  <path d="M675 294 Q860 285 1045 294 L1220 400H500Z" fill="url(#lakeReflection)" opacity=".82"/>
+  <path d="M735 305 Q860 300 985 305" fill="none" stroke="#efabc3" stroke-opacity=".32" stroke-width="2"/>
+  <path d="M690 316 Q860 311 1030 316" fill="none" stroke="#d594b5" stroke-opacity=".24" stroke-width="1.5"/>
+  <path d="M620 331 Q860 325 1100 331" fill="none" stroke="#a67ea8" stroke-opacity=".2" stroke-width="1.5"/>
+  <path d="M550 350 Q860 344 1170 350" fill="none" stroke="#6f83a4" stroke-opacity=".2" stroke-width="1.4"/>
+  <path d="M430 372 Q860 366 1290 372" fill="none" stroke="#56708f" stroke-opacity=".16" stroke-width="1.2"/>
+</svg>

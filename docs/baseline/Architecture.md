@@ -1,5 +1,5 @@
 ---
-updated: 2026-10-12
+updated: 2026-10-13
 status: current
 type: architecture
 ---
@@ -11,6 +11,13 @@ type: architecture
 - NAS 正式数据位于 `/volume1/SecBR/SecondBrain` 与 `/volume1/SecBR/KnowledgeAssets`。Private 单独隔离，默认不对 Agent/API 开放。
 - 生产与测试插件身份、资源、入口和快照隔离；FE-4 已部署不等于所有业务模块已接通。
 - 个人自用、业务优先、风险适度：复用 Hermes 登录、会话与插件能力；保留人工 Promote、Private 隔离、重要资料保护和审计恢复，不默认引入 SaaS 级复杂控制。详细执行规则见 Agent-Rules。
+
+## 开发仓库与职责边界
+
+- GitHub 私有 Monorepo 是 SecondBrain 代码与正式项目基线文档的唯一权威源；iMac、MBA 各自 clone 并独立开发，通过 Git Commit / Push / Pull 协作。开发与本地测试不依赖 NAS 在线。
+- NAS 负责 Docker 服务、业务数据与运行配置。NAS 上的 Obsidian SecondBrain 库仅用于笔记、知识内容和适合阅读的项目资料，不保存开发代码，也不作为基线文档源。
+- 代码和文档的正式修改在 Git 仓库中完成。NAS 部署与生产数据操作分开执行，必须取得用户明确授权；部署状态和运行事实仍按需记录在 Environment-Baseline / CURRENT。
+- 原 NAS/Synology Drive/Google Drive 同步描述反映迁移前流程，只用于理解历史环境，不再定义当前开发、版本管理或正式文档发布机制。
 
 ## 当前运行架构（已部署）
 
@@ -24,7 +31,7 @@ Hermes Dashboard Shell → SecondBrain Dashboard Plugin → 认证 API/薄适配
 
 Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、Journal、Projects、Calendar。模块共享一个应用进程/部署单元并通过显式接口协作；不新增独立数据库、LLM、n8n、第二 Runtime 或独立管理后台。只有已实现模块建立代码，不创建空占位包。
 
-**CORE-0 隔离工程基础（已实现并测试，未部署）：** `web-app/secondbrain-core/secondbrain_core/modules/review_promote/` 收纳 Review Adapter、审批校验、幂等记录、Promote Worker 与 HTTP Router。Promote 在 Core 同进程完成，不使用跨容器审批队列。29 项隔离测试在此前阶段通过。源码、测试与 `CORE-0.bundle` 已放入 NAS 正式项目资产；Git bundle 可恢复该版本，NAS 主机没有 Git CLI。
+**CORE-0 隔离工程基础（已实现并测试，未部署）：** `web-app/secondbrain-core/secondbrain_core/modules/review_promote/` 收纳 Review Adapter、审批校验、幂等记录、Promote Worker 与 HTTP Router。Promote 在 Core 同进程完成，不使用跨容器审批队列。29 项隔离测试在此前阶段通过。当时源码、测试与 `CORE-0.bundle` 曾放入 NAS 项目资产；此为迁移前归档事实，不改变当前 GitHub 仓库的代码权威地位。
 
 **CORE-1/2 身份与审批边界（CORE-2 隔离实现，未部署）：** Hermes v0.21.5 Basic Auth 中间件验证 session 后写入进程内 `request.state.session`，`/api/auth/me` 返回该身份；但生产 Hermes 以 root 运行、Basic Auth 密码在容器环境中且普通 Agent/Shell 共用该进程边界，因此 Hermes Cookie 转发或 Core 回查都不能证明是本人审批。v0.21.7 RC 的 `/api/auth/me` 在 loopback 模式可返回 token 校验后的合成 `user_id=local`、`provider=loopback`，该身份绝不能提升为人工批准。
 
@@ -66,11 +73,9 @@ Web App 详细产品契约见 `SecondBrain-Web-App-V1-Business-Spec.md`。Home �
 
 V1 基本可用后，目标是通过现有域名/DDNS、路由器端口转发和 DSM HTTPS 直接访问 Agent 与 Dashboard；不要求先连接 WireGuard，也不为 SecondBrain 专门改造 AdGuard。公网接入按届时实际入口完成必要认证和访问验证，不作为当前普通业务开发的前置条件。
 
-## 项目文件同步与文档发布
+## 迁移前同步流程（历史说明）
 
-日常项目文件由 NAS 与 Synology Drive 双向同步到已配置的 iMac、MBA 及未来 Mac；这条双向工作副本链路不改变 NAS 正式源地位。治理文档另有单向发布路径：NAS 正式文件 → 当前 Mac 通过 SSH 读取的发布脚本 → Google Drive 桌面客户端 → `我的云端硬盘/Project Doc/<项目目录>/`。发布按需执行，不从 Mac 工作镜像反向覆盖 NAS。
-
-发布必须使用项目 Markdown 白名单、仅更新变化文件且不主动删除云端内容。Google Drive 桌面客户端上传异步；本机目标目录写入成功不能作为云端上传完成证据。当前实际脚本仍位于 SecondBrain 项目 `tools/sync-chatgpt-live.sh`，配置内嵌于 `load_project`；NAS `_Shared/tools/publish-docs.sh` 与独立多项目配置文件尚未找到，不能标记为已部署的共享实现。
+此前项目代码与治理文档通过 NAS、Synology Drive 及 Google Drive 镜像流转，且曾以 NAS 为源头。该流程已由 GitHub 私有 Monorepo 取代，不再作为当前代码或基线文档发布规则。旧同步脚本和 NAS 副本仅供历史追溯；不得把旧镜像反向覆盖 GitHub 版本。NAS 运行服务及业务数据的现行事实仍见 Environment-Baseline。
 
 ## 工程治理与历史
 
