@@ -21,7 +21,7 @@ type: project-status
 - Hermes：生产 v0.21.5 / build 749220ef，镜像按不可变 digest 固定。运行事实与部署回退入口见 Environment-Baseline。
 - Universal Capture：生产 Skill v0.1.3；已验收文本 Raw→Review，不自动 Promote。V1 MUST 还包括 URL/Web、PDF、Image/Screenshot、Audio/Voice，均未实现/验收。见 [Universal-Capture-Business-Spec.md](Universal-Capture-Business-Spec.md)。
 - Dashboard FE-4：正式版已部署，Mac/PC 与 iPhone 视觉已接受；整体 ACCEPTED WITH KNOWN ISSUES。业务 API 部分真实、部分未连接/不可用；正式 iPhone Safari 独立回归仍缺证据。模块与验收细节见 Progress-Log。
-- Hermes + SecondBrain Core 遵循 D066/D067/D068；Core 已在现有 SecondBrain 项目运行 healthy。Dashboard FE-4 视觉保持不变。D071 的 Hermes Session 只读 Review API 与版本化前端 bundle 已部署至生产；Hermes Basic Auth Session 契约及未认证/跨站拒绝已核验，用户仍需在 Edge 完成已登录 Review 列表与详情验收。Promote 仍关闭、Knowledge RO，无正式知识写入。
+- Hermes + SecondBrain Core 遵循 D066/D067/D068；Core 已在现有 SecondBrain 项目运行 healthy。D071 Review API 保持原样；正式 manifest v0.2.3 已切至以已验收 FE-4 JS 原始字节为基底的修正版 bundle，FE-4 CSS 未改。健康与未认证拒绝已核验；用户仍需在 Edge 完成最终视觉及 Review 列表/详情验收。Promote 仍关闭、Knowledge RO，无正式知识写入。
 
 ## 主要安全与实施边界
 
