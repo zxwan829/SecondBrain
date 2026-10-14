@@ -30,6 +30,14 @@ ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg",
                     ".webp", ".gif", ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
+PREVIEW_MEDIA_TYPES = {
+    ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
+    ".markdown": "text/plain; charset=utf-8", ".pdf": "application/pdf",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".webp": "image/webp", ".gif": "image/gif", ".wav": "audio/wav",
+    ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".ogg": "audio/ogg", ".flac": "audio/flac",
+}
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -557,5 +565,28 @@ def create_capture_router(auth, service):
         if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
             raise HTTPException(404, "Raw asset not found")
         return FileResponse(path, filename=Path(item["raw_path"]).name, media_type="application/octet-stream")
+
+    @router.get("/inbox/{capture_id}/preview")
+    def preview_file(request: Request, capture_id: str):
+        from fastapi.responses import FileResponse
+        auth.require_action(request, "inbox.read")
+        item = service.get(capture_id)
+        raw_name = item.get("raw_path")
+        if not isinstance(raw_name, str) or Path(raw_name).name != raw_name or raw_name in {".", ".."}:
+            raise HTTPException(404, "Raw asset not found")
+        suffix = Path(raw_name).suffix.lower()
+        media_type = PREVIEW_MEDIA_TYPES.get(suffix)
+        if not media_type:
+            raise HTTPException(415, "This Raw asset type is not supported for in-app preview")
+        path = service.raw_root / raw_name
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            raise HTTPException(404, "Raw asset not found") from exc
+        if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+            raise HTTPException(404, "Raw asset not found")
+        return FileResponse(path, media_type=media_type, content_disposition_type="inline",
+                            headers={"Content-Disposition": "inline",
+                                     "X-Content-Type-Options": "nosniff"})
 
     return router

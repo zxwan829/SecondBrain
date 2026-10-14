@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
+    "test": "vitest run",
     "start:app": "cd ../secondbrain-core && python3 -m secondbrain_core",
     "package:test-plugin": "npm run build && node scripts/package-test-plugin.mjs",
     "package:review-bundle": "node scripts/package-review-bundle.mjs",
@@ -15,13 +16,17 @@
     "verify:fe25": "node scripts/verify-fe25.mjs"
   },
   "dependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest"
+    "typescript": "latest",
+    "vite": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@testing-library/react": "16.3.3",
+    "jsdom": "30.1.2",
+    "vitest": "5.0.4"
+  }
 }

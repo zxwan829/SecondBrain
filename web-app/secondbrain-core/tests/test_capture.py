@@ -265,6 +265,38 @@ class CaptureApiTests(unittest.TestCase):
         raw = self.client.get("/api/inbox/" + item["capture_id"] + "/raw")
         self.assertEqual(raw.content, b"web intake")
 
+    def test_preview_requires_session_uses_safe_mime_and_keeps_download_separate(self):
+        unauth = self.client.get("/api/inbox/" + ("0" * 32) + "/preview")
+        self.assertEqual(unauth.status_code, 401)
+        self.login()
+        accepted = self.client.post("/api/capture/files", files={"file": ("guide.md", b"# Plain text\n<script>not executable</script>", "text/markdown")}, headers={"Origin": "https://testserver"})
+        item = accepted.json()
+        preview = self.client.get(f"/api/inbox/{item['capture_id']}/preview")
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(preview.headers["x-content-type-options"], "nosniff")
+        self.assertIn("inline", preview.headers["content-disposition"])
+        self.assertEqual(preview.content, b"# Plain text\n<script>not executable</script>")
+        download = self.client.get(f"/api/inbox/{item['capture_id']}/raw")
+        self.assertEqual(download.headers["content-type"], "application/octet-stream")
+        self.assertIn("attachment", download.headers["content-disposition"])
+
+    def test_preview_mime_allowlist_and_unsafe_paths(self):
+        self.login()
+        response = self.client.post("/api/capture/files", files={"file": ("pixel.png", b"\x89PNG\r\n\x1a\npixel", "image/png")}, headers={"Origin": "https://testserver"})
+        image = response.json()
+        image_preview = self.client.get(f"/api/inbox/{image['capture_id']}/preview")
+        self.assertEqual(image_preview.status_code, 200)
+        self.assertEqual(image_preview.headers["content-type"], "image/png")
+        self.assertEqual(image_preview.headers["x-content-type-options"], "nosniff")
+        state_path = next(self.state.glob(f"**/{image['capture_id']}.json"))
+        import json
+        state = json.loads(state_path.read_text())
+        state["raw_path"] = "../secret.txt"
+        state_path.write_text(json.dumps(state))
+        unsafe = self.client.get(f"/api/inbox/{image['capture_id']}/preview")
+        self.assertEqual(unsafe.status_code, 404)
+
     def test_multipart_file_capture_signature_and_size_checks(self):
         self.login()
         headers = {"Origin": "https://testserver"}

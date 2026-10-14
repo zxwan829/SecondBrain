@@ -582,3 +582,12 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - App Raw `00-Inbox`、Review 挂载 RW；Knowledge RO、Private 不挂载、state 使用原 `core-state`、`SB_PROMOTE_ENABLED=false`。UID/GID `1026:100`；未递归改 owner/mode/ACL，未给 SecondBrain 根目录 RW。Hermes、9119/63012、PBR/WireGuard、DSM 反代和 Container Manager GUI 均未触碰。
 - 经 TLS 校验的 63013 请求完成 App 登录与 Cookie 安全属性核验；Home、Chat capabilities/session、Review list/detail、Inbox 及 Promote 状态均通过，未登录 Inbox 返回 401。五种独立无敏感样本的真实 Raw/Review/state 路径及状态已记入 Environment-Baseline；URL 初始 Raw hash 不变；图片/音频以 `processor_unavailable` 保留 Raw，不生成假 Review。没有向 Knowledge 写入，App Knowledge mount 为只读。
 - NAS 构建中前端 typecheck/build 通过；本地 Core 全量测试 35 passed，前端 typecheck/build 通过。生产部署成功不等于用户验收：登录后 Inbox/Review 页面交互与手机布局仍待用户浏览器确认；图片/音频处理器和微信渠道未实现。测试样本保留，不清理。
+
+## 2026-10-14 D075.1 收录体验缺陷修复（本地）
+
+- Inbox 增加受 App Session 保护的 `/api/inbox/{capture_id}/preview`：只允许已登记 Raw 文件的安全扩展名和固定 MIME，路径拒绝遍历/符号链接，响应 `nosniff`；文本以纯文本显示，PDF 由新标签页的浏览器原生查看器打开，图片/音频在页面预览。原件下载仍为独立附件操作；URL、采集时间、状态、失败原因、原件保存和关联 Review 在详情中展示。CSP、认证及 Private 边界未放宽。
+- Inbox 使用 `capture.review_path` 定位 `/review?review_path=...`；Review 从服务端列表精确匹配目标、详情高亮，刷新和前进/后退恢复 URL 选中项；目标不存在时显示明确提示，不回退到第一条。
+- Quick Capture 支持单文件拖放与原生文件选择、20 MiB/类型校验、文件信息、撤销/更换。服务端响应确认 `capture_id` 和 `raw_path` 后清空输入并显示处理状态、Raw 路径、继续收录与前往 Inbox；未确认保存的失败保留输入，提交 ref 防止并发重复请求。
+- Core Capture API 测试覆盖预览会话拒绝、纯文本安全 MIME/`nosniff`、inline 预览与原件附件下载分离、PNG MIME、路径穿越拒绝；既有 URL Raw 哈希成功/失败/重试测试保留。前端新增 Vitest/jsdom 交互覆盖拖放/撤销、成功清空、失败保留、重复提交、预览安全显示、Review 精确定位及目标缺失。
+- 验证：Core 全量 **37 passed**；前端交互 **8 passed**，typecheck、production build、`git diff --check` 通过。FE-4 视觉方向未变。
+- **状态：本地实现、测试通过；未部署 NAS、未修改生产。** 保留 D075 已有五条生产测试样本；63013 浏览器验收待后续明确部署授权。

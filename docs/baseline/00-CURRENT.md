@@ -70,7 +70,7 @@ source: GitHub SecondBrain Monorepo
 | Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
 | Chat | PROD-PARTIAL：Hermes 原生（旧入口） | 独立 Chat UI 与 Hermes Session/Skill/工具/流式行为联调并验收 |
 | Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
-| Inbox | DEV-TESTED：读取 Core 持久化 Capture 状态、来源/类型/时间/状态、Raw 下载入口 | 生产独立页面与上传入口尚未部署验收 |
+| Inbox | PROD-PARTIAL：D075 页面、采集入口与真实 Core Capture API 已部署；D075.1 预览、精确 Review 定位、拖放与提交重置仅本地开发测试 | D075.1 尚未部署及浏览器验收；手机交互和图片/音频处理器、微信渠道仍待完成 |
 | Review / Approval | PROD-PARTIAL：只读已验收 | Core 审批、状态、暂缓/入库及结果反馈 |
 | Projects | NOT CONNECTED：UNAVAILABLE | 真实项目、状态、最近活动、下一步、相关笔记 |
 | Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |

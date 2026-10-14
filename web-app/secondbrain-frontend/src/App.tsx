@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchHome, type Home } from './api/home';
 import { adaptHome, type DataKind, type ListItem } from './api/home-adapter';
 import { DEMO_KPI_DELTAS, DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
@@ -23,6 +23,7 @@ type CaptureItem = {
   capture_id: string; source_type: string; input_type: string; captured_at: string;
   original_asset: string; raw_path: string; review_path?: string | null; status: string;
   error?: { code: string; message: string } | null; title: string; content_preview?: string;
+  source_url?: string | null; derived_source_url?: string | null;
 };
 
 function pageFromPath(path: string): Page {
@@ -171,6 +172,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [error, setError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname));
+  const [routeRevision, setRouteRevision] = useState(0);
   const [captureOpen, setCaptureOpen] = useState(false);
   const t = messages[locale];
 
@@ -184,7 +186,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     return () => { mounted = false; };
   }, []);
   useEffect(() => {
-    const onPop = () => setPage(pageFromPath(location.pathname));
+    const onPop = () => { setPage(pageFromPath(location.pathname)); setRouteRevision((value) => value + 1); };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
@@ -194,11 +196,11 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const navigate = (item: string) => {
     const destination = navItems.find((entry) => entry.id === item);
     if (destination && 'route' in destination && destination.route) {
-      if (location.pathname !== destination.route) history.pushState({}, '', destination.route);
-      setPage(destination.id); setMenuOpen(false); return;
+      if (location.pathname !== destination.route || location.search) history.pushState({}, '', destination.route);
+      setPage(destination.id); setRouteRevision((value) => value + 1); setMenuOpen(false); return;
     }
     if (page !== 'home') {
-      history.pushState({}, '', '/'); setPage('home');
+        history.pushState({}, '', '/'); setPage('home');
     }
     const target = document.getElementById(anchorByNav[item] ?? 'top');
     window.requestAnimationFrame(() => target?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -303,20 +305,23 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </section>
 
-        </> : page === 'review' ? <ReviewPage locale={locale} onBack={() => navigate('home')} />
-          : page === 'inbox' ? <InboxPage locale={locale} onCapture={() => setCaptureOpen(true)} />
+        </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} onBack={() => navigate('home')} />
+          : page === 'inbox' ? <InboxPage locale={locale} onCapture={() => setCaptureOpen(true)} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); history.pushState({}, '', `/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
           : page === 'chat' ? <ChatPage locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
-      {captureOpen && <QuickCapture locale={locale} onClose={() => setCaptureOpen(false)} onComplete={() => { if (page === 'inbox') window.dispatchEvent(new Event('sb-inbox-refresh')); }} />}
+      {captureOpen && <QuickCapture locale={locale} onClose={() => setCaptureOpen(false)} onGoInbox={() => { setCaptureOpen(false); navigate('inbox'); }} onComplete={() => { if (page === 'inbox') window.dispatchEvent(new Event('sb-inbox-refresh')); }} />}
     </main>
   );
 }
 
-function InboxPage({ locale, onCapture }: { locale: Locale; onCapture: () => void }) {
+export function InboxPage({ locale, onCapture, onReview }: { locale: Locale; onCapture: () => void; onReview: (reviewPath: string) => void }) {
   const [items, setItems] = useState<CaptureItem[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [preview, setPreview] = useState<CaptureItem | null>(null);
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState('');
   const load = async (showLoading = false) => {
     if (showLoading) setLoading(true);
     setError('');
@@ -336,6 +341,16 @@ function InboxPage({ locale, onCapture }: { locale: Locale; onCapture: () => voi
     return () => { window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
   }, []);
   const text = locale === 'en';
+  const openPreview = async (item: CaptureItem) => {
+    setPreview(item); setPreviewText(null); setPreviewError('');
+    if (previewKind(item.raw_path) === 'text') {
+      try {
+        const response = await fetch(`/api/inbox/${encodeURIComponent(item.capture_id)}/preview`, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setPreviewText(await response.text());
+      } catch { setPreviewError(text ? 'Preview could not be loaded.' : '原件预览暂时无法加载。'); }
+    }
+  };
   return <section className="capture-page" aria-labelledby="inbox-title">
     <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div><button className="capture-primary" onClick={onCapture}>{text ? 'Quick capture' : '快速收录'}</button></header>
     {error && <p role="alert" className="capture-alert">{error}</p>}
@@ -343,12 +358,49 @@ function InboxPage({ locale, onCapture }: { locale: Locale; onCapture: () => voi
       <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{item.title || item.raw_path}</h2><p>{item.source_type} · {new Date(item.captured_at).toLocaleString(text ? 'en-US' : 'zh-CN')}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
       {item.content_preview && <pre className="inbox-preview">{item.content_preview.slice(0, 500)}</pre>}
       {item.error && <p className="capture-alert">{item.error.message}</p>}
-      <div className="inbox-links"><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} target="_blank" rel="noreferrer">{text ? 'Open Raw' : '打开原始素材'}</a>{item.review_path && <a href="/review">{text ? 'View Review' : '查看 Review'}</a>}{item.status === 'partial_success' && <button onClick={async () => { await fetch(`/api/capture/${item.capture_id}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); void load(); }}>{text ? 'Retry' : '重试处理'}</button>}</div>
+      <div className="inbox-links"><button type="button" onClick={() => void openPreview(item)}>{text ? 'Preview details' : '预览与详情'}</button><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{text ? 'Download Raw' : '下载原件'}</a>{item.review_path && <button type="button" onClick={() => onReview(item.review_path!)}>{text ? 'View Review' : '查看 Review'}</button>}{item.status === 'partial_success' && <button onClick={async () => { await fetch(`/api/capture/${item.capture_id}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); void load(); }}>{text ? 'Retry' : '重试处理'}</button>}</div>
     </article>) : <p className="capture-empty">{text ? 'No captures yet.' : '还没有采集内容。'}</p>}</div>
+    {preview && <CapturePreview item={preview} locale={locale} content={previewText} error={previewError} onClose={() => { setPreview(null); setPreviewText(null); setPreviewError(''); }} onReview={onReview} />}
   </section>;
 }
 
-function QuickCapture({ locale, onClose, onComplete }: { locale: Locale; onClose: () => void; onComplete: () => void }) {
+function previewKind(path: string): 'text' | 'pdf' | 'image' | 'audio' | 'unsupported' {
+  const suffix = path.toLowerCase().split('.').pop() || '';
+  if (['txt', 'md', 'markdown'].includes(suffix)) return 'text';
+  if (suffix === 'pdf') return 'pdf';
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(suffix)) return 'image';
+  if (['wav', 'mp3', 'm4a', 'aac', 'ogg', 'flac'].includes(suffix)) return 'audio';
+  return 'unsupported';
+}
+
+function isSafeHttpUrl(value: string): boolean {
+  try { const url = new URL(value); return url.protocol === 'http:' || url.protocol === 'https:'; }
+  catch { return false; }
+}
+
+function CapturePreview({ item, locale, content, error, onClose, onReview }: { item: CaptureItem; locale: Locale; content: string | null; error: string; onClose: () => void; onReview: (path: string) => void }) {
+  const en = locale === 'en';
+  const kind = previewKind(item.raw_path);
+  const url = `/api/inbox/${encodeURIComponent(item.capture_id)}/preview`;
+  return <div className="capture-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="capture-modal capture-preview-modal" role="dialog" aria-modal="true" aria-labelledby="capture-preview-title">
+      <header><div><p className="eyebrow">SECONDBRAIN / INBOX</p><h2 id="capture-preview-title">{item.title || item.raw_path}</h2></div><button className="capture-close" onClick={onClose} aria-label={en ? 'Close' : '关闭'}>×</button></header>
+      <p>{captureStatus(item.status, en)} · {new Date(item.captured_at).toLocaleString(en ? 'en-US' : 'zh-CN')}</p>
+      <p>{item.raw_path ? (en ? 'Raw preserved' : '原件已保存') : (en ? 'Raw unavailable' : '原件未保存')} · {item.error?.message || (en ? 'No processing error' : '无处理错误')}</p>
+      {item.source_url && <dl><dt>{en ? 'Original URL' : '原始 URL'}</dt><dd>{isSafeHttpUrl(item.source_url) ? <a href={item.source_url} target="_blank" rel="noreferrer">{item.source_url}</a> : item.source_url}</dd>{item.derived_source_url && <><dt>{en ? 'Fetched URL' : '实际获取地址'}</dt><dd>{item.derived_source_url}</dd></>}</dl>}
+      <div className="capture-preview-content">
+        {kind === 'text' && (error ? <p role="alert">{error}</p> : content === null ? <p>{en ? 'Loading preview…' : '正在读取预览…'}</p> : <pre>{content}</pre>)}
+        {kind === 'pdf' && <p><a href={url} target="_blank" rel="noreferrer">{en ? 'Open PDF preview' : '在新标签页预览 PDF'}</a></p>}
+        {kind === 'image' && <img src={url} alt={item.title || item.raw_path} />}
+        {kind === 'audio' && <audio controls preload="metadata" src={url}>{en ? 'Audio playback is not supported by this browser.' : '当前浏览器不支持此音频播放。'}</audio>}
+        {kind === 'unsupported' && <p>{en ? 'This file type cannot be previewed here. Download the original file instead.' : '此类型暂不支持站内预览，可下载原件查看。'}</p>}
+      </div>
+      <footer><a className="capture-secondary" href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>{item.review_path && <button type="button" className="capture-primary" onClick={() => onReview(item.review_path!)}>{en ? 'View related Review' : '查看对应 Review'}</button>}<button type="button" className="capture-secondary" onClick={onClose}>{en ? 'Close' : '关闭'}</button></footer>
+    </section>
+  </div>;
+}
+
+export function QuickCapture({ locale, onClose, onComplete, onGoInbox }: { locale: Locale; onClose: () => void; onComplete: () => void; onGoInbox: () => void }) {
   const [kind, setKind] = useState<'text' | 'markdown' | 'url' | 'file'>('text');
   const [value, setValue] = useState('');
   const [context, setContext] = useState('');
@@ -356,6 +408,9 @@ function QuickCapture({ locale, onClose, onComplete }: { locale: Locale; onClose
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<CaptureItem | null>(null);
   const [error, setError] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const submitting = useRef(false);
   const text = locale === 'en';
   useEffect(() => {
     if (!result || result.status !== 'processing') return;
@@ -374,7 +429,9 @@ function QuickCapture({ locale, onClose, onComplete }: { locale: Locale; onClose
     return () => { active = false; window.clearInterval(timer); };
   }, [result?.capture_id, result?.status]);
   const submit = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(''); setResult(null);
+    event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true; setBusy(true); setError(''); setResult(null);
     try {
       let response: Response;
       if (kind === 'file') {
@@ -386,21 +443,37 @@ function QuickCapture({ locale, onClose, onComplete }: { locale: Locale; onClose
       }
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      if (!payload.capture_id || !payload.raw_path) throw new Error(text ? 'The server did not confirm Raw preservation.' : '服务器未确认原件已保存，输入已保留。');
+      setValue(''); setContext(''); setFile(null);
+      if (fileInput.current) fileInput.current.value = '';
       setResult(payload); onComplete();
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    finally { submitting.current = false; setBusy(false); }
   };
+  const acceptFile = (candidate?: File) => {
+    if (!candidate) return;
+    const allowed = /\.(txt|md|markdown|pdf|png|jpe?g|webp|gif|wav|mp3|m4a|aac|ogg|flac)$/i.test(candidate.name);
+    if (!allowed) { setError(text ? 'This file type is not supported.' : '此文件类型不受支持。'); return; }
+    if (candidate.size > 20 * 1024 * 1024) { setError(text ? 'Files must be 20 MiB or smaller.' : '文件不能超过 20 MiB。'); return; }
+    setError(''); setFile(candidate);
+  };
+  const fileSize = (size: number) => size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KiB` : `${(size / (1024 * 1024)).toFixed(2)} MiB`;
   return <div className="capture-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="capture-modal" role="dialog" aria-modal="true" aria-labelledby="capture-dialog-title">
       <header><div><p className="eyebrow">SECONDBRAIN / CAPTURE</p><h2 id="capture-dialog-title">{text ? 'Quick capture' : '快速收录'}</h2></div><button className="capture-close" onClick={onClose} aria-label={text ? 'Close' : '关闭'}>×</button></header>
       <div className="capture-tabs">{(['text', 'markdown', 'url', 'file'] as const).map((tab) => <button className={kind === tab ? 'selected' : ''} key={tab} onClick={() => setKind(tab)}>{tab === 'text' ? (text ? 'Text' : '文本') : tab === 'markdown' ? 'Markdown' : tab === 'url' ? 'URL' : (text ? 'File' : '文件')}</button>)}</div>
       <form onSubmit={(event) => void submit(event)}>
-        {kind === 'text' || kind === 'markdown' ? <textarea autoFocus required maxLength={200000} value={value} onChange={(event) => setValue(event.target.value)} placeholder={text ? (kind === 'markdown' ? 'Paste Markdown…' : 'Paste text…') : (kind === 'markdown' ? '粘贴 Markdown…' : '粘贴文本…')} /> : kind === 'url' ? <input autoFocus required type="url" maxLength={2048} value={value} onChange={(event) => setValue(event.target.value)} placeholder="https://…" /> : <><input type="file" accept=".txt,.md,.markdown,.pdf,image/*,audio/*" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><small>{text ? 'TXT, Markdown, PDF, images, audio · max 20 MiB' : 'TXT、Markdown、PDF、图片、音频 · 最大 20 MiB'}</small></>}
+        {kind === 'text' || kind === 'markdown' ? <textarea autoFocus required maxLength={200000} value={value} onChange={(event) => setValue(event.target.value)} placeholder={text ? (kind === 'markdown' ? 'Paste Markdown…' : 'Paste text…') : (kind === 'markdown' ? '粘贴 Markdown…' : '粘贴文本…')} /> : kind === 'url' ? <input autoFocus required type="url" maxLength={2048} value={value} onChange={(event) => setValue(event.target.value)} placeholder="https://…" /> : <div className={`capture-dropzone ${dragOver ? 'is-drag-over' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragOver(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragOver(false); }} onDrop={(event) => { event.preventDefault(); setDragOver(false); acceptFile(event.dataTransfer.files[0]); }}>
+          <input ref={fileInput} type="file" accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp,.gif,.wav,.mp3,.m4a,.aac,.ogg,.flac" onChange={(event) => acceptFile(event.target.files?.[0] ?? undefined)} aria-label={text ? 'Choose a file' : '选择文件'} />
+          <strong>{dragOver ? (text ? 'Drop to add this file' : '松开鼠标以添加文件') : file ? file.name : (text ? 'Drop one file here' : '将一个文件拖到这里')}</strong>
+          <small>{file ? `${file.type || file.name.split('.').pop()?.toUpperCase()} · ${fileSize(file.size)}` : (text ? 'or use the file picker · TXT, Markdown, PDF, image, audio · max 20 MiB' : '也可点击选择 · TXT、Markdown、PDF、图片、音频 · 最大 20 MiB')}</small>
+          <div className="capture-dropzone-actions"><button type="button" className="capture-secondary" onClick={() => fileInput.current?.click()}>{text ? (file ? 'Replace file' : 'Choose file') : (file ? '更换文件' : '选择文件')}</button>{file && <button type="button" className="capture-secondary" onClick={() => { setFile(null); if (fileInput.current) fileInput.current.value = ''; }}>{text ? 'Remove' : '撤销'}</button>}</div>
+        </div>}
         <input value={context} maxLength={2000} onChange={(event) => setContext(event.target.value)} placeholder={text ? 'Optional capture context' : '补充说明（可选）'} />
         {error && <p role="alert" className="capture-alert">{error}</p>}
         {busy && <div role="status" className="capture-result"><strong>{captureStatus('receiving', text)}</strong></div>}
-        {result && <div role="status" className="capture-result"><strong>{captureStatus(result.status, text)}</strong><span>{result.error?.message || result.review_path || result.raw_path}</span></div>}
-        <footer><button type="button" className="capture-secondary" onClick={onClose}>{text ? 'Close' : '关闭'}</button><button type="submit" className="capture-primary" disabled={busy}>{busy ? (text ? 'Submitting…' : '提交中…') : (text ? 'Save to Inbox' : '保存到收件箱')}</button></footer>
+        {result && <div role="status" className="capture-result"><strong>{captureStatus(result.status, text)}</strong><span>{result.status === 'partial_success' ? (text ? `Raw original saved: ${result.raw_path}. ${result.error?.message || ''}` : `原件已保存：${result.raw_path}。${result.error?.message || ''}`) : result.error?.message || result.review_path || result.raw_path}</span></div>}
+        <footer>{result ? <><button type="button" className="capture-secondary" onClick={() => { setResult(null); setError(''); }}>{text ? 'Continue capture' : '继续收录'}</button><button type="button" className="capture-primary" onClick={onGoInbox}>{text ? 'Go to Inbox' : '前往收件箱'}</button></> : <><button type="button" className="capture-secondary" onClick={onClose}>{text ? 'Close' : '关闭'}</button><button type="submit" className="capture-primary" disabled={busy || (kind === 'file' ? !file : !value.trim())}>{busy ? (text ? 'Submitting…' : '提交中…') : (text ? 'Save to Inbox' : '保存到收件箱')}</button></>}</footer>
       </form>
     </section>
   </div>;
@@ -412,7 +485,7 @@ function captureStatus(status: string, en: boolean) {
   return en ? pair[1] : pair[0];
 }
 
-function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) {
+export function ReviewPage({ locale, onBack, initialReviewPath = null }: { locale: Locale; onBack: () => void; initialReviewPath?: string | null }) {
   const t = messages[locale];
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
@@ -444,7 +517,11 @@ function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) 
       const nextItems = Array.isArray(result.items) ? result.items : [];
       setItems(nextItems);
       setStatus(t.coreConnected.replace('{count}', String(nextItems.length)));
-      if (nextItems.length) await loadDetail(nextItems[0]);
+      if (initialReviewPath) {
+        const selected = nextItems.find((item) => item.review_path === initialReviewPath);
+        if (selected) await loadDetail(selected);
+        else { setDetail(null); setStatus(locale === 'en' ? 'The requested Review item could not be found.' : '找不到指定的 Review 条目。'); }
+      } else if (nextItems.length) await loadDetail(nextItems[0]);
       else setDetail(null);
       const promote = await request<{ promote_enabled?: boolean }>('/status');
       setPromoteEnabled(promote.promote_enabled === true);
@@ -478,7 +555,13 @@ function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) 
     void loadList();
     // Initial status check only; subsequent reads are user initiated.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [initialReviewPath]);
+
+  const selectReview = (item: ReviewItem) => {
+    const query = new URLSearchParams({ review_path: item.review_path });
+    history.pushState({}, '', `/review?${query}`);
+    void loadDetail(item);
+  };
 
   const decide = async (decision: 'approve' | 'defer') => {
     if (!detail) return;
@@ -511,7 +594,7 @@ function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) 
       <div className="review-page-toolbar"><span>{status}</span><button type="button" onClick={() => void loadList()} disabled={busy}>{locale === 'en' ? 'Refresh' : '刷新'}</button></div>
       <div className="review-page-grid">
         <div className="review-page-list" aria-label={t.reviewPageTitle}>
-          {items.length ? items.map((item) => <button key={item.review_path} type="button" className={`review-page-item ${detail?.review_path === item.review_path ? 'is-selected' : ''}`} onClick={() => void loadDetail(item)}>
+          {items.length ? items.map((item) => <button key={item.review_path} type="button" className={`review-page-item ${detail?.review_path === item.review_path ? 'is-selected' : ''}`} onClick={() => selectReview(item)}>
             <strong>{item.title || item.target_filename}</strong><small>{item.target_filename}</small><span>{t.coreStatus}: {item.decision?.status || item.status || 'pending'}</span>
           </button>) : <p className="review-page-empty">{t.coreNoItems}</p>}
         </div>

@@ -1,0 +1,116 @@
+import React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { InboxPage, QuickCapture, ReviewPage } from './App';
+
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+const callbacks = () => ({ onClose: vi.fn(), onComplete: vi.fn(), onGoInbox: vi.fn() });
+const ok = (body: unknown, contentType = 'application/json') => ({
+  ok: true, status: 200, headers: { get: () => contentType },
+  json: async () => body, text: async () => typeof body === 'string' ? body : JSON.stringify(body),
+});
+
+describe('D075.1 capture interactions', () => {
+  it('accepts a single dropped file and allows removing it', async () => {
+    const props = callbacks();
+    render(<QuickCapture locale="zh-CN" {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: '文件' }));
+    const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
+    const dropzone = screen.getByText('将一个文件拖到这里').closest('.capture-dropzone')!;
+    fireEvent.dragEnter(dropzone, { dataTransfer: { files: [file] } });
+    fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
+    expect(await screen.findByText('notes.txt')).toBeTruthy();
+    expect(screen.getByText(/KiB/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '撤销' }));
+    expect(screen.queryByText('notes.txt')).toBeNull();
+  });
+
+  it('clears input only after server confirms Raw and keeps the result actions', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ capture_id: 'a'.repeat(32), raw_path: 'note.md', status: 'processing' })));
+    const props = callbacks();
+    render(<QuickCapture locale="zh-CN" {...props} />);
+    const input = screen.getByPlaceholderText('粘贴文本…') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: 'keep this capture' } });
+    fireEvent.change(screen.getByPlaceholderText('补充说明（可选）'), { target: { value: 'context' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存到收件箱' }));
+    await screen.findByText('note.md');
+    expect(input.value).toBe('');
+    expect((screen.getByPlaceholderText('补充说明（可选）') as HTMLInputElement).value).toBe('');
+    expect(screen.getByRole('button', { name: '继续收录' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '前往收件箱' }));
+    expect(props.onGoInbox).toHaveBeenCalledOnce();
+  });
+
+  it('preserves text when the server rejects capture before Raw is saved', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ detail: 'invalid input' }) }));
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    const input = screen.getByPlaceholderText('粘贴文本…') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: 'retry this' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存到收件箱' }));
+    await screen.findByRole('alert');
+    expect(input.value).toBe('retry this');
+  });
+
+  it('does not issue duplicate requests while a capture is in flight', async () => {
+    let resolveResponse!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { resolveResponse = resolve; });
+    const request = vi.fn().mockReturnValue(pending);
+    vi.stubGlobal('fetch', request);
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    fireEvent.change(screen.getByPlaceholderText('粘贴文本…'), { target: { value: 'single request' } });
+    const form = screen.getByPlaceholderText('粘贴文本…').closest('form')!;
+    fireEvent.submit(form); fireEvent.submit(form);
+    expect(request).toHaveBeenCalledTimes(1);
+    resolveResponse(ok({ capture_id: 'e'.repeat(32), raw_path: 'single.md', status: 'completed' }));
+    await screen.findByText('single.md');
+  });
+
+  it('routes to the exact associated Review and renders that selected detail', async () => {
+    const item = { capture_id: 'b'.repeat(32), source_type: 'text', input_type: 'md', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/x.md', raw_path: 'x.md', review_path: 'nested/exact.md', status: 'completed', title: 'Inbox source' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
+    const onReview = vi.fn();
+    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={onReview} />);
+    fireEvent.click(await screen.findByRole('button', { name: '查看 Review' }));
+    expect(onReview).toHaveBeenCalledWith('nested/exact.md');
+
+    const review = { review_path: 'nested/exact.md', review_sha256: 'hash', target_filename: 'exact.md', title: 'Exact entry', status: 'pending', content: 'Exact content' };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/review/items')) return ok({ items: [review, { ...review, review_path: 'other.md', title: 'Other entry' }] });
+      if (url.endsWith('/status')) return ok({ promote_enabled: false });
+      return ok(review);
+    }));
+    const { container } = render(<ReviewPage locale="zh-CN" initialReviewPath="nested/exact.md" onBack={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText('Exact content')).toBeTruthy());
+    const selected = container.querySelector('.review-page-item.is-selected');
+    expect(selected?.textContent).toContain('Exact entry');
+  });
+
+  it('shows a safe text preview and download separately', async () => {
+    const item = { capture_id: 'd'.repeat(32), source_type: 'markdown', input_type: 'md', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/readme.md', raw_path: 'readme.md', status: 'completed', title: 'Read me', content_preview: '# safe' };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/preview') ? ok('# Safe text\n<script>text only</script>', 'text/plain') : ok({ items: [item] })));
+    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: '预览与详情' }));
+    expect(await screen.findByText(/<script>text only<\/script>/)).toBeTruthy();
+    expect(screen.getAllByRole('link', { name: '下载原件' })).toHaveLength(2);
+  });
+
+  it('does not silently select the first item when the requested Review is missing', async () => {
+    const other = { review_path: 'other.md', review_sha256: 'hash', target_filename: 'other.md', title: 'Other entry', status: 'pending', content: 'Other content' };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/review/items') ? ok({ items: [other] }) : ok({ promote_enabled: false })));
+    const { container } = render(<ReviewPage locale="zh-CN" initialReviewPath="missing.md" onBack={vi.fn()} />);
+    expect((await screen.findAllByText('找不到指定的 Review 条目。')).length).toBeGreaterThan(0);
+    expect(container.querySelector('.review-page-item.is-selected')).toBeNull();
+    expect(screen.queryByText('Other content')).toBeNull();
+  });
+
+  it('does not offer a Review action when no Review path exists', async () => {
+    const item = { capture_id: 'c'.repeat(32), source_type: 'image', input_type: 'png', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/p.png', raw_path: 'p.png', status: 'partial_success', title: 'Image', error: { code: 'processor_unavailable', message: 'No processor' } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
+    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    await screen.findByText('Image');
+    expect(screen.queryByRole('button', { name: '查看 Review' })).toBeNull();
+    expect(screen.getByText('No processor')).toBeTruthy();
+  });
+});
