@@ -350,3 +350,13 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 NAS 只读核验发现 Hermes API 在 `127.0.0.1:8642` 监听、health 200、未认证 sessions/capabilities 返回 401；该端口未发布且 loopback 不可供 App service 访问，未找到 App 可用的 API key 配置。因此本次未执行带凭据真实联调，也未更改 Compose、容器、密钥或 NAS。需要单独授权配置 Hermes 内部 API bind/key 并以两个容器间验收后，才能进入正式 App 联调/部署。
 
 **Personal OS 扩展边界补充：** 前端导航配置持有路由与模块位置，Shell/登录复用；Core 维持模块化单体，各业务独立 API/业务服务，不增加服务、数据库或通用插件框架。当前单用户登录不预建 RBAC，API 通过语义操作名 `require_action(action)` 进入统一 owner policy seam；Knowledge Promote 单独受人工审核，Memo/Calendar/新闻订阅等未来普通 CRUD 按其各自授权规则实现，不强制走 Promote。AI 定时任务优先复用 Hermes 原生 scheduler，Core 保存用户配置/业务状态及必要授权。V1 LAN HTTP 与 DSM LAN-only HTTPS 要求不变。
+
+## D075 — 2026-10-14 Universal Capture Web 入口与多类型采集
+
+**决策：** SecondBrain App 的 Quick Capture 和 Inbox 作为 Universal Capture Web 输入/查询界面，所有输入进入现有 Raw → Review 生命周期，沿用 UC v1.1 原件保留、元数据和失败语义；不创建第二套 Skill、元数据、数据库或自动 Promote 路径。Capture API 由现有 Core 模块化单体提供，并以 App 单用户 session/action policy 授权。
+
+**安全与处理：** 文本、Markdown、TXT、URL/Web、PDF、图片和音频按安全文件名/大小/格式限制及独占创建保留 Raw；Review 以不覆盖写入并在文件与 SHA-256 实际校验成功后标完成。URL 每跳限制 HTTP(S)、拒绝非公网 DNS 结果、直接连接已核验 IP 并逐个重定向重新校验。处理失败保留 Raw、在 Core 私有状态中记录且可安全重试；Promote=false、Knowledge RO、Private 隔离边界不变。图片/音频只有在真实处理器可用且验证后才允许生成 Review；不得用模拟输出报成功。
+
+**部署与视觉：** 为 App 采集所需的最小生产权限候选为 KnowledgeAssets `00-Inbox` 专用 RW bind，以及现有 App Review bind 从 RO 改为 RW；不增加 Knowledge、Private 或 SecondBrain 根目录写入。该候选仍须单独授权后部署。本阶段 FE-4 视觉冻结；用户已接受当前视觉约 90% 符合预期，暂不重新设计。
+
+**状态：** D075 本地实现与自动化测试完成；生产未部署/未获挂载变更授权。文本、URL、可提取 PDF 已本地测试；图像识别与音频转写能力未在 App/Core 配置，二者当前只能保留 Raw 并报告部分成功。微信仍为 V1 MUST，后续复用本 Capture 流程接入。

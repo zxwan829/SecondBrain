@@ -19,8 +19,8 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
         self.root = Path(self.temp.name)
-        self.review, self.knowledge, self.state = [self.root / n for n in ("review", "knowledge", "state")]
-        for path in (self.review, self.knowledge, self.state):
+        self.review, self.knowledge, self.state, self.raw = [self.root / n for n in ("review", "knowledge", "state", "raw")]
+        for path in (self.review, self.knowledge, self.state, self.raw):
             path.mkdir(mode=0o700)
         (self.state / "approvals").mkdir(mode=0o700)
         self.unlock_secret = base64.urlsafe_b64encode(os.urandom(48))
@@ -83,6 +83,7 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         app_password_file.chmod(0o600)
         env = {
             "SB_REVIEW_ROOT": str(self.review),
+            "SB_CAPTURE_RAW_ROOT": str(self.raw),
             "SB_KNOWLEDGE_ROOT": str(self.knowledge),
             "SB_PROMOTE_STATE_ROOT": str(self.root / "app-state"),
             "SB_DASHBOARD_ORIGINS": "https://testserver",

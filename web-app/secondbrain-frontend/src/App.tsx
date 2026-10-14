@@ -19,6 +19,11 @@ type ReviewItem = {
   decision?: { status?: string; request_id?: string; error_code?: string } | null;
 };
 type ReviewDetail = ReviewItem & { content: string };
+type CaptureItem = {
+  capture_id: string; source_type: string; input_type: string; captured_at: string;
+  original_asset: string; raw_path: string; review_path?: string | null; status: string;
+  error?: { code: string; message: string } | null; title: string; content_preview?: string;
+};
 
 function pageFromPath(path: string): Page {
   const route = navItems.find((item) => 'route' in item && item.route !== '/' &&
@@ -99,7 +104,7 @@ const navItems = [
   { id: 'home', key: 'home', icon: 'home', section: 'top', route: '/' },
   { id: 'chat', key: 'chat', icon: 'message', section: 'top', route: '/chat' },
   { id: 'today', key: 'today', icon: 'calendar', section: 'work' },
-  { id: 'inbox', key: 'inbox', icon: 'inbox', section: 'work' },
+  { id: 'inbox', key: 'inbox', icon: 'inbox', section: 'work', route: '/inbox' },
   { id: 'review', key: 'review', icon: 'check', section: 'work', route: '/review' },
   { id: 'projects', key: 'projects', icon: 'folder', section: 'library' },
   { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library' },
@@ -166,6 +171,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [error, setError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname));
+  const [captureOpen, setCaptureOpen] = useState(false);
   const t = messages[locale];
 
   useEffect(() => {
@@ -292,17 +298,118 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <div className="action-row">
             <ActionCard icon="message" tone="action-blue" title={t.chat} description={t.chatDescription} onClick={() => navigate('chat')} />
             <ActionCard icon="check" tone="action-violet" title={t.review} description={t.reviewDescription} onClick={() => navigate('review')} />
-            <ActionCard icon="capture" tone="action-teal" title={t.capture} description={t.captureDescription} soon={t.soon} />
+            <ActionCard icon="capture" tone="action-teal" title={t.capture} description={t.captureDescription} onClick={() => setCaptureOpen(true)} />
             <ActionCard icon="journal" tone="action-slate" title={t.newJournal} description={t.journalDescription} soon={t.soon} />
           </div>
         </section>
 
         </> : page === 'review' ? <ReviewPage locale={locale} onBack={() => navigate('home')} />
+          : page === 'inbox' ? <InboxPage locale={locale} onCapture={() => setCaptureOpen(true)} />
           : page === 'chat' ? <ChatPage locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
+      {captureOpen && <QuickCapture locale={locale} onClose={() => setCaptureOpen(false)} onComplete={() => { if (page === 'inbox') window.dispatchEvent(new Event('sb-inbox-refresh')); }} />}
     </main>
   );
+}
+
+function InboxPage({ locale, onCapture }: { locale: Locale; onCapture: () => void }) {
+  const [items, setItems] = useState<CaptureItem[]>([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const load = async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    setError('');
+    try {
+      const response = await fetch('/api/inbox', { credentials: 'same-origin' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const value = await response.json();
+      setItems(Array.isArray(value.items) ? value.items : []);
+    } catch { setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => {
+    void load(true);
+    const refresh = () => void load();
+    window.addEventListener('sb-inbox-refresh', refresh);
+    const timer = window.setInterval(refresh, 5000);
+    return () => { window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
+  }, []);
+  const text = locale === 'en';
+  return <section className="capture-page" aria-labelledby="inbox-title">
+    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div><button className="capture-primary" onClick={onCapture}>{text ? 'Quick capture' : '快速收录'}</button></header>
+    {error && <p role="alert" className="capture-alert">{error}</p>}
+    <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
+      <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{item.title || item.raw_path}</h2><p>{item.source_type} · {new Date(item.captured_at).toLocaleString(text ? 'en-US' : 'zh-CN')}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
+      {item.content_preview && <pre className="inbox-preview">{item.content_preview.slice(0, 500)}</pre>}
+      {item.error && <p className="capture-alert">{item.error.message}</p>}
+      <div className="inbox-links"><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} target="_blank" rel="noreferrer">{text ? 'Open Raw' : '打开原始素材'}</a>{item.review_path && <a href="/review">{text ? 'View Review' : '查看 Review'}</a>}{item.status === 'partial_success' && <button onClick={async () => { await fetch(`/api/capture/${item.capture_id}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); void load(); }}>{text ? 'Retry' : '重试处理'}</button>}</div>
+    </article>) : <p className="capture-empty">{text ? 'No captures yet.' : '还没有采集内容。'}</p>}</div>
+  </section>;
+}
+
+function QuickCapture({ locale, onClose, onComplete }: { locale: Locale; onClose: () => void; onComplete: () => void }) {
+  const [kind, setKind] = useState<'text' | 'markdown' | 'url' | 'file'>('text');
+  const [value, setValue] = useState('');
+  const [context, setContext] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<CaptureItem | null>(null);
+  const [error, setError] = useState('');
+  const text = locale === 'en';
+  useEffect(() => {
+    if (!result || result.status !== 'processing') return;
+    let active = true;
+    const timer = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/capture/${encodeURIComponent(result.capture_id)}`, { credentials: 'same-origin' });
+        if (!response.ok) return;
+        const latest = await response.json() as CaptureItem;
+        if (active) {
+          setResult(latest);
+          if (latest.status !== 'processing') onComplete();
+        }
+      } catch { /* Inbox keeps the durable state available after a transient disconnect. */ }
+    }, 900);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [result?.capture_id, result?.status]);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError(''); setResult(null);
+    try {
+      let response: Response;
+      if (kind === 'file') {
+        if (!file) throw new Error(text ? 'Choose a file first.' : '请先选择文件。');
+        const form = new FormData(); form.set('file', file); form.set('capture_context', context);
+        response = await fetch('/api/capture/files', { method: 'POST', credentials: 'same-origin', body: form });
+      } else {
+        response = await fetch(kind === 'url' ? '/api/capture/url' : '/api/capture/text', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(kind === 'url' ? { url: value, capture_context: context } : { text: value, source_type: kind, capture_context: context }) });
+      }
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      setResult(payload); onComplete();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
+  return <div className="capture-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="capture-modal" role="dialog" aria-modal="true" aria-labelledby="capture-dialog-title">
+      <header><div><p className="eyebrow">SECONDBRAIN / CAPTURE</p><h2 id="capture-dialog-title">{text ? 'Quick capture' : '快速收录'}</h2></div><button className="capture-close" onClick={onClose} aria-label={text ? 'Close' : '关闭'}>×</button></header>
+      <div className="capture-tabs">{(['text', 'markdown', 'url', 'file'] as const).map((tab) => <button className={kind === tab ? 'selected' : ''} key={tab} onClick={() => setKind(tab)}>{tab === 'text' ? (text ? 'Text' : '文本') : tab === 'markdown' ? 'Markdown' : tab === 'url' ? 'URL' : (text ? 'File' : '文件')}</button>)}</div>
+      <form onSubmit={(event) => void submit(event)}>
+        {kind === 'text' || kind === 'markdown' ? <textarea autoFocus required maxLength={200000} value={value} onChange={(event) => setValue(event.target.value)} placeholder={text ? (kind === 'markdown' ? 'Paste Markdown…' : 'Paste text…') : (kind === 'markdown' ? '粘贴 Markdown…' : '粘贴文本…')} /> : kind === 'url' ? <input autoFocus required type="url" maxLength={2048} value={value} onChange={(event) => setValue(event.target.value)} placeholder="https://…" /> : <><input type="file" accept=".txt,.md,.markdown,.pdf,image/*,audio/*" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><small>{text ? 'TXT, Markdown, PDF, images, audio · max 20 MiB' : 'TXT、Markdown、PDF、图片、音频 · 最大 20 MiB'}</small></>}
+        <input value={context} maxLength={2000} onChange={(event) => setContext(event.target.value)} placeholder={text ? 'Optional capture context' : '补充说明（可选）'} />
+        {error && <p role="alert" className="capture-alert">{error}</p>}
+        {busy && <div role="status" className="capture-result"><strong>{captureStatus('receiving', text)}</strong></div>}
+        {result && <div role="status" className="capture-result"><strong>{captureStatus(result.status, text)}</strong><span>{result.error?.message || result.review_path || result.raw_path}</span></div>}
+        <footer><button type="button" className="capture-secondary" onClick={onClose}>{text ? 'Close' : '关闭'}</button><button type="submit" className="capture-primary" disabled={busy}>{busy ? (text ? 'Submitting…' : '提交中…') : (text ? 'Save to Inbox' : '保存到收件箱')}</button></footer>
+      </form>
+    </section>
+  </div>;
+}
+
+function captureStatus(status: string, en: boolean) {
+  const labels: Record<string, [string, string]> = { receiving: ['接收中', 'Receiving'], processing: ['处理中', 'Processing'], completed: ['已完成', 'Completed'], partial_success: ['部分成功', 'Partial success'], failed: ['失败', 'Failed'] };
+  const pair = labels[status] ?? ['接收中', 'Receiving'];
+  return en ? pair[1] : pair[0];
 }
 
 function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) {

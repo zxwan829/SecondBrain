@@ -50,13 +50,13 @@ source: GitHub SecondBrain Monorepo
 | Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | PROD-PARTIAL：生产为 Hermes 原生 Chat；App 已按 v0.21.5 `749220ef` 固定响应契约实现适配并通过 Mock 回归 | NAS 只读核验见 Environment-Baseline：8642 仅监听 Hermes loopback，未能从 App 网络做授权联调；生产启用内部 API/密钥配置需单独授权，且未部署/验收 |
 | Daily Capture | 低摩擦保存日常素材；不得把内容自动提升成正式 Knowledge | PROD-PARTIAL | 对照 Skill 的正式触发和行为做必要回归 |
 | Knowledge Retrieval | 从批准的目录读取/搜索已存在的正式知识 | ACCEPTED：V0 已生产验收 | 仅在真实效果问题出现时优化，不强行接 RAG |
-| Universal Capture：文本/Markdown/TXT | 保存 Raw、建立 Review、元数据与路径真实落盘、不自动 Promote | ACCEPTED：文本 Raw→Review | 检查其他文本格式边界及跨入口表现 |
-| Universal Capture：URL/Web | 保留原 URL/时间，安全抓取/提取，再形成 Review | NOT DONE | 抓取、SSRF 防护、提取失败与原件追踪 |
-| Universal Capture：PDF | 保存 PDF 原件、提取正文、生成 Review | NOT DONE | 文件处理、安全边界、失败可恢复 |
-| Universal Capture：图片/截图 | 保存图片、必要识别、生成 Review | NOT DONE | 图像/OCR 处理与 Raw/Review 验证 |
-| Universal Capture：语音/音频 | 保存音频、转写、生成 Review | NOT DONE | 转写、元数据及失败返回 |
+| Universal Capture：文本/Markdown/TXT | 保存 Raw、建立 Review、元数据与路径真实落盘、不自动 Promote | ACCEPTED：Hermes 文本 Raw→Review；D075 App/Core 本地 DEV-TESTED | Web 入口/生产 RW 挂载未部署验收 |
+| Universal Capture：URL/Web | 保留原 URL/时间，安全抓取/提取，再形成 Review | DEV-TESTED：Core 有 DNS 校验后 IP pin、重定向重验、HTML/text 提取与原件状态；仅本地测试 | 生产部署与真实外站端到端验收未完成 |
+| Universal Capture：PDF | 保存 PDF 原件、提取正文、生成 Review | DEV-TESTED：pypdf 可提取文本；无文本/OCR PDF 保留 Raw 并可重试 | 生产部署、扫描件 OCR 未配置 |
+| Universal Capture：图片/截图 | 保存图片、必要识别、生成 Review | DEV-TESTED：Raw 保存和类型/签名验证；图像处理器未配置，明确部分成功 | 接入并验证真实图像理解/OCR 后才可生成 Review |
+| Universal Capture：语音/音频 | 保存音频、转写、生成 Review | DEV-TESTED：Raw 保存和类型/签名验证；转写器未配置，明确部分成功 | 接入并验证真实转写器后才可生成 Review |
 | **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
-| Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | NOT DONE / 未验收 | Web 侧 Capture 输入及状态反馈联调 |
+| Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | DEV-TESTED：快速收录 + 真实 Core API/文件集成测试；未部署 | RW 挂载变更、生产部署及 HTTPS 浏览器验收 |
 | Review 读取 | Web App 统一会话下展示列表/详情、来源和内容 | ACCEPTED：现有 D071 Dashboard v0.2.4；独立 App 63013 HTTPS 浏览器已显示 8 条真实 Review 与详情 | 独立 App 用户最终验收；补齐正式审批状态/动作部署 |
 | Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | DEV-TESTED：阶段 A 15 项测试；生产关闭 | 收口权限、统一登录安全边界、正式部署、HTTPS 用户验收 |
 | Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
@@ -70,7 +70,7 @@ source: GitHub SecondBrain Monorepo
 | Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
 | Chat | PROD-PARTIAL：Hermes 原生（旧入口） | 独立 Chat UI 与 Hermes Session/Skill/工具/流式行为联调并验收 |
 | Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
-| Inbox | UNKNOWN / 独立真实业务页未确认 | 读取真实 Inbox，展示来源/类型/时间/状态 |
+| Inbox | DEV-TESTED：读取 Core 持久化 Capture 状态、来源/类型/时间/状态、Raw 下载入口 | 生产独立页面与上传入口尚未部署验收 |
 | Review / Approval | PROD-PARTIAL：只读已验收 | Core 审批、状态、暂缓/入库及结果反馈 |
 | Projects | NOT CONNECTED：UNAVAILABLE | 真实项目、状态、最近活动、下一步、相关笔记 |
 | Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |
@@ -98,7 +98,7 @@ source: GitHub SecondBrain Monorepo
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `d074-e58a7f4-auth-status-ba2f040` healthy；独立 App 密码登录、HTTPS Cookie、Home/Review；Chat 工具进度/成功/失败、Stop→cancelled、停止后继续、刷新/切换恢复浏览器回归通过 | DSM Container Manager GUI 仍缓存旧 Hermes 名称/`latest`；尚无已验证且不执行旧定义的对齐流程。用户最终验收待完成。Promote 关闭、Knowledge RO |
-| P1 | Universal Capture 多类型处理 + 微信/Web 输入渠道 | 每个 MUST 输入类型真实 Raw/Review 成功且失败可核对；微信端到端有效 | Hermes 微信集成方法仍需确证，不以 OpenClaw 作为路线 |
+| P1 | Universal Capture Web 入口 + 多类型 | Web Core 本地文本/Markdown、URL、可读 PDF Raw→Review 测试通过；失败保留 Raw/可重试 | App 生产需新增 KnowledgeAssets Inbox RW、Review RW；图片/音频处理器缺失；微信端到端仍未接入。DSM GUI 项目缓存独立跟踪、不阻塞开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
 

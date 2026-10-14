@@ -8,6 +8,7 @@ from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 
 from .modules.app_auth import AppSessionAuth
+from .modules.capture import CaptureService, create_capture_router
 from .modules.hermes_api import HermesAPI
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
@@ -47,9 +48,11 @@ def create_app():
     app_password_file = os.environ["SB_APP_PASSWORD_FILE"]
     auth = AppSessionAuth(app_password_file, origins, ttl)
     hermes = HermesAPI()
+    capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root)
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root))
+    app.include_router(create_capture_router(auth, capture))
     app.include_router(create_core_router(service, review_root, auth,
                                           promote_enabled=promote_enabled,
                                           include_auth_routes=False), prefix="/api/promote")

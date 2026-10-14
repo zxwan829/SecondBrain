@@ -21,8 +21,9 @@ class WebAppBffTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.review = self.root / "review"
         self.knowledge = self.root / "knowledge"
+        self.raw = self.root / "raw"
         self.state = self.root / "state"
-        for path in (self.review, self.knowledge, self.state):
+        for path in (self.review, self.knowledge, self.raw, self.state):
             path.mkdir(mode=0o700)
         self.review_content = b"---\ntype: review\nstatus: pending\n---\n# Review title\nReal Review content.\n"
         (self.review / "candidate.md").write_bytes(self.review_content)
@@ -65,6 +66,7 @@ class WebAppBffTests(unittest.TestCase):
         self.hermes = HermesAPI("http://hermes.internal", "server-only-test-key", self.transport)
         self.env = {
             "SB_REVIEW_ROOT": str(self.review),
+            "SB_CAPTURE_RAW_ROOT": str(self.raw),
             "SB_KNOWLEDGE_ROOT": str(self.knowledge),
             "SB_PROMOTE_STATE_ROOT": str(self.state),
             "SB_DASHBOARD_ORIGINS": "http://testserver,https://testserver",

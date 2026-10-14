@@ -92,6 +92,14 @@ type: environment-baseline
 - Production Skill `universal-capture` v0.1.3，已接受范围为文本 Raw/Review；生产 URL/Web、PDF、Image/Screenshot、Audio/Voice 处理尚未实现。生产 Human Approval 仍是进入 Knowledge 的业务规则。
 - Promote 与审批 API 已实现并通过此前隔离测试；正式项目 Compose 中 Core service 当前 healthy，但 `SB_PROMOTE_ENABLED=false`、Knowledge 为 RO。Dashboard 加法 bundle 已发布；Core health API 可访问，真实认证 Review 浏览器读取未验证；无正式 Knowledge 写入。
 
+### D075 Web Capture 候选边界（2026-10-14，本地开发，未部署）
+
+- App/Core 新增 `SB_CAPTURE_RAW_ROOT=/knowledge-assets/00-Inbox`；该路径必须作为显式数据 bind mount 已存在且对 App UID 可写，服务启动不会在缺失挂载时自行创建容器内目录。现有 `SB_REVIEW_ROOT=/review` 必须对 Core UID 可写。
+- 当前生产 App Compose 仅有 Review RO、Knowledge RO 与 Core state RW，尚无 KnowledgeAssets Inbox bind；因此部署此 Capture 版本前仅准备以下最小 App 权限差异：新增宿主 `/volume1/SecBR/KnowledgeAssets/00-Inbox` → `/knowledge-assets/00-Inbox:rw`；将现有宿主 `/volume1/SecBR/SecondBrain/10-Review` → `/review` bind 从 RO 改为 RW。Hermes Compose/挂载不变，App Knowledge 保持 RO，Private 不挂载，Promote 保持 false。首次部署前须以生产 UID/GID `1026:100` 核实两个宿主目录 ACL/写权限并验证回滚快照；没有获得后续部署授权前不改 Compose、挂载、目录权限或服务。
+- Raw 文件使用独占创建、路径 basename 清洗、格式签名与 20 MiB 限制；Core 私有 state 保存状态，任务重启中断时转为可重试 partial 状态。成功必须核实 Raw 与 Review 文件、SHA-256 和 canonical Review 字段；只写 Raw/Review 路径，不写 Knowledge。
+- Core 的 URL 处理逐跳限制 HTTP(S)、拒绝本地/非公网 DNS 结果、连接到校验过的具体 IP 以防 DNS 重绑定，并对重定向重新校验；生产公开站点抓取仍需部署后验收。PDF 使用 pypdf 提取文本；扫描/加密/空文本 PDF 保留 Raw 且失败可重试。当前 App/Core 未配置可验证的图像理解或音频转写处理器，图片/音频只会保留 Raw 并返回 `processor_unavailable`，不得把部分成功标记为 Review 完成。
+- 本地自动化验证 34 项通过；同源本地浏览器以测试账号完成登录、Home、文本 Quick Capture、Inbox 状态/Raw 入口及 Review 新条目 smoke。测试数据及状态已从 `/private/tmp` 清除。这不是生产部署、生产 ACL 校验、外站抓取验收、视觉对比或用户验收。FE-4 视觉按用户反馈约 90% 符合预期冻结，本阶段未重设计。
+
 ## 治理安全写入与同步
 
 - NAS `safe-governance-write.sh`、Live Mirror 和 Google Drive 项目文档发布流程已退役；旧项目目录与专属治理快照已清理。正式文档以 GitHub 历史为准，不再从 NAS 发布或回写。旧迁移记录中关于 NAS-first Google Drive 发布脚本“正式采用/迁移”的条目已被此退役状态取代，不代表仍有活动发布入口。

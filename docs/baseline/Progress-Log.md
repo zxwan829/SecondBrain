@@ -565,3 +565,13 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - DSM GUI 项目 `secondbrain` 刷新后仍显示 Hermes 旧容器名 `8fad22e58156_secondbrain-hermes` 及 `nousresearch/hermes-agent:latest`，App 镜像行是当前版本。Synology 官方说明 Project YAML 编辑会部署新设置；历史已出现 GUI 编辑启动旧 Core 并造成端口冲突。因此本轮未保存 YAML、未执行项目级 Build/Start/Stop/Restart/Clean，也未触碰 DSM 内部数据。没有可验证的安全 GUI 定义对齐方式，项目 GUI 管理验收仍阻断。
 - 当前运行时安全边界保持：Hermes 固定 v0.21.5；Knowledge 只读，Private 未挂载；App Promote=false、Knowledge RO；App 仅 127.0.0.1:9120 发布，Hermes 8642 无宿主映射；9119/63012、反向代理、网络分流未变。
 - **状态：** Chat 浏览器测试完成；生产部署保持部分完成。DSM Container Manager 保存项目定义不同步是本轮部署收口阻断；用户最终验收仍待完成。项目 Compose SHA 已在 Environment-Baseline 更新；未跟踪 `typescript` 保留。
+
+## 2026-10-14 D075 Universal Capture Web 入口与多类型本地开发
+
+- 在现有 Core 增加 App-authenticated Capture API、Inbox 列表/状态/Raw 读取、失败重试和私有持久状态；Raw 独占创建防覆盖，文件路径/签名/大小校验，任务中断后保留原件并可恢复。Review 复用既有 schema，实际文件/hash 验证后才标完成；只使用专用 Raw/Review root，没有 Knowledge 写路径。
+- FE-4 Home Quick Capture 改为可提交的文本、Markdown、URL、文件入口；Inbox 导航成为真实 Core API 页面，显示来源、类型、时间、状态、内容预览及原件链接，允许重试 partial 状态。视觉资产和布局未重设计。
+- Core URL fetch 对 DNS 解析结果做公网地址校验，按通过校验的 IP 直连，并逐跳重验重定向；抓取 HTML/text 与提取正文。PDF 使用 pypdf 提取可读正文，保留 PDF Raw。图片、音频保留原始文件；当前 App/Core 没有已配置可验证的图像理解/转写服务，返回 `processor_unavailable` 与 partial 状态，不伪造 Review。
+- 验证：Core `pytest -q web-app/secondbrain-core/tests` **34 passed**（含登录/未授权、Raw/Review API、URL 私网/重定向防护、PDF 成功/失败、图片/音频明确部分成功、同名防覆盖、重试/中断恢复、无 Knowledge 写入）；前端 `npm run typecheck`、`npm run build` 通过；`git diff --check` 通过。HTTP URL 集成夹具仅连接本机回环测试服务器，不访问生产或外站；浏览器视觉/移动端验收尚未执行。
+- 同源本地浏览器 smoke：使用临时本机状态与测试账号登录 App，Home 读取成功，提交文本显示完成；Inbox 展示真实 capture 与 Raw 入口，Review 列表/详情读取到新候选。临时状态已清理；没有连接 NAS/生产 Hermes。没有进行视觉基线对比或移动端验收。
+- 生产未修改。候选最小 App RW 权限：KnowledgeAssets `00-Inbox` 专用 mount 新增 RW；现有 App Review mount 从 RO 改 RW；Knowledge 仍 RO，Private 不挂载，Promote=false。生产目录 ACL/UID 写权限及此 Compose 变更需另行授权后再验证。微信渠道仍属 V1 MUST，未从矩阵删除，后续复用同一 Capture API/流程接入。
+- 用户确认 FE-4 视觉约 90% 符合预期，本阶段冻结视觉、不重新设计。DSM Container Manager GUI 项目定义缓存单独跟踪，不阻塞 D075 业务开发。
