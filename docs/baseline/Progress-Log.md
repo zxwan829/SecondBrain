@@ -575,3 +575,10 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 同源本地浏览器 smoke：使用临时本机状态与测试账号登录 App，Home 读取成功，提交文本显示完成；Inbox 展示真实 capture 与 Raw 入口，Review 列表/详情读取到新候选。临时状态已清理；没有连接 NAS/生产 Hermes。没有进行视觉基线对比或移动端验收。
 - 生产未修改。候选最小 App RW 权限：KnowledgeAssets `00-Inbox` 专用 mount 新增 RW；现有 App Review mount 从 RO 改 RW；Knowledge 仍 RO，Private 不挂载，Promote=false。生产目录 ACL/UID 写权限及此 Compose 变更需另行授权后再验证。微信渠道仍属 V1 MUST，未从矩阵删除，后续复用同一 Capture API/流程接入。
 - 用户确认 FE-4 视觉约 90% 符合预期，本阶段冻结视觉、不重新设计。DSM Container Manager GUI 项目定义缓存单独跟踪，不阻塞 D075 业务开发。
+
+## 2026-10-14 D075 NAS 测试部署与真实采集联调
+
+- 按用户授权仅更新/重建正式 Compose 的 `secondbrain-app`，部署 GitHub `d53cfa3`；NAS 镜像 `secondbrain-app:d075-d53cfa3`、App healthy，Hermes 容器/image/start 时间完全未变。Compose SHA、受限部署前快照、App-only 回滚步骤、挂载和 ACL 证据见 Environment-Baseline。
+- App Raw `00-Inbox`、Review 挂载 RW；Knowledge RO、Private 不挂载、state 使用原 `core-state`、`SB_PROMOTE_ENABLED=false`。UID/GID `1026:100`；未递归改 owner/mode/ACL，未给 SecondBrain 根目录 RW。Hermes、9119/63012、PBR/WireGuard、DSM 反代和 Container Manager GUI 均未触碰。
+- 经 TLS 校验的 63013 请求完成 App 登录与 Cookie 安全属性核验；Home、Chat capabilities/session、Review list/detail、Inbox 及 Promote 状态均通过，未登录 Inbox 返回 401。五种独立无敏感样本的真实 Raw/Review/state 路径及状态已记入 Environment-Baseline；URL 初始 Raw hash 不变；图片/音频以 `processor_unavailable` 保留 Raw，不生成假 Review。没有向 Knowledge 写入，App Knowledge mount 为只读。
+- NAS 构建中前端 typecheck/build 通过；本地 Core 全量测试 35 passed，前端 typecheck/build 通过。生产部署成功不等于用户验收：登录后 Inbox/Review 页面交互与手机布局仍待用户浏览器确认；图片/音频处理器和微信渠道未实现。测试样本保留，不清理。
