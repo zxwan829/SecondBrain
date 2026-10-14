@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。2026-10-14 D074 App 已部分部署到 NAS：React classic JSX 修复与登录状态码提示已部署；App 健康，Hermes API 真实连接。App 已使用与 Hermes 不同的独立密码；63013 HTTPS 登录、Cookie 安全属性和 Home/Review API 验证通过，浏览器实际显示登录后 Home 与 8 条真实 Review 的列表/详情。Chat 浏览器已验证历史/多轮消息、SSE、只读工具成功与失败状态、Stop 后 Hermes Run 取消、停止后继续对话，以及刷新和切换会话后的消息恢复。2026-10-14 D075 App 已按 `d53cfa3` 测试部署：63013 登录、Home/Chat/Review/Inbox API 及文本、URL、可读 PDF 的真实 Raw→Review 验证通过；图片/音频原件保留并明确显示处理器未配置。Core state、Knowledge RO、Private 隔离及 Promote=false 均核验通过；用户浏览器最终验收待完成。DSM GUI 项目仍显示旧 Hermes 容器行/镜像缓存，尚未找到可证明不触发旧 Compose 部署的安全对齐方式。Promote 仍关闭且 Knowledge RO；微信实际接入及多个真实业务模块尚未完成生产验收。
+**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.1 已按 `777ee38` 更新并部署 App：新镜像 healthy，63013 根页面返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录及 Raw/Review 文件仍存在；未登录 Inbox/预览请求返回 401。App 重建使进程内登录会话失效；Edge 自动化当前被页面上的扩展 UI 阻断，故 D075.1 登录后预览/下载、Review 定位和上传交互尚未完成真实浏览器验收。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。图片/音频处理器、微信实际接入及多个真实业务模块尚未完成生产验收。
 
 ## 2. 已确定的架构与边界（接手项目必须先知）
 
@@ -70,7 +70,7 @@ source: GitHub SecondBrain Monorepo
 | Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
 | Chat | PROD-PARTIAL：Hermes 原生（旧入口） | 独立 Chat UI 与 Hermes Session/Skill/工具/流式行为联调并验收 |
 | Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
-| Inbox | PROD-PARTIAL：D075 页面、采集入口与真实 Core Capture API 已部署；D075.1 预览、精确 Review 定位、拖放与提交重置仅本地开发测试 | D075.1 尚未部署及浏览器验收；手机交互和图片/音频处理器、微信渠道仍待完成 |
+| Inbox | PROD-PARTIAL：D075.1 预览、精确 Review 定位、拖放与提交重置已部署到 63013；后端健康、旧数据和未登录拒绝已核验 | 登录后浏览器交互与手机验收待完成；图片/音频处理器和微信渠道仍待完成 |
 | Review / Approval | PROD-PARTIAL：只读已验收 | Core 审批、状态、暂缓/入库及结果反馈 |
 | Projects | NOT CONNECTED：UNAVAILABLE | 真实项目、状态、最近活动、下一步、相关笔记 |
 | Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |
@@ -97,8 +97,8 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d075-d53cfa3` healthy；D074 HTTPS Cookie、Home/Review；Chat 浏览器工具进度/停止/恢复通过；D075 Capture API 已在 63013 验证 | 登录后 D075 Inbox/Review 页面与手机交互待用户浏览器验收。DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
-| P1 | Universal Capture Web 入口 + 多类型 | D075 `d53cfa3` 已部署到 App：文本/URL/可读 PDF Raw→Review，图片/音频 Raw-only 部分成功；状态、文件 hash、Inbox/Review 详情经 63013 核实 | 用户浏览器最终验收；图片/音频处理器、微信端到端仍未接入。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
+| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d0751-777ee38` healthy；D074 HTTPS Cookie、Home/Review；Chat 浏览器工具进度/停止/恢复通过；D075.1 采集体验部署完成 | D075.1 登录后页面交互待浏览器重新登录验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
+| P1 | Universal Capture Web 入口 + 多类型 | D075.1 `777ee38` 已部署到 App：文本/URL/可读 PDF Raw→Review，图片/音频 Raw-only 部分成功；五条旧测试记录仍在，未登录 API 拒绝已验证 | 登录后预览/下载、Review 精确定位、拖放/重置需浏览器验收；图片理解、音频转写、微信端到端仍未接入。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
 

@@ -591,3 +591,10 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - Core Capture API 测试覆盖预览会话拒绝、纯文本安全 MIME/`nosniff`、inline 预览与原件附件下载分离、PNG MIME、路径穿越拒绝；既有 URL Raw 哈希成功/失败/重试测试保留。前端新增 Vitest/jsdom 交互覆盖拖放/撤销、成功清空、失败保留、重复提交、预览安全显示、Review 精确定位及目标缺失。
 - 验证：Core 全量 **37 passed**；前端交互 **8 passed**，typecheck、production build、`git diff --check` 通过。FE-4 视觉方向未变。
 - **状态：本地实现、测试通过；未部署 NAS、未修改生产。** 保留 D075 已有五条生产测试样本；63013 浏览器验收待后续明确部署授权。
+
+## 2026-10-14 D075.1 NAS 测试部署（Commit `777ee38`）
+
+- 已在正式 Compose 中按授权只改 App build context 和 image tag；新上下文独立保留，旧 D075 源码和镜像可回滚。构建内前端 typecheck、Vite build 和 Core image build 通过；快照完整性、Compose 两行差异与 Compose config 校验通过。
+- 仅更新 `secondbrain-app`。App healthy、63013 TLS/根页与健康端点正常；Hermes ID、image、启动时间不变。Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false、state/Secrets 不变。五条 D075 测试记录 Raw/state 均存在，三个 Review 文件存在；PNG/WAV 保持 processor_unavailable，无伪造 Review。
+- 未登录 Inbox/preview API 返回 401。App 重建使服务端内存会话失效；Edge 自动化被其他扩展 UI 阻断，无法完成重新登录后的原件预览/下载、Review 精确定位和拖放/重置浏览器验收。代码级相关 Core/前端测试证据仍为本地 D075.1 37 + 8 passed；本次不将其替代生产浏览器验收。须用户关闭/处理 Edge 扩展 UI、重新登录 63013 后完成剩余浏览器验收。
+- 回滚快照：`/volume1/docker/secondbrain/rollback/d0751-preflight-20261014-120500/`；只需恢复旧 Compose 并仅重建 App，Hermes 不变。没有改动未跟踪 `typescript`、业务原件、Hermes、DSM GUI 项目、Secret、ACL 或网络。
