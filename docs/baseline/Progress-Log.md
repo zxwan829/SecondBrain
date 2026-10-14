@@ -550,3 +550,9 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - App Secret 文件只读挂载、mode/owner 正确，启动时读入值以该 Secret 做 HTTPS 登录成功，排除 App 进程未加载或 Cookie/Origin 故障。NAS 内存中比较发现 App Secret 48 bytes、Hermes Dashboard Basic Auth 9 bytes，值不同；App 代码要求至少 12 bytes。因此当前 401 是 App Secret 未与用户确认的旧 Hermes 凭据对齐，而非假设用户输入错误。没有查看或记录任何明文。
 - 修复前端错误文案：401 凭据校验、403 来源校验、429 限流、5xx 服务端异常分开显示。前端 typecheck/build、NAS 镜像 build 通过。只部署 `secondbrain-app:d074-e58a7f4-auth-status-ba2f040`，容器 healthy；Hermes 未重建。HTTPS 登录页仍可见，App Secret 登录和 Home API 200，Home 返回真实 Review 与 Agent 状态。
 - **阻断：** 直接将 9-byte Hermes 凭据同步为 App Secret 会违反 App 现有 12-byte 最低长度要求。本轮没有降低认证门槛或更改凭据；需决定是否批准此最小安全例外，之后才能让同一旧凭据登录并完成浏览器 Home UI 验收。回滚快照见 Environment-Baseline。未跟踪 `typescript` 保留。
+
+## 2026-10-14 D074 独立 App 密码轮换与浏览器读取
+
+- 用户明确决定 App 与 Hermes 使用不同密码，保持 App 现有 12-byte 最低要求。Mac Terminal 隐藏输入后仅更新 App Secret 并重启 `secondbrain-app`；Secret 为 `1026:100/0600`、容器内 RO，与 Hermes Basic Auth 不同。受限回滚快照见 Environment-Baseline；无明文入 Git/聊天。
+- 63013 HTTPS 登录与 Session、Home、Review、Promote 状态接口均返回 200；Cookie `Secure/HttpOnly/SameSite=Strict` 验证通过。浏览器实际显示登录后 Home 与 8 条真实 Review 列表/详情，批准按钮因 Promote 关闭而禁用。App healthy；Hermes 未重建，Knowledge RO、Private 未挂载、Capture 写边界和 `SB_PROMOTE_ENABLED=false` 保持。
+- **状态：App 独立密码与 Home/Review 浏览器运行核验完成；Chat 浏览器交互、DSM GUI 项目旧缓存和用户最终验收仍待完成。** 未修改业务数据、Compose、DSM 或网络；未跟踪 `typescript` 保留。
