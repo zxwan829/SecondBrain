@@ -613,3 +613,10 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 修复部分成功图片重复重试造成的 Review 副本：只在原 `review_path` 的普通文件 hash 与 state 一致、且内容字节完全相同的情况下复用，绝不覆盖；变化内容仍另起文件。
 - 验证：Core Capture/multimodal/Hermes BFF 定向 **34 passed**；Python 编译、`git diff --check` 通过。D076 识别结果和 Hermes API 行为使用隔离 fixture/Mock。本机没有 Docker/Podman/Tesseract，不能通过正式 App Dockerfile 构建，也未真实跑中英图片、扫描 PDF OCR，未测只读 rootfs 下 `/tmp`，无实际耗时/内存证据；未生产构建/部署。图像 AI 场景描述及可靠 STT runtime 仍是阻断。
 - **状态：** D076 部分代码/定向测试完成，真实多模态能力未验收。下一步需在可控构建中验证中文 OCR 真实样本，选择并授权无意外费用/数据传输的图像场景描述和 STT 处理器，再另行申请生产部署；不得标为 DONE。
+
+### D076-A NAS 隔离 OCR canary（2026-10-14）
+
+- 目标 Commit `3c57a553bebd47b64ceb8603ab6da96465bb2de8` 的 `web-app/Dockerfile.app` 独立归档已传至临时构建目录并成功构建；NAS Docker 24.0.2 无 buildx，classic build image 为 `secondbrain-app:d076-ocr-canary-3c57a55` / `sha256:06bb37d41df4af32dd8ddda9a3e4df7f449dac12be0da5fc79eebd99a7bd45a4`。Dockerfile 本地与 NAS SHA-256 为 `be3bb7ae0a9c80b3d2a6881c63d90380f5f7d2dff4c5461becb4b67dfa8dbff0`；构建绑定 CPU 3、2 GiB memory，构建成功。
+- 运行前预检显示 NAS Docker cgroup v1 不支持 CFS CPU quota；`--cpus=1` 被 daemon 拒绝。也没有 PIDs cgroup，`--pids-limit=128` 明确被忽略。虽可用 `--cpuset-cpus=3` 与 1 GiB 内存限制并通过 Docker inspect 核验，但缺少 PID 限制使完整隔离契约不成立。按边界未执行任何 OCR 代码；只读验证容器被立即移除。没有合成 PNG/PDF 被 OCR 处理，不存在真实识别、耗时、RSS/CPU 样本或 tmpfs 峰值数据。
+- 可核实的正式服务前后状态一致：App ID `3ca30d08568ca547bea9fedf924a73d01a0e00ce06c07b5f95ef52026eed1a4c` / Image `sha256:c3801b546b0e9605370b659cc5c3605abf827080fec7a14a1e88856e917f361d`，`healthy`；Hermes ID `f6703ca3e3d41856b6e35348f28cd1c7f833ffb9ab31b19e958656540eed8ac6` / Image `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`，保持运行；启动时间与预检记录相同。Compose、端口、挂载、Secret、权限、服务、业务数据均未更改。临时源码/样本目录和 canary 容器已清理；仅保留 canary 镜像供后续有条件验证。
+- **结论：** Dockerfile 的正式 App 镜像构建已验证；OCR runtime 验收阻断，不能视为图片/PDF 多模态 DONE。后续需在可强制 CPU 与 PID 限制的隔离 Docker 环境重新运行本 canary；本轮未部署 D076。
