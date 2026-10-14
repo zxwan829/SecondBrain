@@ -516,3 +516,12 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 新增单镜像候选 `web-app/Dockerfile.app`，将前端构建产物嵌入 Core/App；新增环境模板与本地开发说明。没有创建第二数据库、Runtime 或网关。
 - 验证：前端 `npm run typecheck` 和生产构建通过；Core 全测试 **19 项通过**，覆盖 App 会话/Origin、无会话与伪造批准拒绝、Promote 默认关闭、真实 Review/Knowledge 文件、暂缓状态、服务端 Hermes 凭据、Chat Sessions/Run/SSE/停止及 SPA 静态回退。`git diff --check` 通过。测试只用本地临时目录与 Mock Hermes；未执行容器构建，未证明部署 Hermes v0.21.5 的线上 API 兼容。
 - **阶段状态：本地代码已实现、离线测试通过；未部署、未做真实 Hermes 运行联调、未做 LAN/DSM 浏览器用户验收。** 生产仍使用 Hermes Dashboard Plugin；没有改 Compose/NAS/容器/权限/网络，Core Knowledge 保持 RO，Promote 关闭。完整 Web App V1（Today、Capture、Journal、Projects、Brief、Activity、多输入渠道及跨端回归等）未完成，不标记 DONE。
+
+## 2026-10-14 D074 第二轮 Hermes API 与代理兼容
+
+- `HermesAPI` 适配器按生产 Hermes v0.21.5 固定上游 `749220ef` 统一 Sessions/Messages `data` 数组、create/fork `session.id`、SSE JSON `event` 及文本/工具/终态字段；新增 `GET /api/chat/runs/{id}`，Chat 断流、页面恢复和 Stop 后轮询 Run 状态并从 session history 对账。失败、取消、中断会显示结果，不把断线误报成完成。
+- App HTTPS 依赖仅信任明确的 `SB_TRUSTED_PROXY_IPS` 地址字面值；已知 DSM peer 为 `172.18.0.1`，拒绝通配符/CIDR。App 设置响应 Cookie Secure 由 ASGI 可信代理 scheme 驱动，精确 Origin/Host 检查保留。候选 App UID/GID 与 NAS Core 数据/secret owner 一致为 `1026:100`；BFF 上游地址改为 Compose service DNS `hermes:8642`。
+- 按 D074 Personal OS 补充，导航项现在带可选 route 配置，现有 Home/Chat/Review 保持原页面；未注册具体渲染器的已配置路由会显示通用未接入状态，不会误落到 Chat。Core API 统一经 `require_action(action)` seam；V1 仍是单一 owner 校验，没有新增 RBAC。Knowledge Promote 与未来普通业务 CRUD 在权限语义上分离；调度目标保留为复用 Hermes 原生 scheduler。
+- NAS 只读 SSH：Hermes v0.21.5/build `749220ef`，`127.0.0.1:8642` 有监听且 loopback `/health` 为 200；未认证 `/api/sessions` 和 `/v1/capabilities` 返回 401。当前正式 Compose 有 `hermes` service、`secondbrain_default` 网络，无 8642 宿主映射；API loopback 绑定不能供 App 容器调用，且没有 App 可用的服务端 API key。未执行带凭据请求，也没有修改生产 Compose、容器、密钥或服务。
+- 验证：前端 `npm run typecheck`、`npm run build` 通过；Core `uv run --extra test pytest -q` **21 passed**，覆盖 pinned DTO、Run SSE/失败/中断、状态查询、服务端 API key、HTTP/HTTPS Cookie、精确代理 peer、未授权/跨站、Promote fail-closed。测试使用 Mock 上游和临时数据；不代表 NAS 真实 Chat 联调或 DSM 浏览器验收。`Dockerfile.app` 未在本机 Docker 构建。
+- **状态：本地开发完成并测试；未部署。** 真实 Hermes 联调的阻断是 API 当前只在容器 loopback 监听且 App 服务端授权未配置。下一步需用户单独授权只修改 Hermes 的最小内部 API bind/key 配置并验证 Docker 内部网络访问；不加宿主端口、不改 Hermes 版本/Knowledge 权限、不启动 Promote。LAN HTTP/DSM HTTPS 浏览器验收和 App 部署另行授权。

@@ -68,6 +68,12 @@ class CorePromoteAuth:
             raise HTTPException(status_code=401, detail="Promote session expired")
         return "owner"
 
+    def require_action(self, request, action):
+        """Compatibility policy seam; legacy Core unlock currently authorizes one owner."""
+        if not isinstance(action, str) or not action:
+            raise ValueError("An action name is required")
+        return self.require_owner(request)
+
     def lock(self, request):
         self._check_origin(request)
         token = request.cookies.get(self.COOKIE_NAME, "")

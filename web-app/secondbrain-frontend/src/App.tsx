@@ -7,7 +7,7 @@ import hermesOrbUrl from './assets/hermes-planet-user.png';
 import todayLandscapeUrl from './assets/today-lake-background.png';
 
 type Locale = 'zh-CN' | 'en';
-type Page = 'home' | 'review' | 'chat';
+type Page = string;
 type Copy = typeof messages['zh-CN'];
 
 type ReviewItem = {
@@ -21,8 +21,9 @@ type ReviewItem = {
 type ReviewDetail = ReviewItem & { content: string };
 
 function pageFromPath(path: string): Page {
-  if (path === '/review' || path.startsWith('/review/')) return 'review';
-  if (path === '/chat' || path.startsWith('/chat/')) return 'chat';
+  const route = navItems.find((item) => 'route' in item && item.route !== '/' &&
+    (path === item.route || path.startsWith(`${item.route}/`)));
+  if (route) return route.id;
   return 'home';
 }
 
@@ -95,11 +96,11 @@ const messages = {
 } as const;
 
 const navItems = [
-  { id: 'home', key: 'home', icon: 'home', section: 'top' },
-  { id: 'chat', key: 'chat', icon: 'message', section: 'top' },
+  { id: 'home', key: 'home', icon: 'home', section: 'top', route: '/' },
+  { id: 'chat', key: 'chat', icon: 'message', section: 'top', route: '/chat' },
   { id: 'today', key: 'today', icon: 'calendar', section: 'work' },
   { id: 'inbox', key: 'inbox', icon: 'inbox', section: 'work' },
-  { id: 'review', key: 'review', icon: 'check', section: 'work' },
+  { id: 'review', key: 'review', icon: 'check', section: 'work', route: '/review' },
   { id: 'projects', key: 'projects', icon: 'folder', section: 'library' },
   { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library' },
   { id: 'brief', key: 'brief', icon: 'file', section: 'library' },
@@ -177,11 +178,10 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const view = useMemo(() => adaptHome(home), [home]);
   const changeLocale = () => setLocale((current) => current === 'zh-CN' ? 'en' : 'zh-CN');
   const navigate = (item: string) => {
-    if (item === 'chat' || item === 'review' || item === 'home') {
-      const next = item as Page;
-      const path = next === 'home' ? '/' : `/${next}`;
-      if (location.pathname !== path) history.pushState({}, '', path);
-      setPage(next); setMenuOpen(false); return;
+    const destination = navItems.find((entry) => entry.id === item);
+    if (destination && 'route' in destination && destination.route) {
+      if (location.pathname !== destination.route) history.pushState({}, '', destination.route);
+      setPage(destination.id); setMenuOpen(false); return;
     }
     if (page !== 'home') {
       history.pushState({}, '', '/'); setPage('home');
@@ -289,7 +289,9 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </section>
 
-        </> : page === 'review' ? <ReviewPage locale={locale} onBack={() => navigate('home')} /> : <ChatPage locale={locale} />}
+        </> : page === 'review' ? <ReviewPage locale={locale} onBack={() => navigate('home')} />
+          : page === 'chat' ? <ChatPage locale={locale} />
+            : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
     </main>
   );
@@ -456,6 +458,7 @@ function ChatPage({ locale }: { locale: Locale }) {
       if (role !== 'user' && role !== 'assistant') return [];
       let text = row.text ?? row.content ?? row.message ?? '';
       if (Array.isArray(text)) text = text.flatMap((part) => part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string' ? [(part as Record<string, unknown>).text] : []).join('\n');
+      if (typeof row.text === 'string') text = row.text;
       return typeof text === 'string' && text ? [{ id: String(row.id ?? index), role, text } as ChatMessage] : [];
     }));
   };
@@ -466,11 +469,39 @@ function ChatPage({ locale }: { locale: Locale }) {
     try { await loadMessages(sessionId); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not load session history'); }
   };
 
+  const pollRun = async (activeRun: string, sessionId: string) => {
+    const terminal = new Set(['completed', 'failed', 'error', 'cancelled', 'canceled', 'interrupted', 'expired']);
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const result = await api<Record<string, unknown>>(`/api/chat/runs/${encodeURIComponent(activeRun)}`);
+      const status = String(result.status ?? 'unknown').toLowerCase();
+      if (terminal.has(status)) {
+        if (status === 'failed' || status === 'error' || status === 'interrupted') setError(String(result.error ?? (status === 'interrupted' ? 'Hermes run was interrupted' : 'Hermes run failed')));
+        setProgress(status === 'completed' ? (en ? 'Completed' : '已完成') : status === 'cancelled' || status === 'canceled' ? (en ? 'Stopped' : '已停止') : status);
+        await loadMessages(sessionId); await reloadSessions(sessionId);
+        sessionStorage.removeItem('secondbrain.chat.activeRun');
+        sessionStorage.removeItem('secondbrain.chat.activeSession');
+        return true;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    setProgress(en ? 'Run is still active; reconnect to check its result.' : '任务仍在运行；重新进入 Chat 可继续核对结果。');
+    return false;
+  };
+
   useEffect(() => { void (async () => {
     try {
       const preferred = localStorage.getItem('secondbrain.chat.session') ?? '';
       const next = await reloadSessions(preferred);
       if (preferred && next.some((session) => session.id === preferred)) await selectSession(preferred);
+      const activeRun = sessionStorage.getItem('secondbrain.chat.activeRun') ?? '';
+      const activeSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? preferred;
+      if (activeRun && activeSession) {
+        setSelected(activeSession); setBusy(true); setRunId(activeRun);
+        setProgress(en ? 'Checking the interrupted connection…' : '正在核对中断的连接…');
+        try { await pollRun(activeRun, activeSession); }
+        catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not recover run status'); }
+        finally { setBusy(false); setRunId(''); }
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Hermes API unavailable'); }
   })(); }, []);
 
@@ -478,7 +509,7 @@ function ChatPage({ locale }: { locale: Locale }) {
     setError('');
     try {
       const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
-      const id = String(payload.session_id ?? payload.id ?? '');
+      const id = String(payload.session_id ?? '');
       if (!id) throw new Error('Hermes did not return a session identifier');
       await reloadSessions(id); setSelected(id); setMessages([]); localStorage.setItem('secondbrain.chat.session', id);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not create session'); }
@@ -488,7 +519,7 @@ function ChatPage({ locale }: { locale: Locale }) {
     if (!selected) return;
     try {
       const result = await api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(selected)}/fork`, { method: 'POST', body: '{}' });
-      const id = String(result.session_id ?? result.id ?? '');
+      const id = String(result.session_id ?? '');
       if (!id) throw new Error('Hermes did not return a forked session identifier');
       await reloadSessions(id); await selectSession(id);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not fork session'); }
@@ -504,7 +535,7 @@ function ChatPage({ locale }: { locale: Locale }) {
       let sessionId = selected;
       if (!sessionId) {
         const created = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
-        sessionId = String(created.session_id ?? created.id ?? '');
+        sessionId = String(created.session_id ?? '');
         if (!sessionId) throw new Error('Hermes did not return a session identifier');
         setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
         await reloadSessions(sessionId);
@@ -516,32 +547,42 @@ function ChatPage({ locale }: { locale: Locale }) {
       const activeRun = String(started.run_id ?? '');
       if (!activeRun) throw new Error('Hermes did not return a run identifier');
       setRunId(activeRun); setProgress(en ? 'Connected to Hermes' : '已连接 Hermes');
+      sessionStorage.setItem('secondbrain.chat.activeRun', activeRun);
+      sessionStorage.setItem('secondbrain.chat.activeSession', sessionId);
       const controller = new AbortController(); abortRef.current = controller;
       const response = await fetch(`/api/chat/runs/${encodeURIComponent(activeRun)}/events`, { credentials: 'same-origin', signal: controller.signal, headers: { Accept: 'text/event-stream' } });
       if (!response.ok || !response.body) throw new Error(`Hermes stream failed (HTTP ${response.status})`);
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+      let sawTerminal = false;
       const consume = (frame: string) => {
-        let eventName = 'message'; const data: string[] = [];
+        const data: string[] = [];
         for (const line of frame.split(/\r?\n/)) {
           if (line.startsWith(':')) continue;
-          if (line.startsWith('event:')) eventName = line.slice(6).trim();
           if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
         }
         if (!data.length) return;
         let payload: Record<string, unknown> = {};
         try { payload = JSON.parse(data.join('\n')) as Record<string, unknown>; } catch { payload = { text: data.join('\n') }; }
+        const eventName = String(payload.event ?? 'message');
         const name = String(payload.name ?? payload.tool_name ?? payload.tool ?? 'tool');
-        if (eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
-          const delta = String(payload.delta ?? payload.text ?? payload.output_text ?? '');
+        if (eventName === 'message.delta' || eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
+          const delta = String(payload.delta ?? payload.text ?? payload.output_text ?? payload.content ?? '');
           if (delta) setMessages((current) => current.map((message, index) => index === current.length - 1 && message.role === 'assistant' ? { ...message, text: message.text + delta } : message));
         } else if (eventName.startsWith('tool.')) {
-          setProgress(`${eventName.replace('tool.', '')}: ${name}`);
+          const detail = typeof payload.preview === 'string' && payload.preview ? ` · ${payload.preview}` : '';
+          const failed = payload.error === true;
+          const failure = typeof payload.error === 'string' && payload.error ? ` · ${payload.error}` : failed ? (en ? ' · tool reported an error' : ' · 工具报告错误') : '';
+          setProgress(`${eventName.replace('tool.', '')}: ${name}${detail}${failure}`);
         } else if (eventName === 'run.completed' || eventName === 'assistant.completed') {
+          sawTerminal = true;
           const output = typeof payload.output === 'string' ? payload.output : '';
           setMessages((current) => current.map((message, index) => index === current.length - 1 && message.role === 'assistant' && !message.text && output ? { ...message, text: output } : message));
           setProgress(en ? 'Completed' : '已完成');
         } else if (eventName === 'run.failed' || eventName === 'run.cancelled' || eventName === 'run.interrupted') {
-          setProgress(String(payload.error ?? (eventName === 'run.cancelled' ? (en ? 'Stopped' : '已停止') : eventName)));
+          sawTerminal = true;
+          const detail = String(payload.error ?? (eventName === 'run.cancelled' ? (en ? 'Stopped' : '已停止') : eventName));
+          setProgress(detail);
+          if (eventName === 'run.failed' || eventName === 'run.interrupted') setError(detail);
         }
       };
       while (true) {
@@ -551,9 +592,23 @@ function ChatPage({ locale }: { locale: Locale }) {
         frames.forEach(consume);
         if (part.done) { if (buffer.trim()) consume(buffer); break; }
       }
-      await loadMessages(sessionId); await reloadSessions(sessionId);
+      if (sawTerminal) {
+        await loadMessages(sessionId); await reloadSessions(sessionId);
+        sessionStorage.removeItem('secondbrain.chat.activeRun'); sessionStorage.removeItem('secondbrain.chat.activeSession');
+      } else {
+        setProgress(en ? 'Stream ended; checking run status…' : '连接结束，正在核对任务状态…');
+        await pollRun(activeRun, sessionId);
+      }
     } catch (cause) {
-      if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError(cause instanceof Error ? cause.message : 'Chat failed');
+      if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
+        setProgress(en ? 'Connection interrupted; checking run status…' : '连接中断，正在核对任务状态…');
+        try {
+          const pendingRun = sessionStorage.getItem('secondbrain.chat.activeRun') ?? '';
+          const pendingSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? selected;
+          if (pendingRun && pendingSession) await pollRun(pendingRun, pendingSession);
+          else setError(cause instanceof Error ? cause.message : 'Chat failed');
+        } catch (recoveryError) { setError(recoveryError instanceof Error ? recoveryError.message : 'Could not recover run status'); }
+      }
     } finally { abortRef.current = null; setRunId(''); setBusy(false); }
   };
 
@@ -561,7 +616,12 @@ function ChatPage({ locale }: { locale: Locale }) {
     if (!runId) return;
     try { await api(`/api/chat/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST', body: '{}' }); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not stop run'); }
+    const activeSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? selected;
+    setProgress(en ? 'Stopping…' : '正在停止…');
+    try { await pollRun(runId, activeSession); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not confirm stop status'); }
     abortRef.current?.abort();
+    setBusy(false); setRunId('');
   };
 
   return <section className="chat-page">

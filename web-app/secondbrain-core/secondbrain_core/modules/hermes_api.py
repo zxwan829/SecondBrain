@@ -71,20 +71,52 @@ class HermesAPI:
             raise HTTPException(status_code=502, detail="Hermes API returned invalid JSON") from exc
 
     async def list_sessions(self, limit=50, offset=0):
-        return await self.json_request("GET", "/api/sessions", params={"limit": limit, "offset": offset})
+        payload = await self.json_request("GET", "/api/sessions", params={"limit": limit, "offset": offset})
+        rows = payload.get("data", payload.get("sessions", [])) if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            raise HTTPException(status_code=502, detail="Hermes returned invalid session data")
+        return {"sessions": [self._session(row) for row in rows if isinstance(row, dict)],
+                "pagination": {key: payload[key] for key in ("limit", "offset", "has_more")
+                               if key in payload} if isinstance(payload, dict) else {}}
 
     async def create_session(self, body):
-        return await self.json_request("POST", "/api/sessions", body=body)
+        return self._session_result(await self.json_request("POST", "/api/sessions", body=body))
 
     async def get_session(self, session_id):
-        return await self.json_request("GET", f"/api/sessions/{self._safe_id(session_id)}")
+        return self._session_result(await self.json_request("GET", f"/api/sessions/{self._safe_id(session_id)}"))
 
     async def get_messages(self, session_id):
-        return await self.json_request("GET", f"/api/sessions/{self._safe_id(session_id)}/messages",
-                                       params={"inline_images": "false"})
+        payload = await self.json_request("GET", f"/api/sessions/{self._safe_id(session_id)}/messages",
+                                          params={"inline_images": "false"})
+        rows = payload.get("data", payload.get("messages", [])) if isinstance(payload, dict) else payload
+        if not isinstance(rows, list):
+            raise HTTPException(status_code=502, detail="Hermes returned invalid message history")
+        messages = []
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            content = row.get("content", row.get("text", ""))
+            if isinstance(content, list):
+                content = "\n".join(part.get("text", "") for part in content
+                                    if isinstance(part, dict) and isinstance(part.get("text"), str))
+            messages.append({"id": str(row.get("id", index)), "role": row.get("role", ""),
+                             "text": content if isinstance(content, str) else ""})
+        return {"messages": messages}
 
     async def fork_session(self, session_id, body):
-        return await self.json_request("POST", f"/api/sessions/{self._safe_id(session_id)}/fork", body=body)
+        return self._session_result(await self.json_request("POST", f"/api/sessions/{self._safe_id(session_id)}/fork", body=body))
+
+    @staticmethod
+    def _session(row):
+        return {"session_id": str(row.get("id", row.get("session_id", ""))),
+                "title": row.get("title", ""), "updated_at": row.get("updated_at")}
+
+    @classmethod
+    def _session_result(cls, payload):
+        row = payload.get("session", payload) if isinstance(payload, dict) else {}
+        if not isinstance(row, dict) or not (row.get("id") or row.get("session_id")):
+            raise HTTPException(status_code=502, detail="Hermes returned an invalid session")
+        return cls._session(row)
 
     async def patch_session(self, session_id, body):
         return await self.json_request("PATCH", f"/api/sessions/{self._safe_id(session_id)}", body=body)
@@ -107,7 +139,21 @@ class HermesAPI:
         if response.status_code >= 400:
             raise HTTPException(status_code=502 if response.status_code >= 500 else response.status_code,
                                 detail=f"Hermes API returned HTTP {response.status_code}")
-        return response.json()
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=502, detail="Hermes returned invalid run data") from exc
+        run_id = payload.get("run_id") if isinstance(payload, dict) else None
+        if not isinstance(run_id, str) or not run_id:
+            raise HTTPException(status_code=502, detail="Hermes returned an invalid run identifier")
+        return {"run_id": run_id, "status": payload.get("status", "accepted")}
+
+    async def get_run(self, run_id):
+        payload = await self.json_request("GET", f"/v1/runs/{self._safe_id(run_id)}")
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=502, detail="Hermes returned invalid run status")
+        return {key: payload[key] for key in ("run_id", "status", "error", "output", "created_at", "updated_at")
+                if key in payload}
 
     async def stream_run(self, run_id):
         run_id = self._safe_id(run_id)
@@ -129,16 +175,42 @@ class HermesAPI:
 
         async def chunks():
             try:
-                if response.is_stream_consumed:
-                    if response.content:
-                        yield response.content
-                else:
-                    async for chunk in response.aiter_raw():
-                        yield chunk
+                buffer = ""
+                async for chunk in response.aiter_text():
+                    buffer += chunk
+                    frames = re.split(r"\r?\n\r?\n", buffer)
+                    buffer = frames.pop() or ""
+                    for frame in frames:
+                        normalized = self._normalize_event_frame(frame)
+                        if normalized:
+                            yield normalized.encode("utf-8")
+                if buffer.strip():
+                    normalized = self._normalize_event_frame(buffer)
+                    if normalized:
+                        yield normalized.encode("utf-8")
             finally:
                 await response.aclose()
                 await client.aclose()
         return chunks()
+
+    @staticmethod
+    def _normalize_event_frame(frame):
+        data = [line[5:].lstrip() for line in frame.splitlines() if line.startswith("data:")]
+        if not data:
+            return ""
+        raw = "\n".join(data)
+        try:
+            payload = json.loads(raw)
+        except (ValueError, json.JSONDecodeError):
+            payload = {"event": "message", "text": raw}
+        if not isinstance(payload, dict):
+            payload = {"event": "message", "data": payload}
+        event = payload.get("event")
+        if not isinstance(event, str):
+            # Older compatible event-stream implementations may use the SSE event field.
+            event = next((line[6:].strip() for line in frame.splitlines() if line.startswith("event:")), "message")
+            payload["event"] = event
+        return f"data: {json.dumps(payload, separators=(',', ':'), ensure_ascii=False)}\n\n"
 
     async def stop_run(self, run_id):
         return await self.json_request("POST", f"/v1/runs/{self._safe_id(run_id)}/stop", body={})

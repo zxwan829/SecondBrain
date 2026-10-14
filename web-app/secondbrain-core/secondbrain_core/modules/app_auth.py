@@ -83,6 +83,12 @@ class AppSessionAuth:
             raise HTTPException(status_code=401, detail="App session required")
         return "owner"
 
+    def require_action(self, request, action):
+        """Authorization seam for business operations; V1 maps every action to its single owner."""
+        if not isinstance(action, str) or not action:
+            raise ValueError("An action name is required")
+        return self.require_owner(request)
+
     def logout(self, request):
         token = request.cookies.get(self.COOKIE_NAME, "")
         if token:
@@ -94,5 +100,6 @@ class AppSessionAuth:
                             secure=request.url.scheme == "https", samesite="strict", path="/")
 
     @classmethod
-    def clear_cookie(cls, response):
-        response.delete_cookie(cls.COOKIE_NAME, httponly=True, samesite="strict", path="/")
+    def clear_cookie(cls, response, request):
+        response.delete_cookie(cls.COOKIE_NAME, httponly=True, secure=request.url.scheme == "https",
+                               samesite="strict", path="/")

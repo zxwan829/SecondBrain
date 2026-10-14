@@ -35,6 +35,8 @@ source: GitHub SecondBrain Monorepo
 | 授权体验 | App 登录一次，查看 Review 后点击批准/暂缓；**无第二密码、Passkey 或生物识别** | Core 验证 App 会话、来源、内容版本和幂等；Hermes 无审批凭据/Knowledge 写权；具体隔离尚未验证 |
 | 成本/复杂度 | 两容器、单 HTTP 入口；标准版 LAN-first，客户公网方案为另行收费部署服务 | 不内置 TLS/证书/反代/授权平台/安装向导；参数化部署便于远程交付；不改 V1 业务范围 |
 
+**Personal OS 扩展约束（D074 补充）：** App 是可持续扩展的个人业务入口，不限于 Chat/Knowledge。前端导航由模块配置驱动；Core 保持模块化单体和独立业务 API；单用户登录由通用 action-policy seam 统一校验，不提前实现 RBAC。只有 Knowledge 正式入库走人工审核；Memo、Calendar、新闻订阅等普通业务 CRUD 按各自 Core API 授权。AI 定时任务优先复用 Hermes 原生调度。当前不创建空页面/模块、插件框架、数据库或新容器。
+
 **协作：** ChatGPT 负责范围、技术取舍、任务分解、验收标准；Codex 负责实施、针对性测试、必要文档更新、Git 与经授权的部署。日常遵循 FAST-EXEC。代码 Push ≠ 生产部署 ≠ 用户验收。
 
 ## 3. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
@@ -45,7 +47,7 @@ source: GitHub SecondBrain Monorepo
 
 | V1 项目 | 要求 / 验收要点 | 当前状态 | 仍需完成 |
 |---|---|---|---|
-| Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | PROD-PARTIAL：生产为 Hermes 原生 Chat；独立 App Chat 本地接入 BFF 与 Sessions/Run/SSE API | 需在固定 v0.21.5 运行环境联调会话、流式事件、工具状态和停止行为；未生产部署/验收 |
+| Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | PROD-PARTIAL：生产为 Hermes 原生 Chat；App 已按 v0.21.5 `749220ef` 固定响应契约实现适配并通过 Mock 回归 | NAS 只读核验见 Environment-Baseline：8642 仅监听 Hermes loopback，未能从 App 网络做授权联调；生产启用内部 API/密钥配置需单独授权，且未部署/验收 |
 | Daily Capture | 低摩擦保存日常素材；不得把内容自动提升成正式 Knowledge | PROD-PARTIAL | 对照 Skill 的正式触发和行为做必要回归 |
 | Knowledge Retrieval | 从批准的目录读取/搜索已存在的正式知识 | ACCEPTED：V0 已生产验收 | 仅在真实效果问题出现时优化，不强行接 RAG |
 | Universal Capture：文本/Markdown/TXT | 保存 Raw、建立 Review、元数据与路径真实落盘、不自动 Promote | ACCEPTED：文本 Raw→Review | 检查其他文本格式边界及跨入口表现 |
@@ -95,7 +97,7 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | 本地生产构建、typecheck、Core 测试、Home/Review 文件数据、Chat BFF/SSE 与 SPA 路由通过；不代表 V1 完成 | 固定 Hermes v0.21.5 真实运行联调、完整 V1 模块、LAN/DSM 浏览器回归及生产部署尚未完成；Promote 关闭、Knowledge RO |
+| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | Hermes v0.21.5 固定提交适配；前端 typecheck/build、Core 21 项测试通过；未部署，不代表 V1 完成 | NAS Hermes API 仅 loopback 监听且无 App 侧可用授权配置；需另行批准最小 Hermes 内部 API 配置后联调。完整 V1 模块、LAN/DSM 浏览器回归及生产部署尚未完成；Promote 关闭、Knowledge RO |
 | P1 | Universal Capture 多类型处理 + 微信/Web 输入渠道 | 每个 MUST 输入类型真实 Raw/Review 成功且失败可核对；微信端到端有效 | Hermes 微信集成方法仍需确证，不以 OpenClaw 作为路线 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |

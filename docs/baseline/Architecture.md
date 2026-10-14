@@ -33,8 +33,10 @@ Hermes Dashboard Shell → SecondBrain Dashboard Plugin → 认证 API/薄适配
 - **V1：** 标准版 NAS 内网 HTTP IP+端口；本人 `http://192.168.3.27:9119`，外出经 Home-WG 访问同址。**V1 验收必须同时覆盖** DSM LAN-only `https://zxwan520.com:63012` 的登录、Chat 流式、采集、Review/审批与知识功能，确保本人 V2 无应用架构返工。
 - **V2：** 本人另行配置 AX3600 转发及 DSM HTTPS 公网入口，指向同一 App HTTP 端口；标准客户公网方案为增值部署服务，不内置 HTTPS/证书签发/反代或额外网关容器。外网开放仍须单独核验身份认证、网络可达和安全策略。
 - **权限：** App 会话与受控 Core 审批独立于 Hermes Agent；查看 Review 后点击确认即可，无第二密码/生物识别；服务端校验会话、来源、文件哈希、幂等与审计。Hermes 无审批密钥和 Knowledge 写权；Private 不挂载。单纯点击不宣称可密码学证明真人。
-- **当前首阶段实现：** 独立 React/Vite 入口、同源 SPA 静态托管、App 登录会话、Home/Review 文件读取、Review 状态 API、Hermes Sessions/Run/SSE/stop BFF 与前端 Chat 已在本地代码完成；离线测试覆盖会话来源校验、无会话拒绝、Promote 默认关闭、文件数据、SSE、停止和静态路由。前端 typecheck/build 与 Core 测试通过。固定 Hermes v0.21.5 的真实运行联调、完整 V1 模块及浏览器体验尚未完成。
-- **迁移门槛：** 生产前仍须在固定 Hermes 版本验证 Chat/Session/流式/工具状态/停止等 API、Core 服务凭据与可信反代来源，并完成 LAN HTTP/DSM HTTPS 回归；未通过不切生产端口、不启动 Promote、不改现有 PBR/WG/AdGuard。NAS IP、存储和 API Key 在未来部署配置中参数化。
+- **Personal OS 扩展边界：** 前端沿用可配置的导航项和 route 字段，由各业务页面独立实现；登录、Shell 和导航不绑定 Chat/Review。Core 是模块化单体，各模块通过独立 API 和业务服务扩展，不新增容器/数据库/插件平台。当前单用户策略由服务端 `require_action(action)` 授权 seam 统一执行 owner 校验；不实现 RBAC。Knowledge Promote 与未来普通业务写操作分开授权：Memo、Calendar、新闻订阅等经授权 API 可按业务规则 CRUD，不进入 Knowledge 审批流。AI 定时任务优先调用 Hermes 原生调度，Core 保存用户配置/业务状态并做必要权限检查。
+- **当前首阶段实现：** 独立 React/Vite 入口、同源 SPA 静态托管、App 登录会话、Home/Review 文件读取、Review 状态 API、Hermes Sessions/Run/SSE/stop BFF 与前端 Chat 已在本地代码完成。适配器按 Hermes v0.21.5 上游固定提交 `749220ef` 统一 `data` 列表、嵌套 `session.id` 和 JSON SSE 事件，并实现 Run 状态恢复；前端 typecheck/build 与 Core 21 项测试通过。尚未部署或完成实际 Hermes Chat 联调。
+- **NAS API 只读现状（2026-10-14）：** v0.21.5 API 进程在 Hermes 容器内 `127.0.0.1:8642` 有监听，health 200，未认证 sessions/capabilities 返回 401；loopback 绑定不能供 App 容器调用，且未配置 App 可用的服务端 API key。生产 Compose 服务名为 `hermes`，网络为 `secondbrain_default`。需要单独批准后，才能最小配置内部 API 监听/密钥并验证两容器通信；无需增加端口映射。
+- **迁移门槛：** App 代理只信任逐个核实的 DSM peer IP，拒绝通配或网段信任；精确 Origin/Host 校验与代理 HTTPS scheme 下 Secure Cookie 已通过离线测试，DSM 正式代理链及浏览器回归仍待部署后验证。未通过不切生产端口、不启动 Promote、不改 DSM/PBR/WG/AdGuard。NAS UID/GID 1026:100、Hermes API 服务名和 Secret 所有权要求已写入候选配置；生产变更另行授权。
 
 ## Core 现状与历史集成方式（目标已由 D074 更新）
 

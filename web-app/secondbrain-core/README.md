@@ -32,7 +32,9 @@ unchanged.
 - Home and Review data are read from configured Review and Knowledge files;
   Review decisions are read from the existing versioned Core approval store.
 - Hermes BFF routes for Sessions, history, create/fork/update/delete, run,
-  streaming events, and stop. The API key is attached only by the server.
+  streaming events, status recovery, and stop. The adapter normalizes the
+  Hermes v0.21.5 / `749220ef` `data` lists, nested `session.id`, and JSON SSE
+  event payloads. The API key is attached only by the server.
 - Promote UI is guarded by Core's `promote_enabled` response and explicit user
   confirmation. Core defaults closed and retains SHA-256/version and audit
   protections.
@@ -42,12 +44,16 @@ unchanged.
 
 ## Not yet verified or delivered
 
-- Live compatibility against the deployed Hermes v0.21.5 API and actual
-  service-side key provisioning.
+- Authenticated live compatibility against the deployed Hermes v0.21.5 API and
+  service-side key provisioning. NAS read-only checks found port 8642 listening
+  only on Hermes loopback; uncredentialed requests are rejected. App-to-Hermes
+  integration requires a separately authorized internal bind/key configuration.
 - Remaining V1 business modules and all previously accepted workflow
   regressions in the independent App.
 - Production App/Core image, Compose integration, NAS deployment, DSM HTTPS
-  trusted-proxy/Cookie/SSE behavior, and browser acceptance.
+  runtime trusted-proxy/Cookie/SSE behavior, and browser acceptance. Offline
+  tests cover exact proxy peer handling and Secure cookies when the trusted
+  forwarded scheme is HTTPS.
 - Production Promote. Hermes Knowledge remains read-only; Core Knowledge remains
   read-only and `SB_PROMOTE_ENABLED=false` in production.
 

@@ -34,7 +34,7 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
 
     @router.get("/review/items")
     def list_review_items(request: Request):
-        auth.require_owner(request)
+        auth.require_action(request, "review.read")
         items = []
         for current, dirs, files in os.walk(review_root, followlinks=False):
             dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(current, d)))
@@ -58,7 +58,7 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
 
     @router.get("/review/items/{review_path:path}")
     def get_review_item(request: Request, review_path: str):
-        auth.require_owner(request)
+        auth.require_action(request, "review.read")
         try:
             content = _read_review(str(review_root), review_path)
         except ApprovalRequestError as exc:
@@ -87,12 +87,12 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
 
     @router.get("/status")
     def promote_status(request: Request):
-        auth.require_owner(request)
+        auth.require_action(request, "promote.read")
         return {"status": "ok", "promote_enabled": promote_enabled}
 
     @router.post("/review/approve")
     def approve_review(request: Request, body: dict):
-        approver = auth.require_owner(request)
+        approver = auth.require_action(request, "knowledge.promote")
         if not promote_enabled:
             raise HTTPException(status_code=423, detail="Promote is disabled pending production write approval")
         try:
@@ -104,7 +104,7 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
 
     @router.post("/review/defer")
     def defer_review(request: Request, body: dict):
-        approver = auth.require_owner(request)
+        approver = auth.require_action(request, "review.defer")
         try:
             return service.defer(body.get("review_path"), body.get("review_sha256"), approver)
         except ApprovalRequestError as exc:

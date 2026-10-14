@@ -72,19 +72,19 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
 
     @router.get("/auth/session")
     def session(request: Request):
-        auth.require_owner(request)
+        auth.require_action(request, "auth.session")
         return {"status": "authenticated", "subject": "owner"}
 
     @router.post("/auth/logout")
     def logout(request: Request, response: Response):
-        auth.require_owner(request)
+        auth.require_action(request, "auth.logout")
         auth.logout(request)
-        auth.clear_cookie(response)
+        auth.clear_cookie(response, request)
         return {"status": "logged_out"}
 
     @router.get("/home")
     async def home(request: Request):
-        auth.require_owner(request)
+        auth.require_action(request, "home.read")
         all_reviews = _review_items(review_root, service)
         pending = [item for item in all_reviews if item["status"] in {"pending", "failed"}]
         knowledge = _knowledge_items(knowledge_root)
@@ -105,49 +105,49 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
 
     @router.get("/chat/capabilities")
     async def chat_capabilities(request: Request):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.read")
         return await hermes.capabilities()
 
     @router.get("/chat/sessions")
     async def sessions(request: Request, limit: int = 50, offset: int = 0):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.read")
         if limit < 1 or limit > 100 or offset < 0:
             raise HTTPException(status_code=400, detail="Invalid pagination")
         return await hermes.list_sessions(limit, offset)
 
     @router.post("/chat/sessions")
     async def create_session(request: Request, body: Optional[dict] = None):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.write")
         return await hermes.create_session(body or {})
 
     @router.get("/chat/sessions/{session_id}")
     async def get_session(request: Request, session_id: str):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.read")
         return await hermes.get_session(session_id)
 
     @router.get("/chat/sessions/{session_id}/messages")
     async def messages(request: Request, session_id: str):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.read")
         return await hermes.get_messages(session_id)
 
     @router.post("/chat/sessions/{session_id}/fork")
     async def fork_session(request: Request, session_id: str, body: Optional[dict] = None):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.write")
         return await hermes.fork_session(session_id, body or {})
 
     @router.patch("/chat/sessions/{session_id}")
     async def patch_session(request: Request, session_id: str, body: dict):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.manage")
         return await hermes.patch_session(session_id, body)
 
     @router.delete("/chat/sessions/{session_id}")
     async def delete_session(request: Request, session_id: str):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.manage")
         return await hermes.delete_session(session_id)
 
     @router.post("/chat/sessions/{session_id}/runs")
     async def start_run(request: Request, session_id: str, body: dict):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.run")
         text = body.get("input")
         if not isinstance(text, str) or not text.strip() or len(text) > 100_000:
             raise HTTPException(status_code=400, detail="Message must contain 1-100000 characters")
@@ -158,15 +158,20 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
 
     @router.get("/chat/runs/{run_id}/events")
     async def run_events(request: Request, run_id: str):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.read")
         chunks = await hermes.stream_run(run_id)
         return StreamingResponse(chunks, media_type="text/event-stream", headers={
             "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
         })
 
+    @router.get("/chat/runs/{run_id}")
+    async def get_run(request: Request, run_id: str):
+        auth.require_action(request, "chat.read")
+        return await hermes.get_run(run_id)
+
     @router.post("/chat/runs/{run_id}/stop")
     async def stop_run(request: Request, run_id: str):
-        auth.require_owner(request)
+        auth.require_action(request, "chat.stop")
         return await hermes.stop_run(run_id)
 
     return router

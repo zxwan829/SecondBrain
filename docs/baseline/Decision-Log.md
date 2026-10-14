@@ -344,3 +344,9 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 **访问和安全：** 标准客户只交付 LAN HTTP IP+端口，客户公网/Lucky 等单独收费部署，不内置 TLS/证书/反代；本人 V1 保留 LAN/Home-WG `192.168.3.27:9119`，本人 V2 复用 DSM `https://zxwan520.com:63012` 转发到同一 App HTTP 入口。**V1 即需完成 LAN HTTP 与 DSM LAN-only HTTPS 全业务兼容回归**（同源 API、流式 Chat、Cookie/Origin/可信代理头），V2 不应重构 App/容器拓扑；公网可达性与安全开放仍独立验收。审批体验为 App 一次登录、查看后点击批准/暂缓，不要求第二密码或生物识别；Core 保留会话/来源/版本哈希/幂等/审计校验，Hermes 无审批凭据及 Knowledge 写权，Private 隔离。此机制不宣称能数学证明真人点击。
 
 **工程门槛/状态（2026-10-14 更新）：** 首阶段已直接在正式源码实现 FE-4 独立入口、App/Core 同源静态与 API 服务、App 会话、Home/Review、Hermes Sessions/Run/SSE/stop BFF 及内置 Chat；typecheck、production frontend build、Core 离线测试和 API 集成测试通过。固定 Hermes v0.21.5 真实运行联调、全量 V1 模块及 LAN/DSM 浏览器验收仍未完成。标准 Compose 和宿主参数配置为后续部署预留，不做安装向导、授权平台或多 NAS 专属代码。**本轮仅改本地源码和基线文档：未修改 NAS/Docker/DSM/网络、未部署独立 App、未开启 Promote；生产仍使用已部署 Hermes Plugin。**
+
+**第二轮兼容修复（2026-10-14）：** 服务端 Hermes Adapter 按生产固定上游提交 `749220ef` 转换 Sessions/Messages 的 `data` 列表和 create/fork 的嵌套 `session.id`，统一 SSE JSON 事件、工具进度和错误状态，并新增 Run 状态查询以在断线/中断后核对结果及刷新会话历史。Uvicorn 转发头只接受明确配置的单个 IP 字面地址，`.env.example` 使用已记录 DSM peer `172.18.0.1`；App 候选容器身份调整为 `1026:100`，Hermes BFF 使用 Compose service DNS `hermes`。前端 typecheck/build 与 Core 21 项测试通过。
+
+NAS 只读核验发现 Hermes API 在 `127.0.0.1:8642` 监听、health 200、未认证 sessions/capabilities 返回 401；该端口未发布且 loopback 不可供 App service 访问，未找到 App 可用的 API key 配置。因此本次未执行带凭据真实联调，也未更改 Compose、容器、密钥或 NAS。需要单独授权配置 Hermes 内部 API bind/key 并以两个容器间验收后，才能进入正式 App 联调/部署。
+
+**Personal OS 扩展边界补充：** 前端导航配置持有路由与模块位置，Shell/登录复用；Core 维持模块化单体，各业务独立 API/业务服务，不增加服务、数据库或通用插件框架。当前单用户登录不预建 RBAC，API 通过语义操作名 `require_action(action)` 进入统一 owner policy seam；Knowledge Promote 单独受人工审核，Memo/Calendar/新闻订阅等未来普通 CRUD 按其各自授权规则实现，不强制走 Promote。AI 定时任务优先复用 Hermes 原生 scheduler，Core 保存用户配置/业务状态及必要授权。V1 LAN HTTP 与 DSM LAN-only HTTPS 要求不变。

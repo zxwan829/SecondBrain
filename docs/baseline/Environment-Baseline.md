@@ -1,6 +1,6 @@
 ---
 created: 2026-09-28
-updated: 2026-10-13
+updated: 2026-10-14
 status: current
 type: environment-baseline
 ---
@@ -25,6 +25,12 @@ type: environment-baseline
 - Hermes 数据/配置：`/volume1/docker/secondbrain/hermes/data/`、`config.yaml`；Hermes CLI `/opt/hermes/.venv/bin/hermes`。
 - Dashboard 监听容器端口 `9119`，宿主仅绑定 `192.168.3.27:9119`，LAN HTTP URL `http://192.168.3.27:9119`；DSM HTTPS `https://zxwan520.com:63012` 保留 LAN-only 入口。Basic Auth secret 在 `/volume1/docker/secondbrain/.env`，权限 600。不得把凭据写入文档。
 - 网络 `secondbrain_default`；网段 `172.18.0.0/16`，Gateway `172.18.0.1`，Hermes `172.18.0.2`；容器流量策略路由经 table 200 → `192.168.3.2` → `wg0`。开机脚本 `/volume1/docker/secondbrain/scripts/hermes-policy-route.sh`，DSM Task Scheduler `SecondBrain Boot`（root）；开机恢复未以 NAS 主动重启验证。
+
+### D074 App/Core 与 Hermes API 只读核验（2026-10-14）
+
+- 通过现有 NAS SSH 与一次性 `sudo -n docker exec` 只读核验 `secondbrain-hermes`：Hermes v0.21.5 / upstream `749220ef`；`/proc/net/tcp` 显示 `127.0.0.1:8642` LISTEN，loopback `/health` 返回 200，未认证 `GET /api/sessions` 与 `/v1/capabilities` 返回 401。容器当前配置文件没有 `platforms.api_server` 项，`API_SERVER_*` 环境项未设置且未发现可供 App 使用的 API key 配置。API 进程有响应且受认证保护，但 loopback 绑定不能供同 Compose 的 App 容器访问；未进行带凭据的上游请求。
+- 当前正式 Compose service 名为 `hermes`，容器名 `secondbrain-hermes`，与旧 Core 处于 `secondbrain_default` 网络；Hermes API 无 8642 宿主端口映射。App BFF 候选地址使用 Compose DNS `http://hermes:8642`。当前 Core 仍是旧镜像/service；D074 App 未部署。只读核验没有修改容器、Compose、密钥或运行配置。
+- 候选 App 镜像运行身份与 NAS 现有 Core 一致为 `1026:100`；App password/Hermes API key 文件必须在 App 容器内由 UID 1026 拥有、mode 0600 或更严。`.env.example` 不含密钥。DSM HTTPS 可信 peer 仍按现有基线使用精确 `172.18.0.1`，启动代码只接受单个 IP 字面值，不接受 `*` 或 CIDR；实际 App 生产链路及前端 HTTPS Cookie 尚未运行核验。
 
 ## 已核验挂载与安全差距
 
