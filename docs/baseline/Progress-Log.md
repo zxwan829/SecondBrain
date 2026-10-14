@@ -557,3 +557,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 63013 HTTPS 登录与 Session、Home、Review、Promote 状态接口均返回 200；Cookie `Secure/HttpOnly/SameSite=Strict` 验证通过。浏览器实际显示登录后 Home 与 8 条真实 Review 列表/详情，批准按钮因 Promote 关闭而禁用。App healthy；Hermes 未重建，Knowledge RO、Private 未挂载、Capture 写边界和 `SB_PROMOTE_ENABLED=false` 保持。
 - **状态：App 独立密码与 Home/Review 浏览器运行核验完成；Chat 浏览器交互、DSM GUI 项目旧缓存和用户最终验收仍待完成。** 未修改业务数据、Compose、DSM 或网络；未跟踪 `typescript` 保留。
 - 后续在同一 63013 浏览器打开内置 Chat：现有 Session 与历史加载，向既有 D074 smoke Session 发送一条无工具测试消息，页面收到 SSE 回复并完成；刷新后消息保留。浏览器 Stop/工具进度未重测，DSM GUI 旧缓存与用户最终验收仍待处理。
+
+## 2026-10-14 D074 Chat 浏览器与 Container Manager 项目核验收口
+
+- 63013 Chat 浏览器用例：Knowledge 精确词 `search_files` 成功，前端显示工具执行事件、结果和完成状态；`read_file` 对临时不存在的 Knowledge 路径返回 `File not found`，前端显示错误详情及 Run 终态。长序列只读任务由前端 Stop 中断，状态从“正在停止…”到“已停止”；随后无工具对话正常回复。刷新页面、切换到先前 smoke Session 再切回后，测试消息、工具结果和取消提示均从持久化历史恢复。没有写 Knowledge、Capture 或生产配置，仅新增测试 Session/messages/runs。
+- NAS 只读运行时核验：当前正式 `compose.yaml` SHA-256 为 `14ebd79e5571d42411652c0eabd40a65ae4da7301c4f5bc6f8f5c183197296f0`；`secondbrain-hermes`、`secondbrain-app` 均运行，Docker labels 的 project/service/config/working directory 正确匹配 `secondbrain`、目标两个 service 和正式 Compose 路径。Hermes 镜像 digest、App 镜像与此前配置一致；本轮没有改任何生产服务。
+- DSM GUI 项目 `secondbrain` 刷新后仍显示 Hermes 旧容器名 `8fad22e58156_secondbrain-hermes` 及 `nousresearch/hermes-agent:latest`，App 镜像行是当前版本。Synology 官方说明 Project YAML 编辑会部署新设置；历史已出现 GUI 编辑启动旧 Core 并造成端口冲突。因此本轮未保存 YAML、未执行项目级 Build/Start/Stop/Restart/Clean，也未触碰 DSM 内部数据。没有可验证的安全 GUI 定义对齐方式，项目 GUI 管理验收仍阻断。
+- 当前运行时安全边界保持：Hermes 固定 v0.21.5；Knowledge 只读，Private 未挂载；App Promote=false、Knowledge RO；App 仅 127.0.0.1:9120 发布，Hermes 8642 无宿主映射；9119/63012、反向代理、网络分流未变。
+- **状态：** Chat 浏览器测试完成；生产部署保持部分完成。DSM Container Manager 保存项目定义不同步是本轮部署收口阻断；用户最终验收仍待完成。项目 Compose SHA 已在 Environment-Baseline 更新；未跟踪 `typescript` 保留。
