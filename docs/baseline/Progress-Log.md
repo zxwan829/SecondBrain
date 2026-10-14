@@ -598,3 +598,9 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 仅更新 `secondbrain-app`。App healthy、63013 TLS/根页与健康端点正常；Hermes ID、image、启动时间不变。Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false、state/Secrets 不变。五条 D075 测试记录 Raw/state 均存在，三个 Review 文件存在；PNG/WAV 保持 processor_unavailable，无伪造 Review。
 - 未登录 Inbox/preview API 返回 401。App 重建使服务端内存会话失效；Edge 自动化被其他扩展 UI 阻断，无法完成重新登录后的原件预览/下载、Review 精确定位和拖放/重置浏览器验收。代码级相关 Core/前端测试证据仍为本地 D075.1 37 + 8 passed；本次不将其替代生产浏览器验收。须用户关闭/处理 Edge 扩展 UI、重新登录 63013 后完成剩余浏览器验收。
 - 回滚快照：`/volume1/docker/secondbrain/rollback/d0751-preflight-20261014-120500/`；只需恢复旧 Compose 并仅重建 App，Hermes 不变。没有改动未跟踪 `typescript`、业务原件、Hermes、DSM GUI 项目、Secret、ACL 或网络。
+
+## 2026-10-14 D075.2 NAS 测试部署（Commit `934d0ea`）
+
+- 使用目标 Git commit 的独立 NAS 构建目录，构建 `secondbrain-app:d0752-934d0ea`；前端 typecheck/build、Core 捕获测试 18 项、前端采集交互测试 11 项通过。正式 Compose 仅更改 App build context/image，校验通过；部署前快照 SHA-256 校验通过。
+- 仅重建 App；新容器 healthy，HTTPS 63013 根页与 health 200、匿名 Inbox 401。Hermes 容器 ID、镜像 ID、启动时间均未变化；Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。D075 五条记录、Raw 哈希及已有 Review 未变。
+- 浏览器自动化显示真实 Review 页 15 条记录，但随后被 Edge 上的扩展 UI 阻断。Inbox→Review 自动滚动、手机滚动及 PDF 原文件名仍待用户浏览器验收。回滚快照和部署证据见 `Environment-Baseline.md`；未跟踪 `typescript` 保留。
