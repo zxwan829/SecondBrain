@@ -334,3 +334,13 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 **执行事实：** 此前普通 SSH Docker inspect/exec 因 `/var/run/docker.sock` 权限拒绝而停止。2026-10-13 后续经现有非交互 `sudo -n` 只读授权成功核实运行容器：Hermes v0.21.5 以 root 运行、Knowledge RW 子挂载与宽父级 safe-root 仍在；Core `1026:100`、Knowledge/Review RO、state RW、secret RO、Promote false；Private 未挂载。未修改生产。Hermes 权限收窄候选和验证/回滚计划已记录在 Environment-Baseline，待用户下一次确认后才可实施。阶段 A 代码 `2144f23` 通过 15 项离线测试、尚未生产部署。
 
 **范围边界：** 微信与 Web App 为 Universal Capture V1 输入渠道，按 UC v1.1 汇入统一 Raw→Review；微信详细消息类型/聊天行为在实施前按实际 Hermes 能力确认。WorkBuddy、n8n 当前未列为已冻结 V1 MUST，不在未确认前擅自取消或加入。完整 MUST 以 Web App V1 与 UC V1.1 正式规格及 CURRENT 矩阵为准。
+
+## D074 — 2026-10-14 独立 Web App、业务范围不变与 LAN-first / HTTPS-ready
+
+**架构决策：** 第二大脑产品前端改由独立 React/TypeScript/Vite Web App（含自有 Chat UI）掌控，复用已验收 FE-4 视觉；Hermes 仅负责 Agent/Chat/Session/Skill 等运行能力。采用同一 Compose 的两个核心容器：SecondBrain App（前端托管 + Core 业务/API/BFF + 自有登录/轻量审批）与 Hermes（内部运行服务）。浏览器只访问 App 单一 Origin。原 D048-WEBAPP-PHASE0、D054、D066 中的“长期依附 Hermes Dashboard 宿主”选择由此替代；已部署插件仍是过渡生产事实。
+
+**功能零缩减：** `SecondBrain-Web-App-V1-Business-Spec.md` 的 V1 MUST/SHOULD/DEFERRED 及 `Universal-Capture-Business-Spec.md` v1.1（含微信与 Web 输入、文本/URL/PDF/图像/音频）全部不变；Journal、Knowledge Retrieval、Agent/Skills、Obsidian 同步与人工 Promote 规则继续有效。架构迁移必须复测所有已验收功能，不将“界面独立”误当成缩减 Chat/Session/工具行为的理由。
+
+**访问和安全：** 标准客户只交付 LAN HTTP IP+端口，客户公网/Lucky 等单独收费部署，不内置 TLS/证书/反代；本人 V1 保留 LAN/Home-WG `192.168.3.27:9119`，本人 V2 复用 DSM `https://zxwan520.com:63012` 转发到同一 App HTTP 入口。**V1 即需完成 LAN HTTP 与 DSM LAN-only HTTPS 全业务兼容回归**（同源 API、流式 Chat、Cookie/Origin/可信代理头），V2 不应重构 App/容器拓扑；公网可达性与安全开放仍独立验收。审批体验为 App 一次登录、查看后点击批准/暂缓，不要求第二密码或生物识别；Core 保留会话/来源/版本哈希/幂等/审计校验，Hermes 无审批凭据及 Knowledge 写权，Private 隔离。此机制不宣称能数学证明真人点击。
+
+**工程门槛/状态：** 先验证固定稳定版 Hermes 的 Chat/Session/流式/工具事件/停止接口和新版兼容性，再迁移 FE-4、自有登录和 Core 审批；保持既有数据与权限边界。标准 Compose 和宿主参数配置为后续远程收费部署预留，但不提前做安装向导、授权平台或多 NAS 专属代码。**本决定为目标架构，尚未修改 NAS/Docker/DSM/网络、未部署独立 App、未开启 Promote。**
