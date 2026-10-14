@@ -214,12 +214,16 @@ def _fetch_url(url):
 
 
 class CaptureService:
-    def __init__(self, raw_root, review_root, state_root):
+    def __init__(self, raw_root, review_root, state_root, processors=None):
         self.raw_root = Path(raw_root)
         self.review_root = Path(review_root)
         self.state_root = Path(state_root) / "captures"
         self._active = set()
         self._active_lock = threading.Lock()
+        if processors is None:
+            from .multimodal_capture import MultimodalCaptureProcessors
+            processors = MultimodalCaptureProcessors()
+        self.processors = processors
         self._validate_root(self.raw_root)
         self._validate_root(self.review_root)
         self._validate_root(self.state_root, allow_missing=True)
@@ -436,7 +440,10 @@ class CaptureService:
                     raise ValueError("PDF exceeds the 500 page limit")
                 content = "\n\n".join((page.extract_text() or "") for page in reader.pages).strip()
                 if not content:
-                    raise ValueError("No extractable PDF text; OCR is not configured")
+                    page_sizes = [(page.mediabox.width, page.mediabox.height) for page in reader.pages]
+                    content = self.processors.ocr_pdf(raw, len(reader.pages), page_sizes)
+                    state["processor"] = {"name": "tesseract", "kind": "pdf_ocr",
+                                          "pages": len(reader.pages), "languages": "chi_sim+eng"}
                 if reader.metadata and reader.metadata.title:
                     document_title = str(reader.metadata.title).strip()
                     if document_title:
@@ -444,9 +451,19 @@ class CaptureService:
                 if len(content) > 1_000_000:
                     content = content[:1_000_000]
             elif input_type in {"png", "jpg", "jpeg", "webp", "gif"}:
-                raise ProcessorUnavailable("Image understanding is not configured in this App/Core deployment")
+                recognized = self.processors.ocr_image(raw)
+                state["processor"] = {"name": "tesseract", "kind": "image_ocr",
+                                      "languages": "chi_sim+eng"}
+                content = ("## OCR 识别文字\n\n" + recognized +
+                           "\n\n## AI 画面描述\n\nAI 图像理解尚未配置；以上仅为原图 OCR 结果。")
+                state["partial_error"] = {
+                    "code": "processor_unavailable",
+                    "message": "OCR succeeded; AI scene description is not configured.",
+                }
             elif input_type in {"wav", "mp3", "m4a", "aac", "ogg", "flac"}:
-                raise ProcessorUnavailable("Audio transcription is not configured in this App/Core deployment")
+                transcript, provider = self.processors.transcribe_audio(raw, input_type)
+                state["processor"] = {"name": "hermes_stt", "provider": provider}
+                content = "## 转写文本\n\n" + transcript
             else:
                 content = raw.decode("utf-8-sig", errors="strict").strip()
                 if not content:
@@ -460,10 +477,15 @@ class CaptureService:
                         state["title"] = first_line[:120]
             self._write_review(state, content)
             self._verify_artifacts(state)
-            state.update(status="completed", error=None, updated_at=_now())
+            if state.get("partial_error"):
+                state.update(status="partial_success", error=state.pop("partial_error"), updated_at=_now())
+            else:
+                state.update(status="completed", error=None, updated_at=_now())
         except ProcessorUnavailable as exc:
+            state.pop("partial_error", None)
             state.update(status="partial_success", error={"code": "processor_unavailable", "message": str(exc)}, updated_at=_now())
         except Exception as exc:
+            state.pop("partial_error", None)
             state.update(status="partial_success", error={"code": "processing_failed", "message": str(exc)[:500]}, updated_at=_now())
         self._write_state(state)
 
@@ -492,6 +514,16 @@ class CaptureService:
             body += f"\n# {state['title']}\n\nSource URL: {original_url}\nFetched URL: {final_url}\n\n"
         else:
             body += f"\n# {state['title']}\n\n"
+        processor = state.get("processor")
+        if isinstance(processor, dict):
+            if processor.get("kind") == "pdf_ocr":
+                body += (f"OCR: {processor.get('name', 'OCR')}; "
+                         f"languages: {processor.get('languages', 'unknown')}; "
+                         f"pages: {processor.get('pages', 'unknown')}\n\n")
+            elif processor.get("kind") == "image_ocr":
+                body += f"OCR: {processor.get('name', 'OCR')}; languages: {processor.get('languages', 'unknown')}\n\n"
+            elif processor.get("name") == "hermes_stt":
+                body += f"Transcription provider: {processor.get('provider', 'Hermes STT')}\n\n"
         body += content.strip() + "\n"
         for attempt in range(1000):
             name = review_name if attempt == 0 else f"{Path(review_name).stem}-{attempt}.md"

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import stat
+import base64
 
 import httpx
 from fastapi import HTTPException
@@ -126,6 +127,36 @@ class HermesAPI:
 
     async def capabilities(self):
         return await self.json_request("GET", "/v1/capabilities")
+
+    def transcribe_audio(self, data, mime_type, *, timeout=90):
+        """Use Hermes v0.21.5's server-side STT endpoint without exposing its key.
+
+        Callers must opt in explicitly because Hermes may be configured with a
+        billable remote STT provider. The endpoint's configured provider remains
+        authoritative; this method does not select or change it.
+        """
+        if not self.configured:
+            raise HTTPException(status_code=503, detail="Hermes API is not configured on the server")
+        payload = {"mime_type": mime_type,
+                   "data_url": f"data:{mime_type};base64,{base64.b64encode(data).decode('ascii')}"}
+        try:
+            with httpx.Client(base_url=self.base_url,
+                              headers={"Authorization": f"Bearer {self.api_key}"},
+                              timeout=timeout, follow_redirects=False,
+                              transport=self.transport) as client:
+                response = client.post("/api/audio/transcribe", json=payload)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Hermes transcription unavailable") from exc
+        if response.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Hermes transcription returned HTTP {response.status_code}")
+        try:
+            result = response.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=502, detail="Hermes transcription returned invalid data") from exc
+        transcript = result.get("transcript") if isinstance(result, dict) else None
+        if not isinstance(result, dict) or result.get("ok") is not True or not isinstance(transcript, str) or not transcript.strip():
+            raise HTTPException(status_code=502, detail="Hermes returned no transcription")
+        return {"transcript": transcript.strip(), "provider": str(result.get("provider") or "Hermes STT")[:80]}
 
     async def start_run(self, body, idempotency_key):
         headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None

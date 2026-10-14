@@ -604,3 +604,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 使用目标 Git commit 的独立 NAS 构建目录，构建 `secondbrain-app:d0752-934d0ea`；前端 typecheck/build、Core 捕获测试 18 项、前端采集交互测试 11 项通过。正式 Compose 仅更改 App build context/image，校验通过；部署前快照 SHA-256 校验通过。
 - 仅重建 App；新容器 healthy，HTTPS 63013 根页与 health 200、匿名 Inbox 401。Hermes 容器 ID、镜像 ID、启动时间均未变化；Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。D075 五条记录、Raw 哈希及已有 Review 未变。
 - 浏览器自动化显示真实 Review 页 15 条记录，但随后被 Edge 上的扩展 UI 阻断。Inbox→Review 自动滚动、手机滚动及 PDF 原文件名仍待用户浏览器验收。回滚快照和部署证据见 `Environment-Baseline.md`；未跟踪 `typescript` 保留。
+
+## 2026-10-14 D075.2 用户验收补记与 D076 本地实现
+
+- 用户明确确认 Inbox→Review 自动滚动及 PDF 原始文件名显示通过，CURRENT 已据此记录 ACCEPTED。拖放和成功清空/失败保留仍只记自动化测试覆盖，不替代用户实际验收。
+- 只读核实 Hermes v0.21.5：有 `/api/audio/transcribe`（Base64 `data_url` + MIME）并调用已配置 STT provider；当前容器未安装 faster-whisper/Whisper CLI，未发现 STT 云凭据。默认 GLM-4.5-Air 的官方模型卡只示例 text-generation；Hermes Dashboard 的图片上传保存到其 home/images 并供 Chat 使用，不构成已验证的 App Capture 视觉 API。未提交媒体、调用模型或修改 Hermes。
+- 本地 Core 新增 Tesseract 中文/英文图片 OCR、扫描 PDF 在 pypdf 无文本时的后备渲染/识别（10 页、120 DPI、单页 12MP、75 秒总时限、单任务串行）；图像 Review 分栏记录 OCR，并明确 AI 描述不可用时为 partial。增加带 20 MiB、30 分钟与 90 秒超时边界、默认关闭的 Hermes STT 适配。Raw SHA-256、路径和 Review 来源关系不变；不写 Knowledge、不 Promote。
+- 验证：Core Capture/multimodal/Hermes BFF 定向 **33 passed**；前端 typecheck、production build 通过。D076 识别结果和 Hermes API 行为使用隔离 fixture/Mock；本机没有 Tesseract/Poppler 运行环境，也未真实跑扫描件 OCR、图片 OCR 或音频转写；未生产构建/部署。图像 AI 场景描述及可靠 STT runtime 仍是阻断。
+- **状态：** D076 部分代码/定向测试完成，真实多模态能力未验收。下一步需在可控构建中验证中文 OCR 真实样本，选择并授权无意外费用/数据传输的图像场景描述和 STT 处理器，再另行申请生产部署；不得标为 DONE。

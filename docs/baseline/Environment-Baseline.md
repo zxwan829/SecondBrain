@@ -194,3 +194,11 @@ type: environment-baseline
 - 只读核对 D075 批次五条 state：五条均存在，Raw 文件均存在且 SHA-256 与各自 state 记录一致；三条 completed 记录对应的 Review 文件仍存在，PNG/WAV 仍为 `partial_success` 且无 Review。没有提交新素材或执行 Promote；Knowledge 挂载为 RO，未执行任何 Knowledge 写入。
 - 代码回归：Core `tests/test_capture.py` **18 passed**，前端 `capture-flow.test.tsx` **11 passed**；NAS 镜像构建中的 typecheck/build 均通过。部署后 Edge 现有会话可访问真实 Review 页，AX 页面显示 15 条条目且选中 `anonymous.md`；随后 Edge 因页面上另一扩展 UI 阻断继续自动化。故 Inbox→Review 自动滚动、桌面/手机滚动及 PDF 中文/上传原始文件名的页面级真实验收仍待用户完成，未记为通过。旧 PDF state 无 `display_filename` 时，Raw 文件名回退行为仅由 D075.2 自动化测试覆盖。
 - App-only 回滚：将上述快照 `compose.yaml` 恢复到正式路径，Compose 仍引用已保留的 `secondbrain-app:d0751-777ee38`，再用 Compose CLI 仅重建 `secondbrain-app`；Hermes 不需变更。当前部署成功；DSM Container Manager GUI 缓存风险仍独立跟踪。
+
+## 2026-10-14 D075.2 用户浏览器验收补记与 D076 本地施工
+
+- 用户确认 D075.2 真实浏览器验收：Inbox 点击 Review 后目标自动滚动可见；PDF 文件名显示正常。两项按用户证据记为 ACCEPTED。拖拽上传及 Raw 接收成功后清空/失败保留输入，目前仍只有自动化测试证据，不能标为用户验收。
+- 生产只读核验：Hermes `secondbrain-hermes` 仍为 v0.21.5 / upstream `749220ef`，镜像、容器未改。容器实际提供 `/api/audio/transcribe`，请求为 Base64 `data_url`/MIME 并调用 `transcribe_recording`；STT 配置本地模式，但当前容器未安装 `faster-whisper`、无 Whisper CLI，且未发现已配置的 STT 云凭据。未提交音频或调用转写端点。当前 `/api/chat/image-upload` 是写入 Hermes 私有 images 目录供 Dashboard Chat 使用，不是已验证的 Capture 视觉 API；独立 App 无对应可复用的 Hermes Session 图片消息契约。Hermes 默认 GLM-4.5-Air 当前 model card 给出 text-generation 接口；其他配置模型档案虽可能包含视觉能力，但未确认其 Hermes 适配/成本，未调用或传输用户素材。
+- D076 本地实现：新增 Core 有界 OCR 适配，扫描 PDF 继续优先 pypdf；无文本时限制 OCR 为 10 页、120 DPI、12MP/页、75 秒总时限，Tesseract 使用 `chi_sim+eng`，单次只运行一个 OCR 任务。图片 OCR Review 分开标注识别文字；无视觉描述时状态为 partial、错误 `processor_unavailable`，不伪造描述。Core 镜像 Dockerfile 安装 Poppler、Tesseract 中文/英文数据；图片解码有 12MP 限制。音频通过 Hermes v0.21.5 transcription API 的服务端适配，20 MiB、30 分钟、90 秒超时；`SB_CAPTURE_HERMES_STT_ENABLED` 默认 false，防止未经授权的潜在远程/计费调用。所有路径不改 Raw、不写 Knowledge、不 Promote。
+- 本地定向测试 **33 passed**（Capture + multimodal + Hermes BFF），前端 typecheck/build 通过。OCR 处理路径、中文 Review 分栏、扫描 PDF 回退及 STT 适配以 stub/Mock 覆盖；开发机无 Tesseract，未完成真实 OCR 样本运行。没有真实可用的 Hermes STT 后端，且图像 AI 描述处理器未实现/验证，故图像、扫描 PDF、音频的实际生产处理均未完成。
+- 本轮仅提交代码与文档；NAS Compose、镜像、容器、Hermes 设置、密钥、模型和业务数据均未修改。部署前须补齐真实 OCR 样本验收、获批可用 STT 后端及图像描述器；任何可能发送私人素材至云服务的处理，须先明确数据范围/费用并获得授权。

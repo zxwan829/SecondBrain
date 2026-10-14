@@ -10,6 +10,7 @@ from starlette.staticfiles import StaticFiles
 from .modules.app_auth import AppSessionAuth
 from .modules.capture import CaptureService, create_capture_router
 from .modules.hermes_api import HermesAPI
+from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
 from .modules.web_app import create_web_app_router
@@ -48,7 +49,8 @@ def create_app():
     app_password_file = os.environ["SB_APP_PASSWORD_FILE"]
     auth = AppSessionAuth(app_password_file, origins, ttl)
     hermes = HermesAPI()
-    capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root)
+    capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root,
+                             processors=MultimodalCaptureProcessors(hermes))
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root))
