@@ -1,16 +1,16 @@
 ---
-updated: 2026-10-13
+updated: 2026-10-14
 status: current
 type: architecture
 ---
-# SecondBrain V1 Architecture
+# SecondBrain V1/V2 Architecture
 
 ## 稳定边界
 
-- SecondBrain 文件与目录是业务数据 Source of Truth；Hermes 是当前 Agent Runtime；Dashboard 是交互入口。不要复制 Agent Runtime、正式知识库或第二份业务数据库。
+- SecondBrain 文件是业务 Source of Truth；Hermes 是 Agent Runtime。**目标**为独立 SecondBrain Web App 作为唯一业务前端；目前生产仍为 Hermes Dashboard Plugin。不复制 Agent Runtime 或正式知识库。
 - NAS 正式数据位于 `/volume1/SecBR/SecondBrain` 与 `/volume1/SecBR/KnowledgeAssets`。Private 单独隔离，默认不对 Agent/API 开放。
 - 生产与测试插件身份、资源、入口和快照隔离；FE-4 已部署不等于所有业务模块已接通。
-- 个人自用、业务优先、风险适度：复用 Hermes 登录、会话与插件能力；保留人工 Promote、Private 隔离、重要资料保护和审计恢复，不默认引入 SaaS 级复杂控制。详细执行规则见 Agent-Rules。
+- 个人自用、业务优先、风险适度：目标使用 App 自有登录/Chat UI，服务端复用 Hermes Agent/Chat/Session/Skill API；保留人工 Promote、Private 隔离、审计恢复，不引入企业级认证或第二运行时。
 
 ## 开发仓库与职责边界
 
@@ -27,9 +27,17 @@ Hermes Dashboard Shell → SecondBrain Dashboard Plugin → 认证 API/薄适配
 
 正式插件为 `secondbrain`，页面 `/secondbrain`；前端 React + TypeScript + Vite，复用 Hermes Plugin SDK/宿主 React。Home API 提供受限语义读；不能将文件名/目录列表推断为业务状态。当前模块语义与缺口由 00-CURRENT 和 Environment-Baseline 维护。
 
-## Core 目标架构与当前状态
+## 目标架构（D074，设计已选定、尚未实施）
 
-经批准的方向为 **Hermes + SecondBrain Core 模块化单体**。Hermes 继续承载登录会话、Agent Runtime、原生 Chat 与 Dashboard 插件宿主；SecondBrain Core 作为单一模块化应用承载领域规则、用例和受控文件数据操作，由 Dashboard 直接调用必要的 Core API。2026-10-13 一次性非交互 sudo 只读查询确认两个服务均在现有 Compose Project 运行，Core healthy；Hermes running。D071 同源 Hermes Session 只读 Review API 已在正式 FE-4 v0.2.4 部署，并完成用户 HTTPS Edge 列表及详情验收；Core 写入/审批尚未正式部署。按 D068，Hermes 与 Core 正式归属 Container Manager 现有同一个 SecondBrain Compose Project，Core 作为新增 service；两个容器仍保持独立权限、挂载和认证边界。`compose.core-isolated.yaml` 仅为隔离测试候选，不能作为独立正式项目部署。V1 完整可用前不进行商业发行包、代码/数据/密钥/环境参数化整理。
+- **两容器、同一 Compose：** `secondbrain-app` 负责独立 React Web App（含 Chat UI）、静态托管、Core 业务/API、单次登录、审批与 Hermes BFF 适配；`secondbrain-hermes` 只提供内部 Agent/Chat/Session/Skill 能力。浏览器只访问 App 单一 Origin，Hermes 内部凭据不交浏览器。复用 FE-4 视觉与全部现有功能，不依赖 Hermes Dashboard 页面。
+- **V1：** 标准版 NAS 内网 HTTP IP+端口；本人 `http://192.168.3.27:9119`，外出经 Home-WG 访问同址。**V1 验收必须同时覆盖** DSM LAN-only `https://zxwan520.com:63012` 的登录、Chat 流式、采集、Review/审批与知识功能，确保本人 V2 无应用架构返工。
+- **V2：** 本人另行配置 AX3600 转发及 DSM HTTPS 公网入口，指向同一 App HTTP 端口；标准客户公网方案为增值部署服务，不内置 HTTPS/证书签发/反代或额外网关容器。外网开放仍须单独核验身份认证、网络可达和安全策略。
+- **权限：** App 会话与受控 Core 审批独立于 Hermes Agent；查看 Review 后点击确认即可，无第二密码/生物识别；服务端校验会话、来源、文件哈希、幂等与审计。Hermes 无审批密钥和 Knowledge 写权；Private 不挂载。单纯点击不宣称可密码学证明真人。
+- **迁移门槛：** 先在固定 Hermes 版本验证 Chat/Session/流式/工具状态/停止等 API、现有 FE-4 可复用性及 HTTP/HTTPS 反代回归；未通过不切生产端口、不启动 Promote、不改现有 PBR/WG/AdGuard。NAS IP、存储和 API Key 在未来部署模板中参数化。
+
+## Core 现状与历史集成方式（目标已由 D074 更新）
+
+原 D066 以 Hermes Dashboard 为产品宿主；D074 改为 App 自有前端/登录，Core 作为 App 内业务与 BFF 层、Hermes 作为独立 Runtime。现有已部署功能和审批测试资产保留。2026-10-13 一次性非交互 sudo 只读查询确认两个服务均在现有 Compose Project 运行，Core healthy；Hermes running。D071 同源 Hermes Session 只读 Review API 已在正式 FE-4 v0.2.4 部署，并完成用户 HTTPS Edge 列表及详情验收；Core 写入/审批尚未正式部署。按 D068，Hermes 与 Core 正式归属 Container Manager 现有同一个 SecondBrain Compose Project，Core 作为新增 service；两个容器仍保持独立权限、挂载和认证边界。`compose.core-isolated.yaml` 仅为隔离测试候选，不能作为独立正式项目部署。V1 完整可用前不进行商业发行包、代码/数据/密钥/环境参数化整理。
 
 Core 的模块边界对应业务能力：Capture、Review/Promote、Knowledge、Journal、Projects、Calendar。模块共享一个应用进程/部署单元并通过显式接口协作；不新增独立数据库、LLM、n8n、第二 Runtime 或独立管理后台。只有已实现模块建立代码，不创建空占位包。
 
@@ -64,9 +72,9 @@ Hermes 当前无 Knowledge RW mount；普通 `write_file`/`patch` 被 safe-root 
 
 输入、元数据、失败/重试与验收以 canonical `Universal-Capture-Business-Spec.md` 为准。V1 MUST 输入是文本、URL/Web、PDF、Image/Screenshot、Audio/Voice；原始证据需保留，输出到 Review 并等待人工批准。Office 文件、Video、通用二进制及语义检索/去重等按规格延期。禁止把架构摘要作为第二份业务契约。
 
-## Dashboard
+## 前端与业务规格
 
-正式 SecondBrain UI 使用 Hermes Dashboard Plugin；Hermes 提供宿主与原生 Runtime 能力，SecondBrain 控制页面模块和业务语义。UI 只显示可证实为 REAL 的数据；演示值须标 DEMO，来源或含义不可靠时用 UNAVAILABLE。FE-4 视觉基准已接受；不得以文档整理为由改 FE-4。
+生产仍使用 Hermes Dashboard Plugin；目标自有 React Web App 完整承接 Chat、导航和所有 V1 业务页，FE-4 视觉与已验收能力不得退化。数据仍区分 REAL/DEMO/UNAVAILABLE，不得将测试或假数据冒充真实。
 
 Web App 详细产品契约见 `SecondBrain-Web-App-V1-Business-Spec.md`。Home 与 Calendar 是聚合层，模块注册可扩展；业务页不必共用 Home 布局。写入能力必须由服务端语义接口、allowlist 和明确审批控制，不能仅凭 UI 按钮或模型声明授权。
 
@@ -76,7 +84,7 @@ Web App 详细产品契约见 `SecondBrain-Web-App-V1-Business-Spec.md`。Home �
 
 ## 用户访问目标
 
-V1 基本可用后，目标是通过现有域名/DDNS、路由器端口转发和 DSM HTTPS 直接访问 Agent 与 Dashboard；不要求先连接 WireGuard，也不为 SecondBrain 专门改造 AdGuard。公网接入按届时实际入口完成必要认证和访问验证，不作为当前普通业务开发的前置条件。
+V1 内网及 Home-WG 使用 App HTTP，受限 DSM HTTPS `63012` 做全业务兼容验收；本人 V2 才启用公网反代/转发。客户标准交付只包含 LAN，外网接入另计服务；不改 AdGuard/PBR/WG，也不为不同 NAS 开发产品分支。
 
 ## 迁移前同步流程（历史说明）
 
