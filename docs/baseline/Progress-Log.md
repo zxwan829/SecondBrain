@@ -556,3 +556,4 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 用户明确决定 App 与 Hermes 使用不同密码，保持 App 现有 12-byte 最低要求。Mac Terminal 隐藏输入后仅更新 App Secret 并重启 `secondbrain-app`；Secret 为 `1026:100/0600`、容器内 RO，与 Hermes Basic Auth 不同。受限回滚快照见 Environment-Baseline；无明文入 Git/聊天。
 - 63013 HTTPS 登录与 Session、Home、Review、Promote 状态接口均返回 200；Cookie `Secure/HttpOnly/SameSite=Strict` 验证通过。浏览器实际显示登录后 Home 与 8 条真实 Review 列表/详情，批准按钮因 Promote 关闭而禁用。App healthy；Hermes 未重建，Knowledge RO、Private 未挂载、Capture 写边界和 `SB_PROMOTE_ENABLED=false` 保持。
 - **状态：App 独立密码与 Home/Review 浏览器运行核验完成；Chat 浏览器交互、DSM GUI 项目旧缓存和用户最终验收仍待完成。** 未修改业务数据、Compose、DSM 或网络；未跟踪 `typescript` 保留。
+- 后续在同一 63013 浏览器打开内置 Chat：现有 Session 与历史加载，向既有 D074 smoke Session 发送一条无工具测试消息，页面收到 SSE 回复并完成；刷新后消息保留。浏览器 Stop/工具进度未重测，DSM GUI 旧缓存与用户最终验收仍待处理。
