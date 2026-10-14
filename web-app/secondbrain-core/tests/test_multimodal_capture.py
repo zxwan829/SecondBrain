@@ -80,6 +80,25 @@ class MultimodalCaptureTests(unittest.TestCase):
         self.assertIn("尚未配置", review)
         self.assertEqual(hashlib.sha256((self.raw / result["raw_path"]).read_bytes()).hexdigest(), digest)
 
+    def test_retry_reuses_identical_partial_image_review_without_creating_duplicate(self):
+        image = io.BytesIO()
+        Image.new("RGB", (32, 32), "white").save(image, format="PNG")
+        raw = image.getvalue()
+        service = CaptureService(self.raw, self.review, self.state, ProcessorStub())
+        item = service.accept_file("retry-photo.png", raw)
+        service.process(item, raw)
+        first = service.get(item["capture_id"])
+        first_review = first["review_path"]
+        first_hash = first["review_sha256"]
+        self.assertEqual(first["status"], "partial_success")
+        self.assertEqual(len(list(self.review.glob("*.md"))), 1)
+        retried = service.retry(item["capture_id"])
+        self.assertEqual(retried["status"], "partial_success")
+        self.assertEqual(retried["review_path"], first_review)
+        self.assertEqual(retried["review_sha256"], first_hash)
+        self.assertEqual(len(list(self.review.glob("*.md"))), 1)
+        self.assertEqual(hashlib.sha256((self.raw / retried["raw_path"]).read_bytes()).hexdigest(), retried["raw_sha256"])
+
     def test_audio_adapter_creates_transcript_review_and_keeps_original(self):
         raw = b"RIFFxxxxWAVE" + b"voice-sample"
         service = CaptureService(self.raw, self.review, self.state, ProcessorStub())

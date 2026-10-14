@@ -525,6 +525,24 @@ class CaptureService:
             elif processor.get("name") == "hermes_stt":
                 body += f"Transcription provider: {processor.get('provider', 'Hermes STT')}\n\n"
         body += content.strip() + "\n"
+        # A retry may reproduce the same partial image Review (OCR succeeded
+        # while vision remains unavailable). Reuse only the exact already
+        # verified, service-linked artifact; never overwrite it. Changed output
+        # still receives a new collision-safe filename and preserves history.
+        existing_name = state.get("review_path")
+        existing_digest = state.get("review_sha256")
+        if (isinstance(existing_name, str) and Path(existing_name).name == existing_name
+                and existing_name not in {".", ".."} and isinstance(existing_digest, str)):
+            existing = self.review_root / existing_name
+            try:
+                info = existing.lstat()
+                if stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                    old_body = existing.read_bytes()
+                    if (hashlib.sha256(old_body).hexdigest() == existing_digest
+                            and old_body == body.encode("utf-8")):
+                        return
+            except OSError:
+                pass
         for attempt in range(1000):
             name = review_name if attempt == 0 else f"{Path(review_name).stem}-{attempt}.md"
             path = self.review_root / name

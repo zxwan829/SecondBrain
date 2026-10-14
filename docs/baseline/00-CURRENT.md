@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。D076 已在本地增加扫描 PDF/图片 OCR 与 Hermes STT 适配及有界测试；尚未在 NAS 构建或部署。图像 AI 描述、当前可用的真实 STT 后端，以及生产 OCR/多模态验收仍未完成；微信与多个真实业务模块也未完成。
+**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。D076 本地已增加扫描 PDF/图片 OCR 与 Hermes STT 适配、有界测试及 Review 重试幂等；正式 `Dockerfile.app` 已加入 OCR 系统依赖，但因开发机无 Docker，正式镜像与真实 OCR 运行尚未验证，也未部署。图像 AI 描述、当前可用的真实 STT 后端及多模态验收仍未完成；微信与多个真实业务模块也未完成。
 
 ## 2. 已确定的架构与边界（接手项目必须先知）
 
