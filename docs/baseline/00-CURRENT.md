@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-13
+updated: 2026-10-14
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -14,9 +14,9 @@ source: GitHub SecondBrain Monorepo
 
 ## 1. 项目定位与 V1 完成定义
 
-**定位：** 运行在家庭 NAS 上、以 SecondBrain 文件数据为权威源的单人 AI 第二大脑。Hermes 承载 Agent/Chat/Session，Dashboard 是日常统一交互入口，SecondBrain Core 承载业务规则与受控写入，Obsidian 用于笔记与同步；不建设第二份正式知识数据库。
+**定位：** NAS 私有部署的单人 AI 第二大脑，以 SecondBrain 文件为业务权威源。**目标**由独立 SecondBrain Web App（含自有 Chat UI）提供完整交互，Core 承载业务与受控写入，Hermes 提供 Agent/Chat/Session/Skills，Obsidian 继续同步知识；不建设第二份正式知识数据库。当前生产仍使用 Hermes Dashboard Plugin。
 
-**V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 Dashboard 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
+**V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
 **当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。Promote、附件采集、微信实际接入以及 Web App 多个真实业务模块尚未完成生产验收。权限部署不等于完整用户验收；Dashboard 原生 Chat 在 Hermes 重建后持续重连，待独立诊断。Core Promote 仍未部署且关闭。
 
@@ -26,14 +26,14 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|
 | 设备和数据 | 群晖 DS920+；业务数据 `/volume1/SecBR/SecondBrain/`，原始证据 `/volume1/SecBR/KnowledgeAssets/` | 生产事实以 Environment-Baseline 为准 |
 | 代码与项目文档 SoT | 私有 GitHub Monorepo `zxwan829/SecondBrain`；iMac 与 MBA 独立 Clone；Codex Commit/Push，部署单独授权 | NAS、Google Drive、Synology Drive 旧开发文档副本不是权威源 |
-| Agent Runtime | **Hermes 为唯一当前主线**，复用其 Chat/Skill/Session/Plugin；用户最新决定**不再考虑 OpenClaw** | 旧 D005/D021 中关于 OpenClaw 的历史选择由 D073 取代，保留历史原文 |
-| 后端领域层 | **Hermes + SecondBrain Core 模块化单体**；Core 为独立 service，但归属于**现有同一个 SecondBrain Compose Project** | 生产 Core 已运行；新审批代码阶段 A 已 Push、未部署（按本草案编制时状态） |
-| Web App | Hermes Dashboard Plugin + React/TypeScript/Vite + Hermes SDK；FE-4 视觉已验收；复用原生 Chat | 独立 Portal、额外 React Root、重复 Agent Runtime 非当前方案 |
+| Agent Runtime | **Hermes 为唯一当前主线**，复用 Agent/Chat/Session/Skill API；不以 Hermes Dashboard 作为目标产品前端；不考虑 OpenClaw | 目标版本与 API 兼容须先验证；当前运行 v0.21.5 |
+| 后端领域层 | **两个核心容器**：SecondBrain App（前端静态托管 + Core/BFF/API/登录/审批）与 Hermes（Agent Runtime）；同一 Compose Project | 当前 Core 已运行，但 App/BFF 合并入口与审批尚未部署 |
+| Web App | **目标：独立 React/TypeScript/Vite Web App，自有 Chat UI，保留全部原定 V1 功能和 FE-4 视觉基准** | **规划中**；生产仍是 Hermes Dashboard Plugin；先验证 Hermes API 再迁移 |
 | 数据分区 | `00-Inbox` → `10-Review` → 人工确认 → `20-Knowledge`；原始证据持久保留；Private 默认不挂载/不读取 | 不能让普通 Agent 绕过 Core 直接写 Knowledge |
 | 检索 | Knowledge Retrieval V0：Hermes `search_files` + `read_file` 已生产验收 | QMD/RAG/向量检索只在有真实问题证据时评估 |
-| 对外/同步 | 生产 Dashboard 目前 LAN-only；Obsidian 知识库经 Synology Drive Mac↔NAS 双向同步 | 同步“已为最新”不等于传播测试；公网直达安排在 V1 基本可用后 |
-| 授权体验 | **用户最新确定：Dashboard 会话有效期间，不得出现第二套 Core 密码**；批准必须本人明确确认，Agent 不能伪造 | D072 的二次密码方案由 D073 最新产品决定取代；可信无二次口令的服务端审批机制尚未实现/验证 |
-| 成本/复杂度 | 单人自用、敏捷/功能/成本优先，优先原生能力，不新增独立 LLM 网关、通用身份平台或第二数据库 | 不为商业化预建基础设施；n8n、WorkBuddy 等是否纳入正式 V1，需对照规格/用户决策，不臆测 |
+| 访问/同步 | 标准交付仅 LAN HTTP；本人 V1 LAN/Home-WG 访问 `192.168.3.27:9119`，本人 V2 通过 DSM `https://zxwan520.com:63012`；Obsidian 经 Synology Drive 同步 | V1 必须完成 **LAN HTTP + DSM LAN-only HTTPS 全业务回归**；V2 仅公网接入/安全发布，不返工应用；同步传播待核验 |
+| 授权体验 | App 登录一次，查看 Review 后点击批准/暂缓；**无第二密码、Passkey 或生物识别** | Core 验证 App 会话、来源、内容版本和幂等；Hermes 无审批凭据/Knowledge 写权；具体隔离尚未验证 |
+| 成本/复杂度 | 两容器、单 HTTP 入口；标准版 LAN-first，客户公网方案为另行收费部署服务 | 不内置 TLS/证书/反代/授权平台/安装向导；参数化部署便于远程交付；不改 V1 业务范围 |
 
 **协作：** ChatGPT 负责范围、技术取舍、任务分解、验收标准；Codex 负责实施、针对性测试、必要文档更新、Git 与经授权的部署。日常遵循 FAST-EXEC。代码 Push ≠ 生产部署 ≠ 用户验收。
 
@@ -45,7 +45,7 @@ source: GitHub SecondBrain Monorepo
 
 | V1 项目 | 要求 / 验收要点 | 当前状态 | 仍需完成 |
 |---|---|---|---|
-| Hermes Agent / Chat | 可用原生聊天/Skill 入口，业务数据不绑死 Agent 内存 | PROD-PARTIAL | 确认端到端基本聊天及后续采集接口体验 |
+| Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | PROD-PARTIAL：当前 Hermes 原生 Chat | 验证固定版本 API 的流式响应、会话、工具状态和任务控制，再迁移独立 Chat |
 | Daily Capture | 低摩擦保存日常素材；不得把内容自动提升成正式 Knowledge | PROD-PARTIAL | 对照 Skill 的正式触发和行为做必要回归 |
 | Knowledge Retrieval | 从批准的目录读取/搜索已存在的正式知识 | ACCEPTED：V0 已生产验收 | 仅在真实效果问题出现时优化，不强行接 RAG |
 | Universal Capture：文本/Markdown/TXT | 保存 Raw、建立 Review、元数据与路径真实落盘、不自动 Promote | ACCEPTED：文本 Raw→Review | 检查其他文本格式边界及跨入口表现 |
@@ -55,7 +55,7 @@ source: GitHub SecondBrain Monorepo
 | Universal Capture：语音/音频 | 保存音频、转写、生成 Review | NOT DONE | 转写、元数据及失败返回 |
 | **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
 | Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | NOT DONE / 未验收 | Web 侧 Capture 输入及状态反馈联调 |
-| Review 读取 | Dashboard 统一会话、列表/详情、来源信息可见 | ACCEPTED：D071 v0.2.4 | 不回退 FE-4 与只读 API；补齐审批状态显示 |
+| Review 读取 | Web App 统一会话下展示列表/详情、来源和内容 | ACCEPTED：现有 D071 Dashboard v0.2.4 | 迁移并回归，不回退既有 Review 读取功能；补齐审批状态 |
 | Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | DEV-TESTED：阶段 A 15 项测试；生产关闭 | 收口权限、统一登录安全边界、正式部署、HTTPS 用户验收 |
 | Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
 | Journal | 用户原文留存；目标支持新增/按日期追加，不允许普通 Agent 随意覆写 | NOT DONE：生产未开放专用写入 | 按 D064 执行；**业务是目标能力，但 Web App V1 的快捷录入属于 SHOULD，不能擅自冒充核心 MUST** |
@@ -64,9 +64,9 @@ source: GitHub SecondBrain Monorepo
 
 | 正式 V1 MUST | 当前状态 | 仍需交付 / 验收 |
 |---|---|---|
-| Global App Shell / 导航 / 鉴权 / 路由 | PROD-PARTIAL：FE-4 视觉接受 | 完整路由、状态一致性及真实权限行为 |
+| Global App Shell / 导航 / 鉴权 / 路由 | PROD-PARTIAL：FE-4 视觉接受（旧宿主） | 独立 Web App 承接既定 Shell、路由与登录；保留 FE-4 视觉 |
 | Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
-| Chat | PROD-PARTIAL：Hermes 原生 | 与 Web App 导航/会话衔接验收 |
+| Chat | PROD-PARTIAL：Hermes 原生（旧入口） | 独立 Chat UI 与 Hermes Session/Skill/工具/流式行为联调并验收 |
 | Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
 | Inbox | UNKNOWN / 独立真实业务页未确认 | 读取真实 Inbox，展示来源/类型/时间/状态 |
 | Review / Approval | PROD-PARTIAL：只读已验收 | Core 审批、状态、暂缓/入库及结果反馈 |
@@ -86,7 +86,7 @@ source: GitHub SecondBrain Monorepo
 | 事项 | 当前状态 | V1 收口要求 |
 |---|---|---|
 | Hermes Knowledge 直接写风险 | MITIGATED / DEPLOYED：Hermes Knowledge RW 子挂载已移除，仅 `/secondbrain` RO；safe root 限于三个已核验捕获目录。普通文件工具及终端写探针均被拒；Daily/Universal Capture 与 Dashboard Review 回归通过 | 保持该权限边界；跟进重建后的原生 Chat 重连异常；不以 Hermes Knowledge RW 作为回退 |
-| Core 写权限与审批认证 | BLOCKED：Promote=false，Knowledge RO；免二次口令方案待验证 | 仅受控 Core 执行用户确认后的正式入库；测试失败恢复与不可伪造审批 |
+| Core 写权限与审批认证 | BLOCKED：Promote=false，Knowledge RO；App 单次登录审批尚未实现 | Core 独占受控 Promote，Hermes 不可取得 App 会话/审批凭据；测试失败恢复及拒绝 Agent 越权 |
 | Private | 已有禁止挂载/访问的设计与生产静态证据 | 生产与 API 验证拒绝，不读取 Private 内容 |
 | 多端与数据同步 | PARTIAL | 核实 Web App 桌面/iPad/手机主要动作及 Obsidian Mac↔NAS 文件实际双向传播 |
 | 生产部署、恢复、安全收尾 | PARTIAL | 真实运行检查、变更快照和回退，收口开发期 unrestricted sudoers；验收与文档 Git 收口 |
@@ -95,7 +95,7 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| P0 | Dashboard 会话内免第二密码 + 安全审批；跟进 Chat 重连异常 | 用户通过 HTTPS 实际批准/暂缓；Core 审计/写入准确；Dashboard Chat 稳定 | Hermes Knowledge 权限收窄已部署并通过工具/终端拒写及 Review/Capture 回归；浏览器 Chat 持续重连待诊断；可信审批隔离仍待实现与验证；Core 写权限和 Promote 保持关闭 |
+| P0 | 独立 Web App / Hermes Chat API 兼容 POC + App 单次登录人工审批 | LAN HTTP 与受限 DSM HTTPS 均完成 Chat、Review→Promote 闭环；现有 MUST 功能不退化 | App/BFF 尚未实现；生产仍为旧 Dashboard；Core Promote 关闭且 Knowledge RO |
 | P1 | Universal Capture 多类型处理 + 微信/Web 输入渠道 | 每个 MUST 输入类型真实 Raw/Review 成功且失败可核对；微信端到端有效 | Hermes 微信集成方法仍需确证，不以 OpenClaw 作为路线 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
@@ -107,7 +107,7 @@ source: GitHub SecondBrain Monorepo
 - OpenClaw：**用户已明确不再考虑**，不作为候选 Runtime 或接入前置方案（历史决策需标记被最新选择取代）。
 - DOC/DOCX、PPT/PPTX、XLS/XLSX、视频、任意二进制、复杂知识图谱、语义去重、向量数据库/RAG、强制关联发现：UC 规格 DEFERRED。
 - Books/People/Finance/Travel/Health 等扩展业务页、原生移动 App、完整独立管理后台：Web App 规格 DEFERRED。
-- 公网直接开放与商业化发行包：当前阶段延期；不阻塞内部 LAN-only V1 基本功能。
+- 公网直接开放、客户外网配置和商业发行包：当前阶段延期；但本人 V2 的 DSM HTTPS 兼容必须在 V1 内验收。
 - WorkBuddy、n8n 等曾讨论的生态工具：**在本次已核对的 V1 正式规格中未发现其 MUST 约束**；不得擅自标为已取消或已纳入，未来如用户确认范围再更新总矩阵。
 
 ## 6. 信息去向：保持一个入口，不新增治理文档
@@ -132,7 +132,10 @@ source: GitHub SecondBrain Monorepo
 
 ---
 
+**架构变更不缩减业务规格：** Web App 全部 V1 MUST/SHOULD、Universal Capture v1.1（含微信、文本、URL、PDF、图片、音频）及既有 Journal 规则原封保留。架构迁移的验收必须覆盖既有已验收行为。
+
 **已明确的历史冲突与最新有效口径：**
+- D074 改为独立 SecondBrain App（含自有 Chat），替代此前以 Hermes Dashboard Plugin 为长期产品前端的选择；**仅目标架构变更，生产状态未变**。
 - D005/D021 曾保留 OpenClaw 作为备选，D073 已明确退出当前路线；历史保留，不再将其推荐为 V1 技术选项。
 - D072 原方案仍可作为历史安全研究，但要求额外 Core 密码的部分被 D073 取代；统一会话安全方案未确定，不得标为实现或生产可用。
 - Architecture 已同步更新 D071 与 D072 的有效状态；运行版本和验收事实以本文件及 Environment-Baseline 为准。
