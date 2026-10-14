@@ -1,4 +1,5 @@
 import io
+import hashlib
 import os
 import tempfile
 import threading
@@ -121,44 +122,50 @@ class CaptureServiceTests(unittest.TestCase):
             item = self.service.accept_url("https://capture.example/page")
             self.service.process(item, (self.raw / item["raw_path"]).read_bytes())
         complete = self.service.get(item["capture_id"])
-        raw = (self.raw / complete["raw_path"]).read_text()
+        raw_bytes = (self.raw / complete["raw_path"]).read_bytes()
+        raw = raw_bytes.decode()
         review = (self.review / complete["review_path"]).read_text()
         self.assertIn("Original URL: https://capture.example/page", raw)
         self.assertIn("Captured at:", raw)
+        self.assertEqual(hashlib.sha256(raw_bytes).hexdigest(), item["raw_sha256"])
+        self.assertNotIn("Readable body", raw)
         self.assertIn("Readable body", review)
         self.assertNotIn("ignored", review)
 
-    def test_url_retry_uses_saved_original_url_after_raw_was_expanded(self):
-        url = "https://capture.example/retry"
-        page = "<html><title>Retry page</title><p>Still processable</p></html>"
+    def test_url_extraction_failure_preserves_initial_raw_hash(self):
+        url = "https://capture.example/empty"
         with patch("secondbrain_core.modules.capture._public_http_url", return_value=urlsplit(url)), \
-             patch("secondbrain_core.modules.capture._fetch_url", return_value=(url, page, "text/html")):
+             patch("secondbrain_core.modules.capture._fetch_url", return_value=(url, "<html><script>only script</script></html>", "text/html")):
             item = self.service.accept_url(url)
-            with patch.object(self.service, "_write_review", side_effect=OSError("Review unavailable")):
-                self.service.process(item, (self.raw / item["raw_path"]).read_bytes())
-        partial = self.service.get(item["capture_id"])
-        self.assertEqual(partial["status"], "partial_success")
-        self.assertIn("Original URL:", (self.raw / partial["raw_path"]).read_text())
-        with patch("secondbrain_core.modules.capture._fetch_url", return_value=(url, page, "text/html")):
-            retried = self.service.retry(item["capture_id"])
-        self.assertEqual(retried["status"], "completed")
-        self.assertEqual(retried["source_url"], url)
+            raw_path = self.raw / item["raw_path"]
+            initial_hash = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+            self.service.process(item, raw_path.read_bytes())
+        result = self.service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(hashlib.sha256(raw_path.read_bytes()).hexdigest(), initial_hash)
+        self.assertEqual(result["raw_sha256"], initial_hash)
+        self.assertIsNone(result["review_path"])
 
-    def test_url_retry_uses_saved_original_url_after_raw_was_expanded(self):
+    def test_url_retry_uses_saved_original_url_and_preserves_raw_hash(self):
         url = "https://capture.example/retry"
         page = "<html><title>Retry page</title><p>Still processable</p></html>"
         with patch("secondbrain_core.modules.capture._public_http_url", return_value=urlsplit(url)), \
              patch("secondbrain_core.modules.capture._fetch_url", return_value=(url, page, "text/html")):
             item = self.service.accept_url(url)
+            raw_path = self.raw / item["raw_path"]
+            initial_hash = hashlib.sha256(raw_path.read_bytes()).hexdigest()
             with patch.object(self.service, "_write_review", side_effect=OSError("Review unavailable")):
-                self.service.process(item, (self.raw / item["raw_path"]).read_bytes())
+                self.service.process(item, raw_path.read_bytes())
         partial = self.service.get(item["capture_id"])
         self.assertEqual(partial["status"], "partial_success")
-        self.assertIn("Original URL:", (self.raw / partial["raw_path"]).read_text())
+        self.assertEqual(hashlib.sha256(raw_path.read_bytes()).hexdigest(), initial_hash)
+        self.assertEqual(partial["raw_sha256"], initial_hash)
         with patch("secondbrain_core.modules.capture._fetch_url", return_value=(url, page, "text/html")):
             retried = self.service.retry(item["capture_id"])
         self.assertEqual(retried["status"], "completed")
         self.assertEqual(retried["source_url"], url)
+        self.assertEqual(hashlib.sha256(raw_path.read_bytes()).hexdigest(), initial_hash)
+        self.assertEqual(retried["raw_sha256"], initial_hash)
 
     def test_fetch_uses_pinned_address_and_revalidates_redirect_without_external_network(self):
         class Handler(BaseHTTPRequestHandler):

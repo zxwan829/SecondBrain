@@ -336,18 +336,25 @@ class CaptureService:
                                        ".jpeg": "image", ".webp": "image", ".gif": "image"}.get(
                                            suffix, "audio" if suffix in AUDIO_SUFFIXES else "file"))
         capture_id = uuid.uuid4().hex
+        raw_data = data
+        source_url = None
+        if source_type == "url":
+            source_url = data.decode("utf-8").strip()
+            raw_data = f"Original URL: {source_url}\nCaptured at: {captured_at}\n".encode("utf-8")
         try:
-            raw_path = self._create_raw(filename, data)
+            raw_path = self._create_raw(filename, raw_data)
         except (OSError, ValueError) as exc:
             raise HTTPException(500, "Could not preserve Raw evidence") from exc
         state = {"capture_id": capture_id, "source_type": source_type,
                  "input_type": "url" if source_type == "url" else "text" if suffix in {".txt", ".md", ".markdown"} else suffix[1:],
                  "captured_at": captured_at, "updated_at": captured_at,
                  "original_asset": "/knowledge-assets/00-Inbox/" + raw_path, "raw_path": raw_path,
-                 "raw_sha256": hashlib.sha256(data).hexdigest(),
+                 "raw_sha256": hashlib.sha256(raw_data).hexdigest(),
                  "review_path": None, "status": "processing", "error": None,
-                 "title": Path(raw_path).stem, "content_preview": data[:4096].decode("utf-8", errors="replace") if suffix in {".txt", ".md", ".markdown"} else "",
+                 "title": Path(raw_path).stem, "content_preview": raw_data[:4096].decode("utf-8", errors="replace") if suffix in {".txt", ".md", ".markdown"} else "",
                  "capture_context": context[:2000]}
+        if source_url is not None:
+            state["source_url"] = source_url
         self._write_state(state)
         return state
 
@@ -365,8 +372,6 @@ class CaptureService:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         state = self.accept_file("web-capture.md", url.encode("utf-8"), "url", context)
-        state["source_url"] = url
-        self._write_state(state)
         return state
 
     def process(self, state, raw):
@@ -395,10 +400,9 @@ class CaptureService:
                     title, extracted = final_url, body
                 if not extracted.strip():
                     raise ValueError("No readable page text was extracted")
-                raw_content = f"Original URL: {original_url}\nFinal URL: {final_url}\nCaptured at: {state['captured_at']}\n\n{body}"
-                self._replace_raw(state, raw_content.encode("utf-8"))
                 state["title"] = title[:300]
                 content = extracted[:500_000]
+                state["derived_source_url"] = final_url
             elif input_type == "pdf":
                 reader = PdfReader(__import__("io").BytesIO(raw), strict=True)
                 if reader.is_encrypted:
@@ -452,28 +456,13 @@ class CaptureService:
         if review_digest != state.get("review_sha256"):
             raise ValueError("Review artifact hash verification failed")
 
-    def _replace_raw(self, state, data):
-        path = self.raw_root / state["raw_path"]
-        try:
-            info = path.lstat()
-        except OSError as exc:
-            raise HTTPException(404, "Raw asset not found") from exc
-        if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
-            raise ValueError("Raw evidence path is unsafe")
-        # URL Raw is reserved by O_EXCL at intake and only rewritten by this job.
-        fd = os.open(path, os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0))
-        with os.fdopen(fd, "wb") as output:
-            output.write(data)
-            output.flush()
-            os.fsync(output.fileno())
-        state["raw_sha256"] = hashlib.sha256(data).hexdigest()
-
     def _write_review(self, state, content):
         review_name = _safe_name(state["title"], ".md")
         body = _frontmatter(state["source_type"], state["captured_at"], state["original_asset"], state.get("capture_context", ""))
         if state["source_type"] == "url":
-            original_url = (self.raw_root / state["raw_path"]).read_text(encoding="utf-8", errors="replace").splitlines()[0].removeprefix("Original URL: ")
-            body += f"\n# {state['title']}\n\nSource URL: {original_url}\n\n"
+            original_url = state.get("source_url", "")
+            final_url = state.get("derived_source_url", original_url)
+            body += f"\n# {state['title']}\n\nSource URL: {original_url}\nFetched URL: {final_url}\n\n"
         else:
             body += f"\n# {state['title']}\n\n"
         body += content.strip() + "\n"
