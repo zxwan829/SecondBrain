@@ -127,3 +127,13 @@ type: environment-baseline
 - Docker 内部 HTTP 的 Hermes Chat 已真实完成多轮 Session、SSE delta、tool.started/tool.completed/run.completed、history、重连状态恢复和 Stop→cancelled 测试。测试 Session `D074 deployment smoke 2026-10-14` 留在 Hermes，未清理。正式 9119 和 DSM 63012 未切换；Promote 未启用，未执行 Knowledge 写入。
 - 回滚路径：停止/移除 `secondbrain-app` 后，基于快照中的旧 Compose、保留镜像及 state 重建旧 `secondbrain-core`；恢复 Hermes 前须保持 Knowledge RO、Private 不挂载、Promote false。完整旧 Hermes/Dashboard `.env` 由快照中的受限文件恢复。不要整体 `compose down`，不要把 App secret 写入命令输出或 Git。
 - **部署状态：部分完成，待处理阻断。** 下一步先通过 Container Manager 正式项目流程使 GUI 配置准确反映当前审核 Compose（不使用私有 API/数据库）；再定位 Edge 空白与 HTTPS SSE；随后重新验证 GUI 中恰有目标两个运行容器，并由用户完成 App 浏览器验收。Core RW、Promote、正式端口切换仍未获授权。
+
+## 2026-10-14 D074 React P0 热修复部署
+
+- 最小代码修复：`src/main.tsx` 显式导入 React，与 Vite classic JSX runtime 一致；检查发现 `App.tsx` 已导入 React，其他 JSX 入口无同类遗漏。未改 FE-4 视觉、Hermes、权限、网络、Secret 或 DSM 反代。
+- 本机及 NAS Docker build 中前端 `npm run typecheck`、`npm run build` 均通过。部署镜像为 `secondbrain-app:d074-e58a7f4-reactfix-738f392`，镜像 ID `sha256:432c85f29cc381ceecb3984f46eb739033ddda7592daf56f2c2321356ab2e331`；前端 bundle `index-CILWX8FO.js` 不含旧错误文本或未绑定的 `React.createElement` 引用。`git diff --check` 通过。
+- 仅执行 `docker compose ... up -d --no-deps --force-recreate secondbrain-app`。App 当前 running/healthy，`127.0.0.1:9120->8000`；Hermes 容器 ID、固定镜像、运行状态未变。当前 Compose SHA-256 `ef692c2b5506cccad0e1f666041dfd9c0990e07bfde9871d32553907ccd420e1`；差异只更新 App 构建上下文路径与 image tag。权限/网络/Secret 配置未改。
+- 热修复前快照 `/volume1/docker/secondbrain/rollback/d074-reactfix-738f392-20261014/` 保留原 Compose、App 运行元数据与旧镜像 ID；Compose 快照逐字节核验相同、文件 SHA-256 校验通过，可用原镜像 tag 和该快照恢复原 App。
+- 63013 HTTPS 返回 HTML 200、JS `text/javascript` 200；浏览器登录页实际渲染，Console error/warn 为 0。服务端登录 200，Cookie `Secure; HttpOnly; SameSite=Strict`；`/api/auth/session`、`/api/home`、Review 真实数据与 Hermes capabilities/sessions 均 200，Home Agent online。登录后的 Home 页面未在浏览器中实际呈现，仍待用户会话验收。
+- 63013 Chat 真实运行创建成功，SSE 返回 200 并送达 `message.delta`、`reasoning.available`、`run.completed`；run 状态 completed。先前记录的“200 但无事件”来自诊断脚本只计数独立 `event:` 行，而 BFF 按 `data:` JSON frame 传输，修正解析器后已有事件证据。两次 smoke 运行在 Hermes 中保留；无业务文件被修改。
+- 容器管理器 GUI 项目定义旧缓存问题未处理；本轮没有 GUI 项目级操作。9119/63012 入口、Knowledge RO、Private 隔离、`SB_PROMOTE_ENABLED=false` 保持。部署状态仍为部分完成；待 GUI 定义核对和登录后 Home/Review/Chat 浏览器验收，完整 V1 未完成。

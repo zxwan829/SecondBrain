@@ -534,3 +534,12 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - Hermes API 从 App 内网访问成功；真实 Chat 多轮、Session/history、SSE delta 与 tool started/completed、run complete、重连状态查询、Stop→cancelled 已验证。DSM HTTPS 登录/API 登录态、Secure Cookie、Home/Review 读取均 200；静态资源 200/MIME 正确，但 Edge 空白页未解释。HTTPS SSE 返回 200 后约 60 秒无事件 body，未验收。需取得浏览器 Console/network 证据并核对 DSM SSE buffering。
 - 离线验收复跑：前端 `npm run typecheck`、`npm run build` 通过；Core `UV_CACHE_DIR=/tmp/secondbrain-uv-cache uv run --extra test pytest -q` **21 passed**（1 个依赖弃用警告）；`git diff --check` 通过。NAS Compose 校验通过，App health healthy。Hermes `/proc/net/route` 默认网关为 `172.18.0.1`；未更改 PBR/WireGuard，逐流经 wg0 仍未单独验证。
 - **结论：生产部分部署，未完成 DSM GUI/浏览器验收；不标记 D074 部署完成。** 9119/63012 保持原入口，Promote=false、Knowledge RO、Private 不挂载。快照路径见 Environment-Baseline。下一步先通过受支持 Container Manager 流程对齐项目缓存，再排查 Edge JS 与 HTTPS SSE；不执行项目级重建直到 Compose 对齐。
+
+## 2026-10-14 D074 P0 React classic JSX 修复
+
+- `secondbrain-frontend/src/main.tsx` 增加 React import，修复 production classic JSX transform 下的 `React is not defined`；`App.tsx` 已有 import，未发现其他 JSX 入口同类问题。没有改 FE-4 视觉或扩展架构。
+- 本机和 NAS 构建均通过 `npm run typecheck`、`npm run build`；产物 bundle 不含旧错误文本或 `React.createElement` 未绑定引用。NAS 镜像 `secondbrain-app:d074-e58a7f4-reactfix-738f392` 构建成功；只重建 `secondbrain-app`，容器 healthy，Hermes 保持原容器/镜像/运行状态。9120/63013 保持，未执行 Container Manager GUI 操作。
+- HTTPS 63013 HTML/JS 返回 200 且 JS MIME 正确；浏览器登录页实际可见，Console error/warn 为 0。HTTPS 登录、Secure/HttpOnly/SameSite=Strict Cookie、session、Home/Review 真数据、Hermes Chat capabilities/sessions 均返回成功。Home 登录后视觉仍待用户浏览器验收。
+- 真实 HTTPS SSE 收到 `message.delta`、`reasoning.available`、`run.completed`，run 状态 completed；前一轮“无事件”结论由探针仅统计单独 `event:` 头造成，Hermes/BFF 使用 `data:` JSON frame。烟雾测试创建的两条 Chat session/run 保留；无 Knowledge/业务文件变更。
+- 热修复前回滚快照 `/volume1/docker/secondbrain/rollback/d074-reactfix-738f392-20261014/`，保留旧 App image ID 与 Compose。当前 Compose 仅 App build context/image tag 改动；权限、网络、Secret 未变，Promote=false、Knowledge RO、Private 不挂载。
+- **状态：P0 代码已实现；App 热修复已部署；构建/在线 API/SSE 验证通过；DSM GUI 缓存定义和登录后 Home/Review/Chat 浏览器验收未完成。**
