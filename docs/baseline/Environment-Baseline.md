@@ -20,13 +20,13 @@ type: environment-baseline
 
 - Compose：`/volume1/docker/secondbrain/compose.yaml`；项目根 `/volume1/docker/secondbrain/`；容器 `secondbrain-hermes`。
 - Core build context：`/volume1/docker/secondbrain/core-source/`，按 GitHub Monorepo `main` 部署；旧 `/volume1/SecBR/SecondBrain/30-Projects/SecondBrain V1/` 不再作为源码或构建目录。
-- Core 当前镜像 `secondbrain-core:core4-github-961c07d`（image ID `sha256:d765420f082aae8263e6072249fbc9a1baa9fb117006d06bcb3b31edc2b9e5cc`）；回退镜像 `secondbrain-core:core4`（image ID `sha256:fec9a06032d4462c49643ebaed49d2b41d196b40cd6c737c24608bc29b7e4034`）保留。
+- Core 原镜像 `secondbrain-core:core4-github-961c07d`（image ID `sha256:d765420f082aae8263e6072249fbc9a1baa9fb117006d06bcb3b31edc2b9e5cc`）保留；其旧容器已由 D074 App 替换并移除。回退镜像 `secondbrain-core:core4`（image ID `sha256:fec9a06032d4462c49643ebaed49d2b41d196b40cd6c737c24608bc29b7e4034`）及原 Core state 目录保留。
 - Production Hermes v0.21.5 / build `749220ef`；镜像 `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`；已核验运行 image ID `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`。当前 Runtime 默认模型 `zai-org/GLM-4.5-Air`；最终长期默认未冻结。
 - Hermes 数据/配置：`/volume1/docker/secondbrain/hermes/data/`、`config.yaml`；Hermes CLI `/opt/hermes/.venv/bin/hermes`。
 - Dashboard 监听容器端口 `9119`，宿主仅绑定 `192.168.3.27:9119`，LAN HTTP URL `http://192.168.3.27:9119`；DSM HTTPS `https://zxwan520.com:63012` 保留 LAN-only 入口。Basic Auth secret 在 `/volume1/docker/secondbrain/.env`，权限 600。不得把凭据写入文档。
 - 网络 `secondbrain_default`；网段 `172.18.0.0/16`，Gateway `172.18.0.1`，Hermes `172.18.0.2`；容器流量策略路由经 table 200 → `192.168.3.2` → `wg0`。开机脚本 `/volume1/docker/secondbrain/scripts/hermes-policy-route.sh`，DSM Task Scheduler `SecondBrain Boot`（root）；开机恢复未以 NAS 主动重启验证。
 
-### D074 App/Core 与 Hermes API 只读核验（2026-10-14）
+### D074 App/Core 与 Hermes API 部署前只读核验（2026-10-14，历史快照）
 
 - 通过现有 NAS SSH 与一次性 `sudo -n docker exec` 只读核验 `secondbrain-hermes`：Hermes v0.21.5 / upstream `749220ef`；`/proc/net/tcp` 显示 `127.0.0.1:8642` LISTEN，loopback `/health` 返回 200，未认证 `GET /api/sessions` 与 `/v1/capabilities` 返回 401。容器当前配置文件没有 `platforms.api_server` 项，`API_SERVER_*` 环境项未设置且未发现可供 App 使用的 API key 配置。API 进程有响应且受认证保护，但 loopback 绑定不能供同 Compose 的 App 容器访问；未进行带凭据的上游请求。
 - 当前正式 Compose service 名为 `hermes`，容器名 `secondbrain-hermes`，与旧 Core 处于 `secondbrain_default` 网络；Hermes API 无 8642 宿主端口映射。App BFF 候选地址使用 Compose DNS `http://hermes:8642`。当前 Core 仍是旧镜像/service；D074 App 未部署。只读核验没有修改容器、Compose、密钥或运行配置。
@@ -116,3 +116,14 @@ type: environment-baseline
 - 部署后 `/api/dashboard/plugins` 返回 v0.2.4 与新 entry，`/api/health` 返回 200；匿名 rescan 返回 401，因此仅重启 `secondbrain-hermes` 一次刷新插件缓存，未重启 Core。匿名 Review API 返回 401（预期安全拒绝）；已登录 Edge 上的 Review 列表/详情和跨站浏览器验收仍待用户完成。用户已在全新 Edge 标签验收 FE-4 视觉与首页真实数据。
 - `secondbrain-fe-test` 仅更新隔离 JS/CSS，无 Hermes 重启。测试 JS SHA-256 `4300d65cf33cd1dc3e7e112b7230767c413dcb57e066d00e4c97873504582a1e`，CSS SHA-256 `8db124f950e13cb3b9dc5c2cc377f79ad1df8434934dbe1247bfa35714a94bb2`。新 Edge 标签在 LAN HTTP 上实际渲染 FE-4 与隔离 Review 挂点；Review API 因 HTTP Origin 不匹配而按策略拒绝。DSM HTTPS 63012 从自动化浏览器不可达，故仍待可用 Edge 会话验收。
 - Hermes v0.21.5 health 200；Core running、`SB_PROMOTE_ENABLED=false`、Knowledge RO、Private 未挂载。生产部署后再次核对这些状态未变化。
+
+## 2026-10-14 D074 App NAS 部分部署与阻断
+
+- 预部署快照：`/volume1/docker/secondbrain/rollback/d074-deploy-preflight-20261014-154943/`；包含原 Compose、必要 `.env`、脱敏容器元数据、镜像清单及恢复说明，目录/文件权限为 `0700/0600 root:root`，逐文件比较与 SHA-256 校验通过。旧 Core image 和 `/volume1/docker/secondbrain/core-state` 均保留。App 登录密码、Hermes API key 分别存于 `/volume1/docker/secondbrain/app-secrets-d074/` 私有文件，未写入 Git 或本文。
+- 当前 Compose `/volume1/docker/secondbrain/compose.yaml` SHA-256 `db81653a11877bf6a81935e1b2eecce5235956499dcbd7ee75f9b4d5814ae72a`，`docker compose config --quiet` 通过，services 仅 `hermes`、`secondbrain-app`。运行时容器仅 `secondbrain-hermes` 与 `secondbrain-app`；Hermes 固定 digest 未变且运行，App image `secondbrain-app:d074-e58a7f4-20261014` 运行/healthy，身份 `1026:100`，仅 `127.0.0.1:9120->8000`。Hermes 8642 无宿主映射；9119 仍只绑定 `192.168.3.27`。App 的 Review/Knowledge/secret mounts 为 RO，state RW；Private 未挂载，`SB_PROMOTE_ENABLED=false`。Core 原容器已移除，原镜像及 state 可用于恢复。
+- Hermes API key 由私有 `hermes-api.env` 注入，并与 Hermes data `.env` 中实际优先读取的 API key 对齐；App 容器以只读 secret mount 使用同一服务端凭据。Hermes `/api/sessions` 通过 Docker 内部 API 由 App 获取 200；未将 8642 发布到宿主。Hermes 容器路由表仍显示默认网关 `172.18.0.1`，与既有网络设计一致；本轮未改 PBR/WireGuard/iStoreOS，未取得 wg0 逐流证据。
+- DSM Container Manager GUI 中已登记项目 `secondbrain`，目录 `/volume1/docker/secondbrain`。首次登记未勾选“创建后立即启动”。但 GUI 项目详情刷新后仍把 Hermes 显示为旧名 `8fad22e58156_secondbrain-hermes`/旧镜像 `nousresearch/hermes-agent:latest`，且 GUI 保存编辑时使用缓存旧定义启动了旧 Core 并尝试绑定已占用的 App 端口。已立即停止并移除旧 Core 容器、恢复 Compose 管理的 App；持久化 state、旧 Core 镜像与部署快照未动。**禁止在该 GUI 项目定义对齐前点击项目级启动/重建；GUI 仅显示 2 条不能视作最终验收。**
+- DSM HTTPS `https://zxwan520.com:63013`：服务端真实登录 200，返回 Secure/HttpOnly/SameSite Cookie；`/api/auth/session`、`/api/home`、Review API 均 200，Home 报告 Agent online、8 条 Review。静态 HTML/JS/CSS 及 MIME 均 200，但 Edge 页面目前空白且没有可访问的 DOM 文本。HTTPS Chat SSE 请求握手返回 200，但等待约 60 秒未观察到任何事件内容；须核查浏览器 Console、反向代理缓冲和上游 SSE，不能标记 Chat HTTPS 验收。内网 HTTPS 63013 有效登录/读取已由服务端探针证明；人工浏览器验收未完成。
+- Docker 内部 HTTP 的 Hermes Chat 已真实完成多轮 Session、SSE delta、tool.started/tool.completed/run.completed、history、重连状态恢复和 Stop→cancelled 测试。测试 Session `D074 deployment smoke 2026-10-14` 留在 Hermes，未清理。正式 9119 和 DSM 63012 未切换；Promote 未启用，未执行 Knowledge 写入。
+- 回滚路径：停止/移除 `secondbrain-app` 后，基于快照中的旧 Compose、保留镜像及 state 重建旧 `secondbrain-core`；恢复 Hermes 前须保持 Knowledge RO、Private 不挂载、Promote false。完整旧 Hermes/Dashboard `.env` 由快照中的受限文件恢复。不要整体 `compose down`，不要把 App secret 写入命令输出或 Git。
+- **部署状态：部分完成，待处理阻断。** 下一步先通过 Container Manager 正式项目流程使 GUI 配置准确反映当前审核 Compose（不使用私有 API/数据库）；再定位 Edge 空白与 HTTPS SSE；随后重新验证 GUI 中恰有目标两个运行容器，并由用户完成 App 浏览器验收。Core RW、Promote、正式端口切换仍未获授权。
