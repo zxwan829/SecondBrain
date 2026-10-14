@@ -57,7 +57,7 @@ type: agent-rules
 
 ## Hermes Upstream First
 
-- 优先复用当前受支持 Hermes 上游能力；Core 不重复实现 Hermes Runtime、Chat、Skills、Gateway 或 Dashboard 宿主。
+- 优先复用 Hermes 官方 Agent/Chat/Session/Skill API；SecondBrain 自主实现产品前端与 Chat UI，但不重复实现 Agent Runtime、会话引擎或 Skills/Gateway。
 - Hermes 版本差异集中在适配层；升级前先按目标稳定版本验证接口与安全边界。
 - 不为减少集成工作降低必要安全边界；生产 Knowledge 写权仍只属于经过用户审批的 Core Promote。
 
