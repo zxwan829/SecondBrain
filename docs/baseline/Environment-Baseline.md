@@ -1,6 +1,6 @@
 ---
 created: 2026-09-28
-updated: 2026-10-14
+updated: 2026-10-15
 status: current
 type: environment-baseline
 ---
@@ -204,3 +204,13 @@ type: environment-baseline
 - 定向测试 **34 passed**（Capture + multimodal + Hermes BFF），Python 编译检查及 `git diff --check` 通过。重试幂等、Raw 保留、错误状态以隔离样本/Mock 覆盖。D076-A 只读预检：NAS 4 CPU、约 20.8 GB 内存（当时约 14.9 GB 可用）、Docker 卷约 871 GB 可用；App healthy、Hermes running。正式 `Dockerfile.app` 从 Commit `3c57a553bebd47b64ceb8603ab6da96465bb2de8` 的独立归档构建成功，canary Image ID `sha256:06bb37d41df4af32dd8ddda9a3e4df7f449dac12be0da5fc79eebd99a7bd45a4`（约 290.5 MB）。NAS Docker 24.0.2 无 buildx，使用 classic builder；构建层实际限制为单 CPU affinity（CPU 3）及 2 GiB 内存。`Dockerfile.app` 本地/NAS SHA-256 一致。
 - 真实 OCR 未运行：NAS 为 cgroup v1，但不支持 CPU CFS quota，`docker run --cpus=1` 被拒；PIDs cgroup 未挂载，Docker 警告 `--pids-limit=128` 被丢弃。一次性 canary 仅启动过休眠进程核验其余配置；因上述资源隔离项不能兑现，在执行测试代码前删除。正式 App/Hermes 的 ID、镜像与启动时间复核未变；canary 容器及测试源/样本目录已清理，未访问/挂载业务数据，仅保留构建镜像 tag `secondbrain-app:d076-ocr-canary-3c57a55`。因此没有真实中英 OCR/扫描 PDF 识别、只读 rootfs `/tmp` 运行、OCR 耗时/内存峰值或识别准确性证据；不把镜像 build 或 Mock 结果视作 OCR 通过。
 - 没有真实可用的 Hermes STT 后端，图像 AI 描述也未实现/验证。NAS Compose、正式 App/Hermes 容器、Secret、模型、业务数据和网络均未修改；Promote 保持原状态。后续须在能强制 CPU/PIDs 限制的隔离 Docker 环境执行真实样本验证，再讨论正式部署；任何可能发送私人素材至云服务的处理，须先明确数据范围/费用并获得授权。
+
+## 2026-10-15 D076-A 本地 OCR 部署到 63013
+
+- 部署业务代码 `3c57a553bebd47b64ceb8603ab6da96465bb2de8`；构建源位于 `/volume1/docker/secondbrain/app-build-source-d076a-3c57a55/web-app`，由正式 `web-app/Dockerfile.app` 构建。新镜像 `secondbrain-app:d076a-3c57a55`，Image ID `sha256:3f68f807191b1cb56b436dfd1165475e997d29a3db3de2a12d26c874dccd4ff7`；App 容器 `8e19ef61615f388009017be2ce245de3bbead3991134951f30e7ee888e6e1316`，运行健康，UID/GID `1026:100`，只读 rootfs，入口 `127.0.0.1:9120`。前端源文件及 Dockerfile 对应目标 commit。
+- 正式 Compose 仅有三项 App 变更：build context 改到上述 D076-A 目录；image 改为 `secondbrain-app:d076a-3c57a55`；`/tmp` tmpfs 从 16 MiB 改为 64 MiB（`rw,noexec,nosuid,nodev,size=64m,mode=1777`）。`docker compose config --quiet` 通过。部署前 SHA-256 `6b143e2b39329dadb4a54a31f1c1a0be1ddfbaacac51a8a5a0f31307b926b61a`；部署后 SHA-256 `ac55d3db4fa4e66255f39473458221e9a6778c5d7cf5d683bb00eeb761b56070`。Hermes 服务定义未变化。
+- App 实际镜像内 Tesseract 5.5（`chi_sim`、`eng`、`osd`）、Poppler `pdftoppm` 25.03.0、Pillow 11.3.0、pypdf 6.20.1 均可调用。运行时 `/tmp` 为 65,536 KiB tmpfs，UID 1026 写入探针成功；`/app` 写入探针因只读根文件系统失败，符合预期。OCR 依赖与 tmpfs 已部署；本轮没有向生产上传 OCR 样本，也没有在生产容器执行 OCR。
+- HTTPS 63013 `/` 与 `/health` 返回 200。安全的短时 HTTPS 登录 smoke 验证 Session、Home、Chat capabilities/sessions、Inbox、Review 列表及既有文本/PDF 预览和下载均正常；登录返回 Secure、HttpOnly、SameSite=Strict Cookie，登出后会话失效。未登录 API 返回 401。浏览器重建后旧 App 会话失效，页面需要重新登录；用户需自行完成中文图片与扫描 PDF 的页面级验收。
+- 隔离边界：Raw/Review RW，Knowledge RO，Private 未挂载；Promote=false，STT 开关未设置（默认关闭）。D075 五条既有 state/Raw/Review 共 47 个文件的部署前后路径、大小、SHA-256 清单一致；Secret 校验值不变。未创建测试素材、未重试旧 PNG/WAV、未写 Knowledge。
+- Hermes 容器 ID `f6703ca3e3d41856b6e35348f28cd1c7f833ffb9ab31b19e958656540eed8ac6`、镜像 ID `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`、启动时间 `2026-10-14T08:03:44.970619297Z` 与部署前相同。D075.2 镜像 `secondbrain-app:d0752-934d0ea`（`sha256:c3801b546b0e9605370b659cc5c3605abf827080fec7a14a1e88856e917f361d`）仍保留。
+- App-only 回滚快照：`/volume1/docker/secondbrain/rollback/d076a-predeploy-20261015-003736/`（目录 0700；敏感配置和快照文件 0600；含旧 Compose、必要状态与校验清单）。恢复快照中的 `compose.yaml` 至正式路径，再只对 `secondbrain-app` 执行 Compose `up -d --no-deps --force-recreate --no-build --pull never secondbrain-app`，即可回到 D075.2；不操作 Hermes。D076-A OCR 依赖已部署，不等于 D076 全部交付或用户验收完成。图像描述、STT、微信渠道仍未完成。

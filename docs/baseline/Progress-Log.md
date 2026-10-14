@@ -629,3 +629,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 强制收尾已完成：移除本轮一次性容器、样本/脚本目录、本地临时目录和未被容器引用的 Canary tag/image；未运行任何全局 prune，D075 镜像未清理。NAS Docker volume 可用空间从 912,018,112 KiB 增至 912,188,484 KiB；测试结束后无容器、镜像 tag 或测试目录残留。
 - 正式运行未变化：App ID `3ca30d08568ca547bea9fedf924a73d01a0e00ce06c07b5f95ef52026eed1a4c` / image `sha256:c3801b546b0e9605370b659cc5c3605abf827080fec7a14a1e88856e917f361d`，`healthy`；Hermes ID `f6703ca3e3d41856b6e35348f28cd1c7f833ffb9ab31b19e958656540eed8ac6` / image `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`，持续运行；二者启动时间不变。Compose SHA-256 仍为 `6b143e2b39329dadb4a54a31f1c1a0be1ddfbaacac51a8a5a0f31307b926b61a`；9120/9119 端口、Raw/Review/Knowledge 挂载权限、Secret、Private 隔离与 `SB_PROMOTE_ENABLED=false` 均未变化。测试网络隔离且未挂载正式数据目录，未触碰生产 Raw/Review/Knowledge。
 - **结论：** 中文/中英图片 OCR、扫描 PDF OCR 与 pypdf Fast Path 已完成真实隔离运行验证；这是 Canary 验证，不是正式部署或用户验收。音频 STT 未启用；AI 图像描述仍未配置，完整 D076 尚不具备全部处理器验收条件。本轮未更新 63013、未进入 D076-B。
+
+## 2026-10-15 D076-A OCR App 部署（业务代码 3c57a55）
+
+- 依据授权从目标提交构建独立 NAS source context，正式 App 镜像 secondbrain-app:d076a-3c57a55（sha256:3f68f807191b1cb56b436dfd1165475e997d29a3db3de2a12d26c874dccd4ff7），仅重建 secondbrain-app。正式 Compose 仅更改 App build context、image tag、/tmp tmpfs 64 MiB；配置校验通过。D075.2 镜像保留。
+- App healthy；真实运行镜像含 Tesseract 中文/英文数据、Poppler、Pillow/pypdf。只读 rootfs 下 /tmp tmpfs 为 64 MiB 且 UID 1026 可写；Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false，STT 默认关闭。
+- HTTPS 根页/health 200；短时 HTTPS 登录 smoke 的 Home、Chat、Inbox、Review、文本/PDF 预览/下载均成功，匿名 API 401，Secure/HttpOnly/SameSite=Strict Cookie 确认。D075 47 个相关文件前后清单和 Secret 校验值一致。无生产 OCR 上传或 Knowledge 写入。
+- Hermes 容器、镜像、启动时间未变化。App-only 回滚快照位于 /volume1/docker/secondbrain/rollback/d076a-predeploy-20261015-003736/；详细哈希、容器与验收证据见 Environment-Baseline.md。
+- **状态边界：** D076-A 运行依赖已部署；用户尚需在 63013 上传无敏感中文图片及扫描 PDF 完成页面验收。未自动重试既有素材；图像 AI 描述、STT 后端、微信及 D076-B 未完成，D076 整体仍 NOT DONE。
