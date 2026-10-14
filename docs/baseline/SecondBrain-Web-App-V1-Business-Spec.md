@@ -25,7 +25,7 @@ Home is the dynamic AI workspace: futuristic but readable, central visual focus,
 
 V1 navigation includes Home, Chat, Today/Calendar, Inbox, Review, Projects, Knowledge, Daily Brief, and Activity. Agent Health may live on Home or in a secondary system area. Provider, MCP, model, and tool configuration remain outside primary business navigation.
 
-- **Chat:** continue Hermes sessions, show agent state, and later support attachment/capture; reuse native Hermes chat/session capability.
+- **Chat:** SecondBrain-owned Chat UI using Hermes chat/session APIs; continue sessions, show agent/tool state, and later support attachment/capture. Users need not enter Hermes Dashboard.
 - **Today/Calendar:** personal timeline for schedule, todo, journal, birthdays, anniversaries, reminders, project milestones, and personal events. V1 may be read-only/partial and must not broaden Journal write permissions.
 - **Inbox:** read-first view of 00-Inbox with source, type, created time, and status.
 - **Review/Approval:** 10-Review, Skill pending, Human Approval items, and Promote candidates; preserve WAITING FOR ME semantics and approval boundaries.
@@ -50,7 +50,7 @@ Global visual language: clean, modern, AI-native, subtly futuristic, consistent 
 
 ## 8. Data, runtime, and security boundaries
 
-SecondBrain remains the data Source of Truth. The formal flow is `SecondBrain Data -> Business Services / Agent Runtime -> Web App`; the Web App must not create a second formal knowledge database. Hermes remains the Agent Runtime. Prefer Hermes native Dashboard shell/plugin, chat/session/API, auth, status/runtime API, then a thin SecondBrain adapter and lightweight frontend code. Do not reimplement Agent Runtime, session engine, Skill manager, Provider manager, MCP manager, or model routing.
+SecondBrain files remain the business Source of Truth; no second formal knowledge database. Target: SecondBrain-owned React/TypeScript Web App (including Chat UI) served by SecondBrain App/Core; browser uses one App origin, while server-side adapters use supported Hermes Agent/Chat/Session/Skill APIs. Existing FE-4 UI is a migration baseline, not a Hermes Dashboard dependency. Do not reimplement Agent Runtime, session engine, Skill manager, Provider manager, MCP manager, or model routing. V1 must function on LAN HTTP and pass complete business regression through a trusted HTTPS reverse proxy without opening public access.
 
 Default security is LAN-only with authentication, Private exclusion, least privilege, controlled writes, Human Approval, no implicit Promote, and no automatic permission expansion. Future People data requires a separately defined privacy scope and is not read by V1.
 
