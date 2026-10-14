@@ -27,7 +27,7 @@ def _review_status(content):
     return "unknown"
 
 
-def create_core_router(service, review_root, auth, *, promote_enabled=True):
+def create_core_router(service, review_root, auth, *, promote_enabled=True, include_auth_routes=True):
     """Router for direct browser→Core approval; never trusts Hermes state/headers."""
     router = APIRouter()
     review_root = Path(review_root)
@@ -72,17 +72,18 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True):
                 "target_filename": Path(review_path).name, "title": title,
                 "content": decoded, "decision": service.get_decision(review_path, digest)}
 
-    @router.post("/auth/unlock")
-    def unlock(request: Request, response: Response, body: dict):
-        token = auth.unlock(request, body.get("passphrase"))
-        auth.set_session_cookie(response, request, token, auth.session_ttl)
-        return {"status": "unlocked", "expires_in": auth.session_ttl}
+    if include_auth_routes:
+        @router.post("/auth/unlock")
+        def unlock(request: Request, response: Response, body: dict):
+            token = auth.unlock(request, body.get("passphrase"))
+            auth.set_session_cookie(response, request, token, auth.session_ttl)
+            return {"status": "unlocked", "expires_in": auth.session_ttl}
 
-    @router.post("/auth/lock")
-    def lock(request: Request, response: Response):
-        auth.lock(request)
-        auth.clear_session_cookie(response)
-        return {"status": "locked"}
+        @router.post("/auth/lock")
+        def lock(request: Request, response: Response):
+            auth.lock(request)
+            auth.clear_session_cookie(response)
+            return {"status": "locked"}
 
     @router.get("/status")
     def promote_status(request: Request):

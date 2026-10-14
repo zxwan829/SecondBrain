@@ -1,13 +1,17 @@
 """SecondBrain Core HTTP application factory."""
 import os
+from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import FileResponse, JSONResponse
+from starlette.staticfiles import StaticFiles
 
-from .modules.review_promote.core_auth import CorePromoteAuth
+from .modules.app_auth import AppSessionAuth
+from .modules.hermes_api import HermesAPI
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
+from .modules.web_app import create_web_app_router
 
 
 def create_app():
@@ -19,8 +23,7 @@ def create_app():
     allowed_hosts = [value.strip().lower() for value in os.environ["SB_CORE_ALLOWED_HOSTS"].split(",") if value.strip()]
     if not allowed_hosts or any("*" in host for host in allowed_hosts):
         raise RuntimeError("Core requires a nonempty exact Host allowlist")
-    secret_file = os.environ["SB_PROMOTE_UNLOCK_SECRET_FILE"]
-    ttl = int(os.environ.get("SB_PROMOTE_SESSION_TTL", "3600"))
+    ttl = int(os.environ.get("SB_APP_SESSION_TTL", "28800"))
     # Fail closed: a deployment must explicitly enable final Knowledge writes.
     promote_enabled_value = os.environ.get("SB_PROMOTE_ENABLED", "false").strip().lower()
     if promote_enabled_value not in {"true", "false"}:
@@ -41,16 +44,47 @@ def create_app():
         raise RuntimeError("Core approval directory must be private and owned by the Core UID")
     service = PromoteService(review_root, knowledge_root,
                              approvals_path, audit_path)
-    auth = CorePromoteAuth(secret_file, origins, ttl)
+    app_password_file = os.environ["SB_APP_PASSWORD_FILE"]
+    auth = AppSessionAuth(app_password_file, origins, ttl)
+    hermes = HermesAPI()
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
-                       allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root))
     app.include_router(create_core_router(service, review_root, auth,
-                                          promote_enabled=promote_enabled), prefix="/api/promote")
+                                          promote_enabled=promote_enabled,
+                                          include_auth_routes=False), prefix="/api/promote")
+
+    @app.middleware("http")
+    async def security_headers(request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy",
+                                    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                                    "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'")
+        return response
 
     @app.get("/health")
     def health():
-        return {"status": "ok"}
+        return {"status": "ok", "promote_enabled": promote_enabled,
+                "hermes_configured": hermes.configured}
+
+    static_root_value = os.environ.get("SB_STATIC_ROOT", "")
+    if static_root_value:
+        static_root = Path(static_root_value).resolve(strict=True)
+        if not static_root.is_dir() or not (static_root / "index.html").is_file():
+            raise RuntimeError("SB_STATIC_ROOT must contain the built frontend index.html")
+        if (static_root / "assets").is_dir():
+            app.mount("/assets", StaticFiles(directory=static_root / "assets"), name="assets")
+
+        @app.get("/{path:path}", include_in_schema=False)
+        async def frontend_fallback(path: str):
+            candidate = (static_root / path).resolve()
+            if candidate.is_relative_to(static_root) and candidate.is_file():
+                return FileResponse(candidate)
+            if path.startswith("api/"):
+                return JSONResponse({"detail": "Not found"}, status_code=404)
+            return FileResponse(static_root / "index.html")
 
     return app

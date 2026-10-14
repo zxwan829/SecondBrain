@@ -1,18 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { fetchHome, type Home } from './api/home';
 import { adaptHome, type DataKind, type ListItem } from './api/home-adapter';
-import { useImmersiveTrace } from './host-integration/immersive';
 import { DEMO_KPI_DELTAS, DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
 import aiCubeUrl from './assets/ai-cube-user.png';
 import hermesOrbUrl from './assets/hermes-planet-user.png';
 import todayLandscapeUrl from './assets/today-lake-background.png';
 
 type Locale = 'zh-CN' | 'en';
-type Page = 'home' | 'review';
+type Page = 'home' | 'review' | 'chat';
 type Copy = typeof messages['zh-CN'];
-
-const CORE_REVIEW_API = (import.meta.env.VITE_CORE_REVIEW_API ?? '').replace(/\/+$/, '');
-const DASHBOARD_ORIGIN = import.meta.env.VITE_DASHBOARD_ORIGIN ?? '';
 
 type ReviewItem = {
   review_path: string;
@@ -20,8 +16,15 @@ type ReviewItem = {
   target_filename: string;
   title: string;
   status: string;
+  decision?: { status?: string; request_id?: string; error_code?: string } | null;
 };
 type ReviewDetail = ReviewItem & { content: string };
+
+function pageFromPath(path: string): Page {
+  if (path === '/review' || path.startsWith('/review/')) return 'review';
+  if (path === '/chat' || path.startsWith('/chat/')) return 'chat';
+  return 'home';
+}
 
 const messages = {
   'zh-CN': {
@@ -47,14 +50,14 @@ const messages = {
     personal: 'Personal OS', workspaceType: '个人工作台', settingsSoon: '设置即将开放',
     copyTrace: '复制全部诊断结果', copied: '诊断结果已复制', copyManual: '请在下方文本框中全选复制',
     reviewPageTitle: '待审核', reviewPageDescription: '查看真实 Review 内容与状态。Promote 当前关闭。',
-    coreUnlock: '解锁 Core', coreLock: '锁定 Core', corePassphrase: 'Core 专属解锁口令',
-    coreLocked: 'Review 受 Core 会话保护。输入解锁口令后读取真实列表。',
+    coreUnlock: '登录', coreLock: '退出登录', corePassphrase: 'SecondBrain 登录口令',
+    coreLocked: '请登录以读取真实 Review 内容。',
     coreLoading: '正在读取 Core Review…', coreConnected: '已连接 Core · {count} 条真实 Review · Promote 关闭',
     coreNoItems: '暂无待审核条目', coreSelectItem: '选择条目查看内容', coreStatus: '状态',
-    coreNeedHttps: '请通过已配置的 Dashboard HTTPS 地址使用 Review。',
-    coreNotConfigured: '尚未配置 Core Review API。请在本地构建环境中设置 VITE_CORE_REVIEW_API 和 VITE_DASHBOARD_ORIGIN。',
-    coreSessionExpired: 'Core 会话已失效，请重新解锁。', coreConnectionFailed: 'Core 连接失败',
-    coreUnlockFailed: '解锁失败，请检查口令后重试。', coreLockFailed: '锁定失败', backHome: '返回首页',
+    coreNeedHttps: '请使用当前 SecondBrain App 地址。',
+    coreNotConfigured: 'SecondBrain App API 尚未配置。',
+    coreSessionExpired: '登录会话已失效，请重新登录。', coreConnectionFailed: 'SecondBrain 服务连接失败',
+    coreUnlockFailed: '登录失败，请检查口令后重试。', coreLockFailed: '退出登录失败', backHome: '返回首页',
   },
   en: {
     brand: 'SecondBrain', workspace: 'Your workspace', subtitle: 'See your current state and focus on what matters today',
@@ -80,14 +83,14 @@ const messages = {
     personal: 'Personal OS', workspaceType: 'Personal workspace', settingsSoon: 'Settings coming soon',
     copyTrace: 'Copy all diagnostic results', copied: 'Diagnostics copied', copyManual: 'Select and copy the text below',
     reviewPageTitle: 'Review', reviewPageDescription: 'Read real Review content and status. Promote is disabled.',
-    coreUnlock: 'Unlock Core', coreLock: 'Lock Core', corePassphrase: 'Core-only passphrase',
-    coreLocked: 'Review is protected by a Core session. Unlock to load the real list.',
+    coreUnlock: 'Sign in', coreLock: 'Sign out', corePassphrase: 'SecondBrain passphrase',
+    coreLocked: 'Sign in to load real Review items.',
     coreLoading: 'Loading Core Review…', coreConnected: 'Connected to Core · {count} real Review items · Promote disabled',
     coreNoItems: 'No pending Review items', coreSelectItem: 'Select an item to view its content', coreStatus: 'Status',
     coreNeedHttps: 'Open Review through the configured Dashboard HTTPS address.',
-    coreNotConfigured: 'Core Review API is not configured. Set VITE_CORE_REVIEW_API and VITE_DASHBOARD_ORIGIN in the local build environment.',
-    coreSessionExpired: 'Core session expired. Unlock again.', coreConnectionFailed: 'Core connection failed',
-    coreUnlockFailed: 'Unlock failed. Check the passphrase and try again.', coreLockFailed: 'Could not lock Core', backHome: 'Back to Home',
+    coreNotConfigured: 'The SecondBrain App API is not configured.',
+    coreSessionExpired: 'App session expired. Sign in again.', coreConnectionFailed: 'SecondBrain service connection failed',
+    coreUnlockFailed: 'Sign-in failed. Check the password and try again.', coreLockFailed: 'Could not sign out', backHome: 'Back to Home',
   },
 } as const;
 
@@ -111,13 +114,49 @@ const anchorByNav: Record<string, string> = {
 };
 
 export function App() {
-  const trace = useImmersiveTrace();
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+
+  const checkSession = async () => {
+    try {
+      const response = await fetch('/api/auth/session', { credentials: 'same-origin' });
+      setAuthenticated(response.ok);
+      if (!response.ok && response.status !== 401) setAuthError('SecondBrain App API 暂不可用。');
+    } catch {
+      setAuthenticated(false);
+      setAuthError('无法连接 SecondBrain App API。');
+    }
+  };
+  useEffect(() => { void checkSession(); }, []);
+
+  const login = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAuthBusy(true); setAuthError('');
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (!response.ok) throw new Error(response.status === 429 ? '登录尝试过多，请稍后再试。' : '登录口令不正确。');
+      setPassword(''); setAuthenticated(true);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : '登录失败。');
+    } finally { setAuthBusy(false); }
+  };
+
+  if (authenticated === null) return <div className="app-login"><p>SecondBrain</p><span>正在检查登录状态…</span></div>;
+  if (!authenticated) return <main className="app-login"><div className="app-login-card"><span className="brand-mark"><Icon name="brain" size={21} /></span><p className="eyebrow">SECONDBRAIN</p><h1>欢迎回来</h1><p>登录后进入你的个人工作台。</p><form onSubmit={login}><label htmlFor="app-password">{messages['zh-CN'].corePassphrase}</label><input id="app-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="submit" disabled={authBusy || !password}>{authBusy ? '正在登录…' : '登录'}</button></form>{authError && <p role="alert" className="auth-error">{authError}</p>}</div></main>;
+  return <WorkspaceApp onLogout={async () => { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setAuthenticated(false); }} />;
+}
+
+function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [locale, setLocale] = useState<Locale>(() => localStorage.getItem('secondbrain.locale') === 'en' ? 'en' : 'zh-CN');
   const [home, setHome] = useState<Home | null>(null);
   const [error, setError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [copyState, setCopyState] = useState('');
-  const [page, setPage] = useState<Page>('home');
+  const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname));
   const t = messages[locale];
 
   useEffect(() => {
@@ -129,13 +168,24 @@ export function App() {
     fetchHome().then((data) => { if (mounted) setHome(data); }).catch(() => { if (mounted) setError(true); });
     return () => { mounted = false; };
   }, []);
+  useEffect(() => {
+    const onPop = () => setPage(pageFromPath(location.pathname));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   const view = useMemo(() => adaptHome(home), [home]);
   const changeLocale = () => setLocale((current) => current === 'zh-CN' ? 'en' : 'zh-CN');
   const navigate = (item: string) => {
-    if (item === 'chat') { window.location.href = '/chat'; return; }
-    if (item === 'review') { setPage('review'); setMenuOpen(false); return; }
-    if (page === 'review') setPage('home');
+    if (item === 'chat' || item === 'review' || item === 'home') {
+      const next = item as Page;
+      const path = next === 'home' ? '/' : `/${next}`;
+      if (location.pathname !== path) history.pushState({}, '', path);
+      setPage(next); setMenuOpen(false); return;
+    }
+    if (page !== 'home') {
+      history.pushState({}, '', '/'); setPage('home');
+    }
     const target = document.getElementById(anchorByNav[item] ?? 'top');
     window.requestAnimationFrame(() => target?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     setMenuOpen(false);
@@ -200,7 +250,7 @@ export function App() {
             <ClockWeather locale={locale} />
             <span className={`header-agent ${view.agentStatus ? 'is-real' : 'is-unavailable'}`}><i />{view.agentStatus ? localizeStatus(view.agentStatus, locale) : t.unavailable}</span>
             <button type="button" className="locale-button desktop-locale" onClick={changeLocale}>{t.localeLabel}<Icon name="chevron" size={13} /></button>
-            <button type="button" className="settings-button" disabled title={t.settingsSoon} aria-label={t.settingsSoon}><Icon name="settings" size={17} /></button>
+            <button type="button" className="settings-button" onClick={onLogout} title={t.coreLock} aria-label={t.coreLock}><Icon name="settings" size={17} /></button>
           </div>
         </header>
 
@@ -232,15 +282,14 @@ export function App() {
         <section className="quick-strip" aria-labelledby="quick-title">
           <div className="quick-heading"><div><h2 id="quick-title">{t.quick}</h2><p>{t.quickDescription}</p></div><Icon name="bolt" size={21} /></div>
           <div className="action-row">
-            <ActionCard icon="message" tone="action-blue" title={t.chat} description={t.chatDescription} onClick={() => { window.location.href = '/chat'; }} />
+            <ActionCard icon="message" tone="action-blue" title={t.chat} description={t.chatDescription} onClick={() => navigate('chat')} />
             <ActionCard icon="check" tone="action-violet" title={t.review} description={t.reviewDescription} onClick={() => navigate('review')} />
             <ActionCard icon="capture" tone="action-teal" title={t.capture} description={t.captureDescription} soon={t.soon} />
             <ActionCard icon="journal" tone="action-slate" title={t.newJournal} description={t.journalDescription} soon={t.soon} />
           </div>
         </section>
 
-        {trace.debug && <TracePanel trace={trace} locale={locale} copied={copyState} setCopied={setCopyState} />}
-        </> : <ReviewPage locale={locale} onBack={() => setPage('home')} />}
+        </> : page === 'review' ? <ReviewPage locale={locale} onBack={() => navigate('home')} /> : <ChatPage locale={locale} />}
       </section>
     </main>
   );
@@ -250,22 +299,14 @@ function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) 
   const t = messages[locale];
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
-  const [passphrase, setPassphrase] = useState('');
-  const [locked, setLocked] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string>(t.coreLocked);
+  const [status, setStatus] = useState<string>(t.coreLoading);
+  const [promoteEnabled, setPromoteEnabled] = useState(false);
 
   const request = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
-    if (!CORE_REVIEW_API || !DASHBOARD_ORIGIN) {
-      throw new Error(t.coreNotConfigured);
-    }
-    if (window.location.origin !== DASHBOARD_ORIGIN || window.location.protocol !== 'https:') {
-      throw new Error(t.coreNeedHttps);
-    }
-    const response = await fetch(`${CORE_REVIEW_API}${path}`, {
+    const response = await fetch(`/api/promote${path}`, {
       ...init,
-      mode: 'cors',
-      credentials: 'include',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
     });
     let payload: Record<string, unknown> = {};
@@ -285,16 +326,17 @@ function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) 
       const result = await request<{ items?: ReviewItem[] }>('/review/items');
       const nextItems = Array.isArray(result.items) ? result.items : [];
       setItems(nextItems);
-      setLocked(false);
       setStatus(t.coreConnected.replace('{count}', String(nextItems.length)));
       if (nextItems.length) await loadDetail(nextItems[0]);
       else setDetail(null);
+      const promote = await request<{ promote_enabled?: boolean }>('/status');
+      setPromoteEnabled(promote.promote_enabled === true);
     } catch (error) {
       setItems([]);
       setDetail(null);
-      setLocked(true);
       const statusCode = (error as Error & { status?: number }).status;
-      setStatus(statusCode === 401 ? t.coreLocked : error instanceof Error ? error.message : t.coreConnectionFailed);
+      if (statusCode === 401) window.location.reload();
+      setStatus(error instanceof Error ? error.message : t.coreConnectionFailed);
     } finally {
       setBusy(false);
     }
@@ -309,7 +351,7 @@ function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) 
     } catch (error) {
       const statusCode = (error as Error & { status?: number }).status;
       setStatus(statusCode === 401 ? t.coreSessionExpired : error instanceof Error ? error.message : t.coreConnectionFailed);
-      if (statusCode === 401) { setLocked(true); setItems([]); setDetail(null); }
+      if (statusCode === 401) window.location.reload();
     } finally {
       setBusy(false);
     }
@@ -321,28 +363,25 @@ function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const unlock = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const decide = async (decision: 'approve' | 'defer') => {
+    if (!detail) return;
+    if (decision === 'approve' && !window.confirm(locale === 'en' ? `Approve and promote “${detail.title}” to Knowledge?` : `确认将「${detail.title}」批准并正式写入 Knowledge？`)) return;
     setBusy(true);
-    setStatus(t.coreLoading);
     try {
-      await request('/auth/unlock', { method: 'POST', body: JSON.stringify({ passphrase }) });
-      setPassphrase('');
+      const path = decision === 'approve' ? '/review/approve' : '/review/defer';
+      const retryable = ['approved', 'promoting', 'failed'].includes(detail.decision?.status || '');
+      const requestId = decision === 'approve' && retryable && detail.decision?.request_id
+        ? detail.decision.request_id : crypto.randomUUID();
+      const result = await request<{ status?: string }>(path, { method: 'POST', body: JSON.stringify({
+        review_path: detail.review_path, review_sha256: detail.review_sha256,
+        request_id: requestId, target_filename: detail.target_filename,
+      }) });
+      setStatus(result.status || (decision === 'approve' ? 'approved' : 'deferred'));
       await loadList();
     } catch (error) {
-      setPassphrase('');
-      setStatus(error instanceof Error ? error.message : t.coreUnlockFailed);
-      setBusy(false);
-    }
-  };
-
-  const lock = async () => {
-    setBusy(true);
-    try {
-      await request('/auth/lock', { method: 'POST', body: '{}' });
-      setLocked(true); setItems([]); setDetail(null); setStatus(t.coreLocked);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : t.coreLockFailed);
+      const message = error instanceof Error ? error.message : t.coreConnectionFailed;
+      await loadList();
+      setStatus(message);
     } finally { setBusy(false); }
   };
 
@@ -351,23 +390,187 @@ function ReviewPage({ locale, onBack }: { locale: Locale; onBack: () => void }) 
       <div><p className="eyebrow">SECONDBRAIN <span>/</span> {t.review.toUpperCase()}</p><h1 id="review-page-title">{t.reviewPageTitle}</h1><p className="workspace-subtitle">{t.reviewPageDescription}</p></div>
       <button type="button" className="review-back-button" onClick={onBack}>{t.backHome}</button>
     </header>
-    <p className={`review-connection-status ${locked ? 'is-locked' : 'is-connected'}`} role="status" aria-live="polite">{status}</p>
-    {locked ? <form className="review-unlock-form" onSubmit={unlock}>
-      <p>{t.coreLocked}</p><label><span>{t.corePassphrase}</span><input type="password" autoComplete="current-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} required /></label>
-      <button type="submit" disabled={busy || !passphrase}>{busy ? t.coreLoading : t.coreUnlock}</button>
-    </form> : <>
-      <div className="review-page-toolbar"><span>{status}</span><button type="button" onClick={lock} disabled={busy}>{t.coreLock}</button></div>
+    <p className={`review-connection-status ${busy ? 'is-locked' : 'is-connected'}`} role="status" aria-live="polite">{status}</p>
+      <div className="review-page-toolbar"><span>{status}</span><button type="button" onClick={() => void loadList()} disabled={busy}>{locale === 'en' ? 'Refresh' : '刷新'}</button></div>
       <div className="review-page-grid">
         <div className="review-page-list" aria-label={t.reviewPageTitle}>
           {items.length ? items.map((item) => <button key={item.review_path} type="button" className={`review-page-item ${detail?.review_path === item.review_path ? 'is-selected' : ''}`} onClick={() => void loadDetail(item)}>
-            <strong>{item.title || item.target_filename}</strong><small>{item.target_filename}</small><span>{t.coreStatus}: {item.status || 'unknown'}</span>
+            <strong>{item.title || item.target_filename}</strong><small>{item.target_filename}</small><span>{t.coreStatus}: {item.decision?.status || item.status || 'pending'}</span>
           </button>) : <p className="review-page-empty">{t.coreNoItems}</p>}
         </div>
         <article className="review-page-detail">
-          {detail ? <><h2>{detail.title || detail.target_filename}</h2><p>{detail.target_filename} · {t.coreStatus}: {detail.status || 'unknown'}</p><pre>{detail.content}</pre></> : <p>{t.coreSelectItem}</p>}
+          {detail ? <><h2>{detail.title || detail.target_filename}</h2><p>{detail.target_filename} · {t.coreStatus}: {detail.decision?.status || detail.status || 'pending'}{detail.decision?.error_code ? ` · ${locale === 'en' ? 'Failure' : '失败'}: ${detail.decision.error_code}` : ''}</p><pre>{detail.content}</pre><div className="review-decisions"><button type="button" onClick={() => void decide('defer')} disabled={busy || ['approved', 'promoting', 'promoted', 'failed'].includes(detail.decision?.status || '')}>{locale === 'en' ? 'Defer' : '暂缓'}</button><button type="button" onClick={() => void decide('approve')} disabled={busy || !promoteEnabled || detail.decision?.status === 'promoted'} title={!promoteEnabled ? 'Promote disabled on this App build' : undefined}>{['approved', 'promoting', 'failed'].includes(detail.decision?.status || '') ? (locale === 'en' ? 'Retry approved write' : '重试正式入库') : (locale === 'en' ? 'Approve to Knowledge' : '批准入库')}</button>{!promoteEnabled && <small>{locale === 'en' ? 'Knowledge writes are disabled.' : '正式入库当前关闭。'}</small>}</div></> : <p>{t.coreSelectItem}</p>}
         </article>
       </div>
-    </>}
+  </section>;
+}
+
+type ChatSession = { id: string; title: string; updated?: string | number };
+type ChatMessage = { id: string; role: 'user' | 'assistant'; text: string };
+
+function ChatPage({ locale }: { locale: Locale }) {
+  const en = locale === 'en';
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [selected, setSelected] = useState('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [progress, setProgress] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [runId, setRunId] = useState('');
+  const abortRef = React.useRef<AbortController | null>(null);
+
+  const api = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
+    const response = await fetch(path, { ...init, credentials: 'same-origin', headers: {
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(init.headers ?? {}),
+    } });
+    const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok) {
+      if (response.status === 401) window.location.reload();
+      throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${response.status}`);
+    }
+    return body as T;
+  };
+
+  const reloadSessions = async (preferred = selected) => {
+    const payload = await api<Record<string, unknown>>('/api/chat/sessions?limit=50&offset=0');
+    const raw = Array.isArray(payload.sessions) ? payload.sessions : Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : [];
+    const next = raw.flatMap((value, index) => {
+      if (!value || typeof value !== 'object') return [];
+      const row = value as Record<string, unknown>;
+      const id = String(row.session_id ?? row.id ?? '');
+      return id ? [{ id, title: String(row.title ?? row.name ?? (en ? `Session ${index + 1}` : `会话 ${index + 1}`)), updated: row.updated_at as string | number | undefined }] : [];
+    });
+    setSessions(next);
+    if (!preferred && next.length) await selectSession(next[0].id);
+    return next;
+  };
+
+  const loadMessages = async (sessionId: string) => {
+    const payload = await api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`);
+    const raw = Array.isArray(payload.messages) ? payload.messages : Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : [];
+    setMessages(raw.flatMap((value, index) => {
+      if (!value || typeof value !== 'object') return [];
+      const row = value as Record<string, unknown>;
+      const role = String(row.role ?? row.type ?? '');
+      if (role !== 'user' && role !== 'assistant') return [];
+      let text = row.text ?? row.content ?? row.message ?? '';
+      if (Array.isArray(text)) text = text.flatMap((part) => part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string' ? [(part as Record<string, unknown>).text] : []).join('\n');
+      return typeof text === 'string' && text ? [{ id: String(row.id ?? index), role, text } as ChatMessage] : [];
+    }));
+  };
+
+  const selectSession = async (sessionId: string) => {
+    setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
+    setError(''); setMessages([]);
+    try { await loadMessages(sessionId); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not load session history'); }
+  };
+
+  useEffect(() => { void (async () => {
+    try {
+      const preferred = localStorage.getItem('secondbrain.chat.session') ?? '';
+      const next = await reloadSessions(preferred);
+      if (preferred && next.some((session) => session.id === preferred)) await selectSession(preferred);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Hermes API unavailable'); }
+  })(); }, []);
+
+  const newSession = async () => {
+    setError('');
+    try {
+      const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
+      const id = String(payload.session_id ?? payload.id ?? '');
+      if (!id) throw new Error('Hermes did not return a session identifier');
+      await reloadSessions(id); setSelected(id); setMessages([]); localStorage.setItem('secondbrain.chat.session', id);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not create session'); }
+  };
+
+  const forkSession = async () => {
+    if (!selected) return;
+    try {
+      const result = await api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(selected)}/fork`, { method: 'POST', body: '{}' });
+      const id = String(result.session_id ?? result.id ?? '');
+      if (!id) throw new Error('Hermes did not return a forked session identifier');
+      await reloadSessions(id); await selectSession(id);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not fork session'); }
+  };
+
+  const send = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const prompt = input.trim();
+    if (!prompt || busy) return;
+    setError(''); setInput(''); setBusy(true); setProgress(en ? 'Starting…' : '正在启动…');
+    setMessages((current) => [...current, { id: `local-${Date.now()}`, role: 'user', text: prompt }, { id: `assistant-${Date.now()}`, role: 'assistant', text: '' }]);
+    try {
+      let sessionId = selected;
+      if (!sessionId) {
+        const created = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
+        sessionId = String(created.session_id ?? created.id ?? '');
+        if (!sessionId) throw new Error('Hermes did not return a session identifier');
+        setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
+        await reloadSessions(sessionId);
+      }
+      const idempotencyKey = crypto.randomUUID();
+      const started = await api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/runs`, {
+        method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ input: prompt }),
+      });
+      const activeRun = String(started.run_id ?? '');
+      if (!activeRun) throw new Error('Hermes did not return a run identifier');
+      setRunId(activeRun); setProgress(en ? 'Connected to Hermes' : '已连接 Hermes');
+      const controller = new AbortController(); abortRef.current = controller;
+      const response = await fetch(`/api/chat/runs/${encodeURIComponent(activeRun)}/events`, { credentials: 'same-origin', signal: controller.signal, headers: { Accept: 'text/event-stream' } });
+      if (!response.ok || !response.body) throw new Error(`Hermes stream failed (HTTP ${response.status})`);
+      const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+      const consume = (frame: string) => {
+        let eventName = 'message'; const data: string[] = [];
+        for (const line of frame.split(/\r?\n/)) {
+          if (line.startsWith(':')) continue;
+          if (line.startsWith('event:')) eventName = line.slice(6).trim();
+          if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+        }
+        if (!data.length) return;
+        let payload: Record<string, unknown> = {};
+        try { payload = JSON.parse(data.join('\n')) as Record<string, unknown>; } catch { payload = { text: data.join('\n') }; }
+        const name = String(payload.name ?? payload.tool_name ?? payload.tool ?? 'tool');
+        if (eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
+          const delta = String(payload.delta ?? payload.text ?? payload.output_text ?? '');
+          if (delta) setMessages((current) => current.map((message, index) => index === current.length - 1 && message.role === 'assistant' ? { ...message, text: message.text + delta } : message));
+        } else if (eventName.startsWith('tool.')) {
+          setProgress(`${eventName.replace('tool.', '')}: ${name}`);
+        } else if (eventName === 'run.completed' || eventName === 'assistant.completed') {
+          const output = typeof payload.output === 'string' ? payload.output : '';
+          setMessages((current) => current.map((message, index) => index === current.length - 1 && message.role === 'assistant' && !message.text && output ? { ...message, text: output } : message));
+          setProgress(en ? 'Completed' : '已完成');
+        } else if (eventName === 'run.failed' || eventName === 'run.cancelled' || eventName === 'run.interrupted') {
+          setProgress(String(payload.error ?? (eventName === 'run.cancelled' ? (en ? 'Stopped' : '已停止') : eventName)));
+        }
+      };
+      while (true) {
+        const part = await reader.read();
+        buffer += decoder.decode(part.value ?? new Uint8Array(), { stream: !part.done });
+        const frames = buffer.split(/\r?\n\r?\n/); buffer = frames.pop() ?? '';
+        frames.forEach(consume);
+        if (part.done) { if (buffer.trim()) consume(buffer); break; }
+      }
+      await loadMessages(sessionId); await reloadSessions(sessionId);
+    } catch (cause) {
+      if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError(cause instanceof Error ? cause.message : 'Chat failed');
+    } finally { abortRef.current = null; setRunId(''); setBusy(false); }
+  };
+
+  const stop = async () => {
+    if (!runId) return;
+    try { await api(`/api/chat/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST', body: '{}' }); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not stop run'); }
+    abortRef.current?.abort();
+  };
+
+  return <section className="chat-page">
+    <aside className="chat-sessions"><div className="chat-session-heading"><h1>{en ? 'Chat' : '对话'}</h1><button type="button" onClick={() => void newSession()}>{en ? 'New chat' : '新对话'}</button></div><div className="chat-session-list">{sessions.map((session) => <button type="button" key={session.id} className={session.id === selected ? 'is-selected' : ''} onClick={() => void selectSession(session.id)}><strong>{session.title}</strong><small>{session.updated ? formatDate(session.updated, locale) : session.id.slice(0, 16)}</small></button>)}</div></aside>
+    <div className="chat-conversation"><header><div><p className="eyebrow">SECONDBRAIN <span>/</span> {en ? 'CHAT' : '对话'}</p><h2>{sessions.find((session) => session.id === selected)?.title ?? (en ? 'New conversation' : '新对话')}</h2></div><button type="button" onClick={() => void forkSession()} disabled={!selected || busy}>{en ? 'Fork' : '分支会话'}</button></header>
+      <div className="chat-message-list">{messages.map((message) => <article key={message.id} className={`chat-message ${message.role}`}><span>{message.role === 'user' ? (en ? 'You' : '你') : 'Hermes'}</span><p>{message.text || (busy && message.role === 'assistant' ? progress : '')}</p></article>)}{!messages.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      {progress && <div className="chat-progress" role="status">{progress}</div>}{error && <p className="chat-error" role="alert">{error}</p>}
+      <form className="chat-composer" onSubmit={send}><textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder={en ? 'Message Hermes…' : '发送消息给 Hermes…'} rows={3} disabled={busy} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><div><small>{en ? 'Enter to send · Shift+Enter for a new line' : 'Enter 发送 · Shift+Enter 换行'}</small>{busy ? <button type="button" onClick={() => void stop()} disabled={!runId}>{en ? 'Stop' : '停止'}</button> : <button type="submit" disabled={!input.trim()}>{en ? 'Send' : '发送'}</button>}</div></form>
+    </div>
   </section>;
 }
 
@@ -510,27 +713,3 @@ function ActionCard({ icon, tone, title, description, soon, onClick }: { icon: s
     <span className="action-icon"><Icon name={icon} size={19} /></span><span className="action-copy"><strong>{title}</strong><small>{soon || description}</small></span>{soon ? <span className="soon-dot" /> : <Icon name="chevron" size={16} />}
   </button>;
 }
-
-function TracePanel({ trace, locale, copied, setCopied }: { trace: ReturnType<typeof useImmersiveTrace>; locale: Locale; copied: string; setCopied: (value: string) => void }) {
-  const t = messages[locale];
-  const text = trace.copyText || JSON.stringify(trace, null, 2);
-  const copy = async () => {
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
-      await navigator.clipboard.writeText(text);
-      setCopied(t.copied);
-    } catch {
-      setCopied(t.copyManual);
-      const textarea = document.querySelector<HTMLTextAreaElement>('.diagnostics textarea');
-      textarea?.focus();
-      textarea?.select();
-    }
-  };
-  return <section className="diagnostics" aria-label="Immersive diagnostics">
-    <div className="diagnostics-heading"><div><span>CLIENT-SIDE ONLY</span><h2>IMMERSIVE LIFECYCLE TRACE</h2></div><button type="button" onClick={copy}>{copied || t.copyTrace}</button></div>
-    <div className="diagnostic-summary"><Diagnostic label="Route" value={trace.activeRoute}/><Diagnostic label="Immersive" value={String(trace.immersiveActive)}/><Diagnostic label="Header" value={trace.headerStyle}/><Diagnostic label="Spacer" value={trace.spacerStyle}/><Diagnostic label="SecondBrain top" value={trace.secondBrainHeaderTop === null ? '—' : `${trace.secondBrainHeaderTop.toFixed(1)}px`}/></div>
-    <textarea readOnly value={text} aria-label="diagnostic results" />
-  </section>;
-}
-
-function Diagnostic({ label, value }: { label: string; value: string }) { return <div><small>{label}</small><strong>{value}</strong></div>; }

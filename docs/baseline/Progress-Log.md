@@ -508,3 +508,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 已决定独立 SecondBrain Web App（自有 Chat）+ App/Core/BFF + Hermes 两个核心容器，标准版 LAN-first，本人 V1/V2 同一后端、V1 需完成 DSM LAN-only HTTPS 全业务回归。
 - 正式 Web App V1 的 MUST/SHOULD/DEFERRED、Universal Capture v1.1 全部输入（含微信）与既有业务权限/同步规则未删减；先验证 Hermes API 再进行架构迁移。
 - 本次仅修改 GitHub 文档，不代表源码开发、环境验证、生产部署或用户功能验收完成。
+
+## 2026-10-14 D074 独立 App 首阶段本地实施
+
+- 将 `secondbrain-frontend` 改为独立 React/Vite 启动入口，移除 App bundle 对 Hermes Dashboard Plugin SDK/宿主注册的依赖；保留 FE-4 页面、样式和视觉资源，Home 中原有 DEMO 内容继续明确标识为示意。
+- 在现有 Core 应用进程增加 App 静态托管及同源 API/BFF：App 登录会话覆盖 Home、Chat、Review；Home/Review 从配置目录读取真实文件和服务端审核状态；Hermes Sessions、历史、创建/分叉、更新/删除、Run、SSE、停止由服务端代理，浏览器不接触 Hermes API Key。Review 暂缓和显式确认批准复用已有 Core Promote，批准受 Core 状态门控；`SB_PROMOTE_ENABLED` 缺省关闭。
+- 新增单镜像候选 `web-app/Dockerfile.app`，将前端构建产物嵌入 Core/App；新增环境模板与本地开发说明。没有创建第二数据库、Runtime 或网关。
+- 验证：前端 `npm run typecheck` 和生产构建通过；Core 全测试 **19 项通过**，覆盖 App 会话/Origin、无会话与伪造批准拒绝、Promote 默认关闭、真实 Review/Knowledge 文件、暂缓状态、服务端 Hermes 凭据、Chat Sessions/Run/SSE/停止及 SPA 静态回退。`git diff --check` 通过。测试只用本地临时目录与 Mock Hermes；未执行容器构建，未证明部署 Hermes v0.21.5 的线上 API 兼容。
+- **阶段状态：本地代码已实现、离线测试通过；未部署、未做真实 Hermes 运行联调、未做 LAN/DSM 浏览器用户验收。** 生产仍使用 Hermes Dashboard Plugin；没有改 Compose/NAS/容器/权限/网络，Core Knowledge 保持 RO，Promote 关闭。完整 Web App V1（Today、Capture、Journal、Projects、Brief、Activity、多输入渠道及跨端回归等）未完成，不标记 DONE。

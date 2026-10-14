@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
+    "start:app": "cd ../secondbrain-core && python3 -m secondbrain_core",
     "package:test-plugin": "npm run build && node scripts/package-test-plugin.mjs",
     "package:review-bundle": "node scripts/package-review-bundle.mjs",
     "validate:manifest": "node scripts/validate-manifest.mjs",

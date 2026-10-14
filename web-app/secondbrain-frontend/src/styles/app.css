@@ -287,6 +287,52 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .review-page-detail h2 { margin: 0 0 8px; overflow-wrap: anywhere; font-size: 20px; }
 .review-page-detail pre { margin: 18px 0 0; color: var(--sb-text-soft); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 760px) { .review-page { padding: 18px 14px; } .review-page-grid { grid-template-columns: 1fr; } .review-page-list { max-height: 36vh; overflow: auto; } .review-page-header { align-items: center; } }
+
+.app-login { display: grid; min-height: 100vh; place-items: center; padding: 24px; color: var(--sb-text); background: radial-gradient(ellipse at 50% 0%, rgb(32 95 139 / 20%), transparent 55%), var(--sb-bg); }
+.app-login-card { width: min(100%, 420px); padding: 34px; border: 1px solid var(--sb-border); border-radius: 20px; background: var(--sb-surface); box-shadow: 0 25px 90px rgb(0 0 0 / 32%); }
+.app-login-card .brand-mark { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid var(--sb-border-strong); border-radius: 13px; color: #82d9ff; background: rgb(56 189 248 / 12%); }
+.app-login-card .eyebrow { margin-top: 26px; color: #83d9f8; font-size: 11px; letter-spacing: .16em; }
+.app-login-card h1 { margin: 9px 0; color: var(--sb-text); font-size: 30px; }
+.app-login-card p { color: var(--sb-muted); }
+.app-login-card form { display: grid; gap: 12px; margin-top: 26px; }
+.app-login-card label { color: var(--sb-text-soft); font-size: 13px; }
+.app-login-card input { width: 100%; padding: 12px 13px; border: 1px solid var(--sb-border-strong); border-radius: 9px; outline: 0; color: var(--sb-text); background: rgb(4 12 23 / 65%); }
+.app-login-card input:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgb(56 189 248 / 12%); }
+.app-login-card button, .review-decisions button, .chat-session-heading button, .chat-conversation > header button, .chat-composer button { border: 1px solid rgb(56 189 248 / 38%); border-radius: 9px; padding: 10px 15px; color: #e7f7ff; background: linear-gradient(135deg, #075985, #0c4a6e); cursor: pointer; }
+.app-login-card button:disabled, .review-decisions button:disabled, .chat-composer button:disabled { opacity: .55; cursor: wait; }
+.auth-error, .chat-error { color: #ff9c9c !important; }
+.review-decisions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 24px; padding-top: 17px; border-top: 1px solid var(--sb-border); }
+.review-decisions button:first-child { border-color: var(--sb-border-strong); background: var(--sb-surface-raised); }
+.review-decisions small { color: var(--sb-muted); }
+.chat-page { display: grid; grid-template-columns: minmax(220px, 290px) minmax(0, 1fr); min-height: calc(100vh - 48px); color: var(--sb-text); background: var(--sb-bg); }
+.chat-sessions { min-width: 0; padding: 22px 14px; border-right: 1px solid var(--sb-border); background: rgb(7 14 25 / 42%); }
+.chat-session-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 16px; }
+.chat-session-heading h1 { margin: 0; font-size: 20px; }
+.chat-session-heading button { padding: 8px 10px; white-space: nowrap; }
+.chat-session-list { display: grid; gap: 5px; max-height: calc(100vh - 130px); overflow: auto; }
+.chat-session-list button { display: grid; gap: 5px; min-width: 0; padding: 11px; border: 1px solid transparent; border-radius: 9px; color: var(--sb-text-soft); text-align: left; background: transparent; cursor: pointer; }
+.chat-session-list button:hover, .chat-session-list button.is-selected { border-color: var(--sb-border); background: var(--sb-surface); }
+.chat-session-list strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-session-list small { color: var(--sb-muted); font-size: 11px; }
+.chat-conversation { display: grid; grid-template-rows: auto minmax(180px, 1fr) auto auto; min-width: 0; max-width: 1200px; width: 100%; min-height: calc(100vh - 48px); margin: 0 auto; padding: 22px clamp(15px, 3vw, 38px); }
+.chat-conversation > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--sb-border); }
+.chat-conversation > header h2 { margin: 5px 0 0; font-size: 18px; }
+.chat-conversation > header button { padding: 8px 12px; }
+.chat-message-list { display: flex; flex-direction: column; gap: 15px; overflow: auto; padding: 22px 2px; }
+.chat-message { max-width: min(88%, 780px); padding: 13px 15px; border: 1px solid var(--sb-border); border-radius: 13px; background: var(--sb-surface); }
+.chat-message.user { align-self: flex-end; border-color: rgb(56 189 248 / 28%); background: rgb(8 47 73 / 42%); }
+.chat-message > span { color: #78d5fa; font-size: 11px; font-weight: 650; }
+.chat-message p { margin: 7px 0 0; color: var(--sb-text-soft); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-empty { display: grid; flex: 1; place-items: center; color: var(--sb-muted); text-align: center; }
+.chat-progress { padding: 7px 0; color: #8ddcf8; font-size: 12px; }
+.chat-error { margin: 4px 0; font-size: 13px; }
+.chat-composer { display: grid; gap: 9px; padding: 12px; border: 1px solid var(--sb-border-strong); border-radius: 14px; background: var(--sb-surface); }
+.chat-composer textarea { width: 100%; resize: vertical; border: 0; outline: 0; color: var(--sb-text); background: transparent; font: inherit; line-height: 1.5; }
+.chat-composer textarea::placeholder { color: var(--sb-muted); }
+.chat-composer > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chat-composer small { color: var(--sb-muted); font-size: 11px; }
+.chat-composer button { min-width: 84px; padding: 8px 13px; }
+@media (max-width: 800px) { .chat-page { grid-template-columns: 1fr; } .chat-sessions { border-right: 0; border-bottom: 1px solid var(--sb-border); padding: 12px; } .chat-session-list { display: flex; max-height: 90px; overflow-x: auto; } .chat-session-list button { min-width: 150px; } .chat-conversation { min-height: 72vh; padding: 14px; } }
 .empty-inline { display: flex; align-items: center; gap: 8px; min-height: 58px; color: #91a3bf; font-size: var(--sb-type-body); }
 .empty-inline span { color: #75a6ff; font-size: 18px; }
 .today-card { display: flex; flex-direction: column; }

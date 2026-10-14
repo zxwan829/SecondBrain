@@ -343,4 +343,4 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 
 **访问和安全：** 标准客户只交付 LAN HTTP IP+端口，客户公网/Lucky 等单独收费部署，不内置 TLS/证书/反代；本人 V1 保留 LAN/Home-WG `192.168.3.27:9119`，本人 V2 复用 DSM `https://zxwan520.com:63012` 转发到同一 App HTTP 入口。**V1 即需完成 LAN HTTP 与 DSM LAN-only HTTPS 全业务兼容回归**（同源 API、流式 Chat、Cookie/Origin/可信代理头），V2 不应重构 App/容器拓扑；公网可达性与安全开放仍独立验收。审批体验为 App 一次登录、查看后点击批准/暂缓，不要求第二密码或生物识别；Core 保留会话/来源/版本哈希/幂等/审计校验，Hermes 无审批凭据及 Knowledge 写权，Private 隔离。此机制不宣称能数学证明真人点击。
 
-**工程门槛/状态：** 先验证固定稳定版 Hermes 的 Chat/Session/流式/工具事件/停止接口和新版兼容性，再迁移 FE-4、自有登录和 Core 审批；保持既有数据与权限边界。标准 Compose 和宿主参数配置为后续远程收费部署预留，但不提前做安装向导、授权平台或多 NAS 专属代码。**本决定为目标架构，尚未修改 NAS/Docker/DSM/网络、未部署独立 App、未开启 Promote。**
+**工程门槛/状态（2026-10-14 更新）：** 首阶段已直接在正式源码实现 FE-4 独立入口、App/Core 同源静态与 API 服务、App 会话、Home/Review、Hermes Sessions/Run/SSE/stop BFF 及内置 Chat；typecheck、production frontend build、Core 离线测试和 API 集成测试通过。固定 Hermes v0.21.5 真实运行联调、全量 V1 模块及 LAN/DSM 浏览器验收仍未完成。标准 Compose 和宿主参数配置为后续部署预留，不做安装向导、授权平台或多 NAS 专属代码。**本轮仅改本地源码和基线文档：未修改 NAS/Docker/DSM/网络、未部署独立 App、未开启 Promote；生产仍使用已部署 Hermes Plugin。**

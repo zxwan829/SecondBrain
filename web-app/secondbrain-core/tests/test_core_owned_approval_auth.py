@@ -77,37 +77,38 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         http_client.close()
 
-    def test_app_cors_allows_only_dashboard_origin_with_credentials(self):
+    def test_app_session_is_single_login_and_promote_stays_disabled(self):
+        app_password_file = self.root / "app.password"
+        app_password_file.write_text("correct horse battery staple", encoding="utf-8")
+        app_password_file.chmod(0o600)
         env = {
             "SB_REVIEW_ROOT": str(self.review),
             "SB_KNOWLEDGE_ROOT": str(self.knowledge),
             "SB_PROMOTE_STATE_ROOT": str(self.root / "app-state"),
             "SB_DASHBOARD_ORIGINS": "https://testserver",
             "SB_CORE_ALLOWED_HOSTS": "testserver",
-            "SB_PROMOTE_UNLOCK_SECRET_FILE": str(self.secret_file),
+            "SB_APP_PASSWORD_FILE": str(app_password_file),
+            "SB_HERMES_API_URL": "http://hermes.invalid",
+            "SB_HERMES_API_KEY": "test-server-only-key",
         }
         app_state = self.root / "app-state"
         app_state.mkdir(mode=0o700)
         with patch.dict(os.environ, env):
             app = create_app()
         client = TestClient(app, base_url="https://testserver")
-        unlocked = client.post("/api/promote/auth/unlock",
-                               json={"passphrase": self.unlock_secret.decode("ascii")},
-                               headers={"Origin": "https://testserver"})
-        self.assertEqual(unlocked.status_code, 200)
-        self.assertEqual(client.get("/api/promote/status",
-                                   headers={"Origin": "https://testserver"}).json(),
+        self.assertEqual(client.get("/api/promote/status").status_code, 401)
+        login = client.post("/api/auth/login", json={"password": "correct horse battery staple"},
+                            headers={"Origin": "https://testserver"})
+        self.assertEqual(login.status_code, 200, login.text)
+        cookie = login.headers["set-cookie"].lower()
+        self.assertIn("httponly", cookie)
+        self.assertIn("secure", cookie)
+        self.assertIn("samesite=strict", cookie)
+        self.assertIn("path=/", cookie)
+        self.assertEqual(client.get("/api/promote/status").json(),
                          {"status": "ok", "promote_enabled": False})
-        allowed = client.options("/api/promote/auth/unlock", headers={
-            "Origin": "https://testserver",
-            "Access-Control-Request-Method": "POST",
-        })
-        denied = client.options("/api/promote/auth/unlock", headers={
-            "Origin": "https://evil.invalid",
-            "Access-Control-Request-Method": "POST",
-        })
-        self.assertEqual(allowed.headers.get("access-control-allow-origin"), "https://testserver")
-        self.assertEqual(allowed.headers.get("access-control-allow-credentials"), "true")
+        denied = client.post("/api/promote/review/defer", json={}, headers={"Origin": "https://evil.invalid"})
+        self.assertEqual(denied.status_code, 403)
         self.assertNotIn("access-control-allow-origin", denied.headers)
         bad_host = client.get("/health", headers={"Host": "attacker.invalid"})
         self.assertEqual(bad_host.status_code, 400)
