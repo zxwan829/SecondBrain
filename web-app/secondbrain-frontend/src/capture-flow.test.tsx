@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { InboxPage, QuickCapture, ReviewPage } from './App';
+import { InboxPage, QuickCapture, ReviewPage, scrollReviewItemIntoView } from './App';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -105,11 +105,52 @@ describe('D075.1 capture interactions', () => {
     expect(screen.queryByText('Other content')).toBeNull();
   });
 
+  it('scrolls an overflowing mobile Review list itself and centers the selected row', () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
+    const list = document.createElement('div');
+    list.style.overflowY = 'auto';
+    Object.defineProperties(list, { clientHeight: { value: 200 }, scrollHeight: { value: 800 }, scrollTop: { value: 10, writable: true } });
+    list.getBoundingClientRect = vi.fn().mockReturnValue({ top: 20, bottom: 220, left: 0, right: 200, width: 200, height: 200, x: 0, y: 20, toJSON: () => ({}) });
+    const scrollTo = vi.fn();
+    list.scrollTo = scrollTo;
+    const target = document.createElement('button');
+    target.getBoundingClientRect = vi.fn().mockReturnValue({ top: 180, bottom: 220, left: 0, right: 100, width: 100, height: 40, x: 0, y: 180, toJSON: () => ({}) });
+
+    scrollReviewItemIntoView(list, target);
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 90, behavior: 'smooth' });
+  });
+
+  it('uses viewport scrolling on desktop and disables animation for reduced motion', () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+    const list = document.createElement('div');
+    list.style.overflowY = 'visible';
+    Object.defineProperties(list, { clientHeight: { value: 500 }, scrollHeight: { value: 500 } });
+    const target = document.createElement('button');
+    const scrollIntoView = vi.fn();
+    target.scrollIntoView = scrollIntoView;
+
+    scrollReviewItemIntoView(list, target);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'center', inline: 'nearest' });
+  });
+
+  it('shows the validated upload filename instead of PDF metadata and falls back to the legacy Raw filename', async () => {
+    const newer = { capture_id: 'f'.repeat(32), source_type: 'pdf', input_type: 'pdf', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/safe.pdf', raw_path: 'safe.pdf', status: 'completed', title: 'safe', display_filename: '会议纪要.pdf', document_title: '(anonymous)' };
+    const legacy = { ...newer, capture_id: 'e'.repeat(32), display_filename: undefined, raw_path: '旧版计划.pdf', title: '(anonymous)' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [newer, legacy] })));
+    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+
+    expect(await screen.findByRole('heading', { name: '会议纪要.pdf' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '旧版计划.pdf' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '(anonymous)' })).toBeNull();
+  });
+
   it('does not offer a Review action when no Review path exists', async () => {
     const item = { capture_id: 'c'.repeat(32), source_type: 'image', input_type: 'png', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/p.png', raw_path: 'p.png', status: 'partial_success', title: 'Image', error: { code: 'processor_unavailable', message: 'No processor' } };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
     render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
-    await screen.findByText('Image');
+    await screen.findByRole('heading', { name: 'p.png' });
     expect(screen.queryByRole('button', { name: '查看 Review' })).toBeNull();
     expect(screen.getByText('No processor')).toBeTruthy();
   });

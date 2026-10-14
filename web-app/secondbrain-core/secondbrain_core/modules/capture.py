@@ -12,6 +12,7 @@ import re
 import socket
 import stat
 import threading
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -24,6 +25,7 @@ from pypdf import PdfReader
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_TEXT_CHARS = 200_000
+MAX_DISPLAY_FILENAME_CHARS = 255
 MAX_WEB_BYTES = 5 * 1024 * 1024
 MAX_REDIRECTS = 4
 ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg",
@@ -51,6 +53,20 @@ def _safe_name(name, suffix):
     stem = Path(raw).stem[:100] or "capture"
     clean = _SAFE_NAME.sub("-", stem).strip(".-_") or "capture"
     return clean + suffix
+
+
+def _display_filename(name, suffix):
+    """Keep a bounded, human-readable upload name separate from the safe Raw path."""
+    raw = str(name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    raw = "".join(char for char in raw if unicodedata.category(char) not in {"Cc", "Cf", "Cs"}).strip()
+    if not raw:
+        raw = "upload" + suffix
+    if len(raw) > MAX_DISPLAY_FILENAME_CHARS:
+        extension = Path(raw).suffix
+        if len(extension) >= MAX_DISPLAY_FILENAME_CHARS:
+            extension = ""
+        raw = raw[:MAX_DISPLAY_FILENAME_CHARS - len(extension)] + extension
+    return raw
 
 
 def _valid_signature(suffix, data):
@@ -357,6 +373,7 @@ class CaptureService:
                  "input_type": "url" if source_type == "url" else "text" if suffix in {".txt", ".md", ".markdown"} else suffix[1:],
                  "captured_at": captured_at, "updated_at": captured_at,
                  "original_asset": "/knowledge-assets/00-Inbox/" + raw_path, "raw_path": raw_path,
+                 "display_filename": _display_filename(filename, suffix),
                  "raw_sha256": hashlib.sha256(raw_data).hexdigest(),
                  "review_path": None, "status": "processing", "error": None,
                  "title": Path(raw_path).stem, "content_preview": raw_data[:4096].decode("utf-8", errors="replace") if suffix in {".txt", ".md", ".markdown"} else "",
@@ -421,7 +438,9 @@ class CaptureService:
                 if not content:
                     raise ValueError("No extractable PDF text; OCR is not configured")
                 if reader.metadata and reader.metadata.title:
-                    state["title"] = str(reader.metadata.title)[:300]
+                    document_title = str(reader.metadata.title).strip()
+                    if document_title:
+                        state["document_title"] = document_title[:300]
                 if len(content) > 1_000_000:
                     content = content[:1_000_000]
             elif input_type in {"png", "jpg", "jpeg", "webp", "gif"}:

@@ -43,6 +43,7 @@ class CaptureServiceTests(unittest.TestCase):
             self.assertIn(field, review)
         self.assertIn("Keep this exact body.", review)
         self.assertTrue(complete["original_asset"].startswith("/knowledge-assets/00-Inbox/"))
+        self.assertEqual(complete["display_filename"], "capture.md")
 
     def test_collision_does_not_overwrite_raw_or_review_and_retry_uses_suffix(self):
         first = self.service.accept_file("same.txt", b"first")
@@ -73,6 +74,7 @@ class CaptureServiceTests(unittest.TestCase):
             result = self.service.get(item["capture_id"])
             self.assertEqual(result["status"], "partial_success")
             self.assertEqual(result["error"]["code"], "processor_unavailable")
+            self.assertEqual(result["display_filename"], name)
             self.assertEqual((self.raw / result["raw_path"]).read_bytes(), data)
             self.assertIsNone(result["review_path"])
 
@@ -115,6 +117,39 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertEqual(complete["status"], "completed")
         self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), original)
         self.assertIn("hello PDF capture", (self.review / complete["review_path"]).read_text())
+
+    def test_pdf_metadata_title_does_not_replace_unicode_upload_filename(self):
+        class Page:
+            def extract_text(self):
+                return "Readable PDF body"
+        class Metadata:
+            title = "(anonymous)"
+        class Reader:
+            is_encrypted = False
+            pages = [Page()]
+            metadata = Metadata()
+
+        data = b"%PDF-1.4\nfixture"
+        with patch("secondbrain_core.modules.capture.PdfReader", return_value=Reader()):
+            item = self.service.accept_file("C:\\fakepath\\会议纪要.pdf", data)
+            self.service.process(item, data)
+        complete = self.service.get(item["capture_id"])
+        self.assertEqual(complete["display_filename"], "会议纪要.pdf")
+        self.assertEqual(complete["document_title"], "(anonymous)")
+        self.assertNotEqual(complete["title"], "(anonymous)")
+        self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), data)
+        self.assertEqual(complete["raw_sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(complete["status"], "completed")
+
+    def test_display_filename_is_bounded_and_removes_controls_without_affecting_raw_name(self):
+        supplied = "../../\u0000" + ("计划" * 150) + ".txt"
+        item = self.service.accept_file(supplied, b"text")
+        display = item["display_filename"]
+        self.assertEqual(len(display), 255)
+        self.assertNotIn("\x00", display)
+        self.assertTrue(display.endswith(".txt"))
+        self.assertEqual(Path(item["raw_path"]).name, item["raw_path"])
+        self.assertNotIn("计划", item["raw_path"])
 
     def test_url_capture_stores_url_time_body_and_html_extraction(self):
         with patch("secondbrain_core.modules.capture._public_http_url", return_value=urlsplit("https://capture.example/page")), \

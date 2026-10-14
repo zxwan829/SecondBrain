@@ -23,8 +23,35 @@ type CaptureItem = {
   capture_id: string; source_type: string; input_type: string; captured_at: string;
   original_asset: string; raw_path: string; review_path?: string | null; status: string;
   error?: { code: string; message: string } | null; title: string; content_preview?: string;
+  display_filename?: string | null; document_title?: string | null;
   source_url?: string | null; derived_source_url?: string | null;
 };
+
+function captureDisplayFilename(item: CaptureItem, locale: Locale) {
+  const saved = item.display_filename?.trim();
+  if (saved) return saved;
+  const rawName = item.raw_path.replace(/\\/g, '/').split('/').pop()?.trim();
+  return rawName || (locale === 'en' ? 'Untitled capture' : '未命名素材');
+}
+
+export function scrollReviewItemIntoView(container: HTMLElement, target: HTMLElement) {
+  const reducedMotion = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const behavior: ScrollBehavior = reducedMotion ? 'auto' : 'smooth';
+  const style = window.getComputedStyle(container);
+  const scrollsInternally = /^(auto|scroll|overlay)$/.test(style.overflowY)
+    && container.scrollHeight > container.clientHeight;
+  if (scrollsInternally) {
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const top = container.scrollTop + targetRect.top - containerRect.top
+      - (container.clientHeight - targetRect.height) / 2;
+    if (typeof container.scrollTo === 'function') container.scrollTo({ top, behavior });
+    else container.scrollTop = top;
+    return;
+  }
+  target.scrollIntoView?.({ behavior, block: 'center', inline: 'nearest' });
+}
 
 function pageFromPath(path: string): Page {
   const route = navItems.find((item) => 'route' in item && item.route !== '/' &&
@@ -355,7 +382,7 @@ export function InboxPage({ locale, onCapture, onReview }: { locale: Locale; onC
     <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div><button className="capture-primary" onClick={onCapture}>{text ? 'Quick capture' : '快速收录'}</button></header>
     {error && <p role="alert" className="capture-alert">{error}</p>}
     <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
-      <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{item.title || item.raw_path}</h2><p>{item.source_type} · {new Date(item.captured_at).toLocaleString(text ? 'en-US' : 'zh-CN')}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
+      <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{captureDisplayFilename(item, locale)}</h2><p>{item.source_type} · {new Date(item.captured_at).toLocaleString(text ? 'en-US' : 'zh-CN')}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
       {item.content_preview && <pre className="inbox-preview">{item.content_preview.slice(0, 500)}</pre>}
       {item.error && <p className="capture-alert">{item.error.message}</p>}
       <div className="inbox-links"><button type="button" onClick={() => void openPreview(item)}>{text ? 'Preview details' : '预览与详情'}</button><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{text ? 'Download Raw' : '下载原件'}</a>{item.review_path && <button type="button" onClick={() => onReview(item.review_path!)}>{text ? 'View Review' : '查看 Review'}</button>}{item.status === 'partial_success' && <button onClick={async () => { await fetch(`/api/capture/${item.capture_id}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); void load(); }}>{text ? 'Retry' : '重试处理'}</button>}</div>
@@ -380,18 +407,19 @@ function isSafeHttpUrl(value: string): boolean {
 
 function CapturePreview({ item, locale, content, error, onClose, onReview }: { item: CaptureItem; locale: Locale; content: string | null; error: string; onClose: () => void; onReview: (path: string) => void }) {
   const en = locale === 'en';
+  const displayFilename = captureDisplayFilename(item, locale);
   const kind = previewKind(item.raw_path);
   const url = `/api/inbox/${encodeURIComponent(item.capture_id)}/preview`;
   return <div className="capture-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="capture-modal capture-preview-modal" role="dialog" aria-modal="true" aria-labelledby="capture-preview-title">
-      <header><div><p className="eyebrow">SECONDBRAIN / INBOX</p><h2 id="capture-preview-title">{item.title || item.raw_path}</h2></div><button className="capture-close" onClick={onClose} aria-label={en ? 'Close' : '关闭'}>×</button></header>
+      <header><div><p className="eyebrow">SECONDBRAIN / INBOX</p><h2 id="capture-preview-title">{displayFilename}</h2></div><button className="capture-close" onClick={onClose} aria-label={en ? 'Close' : '关闭'}>×</button></header>
       <p>{captureStatus(item.status, en)} · {new Date(item.captured_at).toLocaleString(en ? 'en-US' : 'zh-CN')}</p>
       <p>{item.raw_path ? (en ? 'Raw preserved' : '原件已保存') : (en ? 'Raw unavailable' : '原件未保存')} · {item.error?.message || (en ? 'No processing error' : '无处理错误')}</p>
       {item.source_url && <dl><dt>{en ? 'Original URL' : '原始 URL'}</dt><dd>{isSafeHttpUrl(item.source_url) ? <a href={item.source_url} target="_blank" rel="noreferrer">{item.source_url}</a> : item.source_url}</dd>{item.derived_source_url && <><dt>{en ? 'Fetched URL' : '实际获取地址'}</dt><dd>{item.derived_source_url}</dd></>}</dl>}
       <div className="capture-preview-content">
         {kind === 'text' && (error ? <p role="alert">{error}</p> : content === null ? <p>{en ? 'Loading preview…' : '正在读取预览…'}</p> : <pre>{content}</pre>)}
         {kind === 'pdf' && <p><a href={url} target="_blank" rel="noreferrer">{en ? 'Open PDF preview' : '在新标签页预览 PDF'}</a></p>}
-        {kind === 'image' && <img src={url} alt={item.title || item.raw_path} />}
+        {kind === 'image' && <img src={url} alt={displayFilename} />}
         {kind === 'audio' && <audio controls preload="metadata" src={url}>{en ? 'Audio playback is not supported by this browser.' : '当前浏览器不支持此音频播放。'}</audio>}
         {kind === 'unsupported' && <p>{en ? 'This file type cannot be previewed here. Download the original file instead.' : '此类型暂不支持站内预览，可下载原件查看。'}</p>}
       </div>
@@ -492,6 +520,8 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>(t.coreLoading);
   const [promoteEnabled, setPromoteEnabled] = useState(false);
+  const reviewListRef = useRef<HTMLDivElement | null>(null);
+  const selectedReviewRef = useRef<HTMLButtonElement | null>(null);
 
   const request = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
     const response = await fetch(`/api/promote${path}`, {
@@ -557,6 +587,13 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialReviewPath]);
 
+  useEffect(() => {
+    if (!detail?.review_path) return;
+    const list = reviewListRef.current;
+    const selected = selectedReviewRef.current;
+    if (list && selected) scrollReviewItemIntoView(list, selected);
+  }, [detail?.review_path]);
+
   const selectReview = (item: ReviewItem) => {
     const query = new URLSearchParams({ review_path: item.review_path });
     history.pushState({}, '', `/review?${query}`);
@@ -593,8 +630,8 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
     <p className={`review-connection-status ${busy ? 'is-locked' : 'is-connected'}`} role="status" aria-live="polite">{status}</p>
       <div className="review-page-toolbar"><span>{status}</span><button type="button" onClick={() => void loadList()} disabled={busy}>{locale === 'en' ? 'Refresh' : '刷新'}</button></div>
       <div className="review-page-grid">
-        <div className="review-page-list" aria-label={t.reviewPageTitle}>
-          {items.length ? items.map((item) => <button key={item.review_path} type="button" className={`review-page-item ${detail?.review_path === item.review_path ? 'is-selected' : ''}`} onClick={() => selectReview(item)}>
+        <div ref={reviewListRef} className="review-page-list" aria-label={t.reviewPageTitle}>
+          {items.length ? items.map((item) => <button ref={detail?.review_path === item.review_path ? selectedReviewRef : null} key={item.review_path} type="button" className={`review-page-item ${detail?.review_path === item.review_path ? 'is-selected' : ''}`} onClick={() => selectReview(item)}>
             <strong>{item.title || item.target_filename}</strong><small>{item.target_filename}</small><span>{t.coreStatus}: {item.decision?.status || item.status || 'pending'}</span>
           </button>) : <p className="review-page-empty">{t.coreNoItems}</p>}
         </div>
