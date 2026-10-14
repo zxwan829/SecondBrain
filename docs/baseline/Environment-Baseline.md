@@ -137,3 +137,11 @@ type: environment-baseline
 - 63013 HTTPS 返回 HTML 200、JS `text/javascript` 200；浏览器登录页实际渲染，Console error/warn 为 0。服务端登录 200，Cookie `Secure; HttpOnly; SameSite=Strict`；`/api/auth/session`、`/api/home`、Review 真实数据与 Hermes capabilities/sessions 均 200，Home Agent online。登录后的 Home 页面未在浏览器中实际呈现，仍待用户会话验收。
 - 63013 Chat 真实运行创建成功，SSE 返回 200 并送达 `message.delta`、`reasoning.available`、`run.completed`；run 状态 completed。先前记录的“200 但无事件”来自诊断脚本只计数独立 `event:` 行，而 BFF 按 `data:` JSON frame 传输，修正解析器后已有事件证据。两次 smoke 运行在 Hermes 中保留；无业务文件被修改。
 - 容器管理器 GUI 项目定义旧缓存问题未处理；本轮没有 GUI 项目级操作。9119/63012 入口、Knowledge RO、Private 隔离、`SB_PROMOTE_ENABLED=false` 保持。部署状态仍为部分完成；待 GUI 定义核对和登录后 Home/Review/Chat 浏览器验收，完整 V1 未完成。
+
+## 2026-10-14 D074 App 登录失败诊断
+
+- 生产 App 最近的 `/api/auth/login` 访问日志：09:43:24Z 有一次 403（本地诊断探针未带 `Origin`）；同源 `https://zxwan520.com:63013` 请求随后 200。09:49:17Z、21Z、23Z 为 3 次 401；没有 429 或 500。限流在连续 5 次失败后触发，当前 App 后续单服务重建已清空进程内计数。
+- App Secret 源文件 `/volume1/docker/secondbrain/app-secrets-d074/secondbrain_app_password` 以只读 bind mount 到 `/run/secrets/secondbrain_app_password`；两侧 mode `0600`、owner `1026:100`、48 bytes。App 于 09:41:10Z 启动；`AppSessionAuth` 在启动时读取该文件、对文件字节 `.strip()` 后以 UTF-8 输入做常量时间精确比较。用该挂载 Secret 对实际 HTTPS 登录的服务端探针返回 200，并取得 `Secure; HttpOnly; SameSite=Strict` Cookie 和 Home API 200，证明挂载/加载/HTTPS Origin 正常。
+- 在 NAS 进程内将 App Secret 与 Hermes 当前 `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD` 做相等比较，只输出匹配结果及长度：不匹配；App 48 bytes、Hermes 9 bytes。明文未输出或记录。故使用与 Hermes 相同的用户输入命中 401，是当前 App Secret 未同步的服务端配置问题；不是 403/代理校验，也没有证据显示输入编码或空格问题。直接同步 9-byte 凭据会被 App 当前 12-byte 最低长度校验拒绝。本轮没有降低该门槛或更改任何 Secret，等待最小安全策略确认。
+- 前端登录错误现按 401 凭据校验、403 来源校验、429 限流、5xx 服务异常及其他状态分别提示，不再把所有非 429 一律显示成密码错误。`npm run typecheck` 与 `npm run build` 通过；NAS 单服务构建也通过。部署 `secondbrain-app:d074-e58a7f4-auth-status-ba2f040`，App healthy；Hermes 未重建。当前 Compose SHA-256 `14ebd79e5571d42411652c0eabd40a65ae4da7301c4f5bc6f8f5c183197296f0`，仅 App build context/image tag 变化。
+- 本次回滚快照 `/volume1/docker/secondbrain/rollback/d074-auth-status-ba2f040-20261014/`（目录 `0700`，含旧 Compose、旧 App image ID 与运行元数据；不复制 Secret）。63013 HTTPS 登录页仍可渲染，Console error/warn 为 0。以当前 App Secret 登录的真实 Home API 返回 8 条 Review、Agent online；用户浏览器输入旧 Hermes 凭据仍会按 401 拒绝，因此登录后的 Home UI 尚未验收。未改 Hermes、DSM、Project GUI、Knowledge 权限、Private、Network 或 Promote 状态。

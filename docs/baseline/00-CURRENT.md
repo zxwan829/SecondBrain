@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。2026-10-14 D074 App 已部分部署到 NAS：React classic JSX 入口修复已部署；App 健康，Hermes API 真实连接；DSM HTTPS 登录页已在浏览器渲染且无 Console error，HTTPS 登录 Cookie、Home/Review API 与 Chat SSE 均有真实服务端证据。Home 登录后视觉验收尚未完成；DSM GUI 项目仍显示旧缓存定义，完整 GUI/用户验收未完成。Promote 仍关闭且 Knowledge RO；附件采集、微信实际接入及多个真实业务模块尚未完成生产验收。
+**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。2026-10-14 D074 App 已部分部署到 NAS：React classic JSX 修复与登录状态码提示已部署；App 健康，Hermes API 真实连接，HTTPS 登录页可渲染。真实探针以 App Secret 登录及 Home/Review API 成功，Chat SSE 真实收到事件；但用户输入的 Hermes 旧凭据在最近请求中返回 401。只读对比发现 App Secret 与 Hermes Basic Auth 值不一致，且 Hermes 凭据长度低于 App 当前最小长度策略；凭据对齐/密码策略待授权收口，因此用户浏览器登录后 Home 验收未完成。DSM GUI 项目仍显示旧缓存定义。Promote 仍关闭且 Knowledge RO；附件采集、微信实际接入及多个真实业务模块尚未完成生产验收。
 
 ## 2. 已确定的架构与边界（接手项目必须先知）
 
@@ -97,7 +97,7 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `d074-e58a7f4-reactfix-738f392` healthy；React 运行时故障修复；HTTPS 登录页渲染、无浏览器错误，登录 Cookie/Home/Review API 与 Chat SSE 有真实证据；Core 21 项测试沿用前次通过结果 | 登录后 Home 的浏览器视觉验收及 DSM Container Manager 项目缓存对齐仍待完成；继续验证 GUI 项目仅含目标两容器及浏览器 Chat/Home/Review。Promote 关闭、Knowledge RO |
+| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `d074-e58a7f4-auth-status-ba2f040` healthy；React 修复；登录页和状态提示已部署；App Secret 登录/Home API 与 HTTPS Chat SSE 有真实证据 | App Secret 与 Hermes 旧凭据不一致；旧凭据为 9 字节而 App 启动校验最小 12 字节。需要先授权最小密码策略/凭据对齐，之后完成登录后 Home 视觉验收；DSM Container Manager 项目缓存也待对齐。Promote 关闭、Knowledge RO |
 | P1 | Universal Capture 多类型处理 + 微信/Web 输入渠道 | 每个 MUST 输入类型真实 Raw/Review 成功且失败可核对；微信端到端有效 | Hermes 微信集成方法仍需确证，不以 OpenClaw 作为路线 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |

@@ -543,3 +543,10 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 真实 HTTPS SSE 收到 `message.delta`、`reasoning.available`、`run.completed`，run 状态 completed；前一轮“无事件”结论由探针仅统计单独 `event:` 头造成，Hermes/BFF 使用 `data:` JSON frame。烟雾测试创建的两条 Chat session/run 保留；无 Knowledge/业务文件变更。
 - 热修复前回滚快照 `/volume1/docker/secondbrain/rollback/d074-reactfix-738f392-20261014/`，保留旧 App image ID 与 Compose。当前 Compose 仅 App build context/image tag 改动；权限、网络、Secret 未变，Promote=false、Knowledge RO、Private 不挂载。
 - **状态：P0 代码已实现；App 热修复已部署；构建/在线 API/SSE 验证通过；DSM GUI 缓存定义和登录后 Home/Review/Chat 浏览器验收未完成。**
+
+## 2026-10-14 D074 App 登录失败状态与凭据诊断
+
+- NAS App access log 中 09:49Z 三次用户登录失败为 HTTP 401；无 429/500。此前 403 来自未带 Origin 的诊断探针，带精确 HTTPS Origin 的探针返回 200。最近重新创建 App 后限流计数已清零。
+- App Secret 文件只读挂载、mode/owner 正确，启动时读入值以该 Secret 做 HTTPS 登录成功，排除 App 进程未加载或 Cookie/Origin 故障。NAS 内存中比较发现 App Secret 48 bytes、Hermes Dashboard Basic Auth 9 bytes，值不同；App 代码要求至少 12 bytes。因此当前 401 是 App Secret 未与用户确认的旧 Hermes 凭据对齐，而非假设用户输入错误。没有查看或记录任何明文。
+- 修复前端错误文案：401 凭据校验、403 来源校验、429 限流、5xx 服务端异常分开显示。前端 typecheck/build、NAS 镜像 build 通过。只部署 `secondbrain-app:d074-e58a7f4-auth-status-ba2f040`，容器 healthy；Hermes 未重建。HTTPS 登录页仍可见，App Secret 登录和 Home API 200，Home 返回真实 Review 与 Agent 状态。
+- **阻断：** 直接将 9-byte Hermes 凭据同步为 App Secret 会违反 App 现有 12-byte 最低长度要求。本轮没有降低认证门槛或更改凭据；需决定是否批准此最小安全例外，之后才能让同一旧凭据登录并完成浏览器 Home UI 验收。回滚快照见 Environment-Baseline。未跟踪 `typescript` 保留。

@@ -140,16 +140,24 @@ export function App() {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       });
-      if (!response.ok) throw new Error(response.status === 429 ? '登录尝试过多，请稍后再试。' : '登录口令不正确。');
+      if (!response.ok) throw new Error(loginFailureMessage(response.status));
       setPassword(''); setAuthenticated(true);
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : '登录失败。');
+      setAuthError(error instanceof Error ? error.message : '登录请求失败：请稍后重试。');
     } finally { setAuthBusy(false); }
   };
 
   if (authenticated === null) return <div className="app-login"><p>SecondBrain</p><span>正在检查登录状态…</span></div>;
   if (!authenticated) return <main className="app-login"><div className="app-login-card"><span className="brand-mark"><Icon name="brain" size={21} /></span><p className="eyebrow">SECONDBRAIN</p><h1>欢迎回来</h1><p>登录后进入你的个人工作台。</p><form onSubmit={login}><label htmlFor="app-password">{messages['zh-CN'].corePassphrase}</label><input id="app-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="submit" disabled={authBusy || !password}>{authBusy ? '正在登录…' : '登录'}</button></form>{authError && <p role="alert" className="auth-error">{authError}</p>}</div></main>;
   return <WorkspaceApp onLogout={async () => { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setAuthenticated(false); }} />;
+}
+
+function loginFailureMessage(status: number): string {
+  if (status === 401) return '登录未通过 App 凭据校验（HTTP 401）。';
+  if (status === 403) return '请求来源校验失败（HTTP 403）。请使用配置的 SecondBrain HTTPS 地址。';
+  if (status === 429) return '登录尝试过多（HTTP 429），请稍后再试。';
+  if (status >= 500) return `SecondBrain App 服务异常（HTTP ${status}），请稍后重试。`;
+  return `登录请求被拒绝（HTTP ${status}）。`;
 }
 
 function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
