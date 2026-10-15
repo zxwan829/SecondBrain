@@ -13,6 +13,8 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.hermes_api import HermesAPI
+from secondbrain_core.modules.auto_organize import OrganizeSettingsStore, next_scheduled_at
+from datetime import datetime, timezone
 
 
 class WebAppBffTests(unittest.TestCase):
@@ -50,7 +52,7 @@ class WebAppBffTests(unittest.TestCase):
             if request.url.path == "/api/sessions/session-1/fork":
                 return httpx.Response(201, json={"object": "hermes.session", "session": {"id": "session-3", "title": "Forked"}})
             if request.url.path.endswith("/messages"):
-                return httpx.Response(200, json={"object": "list", "session_id": "session-1", "data": [{"id": "message-1", "role": "user", "content": [{"type": "text", "text": "hello"}]}]})
+                return httpx.Response(200, json={"object": "list", "session_id": "session-1", "data": [{"id": "message-1", "session_id": "session-1", "role": "user", "timestamp": "2026-10-15T01:02:03Z", "content": [{"type": "text", "text": "hello"}]}], "pagination": {"limit": 100, "offset": 50, "order": "oldest", "returned": 1}})
             if request.url.path == "/v1/runs":
                 return httpx.Response(202, json={"run_id": "run-1", "status": "started"})
             if request.url.path == "/v1/runs/run-1":
@@ -144,7 +146,8 @@ class WebAppBffTests(unittest.TestCase):
         forked = self.client.post("/api/chat/sessions/session-1/fork", json={}, headers={"Origin": "https://testserver"})
         self.assertEqual(forked.json()["session_id"], "session-3")
         messages = self.client.get("/api/chat/sessions/session-1/messages").json()
-        self.assertEqual(messages["messages"][0], {"id": "message-1", "role": "user", "text": "hello"})
+        self.assertEqual(messages["messages"][0], {"id": "message-1", "session_id": "session-1", "role": "user",
+                                                     "timestamp": "2026-10-15T01:02:03Z", "text": "hello"})
         started = self.client.post("/api/chat/sessions/session-1/runs", json={"input": "hello"},
                                    headers={"Origin": "https://testserver", "Idempotency-Key": "test-run-1"})
         self.assertEqual(started.status_code, 200)
@@ -208,6 +211,55 @@ class WebAppBffTests(unittest.TestCase):
         asset = self.client.get("/assets/app.js")
         self.assertEqual(asset.status_code, 200)
         self.assertIn("javascript", asset.headers["content-type"])
+
+    def test_persistent_message_adapter_preserves_source_ids_timestamps_and_page(self):
+        result = asyncio.run(self.hermes.list_messages("session-1", limit=100, offset=50, order="oldest"))
+        self.assertEqual(result["messages"][0]["id"], "message-1")
+        self.assertEqual(result["messages"][0]["session_id"], "session-1")
+        self.assertEqual(result["messages"][0]["timestamp"], "2026-10-15T01:02:03Z")
+        self.assertEqual(result["pagination"]["offset"], 50)
+        request = self.calls[-1]
+        self.assertEqual(request.url.params["limit"], "100")
+        self.assertEqual(request.url.params["offset"], "50")
+
+    def test_automation_settings_persist_and_execution_fails_closed(self):
+        self.login()
+        settings = self.client.get("/api/automation/organize/settings")
+        self.assertEqual(settings.status_code, 200)
+        self.assertEqual(settings.json()["mode"], "interval")
+        self.assertEqual(settings.json()["interval_hours"], 4)
+        changed = {**settings.json(), "mode": "fixed_time", "daily_time": "06:45", "timezone": "Asia/Shanghai"}
+        saved = self.client.put("/api/automation/organize/settings", json=changed,
+                                headers={"Origin": "https://testserver"})
+        self.assertEqual(saved.status_code, 200)
+        store = OrganizeSettingsStore(self.state / "ai-organize")
+        self.assertEqual(store.read()["daily_time"], "06:45")
+        self.assertEqual(self.client.get("/api/automation/organize/status").json()["execution_available"], False)
+        run = self.client.post("/api/automation/organize/run", json={}, headers={"Origin": "https://testserver"})
+        self.assertEqual(run.status_code, 503)
+        self.assertEqual(run.json()["detail"]["code"], "organizer_unavailable")
+
+    def test_automation_settings_validation_and_auth(self):
+        self.assertEqual(self.client.get("/api/automation/organize/settings").status_code, 401)
+        self.login()
+        invalid = self.client.put("/api/automation/organize/settings",
+                                  json={"enabled": True, "mode": "interval", "interval_hours": 5},
+                                  headers={"Origin": "https://testserver"})
+        self.assertEqual(invalid.status_code, 422)
+        cross_origin = self.client.put("/api/automation/organize/settings",
+                                       json={"enabled": False, "mode": "interval", "interval_hours": 4},
+                                       headers={"Origin": "https://evil.invalid"})
+        self.assertEqual(cross_origin.status_code, 403)
+
+    def test_scheduler_time_calculation_uses_zone_and_persisted_interval_anchor(self):
+        now = datetime(2026, 10, 15, 0, 0, tzinfo=timezone.utc)
+        interval = {"enabled": True, "mode": "interval", "interval_hours": 4,
+                    "daily_time": "00:30", "timezone": "Asia/Shanghai"}
+        anchor = datetime(2026, 10, 14, 22, 0, tzinfo=timezone.utc)
+        self.assertEqual(next_scheduled_at(interval, now=now, interval_anchor=anchor), datetime(2026, 10, 15, 2, 0, tzinfo=timezone.utc))
+        fixed = {"enabled": True, "mode": "fixed_time", "interval_hours": 4,
+                 "daily_time": "00:30", "timezone": "Asia/Shanghai"}
+        self.assertEqual(next_scheduled_at(fixed, now=now), datetime(2026, 10, 15, 16, 30, tzinfo=timezone.utc))
         self.assertEqual(self.client.get("/api/does-not-exist").status_code, 404)
 
 

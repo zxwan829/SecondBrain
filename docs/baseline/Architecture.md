@@ -33,7 +33,7 @@ Hermes Dashboard Shell → SecondBrain Dashboard Plugin → 认证 API/薄适配
 - **V1：** 标准版 NAS 内网 HTTP IP+端口；本人 `http://192.168.3.27:9119`，外出经 Home-WG 访问同址。**V1 验收必须同时覆盖** DSM LAN-only `https://zxwan520.com:63012` 的登录、Chat 流式、采集、Review/审批与知识功能，确保本人 V2 无应用架构返工。
 - **V2：** 本人另行配置 AX3600 转发及 DSM HTTPS 公网入口，指向同一 App HTTP 端口；标准客户公网方案为增值部署服务，不内置 HTTPS/证书签发/反代或额外网关容器。外网开放仍须单独核验身份认证、网络可达和安全策略。
 - **权限：** App 会话与受控 Core 审批独立于 Hermes Agent；查看 Review 后点击确认即可，无第二密码/生物识别；服务端校验会话、来源、文件哈希、幂等与审计。Hermes 无审批密钥和 Knowledge 写权；Private 不挂载。单纯点击不宣称可密码学证明真人。
-- **Personal OS 扩展边界：** 前端沿用可配置的导航项和 route 字段，由各业务页面独立实现；登录、Shell 和导航不绑定 Chat/Review。Core 是模块化单体，各模块通过独立 API 和业务服务扩展，不新增容器/数据库/插件平台。当前单用户策略由服务端 `require_action(action)` 授权 seam 统一执行 owner 校验；不实现 RBAC。Knowledge Promote 与未来普通业务写操作分开授权：Memo、Calendar、新闻订阅等经授权 API 可按业务规则 CRUD，不进入 Knowledge 审批流。AI 定时任务优先调用 Hermes 原生调度，Core 保存用户配置/业务状态并做必要权限检查。
+- **Personal OS 扩展边界：** 前端沿用可配置的导航项和 route 字段，由各业务页面独立实现；登录、Shell 和导航不绑定 Chat/Review。Core 是模块化单体，各模块通过独立 API 和业务服务扩展，不新增容器/数据库/插件平台。当前单用户策略由服务端 `require_action(action)` 授权 seam 统一执行 owner 校验；不实现 RBAC。Knowledge Promote 与未来普通业务写操作分开授权：Memo、Calendar、新闻订阅等经授权 API 可按业务规则 CRUD，不进入 Knowledge 审批流。D076 自动整理由 NAS 本地 App 持久调度负责；Hermes 提供持久对话/模型能力。此项取代此前笼统“优先调用 Hermes 原生调度”的方向，配置由 Core 保存并校验。
 - **当前首阶段实现：** 独立 React/Vite 入口、同源 SPA 静态托管、App 登录会话、Home/Review 文件读取、Review 状态 API、Hermes Sessions/Run/SSE/stop BFF 与前端 Chat 已在本地代码完成。适配器按 Hermes v0.21.5 上游固定提交 `749220ef` 统一 `data` 列表、嵌套 `session.id` 和 JSON SSE 事件，并实现 Run 状态恢复；前端 typecheck/build 与 Core 21 项测试通过。尚未部署或完成实际 Hermes Chat 联调。
 - **NAS API 只读现状（2026-10-14）：** v0.21.5 API 进程在 Hermes 容器内 `127.0.0.1:8642` 有监听，health 200，未认证 sessions/capabilities 返回 401；loopback 绑定不能供 App 容器调用，且未配置 App 可用的服务端 API key。生产 Compose 服务名为 `hermes`，网络为 `secondbrain_default`。需要单独批准后，才能最小配置内部 API 监听/密钥并验证两容器通信；无需增加端口映射。
 - **迁移门槛：** App 代理只信任逐个核实的 DSM peer IP，拒绝通配或网段信任；精确 Origin/Host 校验与代理 HTTPS scheme 下 Secure Cookie 已通过离线测试，DSM 正式代理链及浏览器回归仍待部署后验证。未通过不切生产端口、不启动 Promote、不改 DSM/PBR/WG/AdGuard。NAS UID/GID 1026:100、Hermes API 服务名和 Secret 所有权要求已写入候选配置；生产变更另行授权。
@@ -96,3 +96,11 @@ V1 内网及 Home-WG 使用 App HTTP，受限 DSM HTTPS `63012` 做全业务兼�
 ## 工程治理与历史
 
 日常读取遵循 Agent-Rules 的 FAST-EXEC；技术环境事实集中在 Environment-Baseline；业务契约分别在正式 Business Specification；历史、测试证据与演进只记在 Progress-Log；架构/业务/安全决策以 Decision-Log 唯一别名引用。详细阶段演进和已完成验收不在此重复。
+
+## D076 统一对话入口与 AI 智能整理（本地实现状态）
+
+- `/chat` 是默认统一输入入口；Chat/Capture 由用户显式切换。Chat 继续使用 Hermes session/run/SSE；Core Capture 使用现有 Capture API。附件在 Chat 模式仅提供“尚未验证”的解释和用户主动切换到收录，不能静默送模型。Inbox 只管理素材，不重复显示主要输入框；Review 不并入 Chat。
+- Organizer 配置/游标/作业状态属于 Core 私有状态存储，生成的候选属于 Review 文件；Hermes SessionDB 只作持久化来源，不把 Hermes Memory 或 Workspace 作为第二 Brain 的业务 SoT。状态和结果由 Core 语义 API 暴露，单用户 action auth 保护，Knowledge Promote 与普通草稿生成分离。
+- 调度目标为可恢复本地调度器：配置变更重算下次时间，时区/DST 用 IANA ZoneInfo；interval 锚定持久化作业时间，不锚定浏览器或容器启动时间；运行锁及 source message ID 去重；状态原子持久化。模型成功但写 Review 失败时从已保存 job output 重试写入，不能重新付费调用；人工编辑/已审核 Review 只允许生成新版本/新候选，不覆盖原文件。
+- **当前门槛：** 固定 Hermes v0.21.5 API `749220ef` 的 Sessions API 有 offset 分页，消息最多 500 条一页且支持 oldest/latest；返回 message id、session_id 和 timestamp。适配层保留这些字段。该接口读取 API Server 配置的 SessionDB/Profile，不证明其他 profile、外部渠道私有存储或删除/压缩链都能完全纳入；实际已部署路由和权限范围需继续验证。
+- 无工具约束的模型整理接口尚未证明：`/v1/runs` 调用 Agent Runtime，存在工具/副作用边界，因此禁止把它当纯文本整理器。本地设置已持久化；执行器关闭、无实际定时调度，手动触发返回 503 明确原因，UI 显示未激活。调度、持久游标、任务作业和草稿写入只有在 safe model adapter / 成本边界得到测试后再实施。

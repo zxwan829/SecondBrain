@@ -87,8 +87,15 @@ class HermesAPI:
         return self._session_result(await self.json_request("GET", f"/api/sessions/{self._safe_id(session_id)}"))
 
     async def get_messages(self, session_id):
+        # Keep the Chat UI behavior: show the most recent persisted page.
+        return await self.list_messages(session_id, order="latest")
+
+    async def list_messages(self, session_id, limit=500, offset=0, order="oldest"):
+        if limit < 1 or limit > 500 or offset < 0 or order not in {"oldest", "latest"}:
+            raise HTTPException(status_code=400, detail="Invalid message pagination")
         payload = await self.json_request("GET", f"/api/sessions/{self._safe_id(session_id)}/messages",
-                                          params={"inline_images": "false"})
+                                          params={"inline_images": "false", "limit": limit,
+                                                  "offset": offset, "order": order})
         rows = payload.get("data", payload.get("messages", [])) if isinstance(payload, dict) else payload
         if not isinstance(rows, list):
             raise HTTPException(status_code=502, detail="Hermes returned invalid message history")
@@ -100,17 +107,27 @@ class HermesAPI:
             if isinstance(content, list):
                 content = "\n".join(part.get("text", "") for part in content
                                     if isinstance(part, dict) and isinstance(part.get("text"), str))
-            messages.append({"id": str(row.get("id", index)), "role": row.get("role", ""),
+            message_id = row.get("id")
+            timestamp = row.get("timestamp")
+            messages.append({"id": str(message_id) if message_id is not None else "",
+                             "session_id": str(row.get("session_id", session_id)),
+                             "role": row.get("role", ""),
+                             "timestamp": timestamp,
                              "text": content if isinstance(content, str) else ""})
-        return {"messages": messages}
+        return {"messages": messages,
+                "pagination": payload.get("pagination", {}) if isinstance(payload, dict) else {}}
 
     async def fork_session(self, session_id, body):
         return self._session_result(await self.json_request("POST", f"/api/sessions/{self._safe_id(session_id)}/fork", body=body))
 
     @staticmethod
     def _session(row):
-        return {"session_id": str(row.get("id", row.get("session_id", ""))),
-                "title": row.get("title", ""), "updated_at": row.get("updated_at")}
+        fields = ("started_at", "ended_at", "last_active", "message_count", "source", "archived", "hidden")
+        result = {"session_id": str(row.get("id", row.get("session_id", ""))),
+                  "title": row.get("title", ""),
+                  "updated_at": row.get("last_active", row.get("updated_at"))}
+        result.update({key: row[key] for key in fields if key in row})
+        return result
 
     @classmethod
     def _session_result(cls, payload):

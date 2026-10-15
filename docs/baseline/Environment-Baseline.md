@@ -268,3 +268,14 @@ type: environment-baseline
 - 目标代码自动化验证：Capture/Review 定向前端测试 31 项通过；前端 typecheck、Vite build 通过；Core approval auth 测试 13 项、Capture 测试 18 项通过。部署镜像只读隔离 smoke 验证 Tesseract 5.5.0、chi_sim/eng、Poppler 25.03.0、Pillow 11.3.0、pypdf 6.20.1 可用，UID/GID `1026:100` 下 `/tmp` 可写、`/app` 只读；本轮没有执行 OCR 样本处理。
 - HTTPS `63013` 未登录检查：`/`、`/health` 返回 200；会话、Inbox、Review 业务 API、预览及下载 API 均返回 401。实际服务提供的 JS/CSS 资源与目标构建产物 SHA-256 一致，CSS 布局契约包含 36/64 双栏及独立滚动规则。登录页可见，但没有输入凭据，故登录后 Home、Inbox/Review 排序、真实“时间未知”条目定位、预览/下载与桌面交互仍待用户浏览器验收；现有有状态记录均有有效时间，本次未观察到真实 unknown-time 行。手机布局仍待用户验收。
 - SSH 客户端无法在当前受限环境更新本机 `known_hosts` 的警告未影响 SSH 会话；未修改本机 SSH 配置。D076-A.1 已部署不代表 OCR 准确率、D076 完整交付或用户验收已完成；用户实测扫描 PDF 乱码/漏字仍待单独评估，本轮未重跑 OCR。
+- **用户验收更新（2026-10-15）：** 用户确认该版本桌面端 Review 布局、滚动及排序通过。未知时间记录目前没有真实样本可作页面验收；手机端与扫描 PDF OCR 质量仍待验收。
+
+## 2026-10-15 — D076 本地统一入口与自动整理安全骨架（未部署）
+
+- 本地 HEAD 从 GitHub `main` 快进验证至 `7e0e2fca1986ef02696a20e43ee6d47d4592ce30`；仅保留未跟踪 `typescript`，未处理。NAS、Compose、容器、Hermes、网络、权限、Raw/Review/Knowledge 和运行中设置均未访问或修改。
+- Hermes v0.21.5 固定上游源 `749220ef`：API Server `GET /api/sessions` 支持 limit/offset 分页并返回 has_more；`GET /api/sessions/{id}/messages` 支持 limit/offset（单页最大 500）及 oldest/latest，消息响应安全字段包含 id/session_id/timestamp。它从 API Server 当前绑定的 SessionDB 读持久历史；该事实证明 Default API profile 的持久 Session 历史接口，不证明额外 Hermes profiles/外部渠道存储的全量覆盖。来源文件：`gateway/platforms/api_server.py` 的 `_handle_list_sessions`、`_handle_session_messages`、`_message_response`，固定提交 `749220ef`。
+- 本地 Hermes Adapter 已保留会话 `started_at/last_active/message_count/source/archived/hidden` 与消息 `id/session_id/timestamp`，新增 bounded message pagination；原 Chat history 继续取最新分页，不改变聊天默认行为。
+- 设置/API 本地保存于现有 Core 私有状态根下的 `ai-organize/settings.json`（目录 0700、文件 0600、原子替换），默认 `enabled=true, mode=interval, interval_hours=4`；可选 fixed_time，HH:MM 默认 `00:30`，时区默认 `Asia/Shanghai`。增加读取/更新设置、运行状态、手动请求接口。手动执行目前明确返回 503，状态 `execution_available=false`，Inbox 的立即整理按钮禁用并说明原因；未调用模型、未创建任务/草稿，未启用本地 scheduler。
+- 阻断：当前 Hermes `/v1/runs` 是带 Agent 能力的 Run，尚无证据证明可把工具彻底禁用并实施 token/成本/请求次数硬限制；因此没有复用它做整理。稳定的增量恢复还需处理 default profile 边界、压缩/分支 session、迟到消息与分页快照。完成 no-tools adapter 和成本/来源完整性验证前，Organizer job/cursor/Review 写入不得开放。
+- 前端本地已增加 Chat 默认/“收录到第二大脑”显式切换；Inbox 移除主要 Composer；附件在 Chat 接口未验证时保留文件并提供显式切换到现有 Capture 的操作。Settings 页面展示互斥调度选项和“执行器未激活”状态，不声称设置启用即代表任务已运行。
+- **状态：代码本地测试，未 Commit/Push 时仍处于开发中；未部署 63013，也未运行生产任务、模型、Review 写入或 Promote。**

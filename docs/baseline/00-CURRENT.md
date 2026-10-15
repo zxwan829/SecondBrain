@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。统一收录 Composer、中文状态/错误提示与 D076-A.1 Review/OCR 体验修复已按 `55977c8` 合并部署到 63013，App healthy；登录、Home/Chat/Inbox/Review/预览/下载 API smoke 通过，独立 Canary OCR 真实识别通过。用户后续验收发现 Review 双栏尺寸/页面位置随条目变化；D076-A.1 Review 稳定比例双栏、长行约束、重复连接提示收敛、OCR 技术行折叠及真实采集时间排序修复已按 `9962001` 部署；静态构建与自动化验证一致，登录后的列表交互仍待用户验收。用户实测扫描 PDF 有乱码/漏字；没有重跑或覆盖旧素材，准确率仍待对照原件人工验收；手机端也仍待用户验收。D076-A.1 与 Unified Capture 已合并部署至 63013。NAS 隔离 Canary 以合成中英文图片和扫描 PDF 真实运行 Tesseract/Poppler；200 DPI 扫描 PDF OCR 与 120 DPI 对照均识别出样本文字，可读 PDF 继续走 pypdf Fast Path。测试不是用户私人素材，真实扫描件效果仍待用户复验。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 整体未交付。
+**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。统一收录 Composer、中文状态/错误提示与 D076-A.1 Review/OCR 体验修复已部署；用户现已确认 `9962001` 版本的桌面 Review 布局、滚动和采集时间排序通过。未知时间记录具体可视呈现只有代码测试证据（当前没有真实 unknown-time 条目）；手机端、真实扫描 PDF OCR 准确度及 Composer 页面交互仍待用户验收。独立 Canary OCR 真实识别通过，可读 PDF 继续走 pypdf Fast Path。D076 统一对话/收录入口与 AI 智能整理本地代码已开始：对话默认 Hermes，收录需用户显式切换；设置与状态安全骨架本地测试通过，但调度器、任务游标、模型提取和 Review 草稿 worker 未实现，立即整理保持禁用/503。`/v1/runs` 无工具及成本约束未验证，不能运行 Organizer。生产未改动、未部署此 D076 代码。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 多模态与整理功能整体未交付。
 
 ## 2. 已确定的架构与边界（接手项目必须先知）
 
@@ -35,7 +35,9 @@ source: GitHub SecondBrain Monorepo
 | 授权体验 | App 登录一次，查看 Review 后点击批准/暂缓；**无第二密码、Passkey 或生物识别** | Core 验证 App 会话、来源、内容版本和幂等；Hermes 无审批凭据/Knowledge 写权；具体隔离尚未验证 |
 | 成本/复杂度 | 两容器、单 HTTP 入口；标准版 LAN-first，客户公网方案为另行收费部署服务 | 不内置 TLS/证书/反代/授权平台/安装向导；参数化部署便于远程交付；不改 V1 业务范围 |
 
-**Personal OS 扩展约束（D074 补充）：** App 是可持续扩展的个人业务入口，不限于 Chat/Knowledge。前端导航由模块配置驱动；Core 保持模块化单体和独立业务 API；单用户登录由通用 action-policy seam 统一校验，不提前实现 RBAC。只有 Knowledge 正式入库走人工审核；Memo、Calendar、新闻订阅等普通业务 CRUD 按各自 Core API 授权。AI 定时任务优先复用 Hermes 原生调度。当前不创建空页面/模块、插件框架、数据库或新容器。
+**Personal OS 扩展约束（D074 补充）：** App 是可持续扩展的个人业务入口，不限于 Chat/Knowledge。前端导航由模块配置驱动；Core 保持模块化单体和独立业务 API；单用户登录由通用 action-policy seam 统一校验，不提前实现 RBAC。只有 Knowledge 正式入库走人工审核；Memo、Calendar、新闻订阅等普通业务 CRUD 按各自 Core API 授权。D076 将 NAS 本地 App 持久调度作为自动整理的调度主体，Hermes 仅提供消息/模型能力，不依赖浏览器或外部任务。当前不创建空页面/模块、插件框架、数据库或新容器。
+
+**D076 自动整理状态：** 每日固定 `00:30 Asia/Shanghai` 不再是唯一调度；产品默认配置为启用、每 4 小时，可改每天固定时间。当前只实现本地模式切换、私有持久化设置与明确的 blocked 状态 API；无真实 scheduler、cursor 或模型执行，`立即整理`禁用，不能标记为业务可用。安全 no-tools 模型调用和成本限制验证通过前，不启动整理或生成草稿。
 
 **协作：** ChatGPT 负责范围、技术取舍、任务分解、验收标准；Codex 负责实施、针对性测试、必要文档更新、Git 与经授权的部署。日常遵循 FAST-EXEC。代码 Push ≠ 生产部署 ≠ 用户验收。
 
@@ -52,7 +54,7 @@ source: GitHub SecondBrain Monorepo
 | Knowledge Retrieval | 从批准的目录读取/搜索已存在的正式知识 | ACCEPTED：V0 已生产验收 | 仅在真实效果问题出现时优化，不强行接 RAG |
 | Universal Capture：文本/Markdown/TXT | 保存 Raw、建立 Review、元数据与路径真实落盘、不自动 Promote | PROD-PARTIAL：Hermes 文本 Raw→Review 已验收；D075 App 63013 文本真实 Raw/Review 与 Inbox/Review API 验证通过 | 用户浏览器验收；微信端到端仍未接入 |
 | Universal Capture：URL/Web | 保留原 URL/时间，安全抓取/提取，再形成 Review | PROD-PARTIAL：63013 真实抓取 `example.com`；Raw URL/采集时间与 SHA-256 保持不变，Review 保存提取文本 | 多站点与失败恢复的生产覆盖仍有限；用户浏览器验收 |
-| Universal Capture：PDF | 保存 PDF 原件、提取正文、生成 Review | PROD-PARTIAL：D076-A.1 200 DPI 自适应已部署；独立 Canary 的合成扫描 PDF OCR 实测命中对照文字，可读 PDF 仍走 pypdf；用户反馈真实扫描件乱码/漏字 | 用户对照原件验收真实 OCR 质量；Review 布局/时间排序修复已按 `9962001` 部署，登录后的浏览器验收待完成；扩大真实 PDF 覆盖 |
+| Universal Capture：PDF | 保存 PDF 原件、提取正文、生成 Review | PROD-PARTIAL：D076-A.1 200 DPI 自适应已部署；独立 Canary 的合成扫描 PDF OCR 实测命中对照文字，可读 PDF 仍走 pypdf；用户反馈真实扫描件乱码/漏字；用户已接受桌面 Review 布局/滚动/排序 | 用户对照原件验收真实 OCR 质量；手机布局待验收；扩大真实 PDF 覆盖 |
 | Universal Capture：图片/截图 | 保存图片、必要识别、生成 Review | PROD-PARTIAL：D076-A.1 Review/状态体验已部署；独立 Canary 中文/中英合成图片 OCR 命中对照文字；缺少视觉描述时仍为 partial | 用户浏览器复验 Review 阅读与图片 OCR；AI 视觉描述处理器 |
 | Universal Capture：语音/音频 | 保存音频、转写、生成 Review | PROD-PARTIAL：63013 音频 Raw 状态持久化；D076 已适配 Hermes v0.21.5 STT 接口、限长和显式关闭开关；当前 Hermes 容器没有可验证的 STT 后端，未真实转写 | 授权并配置已验证处理器后，完成真实样本与成本验证 |
 | **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
@@ -70,7 +72,7 @@ source: GitHub SecondBrain Monorepo
 | Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
 | Chat | PROD-PARTIAL：Hermes 原生（旧入口） | 独立 Chat UI 与 Hermes Session/Skill/工具/流式行为联调并验收 |
 | Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
-| Inbox | PROD-PARTIAL：D075.2 预览/定位及 PDF 文件名验收保留；D076-A.1 + Unified Capture/中文提示已部署。`9962001` 已部署 Inbox/Review 真实采集时间倒序；登录后页面验收待完成 | 用户浏览器/手机验收统一 Composer、Review 双栏/阅读与真实扫描件质量；音频处理和微信渠道仍待完成 |
+| Inbox | PROD-PARTIAL：D075.2 预览/定位及 PDF 文件名验收保留；D076-A.1 + Unified Capture/中文提示已部署；用户已接受 `9962001` 桌面 Review 布局/滚动/排序 | 用户浏览器/手机验收统一 Composer、Review 双栏/阅读与真实扫描件质量；音频处理和微信渠道仍待完成 |
 | Review / Approval | PROD-PARTIAL：只读已验收 | Core 审批、状态、暂缓/入库及结果反馈 |
 | Projects | NOT CONNECTED：UNAVAILABLE | 真实项目、状态、最近活动、下一步、相关笔记 |
 | Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |
@@ -97,7 +99,7 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076a1.1-9962001` healthy；HTTPS root/health 200，静态 JS/CSS SHA-256 与目标构建一致，匿名受保护 API 401；Hermes 未重启 | 新版本已显示登录表单，但因没有在本轮输入用户口令且 Edge 被扩展 UI 阻断，登录成功后的 Home/Chat/Inbox/Review/排序/预览下载仍待用户浏览器验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
+| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076a1.1-9962001` healthy；HTTPS root/health 200，静态 JS/CSS SHA-256 与目标构建一致，匿名受保护 API 401；用户已接受桌面 Review 布局/滚动/排序；Hermes 未重启 | Composer、手机 Review 和真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |

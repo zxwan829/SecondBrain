@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { InboxPage, QuickCapture, ReviewPage, scrollReviewItemIntoView, sortByCapturedAt } from './App';
+import { ChatPage, InboxPage, QuickCapture, ReviewPage, scrollReviewItemIntoView, sortByCapturedAt } from './App';
 
 afterEach(() => { cleanup(); window.history.replaceState({}, '', '/'); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
@@ -151,14 +151,40 @@ describe('D075.1 capture interactions', () => {
     expect(screen.queryByText(/exceeded its time limit/)).toBeNull();
   });
 
-  it('shows the shared Composer directly in Inbox without mode switches or a separate context field', async () => {
+  it('keeps Inbox as a history manager and exposes an honest unavailable organize action', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [] })));
     render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: '收件箱' })).toBeTruthy();
-    expect(screen.getByLabelText('收录内容')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '添加附件' })).toBeTruthy();
-    expect(screen.queryByPlaceholderText('补充说明（可选）')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Markdown' })).toBeNull();
+    expect(screen.queryByLabelText('收录内容')).toBeNull();
+    expect(screen.getByRole('button', { name: '立即整理' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('defaults to Hermes chat and explicitly switches unsupported attachments into capture', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ sessions: [] })));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const chatInput = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(chatInput, { target: { value: '这段文字作为附件说明' } });
+    const chooser = document.querySelector('.chat-composer input[type="file"]') as HTMLInputElement;
+    fireEvent.change(chooser, { target: { files: [new File(['sample'], 'image.png', { type: 'image/png' })] } });
+    expect(await screen.findByText(/对话附件解析尚未验证/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '切换到收录' }));
+    expect(await screen.findByText('image.png')).toBeTruthy();
+    expect((screen.getByLabelText('收录内容') as HTMLTextAreaElement).value).toBe('这段文字作为附件说明');
+    expect(screen.getByRole('button', { name: '对话' })).toBeTruthy();
+  });
+
+  it('accepts Finder drag and drop without sending an unverified file to Hermes', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ sessions: [] })));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    await screen.findByPlaceholderText('发送消息给 Hermes…');
+    const file = new File(['scan'], 'scan.pdf', { type: 'application/pdf' });
+    const composer = document.querySelector('.chat-composer')!;
+    fireEvent.drop(composer, { dataTransfer: { files: [file], types: ['Files'] } });
+    expect(await screen.findByText(/当前 Hermes 对话附件解析能力未验证/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '切换到收录' }));
+    expect(await screen.findByText('scan.pdf')).toBeTruthy();
   });
 
   it('does not submit Enter during IME composition, while Shift+Enter remains a newline', async () => {

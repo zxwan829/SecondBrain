@@ -33,13 +33,17 @@ function formatSize(size: number): string {
   return size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KiB` : `${(size / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox }: {
+export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox, initialFile = null, initialValue = '', onAttachmentConsumed, onDraftChange }: {
   locale: Locale;
   onComplete: () => void;
   onGoInbox: () => void;
+  initialFile?: File | null;
+  initialValue?: string;
+  onAttachmentConsumed?: () => void;
+  onDraftChange?: (value: string) => void;
 }) {
   const en = locale === 'en';
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(initialValue);
   const [file, setFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -86,6 +90,12 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox }: {
     setError(''); setResult(null); setFile(candidate);
   };
 
+  useEffect(() => {
+    if (initialFile) acceptFile(initialFile);
+    // Parent changes the file only after the user explicitly switches into capture mode.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFile]);
+
   const submit = async (event?: React.FormEvent) => {
     event?.preventDefault();
     if (submitting.current || busy || (!file && !value.trim())) return;
@@ -117,9 +127,9 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox }: {
       if (!payload.capture_id || !payload.raw_path) {
         throw new Error(en ? 'The server did not confirm that the original was saved. Your input is still here.' : '服务器未确认原件已保存，输入已保留。');
       }
-      setValue(''); setFile(null);
+      setValue(''); onDraftChange?.(''); setFile(null);
       if (fileInput.current) fileInput.current.value = '';
-      setResult(payload as Capture); onComplete();
+      setResult(payload as Capture); onComplete(); if (file) onAttachmentConsumed?.();
     } catch (cause) {
       setError(cause instanceof Error ? apiFailureLabel(cause.message, 0, locale, 'capture') : '收录请求未成功，请稍后重试。');
     } finally { submitting.current = false; setBusy(false); }
@@ -154,7 +164,7 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox }: {
         maxLength={file ? 2000 : 200000}
         disabled={busy}
         value={value}
-        onChange={(event) => { setValue(event.target.value); if (result) setResult(null); }}
+        onChange={(event) => { setValue(event.target.value); onDraftChange?.(event.target.value); if (result) setResult(null); }}
         onPaste={handlePaste}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;

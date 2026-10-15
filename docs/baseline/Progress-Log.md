@@ -693,3 +693,13 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 代码验证：定向前端 31 项、typecheck、Vite build、Core approval auth 13 项、Capture 18 项均通过。HTTPS 根页/health 200、匿名受保护 API 401；正式资源哈希匹配目标构建。隔离运行检查 OCR 依赖存在，本轮没有处理图片或 PDF。
 - App-only 回滚快照保留于 `/volume1/docker/secondbrain/rollback/d076a1.1-predeploy-20261015T072713Z/`；旧镜像 `secondbrain-app:d076a1-55977c8` 保留。
 - **状态：代码已部署，自动化、静态资源、健康和匿名访问边界验证通过；用户登录后的浏览器验收尚未完成。** 待验收桌面 Review 双栏与时间排序/时间未知显示、Inbox/Review 跳转与阅读、预览/下载、Home 基础页面；手机布局另待验收。没有将部署标为用户 ACCEPTED，也没有清理历史记录、重试 OCR、启用 Promote/STT/视觉或更改 Hermes。
+
+# 2026-10-15 — D076 统一对话/收录入口与 AI 智能整理安全门
+
+- GitHub main 基线核验为 `7e0e2fca1986ef02696a20e43ee6d47d4592ce30`；未跟踪 `typescript` 保留。
+- 固定 Hermes v0.21.5 upstream `749220ef` 源码确认 sessions 分页与单 session 消息分页/时间戳/稳定 ID；Core Hermes adapter 保留这些字段。Chat 默认仍读取最新 message page。
+- Chat 页面增加显式 Chat / Capture 去向切换；点击/拖放/粘贴附件在 Hermes 能力未验证时明确拦截并支持用户主动切换，同时保留图片本地预览与文本草稿；Inbox 变为历史管理页，不再重复显示 Capture 输入框。Hermes 对话附件解析未验证时明确提示，附件可由用户切换到现有 Capture，避免静默发送。IME Enter 保护保留，并修复 Chat API 启动失败/Run 失败时输入草稿恢复。
+- 新增 `AI 智能整理` Settings 页面及 Core 私有原子 JSON 设置 Store，配置支持启停、固定 HH:MM / Asia/Shanghai 与间隔 hours；默认值按 D076 为启用、每 4 小时，切换固定模式默认 00:30。增加状态及立即触发 API。由于 safe no-tools 模型调用和硬成本边界尚未验证，状态明确 blocked，立即触发返回 503 且按钮禁用；没有调用模型、创建 scheduler/job/cursor 或 Review 草稿。
+- Hermes `/v1/runs` 是 Agent Runtime 路径，不能据 Prompt 宣称无工具副作用；Organizer 的安全模型调用器、增量游标/恢复与 Review 草稿 worker 暂缓实现。需要先证明运行时工具禁用、费用上限和 SessionDB/profile 读取完整性。
+- 验证：前端 `npm run typecheck`、Vite build 通过；Capture/Review 与 unified-mode 前端定向测试 **41 passed**。Core BFF、设置持久化与会话消息分页测试 **10 passed**，Capture 回归 **18 passed**，Python compileall 通过。无 NAS/生产访问。
+- **阶段状态：统一入口本地实现并测试；自动整理设置/状态安全骨架本地实现并测试；真实立即整理、周期 scheduler、source cursor、Review 草稿生成尚未实现/未激活。** 生产没有变化。后续需先完成工具受限模型接口验证，再实施增量任务 runner 与自动化/异常验收。

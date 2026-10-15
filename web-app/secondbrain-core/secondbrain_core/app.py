@@ -8,6 +8,7 @@ from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 
 from .modules.app_auth import AppSessionAuth
+from .modules.auto_organize import create_auto_organize_router
 from .modules.capture import CaptureService, create_capture_router
 from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
@@ -54,6 +55,7 @@ def create_app():
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root))
+    app.include_router(create_auto_organize_router(auth, approval_root))
     app.include_router(create_capture_router(auth, capture))
     app.include_router(create_core_router(service, review_root, auth,
                                           promote_enabled=promote_enabled,
