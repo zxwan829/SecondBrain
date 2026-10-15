@@ -61,7 +61,8 @@ def _knowledge_items(knowledge_root, limit=8):
     return sorted(items, key=lambda row: row["updated"], reverse=True)[:limit]
 
 
-def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, review_root, knowledge_root):
+def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, review_root, knowledge_root,
+                          organizer=None):
     router = APIRouter(prefix="/api")
 
     @router.post("/auth/login")
@@ -113,12 +114,29 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
         auth.require_action(request, "chat.read")
         if limit < 1 or limit > 100 or offset < 0:
             raise HTTPException(status_code=400, detail="Invalid pagination")
-        return await hermes.list_sessions(limit, offset)
+        result = await hermes.list_sessions(limit, offset)
+        if organizer:
+            # The App-visible, paginated session set defines the Organizer source scope.
+            # Existing history is baselined, never replayed as newly captured content.
+            for row in result["sessions"]:
+                session_id = row.get("session_id", "")
+                if not session_id:
+                    continue
+                try:
+                    await organizer.baseline_session(hermes._safe_id(session_id), row)
+                except HTTPException:
+                    # Keep Chat usable during a concurrently deleted/unavailable session;
+                    # opening it later will retry baseline admission.
+                    continue
+        return result
 
     @router.post("/chat/sessions")
     async def create_session(request: Request, body: Optional[dict] = None):
         auth.require_action(request, "chat.write")
-        return await hermes.create_session(body or {})
+        created = await hermes.create_session(body or {})
+        if organizer:
+            organizer.state.register_session(created["session_id"], baseline_count=0)
+        return created
 
     @router.get("/chat/sessions/{session_id}")
     async def get_session(request: Request, session_id: str):
@@ -128,12 +146,17 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
     @router.get("/chat/sessions/{session_id}/messages")
     async def messages(request: Request, session_id: str):
         auth.require_action(request, "chat.read")
+        if organizer:
+            await organizer.baseline_session(hermes._safe_id(session_id))
         return await hermes.get_messages(session_id)
 
     @router.post("/chat/sessions/{session_id}/fork")
     async def fork_session(request: Request, session_id: str, body: Optional[dict] = None):
         auth.require_action(request, "chat.write")
-        return await hermes.fork_session(session_id, body or {})
+        forked = await hermes.fork_session(session_id, body or {})
+        if organizer:
+            await organizer.baseline_session(forked["session_id"])
+        return forked
 
     @router.patch("/chat/sessions/{session_id}")
     async def patch_session(request: Request, session_id: str, body: dict):
@@ -143,7 +166,10 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
     @router.delete("/chat/sessions/{session_id}")
     async def delete_session(request: Request, session_id: str):
         auth.require_action(request, "chat.manage")
-        return await hermes.delete_session(session_id)
+        result = await hermes.delete_session(session_id)
+        if organizer:
+            organizer.state.mark_session_deleted(hermes._safe_id(session_id))
+        return result
 
     @router.post("/chat/sessions/{session_id}/runs")
     async def start_run(request: Request, session_id: str, body: dict):
@@ -154,6 +180,8 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
         key = request.headers.get("idempotency-key", "")
         if not key or len(key) > 255 or any(ord(char) < 33 or ord(char) > 126 for char in key):
             raise HTTPException(status_code=400, detail="A valid Idempotency-Key is required")
+        if organizer:
+            await organizer.baseline_session(hermes._safe_id(session_id))
         return await hermes.start_run({"input": text, "session_id": hermes._safe_id(session_id)}, key)
 
     @router.get("/chat/runs/{run_id}/events")

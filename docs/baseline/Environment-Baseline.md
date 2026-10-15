@@ -270,12 +270,12 @@ type: environment-baseline
 - SSH 客户端无法在当前受限环境更新本机 `known_hosts` 的警告未影响 SSH 会话；未修改本机 SSH 配置。D076-A.1 已部署不代表 OCR 准确率、D076 完整交付或用户验收已完成；用户实测扫描 PDF 乱码/漏字仍待单独评估，本轮未重跑 OCR。
 - **用户验收更新（2026-10-15）：** 用户确认该版本桌面端 Review 布局、滚动及排序通过。未知时间记录目前没有真实样本可作页面验收；手机端与扫描 PDF OCR 质量仍待验收。
 
-## 2026-10-15 — D076 本地统一入口与自动整理安全骨架（未部署）
+## 2026-10-15 — D076 统一入口与 AI 自动整理最小闭环（本地，未部署）
 
-- 本地 HEAD 从 GitHub `main` 快进验证至 `7e0e2fca1986ef02696a20e43ee6d47d4592ce30`；仅保留未跟踪 `typescript`，未处理。NAS、Compose、容器、Hermes、网络、权限、Raw/Review/Knowledge 和运行中设置均未访问或修改。
-- Hermes v0.21.5 固定上游源 `749220ef`：API Server `GET /api/sessions` 支持 limit/offset 分页并返回 has_more；`GET /api/sessions/{id}/messages` 支持 limit/offset（单页最大 500）及 oldest/latest，消息响应安全字段包含 id/session_id/timestamp。它从 API Server 当前绑定的 SessionDB 读持久历史；该事实证明 Default API profile 的持久 Session 历史接口，不证明额外 Hermes profiles/外部渠道存储的全量覆盖。来源文件：`gateway/platforms/api_server.py` 的 `_handle_list_sessions`、`_handle_session_messages`、`_message_response`，固定提交 `749220ef`。
-- 本地 Hermes Adapter 已保留会话 `started_at/last_active/message_count/source/archived/hidden` 与消息 `id/session_id/timestamp`，新增 bounded message pagination；原 Chat history 继续取最新分页，不改变聊天默认行为。
-- 设置/API 本地保存于现有 Core 私有状态根下的 `ai-organize/settings.json`（目录 0700、文件 0600、原子替换），默认 `enabled=true, mode=interval, interval_hours=4`；可选 fixed_time，HH:MM 默认 `00:30`，时区默认 `Asia/Shanghai`。增加读取/更新设置、运行状态、手动请求接口。手动执行目前明确返回 503，状态 `execution_available=false`，Inbox 的立即整理按钮禁用并说明原因；未调用模型、未创建任务/草稿，未启用本地 scheduler。
-- 阻断：当前 Hermes `/v1/runs` 是带 Agent 能力的 Run，尚无证据证明可把工具彻底禁用并实施 token/成本/请求次数硬限制；因此没有复用它做整理。稳定的增量恢复还需处理 default profile 边界、压缩/分支 session、迟到消息与分页快照。完成 no-tools adapter 和成本/来源完整性验证前，Organizer job/cursor/Review 写入不得开放。
-- 前端本地已增加 Chat 默认/“收录到第二大脑”显式切换；Inbox 移除主要 Composer；附件在 Chat 接口未验证时保留文件并提供显式切换到现有 Capture 的操作。Settings 页面展示互斥调度选项和“执行器未激活”状态，不声称设置启用即代表任务已运行。
-- **状态：代码本地测试，未 Commit/Push 时仍处于开发中；未部署 63013，也未运行生产任务、模型、Review 写入或 Promote。**
+- 基于 GitHub `main` `305c3748ab8ca2ec9e064b3f82d5778641edb427` 本地实施；本轮没有访问或修改 NAS、Compose、生产 Hermes、网络、Secret、权限、Raw/Review/Knowledge/Private 或运行中设置。未跟踪 `typescript` 保留。
+- 固定 Hermes v0.21.5 上游 `749220ef` 的 `/api/sessions`、`/api/sessions/{id}/messages` 支持 offset 分页，返回稳定 ID、时间戳和会话消息数；本地 API Adapter 保留字段。Organizer 以 App 会话列表中可验证会话为边界，首次登记读取消息数和尾部 ID 作为基线，不回放旧消息；之后仅收集新增用户消息。外部渠道/其他 profile 不在范围。没有删除墓碑或分页快照令牌；计数下降/尾 ID 变化会隔离单个会话并显示覆盖警告，但同数量删除后追加无法从当前接口证明不存在。
+- Core 实现私有持久化设置、游标、作业记录、跨进程互斥锁、最大消息/字符/上下文/候选/模型调用限制、失败退避、模型结果未知时停机防重复、已存输出的 Review 写入恢复及不可覆盖创建。日记/灵感/待办/知识候选保留原文引用与来源消息/会话/时间/作业批次；均写到 Review，不写 Knowledge。手动整理与定时共享 runner/游标。
+- 模型能力实测门槛未通过：固定上游的 `/v1/runs` 与 OpenAI 兼容 Chat 路由会执行 Hermes Agent Runtime，不能证明工具关闭或成本/Token硬限额；SecondBrain 没有已批准的其他零成本模型接口。本地生产配置 `model=None`，应用启动不启动调度器，手动 API 返回 503，Inbox 按钮禁用；UI 显示“仅保存设置，自动整理尚未运行”。无真实/付费模型调用，无 Review 草稿实际写入。
+- 前端移除 Home 弹出的第二个 Composer；Inbox 只保留历史管理和立即整理，Home 的收录入口转至 Chat，用户必须显式切换 Capture。Chat/Capture 模式切换保留编辑文本与替换后的文件附件。本地 Composer 组件级测试覆盖粘贴/拖放等既有行为。
+- 验证：Core 全量 `pytest` **75 passed**（1 条 Starlette/httpx 弃用警告）；前端 `npm run typecheck`、Vitest **42 passed**、Vite build 通过。Organizer 定向测试含无新增跳过、跨会话来源、旧历史基线、分页游标恢复、来源引用、写入恢复、模型结果未知不重试、并发锁、历史断点隔离、固定/间隔计划、预算拒绝和调度退避。
+- **状态：本地代码与自动化验证完成，尚未 Commit/Push；无生产部署、无真实模型运行、无定时任务、无真实对话整理/Review 写入、无用户浏览器验收。**安全模型接口及历史删除完整性仍是阻断项。

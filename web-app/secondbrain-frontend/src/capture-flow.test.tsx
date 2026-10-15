@@ -1,11 +1,13 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { ChatPage, InboxPage, QuickCapture, ReviewPage, scrollReviewItemIntoView, sortByCapturedAt } from './App';
+import { ChatPage, InboxPage, ReviewPage, scrollReviewItemIntoView, sortByCapturedAt } from './App';
+import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 
 afterEach(() => { cleanup(); window.history.replaceState({}, '', '/'); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-const callbacks = () => ({ onClose: vi.fn(), onComplete: vi.fn(), onGoInbox: vi.fn() });
+const callbacks = () => ({ onComplete: vi.fn(), onGoInbox: vi.fn() });
+const TestCaptureComposer = ({ locale, onGoInbox = () => undefined }: { locale: 'zh-CN' | 'en'; onGoInbox?: () => void }) => <UnifiedCaptureComposer locale={locale} onComplete={() => undefined} onGoInbox={onGoInbox} />;
 const ok = (body: unknown, contentType = 'application/json') => ({
   ok: true, status: 200, headers: { get: () => contentType },
   json: async () => body, text: async () => typeof body === 'string' ? body : JSON.stringify(body),
@@ -24,8 +26,7 @@ describe('D075.1 capture interactions', () => {
   });
 
   it('accepts one dropped file and allows removing it', async () => {
-    const props = callbacks();
-    render(<QuickCapture locale="zh-CN" {...props} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
     fireEvent.drop(screen.getByRole('region', { name: '快速收录' }), { dataTransfer: { files: [file], types: ['Files'] } });
     expect(await screen.findByText('notes.txt')).toBeTruthy();
@@ -35,7 +36,7 @@ describe('D075.1 capture interactions', () => {
   });
 
   it('uses the file chooser and rejects unsupported or oversized files', async () => {
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     const input = screen.getByLabelText('选择附件') as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(['x'], 'bad.exe')] } });
     expect((await screen.findByRole('alert')).textContent).toContain('此文件类型不受支持');
@@ -56,7 +57,7 @@ describe('D075.1 capture interactions', () => {
     const createObjectURL = vi.fn().mockReturnValue('blob:preview');
     const revokeObjectURL = vi.fn();
     vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL });
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     const input = screen.getByLabelText('收录内容');
     const image = new File(['image-bytes'], 'clipboard.png', { type: 'image/png' });
     const clipboardItem = { type: 'image/png', getAsFile: () => image };
@@ -79,7 +80,7 @@ describe('D075.1 capture interactions', () => {
       .mockResolvedValueOnce(ok({ capture_id: '1'.repeat(32), raw_path: 'url.md', status: 'completed' }))
       .mockResolvedValueOnce(ok({ capture_id: '2'.repeat(32), raw_path: 'markdown.md', status: 'completed' }));
     vi.stubGlobal('fetch', request);
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     const input = screen.getByLabelText('收录内容');
     fireEvent.change(input, { target: { value: '  https://example.com/path  ' } });
     fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
@@ -99,7 +100,7 @@ describe('D075.1 capture interactions', () => {
   it('uses composer text as attachment context and keeps both fields on failure', async () => {
     const request = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({ detail: 'write failed' }) });
     vi.stubGlobal('fetch', request);
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     const input = screen.getByLabelText('收录内容') as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: '关于这张图的说明' } });
     fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['x'], 'note.txt', { type: 'text/plain' })] } });
@@ -113,7 +114,7 @@ describe('D075.1 capture interactions', () => {
 
   it('clears a selected attachment only after the server confirms its Raw path', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ capture_id: '4'.repeat(32), raw_path: 'photo.png', status: 'processing' })));
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['image'], 'photo.png', { type: 'image/png' })] } });
     expect(await screen.findByText('photo.png')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
@@ -129,7 +130,7 @@ describe('D075.1 capture interactions', () => {
     const partial = { ...processing, status: 'partial_success', review_path: 'photo.md', processor: { kind: 'image_ocr' }, error: { code: 'processor_unavailable', message: 'OCR succeeded; AI scene description is not configured.' } };
     const request = vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).includes('/api/capture/555') ? ok(partial) : ok(processing));
     vi.stubGlobal('fetch', request);
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['image'], 'photo.png', { type: 'image/png' })] } });
     fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -144,7 +145,7 @@ describe('D075.1 capture interactions', () => {
   it('shows a localized real OCR failure instead of the backend English message', async () => {
     const failed = { capture_id: '6'.repeat(32), raw_path: 'broken.png', status: 'partial_success', source_type: 'image', processor: { kind: 'image_ocr' }, error: { code: 'processing_failed', message: 'Image OCR exceeded its time limit' } };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok(failed)));
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['image'], 'broken.png', { type: 'image/png' })] } });
     fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
     expect(await screen.findByText(/处理超时；原始文件已保留，可以重试。/)).toBeTruthy();
@@ -174,6 +175,27 @@ describe('D075.1 capture interactions', () => {
     expect(screen.getByRole('button', { name: '对话' })).toBeTruthy();
   });
 
+  it('preserves edited text and a replaced attachment when switching modes repeatedly', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ sessions: [] })));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const chatInput = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(chatInput, { target: { value: '带着附件一起收录' } });
+    const chooseInChat = document.querySelector('.chat-composer input[type="file"]') as HTMLInputElement;
+    fireEvent.change(chooseInChat, { target: { files: [new File(['old'], 'old.txt', { type: 'text/plain' })] } });
+    fireEvent.click(screen.getByRole('button', { name: '切换到收录' }));
+    const captureInput = screen.getByLabelText('收录内容') as HTMLTextAreaElement;
+    fireEvent.change(captureInput, { target: { value: '编辑后的说明' } });
+    fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['new'], 'replacement.pdf', { type: 'application/pdf' })] } });
+    expect(screen.getByText('replacement.pdf')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '对话' }));
+    expect((screen.getByPlaceholderText('发送消息给 Hermes…') as HTMLTextAreaElement).value).toBe('编辑后的说明');
+    expect(document.querySelector('.chat-attachment-warning')?.textContent).toContain('replacement.pdf');
+    fireEvent.click(screen.getByRole('button', { name: '切换到收录' }));
+    expect((screen.getByLabelText('收录内容') as HTMLTextAreaElement).value).toBe('编辑后的说明');
+    expect(screen.getByText('replacement.pdf')).toBeTruthy();
+  });
+
   it('accepts Finder drag and drop without sending an unverified file to Hermes', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ sessions: [] })));
@@ -190,7 +212,7 @@ describe('D075.1 capture interactions', () => {
   it('does not submit Enter during IME composition, while Shift+Enter remains a newline', async () => {
     const request = vi.fn().mockResolvedValue(ok({ capture_id: '3'.repeat(32), raw_path: 'ime.md', status: 'completed' }));
     vi.stubGlobal('fetch', request);
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     const input = screen.getByLabelText('收录内容');
     fireEvent.change(input, { target: { value: '中文输入' } });
     fireEvent.compositionStart(input);
@@ -207,7 +229,7 @@ describe('D075.1 capture interactions', () => {
   it('clears input only after server confirms Raw and keeps the result actions', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ capture_id: 'a'.repeat(32), raw_path: 'note.md', status: 'processing' })));
     const props = callbacks();
-    render(<QuickCapture locale="zh-CN" {...props} />);
+    render(<TestCaptureComposer locale="zh-CN" onGoInbox={props.onGoInbox} />);
     const input = screen.getByLabelText('收录内容') as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: 'keep this capture' } });
     fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
@@ -220,7 +242,7 @@ describe('D075.1 capture interactions', () => {
 
   it('preserves text when the server rejects capture before Raw is saved', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ detail: 'invalid input' }) }));
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     const input = screen.getByLabelText('收录内容') as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: 'retry this' } });
     fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
@@ -233,7 +255,7 @@ describe('D075.1 capture interactions', () => {
     const pending = new Promise((resolve) => { resolveResponse = resolve; });
     const request = vi.fn().mockReturnValue(pending);
     vi.stubGlobal('fetch', request);
-    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    render(<TestCaptureComposer locale="zh-CN" />);
     fireEvent.change(screen.getByLabelText('收录内容'), { target: { value: 'single request' } });
     const form = screen.getByLabelText('收录内容').closest('form')!;
     fireEvent.submit(form); fireEvent.submit(form);

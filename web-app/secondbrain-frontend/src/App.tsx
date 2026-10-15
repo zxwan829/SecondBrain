@@ -117,7 +117,7 @@ const messages = {
     statusUnavailable: '状态未提供', demoDelta: '趋势示意',
     briefDescription: '每日为你生成关键信息摘要', activityDescription: '聚合与你协作的动态',
     chatDescription: '与 SecondBrain 对话', reviewDescription: '查看待处理内容',
-    captureDescription: '快速保存想法与资料', journalDescription: '记录今日思考',
+    captureDescription: '进入对话页后，可切换到收录模式', journalDescription: '记录今日思考',
     personal: 'Personal OS', workspaceType: '个人工作台', settingsSoon: '设置即将开放',
     copyTrace: '复制全部诊断结果', copied: '诊断结果已复制', copyManual: '请在下方文本框中全选复制',
     reviewPageTitle: '待审核', reviewPageDescription: '查看真实 Review 内容与状态。Promote 当前关闭。',
@@ -150,7 +150,7 @@ const messages = {
     statusUnavailable: 'Status unavailable', demoDelta: 'illustrative change',
     briefDescription: 'A daily summary of the information that matters', activityDescription: 'A view of the work happening around you',
     chatDescription: 'Talk with SecondBrain', reviewDescription: 'Review items waiting for you',
-    captureDescription: 'Save an idea or a useful reference', journalDescription: 'Record a thought from today',
+    captureDescription: 'Open Chat and explicitly switch to capture mode', journalDescription: 'Record a thought from today',
     personal: 'Personal OS', workspaceType: 'Personal workspace', settingsSoon: 'Settings coming soon',
     copyTrace: 'Copy all diagnostic results', copied: 'Diagnostics copied', copyManual: 'Select and copy the text below',
     reviewPageTitle: 'Review', reviewPageDescription: 'Read real Review content and status. Promote is disabled.',
@@ -237,7 +237,6 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname));
   const [routeRevision, setRouteRevision] = useState(0);
-  const [captureOpen, setCaptureOpen] = useState(false);
   const t = messages[locale];
 
   useEffect(() => {
@@ -364,7 +363,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <div className="action-row">
             <ActionCard icon="message" tone="action-blue" title={t.chat} description={t.chatDescription} onClick={() => navigate('chat')} />
             <ActionCard icon="check" tone="action-violet" title={t.review} description={t.reviewDescription} onClick={() => navigate('review')} />
-            <ActionCard icon="capture" tone="action-teal" title={t.capture} description={t.captureDescription} onClick={() => setCaptureOpen(true)} />
+            <ActionCard icon="capture" tone="action-teal" title={t.capture} description={t.captureDescription} onClick={() => navigate('chat')} />
             <ActionCard icon="journal" tone="action-slate" title={t.newJournal} description={t.journalDescription} soon={t.soon} />
           </div>
         </section>
@@ -375,7 +374,6 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
-      {captureOpen && <QuickCapture locale={locale} onClose={() => setCaptureOpen(false)} onGoInbox={() => { setCaptureOpen(false); navigate('inbox'); }} onComplete={() => { if (page === 'inbox') window.dispatchEvent(new Event('sb-inbox-refresh')); }} />}
     </main>
   );
 }
@@ -388,6 +386,9 @@ export function InboxPage({ locale, onReview }: { locale: Locale; onReview: (rev
   const [previewText, setPreviewText] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState('');
   const [organizeReason, setOrganizeReason] = useState('');
+  const [organizeAvailable, setOrganizeAvailable] = useState(false);
+  const [organizeBusy, setOrganizeBusy] = useState(false);
+  const [organizeMessage, setOrganizeMessage] = useState('');
   const load = async (showLoading = false) => {
     if (showLoading) setLoading(true);
     setError('');
@@ -403,6 +404,7 @@ export function InboxPage({ locale, onReview }: { locale: Locale; onReview: (rev
     void load(true);
     void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => response.json()).then((value) => {
       if (value && typeof value.blocked_reason === 'string') setOrganizeReason(value.blocked_reason);
+      setOrganizeAvailable(value?.execution_available === true);
     }).catch(() => setOrganizeReason(locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
     const refresh = () => void load();
     window.addEventListener('sb-inbox-refresh', refresh);
@@ -431,8 +433,23 @@ export function InboxPage({ locale, onReview }: { locale: Locale; onReview: (rev
       setError(cause instanceof Error ? apiFailureLabel(cause.message, 0, locale, 'capture') : (text ? 'Retry failed.' : '重试请求未成功，请稍后再试。'));
     }
   };
+  const organizeNow = async () => {
+    if (!organizeAvailable || organizeBusy) return;
+    setOrganizeBusy(true); setOrganizeMessage('');
+    try {
+      const response = await fetch('/api/automation/organize/run', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error('organizer_run_failed');
+      const label = value.status === 'no_new_messages' ? (text ? 'No new messages to organize.' : '没有新增对话，无需整理。')
+        : value.status === 'already_running' ? (text ? 'An organization job is already running.' : '已有整理任务正在运行。')
+          : (text ? `Organization finished; ${Number(value.draft_count ?? 0)} drafts added.` : `整理完成，新增 ${Number(value.draft_count ?? 0)} 条 Review 草稿。`);
+      setOrganizeMessage(label); window.dispatchEvent(new Event('sb-inbox-refresh'));
+    } catch {
+      setOrganizeMessage(text ? 'Organization could not be completed; check its status and try again.' : '整理未能完成，请查看运行状态后再试。');
+    } finally { setOrganizeBusy(false); }
+  };
   return <section className="capture-page" aria-labelledby="inbox-title">
-    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div><div className="inbox-header-actions"><button type="button" disabled title={organizeReason}>{text ? 'Organize now' : '立即整理'}</button><small>{text ? 'Unavailable until its safe model runner is verified.' : '受限模型执行器验证完成前不可用。'}</small></div></header>
+    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div><div className="inbox-header-actions"><button type="button" disabled={!organizeAvailable || organizeBusy} title={organizeReason} onClick={() => void organizeNow()}>{organizeBusy ? (text ? 'Organizing…' : '整理中…') : (text ? 'Organize now' : '立即整理')}</button><small>{organizeReason || (text ? 'Settings are saved, but the organizer is not active.' : '设置仅保存，自动整理尚未运行。')}</small>{organizeMessage && <small role="status">{organizeMessage}</small>}</div></header>
     {error && <p role="alert" className="capture-alert">{error}</p>}
     <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
       <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{captureDisplayFilename(item, locale)}</h2><p>{item.source_type} · {capturedAtLabel(item.captured_at, locale)}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
@@ -479,16 +496,6 @@ function CapturePreview({ item, locale, content, error, onClose, onReview }: { i
         {kind === 'unsupported' && <p>{en ? 'This file type cannot be previewed here. Download the original file instead.' : '此类型暂不支持站内预览，可下载原件查看。'}</p>}
       </div>
       <footer><a className="capture-secondary" href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>{item.review_path && <button type="button" className="capture-primary" onClick={() => onReview(item.review_path!)}>{en ? 'View related Review' : '查看对应 Review'}</button>}<button type="button" className="capture-secondary" onClick={onClose}>{en ? 'Close' : '关闭'}</button></footer>
-    </section>
-  </div>;
-}
-
-export function QuickCapture({ locale, onClose, onComplete, onGoInbox }: { locale: Locale; onClose: () => void; onComplete: () => void; onGoInbox: () => void }) {
-  const text = locale === 'en';
-  return <div className="capture-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="capture-modal unified-capture-modal" role="dialog" aria-modal="true" aria-labelledby="capture-dialog-title">
-      <header><div><p className="eyebrow">SECONDBRAIN / CAPTURE</p><h2 id="capture-dialog-title">{text ? 'Quick capture' : '快速收录'}</h2></div><button className="capture-close" type="button" onClick={onClose} aria-label={text ? 'Close' : '关闭'}>×</button></header>
-      <UnifiedCaptureComposer locale={locale} onComplete={onComplete} onGoInbox={onGoInbox} />
     </section>
   </div>;
 }
@@ -939,16 +946,24 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
       <div className="chat-message-list">{messages.map((message) => <article key={message.id} className={`chat-message ${message.role}`}><span>{message.role === 'user' ? (en ? 'You' : '你') : 'Hermes'}</span><p>{message.text || (busy && message.role === 'assistant' ? progress : '')}</p></article>)}{!messages.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
       {progress && <div className="chat-progress" role="status">{progress}</div>}{error && <p className="chat-error" role="alert">{error}</p>}
       <div className="unified-mode-switch" role="group" aria-label={en ? 'Input destination' : '输入去向'}><button type="button" className={inputMode === 'chat' ? 'is-active' : ''} onClick={() => setInputMode('chat')}>{en ? 'Chat' : '对话'}</button><button type="button" className={inputMode === 'capture' ? 'is-active' : ''} onClick={() => setInputMode('capture')}>{en ? 'Save to SecondBrain' : '收录到第二大脑'}</button></div>
-      {inputMode === 'chat' ? <form className={`chat-composer ${chatDragOver ? 'is-drag-over' : ''}`} onSubmit={send} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setChatDragOver(true); } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setChatDragOver(false); }} onDrop={handleChatDrop}><textarea value={input} onChange={(event) => setInput(event.target.value)} onPaste={handleChatPaste} placeholder={en ? 'Message Hermes…' : '发送消息给 Hermes…'} rows={3} disabled={busy} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><div><small>{en ? 'Enter to send · Shift+Enter for a new line' : 'Enter 发送 · Shift+Enter 换行'}</small><button type="button" onClick={() => attachmentInput.current?.click()} disabled={busy}>{en ? '＋ Attachment' : '＋ 附件'}</button><input ref={attachmentInput} className="unified-file-input" type="file" accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp,.gif,.wav,.mp3,.m4a,.aac,.ogg,.flac" onChange={handleChatFile} />{busy ? <button type="button" onClick={() => void stop()} disabled={!runId}>{en ? 'Stop' : '停止'}</button> : <button type="submit" disabled={!input.trim() || Boolean(pendingAttachment)}>{en ? 'Send' : '发送'}</button>}</div>{pendingAttachment && <div className="chat-attachment-warning" role="status">{pendingPreview && <img src={pendingPreview} alt={pendingAttachment.name} />}<span>{pendingAttachment.name} · {(pendingAttachment.size / 1048576).toFixed(2)} MiB</span><button type="button" onClick={() => enterCaptureMode(pendingAttachment)}>{en ? 'Switch to capture' : '切换到收录'}</button><button type="button" onClick={() => { setPendingAttachment(null); setAttachmentNotice(''); }}>{en ? 'Remove' : '移除'}</button></div>}{attachmentNotice && <p className="chat-attachment-warning" role="status">{attachmentNotice}</p>}</form> : <UnifiedCaptureComposer key={pendingAttachment ? `${pendingAttachment.name}-${pendingAttachment.lastModified}` : 'capture'} locale={locale} onComplete={() => window.dispatchEvent(new Event('sb-inbox-refresh'))} onGoInbox={onGoInbox} initialFile={pendingAttachment} initialValue={input} onDraftChange={setInput} onAttachmentConsumed={() => setPendingAttachment(null)} />}
+      {inputMode === 'chat' ? <form className={`chat-composer ${chatDragOver ? 'is-drag-over' : ''}`} onSubmit={send} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setChatDragOver(true); } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setChatDragOver(false); }} onDrop={handleChatDrop}><textarea value={input} onChange={(event) => setInput(event.target.value)} onPaste={handleChatPaste} placeholder={en ? 'Message Hermes…' : '发送消息给 Hermes…'} rows={3} disabled={busy} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><div><small>{en ? 'Enter to send · Shift+Enter for a new line' : 'Enter 发送 · Shift+Enter 换行'}</small><button type="button" onClick={() => attachmentInput.current?.click()} disabled={busy}>{en ? '＋ Attachment' : '＋ 附件'}</button><input ref={attachmentInput} className="unified-file-input" type="file" accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp,.gif,.wav,.mp3,.m4a,.aac,.ogg,.flac" onChange={handleChatFile} />{busy ? <button type="button" onClick={() => void stop()} disabled={!runId}>{en ? 'Stop' : '停止'}</button> : <button type="submit" disabled={!input.trim() || Boolean(pendingAttachment)}>{en ? 'Send' : '发送'}</button>}</div>{pendingAttachment && <div className="chat-attachment-warning" role="status">{pendingPreview && <img src={pendingPreview} alt={pendingAttachment.name} />}<span>{pendingAttachment.name} · {(pendingAttachment.size / 1048576).toFixed(2)} MiB</span><button type="button" onClick={() => enterCaptureMode(pendingAttachment)}>{en ? 'Switch to capture' : '切换到收录'}</button><button type="button" onClick={() => { setPendingAttachment(null); setAttachmentNotice(''); }}>{en ? 'Remove' : '移除'}</button></div>}{attachmentNotice && <p className="chat-attachment-warning" role="status">{attachmentNotice}</p>}</form> : <UnifiedCaptureComposer key={pendingAttachment ? `${pendingAttachment.name}-${pendingAttachment.lastModified}` : 'capture'} locale={locale} onComplete={() => window.dispatchEvent(new Event('sb-inbox-refresh'))} onGoInbox={onGoInbox} initialFile={pendingAttachment} initialValue={input} onDraftChange={setInput} onAttachmentChange={setPendingAttachment} onAttachmentConsumed={() => setPendingAttachment(null)} />}
     </div>
   </section>;
 }
 
 type OrganizeSettings = { enabled: boolean; mode: 'fixed_time' | 'interval'; interval_hours: number; daily_time: string; timezone: string };
+type OrganizeStatus = { execution_available: boolean; state: string; last_run_at?: string | null; next_run_at?: string | null; configured_next_run_at?: string | null; last_draft_count?: number | null; last_error?: { message?: string } | null; blocked_reason?: string; coverage_warnings?: { session_id: string; state: string }[] };
+
+function organizerTime(value: string | null | undefined, locale: Locale) {
+  if (!value) return locale === 'en' ? 'None' : '尚无记录';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? (locale === 'en' ? 'Unknown' : '时间未知') : date.toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
+}
 
 function AutomationSettingsPage({ locale }: { locale: Locale }) {
   const en = locale === 'en';
   const [settings, setSettings] = useState<OrganizeSettings | null>(null);
+  const [status, setStatus] = useState<OrganizeStatus | null>(null);
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
@@ -956,7 +971,7 @@ function AutomationSettingsPage({ locale }: { locale: Locale }) {
     void Promise.all([
       fetch('/api/automation/organize/settings', { credentials: 'same-origin' }).then((response) => response.ok ? response.json() : Promise.reject(new Error('settings_unavailable'))),
       fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => response.ok ? response.json() : Promise.reject(new Error('status_unavailable'))),
-    ]).then(([config, status]) => { setSettings(config); setReason(String(status.blocked_reason ?? '')); })
+    ]).then(([config, currentStatus]) => { setSettings(config); setStatus(currentStatus); setReason(String(currentStatus.blocked_reason ?? '')); })
       .catch(() => setMessage(en ? 'Settings could not be loaded.' : '自动整理设置暂时无法读取。'));
   }, [en]);
   const update = (values: Partial<OrganizeSettings>) => setSettings((current) => current ? { ...current, ...values } : current);
@@ -966,9 +981,11 @@ function AutomationSettingsPage({ locale }: { locale: Locale }) {
     try {
       const response = await fetch('/api/automation/organize/settings', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(String(payload.detail?.message ?? payload.detail ?? '保存失败'));
+      if (!response.ok) { setMessage(en ? 'Settings could not be saved.' : '设置保存失败，请稍后重试。'); return; }
       setSettings(payload); setMessage(en ? 'Settings saved.' : '设置已保存。');
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : (en ? 'Settings could not be saved.' : '设置未能保存。')); }
+      void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((result) => result.ok ? result.json() : null)
+        .then((currentStatus) => { if (currentStatus) { setStatus(currentStatus); setReason(String(currentStatus.blocked_reason ?? '')); } }).catch(() => undefined);
+    } catch { setMessage(en ? 'Settings could not be saved.' : '设置保存失败，请稍后重试。'); }
     finally { setSaving(false); }
   };
   return <section className="automation-settings-page">
@@ -982,8 +999,10 @@ function AutomationSettingsPage({ locale }: { locale: Locale }) {
         {settings.mode === 'fixed_time' && <input aria-label={en ? 'Daily time' : '每天执行时间'} type="time" value={settings.daily_time} onChange={(event) => update({ daily_time: event.target.value })} />}
         <p>{en ? `Time zone: ${settings.timezone}` : `时区：${settings.timezone}`}</p>
       </fieldset>
-      <dl className="automation-status-list"><div><dt>{en ? 'Current state' : '当前状态'}</dt><dd>{en ? 'Execution not activated' : '执行器未激活'}</dd></div><div><dt>{en ? 'Last run' : '上次执行'}</dt><dd>{en ? 'None' : '尚无记录'}</dd></div><div><dt>{en ? 'Next estimate' : '下次预计执行'}</dt><dd>{en ? 'Unavailable until the runner is verified' : '执行器通过验证前不可用'}</dd></div><div><dt>{en ? 'New drafts last run' : '上次新增草稿'}</dt><dd>—</dd></div></dl>
+      <dl className="automation-status-list"><div><dt>{en ? 'Current state' : '当前状态'}</dt><dd>{status?.execution_available ? (status.state === 'running' ? (en ? 'Running' : '运行中') : status.state === 'needs_attention' ? (en ? 'Needs attention' : '需要核对') : status.state === 'disabled' ? (en ? 'Disabled' : '已停用') : (en ? 'Scheduled' : '等待执行')) : (en ? 'Settings only; automatic organization has not run.' : '仅保存设置，自动整理尚未运行。')}</dd></div><div><dt>{en ? 'Last run' : '上次执行'}</dt><dd>{organizerTime(status?.last_run_at, locale)}</dd></div><div><dt>{en ? 'Next estimate' : '下次预计执行'}</dt><dd>{status?.execution_available ? organizerTime(status.next_run_at, locale) : (status?.configured_next_run_at ? `${en ? 'Saved plan (not active): ' : '设置的计划时间（尚未运行）：'}${organizerTime(status.configured_next_run_at, locale)}` : (en ? 'Unavailable until the runner is verified' : '执行器通过验证前不可用'))}</dd></div><div><dt>{en ? 'New drafts last run' : '上次新增草稿'}</dt><dd>{status?.last_draft_count ?? '—'}</dd></div></dl>
       {reason && <p className="automation-blocked" role="status">{reason}</p>}
+      {status?.last_error?.message && <p className="automation-blocked" role="alert">{status.last_error.message}</p>}
+      {Boolean(status?.coverage_warnings?.length) && <p className="automation-blocked" role="status">{en ? 'Some source sessions are unavailable or discontinuous; their missing history will not be skipped.' : '部分来源会话已删除或历史不连续；系统不会静默跳过缺失消息。'}</p>}
       <button type="button" onClick={() => void save()} disabled={saving}>{saving ? (en ? 'Saving…' : '正在保存…') : (en ? 'Save settings' : '保存设置')}</button>
       {message && <p role="status">{message}</p>}
     </>}

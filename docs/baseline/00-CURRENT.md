@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。统一收录 Composer、中文状态/错误提示与 D076-A.1 Review/OCR 体验修复已部署；用户现已确认 `9962001` 版本的桌面 Review 布局、滚动和采集时间排序通过。未知时间记录具体可视呈现只有代码测试证据（当前没有真实 unknown-time 条目）；手机端、真实扫描 PDF OCR 准确度及 Composer 页面交互仍待用户验收。独立 Canary OCR 真实识别通过，可读 PDF 继续走 pypdf Fast Path。D076 统一对话/收录入口与 AI 智能整理本地代码已开始：对话默认 Hermes，收录需用户显式切换；设置与状态安全骨架本地测试通过，但调度器、任务游标、模型提取和 Review 草稿 worker 未实现，立即整理保持禁用/503。`/v1/runs` 无工具及成本约束未验证，不能运行 Organizer。生产未改动、未部署此 D076 代码。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 多模态与整理功能整体未交付。
+**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据。D076-A.1 Review 布局、滚动和采集时间排序已由用户验收；手机端及真实扫描 PDF OCR 准确度仍待验收。D076-A OCR Canary 真实识别通过，可读 PDF 继续走 pypdf Fast Path。当前本地 D076 代码将 Inbox 保留为历史管理页，新增收录只从 Chat 显式切换；附件草稿跨模式保留。自动整理的设置、作业状态、共享执行器、增量游标、锁、幂等 Review 草稿和恢复流程已实现并由合成消息/替身模型测试；但没有经验证的无工具且有硬 Token/成本边界的模型接口，Runner 在生产配置中保持关闭，立即整理返回 503，定时任务不启动。Hermes 历史范围仅限 App 会话列表中可验证的会话；外部渠道不在覆盖范围，删除/压缩历史没有墓碑接口，无法证明无同量替换的全量连续性。D076 本轮没有改生产或部署。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 整体未交付。
 
 ## 2. 已确定的架构与边界（接手项目必须先知）
 
@@ -37,7 +37,7 @@ source: GitHub SecondBrain Monorepo
 
 **Personal OS 扩展约束（D074 补充）：** App 是可持续扩展的个人业务入口，不限于 Chat/Knowledge。前端导航由模块配置驱动；Core 保持模块化单体和独立业务 API；单用户登录由通用 action-policy seam 统一校验，不提前实现 RBAC。只有 Knowledge 正式入库走人工审核；Memo、Calendar、新闻订阅等普通业务 CRUD 按各自 Core API 授权。D076 将 NAS 本地 App 持久调度作为自动整理的调度主体，Hermes 仅提供消息/模型能力，不依赖浏览器或外部任务。当前不创建空页面/模块、插件框架、数据库或新容器。
 
-**D076 自动整理状态：** 每日固定 `00:30 Asia/Shanghai` 不再是唯一调度；产品默认配置为启用、每 4 小时，可改每天固定时间。当前只实现本地模式切换、私有持久化设置与明确的 blocked 状态 API；无真实 scheduler、cursor 或模型执行，`立即整理`禁用，不能标记为业务可用。安全 no-tools 模型调用和成本限制验证通过前，不启动整理或生成草稿。
+**D076 自动整理状态：** 每日固定 `00:30 Asia/Shanghai` 不再是唯一调度；设置默认每 4 小时，可改每天固定时间。配置、执行器、共享游标与作业状态/锁、幂等 Review 草稿及故障恢复已有本地实现和测试；由于没有可验证的 no-tools、硬 Token/成本限制模型适配器，执行器保持 blocked，立即整理 API 返回 503、按钮禁用，应用启动时不创建定时任务。不得将安全骨架标记为可用整理服务或生产交付。
 
 **协作：** ChatGPT 负责范围、技术取舍、任务分解、验收标准；Codex 负责实施、针对性测试、必要文档更新、Git 与经授权的部署。日常遵循 FAST-EXEC。代码 Push ≠ 生产部署 ≠ 用户验收。
 

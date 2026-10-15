@@ -123,34 +123,27 @@ def next_scheduled_at(settings, *, now=None, interval_anchor=None):
     return candidate.astimezone(timezone.utc)
 
 
-def create_auto_organize_router(auth, state_root):
+def create_auto_organize_router(auth, runner):
     router = APIRouter(prefix="/api/automation/organize")
-    store = OrganizeSettingsStore(Path(state_root) / "ai-organize")
 
     @router.get("/settings")
     def settings(request: Request):
         auth.require_action(request, "automation.settings.read")
-        return store.read()
+        return runner.settings.read()
 
     @router.put("/settings")
     def update_settings(request: Request, body: dict):
         auth.require_action(request, "automation.settings.write")
-        return store.write(body)
+        return runner.update_settings(body)
 
     @router.get("/status")
     def status(request: Request):
         auth.require_action(request, "automation.status.read")
-        return {"execution_available": False, "state": "blocked",
-                "last_run_at": None, "next_run_at": None,
-                "last_draft_count": None,
-                "blocked_reason": "Hermes 当前可读取持久化消息，但尚未验证可禁用工具的受限模型调用与成本上限；后台整理未激活。"}
+        return runner.status()
 
     @router.post("/run")
-    def run_now(request: Request):
+    async def run_now(request: Request):
         auth.require_action(request, "automation.run")
-        raise HTTPException(status_code=503, detail={
-            "code": "organizer_unavailable",
-            "message": "自动整理执行器尚未通过安全验证，当前不会调用模型或创建草稿。",
-        })
+        return await runner.run(reason="manual")
 
     return router

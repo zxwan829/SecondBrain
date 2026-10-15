@@ -33,13 +33,14 @@ function formatSize(size: number): string {
   return size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KiB` : `${(size / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox, initialFile = null, initialValue = '', onAttachmentConsumed, onDraftChange }: {
+export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox, initialFile = null, initialValue = '', onAttachmentConsumed, onAttachmentChange, onDraftChange }: {
   locale: Locale;
   onComplete: () => void;
   onGoInbox: () => void;
   initialFile?: File | null;
   initialValue?: string;
   onAttachmentConsumed?: () => void;
+  onAttachmentChange?: (file: File | null) => void;
   onDraftChange?: (value: string) => void;
 }) {
   const en = locale === 'en';
@@ -87,7 +88,7 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox, initialF
       setError(en ? 'Files must be 20 MiB or smaller.' : '文件不能超过 20 MiB。');
       return;
     }
-    setError(''); setResult(null); setFile(candidate);
+    setError(''); setResult(null); setFile(candidate); onAttachmentChange?.(candidate);
   };
 
   useEffect(() => {
@@ -127,7 +128,7 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox, initialF
       if (!payload.capture_id || !payload.raw_path) {
         throw new Error(en ? 'The server did not confirm that the original was saved. Your input is still here.' : '服务器未确认原件已保存，输入已保留。');
       }
-      setValue(''); onDraftChange?.(''); setFile(null);
+      setValue(''); onDraftChange?.(''); setFile(null); onAttachmentChange?.(null);
       if (fileInput.current) fileInput.current.value = '';
       setResult(payload as Capture); onComplete(); if (file) onAttachmentConsumed?.();
     } catch (cause) {
@@ -145,7 +146,7 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox, initialF
   };
 
   const removeFile = () => {
-    setFile(null); setError('');
+    setFile(null); onAttachmentChange?.(null); setError('');
     if (fileInput.current) fileInput.current.value = '';
   };
 

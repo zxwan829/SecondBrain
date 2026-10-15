@@ -48,9 +48,13 @@ class WebAppBffTests(unittest.TestCase):
             if request.url.path == "/api/sessions":
                 if request.method == "POST":
                     return httpx.Response(201, json={"object": "hermes.session", "session": {"id": "session-2", "title": "New session"}})
-                return httpx.Response(200, json={"object": "list", "data": [{"id": "session-1", "title": "Existing"}], "limit": 50, "offset": 0})
+                return httpx.Response(200, json={"object": "list", "data": [{"id": "session-1", "title": "Existing", "message_count": 1}], "limit": 50, "offset": 0})
             if request.url.path == "/api/sessions/session-1/fork":
                 return httpx.Response(201, json={"object": "hermes.session", "session": {"id": "session-3", "title": "Forked"}})
+            if request.url.path in {"/api/sessions/session-1", "/api/sessions/session-3"}:
+                session_id = request.url.path.rsplit("/", 1)[-1]
+                count = 1 if session_id == "session-1" else 0
+                return httpx.Response(200, json={"object": "hermes.session", "session": {"id": session_id, "message_count": count}})
             if request.url.path.endswith("/messages"):
                 return httpx.Response(200, json={"object": "list", "session_id": "session-1", "data": [{"id": "message-1", "session_id": "session-1", "role": "user", "timestamp": "2026-10-15T01:02:03Z", "content": [{"type": "text", "text": "hello"}]}], "pagination": {"limit": 100, "offset": 50, "order": "oldest", "returned": 1}})
             if request.url.path == "/v1/runs":
@@ -140,7 +144,10 @@ class WebAppBffTests(unittest.TestCase):
     def test_sessions_runs_sse_and_stop_are_server_side_authenticated(self):
         self.login()
         sessions = self.client.get("/api/chat/sessions").json()
-        self.assertEqual(sessions["sessions"][0], {"session_id": "session-1", "title": "Existing", "updated_at": None})
+        self.assertEqual(sessions["sessions"][0], {"session_id": "session-1", "title": "Existing", "updated_at": None, "message_count": 1})
+        organizer_state = json.loads((self.state / "ai-organize" / "state.json").read_text())
+        self.assertEqual(organizer_state["sessions"]["session-1"]["cursor_count"], 1)
+        self.assertEqual(organizer_state["sessions"]["session-1"]["cursor_message_id"], "message-1")
         created = self.client.post("/api/chat/sessions", json={}, headers={"Origin": "https://testserver"})
         self.assertEqual(created.json()["session_id"], "session-2")
         forked = self.client.post("/api/chat/sessions/session-1/fork", json={}, headers={"Origin": "https://testserver"})
@@ -234,7 +241,9 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         store = OrganizeSettingsStore(self.state / "ai-organize")
         self.assertEqual(store.read()["daily_time"], "06:45")
-        self.assertEqual(self.client.get("/api/automation/organize/status").json()["execution_available"], False)
+        status = self.client.get("/api/automation/organize/status").json()
+        self.assertEqual(status["execution_available"], False)
+        self.assertIsNotNone(status["configured_next_run_at"])
         run = self.client.post("/api/automation/organize/run", json={}, headers={"Origin": "https://testserver"})
         self.assertEqual(run.status_code, 503)
         self.assertEqual(run.json()["detail"]["code"], "organizer_unavailable")

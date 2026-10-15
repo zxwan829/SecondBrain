@@ -101,6 +101,6 @@ V1 内网及 Home-WG 使用 App HTTP，受限 DSM HTTPS `63012` 做全业务兼�
 
 - `/chat` 是默认统一输入入口；Chat/Capture 由用户显式切换。Chat 继续使用 Hermes session/run/SSE；Core Capture 使用现有 Capture API。附件在 Chat 模式仅提供“尚未验证”的解释和用户主动切换到收录，不能静默送模型。Inbox 只管理素材，不重复显示主要输入框；Review 不并入 Chat。
 - Organizer 配置/游标/作业状态属于 Core 私有状态存储，生成的候选属于 Review 文件；Hermes SessionDB 只作持久化来源，不把 Hermes Memory 或 Workspace 作为第二 Brain 的业务 SoT。状态和结果由 Core 语义 API 暴露，单用户 action auth 保护，Knowledge Promote 与普通草稿生成分离。
-- 调度目标为可恢复本地调度器：配置变更重算下次时间，时区/DST 用 IANA ZoneInfo；interval 锚定持久化作业时间，不锚定浏览器或容器启动时间；运行锁及 source message ID 去重；状态原子持久化。模型成功但写 Review 失败时从已保存 job output 重试写入，不能重新付费调用；人工编辑/已审核 Review 只允许生成新版本/新候选，不覆盖原文件。
-- **当前门槛：** 固定 Hermes v0.21.5 API `749220ef` 的 Sessions API 有 offset 分页，消息最多 500 条一页且支持 oldest/latest；返回 message id、session_id 和 timestamp。适配层保留这些字段。该接口读取 API Server 配置的 SessionDB/Profile，不证明其他 profile、外部渠道私有存储或删除/压缩链都能完全纳入；实际已部署路由和权限范围需继续验证。
-- 无工具约束的模型整理接口尚未证明：`/v1/runs` 调用 Agent Runtime，存在工具/副作用边界，因此禁止把它当纯文本整理器。本地设置已持久化；执行器关闭、无实际定时调度，手动触发返回 503 明确原因，UI 显示未激活。调度、持久游标、任务作业和草稿写入只有在 safe model adapter / 成本边界得到测试后再实施。
+- 本地实现包含：私有原子状态/设置文件、固定时间与间隔调度计划、共享运行锁、App 可见会话注册及消息 ID/计数游标、分页增量收集、有限上下文、幂等 Review 文件、人工文件冲突保护，以及模型结果已持久化后的写入恢复。模型结果未知时作业进入 `needs_attention`，禁止自动重复调用；调度失败有持久退避。以上只由合成 Hermes 消息和模型替身验证。
+- **来源边界：** 固定 Hermes v0.21.5 API `749220ef` 的 Sessions API 有 offset 分页，消息最多 500 条一页且支持 oldest/latest；返回 message ID、session ID 和时间戳。Core 从 Chat 会话列表将可见会话作为 Organizer 来源；首次纳入时基线化旧记录，只处理后续新增用户消息。覆盖不包括 App 不可见的外部渠道/其他 profile；Hermes 没有已验证的删除墓碑或分页快照令牌。计数/末消息锚点能检测常见历史回退和压缩，但不能证明“同数量删除后追加”不存在，因此该风险保留为未解决限制。
+- 无工具约束的模型整理接口尚未证明：Hermes `/v1/runs` 以及 OpenAI 兼容 Chat 路由执行 Agent Runtime，不能作为受控整理模型。没有调用真实或付费模型；生产模型适配器为 `None`，应用启动时不运行调度器，手动触发返回 503，设置 UI 明示“仅保存设置，自动整理尚未运行”。因此本地代码不等于 Organizer 已激活/可用，更不等于生产部署。
