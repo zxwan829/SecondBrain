@@ -782,3 +782,12 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - Environment 原部署/回滚/验收流水已逐段核对在本 Progress-Log 的对应日期条目中（D071、D074、D075、D076）；Architecture 中被移除的阶段实施证据也由这些历史记录承接。没有删除唯一历史事实。所有旧 Progress 记录均保留为当时快照，不视作当前运行证明。
 - 最近记录的生产 App 快照仍是 `9962001` / `secondbrain-app:d076a1.1-9962001`；本轮未现场访问 NAS，故当前运行态标 `UNKNOWN`。D076 Organizer 开发版本未部署，执行器仍因模型适配器硬输入/费用能力门槛不满足而未启用。
 - 文档治理仅修改六份正式文档；未改业务代码、NAS、Hermes、网络、权限、真实业务数据或 Codex-Governance。
+
+## 2026-10-15 — D076 Unified Capture / Review 功能恢复核验（本地）
+
+- 本地 `main` HEAD 与实时 `origin/main` 均为 `da8c4bf7d2dd22e6056bedc68882587710a456cc`；工作区原先无已跟踪文件修改，仅有未知未跟踪路径 `typescript`，本轮保留且未读取/改动。未访问 NAS、生产服务或业务数据。
+- 检查 Unified Capture Composer：文件选择/单文件拖放/图片粘贴、普通文本粘贴、20 MiB 限制、URL/Text/File 请求分流、附件说明、Enter/Shift+Enter 与 IME composition、重复提交保护、收到 `capture_id` 和 `raw_path` 后清空、失败保留文字与附件均有实现及定向测试覆盖；无可复现代码缺陷。
+- 检查 Review：桌面列表/正文独立滚动与移动端详情优先/列表折叠布局、切换回顶、日期排序和未知日期处理、frontmatter 折叠、Markdown 安全渲染、OCR 行序与原始 Review 展开均有实现及测试。Review 页面显示提取内容与来源元数据；原始 PDF 在 Inbox 预览入口新标签页打开，图片在 Inbox 预览弹层显示，文本原件可安全预览，并均提供原件下载和对应 Review 跳转。Review 页没有直接内嵌 PDF/图片预览，用户需从 Inbox 的“预览与详情”查看原件并跳回 Review 对照；此路径待浏览器验收，不据自动化测试宣称体验已验收。
+- 验证：前端定向 `capture-flow.test.tsx`、`ReviewMarkdown.test.tsx`、`review-layout.test.ts` **37 passed**；`npm run typecheck`、`npm run build` 通过。构建仅生成本地 `dist`，由忽略规则排除，不构成部署。
+- 最短浏览器验收：在已登录的 63013 桌面端从 Chat 切换到“收录”，输入一段无敏感测试文本并提交，确认成功提示后输入框为空；在手机 Safari 重复一次文本收录。随后 Inbox 对一条既有 PDF/图片点“预览与详情”，核对原件显示/下载及“查看 Review”跳转；在 Review 检查正文、来源日期、OCR 核对提示与移动端阅读/列表展开。若需验证文件拖放/图片粘贴和真实 PDF OCR 质量，使用无敏感、可丢弃样本并由用户自行确认可创建相应 Raw/Review 记录。
+- **状态：** 代码检查/自动化和构建通过；没有修复项。生产部署状态未在本轮复核，按既有 2026-10-15 快照记录为 `UNKNOWN`；用户浏览器验收未执行/未通过。D076-A 真实 PDF OCR 质量、桌面与手机交互仍须按上述步骤验收；Organizer、安全门与运行状态不在本轮范围。
