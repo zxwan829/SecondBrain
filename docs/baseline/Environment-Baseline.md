@@ -277,5 +277,5 @@ type: environment-baseline
 - Core 实现私有持久化设置、游标、作业记录、跨进程互斥锁、最大消息/字符/上下文/候选/模型调用限制、失败退避、模型结果未知时停机防重复、已存输出的 Review 写入恢复及不可覆盖创建。日记/灵感/待办/知识候选保留原文引用与来源消息/会话/时间/作业批次；均写到 Review，不写 Knowledge。手动整理与定时共享 runner/游标。
 - 模型能力实测门槛未通过：固定上游的 `/v1/runs` 与 OpenAI 兼容 Chat 路由会执行 Hermes Agent Runtime，不能证明工具关闭或成本/Token硬限额；SecondBrain 没有已批准的其他零成本模型接口。本地生产配置 `model=None`，应用启动不启动调度器，手动 API 返回 503，Inbox 按钮禁用；UI 显示“仅保存设置，自动整理尚未运行”。无真实/付费模型调用，无 Review 草稿实际写入。
 - 前端移除 Home 弹出的第二个 Composer；Inbox 只保留历史管理和立即整理，Home 的收录入口转至 Chat，用户必须显式切换 Capture。Chat/Capture 模式切换保留编辑文本与替换后的文件附件。本地 Composer 组件级测试覆盖粘贴/拖放等既有行为。
-- 验证：Core 全量 `pytest` **75 passed**（1 条 Starlette/httpx 弃用警告）；前端 `npm run typecheck`、Vitest **42 passed**、Vite build 通过。Organizer 定向测试含无新增跳过、跨会话来源、旧历史基线、分页游标恢复、来源引用、写入恢复、模型结果未知不重试、并发锁、历史断点隔离、固定/间隔计划、预算拒绝和调度退避。
+- 验证：Core 全量 `pytest` **76 passed**（1 条 Starlette/httpx 弃用警告）；前端 `npm run typecheck`、Vitest **42 passed**、Vite build 通过。Organizer 定向测试含无新增跳过、跨会话来源、旧历史基线、分页游标恢复、来源引用、写入恢复、用户编辑 Review 冲突保护、模型结果未知不重试、并发锁、历史断点隔离、固定/间隔计划、预算拒绝和调度退避。
 - **状态：本地代码与自动化验证完成，尚未 Commit/Push；无生产部署、无真实模型运行、无定时任务、无真实对话整理/Review 写入、无用户浏览器验收。**安全模型接口及历史删除完整性仍是阻断项。

@@ -710,5 +710,5 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 固定 Hermes `749220ef` Session API 行为已核实：会话/消息分页、稳定 ID、时间戳与消息数可用；BFF 将 App 当前会话列表中的会话登记为 Organizer 来源，首见时基线跳过既有历史。会话删除 404 保留为 coverage warning；计数回退/锚点改变隔离该会话，不阻止其他会话处理。外部渠道/其他 profile 不纳入；无 tombstone/snapshot token，无法检测同计数删除后追加，不能承诺无遗漏。
 - Core 新增 file-backed Organizer Runner：持久 settings/session cursor/jobs、跨进程文件锁、用户消息增量扫描、有限历史上下文、消息/字符/候选/请求预算、单请求能力闸门、Review 幂等不可覆盖写入、保存模型结果后的写入恢复、模型结果未知时禁止重试，以及调度失败退避。共享手动/计划执行器及游标；无新增消息跳过模型。草稿含分类、AI 提炼与原文区分、会话/消息/时间/作业来源引用，目标仅 Review。
 - 安全阻断仍在：Hermes `/v1/runs` 与 OpenAI 兼容 Chat 路由走 Agent Runtime，不构成已证明的 no-tools、有硬输入/输出 Token、超时、并发和成本限制的模型服务；无获准的独立接口/凭证。本地生产配置 `model=None`，startup 不启动 scheduler，`/run` 返回 503，UI 明示设置只保存、自动整理未运行。未调用真实付费模型、未整理真实历史、未写入真实 Review。
-- 验证：Core 全量 **75 passed**（Starlette/httpx 弃用警告 1 项）；前端 `npm run typecheck`、Vitest **42 passed**、Vite build 通过。新增/覆盖并发互斥、空输入、跨会话来源、分页/游标断点恢复、预算拒绝、来源引用验证、失败恢复、模型结果不明停止、不会覆盖 Review、设置重启持久、配置禁用时的手动运行等。
+- 验证：Core 全量 **76 passed**（Starlette/httpx 弃用警告 1 项）；前端 `npm run typecheck`、Vitest **42 passed**、Vite build 通过。新增/覆盖并发互斥、空输入、跨会话来源、分页/游标断点恢复、预算拒绝、来源引用验证、失败恢复、模型结果不明停止、用户修改 Review 冲突保护、设置重启持久、配置禁用时的手动运行等。
 - **交付状态：** 本地代码和必要文档已更新，未提交前仍是工作树修改；无 NAS/Compose/Hermes/网络/权限/业务数据访问或更改，也没有用户浏览器验收。需先解决受控 no-tools 模型接口和历史完整性策略，再申请真实模型及部署授权。

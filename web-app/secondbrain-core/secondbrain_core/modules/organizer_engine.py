@@ -596,7 +596,8 @@ def _validate_drafts(result: Any, new_messages: list[dict[str, Any]]) -> list[di
 
 
 def _yaml(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False)
+    # Stable key ordering makes Review bytes and retry paths identical after state reload.
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _render_draft(job: dict[str, Any], draft: dict[str, Any], index: int) -> bytes:

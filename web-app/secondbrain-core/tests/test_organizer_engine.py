@@ -147,6 +147,28 @@ class OrganizerEngineTests(unittest.TestCase):
         self.assertEqual(len(self.model.calls), 1)
         self.assertEqual(len(list(self.review.glob("AI-Organize-*.md"))), 1)
 
+    def test_recovery_never_overwrites_a_human_edited_review(self):
+        self.source.sessions["app-session"] = [row("u1", "user", "周末读书", 1)]
+        self.model.result = {"drafts": [{"category": "journal", "title": "读书记录", "summary": "读书。",
+                                          "source_quotes": [{"session_id": "app-session", "message_id": "u1",
+                                                             "excerpt": "周末读书"}]}]}
+        import secondbrain_core.modules.organizer_engine as engine_module
+        original_create = engine_module._create_immutable
+
+        def create_then_interrupt(path, content):
+            original_create(path, content)
+            raise OSError("interrupted after write")
+
+        with patch.object(engine_module, "_create_immutable", side_effect=create_then_interrupt):
+            with self.assertRaises(OSError):
+                asyncio.run(self.runner.run())
+        artifact = next(self.review.glob("AI-Organize-*.md"))
+        artifact.write_text("用户手工修改内容\n", encoding="utf-8")
+        with self.assertRaises(RuntimeError):
+            asyncio.run(self.runner.run())
+        self.assertEqual(artifact.read_text(encoding="utf-8"), "用户手工修改内容\n")
+        self.assertEqual(len(self.model.calls), 1)
+
     def test_model_timeout_or_unknown_failure_is_not_retried_and_cursor_stays(self):
         self.source.sessions["app-session"] = [row("u1", "user", "待处理", 1)]
         self.model.failure = RuntimeError("lost response")
