@@ -1,0 +1,129 @@
+# D076 SiliconFlow 多模态综合评测准备
+
+状态：**评测材料与离线方案已准备；真实 API 联调未授权、未执行。**
+
+截至 2026-10-15，评测只使用本目录中的虚构素材与固定答案，不读取 Hermes 会话、正式 Capture/Review/Knowledge，不访问 Private，不创建或读取凭据，不产生供应商请求费用。本目录中 PDF/图片均为合成内容。
+
+## 1. 材料
+
+| 文件 | 用途 | 标准事实 |
+|---|---|---|
+| `fixtures/01-technical-note.txt` | TXT 文档理解 | 编号 `SB-MULTI-01`、日期 `2026-10-15`、批次 `A17`、产量 128、缺陷 4、合格率 96.875%、周三前发送报告、FAQ 分 3 组 |
+| `fixtures/02-technical-note.md` | Markdown/表格/行序理解 | 与 TXT 相同的业务数字；验证代码格式、表格和显式换行是否保留 |
+| `fixtures/03-simulated-software-ui.png` | 仿真软件界面视觉理解 | `DEMO-042`、READY、128 rows、采集日期 2026-10-15、批次 A17、产量 128、缺陷 4、合格率 96.875% |
+| `fixtures/04-synthetic-chart.png` | 图中文字/数据提取 | Q1=12、Q2=18、Q3=15；单位 items；纵轴 0/5/10/15/20 |
+| `fixtures/05-synthetic-scan.pdf` | 扫描 PDF；无文本层 | `pypdf` 提取为空；印刷事实见下方扫描页答案 |
+| `fixtures/06-readable-report.pdf` | 可读 PDF Fast Path | `pypdf` 提取含编号、日期、数字、行动项及简单表格；不应进入 OCR |
+| `fixtures/07-synthetic-scan-page.png` | 视觉直读路线使用的本地扫描页渲染 | 来自扫描 PDF 合成页，最长边缩至 1600 px |
+
+扫描页答案：编号 `SB-MULTI-01`；日期 `2026-10-15`；批次 `A17`；产量 128；缺陷 4；合格率 96.875%；任务“周三前发送测试报告”；灵感“将高频问题归类为 3 组”。视觉模型应只报告图中明确可见事实，不推断未标出的个人经历。
+
+对话合成样本继续复用 `web-app/secondbrain-core/tests/test_organizer_synthetic_e2e.py` 中固定的虚构消息：生活记录、跨会话重复工作灵感、下一批次补充、待办、礼貌闲聊、普通问答。该测试用例自带固定答案与消息 ID / 时间，不以模型输出生成答案。
+
+## 2. 当前型号与能力核查
+
+Hermes 已配置的文本整理型号（本次只复用上一轮已记录的脱敏结果，不读取 NAS/Hermes 配置）：
+
+| 场景 | SiliconFlow 模型 ID | 状态/上下文 | 输入/输出价（USD/M Token） | 图像输入 / JSON Mode | 当前选择 |
+|---|---|---|---:|---|---|
+| 文本整理 | `deepseek-ai/DeepSeek-V4-Flash` | Available / 1049K | $0.13 / $0.28 | 不支持 / 支持 | 纳入文本横评 |
+| 文本整理 | `zai-org/GLM-4.5-Air` | Available / 131K | $0.14 / $0.86 | 不支持 / 不支持 | 纳入文本横评 |
+| 文本整理/视觉 | `Qwen/Qwen3.5-35B-A3B` | Available / 262K | $0.24 / $1.80 | 支持 / 支持 | 纳入文本横评，也可作为视觉候选 |
+
+最多三个视觉候选：
+
+| 模型 ID | 当前目录状态 | 上下文 | 输入/输出价（USD/百万 Token） | 视觉及参数边界 |
+|---|---|---:|---:|---|
+| `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` | Available / Serverless | 1049K | $0.44 / $1.32 | 图像输入、JSON Mode 支持；实验型号；官方页面称每图计费最多 384 tokens |
+| `zai-org/GLM-5V-Turbo` | Available / Serverless | 205K | $1.20 / $4.00 | 图像输入支持；JSON Mode 不支持；未找到其图像 Token 换算与模型级图片尺寸上限 |
+| `Qwen/Qwen3.5-35B-A3B` | Available / Serverless | 262K | $0.24 / $1.80 | 图像输入、JSON Mode 支持；默认思考模式；官方说明 Qwen 图像缩放/Token 规则 |
+
+三个原文本型号中 DeepSeek-V4-Flash 和 GLM-4.5-Air 官方目录均明确 `Support image input: Not supported`；不能直接拿它们测试视觉。Qwen3.5-35B-A3B 明确支持，因此无需仅为品牌对齐而更换。GLM-4.5V 页面已标记 Deprecated，故不选；GLM 视觉候选改用当前目录可用的 GLM-5V-Turbo。DeepSeek 候选为单独的实验视觉 ID，不能和文本型号混称。
+
+SiliconFlow 多模态文档展示 `/chat/completions` 的 `image_url`，支持远程 URL 或 `data:` Base64，并展示多图消息及 `detail=low/high/auto`。本项目只会发固定 PNG 样本的内联 Base64，避免让供应商抓取任意 URL。官方当前查阅资料没有给出上述三个候选共同的文件格式全集/请求体字节上限；真实联调前需再核查型号 API Reference。评测本地将每图上限设为 2 MiB，缩放到不超过 1600×1600，且总请求体上限 8 MiB，这是本地保守门槛，不是供应商保证。Qwen 的文档像素范围为 56×56 至 3584×3584（约 12.8 MP）；`detail=low` 计 256 image tokens，`high` 按 28 像素 patch 计算。
+
+API 公共参数文档列出 `temperature`、`top_p`、`n`、`stream`、`max_tokens`、`response_format` 等。统一实验参数建议 `temperature=0`、`n=1`、`stream=false`、同任务相同 `max_tokens`；不传 `top_p`（文档建议温度与 top_p 不同时调整），统一使用提示约束 JSON、不传 `response_format`，避免 GLM-5V-Turbo 的 JSON Mode 缺失造成不等价。`enable_thinking=false` 仅在该模型确实接受时发送；否则请求失败即停止，不改参数重试。所有型号的真实端点兼容性尚未联调。
+
+## 3. 12 次请求上限与执行矩阵
+
+严格串行、每项至多一次，不自动重试；任何超时、429、5xx、参数错误或 JSON 异常立即停止后续调用。实际请求数须用户另行授权。
+
+| 请求序号 | 测试包 | 型号 | 发送内容 |
+|---:|---|---|---|
+| 1–3 | 对话整理 | DeepSeek-V4-Flash、GLM-4.5-Air、Qwen3.5-35B-A3B | 同一批合成消息、同一 Organizer 提示与 schema |
+| 4–6 | 文件理解 | 同上 | 同一 TXT + Markdown 合成材料及同一要点提取提示 |
+| 7–9 | PDF 解析 | 同上 | 一个可读 PDF 的 pypdf 文本 + 扫描 PDF 的固定 OCR 参考文本，分段标记来源；模型仅做下游提取。参考 OCR 文本不是 OCR 质量证据 |
+| 10–12 | 视觉理解 | DeepSeek-V4-Flash-Vision-Exp、GLM-5V-Turbo、Qwen3.5-35B-A3B | 同一组 PNG（软件界面、图表、扫描页渲染），同一视觉提示和答案 schema |
+
+调用规模：最多 12 个 HTTP 请求、单并发、无重试、每请求 45 秒客户端超时。共同输出上限按每测试类型提前固定（建议 Organizer 1200，其他提取类 800 Token），文本输入按当前 Adapter 的 UTF-8 字节上限预检；视觉请求在本地进行尺寸/字节预检。注意：Adapter 的输入字节裁剪不是服务端硬 Token 上限，`max_tokens` 文档注明不包含思维链 Token，45 秒客户端超时不能保证服务端未继续计费。
+
+扫描 PDF 两条路由：
+
+1. **OCR 文本路线**：本地 Poppler/Tesseract 提取后，将 OCR 文字作为带 `ocr_text` 标记的普通文本送入文本型号。当前开发机没有 Tesseract，因此此轮不声称 OCR 路线已产出真实识别稿；本计划里的固定参考文本仅能评测模型对已识别文字的解析能力。真实评测前需要使用本地 D076 OCR 对该合成 PDF 生成实际输出，并与固定答案逐项比对。
+2. **视觉直读路线**：将扫描 PDF 第一页在本地渲染为 PNG，再与另外两张合成图片一同送给视觉候选。此路线测模型看页面的提取质量，不上传 PDF 文件，也不测试本地 OCR。
+
+## 4. 固定答案及评分
+
+### 对话整理
+
+- 应提取：公园/家庭生活感受（日记候选）、客服高频问题知识卡片（工作灵感，同一主题重复表达合并并保留两处来源）、周五前将试点计划发给小林（待办）。下一批消息“先从最近一个月的高频问题开始”只能补充前述工作灵感，不能生成旧消息副本。
+- 应过滤：`谢谢，收到。`、普通地理知识问答及助手回答；不能把助手建议改写成用户经历/决定。
+- 原有测试文件内提供确切 source `session_id`/`message_id`/UTC timestamp 与引文。
+
+### 文档、PDF、图片
+
+- 所有数字必须精确：128、4、96.875%、A17、日期 2026-10-15。
+- 图表数据必须精确为 Q1 12、Q2 18、Q3 15；不得把纵轴刻度当成某季度数值。
+- PDF 提取必须区分 pypdf 正文与 OCR 来源文本；不得宣称 OCR 字符准确仅因模型正确归纳了参考文本。
+- 视觉结果拆为“可读文字/字段”和“画面描述”；数值错误单独计错；不允许虚构上下文。
+
+### 指标
+
+1. **分类/字段精确率、召回率、F1**：以本文件列明的必需字段、类别和过滤项作人工金标准；对遗漏与幻觉分别记数。
+2. **来源/引用准确率**：Organizer 每一引用的 session/message ID、UTC 时间、原文连续子串均正确才计正确。
+3. **重复率**：同主题产生的多余草稿数 / 有效主题数；目标为 0。
+4. **结构化结果率**：响应可解析且满足固定 JSON Schema 才通过；模型不可用 JSON Mode 时仍按相同 prompt-only 规则评分。
+5. **视觉数字准确率**：识别出的明确文本/数值正确项 / 金标准项；错读和缺失分别列出。
+6. **成本/时延**：记录 API request ID/trace ID、HTTP 状态、单调时钟时延、返回 usage；按复核时的官方价估算。用户随后在 SiliconFlow 控制台核对实际费用。API usage 与实际账单不是同义证据。
+
+横评结果仅代表这组人工合成样本，不外推一般能力。预期记录表模板：
+
+| 序号/任务 | 模型 ID | 状态/trace ID | 结果/F1 | 引用准确率 | 重复率 | JSON/结构率 | 视觉字段正确数 | 延时 | 输入/输出 usage | 估算 USD | 控制台实费 |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1–12 | 联调时填写 | 未请求 | — | — | — | — | — | — | — | — | 待用户核账 |
+
+## 5. 预算边界与联调前授权
+
+总目标仍为 **人民币 5 元**，只是目标预算，供应商硬封顶未证明。以下只是透明的量级估算，假设对每个文本模型分别使用 Organizer 6k/1.2k、文件 3k/0.5k、PDF 5k/0.8k 输入/输出 Token；视觉每项约 1k 文本输入 + 600 输出，另计图像 Token：DeepSeek 按官方“最多 384 token/图”与 3 图计 1152，Qwen 按 `detail=low` 3×256 计 768。GLM 图像 Token 规则未查到，表中先按纯文字基线计算：
+
+| 组 | 按官方单价的基准估算 USD | 说明 |
+|---|---:|---|
+| Organizer 3 次 | 0.006588 | 每个文本模型 6000/1200 input/output |
+| TXT/Markdown 3 次 | 0.003000 | 每个文本模型 3000/500 |
+| PDF 文本路线 3 次 | 0.004902 | 每个文本模型 5000/800 |
+| 视觉 3 次 | 0.006843 + GLM 图像费用未知 | DeepSeek/Qwen 使用上述图像 Token 估算；GLM 为 1000/600 纯文字基线，按每 1000 个图像输入 Token 另加约 $0.0012 |
+| **合计基线** | **约 $0.021333 + GLM 图像 Token 费用** | 未含费率变动、缓存/思考计费差异、请求失败仍计费等；不能保证折算后不超过 ¥5 |
+
+该估算不是供应商账单或封顶。图片高分辨率处理会改变 Qwen 的 image token；DeepSeek 页面“up to 384”不能替代真实 usage；GLM 不明的图像计价是主要未知项。请求后必须使用服务端 usage 和平台后台账单复核，异常后立即停止。
+
+下一阶段真实联调须单独明确授权：
+
+1. 允许对 SiliconFlow 发送本目录中的虚构文本、PNG 及合成 PDF 渲染页；明确确认数据只传此类公开/虚构样本。
+2. 指定批准本表中的 exact model IDs，并确认最多 12 个**总请求**、串行、45 秒、零自动重试、任一异常即停。
+3. 确认 ¥5 是软目标而非硬费用封顶；最好由用户在供应商后台预先设置并确认账户消费限制及超限拒绝行为，Codex 不以推测替代。
+4. 单独授权创建专用 SiliconFlow API Key 并由用户通过安全隐藏输入/受控 Secret 文件注入开发测试 Core；不得读取 Hermes Key、不得放环境变量/前端/Git。
+5. 若本地 Tesseract 对扫描样本识别有严重错误，先暂停 PDF 模型比较；不追加请求。
+
+**未完成/阻断：** 无真实 API 可用性/参数兼容性确认；无供应商硬输入 Token 或硬支出封顶证据；本机无 Tesseract，扫描件 OCR 实际文本需另行完成本地离线验收；GLM 图像输入的具体尺寸/图片计费规则待官方型号资料或联调前控制台复核。Organizer 仍关闭，定时任务不运行。
+
+## 6. Fixture SHA-256
+
+| 文件 | SHA-256 |
+|---|---|
+| `01-technical-note.txt` | `a11946c9381ab0f2236c09918780a35d96ceec45eecef0d2b46e95017cc0b63c` |
+| `02-technical-note.md` | `11a5037d44734e62644a06a30f81a3cf785fa56f878783762b88d9b6909c32fd` |
+| `03-simulated-software-ui.png` | `389bb997d727c9a40559e583b582cac5393ff8c5d7574df8500020e5465ffd18` |
+| `04-synthetic-chart.png` | `d963b559c0281e75eebdc891636266b17ae25ad3414164fd33dee3e84f42b656` |
+| `05-synthetic-scan.pdf` | `7b01fa54529ab163c36c1f050f05a489778cc353d7ae6a3206532a29ec5eaf59` |
+| `06-readable-report.pdf` | `37c8f641406dbdc1eea88d8684b01cde26a181c765872fbc7c4544f3094da324` |
+| `07-synthetic-scan-page.png` | `e186d7de1ac9ac22c56f05273f032badb6655b407673c5c67253b46c3776ee6b` |

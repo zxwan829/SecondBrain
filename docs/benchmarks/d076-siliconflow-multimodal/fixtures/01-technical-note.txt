@@ -1,0 +1,9 @@
+Synthetic device note — SB-MULTI-01
+Sampling date: 2026-10-15
+Batch: A17
+Output units: 128
+Defects: 4
+Pass rate: 96.875%
+Action: Send the test report by Wednesday.
+Idea: Group frequently asked questions into 3 categories.
+This is fictional benchmark data, not a real person or system.

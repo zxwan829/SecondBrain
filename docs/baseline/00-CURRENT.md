@@ -39,6 +39,8 @@ source: GitHub SecondBrain Monorepo
 
 **D076 自动整理状态：** 每日固定 `00:30 Asia/Shanghai` 不再是唯一调度；设置默认每 4 小时，可改每天固定时间。配置、执行器、共享游标与作业状态/锁、幂等 Review 草稿及故障恢复已有本地实现和测试。新增 SiliconFlow 直连文本 ModelAdapter 原型及合成测试；它仅构造无工具的 Chat Completions 请求、限制输出 Token/超时/并发/单作业调用并读取响应 usage，且不经过 Hermes Agent Runtime。2026-10-15 官方公开页面列出当前适配器模型 `deepseek-ai/DeepSeek-V4-Flash` 上下文 1049K、输入 `$0.13/M`、输出 `$0.28/M`；价格会变动，真实调用前须复核。公开资料未证明请求级输入 Token 硬上限或单 Key/单作业硬费用上限；供应商月度消费限制的拒绝语义尚未核实。适配器因此不满足 Runner 能力门槛，生产 App 仍保持 `model=None`，立即整理 API 返回 503，按钮禁用，应用启动不创建定时任务。没有读取 API Key、没有调用付费 API，也没有 NAS 部署。Organizer 首次纳入仍默认跳过历史；后续可选首次回溯窗口建议为不回溯/当天/最近 4/12/24 小时，按 `session_id:message_id` 去重并持久化时间水位，须显式选择且只读有限窗口，不能全量扫描。不得将适配器原型标记为可用整理服务或生产交付。
 
+**D076 SiliconFlow 多模态评测准备（2026-10-15）：** 已新增纯合成 TXT/Markdown、可读/扫描 PDF、仿真界面与图表图片、标准答案及最多 12 次串行调用方案，见 `docs/benchmarks/d076-siliconflow-multimodal/README.md`。官方目录显示文本型号 DeepSeek-V4-Flash 与 GLM-4.5-Air 不支持图片输入，Qwen3.5-35B-A3B 支持；视觉候选为 DeepSeek-V4-Flash-Vision-Exp、GLM-5V-Turbo、Qwen3.5-35B-A3B。现有 SiliconFlow Adapter 仍只接受文本并验证 Organizer JSON，不支持图像；视觉评测需要独立、限格式/尺寸、Base64 本地样本的 no-tools 适配扩展。当前仅准备和离线校验；没有真实 API、凭据、NAS、模型或生产数据变化。
+
 **协作：** ChatGPT 负责范围、技术取舍、任务分解、验收标准；Codex 负责实施、针对性测试、必要文档更新、Git 与经授权的部署。日常遵循 FAST-EXEC。代码 Push ≠ 生产部署 ≠ 用户验收。
 
 ## 3. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
