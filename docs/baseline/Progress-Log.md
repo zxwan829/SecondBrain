@@ -669,3 +669,12 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 正式 Compose 只变更 App build context/image 两项；新 SHA-256 `b7ca306b82e03b4eae022b8d9ed68beb82b57d1e5b419bf0a4467a632c8a92dc`，`config --quiet` 通过。仅 Compose CLI 重建 App；新容器 `b96506b44965faa1fe88a12a6d7411efcf3e5ab0cfb9218ff17a1e0dfa1d27b8` healthy，Image ID `sha256:e994da5c0c4a5fb0eef27608728b1091d1442e686ac4a407e7661aea37060505`。Hermes 容器、镜像与启动时间不变。
 - HTTPS/API smoke 登录、Secure Cookie、Home、Chat 读取、Inbox、Review 列表/详情、原件预览/下载通过；未登录 Inbox/Review/Capture 拒绝；Promote=false。Raw/Review RW、Knowledge RO、Private 未挂载，STT 关闭，53 个已有 Raw/Review/state 文件哈希未变。未上传生产测试素材或执行 Promote。
 - 构建产物含统一 Composer、中文提示、D076-A.1 Review 布局。**状态：代码已部署并通过隔离 OCR 与服务端 smoke；尚未用户浏览器验收。** 等用户在 63013 验收 Composer 桌面/手机交互、Review 阅读布局及其真实中文扫描 PDF OCR 质量；不代表 D076 完成，也未进入 D076-B。
+
+# 2026-10-15 — D076-A.1 Review、排序与素材关联修复（本地）
+
+- Review 桌面双栏改成固定 36/64 比例并约束 min-width/min-height，列表与正文各自滚动；长行换行，切换条目时正文回顶，删去重复 Core 状态展示。手机仍采用详情优先布局，待用户实机验收。OCR 引擎参数行默认隐藏，完整原始 Review 仍可展开；正文/识别行序不变。
+- Inbox 与 Review 使用有效 `captured_at` 倒序和确定性 tie-break。Review 时间先读 frontmatter；旧记录缺失时用精确 `review_path` 从 Capture state 补足。日期级来源只展示日期，不补造时间；无效、无来源或存在歧义时标“时间未知”并排最后。Inbox 与 Review 深链接仍按路径/ID保持定位。
+- 只读 NAS 盘点：15 条 state 的 Raw 及 13 个关联 Review 的 SHA-256 均与文件一致；2 条部分成功没有 Review。全目录有 23 个 Raw/23 个 Review；8 个 Raw、10 个 Review 无 Capture state 关系，无法安全认定为测试/重复对象。发现唯一 Raw 哈希重复组：capture `2976bd1c32b7440d9e7b407526f3e8be` 与 `8b8a4078ffc34cc98dbf72a30d966d99` 的 PDF 字节相同，但 Raw 路径、Review 路径/hash 不同且没有审批记录。作为待用户确认的清理候选，不删除；具体关联见 Environment-Baseline。现存唯一审批记录是 `capture-1.md` 对应 `deferred`，与重复 PDF 组无关。
+- 用户反馈真实扫描 PDF 乱码/漏字。没有以 Review 生成作为准确性证据，也未读取、重试、覆盖或改动旧 PDF。该质量问题保留为待验收项。
+- 验证：前端 Capture/Review/layout **31 passed**；`npm run typecheck` 与 Vite build 通过；Core Review auth/list/detail **13 passed**、Capture **18 passed**；`git diff --check` 通过。测试检查响应时间字段、日期回退/未知排序、重复提示、OCR 参数隐藏、正文切换回顶与刷新保持定位、桌面比例/滚动与移动布局 CSS 契约。
+- **状态：代码和文档本地修改、测试通过，尚未 Commit/Push 前仍未部署。** 未改 Hermes、Compose、Promote、Knowledge 权限或网络。手机端及真实 PDF OCR 准确度继续待用户验收；任何素材删除/移动需另行批准。

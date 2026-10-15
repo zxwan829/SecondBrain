@@ -346,12 +346,12 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .review-row b { padding: 4px 7px; color: #d5e3fb; background: #263a59; border: 1px solid rgb(102 136 183 / 20%); border-radius: 999px; font-size: var(--sb-type-meta); font-weight: 520; white-space: nowrap; }
 
 /* Dedicated read-only Review page; reuses FE-4 surfaces and type scale. */
-.review-page { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; min-height: 0; padding: 8px 0 0; background: var(--sb-bg); }
-.review-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; max-width: 1500px; margin: 0 auto 22px; }
+.review-page { box-sizing: border-box; display: flex; flex: 1 1 auto; flex-direction: column; align-self: stretch; width: 100%; min-width: 0; min-height: 0; padding: 8px 0 0; background: var(--sb-bg); }
+.review-page-header { box-sizing: border-box; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; width: 100%; max-width: 1500px; min-width: 0; margin: 0 auto 14px; }
 .review-page-header h1 { margin: 8px 0; color: var(--sb-text); font-size: clamp(25px, 3vw, 34px); }
 .review-page-header .workspace-subtitle { margin: 0; }
 .review-back-button, .review-page-toolbar button, .review-unlock-form button { border: 1px solid var(--sb-border-strong); border-radius: 9px; padding: 9px 13px; color: var(--sb-text); background: var(--sb-surface-raised); cursor: pointer; }
-.review-connection-status, .review-unlock-form, .review-page-toolbar, .review-page-grid { max-width: 1500px; margin-right: auto; margin-left: auto; }
+.review-connection-status, .review-unlock-form, .review-page-toolbar, .review-page-grid { box-sizing: border-box; width: 100%; max-width: 1500px; min-width: 0; margin-right: auto; margin-left: auto; }
 .review-connection-status { padding: 12px 15px; border: 1px solid var(--sb-border); border-radius: 10px; color: var(--sb-text-soft); background: var(--sb-surface); }
 .review-connection-status.is-connected { border-color: rgb(34 211 154 / 36%); }
 .review-unlock-form { display: grid; justify-items: start; gap: 14px; padding: 22px; border: 1px solid var(--sb-border); border-radius: var(--sb-radius); background: var(--sb-surface); }
@@ -359,18 +359,19 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .review-unlock-form label { display: grid; gap: 7px; width: min(430px, 100%); color: var(--sb-muted); }
 .review-unlock-form input { width: 100%; padding: 11px 12px; border: 1px solid var(--sb-border-strong); border-radius: 8px; color: var(--sb-text); background: var(--sb-surface-inset); }
 .review-unlock-form button:disabled, .review-page-toolbar button:disabled { opacity: .55; cursor: wait; }
-.review-page-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; color: var(--sb-muted); }
+.review-page-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 14px; margin-bottom: 14px; color: var(--sb-muted); }
 .review-page-toolbar > div { display: flex; gap: 8px; }
 .review-mobile-list-toggle { display: none; }
-.review-page-grid { display: grid; flex: 1 1 auto; grid-template-columns: minmax(260px, 380px) minmax(0, 1fr); gap: 15px; min-height: 0; }
+.review-page-grid { display: grid; flex: 1 1 auto; grid-template-columns: minmax(240px, 0.36fr) minmax(0, 0.64fr); align-items: stretch; gap: 15px; min-height: 0; }
 .review-page-list, .review-page-detail { min-width: 0; border: 1px solid var(--sb-border); border-radius: var(--sb-radius); background: var(--sb-surface); }
 .review-page-list { display: grid; align-content: start; gap: 7px; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 10px; }
-.review-page-item { display: grid; gap: 5px; width: 100%; padding: 12px; border: 1px solid transparent; border-radius: 9px; color: var(--sb-text); text-align: left; background: transparent; cursor: pointer; }
+.review-page-item { display: grid; gap: 5px; width: 100%; min-width: 0; padding: 12px; border: 1px solid transparent; border-radius: 9px; color: var(--sb-text); text-align: left; background: transparent; cursor: pointer; }
 .review-page-item:hover, .review-page-item.is-selected { border-color: var(--sb-border-strong); background: var(--sb-surface-raised); }
 .review-page-item strong { overflow-wrap: anywhere; font-weight: 600; }
 .review-page-item small, .review-page-item span, .review-page-detail > p { color: var(--sb-muted); font-size: var(--sb-type-meta); }
 .review-page-empty { padding: 12px; color: var(--sb-muted); }
-.review-page-detail { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: clamp(15px, 2vw, 24px); scroll-behavior: auto; }
+.review-page-detail { min-height: 0; overflow: auto; overflow-wrap: anywhere; overscroll-behavior: contain; padding: clamp(15px, 2vw, 24px); scroll-behavior: auto; }
+.review-page-detail > * { min-width: 0; max-width: 100%; }
 .review-detail-heading h2 { margin: 0 0 8px; overflow-wrap: anywhere; font-size: 20px; }
 .review-detail-heading > p, .review-detail-heading dl { color: var(--sb-muted); font-size: var(--sb-type-meta); }
 .review-detail-heading dl, .review-metadata dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 10px; overflow-wrap: anywhere; }
@@ -378,6 +379,9 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .review-detail-heading dd, .review-metadata dd { margin: 0; color: var(--sb-text-soft); white-space: pre-wrap; }
 .review-metadata { margin: 12px 0; color: var(--sb-muted); font-size: var(--sb-type-meta); }
 .review-metadata summary { width: fit-content; cursor: pointer; }
+.review-source-original { margin: 12px 0; color: var(--sb-muted); font-size: var(--sb-type-meta); }
+.review-source-original summary { width: fit-content; cursor: pointer; }
+.review-source-original pre { max-width: 100%; overflow: auto; padding: 12px; color: var(--sb-text-soft); background: #080f1d; border: 1px solid var(--sb-border); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 ui-monospace, SFMono-Regular, monospace; }
 .review-markdown { color: var(--sb-text-soft); line-height: 1.7; overflow-wrap: anywhere; }
 .review-markdown h1, .review-markdown h2, .review-markdown h3, .review-markdown h4, .review-markdown h5, .review-markdown h6 { margin: 18px 0 8px; color: var(--sb-text); line-height: 1.35; }
 .review-markdown p { margin: 10px 0; white-space: normal; }

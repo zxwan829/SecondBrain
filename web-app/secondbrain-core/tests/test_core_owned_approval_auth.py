@@ -198,12 +198,28 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         listing = self.client.get("/api/promote/review/items", headers=self.headers)
         self.assertEqual(listing.status_code, 200)
         self.assertEqual(listing.json()["items"][0]["status"], "pending")
+        self.assertEqual(listing.json()["items"][0]["captured_at"], "2026-10-12T00:00:00Z")
         detail = self.client.get("/api/promote/review/items/candidate.md", headers=self.headers)
         self.assertEqual(detail.status_code, 200, detail.text)
         self.assertEqual(detail.json()["content"], self.content.decode())
         self.assertEqual(detail.json()["review_sha256"], self.body["review_sha256"])
         self.assertEqual(detail.json()["status"], "pending")
+        self.assertEqual(detail.json()["captured_at"], "2026-10-12T00:00:00Z")
         self.assertEqual(self.client.get("/api/promote/review/items/missing.md", headers=self.headers).status_code, 404)
+
+    def test_review_list_marks_missing_or_unverifiable_capture_time_as_unknown(self):
+        (self.review / "undated.md").write_text(
+            "---\ntype: review\ncaptured_at: someday\nreview_status: pending\n---\n# Undated\n",
+            encoding="utf-8")
+        (self.review / "date-only.md").write_text(
+            "---\ntype: review\ncaptured_at: 2026-10-10\nreview_status: pending\n---\n# Date only\n",
+            encoding="utf-8")
+        self.assertEqual(self.unlock().status_code, 200)
+        listing = self.client.get("/api/promote/review/items", headers=self.headers)
+        undated = next(item for item in listing.json()["items"] if item["review_path"] == "undated.md")
+        self.assertIsNone(undated["captured_at"])
+        date_only = next(item for item in listing.json()["items"] if item["review_path"] == "date-only.md")
+        self.assertEqual(date_only["captured_at"], "2026-10-10")
 
     def test_review_change_invalidates_approved_digest(self):
         self.assertEqual(self.unlock().status_code, 200)

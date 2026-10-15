@@ -19,6 +19,7 @@ type ReviewItem = {
   target_filename: string;
   title: string;
   status: string;
+  captured_at?: string | null;
   decision?: { status?: string; request_id?: string; error_code?: string } | null;
 };
 type ReviewDetail = ReviewItem & { content: string };
@@ -30,6 +31,35 @@ type CaptureItem = {
   source_url?: string | null; derived_source_url?: string | null;
   processor?: { kind?: string; name?: string } | null;
 };
+
+function capturedAtMillis(value?: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function sortByCapturedAt<T extends { captured_at?: string | null }>(items: T[], stableKey: (item: T) => string): T[] {
+  return items.map((item, index) => ({ item, index, time: capturedAtMillis(item.captured_at) }))
+    .sort((a, b) => {
+      if (a.time === null && b.time !== null) return 1;
+      if (a.time !== null && b.time === null) return -1;
+      if (a.time !== null && b.time !== null && a.time !== b.time) return b.time - a.time;
+      const keyA = stableKey(a.item);
+      const keyB = stableKey(b.item);
+      return (keyA < keyB ? -1 : keyA > keyB ? 1 : 0) || a.index - b.index;
+    }).map(({ item }) => item);
+}
+
+function capturedAtLabel(value: string | null | undefined, locale: Locale): string {
+  const time = capturedAtMillis(value);
+  if (time === null) return locale === 'en' ? 'Time unknown' : '时间未知';
+  if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'zh-CN', {
+      year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'UTC',
+    }).format(new Date(time));
+  }
+  return new Date(time).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
+}
 
 function isVisionDescriptionOnly(item: CaptureItem) {
   return isImageOcrDescriptionUnavailable(item);
@@ -363,7 +393,7 @@ export function InboxPage({ locale, onComplete = () => undefined, onGoInbox = ()
       const response = await fetch('/api/inbox', { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const value = await response.json();
-      setItems(Array.isArray(value.items) ? value.items : []);
+      setItems(sortByCapturedAt(Array.isArray(value.items) ? value.items : [], (item: CaptureItem) => item.capture_id));
     } catch { setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
     finally { setLoading(false); }
   };
@@ -401,7 +431,7 @@ export function InboxPage({ locale, onComplete = () => undefined, onGoInbox = ()
     <UnifiedCaptureComposer locale={locale} onComplete={onComplete} onGoInbox={onGoInbox} />
     {error && <p role="alert" className="capture-alert">{error}</p>}
     <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
-      <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{captureDisplayFilename(item, locale)}</h2><p>{item.source_type} · {new Date(item.captured_at).toLocaleString(text ? 'en-US' : 'zh-CN')}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
+      <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{captureDisplayFilename(item, locale)}</h2><p>{item.source_type} · {capturedAtLabel(item.captured_at, locale)}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
       {item.content_preview && <pre className="inbox-preview">{item.content_preview.slice(0, 500)}</pre>}
       {isVisionDescriptionOnly(item)
         ? <p className="capture-processing-note" role="status">{text ? 'Text recognition completed; image understanding is not connected yet.' : '文字识别完成，画面理解暂未接入。'}</p>
@@ -494,13 +524,33 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
   const loadList = async () => {
     setBusy(true);
     setStatus(t.coreLoading);
+    const requestedReviewPath = location.pathname === '/review'
+      ? new URLSearchParams(location.search).get('review_path')
+      : initialReviewPath;
     try {
       const result = await request<{ items?: ReviewItem[] }>('/review/items');
-      const nextItems = Array.isArray(result.items) ? result.items : [];
+      let captureDates = new Map<string, Set<string>>();
+      try {
+        const response = await fetch('/api/inbox?limit=200', { credentials: 'same-origin' });
+        if (response.ok) {
+          const inbox = await response.json() as { items?: CaptureItem[] };
+          for (const capture of Array.isArray(inbox.items) ? inbox.items : []) {
+            if (!capture.review_path || capturedAtMillis(capture.captured_at) === null) continue;
+            const dates = captureDates.get(capture.review_path) ?? new Set<string>();
+            dates.add(capture.captured_at);
+            captureDates.set(capture.review_path, dates);
+          }
+        }
+      } catch { /* Review frontmatter remains the primary timestamp source. */ }
+      const nextItems = sortByCapturedAt((Array.isArray(result.items) ? result.items : []).map((item) => {
+        if (capturedAtMillis(item.captured_at) !== null) return item;
+        const matches = captureDates.get(item.review_path);
+        return { ...item, captured_at: matches?.size === 1 ? [...matches][0] : null };
+      }), (item) => item.review_path);
       setItems(nextItems);
       setStatus(t.coreConnected.replace('{count}', String(nextItems.length)));
-      if (initialReviewPath) {
-        const selected = nextItems.find((item) => item.review_path === initialReviewPath);
+      if (requestedReviewPath) {
+        const selected = nextItems.find((item) => item.review_path === requestedReviewPath);
         if (selected) await loadDetail(selected);
         else { setDetail(null); setStatus(locale === 'en' ? 'The requested Review item could not be found.' : '找不到指定的 Review 条目。'); }
       } else if (nextItems.length) await loadDetail(nextItems[0]);
@@ -523,7 +573,7 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
     try {
       const safePath = item.review_path.split('/').map(encodeURIComponent).join('/');
       const result = await request<ReviewDetail>(`/review/items/${safePath}`);
-      setDetail(result);
+      setDetail({ ...result, captured_at: result.captured_at ?? item.captured_at ?? null });
     } catch (error) {
       const statusCode = (error as Error & { status?: number }).status;
       setStatus(statusCode === 401 ? t.coreSessionExpired : error instanceof Error ? apiFailureLabel(error.message, statusCode ?? 0, locale, 'review') : t.coreConnectionFailed);
@@ -587,6 +637,9 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
   const decisionStatus = detail?.decision?.status || detail?.status || 'pending';
   const isOcrDocument = Boolean(document && (/^OCR:\s*tesseract\s*;/m.test(document.body) || /## OCR 识别文字/.test(document.body)));
   const ocrOnlyText = Boolean(document?.metadata.source_type === 'image' && /## AI 画面描述/.test(document.body));
+  const visibleReviewBody = isOcrDocument && document
+    ? document.body.replace(/^OCR:\s*tesseract\s*;[^\n]*(?:\n|$)/m, '')
+    : document?.body ?? '';
 
   return <section className="review-page" aria-labelledby="review-page-title">
     <header className="review-page-header">
@@ -594,18 +647,19 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
       <button type="button" className="review-back-button" onClick={onBack}>{t.backHome}</button>
     </header>
     <p className={`review-connection-status ${busy ? 'is-locked' : 'is-connected'}`} role="status" aria-live="polite">{status}</p>
-      <div className="review-page-toolbar"><span>{status}</span><div><button type="button" className="review-mobile-list-toggle" aria-expanded={mobileListOpen} onClick={() => setMobileListOpen((open) => !open)}>{mobileListOpen ? (locale === 'en' ? 'Hide list' : '收起列表') : (locale === 'en' ? 'Browse list' : '浏览审核列表')}</button><button type="button" onClick={() => void loadList()} disabled={busy}>{locale === 'en' ? 'Refresh' : '刷新'}</button></div></div>
+      <div className="review-page-toolbar"><div><button type="button" className="review-mobile-list-toggle" aria-expanded={mobileListOpen} onClick={() => setMobileListOpen((open) => !open)}>{mobileListOpen ? (locale === 'en' ? 'Hide list' : '收起列表') : (locale === 'en' ? 'Browse list' : '浏览审核列表')}</button><button type="button" onClick={() => void loadList()} disabled={busy}>{locale === 'en' ? 'Refresh' : '刷新'}</button></div></div>
       <div className="review-page-grid">
         <div ref={reviewListRef} className={`review-page-list ${mobileListOpen ? 'is-mobile-open' : 'is-mobile-collapsed'}`} aria-label={t.reviewPageTitle}>
           {items.length ? items.map((item) => <button ref={detail?.review_path === item.review_path ? selectedReviewRef : null} key={item.review_path} type="button" className={`review-page-item ${detail?.review_path === item.review_path ? 'is-selected' : ''}`} onClick={() => selectReview(item)}>
-        <strong>{item.title || item.target_filename}</strong><small>{item.target_filename}</small><span>{t.coreStatus}: {reviewStatusLabel(item.decision?.status || item.status || 'pending', locale)}</span>
+        <strong>{item.title || item.target_filename}</strong><small>{item.target_filename} · {capturedAtLabel(item.captured_at, locale)}</small><span>{t.coreStatus}: {reviewStatusLabel(item.decision?.status || item.status || 'pending', locale)}</span>
           </button>) : <p className="review-page-empty">{t.coreNoItems}</p>}
         </div>
         <article ref={reviewDetailRef} className="review-page-detail" tabIndex={-1}>
-          {detail && document ? <><header className="review-detail-heading"><h2>{detail.title || detail.target_filename}</h2><p>{detail.target_filename} · {t.coreStatus}: {reviewStatusLabel(decisionStatus, locale)}{detail.decision?.error_code ? ` · ${locale === 'en' ? 'Failure' : '失败'}: ${detail.decision.error_code}` : ''}</p><dl><dt>{locale === 'en' ? 'Source' : '来源'}</dt><dd>{document.metadata.source_type || (locale === 'en' ? 'Not provided' : '未提供')}</dd><dt>{locale === 'en' ? 'Captured' : '采集日期'}</dt><dd>{document.metadata.captured_at || (locale === 'en' ? 'Not provided' : '未提供')}</dd></dl></header>
+          {detail && document ? <><header className="review-detail-heading"><h2>{detail.title || detail.target_filename}</h2><p>{detail.target_filename} · {t.coreStatus}: {reviewStatusLabel(decisionStatus, locale)}{detail.decision?.error_code ? ` · ${locale === 'en' ? 'Failure' : '失败'}: ${detail.decision.error_code}` : ''}</p><dl><dt>{locale === 'en' ? 'Source' : '来源'}</dt><dd>{document.metadata.source_type || (locale === 'en' ? 'Not provided' : '未提供')}</dd><dt>{locale === 'en' ? 'Captured' : '采集日期'}</dt><dd>{capturedAtLabel(detail.captured_at ?? document.metadata.captured_at, locale)}</dd></dl></header>
             {isOcrDocument && <p className="review-ocr-note" role="note">{ocrOnlyText ? (locale === 'en' ? 'OCR text only. Please verify the recognized text against the original.' : '仅包含 OCR 文字识别结果，请对照原件核对。') : (locale === 'en' ? 'OCR text may contain recognition errors. Please verify it against the original.' : 'OCR 识别可能存在误差，请对照原件核对。')}</p>}
             <details className="review-metadata"><summary>{locale === 'en' ? 'Full metadata' : '完整元数据'}</summary><dl>{Object.entries(document.metadata).map(([key, value]) => <React.Fragment key={key}><dt>{key}</dt><dd>{value}</dd></React.Fragment>)}</dl></details>
-            <ReviewMarkdown source={document.body} preserveLines={isOcrDocument} />
+            {isOcrDocument && <details className="review-source-original"><summary>{locale === 'en' ? 'Full original Review text' : '查看完整原始识别内容'}</summary><pre>{document.body}</pre></details>}
+            <ReviewMarkdown source={visibleReviewBody} preserveLines={isOcrDocument} />
             <div className="review-decisions"><button type="button" onClick={() => void decide('defer')} disabled={busy || ['approved', 'promoting', 'promoted', 'failed'].includes(detail.decision?.status || '')}>{locale === 'en' ? 'Defer' : '暂缓'}</button><button type="button" onClick={() => void decide('approve')} disabled={busy || !promoteEnabled || detail.decision?.status === 'promoted'} title={!promoteEnabled ? (locale === 'en' ? 'Promote disabled on this App build' : '当前版本已关闭正式入库') : undefined}>{['approved', 'promoting', 'failed'].includes(detail.decision?.status || '') ? (locale === 'en' ? 'Retry approved write' : '重试正式入库') : (locale === 'en' ? 'Approve to Knowledge' : '批准入库')}</button>{!promoteEnabled && <small>{locale === 'en' ? 'Knowledge writes are disabled.' : '正式入库当前关闭。'}</small>}</div></> : <p>{t.coreSelectItem}</p>}
         </article>
       </div>

@@ -1,9 +1,9 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { InboxPage, QuickCapture, ReviewPage, scrollReviewItemIntoView } from './App';
+import { InboxPage, QuickCapture, ReviewPage, scrollReviewItemIntoView, sortByCapturedAt } from './App';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); window.history.replaceState({}, '', '/'); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const callbacks = () => ({ onClose: vi.fn(), onComplete: vi.fn(), onGoInbox: vi.fn() });
 const ok = (body: unknown, contentType = 'application/json') => ({
@@ -12,6 +12,17 @@ const ok = (body: unknown, contentType = 'application/json') => ({
 });
 
 describe('D075.1 capture interactions', () => {
+  it('sorts capture timestamps newest first, keeps ties deterministic, and places unknown dates last', () => {
+    const items = [
+      { capture_id: 'z', captured_at: '2026-10-14T00:00:00Z' },
+      { capture_id: 'unknown', captured_at: 'not-a-date' },
+      { capture_id: 'b', captured_at: '2026-10-15T00:00:00Z' },
+      { capture_id: 'a', captured_at: '2026-10-15T00:00:00Z' },
+    ];
+    expect(sortByCapturedAt(items, (item) => item.capture_id).map((item) => item.capture_id))
+      .toEqual(['a', 'b', 'z', 'unknown']);
+  });
+
   it('accepts one dropped file and allows removing it', async () => {
     const props = callbacks();
     render(<QuickCapture locale="zh-CN" {...props} />);
@@ -226,6 +237,77 @@ describe('D075.1 capture interactions', () => {
     expect(selected?.textContent).toContain('Exact entry');
   });
 
+  it('orders Reviews by verified capture time, joins legacy dates from exact Inbox paths, and keeps unknown last', async () => {
+    const review = (review_path: string, captured_at?: string | null) => ({
+      review_path, review_sha256: review_path, target_filename: review_path,
+      title: review_path, status: 'pending', captured_at, content: `# ${review_path}`,
+    });
+    const reviews = [review('old.md', '2026-10-10T00:00:00Z'), review('date-only.md', '2026-10-13'), review('legacy.md'), review('unknown.md')];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/review/items')) return ok({ items: reviews });
+      if (url.includes('/api/inbox')) return ok({ items: [
+        { capture_id: 'legacy-source', captured_at: '2026-10-15T00:00:00Z', review_path: 'legacy.md' },
+      ] });
+      if (url.endsWith('/status')) return ok({ promote_enabled: false });
+      return ok(reviews.find((item) => url.endsWith(item.review_path)));
+    }));
+    const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    await screen.findByText('legacy.md', { selector: '.review-page-item strong' });
+    const titles = [...container.querySelectorAll('.review-page-item strong')].map((node) => node.textContent);
+    expect(titles).toEqual(['legacy.md', 'date-only.md', 'old.md', 'unknown.md']);
+    expect(container.querySelector('.review-page-item:last-child')?.textContent).toContain('时间未知');
+  });
+
+  it('resets the independently scrolling Review detail pane to the top when switching rows', async () => {
+    const reviews = [
+      { review_path: 'a.md', review_sha256: 'a', target_filename: 'a.md', title: 'A', status: 'pending', captured_at: '2026-10-15T00:00:00Z', content: '# A' },
+      { review_path: 'b.md', review_sha256: 'b', target_filename: 'b.md', title: 'B', status: 'pending', captured_at: '2026-10-14T00:00:00Z', content: '# B' },
+    ];
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/review/items')) return ok({ items: reviews });
+      if (url.includes('/api/inbox')) return ok({ items: [] });
+      if (url.endsWith('/status')) return ok({ promote_enabled: false });
+      return ok(reviews.find((item) => url.endsWith(item.review_path)));
+    }));
+    const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    await screen.findByRole('heading', { level: 2, name: 'A' });
+    const detail = container.querySelector('.review-page-detail') as HTMLElement;
+    detail.scrollTop = 240;
+    const secondReview = [...container.querySelectorAll<HTMLButtonElement>('.review-page-item')]
+      .find((button) => button.textContent?.includes('b.md'));
+    expect(secondReview).toBeTruthy();
+    fireEvent.click(secondReview!);
+    await screen.findByRole('heading', { level: 2, name: 'B' });
+    expect(detail.scrollTop).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    await screen.findByRole('heading', { level: 2, name: 'B' });
+    expect(container.querySelector('.review-page-item.is-selected')?.textContent).toContain('Bb.md');
+  });
+
+  it('shows one Core status message and hides OCR engine parameters until original text is expanded', async () => {
+    const review = {
+      review_path: 'ocr.md', review_sha256: 'hash', target_filename: 'ocr.md', title: 'OCR', status: 'pending',
+      captured_at: null,
+      content: '---\ntype: review\nsource_type: pdf\n---\n# OCR\n\nOCR: tesseract; languages: chi_sim+eng; pages: 1\n\n识别正文',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/review/items')) return ok({ items: [review] });
+      if (url.includes('/api/inbox')) return ok({ items: [] });
+      if (url.endsWith('/status')) return ok({ promote_enabled: false });
+      return ok(review);
+    }));
+    const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector('.review-markdown-raw')?.textContent).toContain('识别正文'));
+    expect(container.querySelectorAll('.review-connection-status')).toHaveLength(1);
+    expect(container.querySelector('.review-page-toolbar')?.textContent).not.toContain('已连接 Core');
+    expect(container.querySelector('.review-markdown-raw')?.textContent).not.toContain('tesseract');
+    expect(container.querySelector('.review-source-original')?.textContent).toContain('tesseract');
+    expect(container.querySelector('.review-detail-heading')?.textContent).toContain('时间未知');
+  });
+
   it('renders Review body without frontmatter and keeps full metadata collapsible', async () => {
     const review = {
       review_path: 'scan.md', review_sha256: 'hash', target_filename: 'scan.md',
@@ -238,7 +320,8 @@ describe('D075.1 capture interactions', () => {
     expect(container.querySelector('.review-page-detail')?.textContent).not.toContain('type: "review"');
     expect(screen.getByRole('heading', { level: 2, name: '扫描资料' })).toBeTruthy();
     expect(screen.getByText('完整元数据')).toBeTruthy();
-    expect(screen.getAllByText('2026-10-15T08:00:00Z').length).toBe(2);
+    expect(screen.getByText('2026-10-15T08:00:00Z')).toBeTruthy();
+    expect(container.querySelector('.review-detail-heading')?.textContent).toContain('2026/10/15');
     expect(container.querySelector('.review-markdown h1')?.textContent).toBe('扫描资料');
   });
 
@@ -250,8 +333,10 @@ describe('D075.1 capture interactions', () => {
     };
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/review/items') ? ok({ items: [review] }) : String(input).endsWith('/status') ? ok({ promote_enabled: false }) : ok(review)));
     const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
-    expect(await screen.findByText('第一行：编号 A-01', { exact: false })).toBeTruthy();
+    expect((await screen.findAllByText('第一行：编号 A-01', { exact: false })).length).toBeGreaterThan(0);
     expect(container.querySelector('.review-markdown-raw')?.textContent).toContain('第二行  key: value');
+    expect(container.querySelector('.review-markdown-raw')?.textContent).not.toContain('tesseract');
+    expect(container.querySelector('.review-source-original')?.textContent).toContain('tesseract');
     expect(screen.getByText('OCR 识别可能存在误差，请对照原件核对。')).toBeTruthy();
   });
 

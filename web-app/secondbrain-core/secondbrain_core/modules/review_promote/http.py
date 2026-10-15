@@ -1,8 +1,10 @@
 """Dashboard plugin router factory for the Core Review/Promote module."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
+from datetime import date, datetime
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -25,6 +27,40 @@ def _review_status(content):
         if match:
             return match.group(2).strip()
     return "unknown"
+
+
+def _review_captured_at(content):
+    """Return a verifiable ISO timestamp from Review frontmatter, if present."""
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return None
+    if not lines or lines[0].strip() != "---":
+        return None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        match = re.match(r"^captured_at:\s*(.*?)\s*$", line)
+        if not match:
+            continue
+        value = match.group(1)
+        if value.startswith('"'):
+            try:
+                value = json.loads(value)
+            except (ValueError, TypeError):
+                return None
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            try:
+                date.fromisoformat(value)
+                return value
+            except ValueError:
+                return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
+        return value if parsed.tzinfo is not None else None
+    return None
 
 
 def create_core_router(service, review_root, auth, *, promote_enabled=True, include_auth_routes=True):
@@ -52,6 +88,7 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
                 items.append({"review_path": relative,
                               "review_sha256": hashlib.sha256(content).hexdigest(),
                               "target_filename": name, "title": title,
+                              "captured_at": _review_captured_at(content),
                               "status": _review_status(content),
                               "decision": service.get_decision(relative, hashlib.sha256(content).hexdigest())})
         return {"status": "ok", "items": items}
@@ -69,6 +106,7 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
         digest = hashlib.sha256(content).hexdigest()
         return {"status": _review_status(content), "review_path": review_path,
                 "review_sha256": digest,
+                "captured_at": _review_captured_at(content),
                 "target_filename": Path(review_path).name, "title": title,
                 "content": decoded, "decision": service.get_decision(review_path, digest)}
 
