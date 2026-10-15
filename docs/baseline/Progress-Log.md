@@ -685,3 +685,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 2026-10-09/10 的早期开发/模型测试命名记录虽缺 Capture state，但其 Review 保存有效采集日期，超出本次“缺少有效 captured_at”删除范围，全部保留。相同 SHA-256 的两条 iShot PDF 也有有效 state 时间且各有不同的 capture_id、路径和 Review；保留。唯一审批 `capture-1.md` 为 `deferred`，关联记录有有效日期；保留。按对应原始文件名、Review 路径、capture_id 对 Knowledge 精确检索无引用命中。
 - **删除 0 项，备份 0 项。** 没有文件通过删除门槛，因此不创建无用备份；本记录即零删除清单。未读 Raw/Review 正文、未访问 Private，未写入、移动或删除任何业务文件。
 - 部署后 App healthy、Hermes running，容器 ID/镜像/启动时间未变；Compose SHA-256 `b7ca306b82e03b4eae022b8d9ed68beb82b57d1e5b419bf0a4467a632c8a92dc` 不变。App Knowledge RO、Hermes SecondBrain RO、Private 未挂载。没有执行任何容器、Compose、权限或网络变更。
+
+# 2026-10-15 — D076-A.1 Review 排序与布局 App-only 部署
+
+- 部署目标 `9962001bf296ee8804a2037891e9a85633cfb8ea`，构建为 `secondbrain-app:d076a1.1-9962001`（Image ID `sha256:55f40951620fb8b7043933c724f66cbf22a2326a961d654d8671e877c212bcd3`），新 App 容器 `4af3586d92b294f0808118676a94f3d0cf643b70785ebf0fc17f79264dfe8f95` healthy。只更新正式 Compose 中 App build context/image 两项并仅重建 App；Hermes 容器、镜像、启动时间未变。
+- Compose SHA-256 从 `b7ca306b82e03b4eae022b8d9ed68beb82b57d1e5b419bf0a4467a632c8a92dc` 更新为 `e318d4167666877e415203f637eda63a38cde41b01e5d58855dee29ce50a1149`。Raw/Review/Capture state 61 个文件的路径、大小、权限和 SHA-256 部署前后完全一致；Promote=false、Knowledge RO、Private 未挂载。
+- 代码验证：定向前端 31 项、typecheck、Vite build、Core approval auth 13 项、Capture 18 项均通过。HTTPS 根页/health 200、匿名受保护 API 401；正式资源哈希匹配目标构建。隔离运行检查 OCR 依赖存在，本轮没有处理图片或 PDF。
+- App-only 回滚快照保留于 `/volume1/docker/secondbrain/rollback/d076a1.1-predeploy-20261015T072713Z/`；旧镜像 `secondbrain-app:d076a1-55977c8` 保留。
+- **状态：代码已部署，自动化、静态资源、健康和匿名访问边界验证通过；用户登录后的浏览器验收尚未完成。** 待验收桌面 Review 双栏与时间排序/时间未知显示、Inbox/Review 跳转与阅读、预览/下载、Home 基础页面；手机布局另待验收。没有将部署标为用户 ACCEPTED，也没有清理历史记录、重试 OCR、启用 Promote/STT/视觉或更改 Hermes。
