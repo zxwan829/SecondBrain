@@ -4,17 +4,23 @@ updated: 2026-10-16
 status: current
 source: GitHub SecondBrain Monorepo
 ---
-# SecondBrain V1 — 当前交付基线
+# SecondBrain — 当前交付基线（V1 + Personal Intelligence）
 
-> 本文件只维护 V1 完成定义、最新状态、完整 MUST 矩阵、NOW/BLOCKED/DEFERRED 与文档导航。稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
+> 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Personal-Intelligence-Product-Spec.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
 ## 1. V1 完成定义与当前状态
 
-**V1 DONE：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
+**原 V1 业务交付门槛（保留、不缩水）：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
+
+**新的 Companion MVP 门槛（D077，已批准、尚未实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
+
+**阶段安排：** 先做 Companion 能力审计和隔离实证，再按验证结果最小返工，随后继续完成旧 V1 所有 MUST 与多端业务收口；不要因新增目标将既有 MUST 静默延期为永久不做。
 
 **总体状态：`NOT DONE`。** 2026-10-15 已将 GitHub `b34319a` 部署到 NAS 的 `secondbrain-app`；当前 App-only 部署快照、接口验证和回滚点见 `Environment-Baseline.md` 与 `Progress-Log.md`。D076 Organizer 设置页及本地 Mock 检查接口已部署，模型和 Scheduler 均关闭；尚待用户浏览器验收，真实用户数据自动整理未启用。此前一条合成消息完成的 SiliconFlow DeepSeek-V4-Flash 真实 API 闭环仅验证模型链路，¥0.001302 为估算而非账户账单；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
+
+**当前总体状态仍为 NOT DONE。** 下列旧 V1 MUST 保留原有验收事实；新增 Companion 能力在 Section 2.D 单独追踪。批准目标不等于实施/部署。
 
 状态说明：`ACCEPTED` 已有真实用户验收；`PROD-PARTIAL` 生产部分功能可用；`DEV-TESTED` 仅代码/隔离测试；`NOT CONNECTED` 未接入真实数据；`NOT DONE` 尚无完整生产闭环；`UNKNOWN` 未取得足够证据。**此表须逐项覆盖正式规格的 MUST；若以后更改范围，先同步此表，再实施。**
 
@@ -69,10 +75,27 @@ source: GitHub SecondBrain Monorepo
 | 多端与数据同步 | PARTIAL | 核实 Web App 桌面/iPad/手机主要动作及 Obsidian Mac↔NAS 文件实际双向传播 |
 | 生产部署、恢复、安全收尾 | PARTIAL | 真实运行检查、变更快照和回退，收口开发期 unrestricted sudoers；验收与文档 Git 收口 |
 
+### D. 新批准的 Personal Intelligence / Companion MVP（D077；全部待验证）
+
+| 新增核心能力 | 当前证据/状态 | 最小成功验收 |
+|---|---|---|
+| 无提示主动关联 | NOT VERIFIED：旧 Knowledge Retrieval V0 已 ACCEPTED，但仅证明可用搜索/读取；不能证明自动联想 | 不说“搜索知识库”，自然对话能正确使用相关长期记忆；精确事实自动回源 |
+| 自主个人记忆学习 | NOT VERIFIED：Hermes 原生 memory/skill 在当前 App Chat 路径是否运作、是否持久化尚未审计 | 获准聊天低风险经验自动形成可导出记忆；跨会话可用，能查看/纠正/撤销 |
+| 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
+| 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
+| 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |
+| 文件收录→理解→记忆关联 | Capture 有 PROD-PARTIAL，OCR/STT、Review→Promote 缺口仍在 | 保留原件、正确提炼候选/关联，不擅自提升第三方断言为用户事实 |
+| 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
+| 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |
+
+**工作准则：** 不预设 Hermes v0.21.5 支持最新版官方记忆接口；不因新技术趋势直接上 Jev、世界模型、Honcho、图 DB 或 RAG。分层记忆和 loop 是目标能力的实现方式，先复用、测试现有能力再选型。
+
 ## 3. NOW / BLOCKED / DEFERRED、依赖和阻断
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
+| **NEXT-0 / 2026-10-17 起首轮** | **D077 智能伙伴技术可行性：只读审计 + 合成数据隔离实验** | 比对 Hermes 原生记忆与 BFF/Core 最小召回两路线；测零提示联想、跨会话学习、纠正、事实回源、时延/费用/误召回；输出可执行返工清单 | **未执行。** 先读 `Personal-Intelligence-Product-Spec.md` Phase 0；核实实际 Hermes/Chat/记忆能力，不凭官方最新版假设；不动生产/真实数据出站 |
+| **NEXT-1（待 NEXT-0 结果）** | **Companion MVP：自动个人学习、主动联想、自然语言日记/待办** | 内部评测通过且保留正式 Knowledge 人工 Promote、安全、可纠错/迁移；再批准实际施工与生产变更 | 物理记忆方案、Provider/Adapter、专用 Journal/Task API、主动建议触发机制待证 |
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076-organizer-b34319a` healthy；HTTPS health/login/session、Chat capabilities、Inbox、Review 及受保护设置 API smoke 通过；匿名设置 API 401；Hermes 未重启 | 用户浏览器验收新版本设置页、Composer 和手机 Review；真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
@@ -87,11 +110,13 @@ source: GitHub SecondBrain Monorepo
 - Books/People/Finance/Travel/Health 等扩展业务页、原生移动 App、完整独立管理后台：Web App 规格 DEFERRED。
 - 公网直接开放、客户外网配置和商业发行包：当前阶段延期；但本人 V2 的 DSM HTTPS 兼容必须在 V1 内验收。
 - WorkBuddy、n8n 等曾讨论的生态工具：**在本次已核对的 V1 正式规格中未发现其 MUST 约束**；不得擅自标为已取消或已纳入，未来如用户确认范围再更新总矩阵。
+- Jev/Jev-Mem、世界模型、独立记忆 SaaS、重型向量/知识图谱：D077 明确暂缓，除非真实测试指出必要性；不作为 NEXT-0 的默认施工清单。
 
 ## 4. 文档导航
 
 | 内容 | 权威位置 |
 |---|---|
+| 最高产品目标、核心体验、两种学习/知识闭环、返工路线及 NEXT-0 | `Personal-Intelligence-Product-Spec.md`、决策 D077 |
 | V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` |
 | 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
 | 正式决定、理由及替代关系 | `Decision-Log.md` |
