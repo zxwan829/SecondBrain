@@ -55,7 +55,8 @@ class SiliconFlowAdapterTests(unittest.TestCase):
         body = json.loads(seen[0].content)
         self.assertEqual(body["max_tokens"], 300)
         self.assertFalse(body["stream"])
-        self.assertFalse(body["enable_thinking"])
+        self.assertTrue(seen[0].headers.get("x-trace-id"))
+        self.assertNotIn("enable_thinking", body)
         self.assertNotIn("tools", body)
         self.assertNotIn("tool_choice", body)
         self.assertNotIn("parallel_tool_calls", body)
@@ -112,7 +113,7 @@ class SiliconFlowAdapterTests(unittest.TestCase):
         self.assertEqual(normalized[0]["temperature"], 0)
         self.assertEqual(normalized[0]["n"], 1)
         self.assertFalse(normalized[0]["stream"])
-        self.assertFalse(normalized[0]["enable_thinking"])
+        self.assertNotIn("enable_thinking", normalized[0])
         self.assertNotIn("tools", normalized[0])
         self.assertNotIn("tool_choice", normalized[0])
 
@@ -141,6 +142,8 @@ class SiliconFlowAdapterTests(unittest.TestCase):
         finally:
             asyncio.run(client.aclose())
         self.assertEqual(raised.exception.code, "provider_rate_limited")
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertTrue(raised.exception.trace_id)
         self.assertNotIn("sensitive provider detail", str(raised.exception))
         self.assertEqual(count, 1)
 
@@ -170,19 +173,27 @@ class SiliconFlowAdapterTests(unittest.TestCase):
         finally:
             asyncio.run(client.aclose())
         self.assertEqual(raised.exception.code, "provider_response_invalid")
+        self.assertEqual(raised.exception.status_code, 200)
+        self.assertTrue(raised.exception.trace_id)
 
-    def test_provider_usage_above_output_cap_is_rejected(self):
+    def test_reasoning_tokens_above_final_reply_cap_are_reported(self):
         async def handler(request):
-            return response(good_body(completion_tokens=301))
+            body = good_body(completion_tokens=1301)
+            body["usage"]["completion_tokens_details"] = {"reasoning_tokens": 1101}
+            return response(body)
 
         adapter, client = self.make_adapter(handler)
         try:
-            with self.assertRaises(OrganizerAdapterError) as raised:
-                asyncio.run(adapter.extract({"task": "x", "new_user_messages": [], "context_only": {},
-                                              "output_schema": {}}, max_input_tokens=6000, max_output_tokens=300))
+            result = asyncio.run(adapter.extract({"task": "x", "new_user_messages": [], "context_only": {},
+                                                  "output_schema": {}}, max_input_tokens=6000, max_output_tokens=300))
         finally:
             asyncio.run(client.aclose())
-        self.assertEqual(raised.exception.code, "provider_output_exceeded")
+        self.assertEqual(result["usage"]["completion_tokens"], 1301)
+        self.assertEqual(result["usage"]["reasoning_tokens"], 1101)
+        self.assertEqual(result["http_status"], 200)
+        self.assertGreaterEqual(result["elapsed_ms"], 0)
+        self.assertTrue(result["trace_id"])
+        self.assertFalse(SiliconFlowOrganizerModel.capabilities["hard_output_token_limit"])
 
     def test_output_budget_exhaustion_is_rejected_before_network(self):
         count = 0

@@ -13,6 +13,8 @@ import copy
 import json
 import os
 import stat
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +32,10 @@ TIMEOUT_SECONDS = 45
 class OrganizerAdapterError(RuntimeError):
     """Sanitized adapter failure; provider response bodies are never included."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, status_code: int | None = None, trace_id: str | None = None):
         self.code = code
+        self.status_code = status_code
+        self.trace_id = trace_id
         super().__init__(code)
 
 
@@ -123,7 +127,7 @@ class SiliconFlowOrganizerModel:
     capabilities = {
         "no_tools": True,
         "hard_input_token_limit": False,  # byte-bounded locally; tokenizer limit is not provider-attested
-        "hard_output_token_limit": True,  # max_tokens request plus response usage validation
+        "hard_output_token_limit": False,  # provider max_tokens excludes reasoning tokens
         "hard_timeout": True,
         "single_concurrency": True,
         "single_request_per_job": True,
@@ -176,57 +180,80 @@ class SiliconFlowOrganizerModel:
             "max_tokens": max_output_tokens,
             "temperature": 0,
             "n": 1,
-            "enable_thinking": False,
         }
+        request_trace_id = uuid.uuid4().hex
         async with self._semaphore:
+            started = time.monotonic()
             try:
                 response = await asyncio.wait_for(
                     self._client.post(
                         ENDPOINT,
-                        headers={"Authorization": f"Bearer {self._api_key}", "Accept": "application/json"},
+                        headers={"Authorization": f"Bearer {self._api_key}", "Accept": "application/json",
+                                 "X-Trace-Id": request_trace_id},
                         json=request_body,
                     ),
                     timeout=self.timeout_seconds,
                 )
             except asyncio.TimeoutError as exc:
-                raise OrganizerAdapterError("provider_timeout") from exc
+                raise OrganizerAdapterError("provider_timeout", trace_id=request_trace_id) from exc
             except httpx.HTTPError as exc:
-                raise OrganizerAdapterError("provider_transport_error") from exc
+                raise OrganizerAdapterError("provider_transport_error", trace_id=request_trace_id) from exc
+            elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+        trace_id = response.headers.get("x-siliconcloud-trace-id", request_trace_id)
         if response.history or str(response.url) != ENDPOINT:
-            raise OrganizerAdapterError("provider_redirect_rejected")
+            raise OrganizerAdapterError("provider_redirect_rejected", status_code=response.status_code,
+                                        trace_id=trace_id)
         if response.status_code == 429:
-            raise OrganizerAdapterError("provider_rate_limited")
+            raise OrganizerAdapterError("provider_rate_limited", status_code=429, trace_id=trace_id)
         if response.status_code >= 400:
-            raise OrganizerAdapterError("provider_http_error")
+            raise OrganizerAdapterError("provider_http_error", status_code=response.status_code,
+                                        trace_id=trace_id)
         if len(response.content) > MAX_RESPONSE_BYTES:
-            raise OrganizerAdapterError("provider_response_too_large")
+            raise OrganizerAdapterError("provider_response_too_large", status_code=response.status_code,
+                                        trace_id=trace_id)
         try:
             body = response.json()
             choice = body["choices"][0]
             message = choice["message"]
             if message.get("tool_calls") or choice.get("finish_reason") == "tool_calls":
-                raise OrganizerAdapterError("provider_returned_tool_call")
+                raise OrganizerAdapterError("provider_returned_tool_call", status_code=response.status_code,
+                                            trace_id=trace_id)
             if choice.get("finish_reason") == "length":
-                raise OrganizerAdapterError("provider_output_truncated")
+                raise OrganizerAdapterError("provider_output_truncated", status_code=response.status_code,
+                                            trace_id=trace_id)
             raw_content = message["content"]
             usage = body["usage"]
             completion_tokens = usage["completion_tokens"]
-            if type(completion_tokens) is not int or completion_tokens < 0 or completion_tokens > max_output_tokens:
-                raise OrganizerAdapterError("provider_output_exceeded")
+            if type(completion_tokens) is not int or completion_tokens < 0:
+                raise OrganizerAdapterError("provider_usage_invalid", status_code=response.status_code,
+                                            trace_id=trace_id)
             if not isinstance(raw_content, str) or len(raw_content.encode("utf-8")) > max_output_tokens * 32:
-                raise OrganizerAdapterError("provider_output_exceeded")
+                raise OrganizerAdapterError("provider_output_exceeded", status_code=response.status_code,
+                                            trace_id=trace_id)
             result = json.loads(raw_content)
             if not isinstance(result, dict) or set(result) != {"drafts"} or not isinstance(result["drafts"], list):
-                raise OrganizerAdapterError("provider_output_schema_invalid")
+                raise OrganizerAdapterError("provider_output_schema_invalid", status_code=response.status_code,
+                                            trace_id=trace_id)
             clean_usage = {}
             for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
                 value = usage.get(key)
                 if type(value) is not int or value < 0:
-                    raise OrganizerAdapterError("provider_usage_invalid")
+                    raise OrganizerAdapterError("provider_usage_invalid", status_code=response.status_code,
+                                                trace_id=trace_id)
                 clean_usage[key] = value
+            details = usage.get("completion_tokens_details")
+            reasoning_tokens = details.get("reasoning_tokens") if isinstance(details, dict) else None
+            if reasoning_tokens is not None:
+                if type(reasoning_tokens) is not int or reasoning_tokens < 0:
+                    raise OrganizerAdapterError("provider_usage_invalid", status_code=response.status_code,
+                                                trace_id=trace_id)
+                clean_usage["reasoning_tokens"] = reasoning_tokens
             clean_usage["model"] = str(body.get("model", self.model))[:160]
-            return {"drafts": result["drafts"], "usage": clean_usage}
+            return {"drafts": result["drafts"], "usage": clean_usage,
+                    "http_status": response.status_code, "elapsed_ms": elapsed_ms,
+                    "trace_id": trace_id}
         except OrganizerAdapterError:
             raise
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise OrganizerAdapterError("provider_response_invalid") from exc
+            raise OrganizerAdapterError("provider_response_invalid", status_code=response.status_code,
+                                        trace_id=trace_id) from exc

@@ -1,8 +1,8 @@
 # D076 SiliconFlow 多模态综合评测准备
 
-状态：**评测材料与离线方案已准备；真实 API 联调未授权、未执行。**
+状态：**第一批真实调用进行中断保护：DeepSeek 已完成；GLM 请求已发出但结果未能取回；Qwen 未发送。没有重试。**
 
-截至 2026-10-15，评测只使用本目录中的虚构素材与固定答案，不读取 Hermes 会话、正式 Capture/Review/Knowledge，不访问 Private，不创建或读取凭据，不产生供应商请求费用。本目录中 PDF/图片均为合成内容。
+截至 2026-10-15，评测只使用本目录中的虚构素材与固定答案，不读取 Hermes 会话、正式 Capture/Review/Knowledge，不访问 Private；本轮不创建凭据或读取密钥内容，仅核验测试专用凭据文件的权限元数据。本目录中 PDF/图片均为合成内容。
 
 ## 1. 材料
 
@@ -96,13 +96,39 @@ API 公共参数文档列出 `temperature`、`top_p`、`n`、`stream`、`max_tok
 5. **视觉数字准确率**：识别出的明确文本/数值正确项 / 金标准项；错读和缺失分别列出。
 6. **成本/时延**：记录 API request ID/trace ID、HTTP 状态、单调时钟时延、返回 usage；按复核时的官方价估算。用户随后在 SiliconFlow 控制台核对实际费用。API usage 与实际账单不是同义证据。
 
+## 5. 第一批文本模型真实调用前置核验（2026-10-15）
+
+用户已授权在本机以合成样本对三款文本模型各最多调用一次，并确认 SiliconFlow 账户有可用余额；用户接受 `max_tokens=1200` 是最终回复配置上限，思维令牌可能另计费用，¥5 为软预算。测试专用凭据文件的存在、属主、权限及仓库外位置已核验；凭据内容未读取或输出。
+
+本次检查发现现有 Organizer 适配器曾对所有型号统一发送 `enable_thinking=false`，但公开 API 文档只称该参数适用于“大多数推理模型”，未逐一确认本次三款型号均兼容。为避免依赖未经确认的统一参数，适配器已改为省略该字段；三模型相同请求的离线测试继续验证参数一致。
+
+限制说明：SiliconFlow 官方 [Chat Completions API](https://docs.siliconflow.cn/docs/api/chat-completions-post) 明确说明 `max_tokens` **不包含思维链部分**；响应示例中的 `completion_tokens` 则包含 `reasoning_tokens`。用户已明确接受这一点。本次适配器不发送未逐型号核实的 `enable_thinking`，且不再把响应 usage 高于 `max_tokens` 当作拒绝/费用控制；它记录完整 usage（包括供应商返回的 reasoning_tokens）、状态、耗时与 trace ID。官方[推理模型说明](https://docs.siliconflow.cn/docs/userguide/capabilities/reasoning)的 `thinking_budget` 兼容性仍不作为本轮统一参数。
+
+本地专项测试 `tests/test_siliconflow_organizer.py`：**10 passed**。测试确保请求不再统一发送未逐型号核实的 `enable_thinking`，并保留可能高于 `max_tokens` 的 completion/reasoning usage；Mock 测试不涉及真实网络或凭据。
+
+本轮新增 `secondbrain_core/modules/siliconflow_eval_run.py` 和 `run_d076_text_benchmark.py`：使用 UUID 运行 ID、逐模型 `pending/started/completed/unknown` 状态、私有目录与文件权限、原子结果写入和单运行锁。`prepare` / `status` 不发请求；真实 `run` 必须显式指定已有运行 ID、白名单模型、私有 Key 文件路径并传入确认开关。`started` 只表示尝试槽已持久化，不证明请求已发送；执行器重开时，已无活动锁的遗留 `started` 会变为 `unknown`，不会自动重试。完成结果仅保留脱敏的状态、usage、耗时、trace ID 和结构化输出，可追加人工评分及有来源的费用估算；不保存请求头或 Key。`tests/test_siliconflow_eval_run.py` 通过 MockTransport / 慢协程覆盖慢响应、执行器取消与重开恢复、并发启动、重复启动、HTTP 429 及已完成状态恢复。两个专项测试文件合计 **16 passed**。此前 DeepSeek/GLM 请求发生在账本建立前，不能追溯伪造原运行 ID；在 GLM UNKNOWN 状态核清前，不应为相同评测创建新运行并重发 GLM。
+
+已观察到的调用：
+
+| 顺序 | 模型 ID | 状态 | 输入 / 输出 / reasoning / 总 Token | 耗时 | trace ID | 估算费用 | 结果摘要 |
+|---:|---|---|---:|---:|---|---:|---|
+| 1 | `deepseek-ai/DeepSeek-V4-Flash` | HTTP 200，JSON 有效 | 501 / 925 / 454（含于输出）/ 1426 | 7.2 秒 | `49520d7382b94362910446462520f1b5` | ¥0.009828 | 3 条：日记、合并的工作灵感、待办；闲聊和普通问答未生成草稿；引用 ID 与原文吻合 |
+| 2 | `zai-org/GLM-4.5-Air` | 请求已发出；执行器在 30 秒等待后返回仍运行会话，后续结果不可取回 | 未知 | 至少 30 秒等待；最终耗时未知 | 未知 | 未知，待后台核对 | 不重试；不可评估响应 |
+| 3 | `Qwen/Qwen3.5-35B-A3B` | 未发送 | — | — | — | ¥0 本次调用 | 前一请求结果不可观测，按异常停止条件不继续 |
+
+DeepSeek 估价按本次时段（北京时间 08:00–次日 02:00）公开非缓存价 ¥3/M 输入、¥9/M 输出计算，不应用缓存折扣；思维令牌已包含在 925 completion tokens 中，没有重复相加。此估价不是后台账单。GLM 请求可能已产生费用，用户需在 SiliconFlow 控制台按本表 trace/time 核对。¥5 仍是软预算，不是供应商硬上限。
+
+执行器没有保留 GLM 请求对应的会话句柄，因此无法取得最终 HTTP 状态、usage、响应或 trace ID。不能安全确认该请求成功、失败或是否计费；不得重试。此项结果可观测性问题解决并由用户核对 GLM 后台费用前，不再发起后续模型调用。
+
+本轮没有已连接的 SiliconFlow 控制台账单会话，且用户明确禁止本轮新 API 请求；因此未能只读查询上一笔 GLM 请求记录。其请求是否完成及实际费用仍为 **UNKNOWN**，没有假设未计费。已知 DeepSeek 的 trace ID 可用于控制台核账。新增持久化执行器是在本次丢失事件后实现；不能追溯补造 GLM 原始请求的状态记录。
+
 横评结果仅代表这组人工合成样本，不外推一般能力。预期记录表模板：
 
 | 序号/任务 | 模型 ID | 状态/trace ID | 结果/F1 | 引用准确率 | 重复率 | JSON/结构率 | 视觉字段正确数 | 延时 | 输入/输出 usage | 估算 USD | 控制台实费 |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | 1–12 | 联调时填写 | 未请求 | — | — | — | — | — | — | — | — | 待用户核账 |
 
-## 5. 预算边界与联调前授权
+## 6. 预算边界与联调前授权
 
 总目标仍为 **人民币 5 元**，只是目标预算，供应商硬封顶未证明。以下只是透明的量级估算，假设对每个文本模型分别使用 Organizer 6k/1.2k、文件 3k/0.5k、PDF 5k/0.8k 输入/输出 Token；视觉每项约 1k 文本输入 + 600 输出，另计图像 Token：DeepSeek 按官方“最多 384 token/图”与 3 图计 1152，Qwen 按 `detail=low` 3×256 计 768。GLM 图像 Token 规则未查到，表中先按纯文字基线计算：
 
@@ -126,7 +152,7 @@ API 公共参数文档列出 `temperature`、`top_p`、`n`、`stream`、`max_tok
 
 **未完成/阻断：** 无真实 API 可用性/参数兼容性确认；无供应商硬输入 Token 或硬支出封顶证据；本机无 Tesseract，扫描件 OCR 实际文本需另行完成本地离线验收；GLM 图像输入的具体尺寸/图片计费规则待官方型号资料或联调前控制台复核。Organizer 仍关闭，定时任务不运行。
 
-## 6. Fixture SHA-256
+## 7. Fixture SHA-256
 
 | 文件 | SHA-256 |
 |---|---|
