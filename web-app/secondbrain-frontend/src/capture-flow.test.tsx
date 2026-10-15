@@ -12,31 +12,142 @@ const ok = (body: unknown, contentType = 'application/json') => ({
 });
 
 describe('D075.1 capture interactions', () => {
-  it('accepts a single dropped file and allows removing it', async () => {
+  it('accepts one dropped file and allows removing it', async () => {
     const props = callbacks();
     render(<QuickCapture locale="zh-CN" {...props} />);
-    fireEvent.click(screen.getByRole('button', { name: '文件' }));
     const file = new File(['hello'], 'notes.txt', { type: 'text/plain' });
-    const dropzone = screen.getByText('将一个文件拖到这里').closest('.capture-dropzone')!;
-    fireEvent.dragEnter(dropzone, { dataTransfer: { files: [file] } });
-    fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
+    fireEvent.drop(screen.getByRole('region', { name: '快速收录' }), { dataTransfer: { files: [file], types: ['Files'] } });
     expect(await screen.findByText('notes.txt')).toBeTruthy();
     expect(screen.getByText(/KiB/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '撤销' }));
+    fireEvent.click(screen.getByRole('button', { name: '移除附件' }));
     expect(screen.queryByText('notes.txt')).toBeNull();
+  });
+
+  it('uses the file chooser and rejects unsupported or oversized files', async () => {
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    const input = screen.getByLabelText('选择附件') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['x'], 'bad.exe')] } });
+    expect((await screen.findByRole('alert')).textContent).toContain('此文件类型不受支持');
+    const tooLarge = new File([new Uint8Array(20 * 1024 * 1024 + 1)], 'large.pdf', { type: 'application/pdf' });
+    fireEvent.change(input, { target: { files: [tooLarge] } });
+    expect((await screen.findByRole('alert')).textContent).toContain('不能超过 20 MiB');
+    const selected = new File(['sample'], 'notes.md', { type: 'text/markdown' });
+    fireEvent.change(input, { target: { files: [selected] } });
+    expect(await screen.findByText('notes.md')).toBeTruthy();
+    expect(input.value).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: '更换' }));
+    fireEvent.change(input, { target: { files: [new File(['new'], 'replacement.pdf', { type: 'application/pdf' })] } });
+    expect(await screen.findByText('replacement.pdf')).toBeTruthy();
+    expect(screen.queryByText('notes.md')).toBeNull();
+  });
+
+  it('turns an explicitly pasted clipboard image into an attachment and keeps ordinary text paste', async () => {
+    const createObjectURL = vi.fn().mockReturnValue('blob:preview');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL });
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    const input = screen.getByLabelText('收录内容');
+    const image = new File(['image-bytes'], 'clipboard.png', { type: 'image/png' });
+    const clipboardItem = { type: 'image/png', getAsFile: () => image };
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, 'clipboardData', { value: { items: [clipboardItem] } });
+    input.dispatchEvent(pasteEvent);
+    expect(await screen.findByText('pasted-image.png')).toBeTruthy();
+    expect(createObjectURL).toHaveBeenCalledWith(image);
+    fireEvent.click(screen.getByRole('button', { name: '移除附件' }));
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview'));
+
+    const textPaste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(textPaste, 'clipboardData', { value: { items: [] } });
+    input.dispatchEvent(textPaste);
+    expect(textPaste.defaultPrevented).toBe(false);
+  });
+
+  it('sends a sole valid URL to URL capture and preserves Markdown text through Text Capture', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce(ok({ capture_id: '1'.repeat(32), raw_path: 'url.md', status: 'completed' }))
+      .mockResolvedValueOnce(ok({ capture_id: '2'.repeat(32), raw_path: 'markdown.md', status: 'completed' }));
+    vi.stubGlobal('fetch', request);
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    const input = screen.getByLabelText('收录内容');
+    fireEvent.change(input, { target: { value: '  https://example.com/path  ' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
+    await screen.findByText('url.md');
+    expect(request.mock.calls[0][0]).toBe('/api/capture/url');
+    expect(JSON.parse(request.mock.calls[0][1].body)).toEqual({ url: 'https://example.com/path', capture_context: '' });
+
+    fireEvent.click(screen.getByRole('button', { name: '继续收录' }));
+    const markdown = '# 标题\n\n- 原样保留 **格式**';
+    fireEvent.change(input, { target: { value: markdown } });
+    fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
+    await screen.findByText('markdown.md');
+    expect(request.mock.calls[1][0]).toBe('/api/capture/text');
+    expect(JSON.parse(request.mock.calls[1][1].body).text).toBe(markdown);
+  });
+
+  it('uses composer text as attachment context and keeps both fields on failure', async () => {
+    const request = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({ detail: 'write failed' }) });
+    vi.stubGlobal('fetch', request);
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    const input = screen.getByLabelText('收录内容') as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: '关于这张图的说明' } });
+    fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['x'], 'note.txt', { type: 'text/plain' })] } });
+    fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('write failed');
+    expect(input.value).toBe('关于这张图的说明');
+    const form = request.mock.calls[0][1].body as FormData;
+    expect(form.get('capture_context')).toBe('关于这张图的说明');
+    expect((form.get('file') as File).name).toBe('note.txt');
+  });
+
+  it('clears a selected attachment only after the server confirms its Raw path', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ capture_id: '4'.repeat(32), raw_path: 'photo.png', status: 'processing' })));
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['image'], 'photo.png', { type: 'image/png' })] } });
+    expect(await screen.findByText('photo.png')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
+    await screen.findByText('photo.png', { selector: '.capture-result span' });
+    expect(screen.queryByRole('img', { name: 'photo.png' })).toBeNull();
+    expect(screen.getByRole('button', { name: '继续收录' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '前往收件箱' })).toBeTruthy();
+  });
+
+  it('shows the shared Composer directly in Inbox without mode switches or a separate context field', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [] })));
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: '收件箱' })).toBeTruthy();
+    expect(screen.getByLabelText('收录内容')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '添加附件' })).toBeTruthy();
+    expect(screen.queryByPlaceholderText('补充说明（可选）')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Markdown' })).toBeNull();
+  });
+
+  it('does not submit Enter during IME composition, while Shift+Enter remains a newline', async () => {
+    const request = vi.fn().mockResolvedValue(ok({ capture_id: '3'.repeat(32), raw_path: 'ime.md', status: 'completed' }));
+    vi.stubGlobal('fetch', request);
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    const input = screen.getByLabelText('收录内容');
+    fireEvent.change(input, { target: { value: '中文输入' } });
+    fireEvent.compositionStart(input);
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229, isComposing: true });
+    expect(request).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(request).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(input);
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 13, isComposing: false });
+    await screen.findByText('ime.md');
+    expect(request).toHaveBeenCalledOnce();
   });
 
   it('clears input only after server confirms Raw and keeps the result actions', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ capture_id: 'a'.repeat(32), raw_path: 'note.md', status: 'processing' })));
     const props = callbacks();
     render(<QuickCapture locale="zh-CN" {...props} />);
-    const input = screen.getByPlaceholderText('粘贴文本…') as HTMLTextAreaElement;
+    const input = screen.getByLabelText('收录内容') as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: 'keep this capture' } });
-    fireEvent.change(screen.getByPlaceholderText('补充说明（可选）'), { target: { value: 'context' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存到收件箱' }));
+    fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
     await screen.findByText('note.md');
     expect(input.value).toBe('');
-    expect((screen.getByPlaceholderText('补充说明（可选）') as HTMLInputElement).value).toBe('');
     expect(screen.getByRole('button', { name: '继续收录' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '前往收件箱' }));
     expect(props.onGoInbox).toHaveBeenCalledOnce();
@@ -45,9 +156,9 @@ describe('D075.1 capture interactions', () => {
   it('preserves text when the server rejects capture before Raw is saved', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400, json: async () => ({ detail: 'invalid input' }) }));
     render(<QuickCapture locale="zh-CN" {...callbacks()} />);
-    const input = screen.getByPlaceholderText('粘贴文本…') as HTMLTextAreaElement;
+    const input = screen.getByLabelText('收录内容') as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: 'retry this' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存到收件箱' }));
+    fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
     await screen.findByRole('alert');
     expect(input.value).toBe('retry this');
   });
@@ -58,8 +169,8 @@ describe('D075.1 capture interactions', () => {
     const request = vi.fn().mockReturnValue(pending);
     vi.stubGlobal('fetch', request);
     render(<QuickCapture locale="zh-CN" {...callbacks()} />);
-    fireEvent.change(screen.getByPlaceholderText('粘贴文本…'), { target: { value: 'single request' } });
-    const form = screen.getByPlaceholderText('粘贴文本…').closest('form')!;
+    fireEvent.change(screen.getByLabelText('收录内容'), { target: { value: 'single request' } });
+    const form = screen.getByLabelText('收录内容').closest('form')!;
     fireEvent.submit(form); fireEvent.submit(form);
     expect(request).toHaveBeenCalledTimes(1);
     resolveResponse(ok({ capture_id: 'e'.repeat(32), raw_path: 'single.md', status: 'completed' }));
@@ -70,7 +181,7 @@ describe('D075.1 capture interactions', () => {
     const item = { capture_id: 'b'.repeat(32), source_type: 'text', input_type: 'md', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/x.md', raw_path: 'x.md', review_path: 'nested/exact.md', status: 'completed', title: 'Inbox source' };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
     const onReview = vi.fn();
-    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={onReview} />);
+    render(<InboxPage locale="zh-CN" onReview={onReview} />);
     fireEvent.click(await screen.findByRole('button', { name: '查看 Review' }));
     expect(onReview).toHaveBeenCalledWith('nested/exact.md');
 
@@ -119,7 +230,7 @@ describe('D075.1 capture interactions', () => {
   it('shows a safe text preview and download separately', async () => {
     const item = { capture_id: 'd'.repeat(32), source_type: 'markdown', input_type: 'md', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/readme.md', raw_path: 'readme.md', status: 'completed', title: 'Read me', content_preview: '# safe' };
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/preview') ? ok('# Safe text\n<script>text only</script>', 'text/plain') : ok({ items: [item] })));
-    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: '预览与详情' }));
     expect(await screen.findByText(/<script>text only<\/script>/)).toBeTruthy();
     expect(screen.getAllByRole('link', { name: '下载原件' })).toHaveLength(2);
@@ -167,7 +278,7 @@ describe('D075.1 capture interactions', () => {
   it('shows image OCR partial success neutrally and hides a useless vision retry', async () => {
     const item = { capture_id: 'a'.repeat(32), source_type: 'image', input_type: 'png', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/p.png', raw_path: 'p.png', review_path: 'p.md', status: 'partial_success', title: 'p', processor: { kind: 'image_ocr' }, error: { code: 'processor_unavailable', message: 'AI scene description is not configured.' } };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
-    const { container } = render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    const { container } = render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
     await screen.findByRole('heading', { name: 'p.png' });
     expect(screen.getByText('文字识别完成，画面理解暂未接入。')).toBeTruthy();
     expect(container.querySelector('.capture-alert')).toBeNull();
@@ -177,7 +288,7 @@ describe('D075.1 capture interactions', () => {
   it('keeps retry and a clear error for actual OCR failures without a Review', async () => {
     const item = { capture_id: 'c'.repeat(32), source_type: 'image', input_type: 'png', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/p.png', raw_path: 'p.png', status: 'partial_success', title: 'p', error: { code: 'processing_failed', message: 'Image OCR exceeded its time limit' } };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
-    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
     await screen.findByRole('heading', { name: 'p.png' });
     expect(screen.getByText('Image OCR exceeded its time limit')).toBeTruthy();
     expect(screen.getByRole('button', { name: '重试处理' })).toBeTruthy();
@@ -187,7 +298,7 @@ describe('D075.1 capture interactions', () => {
     const newer = { capture_id: 'f'.repeat(32), source_type: 'pdf', input_type: 'pdf', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/safe.pdf', raw_path: 'safe.pdf', status: 'completed', title: 'safe', display_filename: '会议纪要.pdf', document_title: '(anonymous)' };
     const legacy = { ...newer, capture_id: 'e'.repeat(32), display_filename: undefined, raw_path: '旧版计划.pdf', title: '(anonymous)' };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [newer, legacy] })));
-    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
 
     expect(await screen.findByRole('heading', { name: '会议纪要.pdf' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '旧版计划.pdf' })).toBeTruthy();
@@ -197,7 +308,7 @@ describe('D075.1 capture interactions', () => {
   it('does not offer a Review action when no Review path exists', async () => {
     const item = { capture_id: 'c'.repeat(32), source_type: 'image', input_type: 'png', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/p.png', raw_path: 'p.png', status: 'partial_success', title: 'Image', error: { code: 'processor_unavailable', message: 'No processor' } };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
-    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
     await screen.findByRole('heading', { name: 'p.png' });
     expect(screen.queryByRole('button', { name: '查看 Review' })).toBeNull();
     expect(screen.getByText('No processor')).toBeTruthy();

@@ -82,6 +82,35 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .inbox-links a, .inbox-links button { color: #8bb9ff; background: none; border: 0; font: inherit; font-size: 12px; text-decoration: none; cursor: pointer; }
 .inbox-links a:hover, .inbox-links button:hover { color: #fff; text-decoration: underline; }
 .capture-empty { padding: 36px; color: var(--sb-muted); text-align: center; background: var(--sb-surface); border: 1px dashed var(--sb-border-strong); border-radius: 14px; }
+.unified-composer { position: relative; margin: 0 0 22px; padding: 12px; background: linear-gradient(145deg, rgb(13 20 36 / 98%), rgb(9 17 31 / 99%)); border: 1px solid #263b5a; border-radius: 16px; box-shadow: var(--sb-shadow); transition: border-color var(--sb-motion) ease, background var(--sb-motion) ease; }
+.unified-composer:focus-within { border-color: rgb(74 137 232 / 70%); box-shadow: 0 0 0 2px rgb(40 112 248 / 12%), var(--sb-shadow); }
+.unified-composer.is-drag-over { border-color: #65a1ff; background: #101d33; }
+.unified-composer form { display: grid; gap: 10px; }
+.unified-composer textarea { display: block; width: 100%; min-height: 96px; max-height: 38vh; padding: 10px 12px; color: var(--sb-text); background: transparent; border: 0; outline: 0; resize: vertical; font: inherit; line-height: 1.55; }
+.unified-composer textarea::placeholder { color: #7486a5; }
+.unified-file-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.unified-attachment { display: flex; align-items: center; gap: 11px; min-width: 0; max-width: min(100%, 420px); padding: 8px 9px; background: #080f1d; border: 1px solid var(--sb-border-strong); border-radius: 11px; }
+.unified-attachment > img, .unified-attachment-icon { display: grid; flex: 0 0 48px; width: 48px; height: 48px; place-items: center; object-fit: cover; color: #9fc6ff; background: rgb(40 112 248 / 13%); border-radius: 8px; font-size: 10px; font-weight: 700; }
+.unified-attachment-copy { display: grid; min-width: 0; gap: 4px; }
+.unified-attachment-copy strong { overflow: hidden; color: var(--sb-text-soft); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.unified-attachment-copy small { color: var(--sb-muted); }
+.unified-attachment-replace { flex: 0 0 auto; min-height: 30px; padding: 0 9px; color: #9fc6ff; background: #111d31; border: 1px solid var(--sb-border-strong); border-radius: 8px; font-size: 11px; cursor: pointer; }
+.unified-attachment-remove { flex: 0 0 30px; width: 30px; height: 30px; margin-left: auto; color: var(--sb-text-soft); background: #15233a; border: 1px solid var(--sb-border-strong); border-radius: 8px; font-size: 20px; cursor: pointer; }
+.unified-composer-toolbar { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 8px 0 0; border-top: 1px solid rgb(255 255 255 / 7%); }
+.unified-add-button, .unified-send-button { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; color: var(--sb-text-soft); background: #15233a; border: 1px solid var(--sb-border-strong); border-radius: 50%; font-size: 23px; line-height: 1; cursor: pointer; }
+.unified-add-button:disabled, .unified-send-button:disabled { opacity: .5; cursor: wait; }
+.unified-composer-hint { flex: 1; min-width: 0; color: var(--sb-muted); font-size: 11px; }
+.unified-send-button { color: white; background: linear-gradient(135deg, #2870f8, #5d5ce2); border-color: rgb(112 158 255 / 45%); font-size: 20px; font-weight: 700; }
+.unified-send-spinner { width: 16px; height: 16px; border: 2px solid rgb(255 255 255 / 40%); border-top-color: white; border-radius: 50%; animation: unified-spin 650ms linear infinite; }
+@keyframes unified-spin { to { transform: rotate(360deg); } }
+.unified-busy-status { padding: 4px 0 0; color: var(--sb-muted); font-size: 11px; }
+.unified-result-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.unified-result-actions .capture-primary, .unified-result-actions .capture-secondary { min-height: 34px; }
+.unified-drop-hint { position: absolute; z-index: 2; inset: 5px; display: grid; place-items: center; color: #eaf2ff; background: rgb(7 16 32 / 92%); border: 1px dashed #65a1ff; border-radius: 12px; pointer-events: none; }
+.unified-capture-modal .unified-composer { margin: 18px 0 0; }
+.unified-capture-modal .unified-composer textarea { min-height: 170px; }
+.unified-capture-modal .unified-composer-toolbar { justify-content: space-between; }
+.unified-capture-modal .unified-composer-hint { max-width: 340px; }
 .capture-modal-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 18px; background: rgb(0 4 12 / 75%); backdrop-filter: blur(8px); }
 .capture-modal { width: min(620px, 100%); max-height: min(90vh, 800px); overflow-y: auto; padding: 22px; color: var(--sb-text); background: linear-gradient(145deg, #101a2d, #09111f); border: 1px solid #2a3d5d; border-radius: 18px; box-shadow: 0 24px 80px rgb(0 0 0 / 55%); }
 .capture-modal > header { display: flex; justify-content: space-between; align-items: flex-start; }
@@ -532,6 +561,13 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 }
 @media (max-width: 760px) {
   :root { --sb-type-meta: 10px; --sb-type-caption: 11px; --sb-type-body: 12px; --sb-type-title: 15px; --sb-chart-width: 60px; --sb-chart-height: 38px; --sb-kpi-number-indent: 16px; --sb-kpi-status-indent: 7px; }
+  .unified-composer { padding: 9px; border-radius: 13px; }
+  .unified-composer textarea { min-height: 84px; max-height: 32vh; padding: 9px 8px; font-size: 14px; }
+  .unified-composer-hint { font-size: 10px; line-height: 1.35; }
+  .unified-attachment { max-width: 100%; }
+  .unified-result-actions { justify-content: stretch; }
+  .unified-result-actions > button { flex: 1; padding: 0 10px; }
+  .unified-capture-modal .unified-composer textarea { min-height: 145px; }
   .sb-app { display: block; min-height: 100dvh; overflow: clip; }
   .sidebar { position: fixed; z-index: 50; inset: 0 auto 0 0; display: flex; width: min(82vw, 292px); height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 13px max(14px, env(safe-area-inset-bottom)); border-right: 1px solid #263a56; box-shadow: 18px 0 48px rgb(0 0 0 / 42%); transform: translateX(-105%); transition: transform var(--sb-motion) cubic-bezier(.2,.75,.25,1); }
   .sidebar.is-open { transform: translateX(0); }

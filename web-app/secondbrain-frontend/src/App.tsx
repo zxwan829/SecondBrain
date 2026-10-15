@@ -6,6 +6,7 @@ import { parseReviewDocument, ReviewMarkdown } from './ReviewMarkdown';
 import aiCubeUrl from './assets/ai-cube-user.png';
 import hermesOrbUrl from './assets/hermes-planet-user.png';
 import todayLandscapeUrl from './assets/today-lake-background.png';
+import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -339,7 +340,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} onBack={() => navigate('home')} />
-          : page === 'inbox' ? <InboxPage locale={locale} onCapture={() => setCaptureOpen(true)} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); history.pushState({}, '', `/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
+          : page === 'inbox' ? <InboxPage locale={locale} onComplete={() => window.dispatchEvent(new Event('sb-inbox-refresh'))} onGoInbox={() => navigate('inbox')} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); history.pushState({}, '', `/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
           : page === 'chat' ? <ChatPage locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
@@ -348,7 +349,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-export function InboxPage({ locale, onCapture, onReview }: { locale: Locale; onCapture: () => void; onReview: (reviewPath: string) => void }) {
+export function InboxPage({ locale, onComplete = () => undefined, onGoInbox = () => undefined, onReview }: { locale: Locale; onComplete?: () => void; onGoInbox?: () => void; onReview: (reviewPath: string) => void }) {
   const [items, setItems] = useState<CaptureItem[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -385,7 +386,8 @@ export function InboxPage({ locale, onCapture, onReview }: { locale: Locale; onC
     }
   };
   return <section className="capture-page" aria-labelledby="inbox-title">
-    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div><button className="capture-primary" onClick={onCapture}>{text ? 'Quick capture' : '快速收录'}</button></header>
+    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div></header>
+    <UnifiedCaptureComposer locale={locale} onComplete={onComplete} onGoInbox={onGoInbox} />
     {error && <p role="alert" className="capture-alert">{error}</p>}
     <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
       <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{captureDisplayFilename(item, locale)}</h2><p>{item.source_type} · {new Date(item.captured_at).toLocaleString(text ? 'en-US' : 'zh-CN')}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
@@ -437,80 +439,11 @@ function CapturePreview({ item, locale, content, error, onClose, onReview }: { i
 }
 
 export function QuickCapture({ locale, onClose, onComplete, onGoInbox }: { locale: Locale; onClose: () => void; onComplete: () => void; onGoInbox: () => void }) {
-  const [kind, setKind] = useState<'text' | 'markdown' | 'url' | 'file'>('text');
-  const [value, setValue] = useState('');
-  const [context, setContext] = useState('');
-  const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<CaptureItem | null>(null);
-  const [error, setError] = useState('');
-  const [dragOver, setDragOver] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const submitting = useRef(false);
   const text = locale === 'en';
-  useEffect(() => {
-    if (!result || result.status !== 'processing') return;
-    let active = true;
-    const timer = window.setInterval(async () => {
-      try {
-        const response = await fetch(`/api/capture/${encodeURIComponent(result.capture_id)}`, { credentials: 'same-origin' });
-        if (!response.ok) return;
-        const latest = await response.json() as CaptureItem;
-        if (active) {
-          setResult(latest);
-          if (latest.status !== 'processing') onComplete();
-        }
-      } catch { /* Inbox keeps the durable state available after a transient disconnect. */ }
-    }, 900);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [result?.capture_id, result?.status]);
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (submitting.current) return;
-    submitting.current = true; setBusy(true); setError(''); setResult(null);
-    try {
-      let response: Response;
-      if (kind === 'file') {
-        if (!file) throw new Error(text ? 'Choose a file first.' : '请先选择文件。');
-        const form = new FormData(); form.set('file', file); form.set('capture_context', context);
-        response = await fetch('/api/capture/files', { method: 'POST', credentials: 'same-origin', body: form });
-      } else {
-        response = await fetch(kind === 'url' ? '/api/capture/url' : '/api/capture/text', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(kind === 'url' ? { url: value, capture_context: context } : { text: value, source_type: kind, capture_context: context }) });
-      }
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      if (!payload.capture_id || !payload.raw_path) throw new Error(text ? 'The server did not confirm Raw preservation.' : '服务器未确认原件已保存，输入已保留。');
-      setValue(''); setContext(''); setFile(null);
-      if (fileInput.current) fileInput.current.value = '';
-      setResult(payload); onComplete();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { submitting.current = false; setBusy(false); }
-  };
-  const acceptFile = (candidate?: File) => {
-    if (!candidate) return;
-    const allowed = /\.(txt|md|markdown|pdf|png|jpe?g|webp|gif|wav|mp3|m4a|aac|ogg|flac)$/i.test(candidate.name);
-    if (!allowed) { setError(text ? 'This file type is not supported.' : '此文件类型不受支持。'); return; }
-    if (candidate.size > 20 * 1024 * 1024) { setError(text ? 'Files must be 20 MiB or smaller.' : '文件不能超过 20 MiB。'); return; }
-    setError(''); setFile(candidate);
-  };
-  const fileSize = (size: number) => size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KiB` : `${(size / (1024 * 1024)).toFixed(2)} MiB`;
   return <div className="capture-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="capture-modal" role="dialog" aria-modal="true" aria-labelledby="capture-dialog-title">
-      <header><div><p className="eyebrow">SECONDBRAIN / CAPTURE</p><h2 id="capture-dialog-title">{text ? 'Quick capture' : '快速收录'}</h2></div><button className="capture-close" onClick={onClose} aria-label={text ? 'Close' : '关闭'}>×</button></header>
-      <div className="capture-tabs">{(['text', 'markdown', 'url', 'file'] as const).map((tab) => <button className={kind === tab ? 'selected' : ''} key={tab} onClick={() => setKind(tab)}>{tab === 'text' ? (text ? 'Text' : '文本') : tab === 'markdown' ? 'Markdown' : tab === 'url' ? 'URL' : (text ? 'File' : '文件')}</button>)}</div>
-      <form onSubmit={(event) => void submit(event)}>
-        {kind === 'text' || kind === 'markdown' ? <textarea autoFocus required maxLength={200000} value={value} onChange={(event) => setValue(event.target.value)} placeholder={text ? (kind === 'markdown' ? 'Paste Markdown…' : 'Paste text…') : (kind === 'markdown' ? '粘贴 Markdown…' : '粘贴文本…')} /> : kind === 'url' ? <input autoFocus required type="url" maxLength={2048} value={value} onChange={(event) => setValue(event.target.value)} placeholder="https://…" /> : <div className={`capture-dropzone ${dragOver ? 'is-drag-over' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragOver(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragOver(false); }} onDrop={(event) => { event.preventDefault(); setDragOver(false); acceptFile(event.dataTransfer.files[0]); }}>
-          <input ref={fileInput} type="file" accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp,.gif,.wav,.mp3,.m4a,.aac,.ogg,.flac" onChange={(event) => acceptFile(event.target.files?.[0] ?? undefined)} aria-label={text ? 'Choose a file' : '选择文件'} />
-          <strong>{dragOver ? (text ? 'Drop to add this file' : '松开鼠标以添加文件') : file ? file.name : (text ? 'Drop one file here' : '将一个文件拖到这里')}</strong>
-          <small>{file ? `${file.type || file.name.split('.').pop()?.toUpperCase()} · ${fileSize(file.size)}` : (text ? 'or use the file picker · TXT, Markdown, PDF, image, audio · max 20 MiB' : '也可点击选择 · TXT、Markdown、PDF、图片、音频 · 最大 20 MiB')}</small>
-          <div className="capture-dropzone-actions"><button type="button" className="capture-secondary" onClick={() => fileInput.current?.click()}>{text ? (file ? 'Replace file' : 'Choose file') : (file ? '更换文件' : '选择文件')}</button>{file && <button type="button" className="capture-secondary" onClick={() => { setFile(null); if (fileInput.current) fileInput.current.value = ''; }}>{text ? 'Remove' : '撤销'}</button>}</div>
-        </div>}
-        <input value={context} maxLength={2000} onChange={(event) => setContext(event.target.value)} placeholder={text ? 'Optional capture context' : '补充说明（可选）'} />
-        {error && <p role="alert" className="capture-alert">{error}</p>}
-        {busy && <div role="status" className="capture-result"><strong>{captureStatus('receiving', text)}</strong></div>}
-        {result && <div role="status" className="capture-result"><strong>{captureStatus(result.status, text)}</strong><span>{result.status === 'partial_success' ? (text ? `Raw original saved: ${result.raw_path}. ${result.error?.message || ''}` : `原件已保存：${result.raw_path}。${result.error?.message || ''}`) : result.error?.message || result.review_path || result.raw_path}</span></div>}
-        <footer>{result ? <><button type="button" className="capture-secondary" onClick={() => { setResult(null); setError(''); }}>{text ? 'Continue capture' : '继续收录'}</button><button type="button" className="capture-primary" onClick={onGoInbox}>{text ? 'Go to Inbox' : '前往收件箱'}</button></> : <><button type="button" className="capture-secondary" onClick={onClose}>{text ? 'Close' : '关闭'}</button><button type="submit" className="capture-primary" disabled={busy || (kind === 'file' ? !file : !value.trim())}>{busy ? (text ? 'Submitting…' : '提交中…') : (text ? 'Save to Inbox' : '保存到收件箱')}</button></>}</footer>
-      </form>
+    <section className="capture-modal unified-capture-modal" role="dialog" aria-modal="true" aria-labelledby="capture-dialog-title">
+      <header><div><p className="eyebrow">SECONDBRAIN / CAPTURE</p><h2 id="capture-dialog-title">{text ? 'Quick capture' : '快速收录'}</h2></div><button className="capture-close" type="button" onClick={onClose} aria-label={text ? 'Close' : '关闭'}>×</button></header>
+      <UnifiedCaptureComposer locale={locale} onComplete={onComplete} onGoInbox={onGoInbox} />
     </section>
   </div>;
 }

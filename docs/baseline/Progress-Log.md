@@ -645,3 +645,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - HTTPS 根页/health 200；短时 HTTPS 登录 smoke 的 Home、Chat、Inbox、Review、文本/PDF 预览/下载均成功，匿名 API 401，Secure/HttpOnly/SameSite=Strict Cookie 确认。D075 47 个相关文件前后清单和 Secret 校验值一致。无生产 OCR 上传或 Knowledge 写入。
 - Hermes 容器、镜像、启动时间未变化。App-only 回滚快照位于 /volume1/docker/secondbrain/rollback/d076a-predeploy-20261015-003736/；详细哈希、容器与验收证据见 Environment-Baseline.md。
 - **状态边界：** D076-A 运行依赖已部署；用户尚需在 63013 上传无敏感中文图片及扫描 PDF 完成页面验收。未自动重试既有素材；图像 AI 描述、STT 后端、微信及 D076-B 未完成，D076 整体仍 NOT DONE。
+
+# 2026-10-15 — Unified Capture Composer（本地）
+
+- 抽出共享 UnifiedCaptureComposer，Inbox 直接内嵌，首页「快速收录」继续使用同一组件和逻辑；移除输入类型切换与独立 capture_context 字段，不改变 FE-4 视觉方向。
+- 单一合法 HTTP(S) URL 调用现有 URL API；其余文本原样调用 Text API；带附件时文本作为 `capture_context` 调用现有文件 API。支持剪贴板图片、单文件拖放、系统文件选择、附件本地预览/移除/更换，继续执行允许类型及 20 MiB 限制。
+- Enter 发送、Shift+Enter 保留换行并检查 IME composition；请求重复保护。仅服务端确认 `capture_id` 和 Raw 路径后清空输入，状态轮询与 Inbox 刷新保留；失败保留文本和附件。对象 URL 在附件移除/更换或组件卸载时释放。
+- 前端定向交互测试 **22 passed**，`npm run typecheck`、`npm run build` 通过。覆盖 URL/Text 分流、Markdown 原文、剪贴板图片和普通文本粘贴、拖放、文件选择/校验、附件 context、IME、并发保护、成功清空与失败保留。
+- **状态：本地实现并测试，尚未部署 NAS，也未进行浏览器用户验收。**
