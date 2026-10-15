@@ -9,7 +9,9 @@ from PIL import Image
 
 from secondbrain_core.modules.capture import CaptureService
 from secondbrain_core.modules.hermes_api import HermesAPI
-from secondbrain_core.modules.multimodal_capture import MultimodalCaptureProcessors
+from secondbrain_core.modules.multimodal_capture import (
+    MAX_IMAGE_PIXELS, PDF_OCR_TARGET_DPI, MultimodalCaptureProcessors, _pdf_page_dpi,
+)
 from pypdf import PdfWriter
 import httpx
 
@@ -43,6 +45,34 @@ class MultimodalCaptureTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_pdf_render_dpi_increases_within_existing_pixel_and_side_limits(self):
+        self.assertEqual(_pdf_page_dpi(595, 842), PDF_OCR_TARGET_DPI)
+        dpi = _pdf_page_dpi(2000, 3000)
+        self.assertLess(dpi, PDF_OCR_TARGET_DPI)
+        self.assertLessEqual(int(2000 * dpi / 72), 10000)
+        self.assertLessEqual(int(3000 * dpi / 72), 10000)
+        self.assertLessEqual(int(2000 * dpi / 72) * int(3000 * dpi / 72), MAX_IMAGE_PIXELS)
+
+    def test_pdf_renderer_receives_adaptive_higher_dpi(self):
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        source = io.BytesIO()
+        writer.write(source)
+        processors = MultimodalCaptureProcessors(tesseract="tesseract", pdftoppm="pdftoppm")
+        commands = []
+
+        def fake_render(command, **_kwargs):
+            commands.append(command)
+            Path(command[-1] + ".png").write_bytes(b"rendered")
+            return Mock(returncode=0)
+
+        with patch("secondbrain_core.modules.multimodal_capture.subprocess.run", side_effect=fake_render):
+            with patch.object(processors, "_ocr_image", return_value="recognized text"):
+                result = processors.ocr_pdf(source.getvalue(), 1, [(595, 842)])
+        self.assertEqual(result, "[Page 1]\nrecognized text")
+        dpi_index = commands[0].index("-r") + 1
+        self.assertEqual(commands[0][dpi_index], "200")
 
     def test_scanned_pdf_falls_back_to_ocr_after_empty_pypdf_text_and_preserves_raw(self):
         writer = PdfWriter()

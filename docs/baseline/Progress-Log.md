@@ -630,6 +630,14 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 正式运行未变化：App ID `3ca30d08568ca547bea9fedf924a73d01a0e00ce06c07b5f95ef52026eed1a4c` / image `sha256:c3801b546b0e9605370b659cc5c3605abf827080fec7a14a1e88856e917f361d`，`healthy`；Hermes ID `f6703ca3e3d41856b6e35348f28cd1c7f833ffb9ab31b19e958656540eed8ac6` / image `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`，持续运行；二者启动时间不变。Compose SHA-256 仍为 `6b143e2b39329dadb4a54a31f1c1a0be1ddfbaacac51a8a5a0f31307b926b61a`；9120/9119 端口、Raw/Review/Knowledge 挂载权限、Secret、Private 隔离与 `SB_PROMOTE_ENABLED=false` 均未变化。测试网络隔离且未挂载正式数据目录，未触碰生产 Raw/Review/Knowledge。
 - **结论：** 中文/中英图片 OCR、扫描 PDF OCR 与 pypdf Fast Path 已完成真实隔离运行验证；这是 Canary 验证，不是正式部署或用户验收。音频 STT 未启用；AI 图像描述仍未配置，完整 D076 尚不具备全部处理器验收条件。本轮未更新 63013、未进入 D076-B。
 
+## 2026-10-15 D076-A 用户验收后体验修复（本地，未部署）
+
+- 用户报告 63013 图片和扫描 PDF 的 Raw→OCR→Review 链路正常，但扫描 PDF 识别乱码较多；同时 Review 页面整页滚动、frontmatter 干扰阅读，及图片仅缺 AI 描述时误导性提示。
+- 桌面 Review 调整为受视口约束的独立列表/正文滚动，避免列表定位滚动整页；切换内容将正文滚回顶部。手机详情优先，审核列表可展开。Review 安全解析简单 Markdown，YAML 元数据折叠查看；HTML 作为文本，不执行脚本、不自动载入远程资源；OCR 内容按原行序预格式显示并附核对提示。批准/暂缓逻辑与 Promote 关闭边界未改。
+- 图片 OCR 已生成 Review 且 processor.kind=image_ocr 时，前端保留 partial_success 状态，展示中性“文字识别完成，画面理解暂未接入”，不显示红色错误框或无意义重试；缺少 OCR Review、真实失败等仍展示错误/重试。
+- 扫描 PDF 使用按页面尺寸计算的自适应 DPI，目标最高 200 DPI，仍受 12MP/页、最大 10 页、75 秒总限时与既有尺寸约束；Review 增加核对原件提示，不宣称 OCR 准确。新增参数路径测试。本机无 Tesseract/Docker，未复现真实乱码或证明质量提升；真实质量对照与页面复验待部署后完成。
+- 验证：前端 Review/Capture 定向 **18 passed**，typecheck、Vite build 通过；Core Capture/多模态定向 **30 passed**。未读写 NAS 或其素材，没有更改 Hermes、Compose、Secret、权限、Knowledge、Promote 或网络。本项代码/文档随本次提交推送；生产仍运行先前部署版本。
+
 ## 2026-10-15 D076-A OCR App 部署（业务代码 3c57a55）
 
 - 依据授权从目标提交构建独立 NAS source context，正式 App 镜像 secondbrain-app:d076a-3c57a55（sha256:3f68f807191b1cb56b436dfd1165475e997d29a3db3de2a12d26c874dccd4ff7），仅重建 secondbrain-app。正式 Compose 仅更改 App build context、image tag、/tmp tmpfs 64 MiB；配置校验通过。D075.2 镜像保留。

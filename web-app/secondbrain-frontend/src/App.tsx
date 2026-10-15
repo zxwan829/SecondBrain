@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchHome, type Home } from './api/home';
 import { adaptHome, type DataKind, type ListItem } from './api/home-adapter';
 import { DEMO_KPI_DELTAS, DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
+import { parseReviewDocument, ReviewMarkdown } from './ReviewMarkdown';
 import aiCubeUrl from './assets/ai-cube-user.png';
 import hermesOrbUrl from './assets/hermes-planet-user.png';
 import todayLandscapeUrl from './assets/today-lake-background.png';
@@ -25,7 +26,13 @@ type CaptureItem = {
   error?: { code: string; message: string } | null; title: string; content_preview?: string;
   display_filename?: string | null; document_title?: string | null;
   source_url?: string | null; derived_source_url?: string | null;
+  processor?: { kind?: string; name?: string } | null;
 };
+
+function isVisionDescriptionOnly(item: CaptureItem) {
+  return item.source_type === 'image' && item.processor?.kind === 'image_ocr'
+    && Boolean(item.review_path) && item.error?.code === 'processor_unavailable';
+}
 
 function captureDisplayFilename(item: CaptureItem, locale: Locale) {
   const saved = item.display_filename?.trim();
@@ -50,7 +57,6 @@ export function scrollReviewItemIntoView(container: HTMLElement, target: HTMLEle
     else container.scrollTop = top;
     return;
   }
-  target.scrollIntoView?.({ behavior, block: 'center', inline: 'nearest' });
 }
 
 function pageFromPath(path: string): Page {
@@ -274,7 +280,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </div>
       </aside>
 
-      <section className="dashboard">
+      <section className={`dashboard ${page === 'review' ? 'is-review-page' : ''}`}>
         <div className="mobile-topbar">
           <button type="button" className="mobile-menu-button" aria-label={menuOpen ? t.closeMenu : t.menu} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><Icon name={menuOpen ? 'close' : 'menu'} size={20} /></button>
           <span className="mobile-brand-mark"><Icon name="brain" size={19} /></span>
@@ -384,8 +390,10 @@ export function InboxPage({ locale, onCapture, onReview }: { locale: Locale; onC
     <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
       <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{captureDisplayFilename(item, locale)}</h2><p>{item.source_type} · {new Date(item.captured_at).toLocaleString(text ? 'en-US' : 'zh-CN')}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
       {item.content_preview && <pre className="inbox-preview">{item.content_preview.slice(0, 500)}</pre>}
-      {item.error && <p className="capture-alert">{item.error.message}</p>}
-      <div className="inbox-links"><button type="button" onClick={() => void openPreview(item)}>{text ? 'Preview details' : '预览与详情'}</button><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{text ? 'Download Raw' : '下载原件'}</a>{item.review_path && <button type="button" onClick={() => onReview(item.review_path!)}>{text ? 'View Review' : '查看 Review'}</button>}{item.status === 'partial_success' && <button onClick={async () => { await fetch(`/api/capture/${item.capture_id}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); void load(); }}>{text ? 'Retry' : '重试处理'}</button>}</div>
+      {isVisionDescriptionOnly(item)
+        ? <p className="capture-processing-note" role="status">{text ? 'Text recognition completed; image understanding is not connected yet.' : '文字识别完成，画面理解暂未接入。'}</p>
+        : item.error && <p className="capture-alert">{item.error.message}</p>}
+      <div className="inbox-links"><button type="button" onClick={() => void openPreview(item)}>{text ? 'Preview details' : '预览与详情'}</button><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{text ? 'Download Raw' : '下载原件'}</a>{item.review_path && <button type="button" onClick={() => onReview(item.review_path!)}>{text ? 'View Review' : '查看 Review'}</button>}{item.status === 'partial_success' && !isVisionDescriptionOnly(item) && <button onClick={async () => { await fetch(`/api/capture/${item.capture_id}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); void load(); }}>{text ? 'Retry' : '重试处理'}</button>}</div>
     </article>) : <p className="capture-empty">{text ? 'No captures yet.' : '还没有采集内容。'}</p>}</div>
     {preview && <CapturePreview item={preview} locale={locale} content={previewText} error={previewError} onClose={() => { setPreview(null); setPreviewText(null); setPreviewError(''); }} onReview={onReview} />}
   </section>;
@@ -414,7 +422,7 @@ function CapturePreview({ item, locale, content, error, onClose, onReview }: { i
     <section className="capture-modal capture-preview-modal" role="dialog" aria-modal="true" aria-labelledby="capture-preview-title">
       <header><div><p className="eyebrow">SECONDBRAIN / INBOX</p><h2 id="capture-preview-title">{displayFilename}</h2></div><button className="capture-close" onClick={onClose} aria-label={en ? 'Close' : '关闭'}>×</button></header>
       <p>{captureStatus(item.status, en)} · {new Date(item.captured_at).toLocaleString(en ? 'en-US' : 'zh-CN')}</p>
-      <p>{item.raw_path ? (en ? 'Raw preserved' : '原件已保存') : (en ? 'Raw unavailable' : '原件未保存')} · {item.error?.message || (en ? 'No processing error' : '无处理错误')}</p>
+      <p>{item.raw_path ? (en ? 'Raw preserved' : '原件已保存') : (en ? 'Raw unavailable' : '原件未保存')} · {isVisionDescriptionOnly(item) ? (en ? 'Text recognition completed; image understanding is not connected yet.' : '文字识别完成，画面理解暂未接入。') : item.error?.message || (en ? 'No processing error' : '无处理错误')}</p>
       {item.source_url && <dl><dt>{en ? 'Original URL' : '原始 URL'}</dt><dd>{isSafeHttpUrl(item.source_url) ? <a href={item.source_url} target="_blank" rel="noreferrer">{item.source_url}</a> : item.source_url}</dd>{item.derived_source_url && <><dt>{en ? 'Fetched URL' : '实际获取地址'}</dt><dd>{item.derived_source_url}</dd></>}</dl>}
       <div className="capture-preview-content">
         {kind === 'text' && (error ? <p role="alert">{error}</p> : content === null ? <p>{en ? 'Loading preview…' : '正在读取预览…'}</p> : <pre>{content}</pre>)}
@@ -520,7 +528,9 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>(t.coreLoading);
   const [promoteEnabled, setPromoteEnabled] = useState(false);
+  const [mobileListOpen, setMobileListOpen] = useState(false);
   const reviewListRef = useRef<HTMLDivElement | null>(null);
+  const reviewDetailRef = useRef<HTMLElement | null>(null);
   const selectedReviewRef = useRef<HTMLButtonElement | null>(null);
 
   const request = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
@@ -589,14 +599,23 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
 
   useEffect(() => {
     if (!detail?.review_path) return;
-    const list = reviewListRef.current;
-    const selected = selectedReviewRef.current;
-    if (list && selected) scrollReviewItemIntoView(list, selected);
+    if (reviewDetailRef.current) reviewDetailRef.current.scrollTop = 0;
   }, [detail?.review_path]);
+
+  useEffect(() => {
+    if (!detail?.review_path) return;
+    const frame = window.requestAnimationFrame(() => {
+      const list = reviewListRef.current;
+      const selected = selectedReviewRef.current;
+      if (list && selected) scrollReviewItemIntoView(list, selected);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [detail?.review_path, mobileListOpen]);
 
   const selectReview = (item: ReviewItem) => {
     const query = new URLSearchParams({ review_path: item.review_path });
     history.pushState({}, '', `/review?${query}`);
+    setMobileListOpen(false);
     void loadDetail(item);
   };
 
@@ -622,21 +641,30 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
     } finally { setBusy(false); }
   };
 
+  const document = detail ? parseReviewDocument(detail.content) : null;
+  const decisionStatus = detail?.decision?.status || detail?.status || 'pending';
+  const isOcrDocument = Boolean(document && (/^OCR:\s*tesseract\s*;/m.test(document.body) || /## OCR 识别文字/.test(document.body)));
+  const ocrOnlyText = Boolean(document?.metadata.source_type === 'image' && /## AI 画面描述/.test(document.body));
+
   return <section className="review-page" aria-labelledby="review-page-title">
     <header className="review-page-header">
       <div><p className="eyebrow">SECONDBRAIN <span>/</span> {t.review.toUpperCase()}</p><h1 id="review-page-title">{t.reviewPageTitle}</h1><p className="workspace-subtitle">{t.reviewPageDescription}</p></div>
       <button type="button" className="review-back-button" onClick={onBack}>{t.backHome}</button>
     </header>
     <p className={`review-connection-status ${busy ? 'is-locked' : 'is-connected'}`} role="status" aria-live="polite">{status}</p>
-      <div className="review-page-toolbar"><span>{status}</span><button type="button" onClick={() => void loadList()} disabled={busy}>{locale === 'en' ? 'Refresh' : '刷新'}</button></div>
+      <div className="review-page-toolbar"><span>{status}</span><div><button type="button" className="review-mobile-list-toggle" aria-expanded={mobileListOpen} onClick={() => setMobileListOpen((open) => !open)}>{mobileListOpen ? (locale === 'en' ? 'Hide list' : '收起列表') : (locale === 'en' ? 'Browse list' : '浏览审核列表')}</button><button type="button" onClick={() => void loadList()} disabled={busy}>{locale === 'en' ? 'Refresh' : '刷新'}</button></div></div>
       <div className="review-page-grid">
-        <div ref={reviewListRef} className="review-page-list" aria-label={t.reviewPageTitle}>
+        <div ref={reviewListRef} className={`review-page-list ${mobileListOpen ? 'is-mobile-open' : 'is-mobile-collapsed'}`} aria-label={t.reviewPageTitle}>
           {items.length ? items.map((item) => <button ref={detail?.review_path === item.review_path ? selectedReviewRef : null} key={item.review_path} type="button" className={`review-page-item ${detail?.review_path === item.review_path ? 'is-selected' : ''}`} onClick={() => selectReview(item)}>
             <strong>{item.title || item.target_filename}</strong><small>{item.target_filename}</small><span>{t.coreStatus}: {item.decision?.status || item.status || 'pending'}</span>
           </button>) : <p className="review-page-empty">{t.coreNoItems}</p>}
         </div>
-        <article className="review-page-detail">
-          {detail ? <><h2>{detail.title || detail.target_filename}</h2><p>{detail.target_filename} · {t.coreStatus}: {detail.decision?.status || detail.status || 'pending'}{detail.decision?.error_code ? ` · ${locale === 'en' ? 'Failure' : '失败'}: ${detail.decision.error_code}` : ''}</p><pre>{detail.content}</pre><div className="review-decisions"><button type="button" onClick={() => void decide('defer')} disabled={busy || ['approved', 'promoting', 'promoted', 'failed'].includes(detail.decision?.status || '')}>{locale === 'en' ? 'Defer' : '暂缓'}</button><button type="button" onClick={() => void decide('approve')} disabled={busy || !promoteEnabled || detail.decision?.status === 'promoted'} title={!promoteEnabled ? 'Promote disabled on this App build' : undefined}>{['approved', 'promoting', 'failed'].includes(detail.decision?.status || '') ? (locale === 'en' ? 'Retry approved write' : '重试正式入库') : (locale === 'en' ? 'Approve to Knowledge' : '批准入库')}</button>{!promoteEnabled && <small>{locale === 'en' ? 'Knowledge writes are disabled.' : '正式入库当前关闭。'}</small>}</div></> : <p>{t.coreSelectItem}</p>}
+        <article ref={reviewDetailRef} className="review-page-detail" tabIndex={-1}>
+          {detail && document ? <><header className="review-detail-heading"><h2>{detail.title || detail.target_filename}</h2><p>{detail.target_filename} · {t.coreStatus}: {decisionStatus}{detail.decision?.error_code ? ` · ${locale === 'en' ? 'Failure' : '失败'}: ${detail.decision.error_code}` : ''}</p><dl><dt>{locale === 'en' ? 'Source' : '来源'}</dt><dd>{document.metadata.source_type || (locale === 'en' ? 'Not provided' : '未提供')}</dd><dt>{locale === 'en' ? 'Captured' : '采集日期'}</dt><dd>{document.metadata.captured_at || (locale === 'en' ? 'Not provided' : '未提供')}</dd></dl></header>
+            {isOcrDocument && <p className="review-ocr-note" role="note">{ocrOnlyText ? (locale === 'en' ? 'OCR text only. Please verify the recognized text against the original.' : '仅包含 OCR 文字识别结果，请对照原件核对。') : (locale === 'en' ? 'OCR text may contain recognition errors. Please verify it against the original.' : 'OCR 识别可能存在误差，请对照原件核对。')}</p>}
+            <details className="review-metadata"><summary>{locale === 'en' ? 'Full metadata' : '完整元数据'}</summary><dl>{Object.entries(document.metadata).map(([key, value]) => <React.Fragment key={key}><dt>{key}</dt><dd>{value}</dd></React.Fragment>)}</dl></details>
+            <ReviewMarkdown source={document.body} preserveLines={isOcrDocument} />
+            <div className="review-decisions"><button type="button" onClick={() => void decide('defer')} disabled={busy || ['approved', 'promoting', 'promoted', 'failed'].includes(detail.decision?.status || '')}>{locale === 'en' ? 'Defer' : '暂缓'}</button><button type="button" onClick={() => void decide('approve')} disabled={busy || !promoteEnabled || detail.decision?.status === 'promoted'} title={!promoteEnabled ? 'Promote disabled on this App build' : undefined}>{['approved', 'promoting', 'failed'].includes(detail.decision?.status || '') ? (locale === 'en' ? 'Retry approved write' : '重试正式入库') : (locale === 'en' ? 'Approve to Knowledge' : '批准入库')}</button>{!promoteEnabled && <small>{locale === 'en' ? 'Knowledge writes are disabled.' : '正式入库当前关闭。'}</small>}</div></> : <p>{t.coreSelectItem}</p>}
         </article>
       </div>
   </section>;

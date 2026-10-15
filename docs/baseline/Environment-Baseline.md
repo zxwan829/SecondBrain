@@ -214,3 +214,10 @@ type: environment-baseline
 - 隔离边界：Raw/Review RW，Knowledge RO，Private 未挂载；Promote=false，STT 开关未设置（默认关闭）。D075 五条既有 state/Raw/Review 共 47 个文件的部署前后路径、大小、SHA-256 清单一致；Secret 校验值不变。未创建测试素材、未重试旧 PNG/WAV、未写 Knowledge。
 - Hermes 容器 ID `f6703ca3e3d41856b6e35348f28cd1c7f833ffb9ab31b19e958656540eed8ac6`、镜像 ID `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`、启动时间 `2026-10-14T08:03:44.970619297Z` 与部署前相同。D075.2 镜像 `secondbrain-app:d0752-934d0ea`（`sha256:c3801b546b0e9605370b659cc5c3605abf827080fec7a14a1e88856e917f361d`）仍保留。
 - App-only 回滚快照：`/volume1/docker/secondbrain/rollback/d076a-predeploy-20261015-003736/`（目录 0700；敏感配置和快照文件 0600；含旧 Compose、必要状态与校验清单）。恢复快照中的 `compose.yaml` 至正式路径，再只对 `secondbrain-app` 执行 Compose `up -d --no-deps --force-recreate --no-build --pull never secondbrain-app`，即可回到 D075.2；不操作 Hermes。D076-A OCR 依赖已部署，不等于 D076 全部交付或用户验收完成。图像描述、STT、微信渠道仍未完成。
+
+## 2026-10-15 D076-A 图片与扫描 PDF 用户验收及本地体验修复
+
+- 用户反馈在 63013 实际收录图片和扫描 PDF，Raw→OCR→Review 链路正常；扫描 PDF 识别结果乱码较多。未读取或修改用户素材、未自动重试既有记录。用户同时指出 Review 桌面列表/正文滚动冲突、frontmatter 直接显示，以及图片仅缺 AI 描述时提示过于像错误。
+- 本地修复待部署：Review 改为视口约束下桌面双独立滚动、移动端详情优先/列表折叠；安全 Markdown 渲染将 frontmatter 独立展示，OCR 文本保留原行序并显示核对提示。图片 OCR 成功但视觉描述缺失仍为 partial_success，界面采用中性说明并隐藏无意义重试；真实 OCR 错误仍显示错误和重试。
+- PDF OCR 改为按页面大小自适应目标 200 DPI，在 12MP/页及 10 页、75 秒限制内计算实际 DPI；生成 Review 提示用户对照原件核对，不启发式宣称准确。前端 18 项定向交互/安全测试、typecheck/build 和 Core Capture/多模态 30 项测试通过。
+- 本机有 Poppler 但无 Tesseract 或 Docker；因此 DPI 参数路径通过单元测试验证，乱码复现与识别质量对照样本未能在本机真实运行。改进未部署 NAS，生产 OCR 质量尚待后续经授权更新后用户复验；Promote、Hermes、Compose、权限与业务数据未改变。

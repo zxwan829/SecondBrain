@@ -18,9 +18,23 @@ MAX_IMAGE_PIXELS = 12_000_000
 OCR_TIMEOUT_SECONDS = 20
 PDF_OCR_TOTAL_SECONDS = 75
 PDF_OCR_MAX_PAGES = 10
-PDF_OCR_DPI = 120
+PDF_OCR_TARGET_DPI = 200
 MAX_RENDERED_IMAGE_BYTES = 30 * 1024 * 1024
 MAX_AUDIO_DURATION_SECONDS = 30 * 60
+
+
+def _pdf_page_dpi(width_points, height_points):
+    """Use a sharper render where possible without exceeding OCR pixel bounds."""
+    width_points = float(width_points)
+    height_points = float(height_points)
+    if width_points <= 0 or height_points <= 0:
+        raise ValueError("Scanned PDF page dimensions must be positive")
+    pixel_limited = 72 * (MAX_IMAGE_PIXELS / (width_points * height_points)) ** 0.5
+    side_limited = 72 * 10000 / max(width_points, height_points)
+    dpi = int(min(PDF_OCR_TARGET_DPI, pixel_limited, side_limited))
+    if dpi < 72:
+        raise ValueError("Scanned PDF page exceeds the 12 megapixel OCR limit")
+    return dpi
 
 
 class MultimodalCaptureProcessors:
@@ -82,9 +96,12 @@ class MultimodalCaptureProcessors:
         if page_sizes is None or len(page_sizes) != pages:
             raise ValueError("Scanned PDF page dimensions could not be verified")
         max_pixels = MAX_IMAGE_PIXELS
+        page_dpis = []
         for width_points, height_points in page_sizes:
-            width = max(1, int(float(width_points) * PDF_OCR_DPI / 72))
-            height = max(1, int(float(height_points) * PDF_OCR_DPI / 72))
+            dpi = _pdf_page_dpi(width_points, height_points)
+            page_dpis.append(dpi)
+            width = max(1, int(float(width_points) * dpi / 72))
+            height = max(1, int(float(height_points) * dpi / 72))
             if width > 10000 or height > 10000 or width * height > max_pixels:
                 raise ValueError("Scanned PDF page exceeds the 12 megapixel OCR limit")
 
@@ -93,7 +110,7 @@ class MultimodalCaptureProcessors:
         with tempfile.TemporaryDirectory(prefix="secondbrain-pdf-ocr-") as temp_dir:
             source = Path(temp_dir) / "source.pdf"
             source.write_bytes(pdf_bytes)
-            for page_number in range(1, pages + 1):
+            for page_number, dpi in enumerate(page_dpis, start=1):
                 remaining = PDF_OCR_TOTAL_SECONDS - (time.monotonic() - started)
                 if remaining <= 0:
                     raise ValueError("Scanned PDF OCR exceeded the 75 second limit")
@@ -101,7 +118,7 @@ class MultimodalCaptureProcessors:
                 try:
                     result = subprocess.run(
                         [self.pdftoppm, "-f", str(page_number), "-l", str(page_number),
-                         "-r", str(PDF_OCR_DPI), "-singlefile", "-png", str(source), str(prefix)],
+                         "-r", str(dpi), "-singlefile", "-png", str(source), str(prefix)],
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                         timeout=min(15, remaining), check=False)
                 except subprocess.TimeoutExpired as exc:

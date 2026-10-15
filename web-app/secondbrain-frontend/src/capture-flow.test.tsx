@@ -87,6 +87,35 @@ describe('D075.1 capture interactions', () => {
     expect(selected?.textContent).toContain('Exact entry');
   });
 
+  it('renders Review body without frontmatter and keeps full metadata collapsible', async () => {
+    const review = {
+      review_path: 'scan.md', review_sha256: 'hash', target_filename: 'scan.md',
+      title: '扫描资料', status: 'pending',
+      content: '---\ntype: "review"\nsource_type: "pdf"\ncaptured_at: "2026-10-15T08:00:00Z"\noriginal_asset: "/inbox/scan.pdf"\n---\n# 扫描资料\n\n正文第一行\n正文第二行',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/review/items') ? ok({ items: [review] }) : String(input).endsWith('/status') ? ok({ promote_enabled: false }) : ok(review)));
+    const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector('.review-markdown')?.textContent).toContain('正文第一行'));
+    expect(container.querySelector('.review-page-detail')?.textContent).not.toContain('type: "review"');
+    expect(screen.getByRole('heading', { level: 2, name: '扫描资料' })).toBeTruthy();
+    expect(screen.getByText('完整元数据')).toBeTruthy();
+    expect(screen.getAllByText('2026-10-15T08:00:00Z').length).toBe(2);
+    expect(container.querySelector('.review-markdown h1')?.textContent).toBe('扫描资料');
+  });
+
+  it('preserves OCR text verbatim and shows a verification note for OCR Reviews', async () => {
+    const review = {
+      review_path: 'ocr.md', review_sha256: 'hash', target_filename: 'ocr.md',
+      title: '扫描识别', status: 'pending',
+      content: '---\ntype: "review"\nsource_type: "pdf"\ncaptured_at: "2026-10-15T08:00:00Z"\n---\n# 扫描识别\n\nOCR: tesseract; languages: chi_sim+eng; pages: 1\n\n[Page 1]\n第一行：编号 A-01\n第二行  key: value',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/review/items') ? ok({ items: [review] }) : String(input).endsWith('/status') ? ok({ promote_enabled: false }) : ok(review)));
+    const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    expect(await screen.findByText('第一行：编号 A-01', { exact: false })).toBeTruthy();
+    expect(container.querySelector('.review-markdown-raw')?.textContent).toContain('第二行  key: value');
+    expect(screen.getByText('OCR 识别可能存在误差，请对照原件核对。')).toBeTruthy();
+  });
+
   it('shows a safe text preview and download separately', async () => {
     const item = { capture_id: 'd'.repeat(32), source_type: 'markdown', input_type: 'md', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/readme.md', raw_path: 'readme.md', status: 'completed', title: 'Read me', content_preview: '# safe' };
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/preview') ? ok('# Safe text\n<script>text only</script>', 'text/plain') : ok({ items: [item] })));
@@ -121,7 +150,7 @@ describe('D075.1 capture interactions', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 90, behavior: 'smooth' });
   });
 
-  it('uses viewport scrolling on desktop and disables animation for reduced motion', () => {
+  it('never falls back to scrolling the full page when the list has no scroll range', () => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
     const list = document.createElement('div');
     list.style.overflowY = 'visible';
@@ -132,7 +161,26 @@ describe('D075.1 capture interactions', () => {
 
     scrollReviewItemIntoView(list, target);
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'auto', block: 'center', inline: 'nearest' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('shows image OCR partial success neutrally and hides a useless vision retry', async () => {
+    const item = { capture_id: 'a'.repeat(32), source_type: 'image', input_type: 'png', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/p.png', raw_path: 'p.png', review_path: 'p.md', status: 'partial_success', title: 'p', processor: { kind: 'image_ocr' }, error: { code: 'processor_unavailable', message: 'AI scene description is not configured.' } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
+    const { container } = render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    await screen.findByRole('heading', { name: 'p.png' });
+    expect(screen.getByText('文字识别完成，画面理解暂未接入。')).toBeTruthy();
+    expect(container.querySelector('.capture-alert')).toBeNull();
+    expect(screen.queryByRole('button', { name: '重试处理' })).toBeNull();
+  });
+
+  it('keeps retry and a clear error for actual OCR failures without a Review', async () => {
+    const item = { capture_id: 'c'.repeat(32), source_type: 'image', input_type: 'png', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/p.png', raw_path: 'p.png', status: 'partial_success', title: 'p', error: { code: 'processing_failed', message: 'Image OCR exceeded its time limit' } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
+    render(<InboxPage locale="zh-CN" onCapture={vi.fn()} onReview={vi.fn()} />);
+    await screen.findByRole('heading', { name: 'p.png' });
+    expect(screen.getByText('Image OCR exceeded its time limit')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重试处理' })).toBeTruthy();
   });
 
   it('shows the validated upload filename instead of PDF metadata and falls back to the legacy Raw filename', async () => {
