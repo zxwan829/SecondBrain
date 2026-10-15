@@ -53,11 +53,17 @@ class VisionBenchmarkError(RuntimeError):
 
     def __init__(self, code: str, *, model: str | None = None,
                  elapsed_ms: int | None = None, trace_id: str | None = None,
-                 http_status: int | None = None):
+                 http_status: int | None = None, usage: dict[str, Any] | None = None):
         self.code = code
         self.audit = {"ok": False, "model": model, "error_code": code,
                       "elapsed_ms": elapsed_ms, "trace_id": trace_id,
                       "http_status": http_status}
+        if isinstance(usage, dict):
+            safe_usage = {key: value for key, value in usage.items()
+                          if key in {"prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens"}
+                          and type(value) is int and value >= 0}
+            if safe_usage:
+                self.audit["usage"] = safe_usage
         super().__init__(code)
 
 
@@ -173,7 +179,8 @@ class VisionBenchmarkAdapter:
         elapsed_ms = round((time.monotonic() - started) * 1000)
         response_trace = response.headers.get("x-siliconcloud-trace-id") or trace_id
         if response.history or str(response.url) != ENDPOINT:
-            raise VisionBenchmarkError("provider_redirect_rejected", model=model, elapsed_ms=elapsed_ms, trace_id=response_trace)
+            raise VisionBenchmarkError("provider_redirect_rejected", model=model, elapsed_ms=elapsed_ms,
+                                       trace_id=response_trace, http_status=response.status_code)
         if 300 <= response.status_code < 400:
             raise VisionBenchmarkError("provider_redirect_rejected", model=model, elapsed_ms=elapsed_ms,
                                        trace_id=response_trace, http_status=response.status_code)
@@ -184,7 +191,8 @@ class VisionBenchmarkAdapter:
             raise VisionBenchmarkError("provider_http_error", model=model, elapsed_ms=elapsed_ms,
                                        trace_id=response_trace, http_status=response.status_code)
         if len(response.content) > MAX_RESPONSE_BYTES:
-            raise VisionBenchmarkError("provider_response_too_large", model=model, elapsed_ms=elapsed_ms, trace_id=response_trace)
+            raise VisionBenchmarkError("provider_response_too_large", model=model, elapsed_ms=elapsed_ms,
+                                       trace_id=response_trace, http_status=response.status_code)
         try:
             data = response.json()
             returned_model = data["model"]
@@ -192,31 +200,42 @@ class VisionBenchmarkAdapter:
             choice = data["choices"][0]
             usage = data["usage"]
             raw_content = message["content"]
-            if message.get("tool_calls") or choice.get("finish_reason") == "tool_calls":
-                raise VisionBenchmarkError("provider_returned_tool_call", model=model,
-                                           elapsed_ms=elapsed_ms, trace_id=response_trace)
-            if choice.get("finish_reason") == "length":
-                raise VisionBenchmarkError("provider_output_truncated", model=model,
-                                           elapsed_ms=elapsed_ms, trace_id=response_trace)
-            if not isinstance(raw_content, str) or len(raw_content.encode("utf-8")) > max_output_tokens * 32:
-                raise VisionBenchmarkError("provider_output_exceeded", model=model,
-                                           elapsed_ms=elapsed_ms, trace_id=response_trace)
-            parsed = json.loads(raw_content)
-            if not isinstance(parsed, (dict, list)):
-                raise ValueError("json_shape")
+            if not isinstance(usage, dict):
+                raise ValueError("usage")
             safe_usage = {key: value for key, value in usage.items()
                           if key in {"prompt_tokens", "completion_tokens", "total_tokens"}
                           and type(value) is int and value >= 0}
             if len(safe_usage) != 3:
                 raise ValueError("usage")
-            if safe_usage["completion_tokens"] > body["max_tokens"]:
+            details = usage.get("completion_tokens_details")
+            reasoning_tokens = details.get("reasoning_tokens") if isinstance(details, dict) else None
+            if reasoning_tokens is not None:
+                if type(reasoning_tokens) is not int or reasoning_tokens < 0:
+                    raise ValueError("reasoning_usage")
+                safe_usage["reasoning_tokens"] = reasoning_tokens
+            if message.get("tool_calls") or choice.get("finish_reason") == "tool_calls":
+                raise VisionBenchmarkError("provider_returned_tool_call", model=model,
+                                           elapsed_ms=elapsed_ms, trace_id=response_trace,
+                                           http_status=response.status_code, usage=safe_usage)
+            if choice.get("finish_reason") == "length":
+                raise VisionBenchmarkError("provider_output_truncated", model=model,
+                                           elapsed_ms=elapsed_ms, trace_id=response_trace,
+                                           http_status=response.status_code, usage=safe_usage)
+            if not isinstance(raw_content, str) or len(raw_content.encode("utf-8")) > max_output_tokens * 32:
                 raise VisionBenchmarkError("provider_output_exceeded", model=model,
-                                           elapsed_ms=elapsed_ms, trace_id=response_trace)
+                                           elapsed_ms=elapsed_ms, trace_id=response_trace,
+                                           http_status=response.status_code, usage=safe_usage)
+            parsed = json.loads(raw_content)
+            if not isinstance(parsed, (dict, list)):
+                raise ValueError("json_shape")
         except VisionBenchmarkError:
             raise
         except (ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError):
             code = "provider_output_invalid_json" if "raw_content" in locals() else "provider_response_invalid"
-            raise VisionBenchmarkError(code, model=model, elapsed_ms=elapsed_ms, trace_id=response_trace) from None
+            raise VisionBenchmarkError(code, model=model, elapsed_ms=elapsed_ms,
+                                       trace_id=response_trace,
+                                       http_status=response.status_code,
+                                       usage=safe_usage if "safe_usage" in locals() else None) from None
         return {"content": raw_content, "parsed": parsed, "model": returned_model,
                 "requested_model": model,
                 "usage": safe_usage, "elapsed_ms": elapsed_ms, "trace_id": response_trace,

@@ -30,8 +30,8 @@ def jpeg_bytes():
     return stream.getvalue()
 
 
-def completion(content='{"text":"synthetic"}', *, model=None, usage=None):
-    return {"model": model or MODELS[0], "choices": [{"finish_reason": "stop",
+def completion(content='{"text":"synthetic"}', *, model=None, usage=None, finish_reason="stop"):
+    return {"model": model or MODELS[0], "choices": [{"finish_reason": finish_reason,
             "message": {"role": "assistant", "content": content}}],
             "usage": usage or {"prompt_tokens": 22, "completion_tokens": 5, "total_tokens": 27}}
 
@@ -91,6 +91,44 @@ class VisionBenchmarkAdapterTests(unittest.TestCase):
             vision.build_request(MODELS[2], "test", [png_bytes()], json_mode=True)
         with self.assertRaisesRegex(vision.VisionBenchmarkError, "model_not_allowlisted"):
             vision.build_request("other/model", "test", [png_bytes()])
+
+    def test_preserves_reasoning_usage_even_if_total_completion_usage_exceeds_output_setting(self):
+        async def handler(request):
+            return httpx.Response(200, json=completion(usage={
+                "prompt_tokens": 22, "completion_tokens": 905, "total_tokens": 927,
+                "completion_tokens_details": {"reasoning_tokens": 700},
+            }))
+
+        client = self.client(handler)
+        adapter = vision.VisionBenchmarkAdapter("synthetic-key", client=client)
+        try:
+            result = asyncio.run(adapter.analyze(
+                MODELS[0], "test", [png_bytes()], max_output_tokens=800))
+        finally:
+            asyncio.run(client.aclose())
+        self.assertEqual(result["usage"]["completion_tokens"], 905)
+        self.assertEqual(result["usage"]["reasoning_tokens"], 700)
+
+    def test_truncated_response_retains_http_usage_and_trace_for_audit(self):
+        async def handler(request):
+            return httpx.Response(200, json=completion(
+                content='{"images":[',
+                finish_reason="length",
+                usage={"prompt_tokens": 300, "completion_tokens": 800, "total_tokens": 1100,
+                       "completion_tokens_details": {"reasoning_tokens": 450}},
+            ), headers={"x-siliconcloud-trace-id": "trace-truncated"})
+
+        client = self.client(handler)
+        adapter = vision.VisionBenchmarkAdapter("synthetic-key", client=client)
+        try:
+            with self.assertRaises(vision.VisionBenchmarkError) as caught:
+                asyncio.run(adapter.analyze(MODELS[0], "test", [png_bytes()]))
+        finally:
+            asyncio.run(client.aclose())
+        self.assertEqual(caught.exception.code, "provider_output_truncated")
+        self.assertEqual(caught.exception.audit["http_status"], 200)
+        self.assertEqual(caught.exception.audit["trace_id"], "trace-truncated")
+        self.assertEqual(caught.exception.audit["usage"]["reasoning_tokens"], 450)
 
     def test_rejects_non_image_unsupported_format_and_oversized_inputs(self):
         for raw, code in [(b"not an image", "image_invalid"), (b"", "image_empty")]:
@@ -160,8 +198,6 @@ class VisionBenchmarkAdapterTests(unittest.TestCase):
         for body, expected in [
             (completion("not-json"), "provider_output_invalid_json"),
             ({"choices": []}, "provider_response_invalid"),
-            (completion(usage={"prompt_tokens": 10, "completion_tokens": vision.MAX_OUTPUT_TOKENS + 1,
-                               "total_tokens": vision.MAX_OUTPUT_TOKENS + 11}), "provider_output_exceeded"),
         ]:
             async def handler(request, body=body):
                 return httpx.Response(200, json=body)

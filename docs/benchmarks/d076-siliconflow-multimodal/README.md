@@ -2,7 +2,7 @@
 
 状态（2026-10-15）：**DeepSeek 已完成；GLM 已确认计费但响应不可恢复；Qwen 单次请求在 45 秒客户端超时，结果与实际费用未知。三款模型均未重试。**
 
-截至 2026-10-15，评测只使用本目录中的虚构素材与固定答案，不读取 Hermes 会话、正式 Capture/Review/Knowledge，不访问 Private；本轮不创建凭据或读取密钥内容，仅核验测试专用凭据文件的权限元数据。本目录中 PDF/图片均为合成内容。
+评测只使用本目录中的虚构素材与固定答案，不读取 Hermes 会话、正式 Capture/Review/Knowledge，不访问 Private；API 凭据由隔离进程从仓库外的私有文件读取，未输出、记录或提交密钥。本目录中 PDF/图片均为合成内容。
 
 ## 1. 材料
 
@@ -52,7 +52,7 @@ API 公共参数文档列出 `temperature`、`top_p`、`n`、`stream`、`max_tok
 
 供应商资料核验：官方[视觉指南](https://docs.siliconflow.cn/docs/userguide/capabilities/vision) 展示 Chat Completions 的 Base64 Data URI 示例（JPEG）、`detail` 和多图格式；其[多模态指南](https://docs.siliconflow.cn/docs/userguide/capabilities/multimodal-vision) 给出 Qwen 56×56–3584×3584 与图像 token 处理说明，并称不同型号处理策略不同。官方[Chat Completions API](https://docs.siliconflow.cn/docs/api/chat-completions-post) 说明 `X-Trace-Id`、响应 trace header 和 usage。公开文档没有给出这三个候选模型共同、可确认的 PNG/JPEG Base64 请求体字节硬上限；JPEG Base64 有直接示例，但没有找到三个指定型号逐一承诺两种 MIME 的规范表。因此 PNG/JPEG 请求格式通过本地假服务验证，型号实际接受性仍待真实合成样本联调；2 MiB/图与 8 MiB/body 是本地保护阈值，不得宣称是供应商限额。候选型号的 JSON Mode 记录沿用本项目先前查阅的 SiliconFlow 模型目录结果；该端点兼容性仍待获授权后实测。
 
-离线检查仅使用固定合成 PNG/JPEG 和本地 `httpx.MockTransport` 假 HTTP 服务，无真实网络调用、凭据创建或模型费用。覆盖请求字段/Base64、白名单、PNG/JPEG 类型检查、非支持格式和大小限制、总请求体限制、模型级 JSON Mode、429 无重试、重定向不跟随、超时与错误脱敏、异常响应/无效 JSON。真实视觉 API 联调条件尚未满足；需另行授权仅发送这些合成图片、指定准确模型及最多 3 次总请求（或更新后的上限）、串行/零重试/45 秒、使用用户专用 SiliconFlow key 经安全方式注入本地开发环境，并接受 ¥5 为软目标及事后账单核对。不得读取 Hermes 凭据或开启 Organizer。
+离线检查仅使用固定合成 PNG/JPEG 和本地 `httpx.MockTransport` 假 HTTP 服务。之后单独授权的首个真实视觉请求见第 8 节。适配器覆盖请求字段/Base64、白名单、PNG/JPEG 类型检查、非支持格式和大小限制、总请求体限制、模型级 JSON Mode、429 无重试、重定向不跟随、超时与错误脱敏、异常响应/无效 JSON。真实联调只用仓库合成图片，不读取 Hermes 凭据或开启 Organizer。
 
 ## 3. 12 次请求上限与执行矩阵
 
@@ -122,11 +122,29 @@ DeepSeek 估价按本次时段（北京时间 08:00–次日 02:00）公开非�
 
 之前未能直接连接 SiliconFlow 控制台；本轮依据用户提供的官方账单导出登记 GLM 计费事实，但 HTTP 结果与质量仍为 **UNKNOWN**。新增持久化执行器是在原 GLM 结果丢失后实现；不能追溯补造原请求的状态记录。
 
-本机仓库外的对账账本 `e2dabfb6-d4d7-40da-b39f-be5591515b4e`（目录 `0700`、账本文件 `0600`）记录 DeepSeek 完成、GLM 的账单异常终态及 Qwen 一次调用。GLM 从 `unknown` 经用户授权的人工异常处置进入 `billed_result_unavailable`，保留 1 次尝试和账单证据；不包含 HTTP 状态、trace、响应或质量分数。该状态只解除顺序门禁以允许下一模型，不允许 GLM 重试。
+本机仓库外的文本对账账本 `e2dabfb6-d4d7-40da-b39f-be5591515b4e`（目录 `0700`、账本文件 `0600`）记录 DeepSeek 完成、GLM 的账单异常终态及 Qwen 一次调用。GLM 从 `unknown` 经用户授权的人工异常处置进入 `billed_result_unavailable`，保留 1 次尝试和账单证据；不包含 HTTP 状态、trace、响应或质量分数。该状态只解除顺序门禁以允许下一模型，不允许 GLM 重试。
 
 Qwen 的单次真实请求于 2026-10-15 19:43 左右启动；客户端等待 45 秒后超时。账本已原子保存 `unknown`、`attempts=1`、`provider_timeout`、45001.2 ms 与客户端生成的 trace ID `e5e254dde6c24c83986f2df4793d3dd9`。没有收到 HTTP 响应，故 HTTP 状态、完整 JSON、分类/引用/去重结果、输入/输出/推理 usage 和费用估算均为 UNKNOWN；请求可能已在服务端处理或计费。禁止重发。SiliconFlow [当前价格页](https://siliconflow.cn/pricing)列出该型号 128K 以下输入 ¥0.40/M、输出 ¥3.20/M，但缺少 usage 且 max_tokens 不构成服务端总费用封顶，不能据此伪造本次费用估算或保证不超过 ¥5。
 
-本批已知计费金额合计 ¥0.026611（DeepSeek ¥0.009828 + GLM ¥0.016783）；两笔代金券抵扣后的应付金额均为 ¥0。此合计不含 Qwen：Qwen 该次实际费用尚未知，需用户按 trace ID 在 SiliconFlow 控制台核对。
+本批已知计费金额合计 ¥0.026611（DeepSeek ¥0.009828 + GLM ¥0.016783）；两笔代金券抵扣后的应付金额均为 ¥0。此合计不含文本 Qwen：账单页刷新后仍只有 DeepSeek 和 GLM 两个模型汇总行，尚未看到 Qwen 行；因账单可能延迟或汇总口径不同，不能据此认定未计费，文本 Qwen 仍为 UNKNOWN。
+
+## 8. SiliconFlow 视觉横评首请求（2026-10-15）
+
+调用前检查：复用此前成功完成文本请求的 SecondBrain 专用 Key；账户账单页只显示脱敏 Key 标识与描述，没有读取 Key 内容。余额页显示可用余额约 `¥2.9859…`（界面尾数被截断）、3 张可用代金券、透支额度为 ¥0。费用明细按 2026-10-15 刷新后列出 DeepSeek 与 GLM 两行，未见文本 Qwen 行；此为当前页面观察，不代表供应商确认最终不计费。图片样本是仓库中 3 张固定合成 PNG：仿真软件 UI、合成图表、扫描 PDF 页面渲染；请求 JSON 预检约 287,028 bytes，低于本地 8 MiB 上限。
+
+首个视觉模型为 `Qwen/Qwen3.5-35B-A3B`。参数：单请求、3 张合成 PNG、`detail=low`、`max_tokens=800`、`temperature=0`、`n=1`、非流式、不使用 JSON Mode、不发送 tools、`enable_thinking` 或其他未核实参数；客户端超时 45 秒、无重试。真实视觉运行账本为仓库外 `~/.local/state/secondbrain/d076-vision-benchmark/384bb6a7-03cc-4a63-b3d8-c66d81507097.json`，目录 `0700`、文件 `0600`；记录调用前 `started`、合成 fixture SHA-256 和请求参数摘要。
+
+| 模型 | HTTP / 终态 | 耗时 | Token usage | 完整 JSON / 评分 | 估价 / 账单 |
+|---|---|---:|---|---|---|
+| `Qwen/Qwen3.5-35B-A3B` | HTTP 200；`provider_output_truncated`，账本 `failed`，尝试 1 次 | 32.107 秒 | 本地错误记录缺少 usage；当前账单页未见 Qwen 行 | `finish_reason=length`，未得到完整 JSON，文字/数字/引用/描述均不评分 | 单价见官方[价格页](https://siliconflow.cn/pricing)：128K 内输入 ¥0.40/M、输出 ¥3.20/M；无 usage，不估算本次金额；仍可能计费 |
+| `deepseek-ai/DeepSeek-V4-Flash-Vision-Exp` | 未发送 | — | — | — | 未产生本轮请求 |
+| `zai-org/GLM-5V-Turbo` | 未发送 | — | — | — | 未产生本轮请求 |
+
+Qwen 请求返回 HTTP 200，但模型输出达到配置上限并以 `finish_reason=length` 结束。已记录的追踪标识为 `fc65a99d-1330-4020-8014-3e29e0555d81`，耗时 32.107 秒。该响应不满足成功条件，依“任何异常即停”约束，未发送 DeepSeek Vision 或 GLM-5V 请求，也没有重试。账单页目前未显示 Qwen 行，但最终费用仍未知，后续应按时间与 trace 在后台复核。账本保存的是失败元数据，不伪造最终 JSON 或评分。
+
+本次错误揭示适配器此前未将 `finish_reason=length` 响应中的 usage 持久化。代码现已调整：对截断/解析错误保留 HTTP 状态、trace 及通过白名单筛选的 input/output/reasoning usage；此修复不能恢复本次已丢失的 usage。离线测试验证该行为。后续视觉模型调用须在单独确认本次费用并决定是否继续后再进行；不能延长 45 秒超时或提高输出上限来规避本次结果。
+
+截至此处，视觉横评只有 Qwen 一次失败请求；尚无任何模型视觉准确性结论。总测试软预算 ¥5 仍未证实为硬封顶，折扣券抵扣与模型实际账单应分别核对。
 
 横评结果仅代表这组人工合成样本，不外推一般能力。预期记录表模板：
 
