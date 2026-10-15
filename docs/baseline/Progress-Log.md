@@ -660,3 +660,12 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - Inbox、原件预览、处理重试、Composer 结果及 Review 状态改用映射。图片 OCR 已生成 Review、仅缺视觉描述时显示“文字识别完成，画面理解暂未接入”；真实 OCR 超时/失败仍显示明确的中文失败原因。技术标识、文件名、来源字段和 OCR/聊天原文不翻译。
 - 验证：Capture/Review 交互与文案映射 **30 passed**，typecheck/build 通过；覆盖英文错误不直显、OCR partial 状态轮询、OCR 真失败提示、Review API 错误和英文模式保留。
 - **状态：本地实现并测试，尚未部署 NAS，也未进行浏览器用户验收。**
+
+# 2026-10-15 — D076-A.1 + Unified Capture 合并部署
+
+- 目标代码 `55977c8173337e8f9ff9174cf6841df5a3d5a715` 从独立版本目录通过正式 `Dockerfile.app` 构建为 `secondbrain-app:d076a1-55977c8`。部署前快照 `/volume1/docker/secondbrain/rollback/d076a1-predeploy-20261015-142941/` 已通过 SHA-256、权限及原 Compose/.env 比对校验。
+- 新镜像先进入一次性隔离 Canary。cgroup 实测内存/Swap 各 1 GiB、CPU affinity 3、只读 rootfs、network none、非 root UID/GID 1026:100、64 MiB `/tmp`、cap-drop ALL 与 no-new-privileges 均生效。真实中文/中英图片 OCR、无文字层扫描 PDF 200 DPI OCR、可读 PDF pypdf Fast Path 全部通过；测试对照文字与 Raw/Review SHA-256 已核对。Tesseract 5.5.0、chi_sim/eng、Poppler 25.03.0。容器 memory high-water 215,678,976 bytes，`memory.failcnt=0`、无 OOM；tmpfs 10 ms 采样峰值 274,432 bytes。120 DPI 单样本对照识别相同文本，不据单次耗时评价改进。
+- Canary 容器、合成样本目录及隔离 Capture 输出均已清理；保留版本化构建源码、新镜像和受限回滚快照。
+- 正式 Compose 只变更 App build context/image 两项；新 SHA-256 `b7ca306b82e03b4eae022b8d9ed68beb82b57d1e5b419bf0a4467a632c8a92dc`，`config --quiet` 通过。仅 Compose CLI 重建 App；新容器 `b96506b44965faa1fe88a12a6d7411efcf3e5ab0cfb9218ff17a1e0dfa1d27b8` healthy，Image ID `sha256:e994da5c0c4a5fb0eef27608728b1091d1442e686ac4a407e7661aea37060505`。Hermes 容器、镜像与启动时间不变。
+- HTTPS/API smoke 登录、Secure Cookie、Home、Chat 读取、Inbox、Review 列表/详情、原件预览/下载通过；未登录 Inbox/Review/Capture 拒绝；Promote=false。Raw/Review RW、Knowledge RO、Private 未挂载，STT 关闭，53 个已有 Raw/Review/state 文件哈希未变。未上传生产测试素材或执行 Promote。
+- 构建产物含统一 Composer、中文提示、D076-A.1 Review 布局。**状态：代码已部署并通过隔离 OCR 与服务端 smoke；尚未用户浏览器验收。** 等用户在 63013 验收 Composer 桌面/手机交互、Review 阅读布局及其真实中文扫描 PDF OCR 质量；不代表 D076 完成，也未进入 D076-B。

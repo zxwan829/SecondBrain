@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。统一收录 Composer 与简体中文状态/错误提示映射已在本地开发并通过前端交互测试、typecheck 与 build，尚未部署，不能替代 D075.2 浏览器验收。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。D076-A OCR 已部署到 63013；用户已实际完成图片和扫描 PDF 收录，Raw→OCR→Review 链路可用，但报告扫描 PDF OCR 乱码较多，并发现 Review 双栏滚动及正文呈现问题。当前本地修复尚未部署；PDF 质量提示与分辨率适配通过针对性代码测试，但本机无 Tesseract/Docker，不能声称已复现真实 OCR 质量。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 整体未交付。
+**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。统一收录 Composer、中文状态/错误提示与 D076-A.1 Review/OCR 体验修复已按 `55977c8` 合并部署到 63013，App healthy；登录、Home/Chat/Inbox/Review/预览/下载 API smoke 通过，独立 Canary OCR 真实识别通过。Composer 拖放/输入重置、D076-A.1 新布局和 200 DPI 对真实中文扫描件的效果仍待用户浏览器验收。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。D076-A.1 与 Unified Capture 已合并部署至 63013。NAS 隔离 Canary 以合成中英文图片和扫描 PDF 真实运行 Tesseract/Poppler；200 DPI 扫描 PDF OCR 与 120 DPI 对照均识别出样本文字，可读 PDF 继续走 pypdf Fast Path。测试不是用户私人素材，真实扫描件效果仍待用户复验。Review 双栏/Markdown 阅读、Composer 与中文提示现已部署，拖放、清空/失败保留等交互仍待浏览器验收。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 整体未交付。
 
 ## 2. 已确定的架构与边界（接手项目必须先知）
 
@@ -47,16 +47,16 @@ source: GitHub SecondBrain Monorepo
 
 | V1 项目 | 要求 / 验收要点 | 当前状态 | 仍需完成 |
 |---|---|---|---|
-| Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | PROD-PARTIAL：生产为 Hermes 原生 Chat；App 已按 v0.21.5 `749220ef` 固定响应契约实现适配并通过 Mock 回归 | NAS 只读核验见 Environment-Baseline：8642 仅监听 Hermes loopback，未能从 App 网络做授权联调；生产启用内部 API/密钥配置需单独授权，且未部署/验收 |
+| Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | PROD-PARTIAL：Hermes v0.21.5；App 按 `749220ef` 适配真实响应；63013 Chat capabilities/sessions API smoke 通过，已有 Chat 浏览器验收记录 | 本轮未发送 Chat 消息；后续只在出现回归时验证，完整 V1 业务模块仍待接入 |
 | Daily Capture | 低摩擦保存日常素材；不得把内容自动提升成正式 Knowledge | PROD-PARTIAL | 对照 Skill 的正式触发和行为做必要回归 |
 | Knowledge Retrieval | 从批准的目录读取/搜索已存在的正式知识 | ACCEPTED：V0 已生产验收 | 仅在真实效果问题出现时优化，不强行接 RAG |
 | Universal Capture：文本/Markdown/TXT | 保存 Raw、建立 Review、元数据与路径真实落盘、不自动 Promote | PROD-PARTIAL：Hermes 文本 Raw→Review 已验收；D075 App 63013 文本真实 Raw/Review 与 Inbox/Review API 验证通过 | 用户浏览器验收；微信端到端仍未接入 |
 | Universal Capture：URL/Web | 保留原 URL/时间，安全抓取/提取，再形成 Review | PROD-PARTIAL：63013 真实抓取 `example.com`；Raw URL/采集时间与 SHA-256 保持不变，Review 保存提取文本 | 多站点与失败恢复的生产覆盖仍有限；用户浏览器验收 |
-| Universal Capture：PDF | 保存 PDF 原件、提取正文、生成 Review | PROD-PARTIAL：用户确认 63013 扫描 PDF 已走 Raw→OCR→Review；OCR 文字乱码较多，当前改进仅在本地 | 部署受控的 DPI 适配后用户复验；扩大真实 PDF 覆盖 |
-| Universal Capture：图片/截图 | 保存图片、必要识别、生成 Review | PROD-PARTIAL：D076-A 已部署；用户确认图片 Raw→OCR→Review 链路正常；缺少视觉描述时状态为 partial | Review 阅读体验本地修复尚未部署；AI 视觉描述处理器 |
+| Universal Capture：PDF | 保存 PDF 原件、提取正文、生成 Review | PROD-PARTIAL：D076-A.1 200 DPI 自适应已部署；独立 Canary 的合成扫描 PDF OCR 实测命中对照文字，可读 PDF 仍走 pypdf | 用户对真实中文扫描件复验 OCR 质量；扩大真实 PDF 覆盖 |
+| Universal Capture：图片/截图 | 保存图片、必要识别、生成 Review | PROD-PARTIAL：D076-A.1 Review/状态体验已部署；独立 Canary 中文/中英合成图片 OCR 命中对照文字；缺少视觉描述时仍为 partial | 用户浏览器复验 Review 阅读与图片 OCR；AI 视觉描述处理器 |
 | Universal Capture：语音/音频 | 保存音频、转写、生成 Review | PROD-PARTIAL：63013 音频 Raw 状态持久化；D076 已适配 Hermes v0.21.5 STT 接口、限长和显式关闭开关；当前 Hermes 容器没有可验证的 STT 后端，未真实转写 | 授权并配置已验证处理器后，完成真实样本与成本验证 |
 | **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
-| Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | PROD-PARTIAL：D075.2 已部署；本地统一 Composer 已接入 Inbox 与首页快速收录，共用现有 Capture API；未部署 | 统一 Composer 的部署与浏览器/手机验收；图片/音频处理器和微信渠道 |
+| Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | PROD-PARTIAL：Commit `55977c8` 的统一 Composer 已部署至 63013，Inbox 与首页快速收录共用现有 Capture API；认证 API smoke 通过 | 用户验收拖放、粘贴、IME、成功清空/失败保留及手机选择；音频处理器和微信渠道 |
 | Review 读取 | Web App 统一会话下展示列表/详情、来源和内容 | ACCEPTED：现有 D071 Dashboard v0.2.4；独立 App 63013 HTTPS 浏览器已显示 8 条真实 Review 与详情 | 独立 App 用户最终验收；补齐正式审批状态/动作部署 |
 | Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | DEV-TESTED：阶段 A 15 项测试；生产关闭 | 收口权限、统一登录安全边界、正式部署、HTTPS 用户验收 |
 | Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
@@ -70,7 +70,7 @@ source: GitHub SecondBrain Monorepo
 | Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
 | Chat | PROD-PARTIAL：Hermes 原生（旧入口） | 独立 Chat UI 与 Hermes Session/Skill/工具/流式行为联调并验收 |
 | Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
-| Inbox | PROD-PARTIAL：D075.2 预览、精确 Review 定位/滚动及 PDF 原始文件名兼容已部署到 63013；用户确认 Review 自动滚动和 PDF 文件名通过。统一 Composer 与中文状态/错误映射本地已通过 30 项前端定向测试、typecheck/build，尚未部署 | 部署后浏览器/手机验收统一 Composer；图片/音频处理和微信渠道仍待完成 |
+| Inbox | PROD-PARTIAL：D075.2 预览/定位及 PDF 文件名验收保留；D076-A.1 + Unified Capture/中文提示已部署。登录后的 Inbox、预览、下载与 Review API smoke 通过 | 用户浏览器/手机验收统一 Composer、Review 双栏/阅读与真实扫描件质量；音频处理和微信渠道仍待完成 |
 | Review / Approval | PROD-PARTIAL：只读已验收 | Core 审批、状态、暂缓/入库及结果反馈 |
 | Projects | NOT CONNECTED：UNAVAILABLE | 真实项目、状态、最近活动、下一步、相关笔记 |
 | Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |
@@ -97,8 +97,8 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d0752-934d0ea` healthy；D074 HTTPS Cookie、Home/Review；Chat 浏览器工具进度/停止/恢复通过；D075.2 已部署 | 用户已接受 Inbox→Review 自动滚动和 PDF 文件名；拖放/输入清空待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
-| P1 | Universal Capture Web 入口 + 多类型 | D075.2 `934d0ea` 已部署：文本/URL/可读 PDF Raw→Review，图片/音频 Raw-only；五条旧测试记录仍在且 Raw 哈希一致。D076 OCR 已在 NAS 1 GiB、network-none 隔离 Canary 中真实验证，但未部署；音频 STT 保持关闭 | AI 图像描述无可信已测入口；Hermes STT 后端当前不可用；微信端到端未接入。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
+| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076a1-55977c8` healthy；HTTPS login/Cookie、Home/Chat/Inbox/Review/Preview/Download API smoke 通过；Hermes 未重启 | 用户已接受 Inbox→Review 自动滚动和 PDF 文件名；新 Composer/Review/OCR 页面体验待浏览器验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
+| P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
 
