@@ -1,8 +1,7 @@
 """Fail-closed, file-backed organizer pipeline.
 
-The production model adapter is intentionally absent until Hermes can prove a
-tool-free, hard-budgeted inference path. The engine is injectable so its durable
-state, replay rules, and Review writes can be exercised with synthetic fixtures.
+The provider adapter remains unconnected until hard provider input/cost limits
+are attested. The engine is injectable for synthetic execution tests.
 """
 from __future__ import annotations
 
@@ -361,7 +360,7 @@ class OrganizerRunner:
                         if not row.get("timestamp"):
                             raise RuntimeError("Hermes user message is missing its source timestamp")
                         if len(text) > MAX_INPUT_CHARS:
-                            raise HTTPException(status_code=413, detail={"code": "message_too_large", "message": "单条新消息超过整理输入上限，未推进游标。"})
+                            raise HTTPException(status_code=413, detail={"code": "message_too_large", "message": "单条新消息超过整理硬上限，未推进游标。"})
                         if len(new_messages) >= MAX_INPUT_MESSAGES or total_chars + len(text) > MAX_INPUT_CHARS:
                             budget_stop = True
                             break
@@ -411,7 +410,8 @@ class OrganizerRunner:
             raise HTTPException(status_code=409, detail={"code": "model_retry_budget_exhausted", "message": "该作业的模型调用预算已用完。"})
         job["status"] = "model_started"
         self._save_job(job)
-        payload = {"task": "提取值得保存的用户原始经历、工作灵感、待办或知识候选；不把助手建议写成用户事实。",
+        payload = {"job_id": job["job_id"],
+                   "task": "提取值得保存的用户原始经历、工作灵感、待办或知识候选；不把助手建议写成用户事实。",
                    "new_user_messages": job["new_messages"], "context_only": job["context"],
                    "output_schema": {"drafts": [{"category": "journal|work_idea|todo|knowledge_candidate",
                                                    "title": "string", "summary": "string",
@@ -433,6 +433,14 @@ class OrganizerRunner:
                             "模型请求失败或响应无法核验；远端结果可能未知，已暂停自动重试。")
             raise
         job["drafts"] = drafts
+        usage = result.get("usage") if isinstance(result, dict) else None
+        if isinstance(usage, dict):
+            safe_usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                          if type(usage.get(key)) is int and usage[key] >= 0}
+            if isinstance(usage.get("model"), str):
+                safe_usage["model"] = usage["model"][:160]
+            if safe_usage:
+                job["usage"] = safe_usage
         job["status"] = "drafts_pending"
         job["model_completed_at"] = iso()
         self._save_job(job)

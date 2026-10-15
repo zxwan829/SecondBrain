@@ -279,3 +279,11 @@ type: environment-baseline
 - 前端移除 Home 弹出的第二个 Composer；Inbox 只保留历史管理和立即整理，Home 的收录入口转至 Chat，用户必须显式切换 Capture。Chat/Capture 模式切换保留编辑文本与替换后的文件附件。本地 Composer 组件级测试覆盖粘贴/拖放等既有行为。
 - 验证：Core 全量 `pytest` **76 passed**（1 条 Starlette/httpx 弃用警告）；前端 `npm run typecheck`、Vitest **42 passed**、Vite build 通过。Organizer 定向测试含无新增跳过、跨会话来源、旧历史基线、分页游标恢复、来源引用、写入恢复、用户编辑 Review 冲突保护、模型结果未知不重试、并发锁、历史断点隔离、固定/间隔计划、预算拒绝和调度退避。
 - **状态：本地代码与自动化验证完成，尚未 Commit/Push；无生产部署、无真实模型运行、无定时任务、无真实对话整理/Review 写入、无用户浏览器验收。**安全模型接口及历史删除完整性仍是阻断项。
+
+## 2026-10-15 — SiliconFlow Organizer Adapter 技术核查（本地，未部署）
+
+- 以 `8167ffd` 为开发基线，仅增加 Core 适配器原型与合成测试。没有访问 NAS、生产 Compose、运行容器、业务目录或生产凭据；App factory 仍传 `model=None`，没有定时任务或真实 API 调用。
+- SiliconFlow Chat Completions 文档说明支持 `max_tokens` 输出上限，响应提供 prompt/completion/total usage，429 是 rate-limit 错误；文本模型按 token 计费。公开资料另提到账户面板可设置 monthly spending limits，但本次资料未说明限额对象、超过额度时的硬拒绝语义或按 API Key/单个作业划分；rate limits 明确为账户级，而非 API Key 级。不能将 Core 单作业节流、usage 后核算或账户级 RPM/TPM 宣称为供应商硬费用上限。
+- SiliconFlow 请求侧无可验证的服务端输入 Token 上限参数。Adapter 对提示内容执行 UTF-8 字节上限与截断、拒绝超限输出/不完整 JSON、单次非流请求与 45 秒超时，但 tokenizer 随模型变化，不能据此宣称硬输入 Token 限额。其 `hard_input_token_limit=false`、`hard_cost_budget=false`，因此 Organizer 继续 fail closed。
+- usage 只有 token 数。实际费用需由用户在 SiliconFlow 账户账单确认；没有取得账户信息或调用 API。若后续要启用，需用户指定模型/预算并确认对话数据出站范围，用户在平台核实并配置月支出上限，确认超限阻断语义，另行授权独立 API Key 文件安全注入和一次无敏感联调。若无法证明供应商限额强制生效，保持禁用。
+- 首次入库目前跳过会话既有历史。可考虑由用户显式选择不回溯/当天/最近 4、12、24 小时；固定回溯水位，最近分页读取，`session_id:message_id` 幂等去重并记录源时间和接收时间，遇到历史缺口继续显示 coverage warning。不扫描全部历史。现阶段只记录方案，未改变运行设置。

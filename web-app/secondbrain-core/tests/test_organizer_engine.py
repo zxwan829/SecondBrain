@@ -82,7 +82,9 @@ class OrganizerEngineTests(unittest.TestCase):
         self.model.result = {"drafts": [{"category": "work_idea", "title": "每周复盘",
                                           "summary": "AI 提炼：用户提出每周进行复盘。",
                                           "source_quotes": [{"session_id": "app-session", "message_id": "u1",
-                                                             "excerpt": "我想记录每周复盘"}]}]}
+                                                             "excerpt": "我想记录每周复盘"}]}],
+                             "usage": {"prompt_tokens": 20, "completion_tokens": 15,
+                                       "total_tokens": 35, "model": "synthetic/model"}}
         result = asyncio.run(self.runner.run())
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["draft_count"], 1)
@@ -93,6 +95,9 @@ class OrganizerEngineTests(unittest.TestCase):
         state = self.runner.state.read()
         self.assertEqual(state["sessions"]["app-session"]["cursor_count"], 2)
         self.assertIn("app-session:u1", state["processed_messages"])
+        saved_job = state["jobs"][result["job_id"]]
+        self.assertEqual(saved_job["usage"]["total_tokens"], 35)
+        self.assertEqual(saved_job["usage"]["model"], "synthetic/model")
         second = asyncio.run(self.runner.run())
         self.assertEqual(second["status"], "no_new_messages")
         self.assertEqual(len(self.model.calls), 1)

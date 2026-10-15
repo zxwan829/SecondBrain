@@ -37,7 +37,7 @@ source: GitHub SecondBrain Monorepo
 
 **Personal OS 扩展约束（D074 补充）：** App 是可持续扩展的个人业务入口，不限于 Chat/Knowledge。前端导航由模块配置驱动；Core 保持模块化单体和独立业务 API；单用户登录由通用 action-policy seam 统一校验，不提前实现 RBAC。只有 Knowledge 正式入库走人工审核；Memo、Calendar、新闻订阅等普通业务 CRUD 按各自 Core API 授权。D076 将 NAS 本地 App 持久调度作为自动整理的调度主体，Hermes 仅提供消息/模型能力，不依赖浏览器或外部任务。当前不创建空页面/模块、插件框架、数据库或新容器。
 
-**D076 自动整理状态：** 每日固定 `00:30 Asia/Shanghai` 不再是唯一调度；设置默认每 4 小时，可改每天固定时间。配置、执行器、共享游标与作业状态/锁、幂等 Review 草稿及故障恢复已有本地实现和测试；由于没有可验证的 no-tools、硬 Token/成本限制模型适配器，执行器保持 blocked，立即整理 API 返回 503、按钮禁用，应用启动时不创建定时任务。不得将安全骨架标记为可用整理服务或生产交付。
+**D076 自动整理状态：** 每日固定 `00:30 Asia/Shanghai` 不再是唯一调度；设置默认每 4 小时，可改每天固定时间。配置、执行器、共享游标与作业状态/锁、幂等 Review 草稿及故障恢复已有本地实现和测试。新增 SiliconFlow 直连文本 ModelAdapter 原型及合成测试；它仅构造无工具的 Chat Completions 请求、限制输出 Token/超时/并发/单作业调用并读取响应 usage，且不经过 Hermes Agent Runtime。当前 SiliconFlow 公开资料未能证明输入 Token 服务端硬上限或按密钥/单作业的硬费用上限；供应商月度支出上限的强制边界尚未核实。适配器因此不满足 Runner 能力门槛，生产 App 仍保持 `model=None`，立即整理 API 返回 503，按钮禁用，应用启动不创建定时任务。没有读取 API Key、没有调用付费 API，也没有 NAS 部署。Organizer 首次纳入仍默认跳过历史；后续可选首次回溯窗口建议为不回溯/当天/最近 4/12/24 小时，按 `session_id:message_id` 去重并持久化时间水位，须显式选择且只读有限窗口，不能全量扫描。不得将适配器原型标记为可用整理服务或生产交付。
 
 **协作：** ChatGPT 负责范围、技术取舍、任务分解、验收标准；Codex 负责实施、针对性测试、必要文档更新、Git 与经授权的部署。日常遵循 FAST-EXEC。代码 Push ≠ 生产部署 ≠ 用户验收。
 

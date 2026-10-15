@@ -104,3 +104,7 @@ V1 内网及 Home-WG 使用 App HTTP，受限 DSM HTTPS `63012` 做全业务兼�
 - 本地实现包含：私有原子状态/设置文件、固定时间与间隔调度计划、共享运行锁、App 可见会话注册及消息 ID/计数游标、分页增量收集、有限上下文、幂等 Review 文件、人工文件冲突保护，以及模型结果已持久化后的写入恢复。模型结果未知时作业进入 `needs_attention`，禁止自动重复调用；调度失败有持久退避。以上只由合成 Hermes 消息和模型替身验证。
 - **来源边界：** 固定 Hermes v0.21.5 API `749220ef` 的 Sessions API 有 offset 分页，消息最多 500 条一页且支持 oldest/latest；返回 message ID、session ID 和时间戳。Core 从 Chat 会话列表将可见会话作为 Organizer 来源；首次纳入时基线化旧记录，只处理后续新增用户消息。覆盖不包括 App 不可见的外部渠道/其他 profile；Hermes 没有已验证的删除墓碑或分页快照令牌。计数/末消息锚点能检测常见历史回退和压缩，但不能证明“同数量删除后追加”不存在，因此该风险保留为未解决限制。
 - 无工具约束的模型整理接口尚未证明：Hermes `/v1/runs` 以及 OpenAI 兼容 Chat 路由执行 Agent Runtime，不能作为受控整理模型。没有调用真实或付费模型；生产模型适配器为 `None`，应用启动时不运行调度器，手动触发返回 503，设置 UI 明示“仅保存设置，自动整理尚未运行”。因此本地代码不等于 Organizer 已激活/可用，更不等于生产部署。
+
+**受控文本模型适配边界（2026-10-15）：** 新增 Core 内独立 SiliconFlow Chat Completions Adapter 原型，目标只传文本并直接请求固定 HTTPS API；请求中不含 tools/tool_choice/Skills，禁用流式与重定向，单并发、单作业单请求、45 秒超时、输出 `max_tokens`、本地 UTF-8 输入字节截断，解析返回 token usage。凭据只可由 Core 读取私有 Secret 文件；适配器尚未注册到生产 app factory。供应商 API 暂未证明精确服务端输入 Token 上限及单 Key/单作业硬费用上限；usage 是 token 数，不等于费用核算，账户月度支出限额和账户级 rate limit 不能替代已验证的单作业硬限额。因此能力声明不通过 Organizer gate，`model=None`、自动任务关闭。此原型不授权真实付费调用或消息外传。
+
+**首次历史纳入：** 默认以当前会话消息数/尾 ID 建基线并跳过历史。后续可选首次回溯区间建议为不回溯、当天、最近 4/12/24 小时，由用户明确选择；记录固定时间水位，按有限最近分页读取，并以 `session_id:message_id` 去重，消息时间加 Core 首次接收时间辅助处理迟到/乱序；禁止全量回扫。该选项尚未实现。

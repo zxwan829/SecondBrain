@@ -712,3 +712,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 安全阻断仍在：Hermes `/v1/runs` 与 OpenAI 兼容 Chat 路由走 Agent Runtime，不构成已证明的 no-tools、有硬输入/输出 Token、超时、并发和成本限制的模型服务；无获准的独立接口/凭证。本地生产配置 `model=None`，startup 不启动 scheduler，`/run` 返回 503，UI 明示设置只保存、自动整理未运行。未调用真实付费模型、未整理真实历史、未写入真实 Review。
 - 验证：Core 全量 **76 passed**（Starlette/httpx 弃用警告 1 项）；前端 `npm run typecheck`、Vitest **42 passed**、Vite build 通过。新增/覆盖并发互斥、空输入、跨会话来源、分页/游标断点恢复、预算拒绝、来源引用验证、失败恢复、模型结果不明停止、用户修改 Review 冲突保护、设置重启持久、配置禁用时的手动运行等。
 - **交付状态：** 本地代码和必要文档已更新，未提交前仍是工作树修改；无 NAS/Compose/Hermes/网络/权限/业务数据访问或更改，也没有用户浏览器验收。需先解决受控 no-tools 模型接口和历史完整性策略，再申请真实模型及部署授权。
+
+## 2026-10-15 — D076 SiliconFlow 受控 ModelAdapter 原型（本地，未部署）
+
+- 基于 `8167ffd` 新增独立 SiliconFlow Chat Completions Adapter；目标为 Core 直接调用文本模型，不经过 Hermes Agent Runtime。固定 HTTPS endpoint/model 配置，无重定向、无流式响应、请求体不包含 `tools`、`tool_choice`、Skills 或文件能力；使用 Bearer key、单并发、45 秒硬超时、单次请求/作业、`max_tokens` 输出限额、输入 UTF-8 字节截断；响应校验 JSON/schema/token usage，并拒绝工具调用、超长输出、429、异常响应及超时，不自动重试。私有 Secret 文件读取 helper 要求绝对路径、普通文件、当前 Core UID 所有、权限不宽于 0600、禁止符号链接，并不在错误或 repr 中暴露凭据。
+- SiliconFlow 请求/响应由 `httpx` adapter contract 表达；usage 可记录 prompt/completion/total token 与模型标识，不将 usage 当费用账单。官方资料表明 Chat Completions 支持 `max_tokens`、返回 usage，429 表示限流；计费按实际 token 计价。官方资料提及账户面板月度消费限额，但没有核实其对单 Key/单作业的强制边界，且 rate limit 是账户级；接口也没有可供请求侧设置的硬输入 token 参数。因此能力声明有意将 `hard_input_token_limit` 与 `hard_cost_budget` 设为 false，现有 Organizer Runner 会拒绝启用。
+- 使用 MockTransport/合成数据测试接口无工具、Secret 文件权限、UTF-8 输入截断、usage、超时、429 不重试、异常 JSON、输出超限和超限预算在请求前拒绝；复用 Organizer 现有断点恢复/幂等/作业调用预算测试。定向测试 `test_siliconflow_organizer.py` + `test_organizer_engine.py`：**29 passed**；Core 全量测试：**85 passed**（1 条 Starlette/httpx 弃用警告），Python compileall 与 `git diff --check` 通过。未访问真实 API、未读取或新增凭据、未启动调度器、未修改生产配置或业务数据。
+- 首次会话纳入当前仍跳过已有历史。建议后续提供显式回溯范围 `不回溯 / 当天 / 最近 4 / 12 / 24 小时`；每条来源以 `session_id:message_id` 持久去重，记录消息时间与 Core 接收时间，按消息时间水位及有限倒序分页收集，不扫描全部历史。首次范围选择应固定在作业/配置中，避免重启或改设置产生重复或漏收；当前未实现该回溯选项。
+- **状态：** 适配器代码原型与合成测试完成，安全能力门槛未通过，AI 自动整理仍 blocked/未部署。真实付费调用的最小前置授权：用户指定模型与每月平台支出限额，并确认有限 App 可见 Hermes 对话正文可发送到 SiliconFlow；由用户在供应商控制台确认并配置月度限额及其超限拒绝语义；另行批准为 Core 创建独立 API Key、以私有 Secret 文件注入及一次合成/无敏感样本联调。若供应商不能确认强制限额，则不启用任何付费调用。
