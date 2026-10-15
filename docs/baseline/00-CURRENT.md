@@ -33,7 +33,7 @@ source: GitHub SecondBrain Monorepo
 | **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
 | Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | PROD-PARTIAL：Commit `55977c8` 的统一 Composer 已部署至 63013，Inbox 与首页快速收录共用现有 Capture API；认证 API smoke 通过 | 用户验收拖放、粘贴、IME、成功清空/失败保留及手机选择；音频处理器和微信渠道 |
 | Review 读取 | Web App 统一会话下展示列表/详情、来源和内容 | ACCEPTED：现有 D071 Dashboard v0.2.4；独立 App 63013 HTTPS 浏览器已显示 8 条真实 Review 与详情 | 独立 App 用户最终验收；补齐正式审批状态/动作部署 |
-| Organizer 自动整理（D076） | 设置页管理 SiliconFlow/已验证模型、服务端 API Key、软预算状态、模型和 Scheduler 开关及计划；执行仍产出 Review 草稿并记录 usage/预算/游标 | DEV-TESTED：现有真实合成 API 闭环 1 次；本地后台化新增配置/API Key 生命周期与 Mock 检查，Core/Organizer 定向及既有权限边界测试 63 passed、前端类型检查/构建通过；模型和 Scheduler 默认关闭 | 本轮仅本地代码；连接测试未连接供应商。需用户浏览器验收、供应商控制台核账、单独批准部署；禁止真实业务数据出站，Knowledge/Promote/Private 边界不变 |
+| Organizer 自动整理（D076） | 设置页管理 SiliconFlow/已验证模型、服务端 API Key、软预算状态、模型和 Scheduler 开关及计划；执行仍产出 Review 草稿并记录 usage/预算/游标 | DEV-TESTED：现有真实合成 API 闭环 1 次；后台配置/API Key 生命周期及 Mock 检查；Organizer/Core/既有权限边界定向测试 66 passed，前端类型检查/构建通过；模型和 Scheduler 默认关闭 | 本轮仅本地代码；连接测试未连接供应商。需用户浏览器验收、供应商控制台核账、单独批准部署；禁止真实业务数据出站，Knowledge/Promote/Private 边界不变 |
 | Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | DEV-TESTED：阶段 A 15 项测试；生产关闭 | 收口权限、统一登录安全边界、正式部署、HTTPS 用户验收 |
 | Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
 | Journal | 用户原文留存；目标支持新增/按日期追加，不允许普通 Agent 随意覆写 | NOT DONE：生产未开放专用写入 | 按 D064 执行；**业务是目标能力，但 Web App V1 的快捷录入属于 SHOULD，不能擅自冒充核心 MUST** |

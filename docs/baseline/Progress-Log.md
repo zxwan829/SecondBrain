@@ -823,3 +823,10 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - Organizer 状态补充每日剩余请求数和月度估算余额。保留原预算预留、执行器并发锁、作业/游标、Review 路径；不改变 Knowledge 写入、Promote、Private 边界。本轮未读取已有真实 Key、未真实 API 调用、未读真实 Hermes/业务内容、未启动 Scheduler、未部署。
 - 验证：Core Web App BFF、Organizer Engine、合成 E2E、SiliconFlow MockTransport **49 passed**；Core 既有权限/Promote 边界 **14 passed**；Core `compileall`、前端 `typecheck`、Vite build、`git diff --check` 通过。测试覆盖登录拒绝、非法模型拒绝、密钥响应脱敏/权限/删除、设置重读与 Mock 测试零 Hermes HTTP 新调用。系统 Python 缺少 FastAPI/httpx，改用仓库 `.venv` 成功验证。
 - **状态：** 代码/文档仅本地修改，待提交推送；未生产部署、未真实联调或用户浏览器验收。上线前至少需用户审阅并部署批准、在生产受保护 Core 状态中配置独立凭据、明确批准 Scheduler 和真实数据出站策略，并浏览器验收设置/Key 管理/Mock 测试及预算显示；供应商账单仍须控制台核对。软预算不是供应商硬费用上限。
+
+## 2026-10-15 — D076 Organizer 配置交付复核
+
+- 对照当前页面、Core API、控制存储和 Runner 复核：仅 `deepseek-ai/DeepSeek-V4-Flash` 可选；API Key 单独保存在 Core 私有状态目录、0600 文件中，响应仅报告配置状态；应用会话和同源校验仍生效。配置更新不发模型请求或启动 Scheduler；模型与 Scheduler 开关独立，默认关闭。连接检查为本地 Mock，无供应商请求。
+- 设置页补充费用说明：当前 Mock 不产生供应商费用；未来真实连接测试可能计费，需另行授权后才开放。Review 仍为输出目标，未改变 Knowledge、Promote、Private 边界。
+- 验证：Organizer 配置/Engine/合成 E2E 31 passed，SiliconFlow MockTransport 11 passed，Core BFF 11 passed，Core 审批/权限边界 13 passed（合计 66 passed）；前端 typecheck/build 通过，Core `compileall` 与 `git diff --check` 通过。测试仅使用合成数据和本地 Mock；未读真实 Key、未访问真实 Hermes/业务内容、未调用真实 SiliconFlow、未启动 Scheduler、未部署。
+- **状态：** 源码与文档在本轮提交并推送；生产未部署，用户浏览器验收待完成。真实业务数据启用仍需用户单独批准部署、真实数据出站、受保护生产凭据和 Scheduler 策略；供应商结算需在控制台核对。软预算不是供应商硬费用上限。
