@@ -44,6 +44,16 @@ SiliconFlow 多模态文档展示 `/chat/completions` 的 `image_url`，支持�
 
 API 公共参数文档列出 `temperature`、`top_p`、`n`、`stream`、`max_tokens`、`response_format` 等。统一实验参数建议 `temperature=0`、`n=1`、`stream=false`、同任务相同 `max_tokens`；不传 `top_p`（文档建议温度与 top_p 不同时调整），统一使用提示约束 JSON、不传 `response_format`，避免 GLM-5V-Turbo 的 JSON Mode 缺失造成不等价。`enable_thinking=false` 仅在该模型确实接受时发送；否则请求失败即停止，不改参数重试。所有型号的真实端点兼容性尚未联调。
 
+### 2.1 视觉评测适配器边界（2026-10-15）
+
+新增 `web-app/secondbrain-core/secondbrain_core/modules/vision_benchmark.py` 中独立的 `VisionBenchmarkAdapter`；不修改或接入 `SiliconFlowOrganizerModel`。它只允许上表三个视觉模型 ID，以 PNG/JPEG 本地字节构造 `data:image/png;base64,...` 或 `data:image/jpeg;base64,...` 的 `image_url` 内容，不接受远程图片 URL。请求不带 tools/tool_choice，不流式、不重试、单实例并发为 1，固定官方 HTTPS Chat Completions endpoint，45 秒以内超时；记录模型、usage、耗时、错误码和 trace ID，不记录图片或密钥。JSON Mode 兼容性按模型显式白名单：DeepSeek 与 Qwen 可由调用方选择，GLM 请求前拒绝；默认三者均不传 JSON Mode。没有模型页面证据支持 `enable_thinking` 的一致配置，所以全部省略。
+
+客户端限制（不是供应商硬限制）：最多 3 张、每张最多 2 MiB、宽高各不超过 1600、最多 2.56 MP、序列化 JSON 请求体最多 8 MiB、输出最多 800 Tokens、响应体最多 128 KiB。尺寸上限比 Qwen 官方 3584×3584 像素上限更保守，并为其他型号使用统一低负载门槛。输出 JSON 在本地解析；usage 必须包含 prompt/completion/total token 数，且 completion 不得高于请求上限。非 2xx、429、重定向、超时、无效 JSON 和响应结构异常均返回脱敏错误，不带错误响应正文。
+
+供应商资料核验：官方[视觉指南](https://docs.siliconflow.cn/docs/userguide/capabilities/vision) 展示 Chat Completions 的 Base64 Data URI 示例（JPEG）、`detail` 和多图格式；其[多模态指南](https://docs.siliconflow.cn/docs/userguide/capabilities/multimodal-vision) 给出 Qwen 56×56–3584×3584 与图像 token 处理说明，并称不同型号处理策略不同。官方[Chat Completions API](https://docs.siliconflow.cn/docs/api/chat-completions-post) 说明 `X-Trace-Id`、响应 trace header 和 usage。公开文档没有给出这三个候选模型共同、可确认的 PNG/JPEG Base64 请求体字节硬上限；JPEG Base64 有直接示例，但没有找到三个指定型号逐一承诺两种 MIME 的规范表。因此 PNG/JPEG 请求格式通过本地假服务验证，型号实际接受性仍待真实合成样本联调；2 MiB/图与 8 MiB/body 是本地保护阈值，不得宣称是供应商限额。候选型号的 JSON Mode 记录沿用本项目先前查阅的 SiliconFlow 模型目录结果；该端点兼容性仍待获授权后实测。
+
+离线检查仅使用固定合成 PNG/JPEG 和本地 `httpx.MockTransport` 假 HTTP 服务，无真实网络调用、凭据创建或模型费用。覆盖请求字段/Base64、白名单、PNG/JPEG 类型检查、非支持格式和大小限制、总请求体限制、模型级 JSON Mode、429 无重试、重定向不跟随、超时与错误脱敏、异常响应/无效 JSON。真实视觉 API 联调条件尚未满足；需另行授权仅发送这些合成图片、指定准确模型及最多 3 次总请求（或更新后的上限）、串行/零重试/45 秒、使用用户专用 SiliconFlow key 经安全方式注入本地开发环境，并接受 ¥5 为软目标及事后账单核对。不得读取 Hermes 凭据或开启 Organizer。
+
 ## 3. 12 次请求上限与执行矩阵
 
 严格串行、每项至多一次，不自动重试；任何超时、429、5xx、参数错误或 JSON 异常立即停止后续调用。实际请求数须用户另行授权。
