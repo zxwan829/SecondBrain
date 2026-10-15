@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { apiFailureLabel, captureFailureLabel, captureStatusLabel, isImageOcrDescriptionUnavailable } from './user-messages';
 
 type Locale = 'zh-CN' | 'en';
 type Capture = {
@@ -6,7 +7,9 @@ type Capture = {
   raw_path: string;
   review_path?: string | null;
   status: string;
-  error?: { message?: string } | null;
+  source_type?: string;
+  processor?: { kind?: string } | null;
+  error?: { code?: string; message?: string } | null;
 };
 
 const ACCEPTED_FILES = '.txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp,.gif,.wav,.mp3,.m4a,.aac,.ogg,.flac';
@@ -24,14 +27,6 @@ function validHttpUrl(value: string): boolean {
 function pasteImageName(type: string): string {
   const extension = type === 'image/jpeg' ? 'jpg' : type.split('/')[1]?.replace('svg+xml', 'svg') || 'png';
   return `pasted-image.${extension}`;
-}
-
-function statusLabel(status: string, en: boolean): string {
-  const labels: Record<string, [string, string]> = {
-    receiving: ['接收中', 'Receiving'], processing: ['处理中', 'Processing'],
-    completed: ['已完成', 'Completed'], partial_success: ['部分成功', 'Partial success'], failed: ['失败', 'Failed'],
-  };
-  return (labels[status] ?? labels.receiving)[en ? 1 : 0];
 }
 
 function formatSize(size: number): string {
@@ -118,7 +113,7 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox }: {
         });
       }
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      if (!response.ok) throw new Error(apiFailureLabel(payload.detail, response.status, locale, 'capture'));
       if (!payload.capture_id || !payload.raw_path) {
         throw new Error(en ? 'The server did not confirm that the original was saved. Your input is still here.' : '服务器未确认原件已保存，输入已保留。');
       }
@@ -126,7 +121,7 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox }: {
       if (fileInput.current) fileInput.current.value = '';
       setResult(payload as Capture); onComplete();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause instanceof Error ? apiFailureLabel(cause.message, 0, locale, 'capture') : '收录请求未成功，请稍后重试。');
     } finally { submitting.current = false; setBusy(false); }
   };
 
@@ -176,10 +171,12 @@ export function UnifiedCaptureComposer({ locale, onComplete, onGoInbox }: {
       <input ref={fileInput} className="unified-file-input" type="file" accept={ACCEPTED_FILES} aria-label={en ? 'Choose attachment' : '选择附件'} onChange={(event) => { acceptFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />
       {error && <p role="alert" className="capture-alert">{error}</p>}
       {result && <div role="status" className={`capture-result capture-result-${result.status}`}>
-        <strong>{statusLabel(result.status, en)}</strong>
-        <span>{result.status === 'partial_success'
-          ? `${en ? 'Original saved: ' : '原件已保存：'}${result.raw_path}. ${result.error?.message || ''}`
-          : result.error?.message || result.review_path || result.raw_path}</span>
+        <strong>{captureStatusLabel(result.status, locale)}</strong>
+        <span>{isImageOcrDescriptionUnavailable(result)
+          ? (en ? 'Text recognition completed; image understanding is not connected yet.' : '文字识别完成，画面理解暂未接入。')
+          : result.status === 'partial_success'
+            ? `${en ? 'Original saved: ' : '原件已保存：'}${result.raw_path}. ${captureFailureLabel(result.error, locale)}`
+            : result.error ? captureFailureLabel(result.error, locale) : result.review_path || result.raw_path}</span>
         <div className="unified-result-actions">
           <button type="button" className="capture-secondary" onClick={() => { setResult(null); setError(''); textarea.current?.focus(); }}>{en ? 'Continue capture' : '继续收录'}</button>
           <button type="button" className="capture-primary" onClick={onGoInbox}>{en ? 'Go to Inbox' : '前往收件箱'}</button>

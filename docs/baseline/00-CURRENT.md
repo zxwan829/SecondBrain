@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。统一收录 Composer 已在本地开发并通过前端交互测试、typecheck 与 build，尚未部署，不能替代 D075.2 浏览器验收。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。D076-A OCR 已部署到 63013；用户已实际完成图片和扫描 PDF 收录，Raw→OCR→Review 链路可用，但报告扫描 PDF OCR 乱码较多，并发现 Review 双栏滚动及正文呈现问题。当前本地修复尚未部署；PDF 质量提示与分辨率适配通过针对性代码测试，但本机无 Tesseract/Docker，不能声称已复现真实 OCR 质量。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 整体未交付。
+**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。五条 D075 采集记录的状态、Raw 哈希及已有 Review 均核对保留；未登录 Inbox 返回 401。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据，待用户实际验收。统一收录 Composer 与简体中文状态/错误提示映射已在本地开发并通过前端交互测试、typecheck 与 build，尚未部署，不能替代 D075.2 浏览器验收。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。D076-A OCR 已部署到 63013；用户已实际完成图片和扫描 PDF 收录，Raw→OCR→Review 链路可用，但报告扫描 PDF OCR 乱码较多，并发现 Review 双栏滚动及正文呈现问题。当前本地修复尚未部署；PDF 质量提示与分辨率适配通过针对性代码测试，但本机无 Tesseract/Docker，不能声称已复现真实 OCR 质量。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 整体未交付。
 
 ## 2. 已确定的架构与边界（接手项目必须先知）
 
@@ -70,7 +70,7 @@ source: GitHub SecondBrain Monorepo
 | Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
 | Chat | PROD-PARTIAL：Hermes 原生（旧入口） | 独立 Chat UI 与 Hermes Session/Skill/工具/流式行为联调并验收 |
 | Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
-| Inbox | PROD-PARTIAL：D075.2 预览、精确 Review 定位/滚动及 PDF 原始文件名兼容已部署到 63013；用户确认 Review 自动滚动和 PDF 文件名通过。拖放/输入重置原实现只有自动化测试证据；新的统一 Composer 本地已通过 22 项定向交互测试、typecheck/build，尚未部署 | 部署后浏览器/手机验收统一 Composer；图片/音频处理和微信渠道仍待完成 |
+| Inbox | PROD-PARTIAL：D075.2 预览、精确 Review 定位/滚动及 PDF 原始文件名兼容已部署到 63013；用户确认 Review 自动滚动和 PDF 文件名通过。统一 Composer 与中文状态/错误映射本地已通过 30 项前端定向测试、typecheck/build，尚未部署 | 部署后浏览器/手机验收统一 Composer；图片/音频处理和微信渠道仍待完成 |
 | Review / Approval | PROD-PARTIAL：只读已验收 | Core 审批、状态、暂缓/入库及结果反馈 |
 | Projects | NOT CONNECTED：UNAVAILABLE | 真实项目、状态、最近活动、下一步、相关笔记 |
 | Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |

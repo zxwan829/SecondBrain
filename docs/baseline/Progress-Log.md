@@ -653,3 +653,10 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - Enter 发送、Shift+Enter 保留换行并检查 IME composition；请求重复保护。仅服务端确认 `capture_id` 和 Raw 路径后清空输入，状态轮询与 Inbox 刷新保留；失败保留文本和附件。对象 URL 在附件移除/更换或组件卸载时释放。
 - 前端定向交互测试 **22 passed**，`npm run typecheck`、`npm run build` 通过。覆盖 URL/Text 分流、Markdown 原文、剪贴板图片和普通文本粘贴、拖放、文件选择/校验、附件 context、IME、并发保护、成功清空与失败保留。
 - **状态：本地实现并测试，尚未部署 NAS，也未进行浏览器用户验收。**
+
+# 2026-10-15 — Unified Capture 中文文案收口（本地）
+
+- 增加前端用户提示映射：Capture 常见状态统一为“已完成 / 处理中 / 部分完成 / 处理失败”；Capture 状态错误按错误码和已知原因转为简体中文，未知错误不透传英文正文并保留错误代码。HTTP/API 与 Hermes/Review 错误按状态和已知原因显示中文；英文语言模式继续保留原文。
+- Inbox、原件预览、处理重试、Composer 结果及 Review 状态改用映射。图片 OCR 已生成 Review、仅缺视觉描述时显示“文字识别完成，画面理解暂未接入”；真实 OCR 超时/失败仍显示明确的中文失败原因。技术标识、文件名、来源字段和 OCR/聊天原文不翻译。
+- 验证：Capture/Review 交互与文案映射 **30 passed**，typecheck/build 通过；覆盖英文错误不直显、OCR partial 状态轮询、OCR 真失败提示、Review API 错误和英文模式保留。
+- **状态：本地实现并测试，尚未部署 NAS，也未进行浏览器用户验收。**

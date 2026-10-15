@@ -7,6 +7,7 @@ import aiCubeUrl from './assets/ai-cube-user.png';
 import hermesOrbUrl from './assets/hermes-planet-user.png';
 import todayLandscapeUrl from './assets/today-lake-background.png';
 import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
+import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -31,8 +32,7 @@ type CaptureItem = {
 };
 
 function isVisionDescriptionOnly(item: CaptureItem) {
-  return item.source_type === 'image' && item.processor?.kind === 'image_ocr'
-    && Boolean(item.review_path) && item.error?.code === 'processor_unavailable';
+  return isImageOcrDescriptionUnavailable(item);
 }
 
 function captureDisplayFilename(item: CaptureItem, locale: Locale) {
@@ -183,7 +183,7 @@ export function App() {
       if (!response.ok) throw new Error(loginFailureMessage(response.status));
       setPassword(''); setAuthenticated(true);
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : '登录请求失败：请稍后重试。');
+      setAuthError(error instanceof Error ? apiFailureLabel(error.message, 0, 'zh-CN', 'general') : '登录请求未成功，请稍后重试。');
     } finally { setAuthBusy(false); }
   };
 
@@ -385,6 +385,17 @@ export function InboxPage({ locale, onComplete = () => undefined, onGoInbox = ()
       } catch { setPreviewError(text ? 'Preview could not be loaded.' : '原件预览暂时无法加载。'); }
     }
   };
+  const retryCapture = async (item: CaptureItem) => {
+    setError('');
+    try {
+      const response = await fetch(`/api/capture/${encodeURIComponent(item.capture_id)}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) { setError(apiFailureLabel(payload.detail, response.status, locale, 'capture')); return; }
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? apiFailureLabel(cause.message, 0, locale, 'capture') : (text ? 'Retry failed.' : '重试请求未成功，请稍后再试。'));
+    }
+  };
   return <section className="capture-page" aria-labelledby="inbox-title">
     <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div></header>
     <UnifiedCaptureComposer locale={locale} onComplete={onComplete} onGoInbox={onGoInbox} />
@@ -394,8 +405,8 @@ export function InboxPage({ locale, onComplete = () => undefined, onGoInbox = ()
       {item.content_preview && <pre className="inbox-preview">{item.content_preview.slice(0, 500)}</pre>}
       {isVisionDescriptionOnly(item)
         ? <p className="capture-processing-note" role="status">{text ? 'Text recognition completed; image understanding is not connected yet.' : '文字识别完成，画面理解暂未接入。'}</p>
-        : item.error && <p className="capture-alert">{item.error.message}</p>}
-      <div className="inbox-links"><button type="button" onClick={() => void openPreview(item)}>{text ? 'Preview details' : '预览与详情'}</button><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{text ? 'Download Raw' : '下载原件'}</a>{item.review_path && <button type="button" onClick={() => onReview(item.review_path!)}>{text ? 'View Review' : '查看 Review'}</button>}{item.status === 'partial_success' && !isVisionDescriptionOnly(item) && <button onClick={async () => { await fetch(`/api/capture/${item.capture_id}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); void load(); }}>{text ? 'Retry' : '重试处理'}</button>}</div>
+        : item.error && <p className="capture-alert">{captureFailureLabel(item.error, locale)}</p>}
+      <div className="inbox-links"><button type="button" onClick={() => void openPreview(item)}>{text ? 'Preview details' : '预览与详情'}</button><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{text ? 'Download Raw' : '下载原件'}</a>{item.review_path && <button type="button" onClick={() => onReview(item.review_path!)}>{text ? 'View Review' : '查看 Review'}</button>}{item.status === 'partial_success' && !isVisionDescriptionOnly(item) && <button type="button" onClick={() => void retryCapture(item)}>{text ? 'Retry' : '重试处理'}</button>}</div>
     </article>) : <p className="capture-empty">{text ? 'No captures yet.' : '还没有采集内容。'}</p>}</div>
     {preview && <CapturePreview item={preview} locale={locale} content={previewText} error={previewError} onClose={() => { setPreview(null); setPreviewText(null); setPreviewError(''); }} onReview={onReview} />}
   </section>;
@@ -424,7 +435,7 @@ function CapturePreview({ item, locale, content, error, onClose, onReview }: { i
     <section className="capture-modal capture-preview-modal" role="dialog" aria-modal="true" aria-labelledby="capture-preview-title">
       <header><div><p className="eyebrow">SECONDBRAIN / INBOX</p><h2 id="capture-preview-title">{displayFilename}</h2></div><button className="capture-close" onClick={onClose} aria-label={en ? 'Close' : '关闭'}>×</button></header>
       <p>{captureStatus(item.status, en)} · {new Date(item.captured_at).toLocaleString(en ? 'en-US' : 'zh-CN')}</p>
-      <p>{item.raw_path ? (en ? 'Raw preserved' : '原件已保存') : (en ? 'Raw unavailable' : '原件未保存')} · {isVisionDescriptionOnly(item) ? (en ? 'Text recognition completed; image understanding is not connected yet.' : '文字识别完成，画面理解暂未接入。') : item.error?.message || (en ? 'No processing error' : '无处理错误')}</p>
+      <p>{item.raw_path ? (en ? 'Raw preserved' : '原件已保存') : (en ? 'Raw unavailable' : '原件未保存')} · {isVisionDescriptionOnly(item) ? (en ? 'Text recognition completed; image understanding is not connected yet.' : '文字识别完成，画面理解暂未接入。') : item.error ? captureFailureLabel(item.error, locale) : (en ? 'No processing error' : '无处理错误')}</p>
       {item.source_url && <dl><dt>{en ? 'Original URL' : '原始 URL'}</dt><dd>{isSafeHttpUrl(item.source_url) ? <a href={item.source_url} target="_blank" rel="noreferrer">{item.source_url}</a> : item.source_url}</dd>{item.derived_source_url && <><dt>{en ? 'Fetched URL' : '实际获取地址'}</dt><dd>{item.derived_source_url}</dd></>}</dl>}
       <div className="capture-preview-content">
         {kind === 'text' && (error ? <p role="alert">{error}</p> : content === null ? <p>{en ? 'Loading preview…' : '正在读取预览…'}</p> : <pre>{content}</pre>)}
@@ -449,9 +460,7 @@ export function QuickCapture({ locale, onClose, onComplete, onGoInbox }: { local
 }
 
 function captureStatus(status: string, en: boolean) {
-  const labels: Record<string, [string, string]> = { receiving: ['接收中', 'Receiving'], processing: ['处理中', 'Processing'], completed: ['已完成', 'Completed'], partial_success: ['部分成功', 'Partial success'], failed: ['失败', 'Failed'] };
-  const pair = labels[status] ?? ['接收中', 'Receiving'];
-  return en ? pair[1] : pair[0];
+  return captureStatusLabel(status, en ? 'en' : 'zh-CN');
 }
 
 export function ReviewPage({ locale, onBack, initialReviewPath = null }: { locale: Locale; onBack: () => void; initialReviewPath?: string | null }) {
@@ -475,7 +484,7 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
     let payload: Record<string, unknown> = {};
     try { payload = await response.json() as Record<string, unknown>; } catch { /* retain status fallback */ }
     if (!response.ok) {
-      const error = new Error(typeof payload.detail === 'string' ? payload.detail : `${t.coreConnectionFailed} (HTTP ${response.status})`);
+      const error = new Error(apiFailureLabel(payload.detail, response.status, locale, 'review'));
       Object.assign(error, { status: response.status });
       throw error;
     }
@@ -503,7 +512,7 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
       setDetail(null);
       const statusCode = (error as Error & { status?: number }).status;
       if (statusCode === 401) window.location.reload();
-      setStatus(error instanceof Error ? error.message : t.coreConnectionFailed);
+      setStatus(error instanceof Error ? apiFailureLabel(error.message, statusCode ?? 0, locale, 'review') : t.coreConnectionFailed);
     } finally {
       setBusy(false);
     }
@@ -517,7 +526,7 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
       setDetail(result);
     } catch (error) {
       const statusCode = (error as Error & { status?: number }).status;
-      setStatus(statusCode === 401 ? t.coreSessionExpired : error instanceof Error ? error.message : t.coreConnectionFailed);
+      setStatus(statusCode === 401 ? t.coreSessionExpired : error instanceof Error ? apiFailureLabel(error.message, statusCode ?? 0, locale, 'review') : t.coreConnectionFailed);
       if (statusCode === 401) window.location.reload();
     } finally {
       setBusy(false);
@@ -565,10 +574,10 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
         review_path: detail.review_path, review_sha256: detail.review_sha256,
         request_id: requestId, target_filename: detail.target_filename,
       }) });
-      setStatus(result.status || (decision === 'approve' ? 'approved' : 'deferred'));
+      setStatus(reviewStatusLabel(result.status || (decision === 'approve' ? 'approved' : 'deferred'), locale));
       await loadList();
     } catch (error) {
-      const message = error instanceof Error ? error.message : t.coreConnectionFailed;
+      const message = error instanceof Error ? apiFailureLabel(error.message, (error as Error & { status?: number }).status ?? 0, locale, 'review') : t.coreConnectionFailed;
       await loadList();
       setStatus(message);
     } finally { setBusy(false); }
@@ -589,15 +598,15 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
       <div className="review-page-grid">
         <div ref={reviewListRef} className={`review-page-list ${mobileListOpen ? 'is-mobile-open' : 'is-mobile-collapsed'}`} aria-label={t.reviewPageTitle}>
           {items.length ? items.map((item) => <button ref={detail?.review_path === item.review_path ? selectedReviewRef : null} key={item.review_path} type="button" className={`review-page-item ${detail?.review_path === item.review_path ? 'is-selected' : ''}`} onClick={() => selectReview(item)}>
-            <strong>{item.title || item.target_filename}</strong><small>{item.target_filename}</small><span>{t.coreStatus}: {item.decision?.status || item.status || 'pending'}</span>
+        <strong>{item.title || item.target_filename}</strong><small>{item.target_filename}</small><span>{t.coreStatus}: {reviewStatusLabel(item.decision?.status || item.status || 'pending', locale)}</span>
           </button>) : <p className="review-page-empty">{t.coreNoItems}</p>}
         </div>
         <article ref={reviewDetailRef} className="review-page-detail" tabIndex={-1}>
-          {detail && document ? <><header className="review-detail-heading"><h2>{detail.title || detail.target_filename}</h2><p>{detail.target_filename} · {t.coreStatus}: {decisionStatus}{detail.decision?.error_code ? ` · ${locale === 'en' ? 'Failure' : '失败'}: ${detail.decision.error_code}` : ''}</p><dl><dt>{locale === 'en' ? 'Source' : '来源'}</dt><dd>{document.metadata.source_type || (locale === 'en' ? 'Not provided' : '未提供')}</dd><dt>{locale === 'en' ? 'Captured' : '采集日期'}</dt><dd>{document.metadata.captured_at || (locale === 'en' ? 'Not provided' : '未提供')}</dd></dl></header>
+          {detail && document ? <><header className="review-detail-heading"><h2>{detail.title || detail.target_filename}</h2><p>{detail.target_filename} · {t.coreStatus}: {reviewStatusLabel(decisionStatus, locale)}{detail.decision?.error_code ? ` · ${locale === 'en' ? 'Failure' : '失败'}: ${detail.decision.error_code}` : ''}</p><dl><dt>{locale === 'en' ? 'Source' : '来源'}</dt><dd>{document.metadata.source_type || (locale === 'en' ? 'Not provided' : '未提供')}</dd><dt>{locale === 'en' ? 'Captured' : '采集日期'}</dt><dd>{document.metadata.captured_at || (locale === 'en' ? 'Not provided' : '未提供')}</dd></dl></header>
             {isOcrDocument && <p className="review-ocr-note" role="note">{ocrOnlyText ? (locale === 'en' ? 'OCR text only. Please verify the recognized text against the original.' : '仅包含 OCR 文字识别结果，请对照原件核对。') : (locale === 'en' ? 'OCR text may contain recognition errors. Please verify it against the original.' : 'OCR 识别可能存在误差，请对照原件核对。')}</p>}
             <details className="review-metadata"><summary>{locale === 'en' ? 'Full metadata' : '完整元数据'}</summary><dl>{Object.entries(document.metadata).map(([key, value]) => <React.Fragment key={key}><dt>{key}</dt><dd>{value}</dd></React.Fragment>)}</dl></details>
             <ReviewMarkdown source={document.body} preserveLines={isOcrDocument} />
-            <div className="review-decisions"><button type="button" onClick={() => void decide('defer')} disabled={busy || ['approved', 'promoting', 'promoted', 'failed'].includes(detail.decision?.status || '')}>{locale === 'en' ? 'Defer' : '暂缓'}</button><button type="button" onClick={() => void decide('approve')} disabled={busy || !promoteEnabled || detail.decision?.status === 'promoted'} title={!promoteEnabled ? 'Promote disabled on this App build' : undefined}>{['approved', 'promoting', 'failed'].includes(detail.decision?.status || '') ? (locale === 'en' ? 'Retry approved write' : '重试正式入库') : (locale === 'en' ? 'Approve to Knowledge' : '批准入库')}</button>{!promoteEnabled && <small>{locale === 'en' ? 'Knowledge writes are disabled.' : '正式入库当前关闭。'}</small>}</div></> : <p>{t.coreSelectItem}</p>}
+            <div className="review-decisions"><button type="button" onClick={() => void decide('defer')} disabled={busy || ['approved', 'promoting', 'promoted', 'failed'].includes(detail.decision?.status || '')}>{locale === 'en' ? 'Defer' : '暂缓'}</button><button type="button" onClick={() => void decide('approve')} disabled={busy || !promoteEnabled || detail.decision?.status === 'promoted'} title={!promoteEnabled ? (locale === 'en' ? 'Promote disabled on this App build' : '当前版本已关闭正式入库') : undefined}>{['approved', 'promoting', 'failed'].includes(detail.decision?.status || '') ? (locale === 'en' ? 'Retry approved write' : '重试正式入库') : (locale === 'en' ? 'Approve to Knowledge' : '批准入库')}</button>{!promoteEnabled && <small>{locale === 'en' ? 'Knowledge writes are disabled.' : '正式入库当前关闭。'}</small>}</div></> : <p>{t.coreSelectItem}</p>}
         </article>
       </div>
   </section>;
@@ -625,7 +634,7 @@ function ChatPage({ locale }: { locale: Locale }) {
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) {
       if (response.status === 401) window.location.reload();
-      throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${response.status}`);
+      throw new Error(apiFailureLabel(body.detail, response.status, locale, 'chat'));
     }
     return body as T;
   };
@@ -662,7 +671,7 @@ function ChatPage({ locale }: { locale: Locale }) {
   const selectSession = async (sessionId: string) => {
     setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
     setError(''); setMessages([]);
-    try { await loadMessages(sessionId); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not load session history'); }
+    try { await loadMessages(sessionId); } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not load session history', locale)); }
   };
 
   const pollRun = async (activeRun: string, sessionId: string) => {
@@ -671,8 +680,8 @@ function ChatPage({ locale }: { locale: Locale }) {
       const result = await api<Record<string, unknown>>(`/api/chat/runs/${encodeURIComponent(activeRun)}`);
       const status = String(result.status ?? 'unknown').toLowerCase();
       if (terminal.has(status)) {
-        if (status === 'failed' || status === 'error' || status === 'interrupted') setError(String(result.error ?? (status === 'interrupted' ? 'Hermes run was interrupted' : 'Hermes run failed')));
-        setProgress(status === 'completed' ? (en ? 'Completed' : '已完成') : status === 'cancelled' || status === 'canceled' ? (en ? 'Stopped' : '已停止') : status);
+        if (status === 'failed' || status === 'error' || status === 'interrupted') setError(chatFailureLabel(String(result.error ?? (status === 'interrupted' ? 'Hermes run was interrupted' : 'Hermes run failed')), locale));
+        setProgress(chatStatusLabel(status, locale));
         await loadMessages(sessionId); await reloadSessions(sessionId);
         sessionStorage.removeItem('secondbrain.chat.activeRun');
         sessionStorage.removeItem('secondbrain.chat.activeSession');
@@ -695,10 +704,10 @@ function ChatPage({ locale }: { locale: Locale }) {
         setSelected(activeSession); setBusy(true); setRunId(activeRun);
         setProgress(en ? 'Checking the interrupted connection…' : '正在核对中断的连接…');
         try { await pollRun(activeRun, activeSession); }
-        catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not recover run status'); }
+        catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not recover run status', locale)); }
         finally { setBusy(false); setRunId(''); }
       }
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Hermes API unavailable'); }
+    } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Hermes API unavailable', locale)); }
   })(); }, []);
 
   const newSession = async () => {
@@ -708,7 +717,7 @@ function ChatPage({ locale }: { locale: Locale }) {
       const id = String(payload.session_id ?? '');
       if (!id) throw new Error('Hermes did not return a session identifier');
       await reloadSessions(id); setSelected(id); setMessages([]); localStorage.setItem('secondbrain.chat.session', id);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not create session'); }
+    } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not create session', locale)); }
   };
 
   const forkSession = async () => {
@@ -718,7 +727,7 @@ function ChatPage({ locale }: { locale: Locale }) {
       const id = String(result.session_id ?? '');
       if (!id) throw new Error('Hermes did not return a forked session identifier');
       await reloadSessions(id); await selectSession(id);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not fork session'); }
+    } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not fork session', locale)); }
   };
 
   const send = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -767,8 +776,8 @@ function ChatPage({ locale }: { locale: Locale }) {
         } else if (eventName.startsWith('tool.')) {
           const detail = typeof payload.preview === 'string' && payload.preview ? ` · ${payload.preview}` : '';
           const failed = payload.error === true;
-          const failure = typeof payload.error === 'string' && payload.error ? ` · ${payload.error}` : failed ? (en ? ' · tool reported an error' : ' · 工具报告错误') : '';
-          setProgress(`${eventName.replace('tool.', '')}: ${name}${detail}${failure}`);
+          const failure = typeof payload.error === 'string' && payload.error ? ` · ${chatFailureLabel(payload.error, locale)}` : failed ? (en ? ' · tool reported an error' : ' · 工具报告错误') : '';
+          setProgress(`${chatToolStageLabel(eventName.replace('tool.', ''), locale)}: ${name}${detail}${failure}`);
         } else if (eventName === 'run.completed' || eventName === 'assistant.completed') {
           sawTerminal = true;
           const output = typeof payload.output === 'string' ? payload.output : '';
@@ -777,8 +786,9 @@ function ChatPage({ locale }: { locale: Locale }) {
         } else if (eventName === 'run.failed' || eventName === 'run.cancelled' || eventName === 'run.interrupted') {
           sawTerminal = true;
           const detail = String(payload.error ?? (eventName === 'run.cancelled' ? (en ? 'Stopped' : '已停止') : eventName));
-          setProgress(detail);
-          if (eventName === 'run.failed' || eventName === 'run.interrupted') setError(detail);
+          const statusLabel = chatStatusLabel(eventName.replace('run.', ''), locale);
+          setProgress(eventName === 'run.cancelled' ? statusLabel : chatFailureLabel(detail, locale));
+          if (eventName === 'run.failed' || eventName === 'run.interrupted') setError(chatFailureLabel(detail, locale));
         }
       };
       while (true) {
@@ -802,8 +812,8 @@ function ChatPage({ locale }: { locale: Locale }) {
           const pendingRun = sessionStorage.getItem('secondbrain.chat.activeRun') ?? '';
           const pendingSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? selected;
           if (pendingRun && pendingSession) await pollRun(pendingRun, pendingSession);
-          else setError(cause instanceof Error ? cause.message : 'Chat failed');
-        } catch (recoveryError) { setError(recoveryError instanceof Error ? recoveryError.message : 'Could not recover run status'); }
+          else setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Chat failed', locale));
+        } catch (recoveryError) { setError(recoveryError instanceof Error ? chatFailureLabel(recoveryError.message, locale) : chatFailureLabel('Could not recover run status', locale)); }
       }
     } finally { abortRef.current = null; setRunId(''); setBusy(false); }
   };
@@ -811,11 +821,11 @@ function ChatPage({ locale }: { locale: Locale }) {
   const stop = async () => {
     if (!runId) return;
     try { await api(`/api/chat/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST', body: '{}' }); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not stop run'); }
+    catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not stop run', locale)); }
     const activeSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? selected;
     setProgress(en ? 'Stopping…' : '正在停止…');
     try { await pollRun(runId, activeSession); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not confirm stop status'); }
+    catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not confirm stop status', locale)); }
     abortRef.current?.abort();
     setBusy(false); setRunId('');
   };

@@ -1,9 +1,9 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { InboxPage, QuickCapture, ReviewPage, scrollReviewItemIntoView } from './App';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const callbacks = () => ({ onClose: vi.fn(), onComplete: vi.fn(), onGoInbox: vi.fn() });
 const ok = (body: unknown, contentType = 'application/json') => ({
@@ -93,7 +93,7 @@ describe('D075.1 capture interactions', () => {
     fireEvent.change(input, { target: { value: '关于这张图的说明' } });
     fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['x'], 'note.txt', { type: 'text/plain' })] } });
     fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('write failed');
+    expect((await screen.findByRole('alert')).textContent).toContain('SecondBrain 服务暂时不可用');
     expect(input.value).toBe('关于这张图的说明');
     const form = request.mock.calls[0][1].body as FormData;
     expect(form.get('capture_context')).toBe('关于这张图的说明');
@@ -110,6 +110,34 @@ describe('D075.1 capture interactions', () => {
     expect(screen.queryByRole('img', { name: 'photo.png' })).toBeNull();
     expect(screen.getByRole('button', { name: '继续收录' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '前往收件箱' })).toBeTruthy();
+  });
+
+  it('localizes the polled image OCR partial result without changing its status or error code', async () => {
+    vi.useFakeTimers();
+    const processing = { capture_id: '5'.repeat(32), raw_path: 'photo.png', status: 'processing', source_type: 'image' };
+    const partial = { ...processing, status: 'partial_success', review_path: 'photo.md', processor: { kind: 'image_ocr' }, error: { code: 'processor_unavailable', message: 'OCR succeeded; AI scene description is not configured.' } };
+    const request = vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).includes('/api/capture/555') ? ok(partial) : ok(processing));
+    vi.stubGlobal('fetch', request);
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['image'], 'photo.png', { type: 'image/png' })] } });
+    fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText('处理中')).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    expect(screen.getByText('部分完成')).toBeTruthy();
+    expect(screen.getByText(/文字识别完成，画面理解暂未接入/)).toBeTruthy();
+    expect(screen.queryByText(/AI scene description/)).toBeNull();
+    expect(request).toHaveBeenCalledWith('/api/capture/55555555555555555555555555555555', expect.any(Object));
+  });
+
+  it('shows a localized real OCR failure instead of the backend English message', async () => {
+    const failed = { capture_id: '6'.repeat(32), raw_path: 'broken.png', status: 'partial_success', source_type: 'image', processor: { kind: 'image_ocr' }, error: { code: 'processing_failed', message: 'Image OCR exceeded its time limit' } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok(failed)));
+    render(<QuickCapture locale="zh-CN" {...callbacks()} />);
+    fireEvent.change(screen.getByLabelText('选择附件'), { target: { files: [new File(['image'], 'broken.png', { type: 'image/png' })] } });
+    fireEvent.click(screen.getByRole('button', { name: '发送收录' }));
+    expect(await screen.findByText(/处理超时；原始文件已保留，可以重试。/)).toBeTruthy();
+    expect(screen.queryByText(/exceeded its time limit/)).toBeNull();
   });
 
   it('shows the shared Composer directly in Inbox without mode switches or a separate context field', async () => {
@@ -245,6 +273,13 @@ describe('D075.1 capture interactions', () => {
     expect(screen.queryByText('Other content')).toBeNull();
   });
 
+  it('does not expose an English Core Review error in the Chinese status area', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({ detail: 'Review item not found' }) }));
+    render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    expect((await screen.findAllByText('找不到对应的 Review 条目。')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Review item not found')).toBeNull();
+  });
+
   it('scrolls an overflowing mobile Review list itself and centers the selected row', () => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false }));
     const list = document.createElement('div');
@@ -290,7 +325,8 @@ describe('D075.1 capture interactions', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [item] })));
     render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
     await screen.findByRole('heading', { name: 'p.png' });
-    expect(screen.getByText('Image OCR exceeded its time limit')).toBeTruthy();
+    expect(screen.getByText(/处理超时；原始文件已保留/)).toBeTruthy();
+    expect(screen.queryByText(/Image OCR exceeded its time limit/)).toBeNull();
     expect(screen.getByRole('button', { name: '重试处理' })).toBeTruthy();
   });
 
@@ -311,6 +347,6 @@ describe('D075.1 capture interactions', () => {
     render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
     await screen.findByRole('heading', { name: 'p.png' });
     expect(screen.queryByRole('button', { name: '查看 Review' })).toBeNull();
-    expect(screen.getByText('No processor')).toBeTruthy();
+    expect(screen.getByText(/处理功能暂不可用/)).toBeTruthy();
   });
 });
