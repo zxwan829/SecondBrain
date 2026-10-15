@@ -678,3 +678,10 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 用户反馈真实扫描 PDF 乱码/漏字。没有以 Review 生成作为准确性证据，也未读取、重试、覆盖或改动旧 PDF。该质量问题保留为待验收项。
 - 验证：前端 Capture/Review/layout **31 passed**；`npm run typecheck` 与 Vite build 通过；Core Review auth/list/detail **13 passed**、Capture **18 passed**；`git diff --check` 通过。测试检查响应时间字段、日期回退/未知排序、重复提示、OCR 参数隐藏、正文切换回顶与刷新保持定位、桌面比例/滚动与移动布局 CSS 契约。
 - **状态：代码和文档本地修改、测试通过，尚未 Commit/Push 前仍未部署。** 未改 Hermes、Compose、Promote、Knowledge 权限或网络。手机端及真实 PDF OCR 准确度继续待用户验收；任何素材删除/移动需另行批准。
+
+# 2026-10-15 — 早期无日期测试记录清理复核（零删除）
+
+- 按授权只读复核 23 个 Raw、23 个 Review、15 个 Capture state 与 1 条审批状态。15 条 state 均有有效 `captured_at` 且 Raw SHA-256 匹配；13 个关联 Review 的 SHA-256 匹配，另 2 条部分成功状态无 Review。23 个 Review frontmatter 均有可验证日期/时区时间；10 个无 state 的 Review 也均有时间来源。8 个无 state Raw 与 Review 的 `original_asset` 可关联，另 2 个无 state Review 的 Raw 缺失或不在 Inbox。
+- 2026-10-09/10 的早期开发/模型测试命名记录虽缺 Capture state，但其 Review 保存有效采集日期，超出本次“缺少有效 captured_at”删除范围，全部保留。相同 SHA-256 的两条 iShot PDF 也有有效 state 时间且各有不同的 capture_id、路径和 Review；保留。唯一审批 `capture-1.md` 为 `deferred`，关联记录有有效日期；保留。按对应原始文件名、Review 路径、capture_id 对 Knowledge 精确检索无引用命中。
+- **删除 0 项，备份 0 项。** 没有文件通过删除门槛，因此不创建无用备份；本记录即零删除清单。未读 Raw/Review 正文、未访问 Private，未写入、移动或删除任何业务文件。
+- 部署后 App healthy、Hermes running，容器 ID/镜像/启动时间未变；Compose SHA-256 `b7ca306b82e03b4eae022b8d9ed68beb82b57d1e5b419bf0a4467a632c8a92dc` 不变。App Knowledge RO、Hermes SecondBrain RO、Private 未挂载。没有执行任何容器、Compose、权限或网络变更。
