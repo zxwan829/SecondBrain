@@ -1,16 +1,15 @@
 """Bounded, tool-free SiliconFlow Chat Completions adapter for Organizer.
 
-This adapter is deliberately not wired into the production app. SiliconFlow's
-public API accepts an output-token ceiling and returns usage, but the current
-provider documentation does not establish a per-key, per-job hard spend cap or
-a server-enforced input-token ceiling. Its capabilities therefore fail the
-Organizer's activation gate until those limits are independently attested.
+This adapter is wired behind Core's explicit model opt-in and durable local
+soft-budget gate. Input size uses a local byte/token estimate; provider usage
+and public prices support an estimate, not a bill or hard spending guarantee.
 """
 from __future__ import annotations
 
 import asyncio
 import copy
 import json
+import math
 import os
 import stat
 import time
@@ -25,17 +24,27 @@ ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions"
 MODEL_DEFAULT = "deepseek-ai/DeepSeek-V4-Flash"
 MAX_RESPONSE_BYTES = 128_000
 MAX_PROMPT_BYTES = 4_500
+MAX_REQUEST_BYTES = 16_384
 MAX_OUTPUT_TOKENS = 1_200
 TIMEOUT_SECONDS = 45
+MAX_REQUESTS_PER_JOB = 3
+MAX_REQUESTS_PER_DAY = 12
+MONTHLY_SOFT_BUDGET_CNY = 10
+# Planning estimate only: model page USD prices * 8 CNY/USD * 1.5 safety factor.
+INPUT_PRICE_MICROCNY_PER_MILLION = 1_560_000
+OUTPUT_PRICE_MICROCNY_PER_MILLION = 3_360_000
 
 
 class OrganizerAdapterError(RuntimeError):
     """Sanitized adapter failure; provider response bodies are never included."""
 
-    def __init__(self, code: str, *, status_code: int | None = None, trace_id: str | None = None):
+    def __init__(self, code: str, *, status_code: int | None = None, trace_id: str | None = None,
+                 usage: dict[str, Any] | None = None, local_estimate: dict[str, int] | None = None):
         self.code = code
         self.status_code = status_code
         self.trace_id = trace_id
+        self.usage = usage
+        self.local_estimate = local_estimate
         super().__init__(code)
 
 
@@ -130,13 +139,13 @@ class SiliconFlowOrganizerModel:
         "hard_output_token_limit": False,  # provider max_tokens excludes reasoning tokens
         "hard_timeout": True,
         "single_concurrency": True,
-        "single_request_per_job": True,
-        "hard_cost_budget": False,  # fail closed: account monthly limit is not a proven per-job cap
+        "max_requests_per_job": MAX_REQUESTS_PER_JOB,
+        "max_requests_per_day": MAX_REQUESTS_PER_DAY,
+        "monthly_soft_budget_cny": MONTHLY_SOFT_BUDGET_CNY,
+        "max_request_bytes": MAX_REQUEST_BYTES,
         "max_input_tokens": 6_000,
         "max_output_tokens": MAX_OUTPUT_TOKENS,
         "timeout_seconds": TIMEOUT_SECONDS,
-        "max_calls_per_job": 1,
-        "max_cost_usd": None,
     }
 
     @classmethod
@@ -167,20 +176,36 @@ class SiliconFlowOrganizerModel:
         if self._owns_client:
             await self._client.aclose()
 
-    async def extract(self, payload: dict[str, Any], *, max_input_tokens: int,
+    def _request_body(self, payload: dict[str, Any], *, max_input_tokens: int,
                       max_output_tokens: int) -> dict[str, Any]:
         if not 0 < max_input_tokens <= self.capabilities["max_input_tokens"]:
             raise OrganizerAdapterError("input_budget_exceeded")
-        if not 0 < max_output_tokens <= MAX_OUTPUT_TOKENS:
+        if not 0 < max_output_tokens <= self.capabilities["max_output_tokens"]:
             raise OrganizerAdapterError("output_budget_exceeded")
-        request_body = {
-            "model": self.model,
-            "messages": _bounded_messages(payload, max_input_tokens),
-            "stream": False,
-            "max_tokens": max_output_tokens,
-            "temperature": 0,
-            "n": 1,
-        }
+        messages = _bounded_messages(payload, max_input_tokens)
+        body = {"model": self.model, "messages": messages, "stream": False,
+                "max_tokens": max_output_tokens, "temperature": 0, "n": 1}
+        body_bytes = len(_json_bytes(body))
+        if body_bytes > MAX_REQUEST_BYTES:
+            raise OrganizerAdapterError("request_too_large")
+        prompt_bytes = sum(len(message["content"].encode("utf-8")) for message in messages)
+        # This is a deliberately conservative byte-based estimate, not provider tokenization.
+        estimate = min(max_input_tokens, max(1, math.ceil(prompt_bytes / 2)))
+        return body | {"_local_estimate": {"input_tokens": estimate,
+                                             "output_tokens": max_output_tokens,
+                                             "request_bytes": body_bytes}}
+
+    def estimate_request(self, payload: dict[str, Any], *, max_input_tokens: int,
+                         max_output_tokens: int) -> dict[str, int]:
+        """Preflight without network access, for durable budget reservation."""
+        return self._request_body(payload, max_input_tokens=max_input_tokens,
+                                  max_output_tokens=max_output_tokens)["_local_estimate"]
+
+    async def extract(self, payload: dict[str, Any], *, max_input_tokens: int,
+                      max_output_tokens: int) -> dict[str, Any]:
+        request_body = self._request_body(payload, max_input_tokens=max_input_tokens,
+                                          max_output_tokens=max_output_tokens)
+        local_estimate = request_body.pop("_local_estimate")
         request_trace_id = uuid.uuid4().hex
         async with self._semaphore:
             started = time.monotonic()
@@ -249,9 +274,14 @@ class SiliconFlowOrganizerModel:
                                                 trace_id=trace_id)
                 clean_usage["reasoning_tokens"] = reasoning_tokens
             clean_usage["model"] = str(body.get("model", self.model))[:160]
+            local_estimate["output_tokens"] = max(1, math.ceil(len(raw_content.encode("utf-8")) / 2))
+            if completion_tokens > max_output_tokens:
+                raise OrganizerAdapterError("provider_output_exceeded", status_code=response.status_code,
+                                            trace_id=trace_id, usage=clean_usage,
+                                            local_estimate=local_estimate)
             return {"drafts": result["drafts"], "usage": clean_usage,
                     "http_status": response.status_code, "elapsed_ms": elapsed_ms,
-                    "trace_id": trace_id}
+                    "trace_id": trace_id, "local_estimate": local_estimate}
         except OrganizerAdapterError:
             raise
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:

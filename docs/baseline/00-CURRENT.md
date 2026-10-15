@@ -12,7 +12,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
 
-**总体状态：`NOT DONE`。** 最近一次有据可查的生产 App 快照见 `Environment-Baseline.md`（2026-10-15）；本次职责纠偏未连接 NAS，故该快照之后的实时运行状态为 `UNKNOWN`。D076 统一入口与 Organizer 实现属于本地开发；Organizer 因模型门禁未通过而未启用。DeepSeek-V4-Flash 仅是合成文本横评中唯一有可评分输出的候选；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
+**总体状态：`NOT DONE`。** 最近一次有据可查的生产 App 快照见 `Environment-Baseline.md`（2026-10-15）；本轮未连接 NAS，故之后实时运行状态为 `UNKNOWN`。D076 Organizer 的 Core 本地软预算门禁与默认关闭接线已实现/定向测试；未部署、未启动常驻 Scheduler、未调用真实 API，亦未获真实用户数据出站授权。DeepSeek-V4-Flash 是当前文本候选，不代表账户可用或费用硬封顶；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 

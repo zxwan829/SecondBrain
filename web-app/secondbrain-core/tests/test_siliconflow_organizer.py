@@ -61,8 +61,60 @@ class SiliconFlowAdapterTests(unittest.TestCase):
         self.assertNotIn("tools", body)
         self.assertNotIn("tool_choice", body)
         self.assertNotIn("parallel_tool_calls", body)
-        self.assertEqual(adapter.capabilities["hard_cost_budget"], False)
+        self.assertFalse(adapter.capabilities["hard_input_token_limit"])
+        self.assertFalse(adapter.capabilities["hard_output_token_limit"])
+        self.assertEqual(adapter.capabilities["monthly_soft_budget_cny"], 10)
+        self.assertEqual(adapter.capabilities["max_requests_per_job"], 3)
+        self.assertEqual(adapter.capabilities["max_requests_per_day"], 12)
         self.assertNotIn("synthetic-only-secret", repr(adapter))
+
+    def test_mock_transport_completes_synthetic_hermes_to_review_and_cursor_flow(self):
+        class SyntheticSource:
+            async def get_session(self, session_id):
+                return {"session_id": session_id, "message_count": 1}
+
+            async def list_messages(self, session_id, limit=500, offset=0, order="oldest"):
+                rows = [{"id": "synthetic-user-1", "session_id": session_id, "role": "user",
+                         "timestamp": "2026-10-15T00:00:00Z", "text": "合成测试：周五前整理项目方案。"}]
+                if order == "latest":
+                    rows.reverse()
+                return {"messages": rows[offset:offset + limit]}
+
+        seen = []
+
+        async def handler(request):
+            seen.append(json.loads(request.content))
+            output = {"drafts": [{"category": "todo", "title": "整理项目方案",
+                                  "summary": "合成消息提出周五前整理方案。",
+                                  "source_quotes": [{"session_id": "synthetic-session",
+                                                     "message_id": "synthetic-user-1",
+                                                     "excerpt": "周五前整理项目方案"}]}]}
+            return response(good_body(text=json.dumps(output, ensure_ascii=False)))
+
+        async def scenario(root):
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False)
+            adapter = SiliconFlowOrganizerModel("synthetic-only-secret", client=client, timeout_seconds=1)
+            review = root / "review"
+            review.mkdir(mode=0o700)
+            runner = OrganizerRunner(root / "state", review, SyntheticSource(), adapter)
+            runner.state.register_session("synthetic-session", baseline_count=0)
+            try:
+                result = await runner.run(reason="synthetic-mock-transport")
+                return runner, result, review
+            finally:
+                await client.aclose()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner, result, review = asyncio.run(scenario(root))
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(len(seen), 1)
+            saved = runner.state.read()
+            self.assertEqual(saved["sessions"]["synthetic-session"]["cursor_count"], 1)
+            request = next(iter(saved["budget"]["requests"].values()))
+            self.assertEqual(request["status"], "response_received")
+            self.assertEqual(request["provider_usage"]["total_tokens"], 120)
+            self.assertEqual(len(list(review.glob("AI-Organize-*.md"))), 1)
 
     def test_three_model_ids_receive_the_same_offline_comparison_request(self):
         model_ids = ["deepseek-ai/DeepSeek-V4-Flash", "zai-org/GLM-4.5-Air",
@@ -185,15 +237,15 @@ class SiliconFlowAdapterTests(unittest.TestCase):
 
         adapter, client = self.make_adapter(handler)
         try:
-            result = asyncio.run(adapter.extract({"task": "x", "new_user_messages": [], "context_only": {},
-                                                  "output_schema": {}}, max_input_tokens=6000, max_output_tokens=300))
+            with self.assertRaises(OrganizerAdapterError) as raised:
+                asyncio.run(adapter.extract({"task": "x", "new_user_messages": [], "context_only": {},
+                                              "output_schema": {}}, max_input_tokens=6000, max_output_tokens=300))
         finally:
             asyncio.run(client.aclose())
-        self.assertEqual(result["usage"]["completion_tokens"], 1301)
-        self.assertEqual(result["usage"]["reasoning_tokens"], 1101)
-        self.assertEqual(result["http_status"], 200)
-        self.assertGreaterEqual(result["elapsed_ms"], 0)
-        self.assertTrue(result["trace_id"])
+        self.assertEqual(raised.exception.code, "provider_output_exceeded")
+        self.assertEqual(raised.exception.usage["completion_tokens"], 1301)
+        self.assertEqual(raised.exception.usage["reasoning_tokens"], 1101)
+        self.assertTrue(raised.exception.trace_id)
         self.assertFalse(SiliconFlowOrganizerModel.capabilities["hard_output_token_limit"])
 
     def test_output_budget_exhaustion_is_rejected_before_network(self):
@@ -224,7 +276,7 @@ class SiliconFlowAdapterTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 read_private_secret(path)
 
-    def test_runner_stays_blocked_for_adapter_without_hard_cost_and_token_attestation(self):
+    def test_adapter_is_available_only_as_manual_mode_when_scheduler_is_not_enabled(self):
         class Source:
             async def get_session(self, session_id):
                 return {"message_count": 0}
@@ -241,11 +293,9 @@ class SiliconFlowAdapterTests(unittest.TestCase):
             review = Path(directory) / "review"
             review.mkdir(mode=0o700)
             runner = OrganizerRunner(root, review, Source(), adapter)
-            self.assertFalse(runner.status()["execution_available"])
-            self.assertIn("hard_input_token_limit", runner.status()["blocked_reason"])
-            with self.assertRaises(HTTPException) as raised:
-                asyncio.run(runner.run())
-            self.assertEqual(raised.exception.status_code, 503)
+            self.assertTrue(runner.status()["execution_available"])
+            self.assertEqual(runner.status()["state"], "manual_only")
+            self.assertFalse(runner.start_scheduler())
             self.assertEqual(requests, [], "the configured adapter must not be called until it clears the hard gate")
         asyncio.run(adapter._client.aclose())
 

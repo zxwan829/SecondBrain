@@ -1,14 +1,11 @@
-"""Fail-closed, file-backed organizer pipeline.
-
-The provider adapter remains unconnected until hard provider input/cost limits
-are attested. The engine is injectable for synthetic execution tests.
-"""
+"""File-backed Organizer pipeline with durable local soft-budget reservations."""
 from __future__ import annotations
 
 import asyncio
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -17,19 +14,32 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
 from .auto_organize import DEFAULT_SETTINGS, OrganizeSettingsStore, next_scheduled_at
+from .siliconflow_organizer import (
+    INPUT_PRICE_MICROCNY_PER_MILLION,
+    MAX_OUTPUT_TOKENS as ADAPTER_MAX_OUTPUT_TOKENS,
+    MAX_REQUEST_BYTES,
+    MAX_REQUESTS_PER_DAY,
+    MAX_REQUESTS_PER_JOB,
+    MONTHLY_SOFT_BUDGET_CNY,
+    OUTPUT_PRICE_MICROCNY_PER_MILLION,
+)
 
 
 MAX_INPUT_MESSAGES = 40
 MAX_INPUT_CHARS = 24_000
 MAX_OUTPUT_TOKENS = 1_200
 MAX_INPUT_TOKENS = 6_000
+MAX_INPUT_ESTIMATE_TOKENS = 6_000
 MAX_CONTEXT_CHARS = 4_000
 MODEL_TIMEOUT_SECONDS = 45
-MAX_MODEL_CALLS_PER_JOB = 1
+MAX_MODEL_CALLS_PER_JOB = MAX_REQUESTS_PER_JOB
+MAX_MONTHLY_BUDGET_MICROCNY = MONTHLY_SOFT_BUDGET_CNY * 1_000_000
+BUDGET_TIMEZONE = ZoneInfo("Asia/Shanghai")
 MAX_SESSION_SCAN_ROWS = 2_000
 MAX_CANDIDATES = 12
 MAX_SCHEDULER_BACKOFF_SECONDS = 21_600
@@ -45,6 +55,21 @@ def iso(value: datetime | None = None) -> str:
     return (value or utc_now()).astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def budget_periods(value: datetime) -> tuple[str, str]:
+    local = value.astimezone(BUDGET_TIMEZONE)
+    return local.strftime("%Y-%m-%d"), local.strftime("%Y-%m")
+
+
+def _cost_microcny(input_tokens: int, output_tokens: int) -> int:
+    return math.ceil((input_tokens * INPUT_PRICE_MICROCNY_PER_MILLION
+                      + output_tokens * OUTPUT_PRICE_MICROCNY_PER_MILLION) / 1_000_000)
+
+
+def _estimated_tokens(byte_count: int) -> int:
+    """Conservative local byte heuristic; it is not tokenizer output or a provider limit."""
+    return max(1, math.ceil(byte_count / 2))
+
+
 class MessageSource(Protocol):
     async def get_session(self, session_id: str) -> dict[str, Any]: ...
     async def list_messages(self, session_id: str, limit: int = 500, offset: int = 0,
@@ -52,8 +77,11 @@ class MessageSource(Protocol):
 
 
 class OrganizerModel(Protocol):
-    """Adapters must attest enforceable limits; prompt instructions alone do not count."""
+    """No-tools adapters provide local preflight estimates and bounded requests."""
     capabilities: dict[str, Any]
+
+    def estimate_request(self, payload: dict[str, Any], *, max_input_tokens: int,
+                         max_output_tokens: int) -> dict[str, int]: ...
 
     async def extract(self, payload: dict[str, Any], *, max_input_tokens: int,
                       max_output_tokens: int) -> dict[str, Any]: ...
@@ -76,7 +104,8 @@ class OrganizerState:
     def empty() -> dict[str, Any]:
         return {"version": 1, "sessions": {}, "jobs": {}, "processed_messages": {},
                 "active_job_id": None, "next_run_at": None, "last_run_at": None,
-                "last_draft_count": None, "last_error": None}
+                "last_draft_count": None, "last_error": None,
+                "budget": {"requests": {}, "daily_requests": {}, "monthly_estimated_microcny": {}}}
 
     def read(self) -> dict[str, Any]:
         with self._thread_lock:
@@ -152,13 +181,10 @@ class OrganizerState:
 
 def _valid_model(model: OrganizerModel | None) -> tuple[bool, str]:
     if model is None:
-        return False, "尚无已验证的无工具模型适配器；自动整理仅保存设置，尚未运行。"
+        return False, "Organizer 模型默认关闭；仅保存设置，尚未运行。"
     caps = getattr(model, "capabilities", {})
     requirements = {
-        "no_tools": True, "hard_input_token_limit": True,
-        "hard_output_token_limit": True, "hard_timeout": True,
-        "single_concurrency": True, "single_request_per_job": True,
-        "hard_cost_budget": True,
+        "no_tools": True, "hard_timeout": True, "single_concurrency": True,
     }
     for key, expected in requirements.items():
         if caps.get(key) is not expected:
@@ -166,29 +192,31 @@ def _valid_model(model: OrganizerModel | None) -> tuple[bool, str]:
     input_limit = caps.get("max_input_tokens")
     output_limit = caps.get("max_output_tokens")
     timeout = caps.get("timeout_seconds")
-    calls = caps.get("max_calls_per_job")
-    if type(input_limit) is not int or not 0 < input_limit <= MAX_INPUT_TOKENS:
-        return False, "模型适配器输入 Token 上限无效或超过 Core 限额。"
+    calls = caps.get("max_requests_per_job", caps.get("max_calls_per_job", 1))
+    if type(input_limit) is not int or not 0 < input_limit <= MAX_INPUT_ESTIMATE_TOKENS:
+        return False, "模型适配器本地输入预算无效或超过 Core 估算范围。"
     if type(output_limit) is not int or not 0 < output_limit <= MAX_OUTPUT_TOKENS:
         return False, "模型适配器输出 Token 上限无效或超过 Core 限额。"
     if type(timeout) not in {int, float} or not 0 < timeout <= MODEL_TIMEOUT_SECONDS:
         return False, "模型适配器请求超时上限无效或超过 Core 限额。"
-    if calls != MAX_MODEL_CALLS_PER_JOB:
-        return False, "模型适配器单作业请求次数必须严格等于 Core 限额。"
-    max_cost = caps.get("max_cost_usd")
-    if type(max_cost) not in {int, float} or max_cost != 0:
-        return False, "未批准付费模型预算；当前只允许零成本模型适配器。"
+    if type(calls) is not int or not 0 < calls <= MAX_MODEL_CALLS_PER_JOB:
+        return False, "模型适配器单作业请求数超过 Core 本地额度。"
+    request_bytes = caps.get("max_request_bytes", MAX_REQUEST_BYTES)
+    if type(request_bytes) is not int or not 0 < request_bytes <= MAX_REQUEST_BYTES:
+        return False, "模型适配器请求字节上限无效或超过 Core 限额。"
     return True, ""
 
 
 class OrganizerRunner:
     def __init__(self, state_root: str | Path, review_root: str | Path,
-                 source: MessageSource, model: OrganizerModel | None = None):
+                 source: MessageSource, model: OrganizerModel | None = None, *,
+                 scheduler_enabled: bool = False):
         self.state = OrganizerState(state_root)
         self.settings = OrganizeSettingsStore(Path(state_root) / "ai-organize")
         self.review_root = Path(review_root)
         self.source = source
         self.model = model
+        self.scheduler_enabled = scheduler_enabled is True
         self.lock_path = self.state.root / "run.lock"
         self._scheduler_task: asyncio.Task | None = None
 
@@ -222,6 +250,8 @@ class OrganizerRunner:
             run_state = "running"
         elif not settings["enabled"]:
             run_state = "disabled"
+        elif available and not self.scheduler_enabled:
+            run_state = "manual_only"
         else:
             run_state = "blocked" if not available else "scheduled"
         configured_due = state.get("next_run_at")
@@ -232,14 +262,22 @@ class OrganizerRunner:
         warnings = [{"session_id": session_id, "state": row.get("source_status")}
                     for session_id, row in state["sessions"].items()
                     if row.get("source_status") != "active"]
+        day_key, month_key = budget_periods(utc_now())
+        budget_state = state.get("budget", {})
+        month_cost = int(budget_state.get("monthly_estimated_microcny", {}).get(month_key, 0))
+        daily_count = int(budget_state.get("daily_requests", {}).get(day_key, 0))
         return {"execution_available": available,
                 "state": run_state,
                 "last_run_at": state.get("last_run_at"),
-                "next_run_at": state.get("next_run_at") if available and settings["enabled"] else None,
+                "next_run_at": state.get("next_run_at") if available and settings["enabled"] and self.scheduler_enabled else None,
                 "configured_next_run_at": configured_due,
                 "last_draft_count": state.get("last_draft_count"),
                 "last_error": state.get("last_error"),
                 "coverage_warnings": warnings,
+                "budget": {"timezone": "Asia/Shanghai", "daily_requests": daily_count,
+                           "daily_limit": MAX_REQUESTS_PER_DAY,
+                           "monthly_estimated_cny": round(month_cost / 1_000_000, 6),
+                           "monthly_soft_limit_cny": MONTHLY_SOFT_BUDGET_CNY},
                 "blocked_reason": reason if not available else "",
                 "settings_only": not available}
 
@@ -273,7 +311,7 @@ class OrganizerRunner:
             if not job:
                 raise HTTPException(status_code=409, detail="Organizer state has an orphan active-job pointer")
             if job["status"] == "model_started":
-                self._set_error(job["job_id"], "model_result_unknown", "模型请求中断，结果未知；为避免重复调用，已暂停自动重试。")
+                self._mark_request_unknown(job, "model_result_unknown", "模型请求中断，结果未知；为避免重复调用，已暂停自动重试。")
                 raise HTTPException(status_code=409, detail={"code": "model_result_unknown", "message": "模型请求结果未知，需先核对作业状态。"})
             if job["status"] in {"drafts_pending", "model_complete"}:
                 return self._finish_drafts(job)
@@ -405,11 +443,6 @@ class OrganizerRunner:
                 "user_sessions": {message["session_id"] for message in new_messages}}
 
     async def _invoke_model(self, job: dict[str, Any]):
-        job["attempts"] = int(job.get("attempts", 0)) + 1
-        if job["attempts"] > 1:
-            raise HTTPException(status_code=409, detail={"code": "model_retry_budget_exhausted", "message": "该作业的模型调用预算已用完。"})
-        job["status"] = "model_started"
-        self._save_job(job)
         payload = {"job_id": job["job_id"],
                    "task": "提取值得保存的用户原始经历、工作灵感、待办或知识候选；不把助手建议写成用户事实。",
                    "new_user_messages": job["new_messages"], "context_only": job["context"],
@@ -418,33 +451,56 @@ class OrganizerRunner:
                                                    "source_quotes": [{"session_id": "string", "message_id": "string",
                                                                       "excerpt": "原文连续片段"}]}]}}
         try:
-            capabilities = self.model.capabilities
-            result = await asyncio.wait_for(self.model.extract(
-                                                payload,
-                                                max_input_tokens=min(MAX_INPUT_TOKENS, capabilities["max_input_tokens"]),
-                                                max_output_tokens=min(MAX_OUTPUT_TOKENS, capabilities["max_output_tokens"])),
-                                            timeout=MODEL_TIMEOUT_SECONDS)
-            drafts = _validate_drafts(result, job["new_messages"])
-        except asyncio.TimeoutError:
-            self._set_error(job["job_id"], "model_result_unknown", "模型请求超时，远端是否完成未知；为避免重复调用已暂停。")
-            raise HTTPException(status_code=504, detail={"code": "model_result_unknown", "message": "整理请求超时且结果未知，已暂停自动重试。"})
+            estimate = self._estimate_request(payload)
         except Exception:
-            self._set_error(job["job_id"], "model_result_unknown",
-                            "模型请求失败或响应无法核验；远端结果可能未知，已暂停自动重试。")
+            self._set_preflight_error(job, "model_parameters_incompatible",
+                                      "模型参数或本地请求限制不兼容；请求未发送。")
             raise
-        job["drafts"] = drafts
-        usage = result.get("usage") if isinstance(result, dict) else None
-        if isinstance(usage, dict):
-            safe_usage = {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-                          if type(usage.get(key)) is int and usage[key] >= 0}
-            if isinstance(usage.get("model"), str):
-                safe_usage["model"] = usage["model"][:160]
-            if safe_usage:
-                job["usage"] = safe_usage
-        job["status"] = "drafts_pending"
-        job["model_completed_at"] = iso()
-        self._save_job(job)
+        request_id = self._reserve_model_request(job, estimate)
+        capabilities = self.model.capabilities
+        try:
+            result = await asyncio.wait_for(self.model.extract(
+                payload,
+                max_input_tokens=min(MAX_INPUT_TOKENS, capabilities["max_input_tokens"]),
+                max_output_tokens=min(MAX_OUTPUT_TOKENS, capabilities["max_output_tokens"])),
+                timeout=MODEL_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            self._mark_request_unknown(job, "model_result_unknown", "模型请求被中断，远端结果未知；已暂停自动重试。")
+            raise
+        except asyncio.TimeoutError as exc:
+            self._mark_request_unknown(job, "model_result_unknown", "模型请求超时，远端结果未知；已暂停自动重试。")
+            raise HTTPException(status_code=504, detail={"code": "model_result_unknown", "message": "整理请求超时且结果未知，已暂停自动重试。"}) from exc
+        except Exception as exc:
+            usage = getattr(exc, "usage", None)
+            local_estimate = getattr(exc, "local_estimate", None)
+            if isinstance(usage, dict):
+                self._record_model_response(job, request_id,
+                                            {"usage": usage, "local_estimate": local_estimate}, None,
+                                            error="模型响应违反本地输出限制；已记录估算费用且禁止自动重试。")
+                raise
+            self._mark_request_unknown(job, "model_result_unknown",
+                                       "模型请求失败或响应无法核验；远端结果可能未知，已暂停自动重试。")
+            raise
+
+        try:
+            drafts = _validate_drafts(result, job["new_messages"])
+        except Exception as exc:
+            self._record_model_response(job, request_id, result, None, error=str(exc))
+            raise
+        self._record_model_response(job, request_id, result, drafts)
         return self._finish_drafts(job)
+
+    def _set_preflight_error(self, job: dict[str, Any], code: str, message: str):
+        def save(state):
+            saved_job = state["jobs"].get(job["job_id"])
+            if saved_job:
+                saved_job["status"] = "budget_blocked"
+                saved_job["error_code"] = code
+                saved_job["error"] = message
+            if state.get("active_job_id") == job["job_id"]:
+                state["active_job_id"] = None
+            state["last_error"] = {"code": code, "message": message, "at": iso()}
+        self.state.update(save)
 
     def _finish_drafts(self, job: dict[str, Any]):
         self.review_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -499,6 +555,162 @@ class OrganizerRunner:
             state["active_job_id"] = job["job_id"]
         self.state.update(save)
 
+    def _estimate_request(self, payload: dict[str, Any]) -> dict[str, int]:
+        estimate_fn = getattr(self.model, "estimate_request", None)
+        if callable(estimate_fn):
+            estimate = estimate_fn(payload, max_input_tokens=MAX_INPUT_TOKENS,
+                                   max_output_tokens=MAX_OUTPUT_TOKENS)
+        else:
+            request_bytes = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            estimate = {"input_tokens": _estimated_tokens(request_bytes),
+                        "output_tokens": MAX_OUTPUT_TOKENS, "request_bytes": request_bytes}
+        if (not isinstance(estimate, dict)
+                or any(type(estimate.get(key)) is not int for key in ("input_tokens", "output_tokens", "request_bytes"))
+                or not 0 < estimate["input_tokens"] <= MAX_INPUT_ESTIMATE_TOKENS
+                or not 0 < estimate["output_tokens"] <= MAX_OUTPUT_TOKENS
+                or not 0 < estimate["request_bytes"] <= MAX_REQUEST_BYTES):
+            raise HTTPException(status_code=413, detail={"code": "organizer_request_limit",
+                                                          "message": "整理请求超过 Core 本地字节或估算 Token 限额。"})
+        return estimate
+
+    def _reserve_model_request(self, job: dict[str, Any], estimate: dict[str, int], *,
+                               now: datetime | None = None) -> str:
+        now = now or utc_now()
+        day_key, month_key = budget_periods(now)
+        input_estimate = estimate["input_tokens"]
+        output_reservation = MAX_OUTPUT_TOKENS
+        reserve_cost = _cost_microcny(input_estimate, output_reservation)
+        request_id = uuid.uuid4().hex
+        failure: list[tuple[int, str, str]] = []
+
+        def reserve(state):
+            budget = state.setdefault("budget", {"requests": {}, "daily_requests": {},
+                                                  "monthly_estimated_microcny": {}})
+            saved_job = state["jobs"].setdefault(job["job_id"], job)
+            request_count = int(saved_job.get("request_count", 0))
+            daily_count = int(budget["daily_requests"].get(day_key, 0))
+            month_cost = int(budget["monthly_estimated_microcny"].get(month_key, 0))
+            reason = None
+            if request_count >= MAX_MODEL_CALLS_PER_JOB:
+                reason = ("job_request_limit", "当前整理作业已达到 3 次请求上限。")
+            elif daily_count >= MAX_REQUESTS_PER_DAY:
+                reason = ("daily_request_limit", "今日 Organizer 请求额度已用完。")
+            elif month_cost + reserve_cost > MAX_MONTHLY_BUDGET_MICROCNY:
+                reason = ("monthly_soft_budget", "本月 Organizer 估算软预算已用完。")
+            if reason:
+                saved_job["status"] = "budget_blocked"
+                saved_job["error_code"] = reason[0]
+                saved_job["error"] = reason[1]
+                if state.get("active_job_id") == job["job_id"]:
+                    state["active_job_id"] = None
+                state["last_error"] = {"code": reason[0], "message": reason[1], "at": iso(now)}
+                failure.append((429, reason[0], reason[1]))
+                return
+
+            request = {"request_id": request_id, "job_id": job["job_id"], "model": getattr(self.model, "model", "synthetic"),
+                       "created_at": iso(now), "day": day_key, "month": month_key, "status": "reserved",
+                       "local_estimate": {**estimate, "output_tokens": output_reservation},
+                       "provider_usage": None, "estimated_cost_microcny": reserve_cost,
+                       "estimate_basis": "pre-request maximum reservation; local byte/token estimate"}
+            budget["requests"][request_id] = request
+            budget["daily_requests"][day_key] = daily_count + 1
+            budget["monthly_estimated_microcny"][month_key] = month_cost + reserve_cost
+            saved_job["request_count"] = request_count + 1
+            saved_job["attempts"] = int(saved_job.get("attempts", 0)) + 1
+            saved_job.setdefault("request_ids", []).append(request_id)
+            saved_job["status"] = "model_started"
+            state["active_job_id"] = job["job_id"]
+
+        self.state.update(reserve)
+        if failure:
+            status_code, code, message = failure[0]
+            raise HTTPException(status_code=status_code, detail={"code": code, "message": message})
+        job["request_count"] = int(job.get("request_count", 0)) + 1
+        job["attempts"] = int(job.get("attempts", 0)) + 1
+        job.setdefault("request_ids", []).append(request_id)
+        job["status"] = "model_started"
+        return request_id
+
+    def _record_model_response(self, job: dict[str, Any], request_id: str,
+                               result: dict[str, Any], drafts: list[dict[str, Any]] | None,
+                               error: str | None = None):
+        usage = result.get("usage") if isinstance(result, dict) else None
+        local = result.get("local_estimate") if isinstance(result, dict) else None
+        safe_usage = ({key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens",
+                                                    "reasoning_tokens", "model")
+                       if isinstance(usage, dict) and key in usage
+                       and (type(usage[key]) is int and usage[key] >= 0 or key == "model" and isinstance(usage[key], str))})
+        if all(type(safe_usage.get(key)) is int for key in ("prompt_tokens", "completion_tokens")):
+            cost = _cost_microcny(safe_usage["prompt_tokens"], safe_usage["completion_tokens"])
+            basis = "provider usage; local price estimate, not invoice"
+        else:
+            local_tokens = local if isinstance(local, dict) else {}
+            input_tokens = int(local_tokens.get("input_tokens", MAX_INPUT_TOKENS))
+            output_tokens = int(local_tokens.get("output_tokens", MAX_OUTPUT_TOKENS))
+            cost = _cost_microcny(input_tokens, output_tokens)
+            basis = "local byte/token estimate; provider usage unavailable"
+
+        def persist(state):
+            budget = state.setdefault("budget", {"requests": {}, "daily_requests": {},
+                                                  "monthly_estimated_microcny": {}})
+            request = budget["requests"].get(request_id)
+            if request:
+                previous = int(request.get("estimated_cost_microcny", 0))
+                month = request["month"]
+                total = int(budget["monthly_estimated_microcny"].get(month, 0))
+                request["estimated_cost_microcny"] = cost
+                request["provider_usage"] = safe_usage or None
+                request["local_estimate"] = local if isinstance(local, dict) else request.get("local_estimate")
+                request["estimate_basis"] = basis
+                request["status"] = "response_received" if error is None else "response_invalid"
+                request["response_at"] = iso()
+                budget["monthly_estimated_microcny"][month] = max(0, total - previous + cost)
+            saved_job = state["jobs"].get(job["job_id"])
+            if saved_job:
+                saved_job["provider_usage"] = safe_usage or None
+                saved_job["local_estimate"] = local if isinstance(local, dict) else None
+                saved_job["estimated_cost_microcny"] = cost
+                saved_job["estimate_basis"] = basis
+                if error is None:
+                    saved_job["drafts"] = drafts or []
+                    saved_job["status"] = "drafts_pending"
+                    saved_job["model_completed_at"] = iso()
+                else:
+                    saved_job["status"] = "needs_attention"
+                    saved_job["error_code"] = "model_output_invalid"
+                    saved_job["error"] = error[:500]
+                    state["last_error"] = {"code": "model_output_invalid", "message": "模型响应无法通过 Organizer 校验；未自动重试。", "at": iso()}
+        self.state.update(persist)
+        job["status"] = "drafts_pending" if error is None else "needs_attention"
+        if error is None:
+            job["drafts"] = drafts or []
+            job["provider_usage"] = safe_usage or None
+            job["local_estimate"] = local if isinstance(local, dict) else None
+            job["estimated_cost_microcny"] = cost
+            job["estimate_basis"] = basis
+
+    def _mark_request_unknown(self, job: dict[str, Any], error_code: str, message: str):
+        request_ids = job.get("request_ids", [])
+        request_id = request_ids[-1] if request_ids else None
+
+        def persist(state):
+            if request_id:
+                request = state.get("budget", {}).get("requests", {}).get(request_id)
+                if request and request.get("status") == "reserved":
+                    request["status"] = "unknown"
+                    request["error_code"] = error_code
+                    request["resolved_at"] = iso()
+            saved_job = state["jobs"].get(job["job_id"])
+            if saved_job:
+                saved_job["status"] = "needs_attention"
+                saved_job["error_code"] = error_code
+                saved_job["error"] = message[:500]
+            state["last_error"] = {"code": error_code, "message": message[:500], "at": iso()}
+        self.state.update(persist)
+        job["status"] = "needs_attention"
+        job["error_code"] = error_code
+        job["error"] = message[:500]
+
     def _set_error(self, job_id, code, message):
         def save(state):
             job = state["jobs"].get(job_id)
@@ -513,6 +725,8 @@ class OrganizerRunner:
 
     async def tick(self, *, now: datetime | None = None):
         """One scheduler tick; tests inject time. Production loop is not started without a safe model."""
+        if not self.scheduler_enabled:
+            return {"status": "scheduler_disabled"}
         available, _ = _valid_model(self.model)
         if not available:
             return {"status": "blocked"}
@@ -550,7 +764,7 @@ class OrganizerRunner:
 
     def start_scheduler(self):
         available, _ = _valid_model(self.model)
-        if not available or (self._scheduler_task and not self._scheduler_task.done()):
+        if not self.scheduler_enabled or not available or (self._scheduler_task and not self._scheduler_task.done()):
             return False
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
         return True

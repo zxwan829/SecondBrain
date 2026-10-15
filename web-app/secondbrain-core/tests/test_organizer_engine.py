@@ -96,8 +96,9 @@ class OrganizerEngineTests(unittest.TestCase):
         self.assertEqual(state["sessions"]["app-session"]["cursor_count"], 2)
         self.assertIn("app-session:u1", state["processed_messages"])
         saved_job = state["jobs"][result["job_id"]]
-        self.assertEqual(saved_job["usage"]["total_tokens"], 35)
-        self.assertEqual(saved_job["usage"]["model"], "synthetic/model")
+        self.assertEqual(saved_job["provider_usage"]["total_tokens"], 35)
+        self.assertEqual(saved_job["provider_usage"]["model"], "synthetic/model")
+        self.assertGreater(saved_job["estimated_cost_microcny"], 0)
         second = asyncio.run(self.runner.run())
         self.assertEqual(second["status"], "no_new_messages")
         self.assertEqual(len(self.model.calls), 1)
@@ -183,7 +184,32 @@ class OrganizerEngineTests(unittest.TestCase):
             asyncio.run(self.runner.run())
         self.assertEqual(raised.exception.status_code, 409)
         self.assertEqual(len(self.model.calls), 1)
-        self.assertEqual(self.runner.state.read()["sessions"]["app-session"]["cursor_count"], 0)
+        state = self.runner.state.read()
+        self.assertEqual(state["sessions"]["app-session"]["cursor_count"], 0)
+        request = next(iter(state["budget"]["requests"].values()))
+        self.assertEqual(request["status"], "unknown")
+        self.assertEqual(state["jobs"][state["active_job_id"]]["status"], "needs_attention")
+
+    def test_restart_marks_interrupted_reserved_request_unknown_without_resending(self):
+        job = {"job_id": "interrupted", "status": "model_started", "request_count": 1,
+               "attempts": 1, "request_ids": ["reserved-1"], "new_messages": [],
+               "context": {}, "cursor_updates": {}, "drafts": []}
+        def seed(state):
+            state["jobs"][job["job_id"]] = job
+            state["active_job_id"] = job["job_id"]
+            state["budget"]["requests"]["reserved-1"] = {
+                "request_id": "reserved-1", "job_id": "interrupted", "status": "reserved",
+                "month": "2026-10", "estimated_cost_microcny": 10,
+            }
+        self.runner.state.update(seed)
+        restarted = OrganizerRunner(self.root, self.review, self.source, self.model)
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(restarted.run())
+        self.assertEqual(raised.exception.status_code, 409)
+        saved = restarted.state.read()
+        self.assertEqual(saved["budget"]["requests"]["reserved-1"]["status"], "unknown")
+        self.assertEqual(saved["jobs"]["interrupted"]["status"], "needs_attention")
+        self.assertEqual(self.model.calls, [])
 
     def test_concurrent_manual_and_scheduled_run_share_file_lock(self):
         self.source.sessions["app-session"] = [row("u1", "user", "今天完成了目标", 1)]
@@ -254,6 +280,7 @@ class OrganizerEngineTests(unittest.TestCase):
         self.assertGreaterEqual((due - now).total_seconds(), 4 * 3600)
 
     def test_settings_disabled_blocks_schedule_but_not_manual_run(self):
+        self.runner.scheduler_enabled = True
         self.runner.update_settings({"enabled": False, "mode": "interval", "interval_hours": 4,
                                      "daily_time": "00:30", "timezone": "Asia/Shanghai"})
         self.assertEqual(asyncio.run(self.runner.tick())["status"], "disabled")
@@ -262,12 +289,14 @@ class OrganizerEngineTests(unittest.TestCase):
         self.assertEqual(asyncio.run(self.runner.run(reason="manual"))["status"], "no_candidates")
 
     def test_scheduler_due_time_survives_runner_recreation_and_catches_up_once(self):
+        self.runner.scheduler_enabled = True
         now = datetime(2026, 10, 15, 0, 0, tzinfo=timezone.utc)
         self.runner.update_settings({"enabled": True, "mode": "interval", "interval_hours": 4,
                                      "daily_time": "00:30", "timezone": "Asia/Shanghai"})
         first_due = self.runner.state.read()["next_run_at"]
         self.assertIsNotNone(first_due)
-        runner_after_restart = OrganizerRunner(self.root, self.review, self.source, self.model)
+        runner_after_restart = OrganizerRunner(self.root, self.review, self.source, self.model,
+                                               scheduler_enabled=True)
         self.assertEqual(runner_after_restart.state.read()["next_run_at"], first_due)
         self.source.sessions["app-session"] = []
         result = asyncio.run(runner_after_restart.tick(now=datetime.fromisoformat(first_due.replace("Z", "+00:00"))))
@@ -275,6 +304,7 @@ class OrganizerEngineTests(unittest.TestCase):
         self.assertNotEqual(runner_after_restart.state.read()["next_run_at"], first_due)
 
     def test_manual_and_due_scheduler_runs_share_the_same_model_executor(self):
+        self.runner.scheduler_enabled = True
         self.source.sessions["app-session"] = [row("scheduled-1", "user", "定时新增内容", 1)]
         self.runner.update_settings({"enabled": True, "mode": "interval", "interval_hours": 4,
                                      "daily_time": "00:30", "timezone": "Asia/Shanghai"})
@@ -290,6 +320,67 @@ class OrganizerEngineTests(unittest.TestCase):
         self.assertEqual(len(self.model.calls), 2)
         reasons = {job["reason"] for job in self.runner.state.read()["jobs"].values()}
         self.assertEqual(reasons, {"scheduled", "manual"})
+
+    def test_scheduler_is_separately_disabled_even_when_model_is_available(self):
+        self.assertFalse(self.runner.start_scheduler())
+        self.assertEqual(asyncio.run(self.runner.tick())["status"], "scheduler_disabled")
+
+    def test_three_requests_per_job_and_daily_limit_are_persistently_enforced(self):
+        now = datetime(2026, 10, 15, 2, 0, tzinfo=timezone.utc)
+        estimate = {"input_tokens": 100, "output_tokens": 1200, "request_bytes": 1000}
+        job = {"job_id": "budget-job", "status": "collecting", "request_count": 0,
+               "attempts": 0, "request_ids": []}
+        self.runner.state.update(lambda state: state["jobs"].update({job["job_id"]: job}))
+        for _ in range(3):
+            self.runner._reserve_model_request(job, estimate, now=now)
+        with self.assertRaises(HTTPException) as raised:
+            self.runner._reserve_model_request(job, estimate, now=now)
+        self.assertEqual(raised.exception.status_code, 429)
+        state = self.runner.state.read()
+        self.assertEqual(len(state["budget"]["requests"]), 3)
+        self.assertEqual(state["budget"]["daily_requests"]["2026-10-15"], 3)
+
+        other = {"job_id": "daily-job", "status": "collecting", "request_count": 0,
+                 "attempts": 0, "request_ids": []}
+        self.runner.state.update(lambda value: value["jobs"].update({other["job_id"]: other}))
+        self.runner.state.update(lambda value: value["budget"]["daily_requests"].update({"2026-10-15": 12}))
+        with self.assertRaises(HTTPException) as raised:
+            self.runner._reserve_model_request(other, estimate, now=now)
+        self.assertEqual(raised.exception.detail["code"], "daily_request_limit")
+
+    def test_monthly_soft_budget_is_checked_before_reserving_a_new_request(self):
+        now = datetime(2026, 10, 15, 2, 0, tzinfo=timezone.utc)
+        job = {"job_id": "monthly-job", "status": "collecting", "request_count": 0,
+               "attempts": 0, "request_ids": []}
+        self.runner.state.update(lambda state: state["jobs"].update({job["job_id"]: job}))
+        self.runner.state.update(lambda state: state["budget"]["monthly_estimated_microcny"].update(
+            {"2026-10": 10_000_000}))
+        with self.assertRaises(HTTPException) as raised:
+            self.runner._reserve_model_request(job,
+                {"input_tokens": 100, "output_tokens": 1200, "request_bytes": 1000}, now=now)
+        self.assertEqual(raised.exception.detail["code"], "monthly_soft_budget")
+        self.assertEqual(self.runner.state.read()["budget"]["requests"], {})
+
+    def test_budget_reservations_survive_runner_restart_and_concurrent_attempts_do_not_overrun_day(self):
+        from concurrent.futures import ThreadPoolExecutor
+        now = datetime(2026, 10, 15, 2, 0, tzinfo=timezone.utc)
+        estimate = {"input_tokens": 100, "output_tokens": 1200, "request_bytes": 1000}
+        def reserve(index):
+            job = {"job_id": f"parallel-{index}", "status": "collecting", "request_count": 0,
+                   "attempts": 0, "request_ids": []}
+            self.runner.state.update(lambda state: state["jobs"].update({job["job_id"]: job}))
+            try:
+                self.runner._reserve_model_request(job, estimate, now=now)
+                return True
+            except HTTPException:
+                return False
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            admitted = list(pool.map(reserve, range(16)))
+        self.assertEqual(sum(admitted), 12)
+        restarted = OrganizerRunner(self.root, self.review, self.source, self.model)
+        state = restarted.state.read()
+        self.assertEqual(state["budget"]["daily_requests"]["2026-10-15"], 12)
+        self.assertEqual(len(state["budget"]["requests"]), 12)
 
     def test_input_budget_does_not_advance_cursor(self):
         self.source.sessions["app-session"] = [row("u1", "user", "超长" * 13000, 1)]

@@ -124,7 +124,7 @@ class OrganizerSyntheticEndToEndTests(unittest.TestCase):
             first_payload = model.calls[0]["payload"]
             self.assertEqual(len(first_payload["new_user_messages"]), 6)
             self.assertEqual(len(first_job["artifacts"]), 3)
-            self.assertEqual(first_job["usage"]["model"], "synthetic/fake")
+            self.assertEqual(first_job["provider_usage"]["model"], "synthetic/fake")
             self.assertEqual({row["message_id"] for row in first_payload["new_user_messages"]},
                              {"d-user-001", "d-user-003", "d-user-004", "d-user-005", "w-user-001", "dup-user-001"})
             self.assertNotIn("d-user-005", {quote["message_id"] for draft in first_job["drafts"]

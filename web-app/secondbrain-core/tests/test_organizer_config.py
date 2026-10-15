@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from secondbrain_core.modules.organizer_config import configured_organizer_model
+from secondbrain_core.modules.organizer_config import configured_organizer_model, configured_organizer_scheduler
 from secondbrain_core.modules.siliconflow_organizer import MODEL_DEFAULT
 
 
@@ -24,6 +24,12 @@ class OrganizerConfigurationTests(unittest.TestCase):
             configured_organizer_model({"SB_ORGANIZER_MODEL_ENABLED": "yes"})
         with self.assertRaises(RuntimeError):
             configured_organizer_model({"SB_ORGANIZER_MODEL_ENABLED": "true"})
+
+    def test_scheduler_has_a_separate_disabled_by_default_switch(self):
+        self.assertFalse(configured_organizer_scheduler({"SB_ORGANIZER_MODEL_ENABLED": "true"}))
+        self.assertTrue(configured_organizer_scheduler({"SB_ORGANIZER_SCHEDULER_ENABLED": "true"}))
+        with self.assertRaises(RuntimeError):
+            configured_organizer_scheduler({"SB_ORGANIZER_SCHEDULER_ENABLED": "yes"})
 
 
 if __name__ == "__main__":

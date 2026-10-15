@@ -799,3 +799,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 本地 Mock/Synthetic 验证覆盖新增消息、分类和跨会话重复合并、Review 草稿及游标/作业状态、首次基线跳过旧历史、无新增跳过、跨会话增量、Review 写入中断后用已保存模型结果恢复、人工编辑保护、未知模型结果持久化并禁止重试、手动/定时共用执行器与并发文件锁，以及停用计划任务。未连接真实 Hermes、未读实际 SecondBrain 内容、未读取真实凭据、未调用 SiliconFlow API、未启动常驻 scheduler。
 - 验证：Core 相关测试 **76 passed**（App/Core auth、Capture、Web App BFF、Organizer 配置/Engine/Synthetic E2E、SiliconFlow adapter）；Python 模块编译及 `git diff --check` 通过。一个 Starlette/httpx TestClient 弃用警告，不影响结果。
 - **状态/阻断：** Organizer 已形成可运行的本地合成闭环；手动与定时入口复用同一执行器。真实用户数据仍被阻止：适配器未证明 provider enforceable 的硬输入/输出 Token 和单作业成本上限；此外需用户另行批准真实数据出站、实际模型/供应商费用验证、私有凭据注入及 NAS 部署/验收。Promote 继续关闭、Knowledge RO、Private 隔离；本地配置未改变生产。
+
+## 2026-10-15 — D076 Organizer Core 受控软预算门禁
+
+- 按用户批准的风险取舍，移除 Organizer 启用必须证明供应商硬输入 Token / 单作业硬成本的依赖。Core 现以文件锁保护手动与定时共用执行器，并在发送前原子持久化额度预留：每作业 3 次、Asia/Shanghai 每日 12 次、月估算 ¥10；请求体最多 16 KiB、本地输入估算最多 6,000 Token、输出最多 1,200 Token、单并发、45 秒、无自动重试。预算、每日计数、usage/估算成本、作业/游标均写入现有私有状态文件；没有新增数据库或服务。
+- 预算费率采用官方 DeepSeek-V4-Flash 模型页当前价格乘以固定汇率/安全系数作本地估算。预估、供应商 usage 与结算账单分开保存和说明；未知响应保留完整预留，暂停作业且不得自动重发。已保存模型结果可恢复写 Review；未确认模型、参数不兼容或请求过大则停止，不切换模型。模型 opt-in 默认 false，Scheduler 有单独默认 false 开关；设置每 4 小时或固定时间不启动后台循环。
+- 验证范围为合成 Hermes Source 和 `httpx.MockTransport`，覆盖正常 Adapter 调用/usage、预算限制、每日并发预留、重启持久化、超时未知状态、无新增跳过、已有流程恢复/人工编辑保护、手动与 Scheduler 共用执行器，以及默认关闭与 Scheduler 独立门禁。未连接真实 Hermes、未读取用户内容或真实 Secret、未调用真实 SiliconFlow API、未启动常驻 Scheduler、未部署 NAS。Knowledge 写入、Promote 与 Private 边界未改变。
+- 验证：Organizer 配置、Engine、Synthetic E2E、SiliconFlow MockTransport 及既有 Promote 关闭/鉴权边界测试 **55 passed**；Python `compileall` 与 `git diff --check` 通过。Starlette/httpx 出现既有弃用警告，不影响测试结果。
+- **状态：** 本地代码与必要文档完成；Commit/Push 状态按本轮交付报告核验。生产未部署、未启动常驻 Scheduler、未调用真实 API，用户浏览器验收未执行。真实用户数据启用仍需另行授权数据出站、专用凭据安全注入、模型账户/参数兼容性核验、用户在供应商控制台核账，并单独批准生产部署与验收。软预算不提供供应商级硬费用封顶。

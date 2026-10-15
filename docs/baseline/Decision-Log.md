@@ -375,6 +375,10 @@ NAS 只读核验发现 Hermes API 在 `127.0.0.1:8642` 监听、health 200、未
 
 评估后采用 Core 内可替换的文本 ModelAdapter 作为受控调用边界，不经 Hermes Agent Runtime 执行整理；适配器请求不得携带 tools、Skills 或文件执行能力。SiliconFlow 是已评测的候选平台，但模型评测结果不等于生产连接、费用硬封顶、数据出站授权或上线批准。
 
+### APPROVED — 2026-10-15 Core 本地软预算门禁
+
+用户批准以 Core 服务端持久化软预算替代 Organizer 对供应商硬输入 Token / 单作业硬费用证明的强制依赖；仅替代该执行资格门槛，不表示供应商费用硬封顶、Tokenizer 硬输入上限或真实数据出站获批。首选 exact model 为 `deepseek-ai/DeepSeek-V4-Flash`；Core 在请求前原子预留额度，按每作业最多 3 次、每日最多 12 次、每月估算 ¥10、单并发、45 秒超时、输出最多 1,200 Token、请求体字节上限及本地估算输入 6,000 Token 实施限制。费率与 Token 成本是本地估算；供应商返回 usage 也不是结算账单。未知响应保留占用并禁止自动重试；不切换模型。模型和 Scheduler 各自默认关闭，单独开启模型不启动常驻任务。间隔 4 小时 / 固定 `00:30 Asia/Shanghai` 仅为已有可配置计划设置，不构成 Scheduler 启动批准。Knowledge 写入、Promote、Private 隔离和人工 Review 审批边界不变。真实凭据、真实内容分析、数据出站与生产启用仍须另行批准。
+
 ### PROPOSED — NOT APPROVED：首次历史回溯
 
 Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，默认跳过已有历史。可考虑增加用户明确选择的“不回溯/当天/最近 4、12、24 小时”有限回溯窗口，并固定时间水位、按 `session_id:message_id` 去重。此方案尚未批准实现；禁止默认全量扫描。源 API 没有已验证的分页快照令牌或删除墓碑，任何有限回溯仍须提示覆盖缺口。

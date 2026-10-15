@@ -12,7 +12,7 @@ from .modules.auto_organize import create_auto_organize_router
 from .modules.capture import CaptureService, create_capture_router
 from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
-from .modules.organizer_config import configured_organizer_model
+from .modules.organizer_config import configured_organizer_model, configured_organizer_scheduler
 from .modules.organizer_engine import OrganizerRunner
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
@@ -53,7 +53,8 @@ def create_app():
     auth = AppSessionAuth(app_password_file, origins, ttl)
     hermes = HermesAPI()
     organizer = OrganizerRunner(approval_root, review_root, hermes,
-                                model=configured_organizer_model())
+                                model=configured_organizer_model(),
+                                scheduler_enabled=configured_organizer_scheduler())
     capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root,
                              processors=MultimodalCaptureProcessors(hermes))
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
