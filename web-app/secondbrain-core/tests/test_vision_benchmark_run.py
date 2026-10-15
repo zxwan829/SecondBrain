@@ -7,6 +7,7 @@ from secondbrain_core.modules.vision_benchmark import VisionBenchmarkError
 from secondbrain_core.modules.vision_benchmark_run import (
     VISION_MODEL_ORDER,
     PersistentVisionRun,
+    VisionRunError,
 )
 
 
@@ -20,6 +21,7 @@ def result():
                   "total_tokens": 1100, "reasoning_tokens": 20},
         "content": '{"images": []}',
         "parsed": {"images": []},
+        "finish_reason": "stop",
     }
 
 
@@ -27,7 +29,7 @@ class PersistentVisionRunTests(unittest.TestCase):
     def test_order_success_recovery_and_duplicate_do_not_invoke_again(self):
         with tempfile.TemporaryDirectory() as tmp:
             run = PersistentVisionRun.create(Path(tmp))
-            self.assertEqual(tuple(run.status()["models"]), VISION_MODEL_ORDER)
+            self.assertEqual(tuple(run.status()["model_order"]), VISION_MODEL_ORDER)
             self.assertTrue(run.may_run_in_order(VISION_MODEL_ORDER[0]))
             self.assertFalse(run.may_run_in_order(VISION_MODEL_ORDER[1]))
             calls = 0
@@ -96,7 +98,7 @@ class PersistentVisionRunTests(unittest.TestCase):
                 raise VisionBenchmarkError("provider_output_truncated", model=VISION_MODEL_ORDER[0],
                     elapsed_ms=100, trace_id="trace-truncated", http_status=200,
                     usage={"prompt_tokens": 300, "completion_tokens": 800,
-                           "total_tokens": 1100, "reasoning_tokens": 450})
+                           "total_tokens": 1100, "reasoning_tokens": 450}, finish_reason="length")
 
             with self.assertRaises(VisionBenchmarkError):
                 asyncio.run(run.run_once(VISION_MODEL_ORDER[0], request_metadata={}, invoke=truncated))
@@ -104,8 +106,38 @@ class PersistentVisionRunTests(unittest.TestCase):
             self.assertEqual(row["state"], "failed")
             self.assertEqual(row["error"]["http_status"], 200)
             self.assertEqual(row["error"]["usage"]["reasoning_tokens"], 450)
+            self.assertEqual(row["error"]["finish_reason"], "length")
             self.assertNotIn("result", row)
             self.assertFalse(run.may_run_in_order(VISION_MODEL_ORDER[1]))
+
+    def test_remaining_models_run_in_own_order_and_evaluation_is_saved_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            remaining = VISION_MODEL_ORDER[1:]
+            run = PersistentVisionRun.create(Path(tmp), model_order=remaining)
+            self.assertEqual(tuple(run.status()["model_order"]), remaining)
+            self.assertTrue(run.may_run_in_order(remaining[0]))
+            self.assertFalse(run.may_run_in_order(remaining[1]))
+            asyncio.run(run.run_once(remaining[0], request_metadata={}, invoke=lambda: _async_result(remaining[0])))
+            run.annotate(remaining[0], evaluation={"recognition": 4, "key_numbers": 5,
+                "ui_facts": 4, "source_evidence": 5, "hallucinations": 5,
+                "json_valid": True, "score_notes": "合成测试评分"},
+                estimated_cost_usd=0.002, pricing_as_of="2026-10-15")
+            reopened = PersistentVisionRun.open(Path(tmp), run.run_id)
+            row = reopened.status()["models"][remaining[0]]
+            self.assertEqual(row["result"]["finish_reason"], "stop")
+            self.assertEqual(row["evaluation"]["estimated_cost_usd"], 0.002)
+            with self.assertRaisesRegex(VisionRunError, "evaluation_already_saved"):
+                reopened.annotate(remaining[0], evaluation={"recognition": 4, "key_numbers": 5,
+                    "ui_facts": 4, "source_evidence": 5, "hallucinations": 5,
+                    "json_valid": True, "score_notes": "不得覆盖"},
+                    estimated_cost_usd=0.002, pricing_as_of="2026-10-15")
+            self.assertTrue(reopened.may_run_in_order(remaining[1]))
+
+
+async def _async_result(model):
+    value = result()
+    value["model"] = model
+    return value
 
 
 if __name__ == "__main__":

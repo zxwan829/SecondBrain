@@ -59,13 +59,19 @@ class PersistentVisionRun:
         self.execution_lock_path = directory / f"{run_id}.execution.lock"
 
     @classmethod
-    def create(cls, directory: str | Path) -> "PersistentVisionRun":
+    def create(cls, directory: str | Path, *,
+               model_order: tuple[str, ...] = VISION_MODEL_ORDER) -> "PersistentVisionRun":
+        if (not model_order or len(set(model_order)) != len(model_order)
+                or any(model not in VISION_MODEL_ORDER for model in model_order)
+                or tuple(model for model in VISION_MODEL_ORDER if model in model_order) != model_order):
+            raise VisionRunError("model_order_invalid")
         directory = _private_dir(Path(directory), create=True)
         run_id = str(uuid.uuid4())
         instance = cls(directory, run_id)
         instance._write({"schema_version": 1, "run_id": run_id, "created_at": _now(),
+                         "model_order": list(model_order),
                          "models": {model: {"state": "pending", "attempts": 0}
-                                    for model in VISION_MODEL_ORDER}}, exclusive=True)
+                                    for model in model_order}}, exclusive=True)
         return instance
 
     @classmethod
@@ -137,6 +143,13 @@ class PersistentVisionRun:
         if (not isinstance(doc, dict) or doc.get("schema_version") != 1
                 or doc.get("run_id") != self.run_id or not isinstance(doc.get("models"), dict)):
             raise VisionRunError("ledger_invalid")
+        order = doc.get("model_order", list(VISION_MODEL_ORDER))
+        if (not isinstance(order, list) or not order or len(set(order)) != len(order)
+                or any(model not in VISION_MODEL_ORDER for model in order)
+                or tuple(model for model in VISION_MODEL_ORDER if model in order) != tuple(order)
+                or set(order) != set(doc["models"])):
+            raise VisionRunError("ledger_invalid")
+        self.model_order = tuple(order)
         for model, row in doc["models"].items():
             if (model not in MODEL_POLICIES or not isinstance(row, dict)
                     or row.get("state") not in valid_states
@@ -222,6 +235,7 @@ class PersistentVisionRun:
                                          "reasoning_tokens") if k in usage}
         clean = {"http_status": status, "elapsed_ms": round(float(elapsed), 1),
                  "trace_id": trace, "model": str(result.get("model", ""))[:160],
+                 "finish_reason": result.get("finish_reason"),
                  "usage": details, "content": content, "parsed": parsed}
         if len(json.dumps(clean, ensure_ascii=False).encode("utf-8")) > 128_000:
             raise VisionRunError("result_too_large")
@@ -235,7 +249,7 @@ class PersistentVisionRun:
     def save_error(self, model: str, error: VisionBenchmarkError) -> None:
         audit = error.audit
         terminal = "failed" if type(audit.get("http_status")) is int else "unknown"
-        clean = {k: audit.get(k) for k in ("error_code", "http_status", "elapsed_ms")}
+        clean = {k: audit.get(k) for k in ("error_code", "http_status", "elapsed_ms", "finish_reason")}
         trace = audit.get("trace_id")
         if isinstance(trace, str) and TRACE_PATTERN.fullmatch(trace):
             clean["trace_id"] = trace
@@ -255,12 +269,37 @@ class PersistentVisionRun:
 
     def may_run_in_order(self, model: str) -> bool:
         try:
-            index = VISION_MODEL_ORDER.index(model)
+            index = self.model_order.index(model)
         except ValueError as exc:
             raise VisionRunError("model_not_in_ordered_allowlist") from exc
         states = self.status()["models"]
         return all(states.get(prior, {}).get("state") == "completed"
-                   for prior in VISION_MODEL_ORDER[:index])
+                   for prior in self.model_order[:index])
+
+    def annotate(self, model: str, *, evaluation: dict[str, Any],
+                 estimated_cost_usd: float, pricing_as_of: str) -> None:
+        """Persist a bounded, human-reviewed score after the response is saved."""
+        allowed = {"recognition", "key_numbers", "ui_facts", "source_evidence",
+                   "hallucinations", "json_valid", "score_notes"}
+        if (not isinstance(evaluation, dict) or set(evaluation) - allowed
+                or type(evaluation.get("json_valid")) is not bool
+                or any(type(evaluation.get(key)) is not int or not 0 <= evaluation[key] <= 5
+                       for key in ("recognition", "key_numbers", "ui_facts", "source_evidence", "hallucinations"))
+                or not isinstance(evaluation.get("score_notes"), str)
+                or len(evaluation["score_notes"]) > 1000
+                or not isinstance(estimated_cost_usd, (int, float))
+                or not 0 <= estimated_cost_usd <= 5
+                or not isinstance(pricing_as_of, str) or len(pricing_as_of) > 32):
+            raise VisionRunError("evaluation_invalid")
+
+        def mutate(row):
+            if row["state"] != "completed" or "result" not in row:
+                raise VisionRunError("result_not_completed")
+            if "evaluation" in row:
+                raise VisionRunError("evaluation_already_saved")
+            row["evaluation"] = {**evaluation, "estimated_cost_usd": round(float(estimated_cost_usd), 8),
+                                 "pricing_as_of": pricing_as_of}
+        self._update_row(model, mutate)
 
     async def run_once(self, model: str, *, request_metadata: dict[str, Any],
                        invoke: Callable[[], Awaitable[dict[str, Any]]]) -> dict[str, Any]:

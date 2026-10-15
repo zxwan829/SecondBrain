@@ -19,12 +19,12 @@ IMAGES = (
     FIXTURES / "07-synthetic-scan-page.png",
 )
 PROMPT = (
-    "请分别分析这三张合成图片，并严格返回 JSON 对象，结构为："
-    "{\"images\":[{\"index\":1,\"readable_text\":[{\"text\":\"\",\"evidence\":\"\"}],"
-    "\"facts\":[{\"label\":\"\",\"value\":\"\",\"evidence\":\"\"}],"
-    "\"description\":\"\"}]}。第一张是仿真软件界面，第二张是图表，第三张是扫描页。"
-    "仅记录图中清楚可见的文字、数字和画面内容；证据须为图中文字的原样短引。"
-    "不推测缺失信息。文字识别与画面描述分开。"
+    "分析随附的3张合成图片，只输出紧凑、合法的JSON对象，不要Markdown围栏或解释段落。"
+    "格式：{\"images\":[{\"image_index\":1,\"text\":[\"可见原文\"],"
+    "\"key_facts\":[{\"label\":\"字段\",\"value\":\"值\",\"evidence\":\"最短可核对依据\"}],"
+    "\"ui_info\":[\"重要界面状态或元素\"]}]}。每张图最多列10条文字、8条事实、5条界面信息；"
+    "只记录清晰可见内容，数字原样抄录，不推测、不重复、不写长篇描述。"
+    "所有事实须对应正确图片编号，证据用简短原文或图表位置说明。"
 )
 
 sys.path.insert(0, str(HERE))
@@ -74,7 +74,7 @@ async def _run(args, run):
     # Validate the dedicated secret's ownership/permissions before reserving an attempt.
     api_key = read_private_secret(args.secret_file)
     paths, images = _inputs()
-    body = build_request(model, PROMPT, images, max_output_tokens=800, json_mode=False)
+    body = build_request(model, PROMPT, images, max_output_tokens=2000, json_mode=False)
     metadata = {
         "fixture_sha256": [hashlib.sha256(raw).hexdigest() for raw in images],
         "prompt_sha256": hashlib.sha256(PROMPT.encode("utf-8")).hexdigest(),
@@ -89,7 +89,7 @@ async def _run(args, run):
         try:
             row = await run.run_once(
                 model, request_metadata=metadata,
-                invoke=lambda: adapter.analyze(model, PROMPT, images, max_output_tokens=800, json_mode=False),
+                invoke=lambda: adapter.analyze(model, PROMPT, images, max_output_tokens=2000, json_mode=False),
             )
         except Exception:
             row = run.status()["models"][model]
@@ -105,7 +105,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("prepare", help="create private ledger; no network")
+    prepare = commands.add_parser("prepare", help="create private ledger; no network")
+    prepare.add_argument("--models", nargs="+", choices=VISION_MODEL_ORDER,
+                         help="optional ordered subset for an independent run")
     status = commands.add_parser("status", help="inspect ledger; no network")
     status.add_argument("--run-id", required=True)
     run_cmd = commands.add_parser("run", help="one authorized model request, no retry")
@@ -113,16 +115,32 @@ def main(argv=None):
     run_cmd.add_argument("--model", choices=VISION_MODEL_ORDER, required=True)
     run_cmd.add_argument("--secret-file", type=Path, required=True)
     run_cmd.add_argument("--confirm-real-request", action="store_true")
+    annotate = commands.add_parser("annotate", help="persist offline human evaluation; no network")
+    annotate.add_argument("--run-id", required=True)
+    annotate.add_argument("--model", choices=VISION_MODEL_ORDER, required=True)
+    annotate.add_argument("--evaluation-json", type=Path, required=True)
+    annotate.add_argument("--estimated-cost-usd", type=float, required=True)
+    annotate.add_argument("--pricing-as-of", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "prepare":
-            run = PersistentVisionRun.create(args.state_dir)
+            model_order = tuple(args.models) if args.models else VISION_MODEL_ORDER
+            run = PersistentVisionRun.create(args.state_dir, model_order=model_order)
             _print({"run_id": run.run_id, "state": "prepared_no_requests_sent",
-                    "model_order": list(VISION_MODEL_ORDER)})
+                    "model_order": list(model_order)})
             return 0
         run = PersistentVisionRun.open(args.state_dir, args.run_id)
         if args.command == "status":
             _print(run.status())
+            return 0
+        if args.command == "annotate":
+            evaluation = json.loads(args.evaluation_json.read_text(encoding="utf-8"))
+            run.annotate(args.model, evaluation=evaluation,
+                         estimated_cost_usd=args.estimated_cost_usd,
+                         pricing_as_of=args.pricing_as_of)
+            _print({"run_id": run.run_id, "model_id": args.model,
+                    "state": run.status()["models"][args.model]["state"],
+                    "evaluation_saved": True})
             return 0
         return asyncio.run(_run(args, run))
     except Exception as exc:

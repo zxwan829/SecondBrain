@@ -108,6 +108,15 @@ class VisionBenchmarkAdapterTests(unittest.TestCase):
             asyncio.run(client.aclose())
         self.assertEqual(result["usage"]["completion_tokens"], 905)
         self.assertEqual(result["usage"]["reasoning_tokens"], 700)
+        self.assertEqual(result["finish_reason"], "stop")
+
+    def test_compact_benchmark_budget_is_at_most_2000_and_json_prompt_stays_concise(self):
+        from run_d076_vision_benchmark import PROMPT
+        self.assertLess(len(PROMPT), 1200)
+        self.assertLessEqual(vision.MAX_OUTPUT_TOKENS, 2000)
+        body = vision.build_request(MODELS[1], PROMPT, [png_bytes()], max_output_tokens=2000)
+        self.assertEqual(body["max_tokens"], 2000)
+        self.assertNotIn("response_format", body)
 
     def test_truncated_response_retains_http_usage_and_trace_for_audit(self):
         async def handler(request):
@@ -129,6 +138,7 @@ class VisionBenchmarkAdapterTests(unittest.TestCase):
         self.assertEqual(caught.exception.audit["http_status"], 200)
         self.assertEqual(caught.exception.audit["trace_id"], "trace-truncated")
         self.assertEqual(caught.exception.audit["usage"]["reasoning_tokens"], 450)
+        self.assertEqual(caught.exception.audit["finish_reason"], "length")
 
     def test_rejects_non_image_unsupported_format_and_oversized_inputs(self):
         for raw, code in [(b"not an image", "image_invalid"), (b"", "image_empty")]:

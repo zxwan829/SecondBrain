@@ -23,7 +23,7 @@ ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions"
 MAX_IMAGES = 3
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
 MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024
-MAX_OUTPUT_TOKENS = 800
+MAX_OUTPUT_TOKENS = 2000
 MAX_RESPONSE_BYTES = 128 * 1024
 MAX_TIMEOUT_SECONDS = 45.0
 MAX_IMAGE_WIDTH = 1600
@@ -53,11 +53,12 @@ class VisionBenchmarkError(RuntimeError):
 
     def __init__(self, code: str, *, model: str | None = None,
                  elapsed_ms: int | None = None, trace_id: str | None = None,
-                 http_status: int | None = None, usage: dict[str, Any] | None = None):
+                 http_status: int | None = None, usage: dict[str, Any] | None = None,
+                 finish_reason: str | None = None):
         self.code = code
         self.audit = {"ok": False, "model": model, "error_code": code,
                       "elapsed_ms": elapsed_ms, "trace_id": trace_id,
-                      "http_status": http_status}
+                      "http_status": http_status, "finish_reason": finish_reason}
         if isinstance(usage, dict):
             safe_usage = {key: value for key, value in usage.items()
                           if key in {"prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens"}
@@ -198,6 +199,7 @@ class VisionBenchmarkAdapter:
             returned_model = data["model"]
             message = data["choices"][0]["message"]
             choice = data["choices"][0]
+            finish_reason = choice.get("finish_reason")
             usage = data["usage"]
             raw_content = message["content"]
             if not isinstance(usage, dict):
@@ -216,15 +218,18 @@ class VisionBenchmarkAdapter:
             if message.get("tool_calls") or choice.get("finish_reason") == "tool_calls":
                 raise VisionBenchmarkError("provider_returned_tool_call", model=model,
                                            elapsed_ms=elapsed_ms, trace_id=response_trace,
-                                           http_status=response.status_code, usage=safe_usage)
-            if choice.get("finish_reason") == "length":
+                                           http_status=response.status_code, usage=safe_usage,
+                                           finish_reason=finish_reason)
+            if finish_reason == "length":
                 raise VisionBenchmarkError("provider_output_truncated", model=model,
                                            elapsed_ms=elapsed_ms, trace_id=response_trace,
-                                           http_status=response.status_code, usage=safe_usage)
+                                           http_status=response.status_code, usage=safe_usage,
+                                           finish_reason=finish_reason)
             if not isinstance(raw_content, str) or len(raw_content.encode("utf-8")) > max_output_tokens * 32:
                 raise VisionBenchmarkError("provider_output_exceeded", model=model,
                                            elapsed_ms=elapsed_ms, trace_id=response_trace,
-                                           http_status=response.status_code, usage=safe_usage)
+                                           http_status=response.status_code, usage=safe_usage,
+                                           finish_reason=finish_reason)
             parsed = json.loads(raw_content)
             if not isinstance(parsed, (dict, list)):
                 raise ValueError("json_shape")
@@ -235,8 +240,10 @@ class VisionBenchmarkAdapter:
             raise VisionBenchmarkError(code, model=model, elapsed_ms=elapsed_ms,
                                        trace_id=response_trace,
                                        http_status=response.status_code,
-                                       usage=safe_usage if "safe_usage" in locals() else None) from None
+                                       usage=safe_usage if "safe_usage" in locals() else None,
+                                       finish_reason=finish_reason if "finish_reason" in locals() else None) from None
         return {"content": raw_content, "parsed": parsed, "model": returned_model,
                 "requested_model": model,
                 "usage": safe_usage, "elapsed_ms": elapsed_ms, "trace_id": response_trace,
-                "http_status": response.status_code, "ok": True, "error_code": None}
+                "http_status": response.status_code, "finish_reason": finish_reason,
+                "ok": True, "error_code": None}
