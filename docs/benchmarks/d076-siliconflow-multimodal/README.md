@@ -1,6 +1,6 @@
 # D076 SiliconFlow 多模态综合评测准备
 
-状态（2026-10-15）：文本横评中 DeepSeek 已完成，GLM 已确认计费但响应不可恢复，文本 Qwen 后续账单页显示计费约 ¥0.0068、券抵后账单 ¥0。视觉横评中 Qwen 一次 HTTP 200 但输出截断；DeepSeek Vision 一次 HTTP 400，未取得 usage/评分，费用待后台核对；GLM-5V-Turbo 未调用。所有请求均未重试。
+状态（2026-10-15）：文本横评中 DeepSeek 已完成，GLM 已确认计费但响应不可恢复，文本 Qwen 后续账单页显示计费约 ¥0.0068、券抵后账单 ¥0。视觉横评中 Qwen 一次 HTTP 200 但输出截断；DeepSeek Vision 与 GLM-5V-Turbo 各一次 HTTP 400，均无 usage/模型输出，不评分；GLM 返回供应商结构化错误码 20012（官方解释为模型不存在），当前账单页未列出视觉调用，但最终费用仍 UNKNOWN。所有请求均未重试。
 
 评测只使用本目录中的虚构素材与固定答案，不读取 Hermes 会话、正式 Capture/Review/Knowledge，不访问 Private；API 凭据由隔离进程从仓库外的私有文件读取，未输出、记录或提交密钥。本目录中 PDF/图片均为合成内容。
 
@@ -235,4 +235,18 @@ HTTP 400 最可能属于**模型侧输入校验/多模态预处理拒绝**，具
 
 本地修复使未来非 2xx/429 响应仅可持久化供应商结构化的 `type`、`code` 和严格参数名白名单（例如 `model`、`messages`、`detail`、`max_tokens`）。原始错误正文、任意字段、图片、鉴权数据始终不保存；大于 16 KiB 的错误正文不解析。假服务测试覆盖标准格式差异、错误码/参数提取、拒绝异常标识及 message 内容脱敏。该代码不能恢复本次 400 的已丢失细节。
 
-**GLM 相同风险：** GLM-5V-Turbo 也只依据平台视觉/Chat API 的通用格式，未在本仓库真实调用。它支持图像输入但 JSON Mode 不支持；本请求本来就不启用 JSON Mode。相同 `image_url` 与 PNG MIME 兼容性风险仍存在，无法根据 DeepSeek 结果判断 GLM 必然失败或成功。当前不得调用 GLM，也不自动执行 JPEG 转换、移除 `detail` 或拆分图片等试探。
+**当时对 GLM 的判断：** 撰写本节时 GLM-5V-Turbo 尚未调用；它支持图像输入但 JSON Mode 不支持，因此请求不启用 JSON Mode。相同 `image_url` 与 PNG MIME 兼容性风险仍存在，无法根据 DeepSeek 结果预测 GLM 结果。后来唯一一次 GLM 请求的证据与结论见第 11 节；不自动执行 JPEG 转换、移除 `detail` 或拆分图片等试探。
+
+## 11. GLM-5V-Turbo 唯一视觉请求结果（2026-10-15）
+
+按用户授权对 `zai-org/GLM-5V-Turbo` 发送一次请求；复用同一组 3 张合成 PNG、SHA-256 与第 9 节一致，使用相同紧凑 JSON 提示词、`detail=low`、`max_tokens=2000`、`temperature=0`、`n=1`、非流式。没有启用 JSON Mode、tools、`tool_choice` 或 `enable_thinking`。专用 Key 文件仅由评测进程读取；权限元数据核验为当前用户所有、`0600`，父目录 `0700`，未输出密钥。
+
+请求前 SiliconFlow 控制台显示余额约 ¥2.9859（界面省略尾数）、透支额度 ¥0、3 张可用券；不能确认这些券对该模型适用，未把它们视为费用保证。官方型号页当前列出模型 Available、支持图像输入，价格输入 $1.20/M、输出 $4.00/M。人民币 ¥5 仍是软预算，不是硬限额。[GLM-5V-Turbo 型号页](https://www.siliconflow.com/models/glm-5v-turbo)；[SiliconFlow 价格页](https://www.siliconflow.com/pricing)
+
+| 模型 ID | 状态/HTTP | 耗时 | usage / finish reason / trace | 输出与评分 | 费用 |
+|---|---|---:|---|---|---|
+| `zai-org/GLM-5V-Turbo` | `failed`，HTTP 400，尝试 1 次 | 155 ms | usage 未返回；finish reason 不适用；trace `5ab162f3-b924-462e-8431-bc3464cb2996`；安全账本仅保留结构化错误码 `20012` | 无模型输出；仿真界面、图表数字、扫描页文字与引用均不可评分 | 无法估算；请求后账单页尚未出现此模型记录，仍按 UNKNOWN 处理 |
+
+官方错误码文档将 `20012` 解释为 “Model does not exist”。这说明该次请求被服务端按模型不存在拒绝，是当前最强的直接诊断证据；但 SiliconFlow 型号页同时显示准确 ID `zai-org/GLM-5V-Turbo` 为 Available 且支持图像输入。公开证据无法解释这两者冲突，可能与后端模型路由/账户可用性同步有关，但不能确认。未保存或输出供应商错误正文，没有重试，也没有继续探测参数。[官方错误码说明](https://docs.siliconflow.cn/en/faqs/error-code)
+
+**横评结论：** 当前没有获得可用且可评分的视觉模型结果：Qwen 输出被截断，DeepSeek Vision 返回 HTTP 400，GLM 返回 HTTP 400/20012。停止扩大模型测试。后续应先由 SiliconFlow 支持或控制台确认视觉型号在该账户及 `api.siliconflow.cn` 路由上的实际可用性；若供应商确认模型可用，再另行评估要不要创建新运行批次进行一款模型的单次验证。不得自动换供应商、重试既有模型、调整图片格式/参数试探或将失败伪装成成功。
