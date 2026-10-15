@@ -55,11 +55,10 @@ def _print(value):
 
 async def _run(args, run):
     model = args.model
-    prior = ALLOWED_MODEL_IDS[:ALLOWED_MODEL_IDS.index(model)]
     states = run.status()["models"]
-    if any(states.get(model_id, {}).get("state") != "completed" for model_id in prior):
+    if not run.may_run_in_order(model):
         _print({"run_id": run.run_id, "model_id": model, "state": states[model]["state"],
-                "error_code": "prior_model_not_completed_no_request_sent"})
+                "error_code": "prior_model_gate_not_satisfied_no_request_sent"})
         return 2
     if not args.confirm_real_request:
         _print({"run_id": run.run_id, "model_id": model, "state": states[model]["state"],

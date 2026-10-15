@@ -184,7 +184,8 @@ class PersistentBenchmarkRun:
             raise BenchmarkRunError("run_file_invalid")
         for model_id, row in doc["models"].items():
             if (model_id not in ALLOWED_MODEL_IDS or not isinstance(row, dict)
-                    or row.get("state") not in {"pending", "started", "completed", "unknown"}
+                    or row.get("state") not in {"pending", "started", "completed", "unknown",
+                                                "billed_result_unavailable"}
                     or type(row.get("attempts")) is not int or row["attempts"] not in (0, 1)):
                 raise BenchmarkRunError("run_file_invalid")
         return doc
@@ -270,6 +271,72 @@ class PersistentBenchmarkRun:
                         "source": source, "request_dispatched": request_dispatched,
                         "finished_at": _utc_now(), "error_code": code})
             self._write_unlocked(doc)
+
+    def adjudicate_billed_result_unavailable(self, model_id: str, *, source: str,
+                                             input_tokens: int, output_tokens: int,
+                                             billed_amount_cny: float,
+                                             payable_after_voucher_cny: float,
+                                             reason: str) -> None:
+        """Record user-authorized billing evidence while keeping response unavailable.
+
+        This is a terminal, non-retryable disposition. It stores no fabricated HTTP
+        status, trace ID, model output, or quality score.
+        """
+        if (not isinstance(source, str) or not source or len(source) > 160
+                or not isinstance(reason, str) or not reason or len(reason) > 300
+                or type(input_tokens) is not int or input_tokens < 0
+                or type(output_tokens) is not int or output_tokens < 0
+                or not isinstance(billed_amount_cny, (int, float)) or billed_amount_cny < 0
+                or not isinstance(payable_after_voucher_cny, (int, float))
+                or payable_after_voucher_cny < 0):
+            raise BenchmarkRunError("billing_exception_invalid")
+        with self._locked():
+            doc = self._read_unlocked()
+            row = doc["models"].get(model_id)
+            if row is None or row.get("state") != "unknown" or row.get("attempts") != 1:
+                raise BenchmarkRunError("model_not_unknown_for_billing_exception")
+            row.update({
+                "state": "billed_result_unavailable",
+                "finished_at": _utc_now(),
+                "billing_evidence": {
+                    "source": source,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "billed_amount_cny": round(float(billed_amount_cny), 6),
+                    "payable_after_voucher_cny": round(float(payable_after_voucher_cny), 6),
+                    "response_usage_recovered": False,
+                    "http_status_recovered": False,
+                    "trace_id_recovered": False,
+                },
+                "manual_exception": {
+                    "authorized_by": "user",
+                    "reason": reason,
+                    "recorded_at": _utc_now(),
+                    "permits_next_model_only": True,
+                    "permits_retry": False,
+                },
+            })
+            self._write_unlocked(doc)
+
+    def may_run_in_order(self, model_id: str) -> bool:
+        """Allow only completed predecessors or audited billed-unavailable skips."""
+        try:
+            index = ALLOWED_MODEL_IDS.index(model_id)
+        except ValueError as exc:
+            raise BenchmarkRunError("model_not_in_ordered_allowlist") from exc
+        states = self.status()["models"]
+        for prior_id in ALLOWED_MODEL_IDS[:index]:
+            row = states.get(prior_id, {})
+            if row.get("state") == "completed":
+                continue
+            if (row.get("state") == "billed_result_unavailable"
+                    and row.get("attempts") == 1
+                    and row.get("manual_exception", {}).get("permits_next_model_only") is True
+                    and row.get("manual_exception", {}).get("permits_retry") is False
+                    and "billing_evidence" in row):
+                continue
+            return False
+        return True
 
     def complete_error(self, model_id: str, error_code: str, *, status_code: int,
                        elapsed_ms: float, trace_id: str | None = None) -> None:

@@ -166,6 +166,58 @@ class PersistentBenchmarkRunTests(unittest.TestCase):
             self.assertEqual(unknown["state"], "unknown")
             self.assertEqual(calls, 0)
 
+    def test_billed_result_unavailable_is_audited_terminal_and_only_unblocks_next_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = PersistentBenchmarkRun.create(Path(tmp))
+            run.import_completed(ALLOWED_MODEL_IDS[0], synthetic_result(), source="captured prior response")
+            run.import_unknown(ALLOWED_MODEL_IDS[1], "result_handle_lost", source="lost executor result",
+                               request_dispatched=True)
+            self.assertFalse(run.may_run_in_order(ALLOWED_MODEL_IDS[2]))
+            run.adjudicate_billed_result_unavailable(
+                ALLOWED_MODEL_IDS[1], source="user-provided SiliconFlow official export, 2026-10-15",
+                input_tokens=493, output_tokens=2715, billed_amount_cny=0.016783,
+                payable_after_voucher_cny=0,
+                reason="Billing confirms charge; user authorizes proceeding to the not-yet-called Qwen only.")
+            row = run.status()["models"][ALLOWED_MODEL_IDS[1]]
+            self.assertEqual(row["state"], "billed_result_unavailable")
+            self.assertEqual(row["attempts"], 1)
+            self.assertEqual(row["billing_evidence"]["input_tokens"], 493)
+            self.assertEqual(row["billing_evidence"]["output_tokens"], 2715)
+            self.assertEqual(row["billing_evidence"]["billed_amount_cny"], 0.016783)
+            self.assertFalse(row["billing_evidence"]["response_usage_recovered"])
+            self.assertNotIn("http_status", row)
+            self.assertNotIn("trace_id", row)
+            self.assertNotIn("result", row)
+            self.assertNotIn("evaluation", row)
+            self.assertTrue(row["manual_exception"]["permits_next_model_only"])
+            self.assertFalse(row["manual_exception"]["permits_retry"])
+            self.assertTrue(run.may_run_in_order(ALLOWED_MODEL_IDS[2]))
+
+            calls = 0
+
+            async def must_not_resend_glm():
+                nonlocal calls
+                calls += 1
+                return synthetic_result()
+
+            same_glm = asyncio.run(run.run_once(ALLOWED_MODEL_IDS[1], must_not_resend_glm))
+            self.assertEqual(same_glm["state"], "billed_result_unavailable")
+            self.assertEqual(calls, 0)
+
+            reopened = PersistentBenchmarkRun.open(Path(tmp), run.run_id)
+            self.assertEqual(reopened.status()["models"][ALLOWED_MODEL_IDS[1]]["state"],
+                             "billed_result_unavailable")
+            self.assertTrue(reopened.may_run_in_order(ALLOWED_MODEL_IDS[2]))
+
+    def test_billing_exception_cannot_be_applied_without_unknown_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = PersistentBenchmarkRun.create(Path(tmp))
+            with self.assertRaisesRegex(Exception, "model_not_unknown_for_billing_exception"):
+                run.adjudicate_billed_result_unavailable(
+                    ALLOWED_MODEL_IDS[1], source="user export", input_tokens=493, output_tokens=2715,
+                    billed_amount_cny=0.016783, payable_after_voucher_cny=0,
+                    reason="Authorized one-time skip")
+
     def test_ledger_is_private_and_contains_no_request_headers(self):
         with tempfile.TemporaryDirectory() as tmp:
             run = self.make_run(Path(tmp))
