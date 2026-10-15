@@ -92,6 +92,64 @@ class VisionBenchmarkAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(vision.VisionBenchmarkError, "model_not_allowlisted"):
             vision.build_request("other/model", "test", [png_bytes()])
 
+    def test_qwen_and_deepseek_request_shapes_are_same_except_model_and_payload_values(self):
+        images = [png_bytes(), jpeg_bytes(), png_bytes((1, 2, 3))]
+        qwen = vision.build_request(MODELS[0], "old prompt", images, max_output_tokens=800)
+        deepseek = vision.build_request(MODELS[1], "compact prompt", images, max_output_tokens=2000)
+        self.assertEqual(set(qwen), set(deepseek))
+        self.assertEqual(qwen["messages"][0]["role"], deepseek["messages"][0]["role"])
+        self.assertEqual(qwen["stream"], deepseek["stream"])
+        self.assertEqual(qwen["temperature"], deepseek["temperature"])
+        self.assertEqual(qwen["n"], deepseek["n"])
+        self.assertEqual(qwen["messages"][0]["content"][:-1], deepseek["messages"][0]["content"][:-1])
+        self.assertEqual([p["image_url"]["detail"] for p in qwen["messages"][0]["content"][:-1]],
+                         ["low", "low", "low"])
+        self.assertEqual([p["image_url"]["url"].split(",", 1)[0] for p in qwen["messages"][0]["content"][:-1]],
+                         ["data:image/png;base64", "data:image/jpeg;base64", "data:image/png;base64"])
+        self.assertNotIn("enable_thinking", deepseek)
+        self.assertNotIn("response_format", deepseek)
+        self.assertNotIn("tools", deepseek)
+
+    def test_http_error_persists_only_safe_structured_diagnostics(self):
+        secretish = "DO_NOT_PERSIST secret-like provider message with key sk-not-real"
+
+        async def handler(request):
+            return httpx.Response(400, json={"error": {
+                "type": "invalid_request_error", "code": "image_payload_invalid",
+                "param": "detail", "message": secretish,
+            }}, headers={"x-siliconcloud-trace-id": "trace-safe-400"})
+
+        client = self.client(handler)
+        adapter = vision.VisionBenchmarkAdapter("synthetic-key", client=client)
+        try:
+            with self.assertRaises(vision.VisionBenchmarkError) as caught:
+                asyncio.run(adapter.analyze(MODELS[1], "synthetic prompt", [png_bytes()]))
+        finally:
+            asyncio.run(client.aclose())
+        audit = caught.exception.audit
+        self.assertEqual(audit["http_status"], 400)
+        self.assertEqual(audit["provider_error_type"], "invalid_request_error")
+        self.assertEqual(audit["provider_error_code"], "image_payload_invalid")
+        self.assertEqual(audit["provider_error_param"], "detail")
+        self.assertNotIn(secretish, repr(audit))
+        self.assertNotIn("sk-not-real", repr(audit))
+
+    def test_unrecognized_provider_error_fields_are_discarded(self):
+        async def handler(request):
+            return httpx.Response(400, json={"code": "unsafe code with spaces",
+                "type": "x" * 200, "param": "Authorization", "message": "redact all"})
+
+        client = self.client(handler)
+        adapter = vision.VisionBenchmarkAdapter("synthetic-key", client=client)
+        try:
+            with self.assertRaises(vision.VisionBenchmarkError) as caught:
+                asyncio.run(adapter.analyze(MODELS[1], "synthetic prompt", [png_bytes()]))
+        finally:
+            asyncio.run(client.aclose())
+        self.assertNotIn("provider_error_code", caught.exception.audit)
+        self.assertNotIn("provider_error_type", caught.exception.audit)
+        self.assertNotIn("provider_error_param", caught.exception.audit)
+
     def test_preserves_reasoning_usage_even_if_total_completion_usage_exceeds_output_setting(self):
         async def handler(request):
             return httpx.Response(200, json=completion(usage={

@@ -90,6 +90,28 @@ class PersistentVisionRunTests(unittest.TestCase):
             self.assertEqual(row["error"]["http_status"], 429)
             self.assertFalse(run.may_run_in_order(VISION_MODEL_ORDER[1]))
 
+    def test_http_error_saves_whitelisted_provider_diagnostics_without_body(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = PersistentVisionRun.create(Path(tmp), model_order=VISION_MODEL_ORDER[1:])
+            model = VISION_MODEL_ORDER[1]
+            error = VisionBenchmarkError("provider_http_error", model=model, elapsed_ms=90,
+                http_status=400, trace_id="safe-trace", provider_diagnostics={
+                    "provider_error_type": "invalid_request_error",
+                    "provider_error_code": "image_payload_invalid",
+                    "provider_error_param": "detail",
+                })
+
+            async def failed():
+                raise error
+
+            with self.assertRaises(VisionBenchmarkError):
+                asyncio.run(run.run_once(model, request_metadata={}, invoke=failed))
+            row = run.status()["models"][model]
+            self.assertEqual(row["error"]["provider_error_code"], "image_payload_invalid")
+            self.assertEqual(row["error"]["provider_error_param"], "detail")
+            self.assertNotIn("message", row["error"])
+            self.assertNotIn("response_body", row["error"])
+
     def test_truncated_http_200_usage_is_persisted_without_partial_json_claim(self):
         with tempfile.TemporaryDirectory() as tmp:
             run = PersistentVisionRun.create(Path(tmp))

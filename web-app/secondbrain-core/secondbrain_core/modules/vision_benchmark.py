@@ -10,6 +10,7 @@ import asyncio
 import base64
 import io
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -25,10 +26,16 @@ MAX_IMAGE_BYTES = 2 * 1024 * 1024
 MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024
 MAX_OUTPUT_TOKENS = 2000
 MAX_RESPONSE_BYTES = 128 * 1024
+MAX_ERROR_DIAGNOSTIC_BYTES = 16 * 1024
 MAX_TIMEOUT_SECONDS = 45.0
 MAX_IMAGE_WIDTH = 1600
 MAX_IMAGE_HEIGHT = 1600
 MAX_IMAGE_PIXELS = 2_560_000
+SAFE_PROVIDER_IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+SAFE_PROVIDER_PARAMS = {
+    "model", "messages", "content", "type", "image_url", "url", "detail",
+    "max_tokens", "temperature", "top_p", "n", "stream", "response_format",
+}
 
 
 @dataclass(frozen=True)
@@ -54,11 +61,17 @@ class VisionBenchmarkError(RuntimeError):
     def __init__(self, code: str, *, model: str | None = None,
                  elapsed_ms: int | None = None, trace_id: str | None = None,
                  http_status: int | None = None, usage: dict[str, Any] | None = None,
-                 finish_reason: str | None = None):
+                 finish_reason: str | None = None,
+                 provider_diagnostics: dict[str, str] | None = None):
         self.code = code
         self.audit = {"ok": False, "model": model, "error_code": code,
                       "elapsed_ms": elapsed_ms, "trace_id": trace_id,
                       "http_status": http_status, "finish_reason": finish_reason}
+        if isinstance(provider_diagnostics, dict):
+            for key in ("provider_error_type", "provider_error_code", "provider_error_param"):
+                value = provider_diagnostics.get(key)
+                if isinstance(value, str) and SAFE_PROVIDER_IDENTIFIER.fullmatch(value):
+                    self.audit[key] = value
         if isinstance(usage, dict):
             safe_usage = {key: value for key, value in usage.items()
                           if key in {"prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens"}
@@ -66,6 +79,34 @@ class VisionBenchmarkError(RuntimeError):
             if safe_usage:
                 self.audit["usage"] = safe_usage
         super().__init__(code)
+
+
+def _provider_error_diagnostics(response: httpx.Response) -> dict[str, str]:
+    """Extract only structured, low-risk identifiers; never persist error text."""
+    if len(response.content) > MAX_ERROR_DIAGNOSTIC_BYTES:
+        return {}
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        error = payload
+    output: dict[str, str] = {}
+    raw_type = error.get("type")
+    if isinstance(raw_type, str) and SAFE_PROVIDER_IDENTIFIER.fullmatch(raw_type):
+        output["provider_error_type"] = raw_type
+    raw_code = error.get("code", payload.get("code"))
+    if type(raw_code) is int and 0 <= raw_code <= 999_999_999:
+        output["provider_error_code"] = str(raw_code)
+    elif isinstance(raw_code, str) and SAFE_PROVIDER_IDENTIFIER.fullmatch(raw_code):
+        output["provider_error_code"] = raw_code
+    raw_param = error.get("param", error.get("parameter", payload.get("param")))
+    if isinstance(raw_param, str) and raw_param in SAFE_PROVIDER_PARAMS:
+        output["provider_error_param"] = raw_param
+    return output
 
 
 def _validate_image(raw: bytes) -> tuple[str, str]:
@@ -187,10 +228,12 @@ class VisionBenchmarkAdapter:
                                        trace_id=response_trace, http_status=response.status_code)
         if response.status_code == 429:
             raise VisionBenchmarkError("provider_rate_limited", model=model, elapsed_ms=elapsed_ms,
-                                       trace_id=response_trace, http_status=response.status_code)
+                                       trace_id=response_trace, http_status=response.status_code,
+                                       provider_diagnostics=_provider_error_diagnostics(response))
         if response.status_code >= 400:
             raise VisionBenchmarkError("provider_http_error", model=model, elapsed_ms=elapsed_ms,
-                                       trace_id=response_trace, http_status=response.status_code)
+                                       trace_id=response_trace, http_status=response.status_code,
+                                       provider_diagnostics=_provider_error_diagnostics(response))
         if len(response.content) > MAX_RESPONSE_BYTES:
             raise VisionBenchmarkError("provider_response_too_large", model=model, elapsed_ms=elapsed_ms,
                                        trace_id=response_trace, http_status=response.status_code)

@@ -249,7 +249,8 @@ class PersistentVisionRun:
     def save_error(self, model: str, error: VisionBenchmarkError) -> None:
         audit = error.audit
         terminal = "failed" if type(audit.get("http_status")) is int else "unknown"
-        clean = {k: audit.get(k) for k in ("error_code", "http_status", "elapsed_ms", "finish_reason")}
+        clean = {k: audit.get(k) for k in ("error_code", "http_status", "elapsed_ms", "finish_reason",
+                                            "provider_error_type", "provider_error_code", "provider_error_param")}
         trace = audit.get("trace_id")
         if isinstance(trace, str) and TRACE_PATTERN.fullmatch(trace):
             clean["trace_id"] = trace
