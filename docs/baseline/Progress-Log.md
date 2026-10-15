@@ -807,3 +807,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 验证范围为合成 Hermes Source 和 `httpx.MockTransport`，覆盖正常 Adapter 调用/usage、预算限制、每日并发预留、重启持久化、超时未知状态、无新增跳过、已有流程恢复/人工编辑保护、手动与 Scheduler 共用执行器，以及默认关闭与 Scheduler 独立门禁。未连接真实 Hermes、未读取用户内容或真实 Secret、未调用真实 SiliconFlow API、未启动常驻 Scheduler、未部署 NAS。Knowledge 写入、Promote 与 Private 边界未改变。
 - 验证：Organizer 配置、Engine、Synthetic E2E、SiliconFlow MockTransport 及既有 Promote 关闭/鉴权边界测试 **55 passed**；Python `compileall` 与 `git diff --check` 通过。Starlette/httpx 出现既有弃用警告，不影响测试结果。
 - **状态：** 本地代码与必要文档完成；Commit/Push 状态按本轮交付报告核验。生产未部署、未启动常驻 Scheduler、未调用真实 API，用户浏览器验收未执行。真实用户数据启用仍需另行授权数据出站、专用凭据安全注入、模型账户/参数兼容性核验、用户在供应商控制台核账，并单独批准生产部署与验收。软预算不提供供应商级硬费用封顶。
+
+## 2026-10-15 — D076 SiliconFlow 合成数据最小真实联调
+
+- 使用专用仓库外密钥文件与进程级模型 opt-in；本地全局配置未改，Scheduler 明确关闭。仅向 `deepseek-ai/DeepSeek-V4-Flash` 发送 1 次人工合成 Hermes 消息，无真实 Hermes/SecondBrain 数据、Private、Knowledge、NAS 或生产配置访问。
+- 真实响应完成 Organizer 闭环：`todo` 分类，生成 1 个 `pending` Review 草稿，来源 `synthetic-session-001` / `synthetic-user-001`；作业状态 `completed`，游标从 0 推进至 1。供应商 usage：prompt 197、completion 79、reasoning 0、total 276；按公开最高时段价 ¥3/M 输入、¥9/M 输出得本地费用估算 ¥0.001302，**不是供应商账单**，实际账户结算待控制台核验。
+- 官方 [Chat Completions 参数文档](https://docs.siliconflow.cn/docs/api/chat-completions-post) 核实 DeepSeek-V4-Flash 支持 `enable_thinking`，请求仅对该获准模型设置 `false`；[价格公告](https://docs.siliconflow.cn/docs/release-notes/overview) 显示自 2026-09-01 起分时计价。相应将本地预算估算费率改为公开最高时段价，避免沿用过低旧值。单次联调另有 ¥5 本地估算预检及单 HTTP 尝试门禁。供应商模型可用性由本次成功响应确认；账户实际折扣/券抵扣与账单金额未核实。
+- 首次本地 harness 的同步 HTTPX request hook 在异步 hook `await` 阶段发生 `TypeError`，HTTP 传输尚未开始；Runner 保守持久化为临时 `unknown`，未对该作业重试。修正 hook 后使用新的隔离合成状态成功发出唯一真实 HTTP 请求。没有自动重试或切换模型。
+- 验证：Organizer 配置、Engine、Synthetic E2E、SiliconFlow MockTransport 定向测试 **42 passed**；Python `compileall` 通过。生产未部署，Scheduler 未启动，模型仅在该测试进程中启用；全局模型默认关闭、Promote=false、Knowledge RO。用户尚未在 Web App 浏览器验收；真实业务数据启用、生产部署与供应商控制台账单核对仍待分别批准/验收。Review 草稿位于 `/private/tmp/secondbrain-d076-live.ciNbcR/review/AI-Organize-e9722f57a33247b7806dac66a484a5e1-01-522de94504.md`。

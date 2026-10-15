@@ -55,9 +55,9 @@ class SiliconFlowAdapterTests(unittest.TestCase):
         self.assertEqual(seen[0].headers["authorization"], "Bearer synthetic-only-secret")
         body = json.loads(seen[0].content)
         self.assertEqual(body["max_tokens"], 300)
+        self.assertFalse(body["enable_thinking"])
         self.assertFalse(body["stream"])
         self.assertTrue(seen[0].headers.get("x-trace-id"))
-        self.assertNotIn("enable_thinking", body)
         self.assertNotIn("tools", body)
         self.assertNotIn("tool_choice", body)
         self.assertNotIn("parallel_tool_calls", body)
@@ -159,9 +159,13 @@ class SiliconFlowAdapterTests(unittest.TestCase):
 
         asyncio.run(run_all())
         self.assertEqual([body["model"] for body in seen], model_ids)
-        normalized = [{key: value for key, value in body.items() if key != "model"} for body in seen]
+        normalized = [{key: value for key, value in body.items()
+                       if key not in {"model", "enable_thinking"}} for body in seen]
         self.assertEqual(normalized[0], normalized[1])
         self.assertEqual(normalized[1], normalized[2])
+        self.assertFalse(seen[0]["enable_thinking"])
+        self.assertNotIn("enable_thinking", seen[1])
+        self.assertNotIn("enable_thinking", seen[2])
         self.assertEqual(normalized[0]["max_tokens"], 1200)
         self.assertEqual(normalized[0]["temperature"], 0)
         self.assertEqual(normalized[0]["n"], 1)

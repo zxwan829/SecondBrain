@@ -12,7 +12,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
 
-**总体状态：`NOT DONE`。** 最近一次有据可查的生产 App 快照见 `Environment-Baseline.md`（2026-10-15）；本轮未连接 NAS，故之后实时运行状态为 `UNKNOWN`。D076 Organizer 的 Core 本地软预算门禁与默认关闭接线已实现/定向测试；未部署、未启动常驻 Scheduler、未调用真实 API，亦未获真实用户数据出站授权。DeepSeek-V4-Flash 是当前文本候选，不代表账户可用或费用硬封顶；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
+**总体状态：`NOT DONE`。** 最近一次有据可查的生产 App 快照见 `Environment-Baseline.md`（2026-10-15）；本轮未连接 NAS，故之后实时运行状态为 `UNKNOWN`。D076 Organizer 已用一条合成消息完成 SiliconFlow DeepSeek-V4-Flash 真实 API → 分类 → 本地 Review 草稿 → usage/估算费用及游标/作业状态闭环；代码仍未部署，常驻 Scheduler 保持关闭，真实用户数据出站与生产启用尚未授权。¥0.001302 是按供应商公开最高时段价计算的本地估算，不是账户账单；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 
@@ -33,6 +33,7 @@ source: GitHub SecondBrain Monorepo
 | **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
 | Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | PROD-PARTIAL：Commit `55977c8` 的统一 Composer 已部署至 63013，Inbox 与首页快速收录共用现有 Capture API；认证 API smoke 通过 | 用户验收拖放、粘贴、IME、成功清空/失败保留及手机选择；音频处理器和微信渠道 |
 | Review 读取 | Web App 统一会话下展示列表/详情、来源和内容 | ACCEPTED：现有 D071 Dashboard v0.2.4；独立 App 63013 HTTPS 浏览器已显示 8 条真实 Review 与详情 | 独立 App 用户最终验收；补齐正式审批状态/动作部署 |
+| Organizer 自动整理（D076） | 仅整理获准来源；生成待审核 Review 草稿并记录 usage/预算/游标 | DEV-TESTED：Mock 定向测试 42 passed；1 次 DeepSeek-V4-Flash 真实 API 合成闭环完成，1 个待审核草稿，usage 276 tokens、估算 ¥0.001302 | 供应商控制台核对实际账单；生产数据出站授权、部署及真实浏览器验收均待单独批准；Scheduler 关闭 |
 | Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | DEV-TESTED：阶段 A 15 项测试；生产关闭 | 收口权限、统一登录安全边界、正式部署、HTTPS 用户验收 |
 | Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
 | Journal | 用户原文留存；目标支持新增/按日期追加，不允许普通 Agent 随意覆写 | NOT DONE：生产未开放专用写入 | 按 D064 执行；**业务是目标能力，但 Web App V1 的快捷录入属于 SHOULD，不能擅自冒充核心 MUST** |

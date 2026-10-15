@@ -30,9 +30,10 @@ TIMEOUT_SECONDS = 45
 MAX_REQUESTS_PER_JOB = 3
 MAX_REQUESTS_PER_DAY = 12
 MONTHLY_SOFT_BUDGET_CNY = 10
-# Planning estimate only: model page USD prices * 8 CNY/USD * 1.5 safety factor.
-INPUT_PRICE_MICROCNY_PER_MILLION = 1_560_000
-OUTPUT_PRICE_MICROCNY_PER_MILLION = 3_360_000
+# Conservative estimate uses the provider's highest published time band; this
+# remains a local estimate, not a provider-enforced cap or invoice.
+INPUT_PRICE_MICROCNY_PER_MILLION = 3_000_000
+OUTPUT_PRICE_MICROCNY_PER_MILLION = 9_000_000
 
 
 class OrganizerAdapterError(RuntimeError):
@@ -185,6 +186,8 @@ class SiliconFlowOrganizerModel:
         messages = _bounded_messages(payload, max_input_tokens)
         body = {"model": self.model, "messages": messages, "stream": False,
                 "max_tokens": max_output_tokens, "temperature": 0, "n": 1}
+        if self.model == MODEL_DEFAULT:
+            body["enable_thinking"] = False
         body_bytes = len(_json_bytes(body))
         if body_bytes > MAX_REQUEST_BYTES:
             raise OrganizerAdapterError("request_too_large")
