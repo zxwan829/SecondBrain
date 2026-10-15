@@ -821,5 +821,5 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 设置页增加 SiliconFlow 配置、唯一可运行候选 `deepseek-ai/DeepSeek-V4-Flash`、API Key 新增/替换/删除、模型与 Scheduler 独立开关、4 小时/每日固定时间计划、预算/请求额度及已有运行状态。两个执行开关默认关闭；Scheduler 配置只在后续 Core 启动时生效，保存模型配置不会启动它或整理作业。
 - Core 复用 App 会话和 `automation.settings.read/write` 授权，将无密钥模型设置、密钥独立写入现有私有 `ai-organize` 状态目录；密钥文件权限 `0600`，接口仅返回 `api_key_configured`，无读取/回显 API。模型 ID/provider 由 Core 严格校验。连接测试 API 明确标识为本地 Mock 配置检查，不访问 SiliconFlow，也不验证真实 Key。
 - Organizer 状态补充每日剩余请求数和月度估算余额。保留原预算预留、执行器并发锁、作业/游标、Review 路径；不改变 Knowledge 写入、Promote、Private 边界。本轮未读取已有真实 Key、未真实 API 调用、未读真实 Hermes/业务内容、未启动 Scheduler、未部署。
-- 验证：Core Web App BFF、Organizer Engine、合成 E2E、SiliconFlow MockTransport **49 passed**；Core `compileall`、前端 `typecheck`、Vite build、`git diff --check` 通过。测试覆盖登录拒绝、非法模型拒绝、密钥响应脱敏/权限/删除、设置重读与 Mock 测试零 Hermes HTTP 新调用。系统 Python 缺少 FastAPI/httpx，改用仓库 `.venv` 成功验证。
+- 验证：Core Web App BFF、Organizer Engine、合成 E2E、SiliconFlow MockTransport **49 passed**；Core 既有权限/Promote 边界 **14 passed**；Core `compileall`、前端 `typecheck`、Vite build、`git diff --check` 通过。测试覆盖登录拒绝、非法模型拒绝、密钥响应脱敏/权限/删除、设置重读与 Mock 测试零 Hermes HTTP 新调用。系统 Python 缺少 FastAPI/httpx，改用仓库 `.venv` 成功验证。
 - **状态：** 代码/文档仅本地修改，待提交推送；未生产部署、未真实联调或用户浏览器验收。上线前至少需用户审阅并部署批准、在生产受保护 Core 状态中配置独立凭据、明确批准 Scheduler 和真实数据出站策略，并浏览器验收设置/Key 管理/Mock 测试及预算显示；供应商账单仍须控制台核对。软预算不是供应商硬费用上限。
