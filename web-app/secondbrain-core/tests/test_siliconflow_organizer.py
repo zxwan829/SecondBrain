@@ -55,11 +55,66 @@ class SiliconFlowAdapterTests(unittest.TestCase):
         body = json.loads(seen[0].content)
         self.assertEqual(body["max_tokens"], 300)
         self.assertFalse(body["stream"])
+        self.assertFalse(body["enable_thinking"])
         self.assertNotIn("tools", body)
         self.assertNotIn("tool_choice", body)
         self.assertNotIn("parallel_tool_calls", body)
         self.assertEqual(adapter.capabilities["hard_cost_budget"], False)
         self.assertNotIn("synthetic-only-secret", repr(adapter))
+
+    def test_three_model_ids_receive_the_same_offline_comparison_request(self):
+        model_ids = ["deepseek-ai/DeepSeek-V4-Flash", "zai-org/GLM-4.5-Air",
+                     "Qwen/Qwen3.5-35B-A3B"]
+        seen = []
+        payload = {"job_id": "synthetic-eval-20261015", "task": "按分类提炼明确表达的用户事实；过滤普通问答和闲聊。",
+                   "new_user_messages": [
+                       {"session_id": "synthetic-life", "message_id": "life-001",
+                        "timestamp": "2026-10-15T09:00:00Z", "text": "今天陪家人去公园，感觉轻松。"},
+                       {"session_id": "synthetic-work-a", "message_id": "idea-followup-002",
+                        "timestamp": "2026-10-15T10:10:00Z", "text": "我还可以从最近一个月的高频问题开始。"},
+                       {"session_id": "synthetic-work-b", "message_id": "idea-duplicate-003",
+                        "timestamp": "2026-10-15T10:12:00Z", "text": "先把客服高频问题整理成知识卡片。"},
+                       {"session_id": "synthetic-life", "message_id": "todo-004",
+                        "timestamp": "2026-10-15T10:15:00Z", "text": "周五前把试点计划发给小林。"},
+                       {"session_id": "synthetic-life", "message_id": "smalltalk-005",
+                        "timestamp": "2026-10-15T10:16:00Z", "text": "谢谢，收到。"},
+                       {"session_id": "synthetic-life", "message_id": "qa-006",
+                        "timestamp": "2026-10-15T10:17:00Z", "text": "月球距离地球的平均距离大约是多少？"},
+                   ],
+                   "context_only": {"synthetic-work-a": [{"message_id": "idea-original-001",
+                       "role": "user", "timestamp": "2026-10-15T10:00:00Z",
+                       "text": "下季度把客服问题整理成知识卡片，减少重复排查。"}]},
+                   "output_schema": {"drafts": [{"category": "journal|work_idea|todo|knowledge_candidate",
+                       "title": "string", "summary": "string", "source_quotes": []}]}}
+
+        async def handler(request):
+            seen.append(json.loads(request.content))
+            return response(good_body())
+
+        async def run_all():
+            client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False)
+            try:
+                for model_id in model_ids:
+                    adapter = SiliconFlowOrganizerModel("synthetic-only-secret", model=model_id,
+                                                        client=client, timeout_seconds=1)
+                    result = await adapter.extract(payload,
+                                                   max_input_tokens=6000, max_output_tokens=1200)
+                    self.assertEqual(result["drafts"], [])
+            finally:
+                await client.aclose()
+
+        asyncio.run(run_all())
+        self.assertEqual([body["model"] for body in seen], model_ids)
+        normalized = [{key: value for key, value in body.items() if key != "model"} for body in seen]
+        self.assertEqual(normalized[0], normalized[1])
+        self.assertEqual(normalized[1], normalized[2])
+        self.assertEqual(normalized[0]["max_tokens"], 1200)
+        self.assertEqual(normalized[0]["temperature"], 0)
+        self.assertEqual(normalized[0]["n"], 1)
+        self.assertFalse(normalized[0]["stream"])
+        self.assertFalse(normalized[0]["enable_thinking"])
+        self.assertNotIn("tools", normalized[0])
+        self.assertNotIn("tool_choice", normalized[0])
 
     def test_prompt_is_truncated_to_a_deterministic_byte_ceiling(self):
         original = {"task": "x", "new_user_messages": [{

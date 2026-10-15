@@ -69,12 +69,15 @@ class OrganizerSyntheticEndToEndTests(unittest.TestCase):
         work_idea = "下季度把客服问题整理成知识卡片，减少重复排查。"
         todo = "周五前把试点计划发给小林。"
         idle = "谢谢，收到。"
+        ordinary_question = "月球距离地球的平均距离大约是多少？"
         sessions = {
             "synthetic-diary": [
                 message("synthetic-diary", "d-user-001", "user", "2026-10-15T10:00:00Z", diary),
                 message("synthetic-diary", "d-assistant-002", "assistant", "2026-10-15T10:00:03Z", "听起来不错。"),
                 message("synthetic-diary", "d-user-003", "user", "2026-10-15T10:02:00Z", todo),
                 message("synthetic-diary", "d-user-004", "user", "2026-10-15T10:03:00Z", idle),
+                message("synthetic-diary", "d-user-005", "user", "2026-10-15T10:04:00Z", ordinary_question),
+                message("synthetic-diary", "d-assistant-006", "assistant", "2026-10-15T10:04:03Z", "平均约 384,400 千米。"),
             ],
             "synthetic-work-a": [
                 message("synthetic-work-a", "w-user-001", "user", "2026-10-15T11:00:00Z", work_idea),
@@ -119,14 +122,16 @@ class OrganizerSyntheticEndToEndTests(unittest.TestCase):
             self.assertEqual(len(model.calls), 1)
             first_job = runner.state.read()["jobs"][first["job_id"]]
             first_payload = model.calls[0]["payload"]
-            self.assertEqual(len(first_payload["new_user_messages"]), 5)
+            self.assertEqual(len(first_payload["new_user_messages"]), 6)
             self.assertEqual(len(first_job["artifacts"]), 3)
             self.assertEqual(first_job["usage"]["model"], "synthetic/fake")
             self.assertEqual({row["message_id"] for row in first_payload["new_user_messages"]},
-                             {"d-user-001", "d-user-003", "d-user-004", "w-user-001", "dup-user-001"})
+                             {"d-user-001", "d-user-003", "d-user-004", "d-user-005", "w-user-001", "dup-user-001"})
+            self.assertNotIn("d-user-005", {quote["message_id"] for draft in first_job["drafts"]
+                                             for quote in draft["source_quotes"]})
             self.assertTrue(all(item["session_id"].startswith("synthetic-") for item in first_payload["new_user_messages"]))
             state_after_first = runner.state.read()
-            self.assertEqual(state_after_first["sessions"]["synthetic-diary"]["cursor_count"], 4)
+            self.assertEqual(state_after_first["sessions"]["synthetic-diary"]["cursor_count"], 6)
             self.assertEqual(state_after_first["sessions"]["synthetic-work-a"]["cursor_count"], 1)
             self.assertEqual(state_after_first["sessions"]["synthetic-work-b"]["cursor_count"], 1)
             all_reviews = list(review.glob("AI-Organize-*.md"))

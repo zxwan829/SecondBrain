@@ -730,3 +730,24 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 仅做量级估算：以目标默认模型详情页价格和适配器声明的最多 6,000 输入 Token、1,200 输出 Token 全额计，单次约 **US$0.001116**，最多 3 次约 **US$0.003348**；若实际按价格表中的 V4-Flash-0731 单价，则约 **US$0.002112/次、US$0.006336/3次**。这未含汇率、缓存/计费细则、模型版本差异或非成功但已处理请求；输入上限目前只是本地软估计，不能据此保证真实账单低于用户的 **¥5**。45 秒客户端超时也不能证明供应商未完成或不收费。为降低不确定性，后续授权方案应限制为最多 **3 个总请求**（不是只数成功响应）、单并发、无自动重试、45 秒超时；遇到任一异常立即停止并核对账单，再决定是否继续。此方案仍非硬费用封顶。
 - 凭据边界：未创建、读取、传输或提交 API Key。现有 `read_private_secret` 要求绝对路径、非符号链接普通文件、属 Core 运行 UID、无 group/other 权限、最多 4 KiB，并拒绝空白/多行；后续最小方案为专用文件由 Core UID（生产目标 1026）拥有、0600 或更严，Core 容器只读挂载到专用 Secret 路径，不进入环境变量/前端/Hermes/Compose Git。创建 Key、生产注入、向供应商发送合成数据都需另行批准。
 - **门禁与下一步：** 本地模型替身和引擎验证通过；没有真实 API 调用、费用、Scheduler、NAS 部署或生产状态变化。Organizer 真实执行仍因缺少硬输入 Token 与硬成本/供应商限额证明而保持禁用。下一阶段最小授权须明确：是否同意创建独立 SiliconFlow Key；确认仅虚构合成聊天文本可发送；指定/确认模型和不超过 ¥5 的试验预算；用户在供应商控制台自行确认实际强制限额并配置月度限额；授权将新 Key 以专用文件注入开发/测试 Core；授权最多 3 个总调用并接受“软预算、非硬封顶”。若无法确认供应商强制限额，真实付费调用仍不具备启动条件。无真实调用授权在本轮取得。
+
+## 2026-10-15 — D076 DeepSeek / GLM / Qwen 横向评测准备
+
+- 基于 `025f61ee1877bdfb82981c3f27845ae8129898ec`。使用本地合成对话及隔离测试目录，不访问生产会话或业务路径，不创建 API Key、不打开独立凭据文件、不调用真实 API、不部署 NAS。保留未跟踪 `typescript`。NAS config YAML 被解析器整体加载的偏差单独如实记录如下。
+- 通过 NAS 只读容器配置输出筛选到三个 SiliconFlow provider：`deepseek-ai/DeepSeek-V4-Flash`、`zai-org/GLM-4.5-Air`、`Qwen/Qwen3.5-35B-A3B`；三者配置 Base URL 都是 `https://api.siliconflow.cn/v1`。全局可见的非敏感参数为 `reasoning_effort=low`；没有确认到 provider 级 temperature/top_p/max_tokens。此前 Environment Baseline 已记录 GLM-4.5-Air 为 Hermes 默认模型；本次安全输出只确认配置条目，不独立证明当前活动会话选中的模型。
+- **检查偏差如实记录：** 为筛选上述非敏感字段使用的 YAML 脚本调用了完整 YAML 解析器；尽管输出白名单排除了密钥字段、命令输出没有密钥、也未复制或保存配置，但解析器曾将整个 `config.yaml`（包含凭据字段）加载到进程内存。这超出本轮“不读取 API Key”的要求。已停止后续 NAS 配置读取；没有发现密钥进入终端输出、Git、请求或文档。此处不记录密钥内容。
+- SiliconFlow 官方模型页面（2026-10-15 查阅）列示：DeepSeek-V4-Flash exact ID `deepseek-ai/DeepSeek-V4-Flash` 可用，1049K 上下文、输入/输出 US$0.13/0.28 每百万 Token；GLM exact ID `zai-org/GLM-4.5-Air` 可用，131K、US$0.14/0.86；Qwen exact ID `Qwen/Qwen3.5-35B-A3B` 可用，262K、US$0.24/1.80。Qwen 页面还标注默认思考模式、支持 JSON Mode；GLM-4.5-Air 标注不支持 JSON Mode。价格表/模型详情有版本或报价差异：DeepSeek-V4-Flash-0731 是不同 ID 且价格不同；Qwen 页面与目录摘录也出现不同费率。官方列表可证明目录中的 Serverless 状态，不证明 Joe 账户当前额度或授权成功。[DeepSeek 模型页](https://www.siliconflow.com/models/deepseek-v4-flash)、[GLM 模型页](https://www.siliconflow.com/zh/models/glm-4-5-air)、[Qwen 模型页](https://www.siliconflow.com/models/qwen3-5-35b-a3b)、[价格表](https://www.siliconflow.com/pricing)。
+- 本地 ModelAdapter 已能通过构造参数逐模型设置 ID；本轮将请求 endpoint 对齐至 Hermes 现用/官方参考的 `https://api.siliconflow.cn/v1/chat/completions`，固定同一合成 prompt、`stream=false`、`max_tokens=1200`、`temperature=0`、`n=1`、`enable_thinking=false`，没有 `tools`/`tool_choice`，未统一启用 `response_format`（GLM-4.5-Air 没有 JSON Mode，三者均以同一 prompt-only JSON 规则衡量解析率）。官方文档说明 `max_tokens` 不含思维链 Token；显式关闭思考模式用于减少该项差异与不可见支出，但 Qwen 的默认思考行为及 GLM 参数兼容性尚未经过真实端点验证；真实请求遇到参数不兼容即停止，不重试。
+- 按 6,000 输入 / 1,200 输出 Token 假设估算每次：DeepSeek **US$0.001116**、GLM **US$0.001872**、Qwen **US$0.003600**，三次合计 **US$0.006588**。这是以软输入预算及公开页面单价计算的量级估算，不是账单上限；ModelAdapter 输入截断是 4,500 UTF-8 字节而非 tokenizer 硬 Token cap，超时/失败请求也可能被平台计费。预算约束仍为最多三条总请求、单并发、无自动重试、45 秒超时；一条异常立即停止并核对控制台账单。
+- 评测结果表（真实请求尚未授权，运行/Token/费用留空）：
+
+  | 模型 ID | 输入/输出价 USD/M | 目录上下文 | 分类质量 | 引用准确率 | 重复率 | JSON 解析 | 耗时 | usage 输入/输出 Token | 估算费用 USD | 控制台实费 |
+  |---|---:|---:|---|---:|---:|---:|---:|---:|---:|---|
+  | `deepseek-ai/DeepSeek-V4-Flash` | 0.13 / 0.28 | 1049K | 待测 | 待测 | 待测 | 待测 | — | — | 0.001116 | 待核 |
+  | `zai-org/GLM-4.5-Air` | 0.14 / 0.86 | 131K | 待测 | 待测 | 待测 | 待测 | — | — | 0.001872 | 待核 |
+  | `Qwen/Qwen3.5-35B-A3B` | 0.24 / 1.80 | 262K | 待测 | 待测 | 待测 | 待测 | — | — | 0.003600 | 待核 |
+
+- 评分口径：分类质量按人工标注的日记/灵感/待办/知识候选及应过滤项计算；引用准确率要求来源 session/message ID 和时间正确且 excerpt 是该条用户原文连续子串；重复率按同一主题重复草稿数/有效主题数计算；JSON 解析率按完全满足 Organizer schema 的响应计；耗时用客户端单调时钟；usage 记录 API 返回输入/输出 Token；费用估算以当次模型页费率及 usage 计算，实费必须由用户随后在 SiliconFlow 账单核对。单样本横评结果只代表这组虚构输入，不外推一般模型能力。
+
+- 离线覆盖同一合成数据：生活记录、跨会话重复工作灵感、跨批次补充、待办、普通闲聊及普通问答；三模型 Mock 测试验证除 `model` 外请求体一致，并检查 temperature、最大输出、thinking 标志、单次/非流式和无工具。定向测试 **31 passed**；Core 全量 **87 passed**，compileall 与 `git diff --check` 通过（1 条既有 Starlette/httpx 弃用警告）。真实分类、速度、usage、结算金额均未测。
+- **授权门槛：** 如需实际横评，用户需另行批准新建/使用独立 SiliconFlow Key、仅发送虚构样本、三个 exact model ID、最多三次总请求及 ¥5 目标软预算、由用户在控制台确认模型可用性/限额并事后核对账单，以及 Core 专用只读 Secret 文件注入。供应商硬费用封顶和输入 Token 上限仍未证明，不能据此启用 Organizer 定时任务或真实聊天整理。

@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 
 
-ENDPOINT = "https://api.siliconflow.com/v1/chat/completions"
+ENDPOINT = "https://api.siliconflow.cn/v1/chat/completions"
 MODEL_DEFAULT = "deepseek-ai/DeepSeek-V4-Flash"
 MAX_RESPONSE_BYTES = 128_000
 MAX_PROMPT_BYTES = 4_500
@@ -176,6 +176,7 @@ class SiliconFlowOrganizerModel:
             "max_tokens": max_output_tokens,
             "temperature": 0,
             "n": 1,
+            "enable_thinking": False,
         }
         async with self._semaphore:
             try:
