@@ -1,5 +1,7 @@
 # Progress Log
 
+> 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
+
 # 2026-09-28
 
 - Hermes Docker 正式环境稳定，固定 IP 172.18.0.2。
@@ -770,3 +772,13 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 官方 SiliconFlow 文档确认 Chat Completions 可接受 Base64 image data URI，指南直接展示 JPEG 示例；通用接口说明 `image_url`、detail 与多图。文档没有提供三型号共同的图像字节/请求体上限，也未找到三型号逐一承诺 PNG Base64 的型号级约束。客户端接受 PNG/JPEG 是基于此兼容接口的受限实现，须由后续合成图片请求验证；本地大小/像素限制不是供应商硬上限。Qwen 官方像素范围为 56–3584，当前客户端 1600px 上限更保守。文档链接见多模态评测 README。
 - `test_vision_benchmark_adapter.py` 使用 `httpx.MockTransport` 本地假 HTTP 服务覆盖消息格式及 Base64、模型/JSON 参数、非法与不支持图片格式、单图/总请求/输出限制、429 零重试、重定向拒绝、超时、无效 JSON、异常响应和脱敏 trace/usage。未发真实 API 请求，未创建/读取凭据，未读取 Hermes、生产素材或生产业务数据，未改 Organizer、Scheduler、Compose/NAS。
 - **状态：代码/文档已完成，视觉适配器与既有文本适配器定向测试 18 passed、2 subtests passed；compileall 和 `git diff --check` 通过。尚未 Commit/Push；真实视觉 API 联调未授权、未执行。** 后续需要用户单独授权合成图片数据出站、exact model ID、总请求上限及专用 key 的安全注入；¥5 仍是软预算目标，不能保证硬封顶。
+
+
+## 2026-10-15 — D076 SiliconFlow 横评收尾与基线职责纠偏
+
+- 文本横评最终对账：`deepseek-ai/DeepSeek-V4-Flash` 是唯一获得完整有效输出并可依固定合成答案评分的候选；这不表示全面优于 GLM/Qwen。GLM-4.5-Air 有账单、响应丢失；文本 Qwen 曾超时且无可评分输出。详细 usage/费用证据保留在 `../benchmarks/d076-siliconflow-multimodal/README.md`。
+- 视觉横评三款均没有可评分完整输出：Qwen `finish_reason=length`；DeepSeek Vision HTTP 400 且原因未定；GLM-5V-Turbo HTTP 400 / 供应商错误码 `20012`。视觉请求 usage/账单金额未知，未重试。最终状态 `DEFERRED`，停止参数试探与供应商切换。
+- 按 Codex-Governance《开发协作经验手册》的职责分工盘点并纠偏：`00-CURRENT` 留 V1 定义、完整矩阵、NOW/BLOCKED/DEFERRED 和导航；Architecture 留稳定架构与信任边界；Decision-Log 区分已批准决定与未批准回溯提案；Environment 只保留最近有证据的运行快照、挂载/权限/入口和恢复点；Agent-Rules 仅保留 SecondBrain 专属边界并引用中央规则。
+- Environment 原部署/回滚/验收流水已逐段核对在本 Progress-Log 的对应日期条目中（D071、D074、D075、D076）；Architecture 中被移除的阶段实施证据也由这些历史记录承接。没有删除唯一历史事实。所有旧 Progress 记录均保留为当时快照，不视作当前运行证明。
+- 最近记录的生产 App 快照仍是 `9962001` / `secondbrain-app:d076a1.1-9962001`；本轮未现场访问 NAS，故当前运行态标 `UNKNOWN`。D076 Organizer 开发版本未部署，执行器仍因模型适配器硬输入/费用能力门槛不满足而未启用。
+- 文档治理仅修改六份正式文档；未改业务代码、NAS、Hermes、网络、权限、真实业务数据或 Codex-Governance。

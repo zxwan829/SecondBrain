@@ -4,46 +4,17 @@ updated: 2026-10-15
 status: current
 source: GitHub SecondBrain Monorepo
 ---
-# SecondBrain V1 — 统一项目入口与当前交付基线
+# SecondBrain V1 — 当前交付基线
 
-> **本文件的职责：** 新会话或新 Agent 只读本文件，即应能说清楚：项目做什么、V1 交付什么、既定技术架构是什么、目前实际完成了什么、还差什么、下一步做什么、哪些事情不做。此文件是**项目总索引和最新状态**，不是第二份业务规格或历史流水账。
->
-> **阅读与回答规则：** 回答“V1 还差什么”“现在做到哪里”“下一步”等问题时，必须完整核对下方「V1 交付与验收总矩阵」，而不能只根据 NOW 列表、最近施工或印象作答。只在实施具体任务时按链接增量读取相应 Business Specification、Architecture、Environment-Baseline 和历史记录。没有验收证据的功能不能标记 DONE。
->
-> **冲突优先级：** 当前明确的用户决策 / 经批准的正式业务规格 > 本文件最新状态 > Architecture 与 Decision-Log 中的有效决策 > 历史 Progress-Log。重大冲突先标记并追溯，不默默混合两套方案。历史决策保留原文并标记 SUPERSEDED。
+> 本文件只维护 V1 完成定义、最新状态、完整 MUST 矩阵、NOW/BLOCKED/DEFERRED 与文档导航。稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 1. 项目定位与 V1 完成定义
+## 1. V1 完成定义与当前状态
 
-**定位：** NAS 私有部署的单人 AI 第二大脑，以 SecondBrain 文件为业务权威源。**目标**由独立 SecondBrain Web App（含自有 Chat UI）提供完整交互，Core 承载业务与受控写入，Hermes 提供 Agent/Chat/Session/Skills，Obsidian 继续同步知识；不建设第二份正式知识数据库。Hermes Dashboard 原入口保留；D074 App 已暂时部署到 9120/DSM 63013，状态和验收缺口见 Environment-Baseline。
+**V1 DONE：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
 
-**V1 DONE 的业务含义：** 至少让用户在受支持入口完成 **采集原始内容 → 生成 Review → 在 SecondBrain Web App 看到并明确批准/暂缓 → Core 安全写入 Knowledge → 查询和继续使用知识** 的真实闭环；同时 Web App V1 规定的核心业务页须使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。完成率不能只看 FE-4 视觉或代码/测试通过率。
+**总体状态：`NOT DONE`。** 最近一次有据可查的生产 App 快照见 `Environment-Baseline.md`（2026-10-15）；本次职责纠偏未连接 NAS，故该快照之后的实时运行状态为 `UNKNOWN`。D076 统一入口与 Organizer 实现属于本地开发；Organizer 因模型门禁未通过而未启用。DeepSeek-V4-Flash 仅是合成文本横评中唯一有可评分输出的候选；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
 
-**当下整体状态：** `NOT DONE`。D071 只读 Review 已部署并获用户 Edge 验收；文本 Universal Capture Raw→Review 已验收；Knowledge Retrieval V0 已验收。2026-10-13 按批准范围收窄并实测 Hermes Knowledge 权限，Daily/Universal Capture 与 Dashboard Review 列表/详情回归通过。D074 独立 App 的 Home/Review/Chat 能力和 HTTPS 会话已完成主要技术验证。D075.2 已按 `934d0ea` 更新并部署 App：新镜像 healthy，63013 根页与 health 均返回 200；App-only 变更后 Hermes 容器、镜像及启动时间不变，Raw/Review RW、Knowledge RO、Private 未挂载、Promote=false。用户已确认 Inbox→Review 自动滚动和 PDF 上传文件名显示正常；拖放上传、提交后清空/失败保留仍只有自动化测试证据。D076-A.1 Review 布局、滚动和采集时间排序已由用户验收；手机端及真实扫描 PDF OCR 准确度仍待验收。D076-A OCR Canary 真实识别通过，可读 PDF 继续走 pypdf Fast Path。当前本地 D076 代码将 Inbox 保留为历史管理页，新增收录只从 Chat 显式切换；附件草稿跨模式保留。自动整理的设置、作业状态、共享执行器、增量游标、锁、幂等 Review 草稿和恢复流程已实现并由合成消息/替身模型测试；但没有经验证的无工具且有硬 Token/成本边界的模型接口，Runner 在生产配置中保持关闭，立即整理返回 503，定时任务不启动。Hermes 历史范围仅限 App 会话列表中可验证的会话；外部渠道不在覆盖范围，删除/压缩历史没有墓碑接口，无法证明无同量替换的全量连续性。D076 本轮没有改生产或部署。DSM GUI 项目旧 Compose 缓存仍是独立管理风险。图像 AI 描述、真实 STT 后端、微信与多个真实业务模块仍未完成，D076 整体未交付。
-
-## 2. 已确定的架构与边界（接手项目必须先知）
-
-| 维度 | 当前确定的选择 | 阶段/证据边界 |
-|---|---|---|
-| 设备和数据 | 群晖 DS920+；业务数据 `/volume1/SecBR/SecondBrain/`，原始证据 `/volume1/SecBR/KnowledgeAssets/` | 生产事实以 Environment-Baseline 为准 |
-| 代码与项目文档 SoT | 私有 GitHub Monorepo `zxwan829/SecondBrain`；iMac 与 MBA 独立 Clone；Codex Commit/Push，部署单独授权 | NAS、Google Drive、Synology Drive 旧开发文档副本不是权威源 |
-| Agent Runtime | **Hermes 为唯一当前主线**，复用 Agent/Chat/Session/Skill API；不以 Hermes Dashboard 作为目标产品前端；不考虑 OpenClaw | 目标版本与 API 兼容须先验证；当前运行 v0.21.5 |
-| 后端领域层 | **两个核心容器**：SecondBrain App（前端静态托管 + Core/BFF/API/登录/审批）与 Hermes（Agent Runtime）；同一 Compose Project | NAS 运行两个目标容器；Compose project labels/文件一致指向 `secondbrain` 与正式 `compose.yaml`；但 DSM GUI 容器行仍缓存旧 Hermes 名称/镜像，不能宣称 GUI 定义验收 |
-| Web App | **独立 React/TypeScript/Vite Web App，自有 Chat UI，保留全部原定 V1 功能和 FE-4 视觉基准** | React 运行时修复已部署；63013 HTTPS 登录、Home/Review、Chat 历史/SSE、工具成功/失败进度、Stop→cancelled、停止后继续、刷新和切换会话恢复均已浏览器验证；DSM GUI 项目定义与用户最终验收未完成；完整 V1 未完成 |
-| 数据分区 | `00-Inbox` → `10-Review` → 人工确认 → `20-Knowledge`；原始证据持久保留；Private 默认不挂载/不读取 | 不能让普通 Agent 绕过 Core 直接写 Knowledge |
-| 检索 | Knowledge Retrieval V0：Hermes `search_files` + `read_file` 已生产验收 | QMD/RAG/向量检索只在有真实问题证据时评估 |
-| 访问/同步 | 标准交付仅 LAN HTTP；本人 V1 LAN/Home-WG 访问 `192.168.3.27:9119`，本人 V2 通过 DSM `https://zxwan520.com:63012`；Obsidian 经 Synology Drive 同步 | V1 必须完成 **LAN HTTP + DSM LAN-only HTTPS 全业务回归**；V2 仅公网接入/安全发布，不返工应用；同步传播待核验 |
-| 授权体验 | App 登录一次，查看 Review 后点击批准/暂缓；**无第二密码、Passkey 或生物识别** | Core 验证 App 会话、来源、内容版本和幂等；Hermes 无审批凭据/Knowledge 写权；具体隔离尚未验证 |
-| 成本/复杂度 | 两容器、单 HTTP 入口；标准版 LAN-first，客户公网方案为另行收费部署服务 | 不内置 TLS/证书/反代/授权平台/安装向导；参数化部署便于远程交付；不改 V1 业务范围 |
-
-**Personal OS 扩展约束（D074 补充）：** App 是可持续扩展的个人业务入口，不限于 Chat/Knowledge。前端导航由模块配置驱动；Core 保持模块化单体和独立业务 API；单用户登录由通用 action-policy seam 统一校验，不提前实现 RBAC。只有 Knowledge 正式入库走人工审核；Memo、Calendar、新闻订阅等普通业务 CRUD 按各自 Core API 授权。D076 将 NAS 本地 App 持久调度作为自动整理的调度主体，Hermes 仅提供消息/模型能力，不依赖浏览器或外部任务。当前不创建空页面/模块、插件框架、数据库或新容器。
-
-**D076 自动整理状态：** 每日固定 `00:30 Asia/Shanghai` 不再是唯一调度；设置默认每 4 小时，可改每天固定时间。配置、执行器、共享游标与作业状态/锁、幂等 Review 草稿及故障恢复已有本地实现和测试。新增 SiliconFlow 直连文本 ModelAdapter 原型及合成测试；它仅构造无工具的 Chat Completions 请求、限制输出 Token/超时/并发/单作业调用并读取响应 usage，且不经过 Hermes Agent Runtime。2026-10-15 官方公开页面列出当前适配器模型 `deepseek-ai/DeepSeek-V4-Flash` 上下文 1049K、输入 `$0.13/M`、输出 `$0.28/M`；价格会变动，真实调用前须复核。公开资料未证明请求级输入 Token 硬上限或单 Key/单作业硬费用上限；供应商月度消费限制的拒绝语义尚未核实。适配器因此不满足 Runner 能力门槛，生产 App 仍保持 `model=None`，立即整理 API 返回 503，按钮禁用，应用启动不创建定时任务。没有读取 API Key、没有调用付费 API，也没有 NAS 部署。Organizer 首次纳入仍默认跳过历史；后续可选首次回溯窗口建议为不回溯/当天/最近 4/12/24 小时，按 `session_id:message_id` 去重并持久化时间水位，须显式选择且只读有限窗口，不能全量扫描。不得将适配器原型标记为可用整理服务或生产交付。
-
-**D076 SiliconFlow 多模态评测（2026-10-15，已收尾）：** 评测只用仓库合成素材，横评准备与结果见 `docs/benchmarks/d076-siliconflow-multimodal/README.md`。文本评测中 `deepseek-ai/DeepSeek-V4-Flash` 是唯一获得完整有效输出并可评分的候选，暂列 Organizer 优先候选；这不代表其全面优于 GLM/Qwen。GLM 文本调用已计费但响应丢失，Qwen 文本调用超时且无可评分结果，均不重试。独立 `VisionBenchmarkAdapter` 仅接受受限 PNG/JPEG 本地字节，不带工具、无重试。视觉 Qwen 一次 HTTP 200 但 `finish_reason=length`；DeepSeek Vision 唯一一次 HTTP 400；GLM-5V-Turbo 唯一一次 HTTP 400，安全结构化错误码 `20012`（官方解释为模型不存在）。两次 400 均无 usage/模型结果，三款视觉模型都无完整可评分输出；最终请求费用未知，账单页未列出不能证明未计费。视觉接口兼容性状态为 **DEFERRED**：停止新的视觉联调、参数试探和供应商切换。此前尝试保持单并发、45 秒、零重试；人民币 ¥5 是软预算。未访问 Hermes/SecondBrain 真实对话或生产素材，未部署 NAS、启用 Organizer 或修改生产数据。
-
-**协作：** ChatGPT 负责范围、技术取舍、任务分解、验收标准；Codex 负责实施、针对性测试、必要文档更新、Git 与经授权的部署。日常遵循 FAST-EXEC。代码 Push ≠ 生产部署 ≠ 用户验收。
-
-## 3. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
+## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 
 状态说明：`ACCEPTED` 已有真实用户验收；`PROD-PARTIAL` 生产部分功能可用；`DEV-TESTED` 仅代码/隔离测试；`NOT CONNECTED` 未接入真实数据；`NOT DONE` 尚无完整生产闭环；`UNKNOWN` 未取得足够证据。**此表须逐项覆盖正式规格的 MUST；若以后更改范围，先同步此表，再实施。**
 
@@ -97,7 +68,7 @@ source: GitHub SecondBrain Monorepo
 | 多端与数据同步 | PARTIAL | 核实 Web App 桌面/iPad/手机主要动作及 Obsidian Mac↔NAS 文件实际双向传播 |
 | 生产部署、恢复、安全收尾 | PARTIAL | 真实运行检查、变更快照和回退，收口开发期 unrestricted sudoers；验收与文档 Git 收口 |
 
-## 4. 当前优先次序、依赖和阻断
+## 3. NOW / BLOCKED / DEFERRED、依赖和阻断
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
@@ -108,7 +79,7 @@ source: GitHub SecondBrain Monorepo
 
 **不要把阻断项变成无限研究：** 权限和认证须够安全且有证据；其他问题遵循 FAST-EXEC，优先复用现有能力，不提前建设企业级体系。
 
-## 5. 明确不属于当前 V1 完成门槛
+### DEFERRED：不属于当前 V1 完成门槛
 
 - OpenClaw：**用户已明确不再考虑**，不作为候选 Runtime 或接入前置方案（历史决策需标记被最新选择取代）。
 - DOC/DOCX、PPT/PPTX、XLS/XLSX、视频、任意二进制、复杂知识图谱、语义去重、向量数据库/RAG、强制关联发现：UC 规格 DEFERRED。
@@ -116,33 +87,13 @@ source: GitHub SecondBrain Monorepo
 - 公网直接开放、客户外网配置和商业发行包：当前阶段延期；但本人 V2 的 DSM HTTPS 兼容必须在 V1 内验收。
 - WorkBuddy、n8n 等曾讨论的生态工具：**在本次已核对的 V1 正式规格中未发现其 MUST 约束**；不得擅自标为已取消或已纳入，未来如用户确认范围再更新总矩阵。
 
-## 6. 信息去向：保持一个入口，不新增治理文档
+## 4. 文档导航
 
-| 信息类型 | 唯一维护位置 | 本文件保留什么 |
-|---|---|---|
-| 当前确定的 V1 全量范围、完成状态、阻断与优先级 | **本文件 `00-CURRENT.md`** | 每个 MUST 的一行状态 + 验收差距，所有渠道不隐藏 |
-| 具体业务边界、成功/失败契约 | `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` 及对应正式规格 | 链接和 MUST/SHOULD/DEFERRED 提纲，不复制长条款 |
-| 稳定架构、系统间接口与信任边界 | `Architecture.md` | 已冻结选择的简明表格，不复制部署细节 |
-| 当前 NAS 环境、端口、挂载、镜像、回滚资产 | `Environment-Baseline.md` | 阻断状态与查证入口 |
-| 为什么这么选、何时被替代 | `Decision-Log.md` | 现行决策编号、已替代提醒 |
-| 施工历史、测试命令与复盘 | `Progress-Log.md` | 阶段结果摘要，不复制过程 |
-| 项目执行规则 | `AGENTS.md`、`Agent-Rules.md` | 仅保留回答 V1 状态的强制核对动作 |
-
-## 7. 维护约束（保证下次不再漏模块）
-
-1. **任何改变 V1 必须范围或输入渠道的正式决策**，先更新业务规格，再在此总矩阵逐项增删，并标记相应历史决定 SUPERSEDED；禁止只写进 Decision-Log。
-2. **重要功能完成开发/部署/用户验收时**，Codex 在同一次相关提交中更新此矩阵对应状态与依据；小修复不单独触发文档治理工作。
-3. **ChatGPT 回复「还差什么」前**，须从头核对 A/B/C 三组矩阵，再用 NOW 与环境证据排序；微信及其他输入渠道不因隐藏在子规格中而遗漏。维护此总矩阵时，应使用 `git ls-files` 盘点当前仍生效的 V1 Business Specification，将每条 MUST 与本表对应；没有证据的条目记 UNKNOWN，不凭猜测补齐。
-4. **代码测试、生产部署、真实验收分开**；`UNKNOWN` 不猜测；过期状态须清楚写明“上次核验”，尤其在 Codex 正并行施工时。
-5. 每次里程碑收口执行「代码/测试 → 用户验收 → 必要文档 → Commit / Push」，但生产部署始终独立授权。回答 V1 百分比时只有存在权重和验收台账才输出正式精确百分比。
-
----
-
-**架构变更不缩减业务规格：** Web App 全部 V1 MUST/SHOULD、Universal Capture v1.1（含微信、文本、URL、PDF、图片、音频）及既有 Journal 规则原封保留。架构迁移的验收必须覆盖既有已验收行为。
-
-**已明确的历史冲突与最新有效口径：**
-- D074 改为独立 SecondBrain App（含自有 Chat），替代此前以 Hermes Dashboard Plugin 为长期产品前端的选择；**App 已部署到临时入口，Home/Review 与 Chat 工具状态、停止和恢复已在浏览器验证；DSM GUI 项目定义仍未完成，详见 Environment-Baseline**。
-- D005/D021 曾保留 OpenClaw 作为备选，D073 已明确退出当前路线；历史保留，不再将其推荐为 V1 技术选项。
-- D072 原方案仍可作为历史安全研究，但要求额外 Core 密码的部分被 D073 取代；统一会话安全方案未确定，不得标为实现或生产可用。
-- Architecture 已同步更新 D071 与 D072 的有效状态；运行版本和验收事实以本文件及 Environment-Baseline 为准。
-- D022 曾用三大方向概括 V1，不可据此漏掉 Web App 的具体 MUST 页面和 Universal Capture v1.1 的微信输入渠道。
+| 内容 | 权威位置 |
+|---|---|
+| V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` |
+| 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
+| 正式决定、理由及替代关系 | `Decision-Log.md` |
+| 最近已核验的 NAS 运行快照、权限、端口与恢复入口 | `Environment-Baseline.md` |
+| 历史实施、测试、部署、用户验收与失败复盘 | `Progress-Log.md` |
+| SecondBrain 特有执行与安全规则 | `Agent-Rules.md` |
