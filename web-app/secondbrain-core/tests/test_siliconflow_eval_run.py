@@ -142,6 +142,30 @@ class PersistentBenchmarkRunTests(unittest.TestCase):
             self.assertEqual(repeated["state"], "completed")
             self.assertEqual(calls, 1)
 
+    def test_reconcile_prior_known_and_unknown_attempts_without_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = PersistentBenchmarkRun.create(Path(tmp))
+            run.import_completed(ALLOWED_MODEL_IDS[0], synthetic_result(), source="captured prior response")
+            run.import_unknown(ALLOWED_MODEL_IDS[1], "result_handle_lost",
+                               source="prior request dispatched; runner output unavailable",
+                               request_dispatched=True)
+            state = run.status()["models"]
+            self.assertEqual(state[ALLOWED_MODEL_IDS[0]]["state"], "completed")
+            self.assertEqual(state[ALLOWED_MODEL_IDS[0]]["origin"], "reconciled_prior_request")
+            self.assertEqual(state[ALLOWED_MODEL_IDS[1]]["state"], "unknown")
+            self.assertTrue(state[ALLOWED_MODEL_IDS[1]]["request_dispatched"])
+            self.assertEqual(state[ALLOWED_MODEL_IDS[2]]["state"], "pending")
+            calls = 0
+
+            async def never_send():
+                nonlocal calls
+                calls += 1
+                return synthetic_result()
+
+            unknown = asyncio.run(run.run_once(ALLOWED_MODEL_IDS[1], never_send))
+            self.assertEqual(unknown["state"], "unknown")
+            self.assertEqual(calls, 0)
+
     def test_ledger_is_private_and_contains_no_request_headers(self):
         with tempfile.TemporaryDirectory() as tmp:
             run = self.make_run(Path(tmp))

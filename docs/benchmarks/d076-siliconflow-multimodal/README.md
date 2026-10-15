@@ -106,7 +106,7 @@ API 公共参数文档列出 `temperature`、`top_p`、`n`、`stream`、`max_tok
 
 本地专项测试 `tests/test_siliconflow_organizer.py`：**10 passed**。测试确保请求不再统一发送未逐型号核实的 `enable_thinking`，并保留可能高于 `max_tokens` 的 completion/reasoning usage；Mock 测试不涉及真实网络或凭据。
 
-本轮新增 `secondbrain_core/modules/siliconflow_eval_run.py` 和 `run_d076_text_benchmark.py`：使用 UUID 运行 ID、逐模型 `pending/started/completed/unknown` 状态、私有目录与文件权限、原子结果写入和单运行锁。`prepare` / `status` 不发请求；真实 `run` 必须显式指定已有运行 ID、白名单模型、私有 Key 文件路径并传入确认开关。`started` 只表示尝试槽已持久化，不证明请求已发送；执行器重开时，已无活动锁的遗留 `started` 会变为 `unknown`，不会自动重试。完成结果仅保留脱敏的状态、usage、耗时、trace ID 和结构化输出，可追加人工评分及有来源的费用估算；不保存请求头或 Key。`tests/test_siliconflow_eval_run.py` 通过 MockTransport / 慢协程覆盖慢响应、执行器取消与重开恢复、并发启动、重复启动、HTTP 429 及已完成状态恢复。两个专项测试文件合计 **16 passed**。此前 DeepSeek/GLM 请求发生在账本建立前，不能追溯伪造原运行 ID；在 GLM UNKNOWN 状态核清前，不应为相同评测创建新运行并重发 GLM。
+本轮新增 `secondbrain_core/modules/siliconflow_eval_run.py` 和 `run_d076_text_benchmark.py`：使用 UUID 运行 ID、逐模型 `pending/started/completed/unknown` 状态、私有目录与文件权限、原子结果写入和单运行锁。`prepare` / `status` 不发请求；真实 `run` 必须显式指定已有运行 ID、白名单模型、私有 Key 文件路径并传入确认开关。`started` 只表示尝试槽已持久化，不证明请求已发送；执行器重开时，已无活动锁的遗留 `started` 会变为 `unknown`，不会自动重试。完成结果仅保留脱敏的状态、usage、耗时、trace ID 和结构化输出，可追加人工评分及有来源的费用估算；不保存请求头或 Key。可将先前已观察的完成响应或结果未知请求导入同一账本，不触发网络；UNKNOWN 条目不可重发，并会阻止后续模型越过顺序门禁。`tests/test_siliconflow_eval_run.py` 通过 MockTransport / 慢协程覆盖慢响应、执行器取消与重开恢复、并发启动、重复启动、HTTP 429、历史状态导入及已完成状态恢复。两个专项测试文件合计 **17 passed**。此前 DeepSeek/GLM 请求发生在账本建立前，不能追溯伪造原运行 ID；本轮仅用已观察证据做本地对账记录。
 
 已观察到的调用：
 
@@ -121,6 +121,8 @@ DeepSeek 估价按本次时段（北京时间 08:00–次日 02:00）公开非�
 执行器没有保留 GLM 请求对应的会话句柄，因此无法取得最终 HTTP 状态、usage、响应或 trace ID。不能安全确认该请求成功、失败或是否计费；不得重试。此项结果可观测性问题解决并由用户核对 GLM 后台费用前，不再发起后续模型调用。
 
 本轮没有已连接的 SiliconFlow 控制台账单会话，且用户明确禁止本轮新 API 请求；因此未能只读查询上一笔 GLM 请求记录。其请求是否完成及实际费用仍为 **UNKNOWN**，没有假设未计费。已知 DeepSeek 的 trace ID 可用于控制台核账。新增持久化执行器是在本次丢失事件后实现；不能追溯补造 GLM 原始请求的状态记录。
+
+本次已创建本机、仓库外的对账账本 `e2dabfb6-d4d7-40da-b39f-be5591515b4e`（目录 `0700`、账本文件 `0600`，属主为当前用户），只导入已捕获的 DeepSeek 结果并将既有 GLM 请求标为 `unknown` / `attempts=1`，Qwen 保持 `pending` / `attempts=0`。该账本不是原请求运行 ID，而是本轮建立的恢复账本；在该账本中，顺序门禁会阻止 Qwen 越过 GLM UNKNOWN。要继续此批次，需先取得 SiliconFlow 后台记录，并判断 GLM 是否可以接受为“结果不可恢复、只核账不补测”；不得用新运行 ID重试同一合成请求。
 
 横评结果仅代表这组人工合成样本，不外推一般能力。预期记录表模板：
 

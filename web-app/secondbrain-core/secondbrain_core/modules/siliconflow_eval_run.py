@@ -241,6 +241,36 @@ class PersistentBenchmarkRun:
             row.update({"state": "completed", "finished_at": _utc_now(), "result": clean})
             self._write_unlocked(doc)
 
+    def import_completed(self, model_id: str, result: dict[str, Any], *, source: str) -> None:
+        """Reconcile a prior, already observed response without sending a request."""
+        if not isinstance(source, str) or not source or len(source) > 120:
+            raise BenchmarkRunError("import_source_invalid")
+        clean = _sanitize_model_result(result)
+        with self._locked():
+            doc = self._read_unlocked()
+            row = doc["models"].get(model_id)
+            if row is None or row.get("state") != "pending" or row.get("attempts") != 0:
+                raise BenchmarkRunError("model_not_pending_for_import")
+            row.update({"state": "completed", "attempts": 1, "origin": "reconciled_prior_request",
+                        "source": source, "finished_at": _utc_now(), "result": clean})
+            self._write_unlocked(doc)
+
+    def import_unknown(self, model_id: str, error_code: str, *, source: str,
+                       request_dispatched: bool) -> None:
+        """Reserve a past attempt whose outcome cannot be recovered; never retry it."""
+        code = error_code if SAFE_CODE_RE.fullmatch(error_code or "") else "prior_result_unknown"
+        if not isinstance(source, str) or not source or len(source) > 120 or type(request_dispatched) is not bool:
+            raise BenchmarkRunError("import_source_invalid")
+        with self._locked():
+            doc = self._read_unlocked()
+            row = doc["models"].get(model_id)
+            if row is None or row.get("state") != "pending" or row.get("attempts") != 0:
+                raise BenchmarkRunError("model_not_pending_for_import")
+            row.update({"state": "unknown", "attempts": 1, "origin": "reconciled_prior_request",
+                        "source": source, "request_dispatched": request_dispatched,
+                        "finished_at": _utc_now(), "error_code": code})
+            self._write_unlocked(doc)
+
     def complete_error(self, model_id: str, error_code: str, *, status_code: int,
                        elapsed_ms: float, trace_id: str | None = None) -> None:
         code = error_code if SAFE_CODE_RE.fullmatch(error_code or "") else "provider_http_error"
