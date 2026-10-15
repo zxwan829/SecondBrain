@@ -274,6 +274,23 @@ class OrganizerEngineTests(unittest.TestCase):
         self.assertEqual(result["status"], "no_new_messages")
         self.assertNotEqual(runner_after_restart.state.read()["next_run_at"], first_due)
 
+    def test_manual_and_due_scheduler_runs_share_the_same_model_executor(self):
+        self.source.sessions["app-session"] = [row("scheduled-1", "user", "定时新增内容", 1)]
+        self.runner.update_settings({"enabled": True, "mode": "interval", "interval_hours": 4,
+                                     "daily_time": "00:30", "timezone": "Asia/Shanghai"})
+        due = datetime(2026, 10, 15, 0, 0, tzinfo=timezone.utc)
+        self.runner.state.update(lambda state: state.update({"next_run_at": due.isoformat().replace("+00:00", "Z")}))
+
+        scheduled = asyncio.run(self.runner.tick(now=due))
+        self.assertEqual(scheduled["status"], "no_candidates")
+        self.source.sessions["app-session"].append(row("manual-2", "user", "手动新增内容", 2))
+        manual = asyncio.run(self.runner.run(reason="manual"))
+
+        self.assertEqual(manual["status"], "no_candidates")
+        self.assertEqual(len(self.model.calls), 2)
+        reasons = {job["reason"] for job in self.runner.state.read()["jobs"].values()}
+        self.assertEqual(reasons, {"scheduled", "manual"})
+
     def test_input_budget_does_not_advance_cursor(self):
         self.source.sessions["app-session"] = [row("u1", "user", "超长" * 13000, 1)]
         with self.assertRaises(HTTPException) as raised:

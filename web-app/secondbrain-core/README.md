@@ -21,6 +21,13 @@ unchanged.
   example as production configuration.
 - `SB_PROMOTE_ENABLED` defaults to `false`. Keep it false until separately
   authorized production deployment, mount isolation, and approval validation.
+- Organizer's SiliconFlow adapter is not loaded unless
+  `SB_ORGANIZER_MODEL_ENABLED=true` is explicitly configured. Its preferred
+  candidate is `deepseek-ai/DeepSeek-V4-Flash`; the key must come from a private
+  file named by `SB_ORGANIZER_API_KEY_FILE`. The adapter currently fails the
+  Core hard input/output token and hard cost gates, so connecting it does not
+  enable manual or scheduled execution. Do not configure a real key or enable
+  the adapter for local synthetic tests.
 
 ## Implemented and verified locally
 

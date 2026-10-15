@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 import httpx
+from fastapi import HTTPException
 
 from secondbrain_core.modules.organizer_engine import OrganizerRunner
 from secondbrain_core.modules.siliconflow_organizer import (
@@ -231,8 +232,9 @@ class SiliconFlowAdapterTests(unittest.TestCase):
             async def list_messages(self, *args, **kwargs):
                 return {"messages": []}
 
+        requests = []
         adapter = SiliconFlowOrganizerModel("synthetic-only-secret", client=httpx.AsyncClient(
-            transport=httpx.MockTransport(lambda request: response(good_body()))))
+            transport=httpx.MockTransport(lambda request: requests.append(request) or response(good_body()))))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "state"
             root.mkdir(mode=0o700)
@@ -241,6 +243,10 @@ class SiliconFlowAdapterTests(unittest.TestCase):
             runner = OrganizerRunner(root, review, Source(), adapter)
             self.assertFalse(runner.status()["execution_available"])
             self.assertIn("hard_input_token_limit", runner.status()["blocked_reason"])
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(runner.run())
+            self.assertEqual(raised.exception.status_code, 503)
+            self.assertEqual(requests, [], "the configured adapter must not be called until it clears the hard gate")
         asyncio.run(adapter._client.aclose())
 
 

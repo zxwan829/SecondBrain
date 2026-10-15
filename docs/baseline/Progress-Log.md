@@ -791,3 +791,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 验证：前端定向 `capture-flow.test.tsx`、`ReviewMarkdown.test.tsx`、`review-layout.test.ts` **37 passed**；`npm run typecheck`、`npm run build` 通过。构建仅生成本地 `dist`，由忽略规则排除，不构成部署。
 - 最短浏览器验收：在已登录的 63013 桌面端从 Chat 切换到“收录”，输入一段无敏感测试文本并提交，确认成功提示后输入框为空；在手机 Safari 重复一次文本收录。随后 Inbox 对一条既有 PDF/图片点“预览与详情”，核对原件显示/下载及“查看 Review”跳转；在 Review 检查正文、来源日期、OCR 核对提示与移动端阅读/列表展开。若需验证文件拖放/图片粘贴和真实 PDF OCR 质量，使用无敏感、可丢弃样本并由用户自行确认可创建相应 Raw/Review 记录。
 - **状态：** 代码检查/自动化和构建通过；没有修复项。生产部署状态未在本轮复核，按既有 2026-10-15 快照记录为 `UNKNOWN`；用户浏览器验收未执行/未通过。D076-A 真实 PDF OCR 质量、桌面与手机交互仍须按上述步骤验收；Organizer、安全门与运行状态不在本轮范围。
+
+## 2026-10-15 — D076 Organizer 本地 ModelAdapter 接线与闭环验证
+
+- 基于 `727941254ad2d77f76df3847702554a9212904ee`。确认既有 `OrganizerRunner` 已统一承载手动 `/run` 与定时 `tick`，并共用文件锁、游标、作业恢复和 Review immutable-write；`SiliconFlowOrganizerModel` 已有 DeepSeek-V4-Flash 候选及无工具请求实现，但能力声明不满足硬输入/输出 Token 与硬成本门槛，故既往由 Core 工厂固定传入 `None`。
+- 增加 Core 配置构造器：默认 `SB_ORGANIZER_MODEL_ENABLED=false`，不读取 Secret、不创建适配器；显式启用时默认候选为 `deepseek-ai/DeepSeek-V4-Flash`，Secret 仅从 `SB_ORGANIZER_API_KEY_FILE` 指向的私有文件读取。配置/接线不绕过 Runner 门禁：当前 SiliconFlow adapter 仍不可执行，真实手动/定时路径 fail closed；Core 启动不会因此启动定时循环。默认 Organizer 设置仍保留已批准的每 4 小时间隔/固定时间配置，不代表模型执行已启用。
+- 本地 Mock/Synthetic 验证覆盖新增消息、分类和跨会话重复合并、Review 草稿及游标/作业状态、首次基线跳过旧历史、无新增跳过、跨会话增量、Review 写入中断后用已保存模型结果恢复、人工编辑保护、未知模型结果持久化并禁止重试、手动/定时共用执行器与并发文件锁，以及停用计划任务。未连接真实 Hermes、未读实际 SecondBrain 内容、未读取真实凭据、未调用 SiliconFlow API、未启动常驻 scheduler。
+- 验证：Core 相关测试 **76 passed**（App/Core auth、Capture、Web App BFF、Organizer 配置/Engine/Synthetic E2E、SiliconFlow adapter）；Python 模块编译及 `git diff --check` 通过。一个 Starlette/httpx TestClient 弃用警告，不影响结果。
+- **状态/阻断：** Organizer 已形成可运行的本地合成闭环；手动与定时入口复用同一执行器。真实用户数据仍被阻止：适配器未证明 provider enforceable 的硬输入/输出 Token 和单作业成本上限；此外需用户另行批准真实数据出站、实际模型/供应商费用验证、私有凭据注入及 NAS 部署/验收。Promote 继续关闭、Knowledge RO、Private 隔离；本地配置未改变生产。
