@@ -961,7 +961,7 @@ function organizerTime(value: string | null | undefined, locale: Locale) {
   return Number.isNaN(date.getTime()) ? (locale === 'en' ? 'Unknown' : '时间未知') : date.toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
 }
 
-function AutomationSettingsPage({ locale }: { locale: Locale }) {
+export function AutomationSettingsPage({ locale }: { locale: Locale }) {
   const en = locale === 'en';
   const [settings, setSettings] = useState<OrganizeSettings | null>(null);
   const [status, setStatus] = useState<OrganizeStatus | null>(null);
@@ -969,7 +969,9 @@ function AutomationSettingsPage({ locale }: { locale: Locale }) {
   const [apiKey, setApiKey] = useState('');
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState('');
+  const [mockMessage, setMockMessage] = useState('');
   const [saving, setSaving] = useState(false);
+  const [mockCheck, setMockCheck] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   useEffect(() => {
     void Promise.all([
       fetch('/api/automation/organize/settings', { credentials: 'same-origin' }).then((response) => response.ok ? response.json() : Promise.reject(new Error('settings_unavailable'))),
@@ -1020,36 +1022,73 @@ function AutomationSettingsPage({ locale }: { locale: Locale }) {
     finally { setSaving(false); }
   };
   const mockConnectionTest = async () => {
-    const response = await fetch('/api/automation/organize/connection-test', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    const payload = await response.json().catch(() => ({}));
-    setMessage(response.ok ? String(payload.message) : (en ? 'Local mock configuration check failed.' : '本地 Mock 配置检查失败。'));
+    if (mockCheck === 'loading' || saving) return;
+    setMockCheck('loading');
+    setMockMessage('');
+    try {
+      const response = await fetch('/api/automation/organize/connection-test', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = typeof payload.detail === 'string' ? payload.detail : '';
+        setMockMessage(detail || (response.status === 401 || response.status === 403
+          ? (en ? 'Your session expired or is not authorized. Sign in again and retry.' : '登录已失效或无权检查，请重新登录后重试。')
+          : (en ? `Local mock check failed (HTTP ${response.status}).` : `本地 Mock 检查失败（HTTP ${response.status}）。`)));
+        setMockCheck('error');
+        return;
+      }
+      if (payload.kind !== 'local_mock') throw new Error('unexpected_check_response');
+      setMockMessage(en
+        ? 'Local mock check passed. SiliconFlow was not contacted; no provider charges were incurred.'
+        : '本地 Mock 检查通过，未连接 SiliconFlow，不产生供应商费用。');
+      setMockCheck('success');
+    } catch {
+      setMockMessage(en ? 'Could not reach the local check API. Check your connection and retry.' : '无法连接本地检查接口，请检查网络后重试。');
+      setMockCheck('error');
+    }
   };
   return <section className="automation-settings-page">
     <header><p className="eyebrow">SECONDBRAIN <span>/</span> {en ? 'SETTINGS' : '设置'}</p><h1>{en ? 'AI smart organization' : 'AI 智能整理'}</h1><p>{en ? 'Choose how new Hermes conversations may be proposed as Review drafts.' : '设置如何从新增 Hermes 对话中提取 Review 草稿。'}</p></header>
     {!settings || !modelSettings ? <p role="status">{message || (en ? 'Loading…' : '正在加载…')}</p> : <>
-      <section className="organizer-model-settings" aria-label={en ? 'Organizer model settings' : 'Organizer 模型设置'}>
-        <h2>{en ? 'Model service' : '模型服务'}</h2>
-        <label>{en ? 'Provider' : '服务商'} <select value={modelSettings.provider} disabled><option value="siliconflow">SiliconFlow</option></select></label>
-        <label>{en ? 'Verified model' : '已验证模型'} <select value={modelSettings.model} onChange={(event) => setModelSettings({ ...modelSettings, model: event.target.value })}><option value="deepseek-ai/DeepSeek-V4-Flash">deepseek-ai/DeepSeek-V4-Flash</option></select></label>
-        <p>{en ? 'API key' : 'API Key'}：{modelSettings.api_key_configured ? (en ? 'Configured' : '已配置') : (en ? 'Not configured' : '未配置')}</p>
-        <label>{en ? 'Replace API key' : '设置或替换 API Key'} <input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
-        <button type="button" disabled={!apiKey || saving} onClick={() => void saveKey()}>{en ? 'Save key' : '保存密钥'}</button>
-        <button type="button" disabled={!modelSettings.api_key_configured || saving} onClick={() => void deleteKey()}>{en ? 'Delete key' : '删除密钥'}</button>
-        <button type="button" onClick={() => void mockConnectionTest()}>{en ? 'Run local mock check' : '执行本地 Mock 检查'}</button>
-        <p>{en ? 'This local mock never contacts SiliconFlow and cannot incur provider charges. A future real connection test may be billable and will require separate authorization.' : '当前本地 Mock 不连接 SiliconFlow，也不会产生供应商费用。未来真实连接测试可能计费，需另行授权后才会开放。'}</p>
-        <label className="automation-toggle"><input type="checkbox" checked={modelSettings.model_enabled} onChange={(event) => setModelSettings({ ...modelSettings, model_enabled: event.target.checked })} />{en ? 'Enable model for future manual runs' : '允许后续手动整理使用模型'}</label>
-        <label className="automation-toggle"><input type="checkbox" checked={modelSettings.scheduler_enabled} onChange={(event) => setModelSettings({ ...modelSettings, scheduler_enabled: event.target.checked })} />{en ? 'Enable scheduler on next Core start' : '在 Core 下次启动时启用定时器'}</label>
-        <p>{en ? `Monthly soft budget: ¥${modelSettings.monthly_soft_budget_cny}; estimated use: ¥${status?.budget?.monthly_estimated_cny ?? 0}; estimated remaining: ¥${status?.budget?.monthly_remaining_estimate_cny ?? modelSettings.monthly_soft_budget_cny}; daily requests: ${status?.budget?.daily_requests ?? 0}/${status?.budget?.daily_limit ?? 12} (${status?.budget?.daily_remaining ?? 12} remaining). Estimates are not a provider bill.` : `月度软预算：¥${modelSettings.monthly_soft_budget_cny}；本月估算：¥${status?.budget?.monthly_estimated_cny ?? 0}；估算剩余：¥${status?.budget?.monthly_remaining_estimate_cny ?? modelSettings.monthly_soft_budget_cny}；今日请求：${status?.budget?.daily_requests ?? 0}/${status?.budget?.daily_limit ?? 12}（剩余 ${status?.budget?.daily_remaining ?? 12} 次）。本地估算不等于供应商账单。`}</p>
+      <div className="organizer-settings-grid">
+      <section className="organizer-settings-card organizer-model-settings" aria-label={en ? 'Organizer model settings' : 'Organizer 模型设置'}>
+        <h2>{en ? 'Model configuration' : '模型配置'}</h2>
+        <div className="organizer-readonly-field"><span>{en ? 'Provider' : '服务商'}</span><output>SiliconFlow</output></div>
+        <div className="organizer-readonly-field"><span>{en ? 'Supported model' : '当前支持模型'}</span><output>deepseek-ai/DeepSeek-V4-Flash</output></div>
+        <p className="organizer-note">{en ? 'This is the only verified model currently supported.' : '当前仅支持此已验证模型。'}</p>
+        <div className="organizer-key-row"><span>{en ? 'API key' : 'API Key'}：{modelSettings.api_key_configured ? (en ? 'Configured' : '已配置') : (en ? 'Not configured' : '未配置')}</span><button type="button" disabled={!modelSettings.api_key_configured || saving} onClick={() => void deleteKey()}>{en ? 'Delete key' : '删除密钥'}</button></div>
+        <label className="organizer-input-label">{en ? 'Set or replace API key' : '设置或替换 API Key'} <input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
+        <div className="organizer-actions"><button type="button" disabled={!apiKey || saving} onClick={() => void saveKey()}>{en ? 'Save key' : '保存密钥'}</button><button type="button" disabled={saving || mockCheck === 'loading'} onClick={() => void mockConnectionTest()}>{mockCheck === 'loading' ? (en ? 'Checking…' : '检查中…') : (en ? 'Run local mock check' : '执行本地 Mock 检查')}</button></div>
+        <p className="organizer-note">{en ? 'Mock check only verifies local configuration; it never contacts SiliconFlow.' : 'Mock 检查仅验证本地配置，不会连接 SiliconFlow。'}</p>
+        {mockCheck === 'loading' && <p className="organizer-check-result" role="status">{en ? 'Checking local configuration…' : '正在检查本地配置…'}</p>}
+        {mockCheck !== 'idle' && mockCheck !== 'loading' && <p className={`organizer-check-result ${mockCheck}`} role={mockCheck === 'error' ? 'alert' : 'status'}>{mockMessage}</p>}
       </section>
-      <label className="automation-toggle"><input type="checkbox" checked={settings.enabled} onChange={(event) => update({ enabled: event.target.checked })} />{en ? 'Allow scheduled runs (requires the separate scheduler switch)' : '允许按计划整理（还需单独启用 Scheduler）'}</label>
-      <fieldset><legend>{en ? 'Schedule' : '执行方式'}</legend>
+
+      <section className="organizer-settings-card organizer-run-settings">
+        <h2>{en ? 'Automatic organization' : '自动整理'}</h2>
+        <label className="automation-toggle"><input type="checkbox" checked={modelSettings.model_enabled} onChange={(event) => setModelSettings({ ...modelSettings, model_enabled: event.target.checked })} />{en ? 'Enable model for manual runs' : '允许手动整理使用模型'}</label>
+        <label className="automation-toggle"><input type="checkbox" checked={modelSettings.scheduler_enabled} onChange={(event) => setModelSettings({ ...modelSettings, scheduler_enabled: event.target.checked })} />{en ? 'Enable Scheduler' : '启用 Scheduler'}</label>
+        <label className="automation-toggle"><input type="checkbox" checked={settings.enabled} onChange={(event) => update({ enabled: event.target.checked })} />{en ? 'Allow scheduled runs' : '允许按计划整理'}</label>
+        <fieldset><legend>{en ? 'Schedule' : '执行计划'}</legend>
         <label><input type="radio" name="organize-mode" checked={settings.mode === 'interval'} onChange={() => update({ mode: 'interval' })} />{en ? 'Every interval' : '按固定间隔'}</label>
         {settings.mode === 'interval' && <select aria-label={en ? 'Interval in hours' : '间隔小时数'} value={settings.interval_hours} onChange={(event) => update({ interval_hours: Number(event.target.value) })}>{[1, 2, 3, 4, 6, 8, 12, 24].map((hours) => <option key={hours} value={hours}>{en ? `Every ${hours} hours` : `每 ${hours} 小时`}</option>)}</select>}
         <label><input type="radio" name="organize-mode" checked={settings.mode === 'fixed_time'} onChange={() => update({ mode: 'fixed_time' })} />{en ? 'Daily at a fixed time' : '每天固定时间'}</label>
         {settings.mode === 'fixed_time' && <input aria-label={en ? 'Daily time' : '每天执行时间'} type="time" value={settings.daily_time} onChange={(event) => update({ daily_time: event.target.value })} />}
         <p>{en ? `Time zone: ${settings.timezone}` : `时区：${settings.timezone}`}</p>
-      </fieldset>
+        </fieldset>
+      </section>
+
+      <section className="organizer-settings-card organizer-budget-settings">
+        <h2>{en ? 'Budget and activity' : '预算与运行'}</h2>
+        <dl className="organizer-budget-grid">
+          <div><dt>{en ? 'Monthly soft limit' : '月度软预算'}</dt><dd>¥{modelSettings.monthly_soft_budget_cny}</dd></div>
+          <div><dt>{en ? 'Estimated remaining' : '估算剩余'}</dt><dd>¥{status?.budget?.monthly_remaining_estimate_cny ?? modelSettings.monthly_soft_budget_cny}</dd></div>
+          <div><dt>{en ? 'Today’s requests' : '今日请求'}</dt><dd>{status?.budget?.daily_requests ?? 0}/{status?.budget?.daily_limit ?? 12} · {status?.budget?.daily_remaining ?? 12} {en ? 'left' : '次剩余'}</dd></div>
+          <div><dt>{en ? 'Estimated spend' : '本月估算用量'}</dt><dd>¥{status?.budget?.monthly_estimated_cny ?? 0}</dd></div>
+        </dl>
+        <p className="organizer-note">{en ? 'Local estimates are not provider billing.' : '本地估算不等于供应商账单。'}</p>
       <dl className="automation-status-list"><div><dt>{en ? 'Current state' : '当前状态'}</dt><dd>{status?.execution_available ? (status.state === 'running' ? (en ? 'Running' : '运行中') : status.state === 'needs_attention' ? (en ? 'Needs attention' : '需要核对') : status.state === 'disabled' ? (en ? 'Disabled' : '已停用') : (en ? 'Scheduled' : '等待执行')) : (en ? 'Settings only; automatic organization has not run.' : '仅保存设置，自动整理尚未运行。')}</dd></div><div><dt>{en ? 'Last run' : '上次执行'}</dt><dd>{organizerTime(status?.last_run_at, locale)}</dd></div><div><dt>{en ? 'Next estimate' : '下次预计执行'}</dt><dd>{status?.execution_available ? organizerTime(status.next_run_at, locale) : (status?.configured_next_run_at ? `${en ? 'Saved plan (not active): ' : '设置的计划时间（尚未运行）：'}${organizerTime(status.configured_next_run_at, locale)}` : (en ? 'Unavailable until the runner is verified' : '执行器通过验证前不可用'))}</dd></div><div><dt>{en ? 'New drafts last run' : '上次新增草稿'}</dt><dd>{status?.last_draft_count ?? '—'}</dd></div></dl>
+      </section>
+      </div>
       {reason && <p className="automation-blocked" role="status">{reason}</p>}
       {status?.last_error?.message && <p className="automation-blocked" role="alert">{status.last_error.message}</p>}
       {Boolean(status?.coverage_warnings?.length) && <p className="automation-blocked" role="status">{en ? 'Some source sessions are unavailable or discontinuous; their missing history will not be skipped.' : '部分来源会话已删除或历史不连续；系统不会静默跳过缺失消息。'}</p>}

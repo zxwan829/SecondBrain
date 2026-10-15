@@ -839,3 +839,10 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - HTTPS smoke：health 200；未认证 Organizer 设置 API 401；App 登录/session 200；Chat capabilities 200；Inbox 200（只输出条目数 1）；Review 列表 200（只输出条目数 22）；Organizer 设置 API 200，模型为 `deepseek-ai/DeepSeek-V4-Flash`、模型开关 false、Scheduler false、Key 未配置；连接检查 API 200，标记 `local_mock`，无 SiliconFlow 请求。未读取 Hermes 会话/消息，未调用整理接口，未调用真实模型。生产 `SB_PROMOTE_ENABLED=false`；Knowledge RO、Private 未挂载；Organizer 状态目录权限为 `0700`，无设置文件或 Key 文件。
 - 本次未重跑此前已通过的代码测试；最近针对该提交的结果为 Organizer/Core/权限测试 66 passed、前端 typecheck/build 通过、Core compileall 与 diff check 通过。此次生产验证为只读 HTTP smoke 与运行状态检查。
 - **状态：** App-only 生产部署完成，Organizer 设置与 Mock 检查接口在线；真实自动整理、Scheduler、Promote 均未启用。等待用户在浏览器验收页面呈现与交互；供应商实际账单仍需控制台核账。若需回滚，先复验上述快照和旧镜像，再仅替换 App 镜像并重建 App，保留 Core state 与 Hermes。
+
+## 2026-10-16 — D076 Organizer 设置页浏览器验收问题修复（本地）
+
+- 浏览器反馈后检查前端按钮与 Core `/connection-test`：受保护 Core 路由正常返回本地 Mock 配置结果，不调用供应商或执行 Organizer；前端原实现没有 loading、异常捕获和明确结果区域，网络失败会静默表现为无反馈。现加入进行中、成功及失败提示；成功文案明确未连接 SiliconFlow、无供应商费用，失败展示服务端原因或可读网络/HTTP 提示。测试验证按钮只调用 Mock 端点、不调用 `/run`。
+- 设置页收拢为模型配置、自动整理、预算与运行三组；桌面双栏/预算横跨整行，窄屏单栏；统一控件尺寸并减少留白。服务商和唯一支持型号 `deepseek-ai/DeepSeek-V4-Flash` 显示为只读值，不再呈现单选下拉框。未改 Core 鉴权、Key 存储、预算门禁或任何 API 调用范围。
+- 验证：新增前端 `organizer-settings.test.tsx` **3 passed**，覆盖 Mock loading/success、授权/API 错误、网络异常、唯一模型呈现、模型/Scheduler 默认关闭且不调用 Organizer run；`npm run typecheck` 与 `npm run build` 通过。未部署 NAS、未调用真实 API、未使用 Key、未读取 Hermes/业务数据。
+- **状态：** 代码修复待 Commit/Push；尚未部署。生产仍为 `b34319a`；需部署后由用户在浏览器验收最终视觉布局和交互。
