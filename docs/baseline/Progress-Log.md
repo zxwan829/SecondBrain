@@ -830,3 +830,12 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 设置页补充费用说明：当前 Mock 不产生供应商费用；未来真实连接测试可能计费，需另行授权后才开放。Review 仍为输出目标，未改变 Knowledge、Promote、Private 边界。
 - 验证：Organizer 配置/Engine/合成 E2E 31 passed，SiliconFlow MockTransport 11 passed，Core BFF 11 passed，Core 审批/权限边界 13 passed（合计 66 passed）；前端 typecheck/build 通过，Core `compileall` 与 `git diff --check` 通过。测试仅使用合成数据和本地 Mock；未读真实 Key、未访问真实 Hermes/业务内容、未调用真实 SiliconFlow、未启动 Scheduler、未部署。
 - **状态：** 源码与文档在本轮提交并推送；生产未部署，用户浏览器验收待完成。真实业务数据启用仍需用户单独批准部署、真实数据出站、受保护生产凭据和 Scheduler 策略；供应商结算需在控制台核对。软预算不是供应商硬费用上限。
+
+## 2026-10-15 — D076 Organizer App-only 生产部署
+
+- 部署来源为 GitHub `main` / `origin/main` 的 `b34319af0b928ef6781b9ff4c0cc4ab8bb80c1c0`。构建输入由该提交的 `git archive` 提供；工作区未跟踪 `typescript` 保留且未纳入构建。部署前复核了相对生产 `9962001` 的代码差异，未发现新增容器、挂载、权限扩大或自动启动模型/Scheduler 的路径。
+- 创建并校验 App-only 快照 `/volume1/docker/secondbrain/rollback/d076-organizer-predeploy-20261015T145538Z/`：目录 `0700`、文件 `0600`，清单校验通过；不含密钥或业务文件内容。构建镜像 `secondbrain-app:d076-organizer-b34319a`，Image ID `sha256:6070c61789737bf64b57d7aab726c4bcee20564f2e6df5584344dcc568d9196f`。正式 Compose 仅修改 App 的 build context 和 image 标签；部署使用限定服务的 `up -d --no-deps --force-recreate secondbrain-app`，未重建/重启 Hermes。
+- 部署后 App 容器 `f3da36a01343e764ac051d81c99fac7e6186c947629dd312301c8547e28c3f82` 为 healthy；Hermes 保持原容器 `f6703ca3e3d41856b6e35348f28cd1c7f833ffb9ab31b19e958656540eed8ac6`、镜像及启动时间，状态 running（未配置 healthcheck）。Compose SHA-256 为 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`。
+- HTTPS smoke：health 200；未认证 Organizer 设置 API 401；App 登录/session 200；Chat capabilities 200；Inbox 200（只输出条目数 1）；Review 列表 200（只输出条目数 22）；Organizer 设置 API 200，模型为 `deepseek-ai/DeepSeek-V4-Flash`、模型开关 false、Scheduler false、Key 未配置；连接检查 API 200，标记 `local_mock`，无 SiliconFlow 请求。未读取 Hermes 会话/消息，未调用整理接口，未调用真实模型。生产 `SB_PROMOTE_ENABLED=false`；Knowledge RO、Private 未挂载；Organizer 状态目录权限为 `0700`，无设置文件或 Key 文件。
+- 本次未重跑此前已通过的代码测试；最近针对该提交的结果为 Organizer/Core/权限测试 66 passed、前端 typecheck/build 通过、Core compileall 与 diff check 通过。此次生产验证为只读 HTTP smoke 与运行状态检查。
+- **状态：** App-only 生产部署完成，Organizer 设置与 Mock 检查接口在线；真实自动整理、Scheduler、Promote 均未启用。等待用户在浏览器验收页面呈现与交互；供应商实际账单仍需控制台核账。若需回滚，先复验上述快照和旧镜像，再仅替换 App 镜像并重建 App，保留 Core state 与 Hermes。

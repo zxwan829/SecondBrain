@@ -12,7 +12,7 @@ source: GitHub SecondBrain Monorepo
 
 **V1 DONE：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
 
-**总体状态：`NOT DONE`。** 最近一次有据可查的生产 App 快照见 `Environment-Baseline.md`（2026-10-15）；本轮未连接 NAS，故之后实时运行状态为 `UNKNOWN`。D076 Organizer 已用一条合成消息完成 SiliconFlow DeepSeek-V4-Flash 真实 API → 分类 → 本地 Review 草稿 → usage/估算费用及游标/作业状态闭环；代码仍未部署，常驻 Scheduler 保持关闭，真实用户数据出站与生产启用尚未授权。¥0.001302 是按供应商公开最高时段价计算的本地估算，不是账户账单；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
+**总体状态：`NOT DONE`。** 2026-10-15 已将 GitHub `b34319a` 部署到 NAS 的 `secondbrain-app`；当前 App-only 部署快照、接口验证和回滚点见 `Environment-Baseline.md` 与 `Progress-Log.md`。D076 Organizer 设置页及本地 Mock 检查接口已部署，模型和 Scheduler 均关闭；尚待用户浏览器验收，真实用户数据自动整理未启用。此前一条合成消息完成的 SiliconFlow DeepSeek-V4-Flash 真实 API 闭环仅验证模型链路，¥0.001302 为估算而非账户账单；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 
@@ -33,7 +33,7 @@ source: GitHub SecondBrain Monorepo
 | **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
 | Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | PROD-PARTIAL：Commit `55977c8` 的统一 Composer 已部署至 63013，Inbox 与首页快速收录共用现有 Capture API；认证 API smoke 通过 | 用户验收拖放、粘贴、IME、成功清空/失败保留及手机选择；音频处理器和微信渠道 |
 | Review 读取 | Web App 统一会话下展示列表/详情、来源和内容 | ACCEPTED：现有 D071 Dashboard v0.2.4；独立 App 63013 HTTPS 浏览器已显示 8 条真实 Review 与详情 | 独立 App 用户最终验收；补齐正式审批状态/动作部署 |
-| Organizer 自动整理（D076） | 设置页管理 SiliconFlow/已验证模型、服务端 API Key、软预算状态、模型和 Scheduler 开关及计划；执行仍产出 Review 草稿并记录 usage/预算/游标 | DEV-TESTED：现有真实合成 API 闭环 1 次；后台配置/API Key 生命周期及 Mock 检查；Organizer/Core/既有权限边界定向测试 66 passed，前端类型检查/构建通过；模型和 Scheduler 默认关闭 | 本轮仅本地代码；连接测试未连接供应商。需用户浏览器验收、供应商控制台核账、单独批准部署；禁止真实业务数据出站，Knowledge/Promote/Private 边界不变 |
+| Organizer 自动整理（D076） | 设置页管理 SiliconFlow/已验证模型、服务端 API Key、软预算状态、模型和 Scheduler 开关及计划；执行仍产出 Review 草稿并记录 usage/预算/游标 | PROD-DEPLOYED / 用户验收待完成：`b34319a` App-only 部署；登录、设置 API、本地 Mock 检查通过；模型、Scheduler、Promote 关闭，Knowledge RO、Private 未挂载；Organizer/Core 权限边界定向测试 66 passed，前端类型检查/构建通过 | 用户需浏览器验收设置页、Mock 提示和既有 Chat/Inbox/Review；真实用户数据出站及 Scheduler 启用仍须另行批准，供应商账单需控制台核对；软预算非供应商硬上限 |
 | Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | DEV-TESTED：阶段 A 15 项测试；生产关闭 | 收口权限、统一登录安全边界、正式部署、HTTPS 用户验收 |
 | Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
 | Journal | 用户原文留存；目标支持新增/按日期追加，不允许普通 Agent 随意覆写 | NOT DONE：生产未开放专用写入 | 按 D064 执行；**业务是目标能力，但 Web App V1 的快捷录入属于 SHOULD，不能擅自冒充核心 MUST** |
@@ -73,7 +73,7 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076a1.1-9962001` healthy；HTTPS root/health 200，静态 JS/CSS SHA-256 与目标构建一致，匿名受保护 API 401；用户已接受桌面 Review 布局/滚动/排序；Hermes 未重启 | Composer、手机 Review 和真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
+| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076-organizer-b34319a` healthy；HTTPS health/login/session、Chat capabilities、Inbox、Review 及受保护设置 API smoke 通过；匿名设置 API 401；Hermes 未重启 | 用户浏览器验收新版本设置页、Composer 和手机 Review；真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
