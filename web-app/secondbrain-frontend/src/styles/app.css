@@ -460,6 +460,12 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .automation-settings-page > header { margin-bottom: 22px; }
 .automation-settings-page > header h1 { margin: 8px 0; }
 .automation-settings-page > header p:last-child, .automation-settings-page fieldset p { color: var(--sb-muted); }
+.organizer-model-settings { display: grid; gap: 12px; margin: 18px 0; padding: 18px; border: 1px solid var(--sb-border); border-radius: 12px; background: var(--sb-surface); }
+.organizer-model-settings h2 { margin: 0; font-size: 16px; }
+.organizer-model-settings > label:not(.automation-toggle) { display: grid; gap: 6px; color: var(--sb-text-soft); }
+.organizer-model-settings select, .organizer-model-settings input[type=password] { width: min(100%, 440px); padding: 8px 10px; color: var(--sb-text); border: 1px solid var(--sb-border-strong); border-radius: 8px; background: #080f1d; }
+.organizer-model-settings p { margin: 0; color: var(--sb-muted); line-height: 1.55; }
+.organizer-model-settings button { width: fit-content; }
 .automation-settings-page fieldset { display: grid; gap: 12px; margin: 18px 0; padding: 18px; border: 1px solid var(--sb-border); border-radius: 12px; background: var(--sb-surface); }
 .automation-settings-page fieldset label, .automation-toggle { display: flex; align-items: center; gap: 9px; }
 .automation-settings-page select, .automation-settings-page input[type=time] { width: fit-content; padding: 8px 10px; color: var(--sb-text); border: 1px solid var(--sb-border-strong); border-radius: 8px; background: #080f1d; }

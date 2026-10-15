@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -248,12 +249,14 @@ class OrganizerRunner:
             run_state = "needs_attention"
         elif active:
             run_state = "running"
+        elif not available:
+            run_state = "disabled"
+        elif not self.scheduler_enabled:
+            run_state = "manual_only"
         elif not settings["enabled"]:
             run_state = "disabled"
-        elif available and not self.scheduler_enabled:
-            run_state = "manual_only"
         else:
-            run_state = "blocked" if not available else "scheduled"
+            run_state = "scheduled"
         configured_due = state.get("next_run_at")
         if configured_due is None:
             estimate_now = utc_now()
@@ -276,8 +279,10 @@ class OrganizerRunner:
                 "coverage_warnings": warnings,
                 "budget": {"timezone": "Asia/Shanghai", "daily_requests": daily_count,
                            "daily_limit": MAX_REQUESTS_PER_DAY,
+                           "daily_remaining": max(0, MAX_REQUESTS_PER_DAY - daily_count),
                            "monthly_estimated_cny": round(month_cost / 1_000_000, 6),
-                           "monthly_soft_limit_cny": MONTHLY_SOFT_BUDGET_CNY},
+                           "monthly_soft_limit_cny": MONTHLY_SOFT_BUDGET_CNY,
+                           "monthly_remaining_estimate_cny": round(max(0, MAX_MONTHLY_BUDGET_MICROCNY - month_cost) / 1_000_000, 6)},
                 "blocked_reason": reason if not available else "",
                 "settings_only": not available}
 
@@ -287,10 +292,30 @@ class OrganizerRunner:
         self.state.update(lambda state: state.update({"next_run_at": iso(due) if due else None}))
         return saved
 
+    @contextmanager
+    def configuration_change(self):
+        """Serialize control changes with runs and preserve active job recovery state."""
+        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise HTTPException(status_code=409, detail={"code": "organizer_running",
+                                                              "message": "整理正在执行；完成后再修改模型凭据或开关。"}) from exc
+            state = self.state.read()
+            active = state.get("jobs", {}).get(state.get("active_job_id") or "")
+            if active and active.get("status") not in {"needs_attention", "model_started"}:
+                raise HTTPException(status_code=409, detail={"code": "organizer_job_active",
+                                                              "message": "存在待完成作业；完成恢复后再修改模型配置。"})
+            yield
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+
     async def run(self, *, reason: str = "manual", now: datetime | None = None) -> dict[str, Any]:
-        available, blocked_reason = _valid_model(self.model)
-        if not available:
-            raise HTTPException(status_code=503, detail={"code": "organizer_unavailable", "message": blocked_reason})
         fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
             os.fchmod(fd, 0o600)
@@ -298,6 +323,13 @@ class OrganizerRunner:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return {"status": "already_running", "draft_count": 0}
+            state = self.state.read()
+            active = state.get("jobs", {}).get(state.get("active_job_id") or "")
+            can_resume_without_model = bool(active and active.get("status") in
+                                             {"model_started", "drafts_pending", "model_complete", "needs_attention"})
+            available, blocked_reason = _valid_model(self.model)
+            if not available and not can_resume_without_model:
+                raise HTTPException(status_code=503, detail={"code": "organizer_unavailable", "message": blocked_reason})
             return await self._run_locked(reason=reason, now=now or utc_now())
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -770,7 +802,7 @@ class OrganizerRunner:
         return True
 
     async def _scheduler_loop(self):
-        while True:
+        while self.scheduler_enabled:
             try:
                 result = await self.tick()
             except Exception:

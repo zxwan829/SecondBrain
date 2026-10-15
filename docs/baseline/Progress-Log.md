@@ -815,3 +815,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 官方 [Chat Completions 参数文档](https://docs.siliconflow.cn/docs/api/chat-completions-post) 核实 DeepSeek-V4-Flash 支持 `enable_thinking`，请求仅对该获准模型设置 `false`；[价格公告](https://docs.siliconflow.cn/docs/release-notes/overview) 显示自 2026-09-01 起分时计价。相应将本地预算估算费率改为公开最高时段价，避免沿用过低旧值。单次联调另有 ¥5 本地估算预检及单 HTTP 尝试门禁。供应商模型可用性由本次成功响应确认；账户实际折扣/券抵扣与账单金额未核实。
 - 首次本地 harness 的同步 HTTPX request hook 在异步 hook `await` 阶段发生 `TypeError`，HTTP 传输尚未开始；Runner 保守持久化为临时 `unknown`，未对该作业重试。修正 hook 后使用新的隔离合成状态成功发出唯一真实 HTTP 请求。没有自动重试或切换模型。
 - 验证：Organizer 配置、Engine、Synthetic E2E、SiliconFlow MockTransport 定向测试 **42 passed**；Python `compileall` 通过。生产未部署，Scheduler 未启动，模型仅在该测试进程中启用；全局模型默认关闭、Promote=false、Knowledge RO。用户尚未在 Web App 浏览器验收；真实业务数据启用、生产部署与供应商控制台账单核对仍待分别批准/验收。Review 草稿位于 `/private/tmp/secondbrain-d076-live.ciNbcR/review/AI-Organize-e9722f57a33247b7806dac66a484a5e1-01-522de94504.md`。
+
+## 2026-10-15 — D076 Organizer 模型配置后台化（本地）
+
+- 设置页增加 SiliconFlow 配置、唯一可运行候选 `deepseek-ai/DeepSeek-V4-Flash`、API Key 新增/替换/删除、模型与 Scheduler 独立开关、4 小时/每日固定时间计划、预算/请求额度及已有运行状态。两个执行开关默认关闭；Scheduler 配置只在后续 Core 启动时生效，保存模型配置不会启动它或整理作业。
+- Core 复用 App 会话和 `automation.settings.read/write` 授权，将无密钥模型设置、密钥独立写入现有私有 `ai-organize` 状态目录；密钥文件权限 `0600`，接口仅返回 `api_key_configured`，无读取/回显 API。模型 ID/provider 由 Core 严格校验。连接测试 API 明确标识为本地 Mock 配置检查，不访问 SiliconFlow，也不验证真实 Key。
+- Organizer 状态补充每日剩余请求数和月度估算余额。保留原预算预留、执行器并发锁、作业/游标、Review 路径；不改变 Knowledge 写入、Promote、Private 边界。本轮未读取已有真实 Key、未真实 API 调用、未读真实 Hermes/业务内容、未启动 Scheduler、未部署。
+- 验证：Core Web App BFF、Organizer Engine、合成 E2E、SiliconFlow MockTransport **49 passed**；Core `compileall`、前端 `typecheck`、Vite build、`git diff --check` 通过。测试覆盖登录拒绝、非法模型拒绝、密钥响应脱敏/权限/删除、设置重读与 Mock 测试零 Hermes HTTP 新调用。系统 Python 缺少 FastAPI/httpx，改用仓库 `.venv` 成功验证。
+- **状态：** 代码/文档仅本地修改，待提交推送；未生产部署、未真实联调或用户浏览器验收。上线前至少需用户审阅并部署批准、在生产受保护 Core 状态中配置独立凭据、明确批准 Scheduler 和真实数据出站策略，并浏览器验收设置/Key 管理/Mock 测试及预算显示；供应商账单仍须控制台核对。软预算不是供应商硬费用上限。

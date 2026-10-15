@@ -13,7 +13,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.hermes_api import HermesAPI
-from secondbrain_core.modules.auto_organize import OrganizeSettingsStore, next_scheduled_at
+from secondbrain_core.modules.auto_organize import OrganizerControlStore, OrganizeSettingsStore, next_scheduled_at
 from datetime import datetime, timezone
 
 
@@ -233,6 +233,7 @@ class WebAppBffTests(unittest.TestCase):
         self.login()
         settings = self.client.get("/api/automation/organize/settings")
         self.assertEqual(settings.status_code, 200)
+        self.assertFalse(settings.json()["enabled"])
         self.assertEqual(settings.json()["mode"], "interval")
         self.assertEqual(settings.json()["interval_hours"], 4)
         changed = {**settings.json(), "mode": "fixed_time", "daily_time": "06:45", "timezone": "Asia/Shanghai"}
@@ -243,7 +244,7 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(store.read()["daily_time"], "06:45")
         status = self.client.get("/api/automation/organize/status").json()
         self.assertEqual(status["execution_available"], False)
-        self.assertIsNotNone(status["configured_next_run_at"])
+        self.assertIsNone(status["configured_next_run_at"])
         run = self.client.post("/api/automation/organize/run", json={}, headers={"Origin": "https://testserver"})
         self.assertEqual(run.status_code, 503)
         self.assertEqual(run.json()["detail"]["code"], "organizer_unavailable")
@@ -259,6 +260,64 @@ class WebAppBffTests(unittest.TestCase):
                                        json={"enabled": False, "mode": "interval", "interval_hours": 4},
                                        headers={"Origin": "https://evil.invalid"})
         self.assertEqual(cross_origin.status_code, 403)
+
+    def test_organizer_model_controls_are_private_mock_only_and_independently_persisted(self):
+        self.assertEqual(self.client.get("/api/automation/organize/model-settings").status_code, 401)
+        self.login()
+        settings = self.client.get("/api/automation/organize/model-settings")
+        self.assertEqual(settings.status_code, 200)
+        self.assertEqual(settings.json()["model"], "deepseek-ai/DeepSeek-V4-Flash")
+        self.assertFalse(settings.json()["model_enabled"])
+        self.assertFalse(settings.json()["scheduler_enabled"])
+        self.assertNotIn("api_key", settings.json())
+
+        bad_model = self.client.put("/api/automation/organize/model-settings",
+                                    json={"model": "unsupported-model", "provider": "siliconflow"},
+                                    headers={"Origin": "https://testserver"})
+        self.assertEqual(bad_model.status_code, 422)
+        fake_key = "synthetic-test-key-never-used"
+        saved_key = self.client.put("/api/automation/organize/api-key", json={"api_key": fake_key},
+                                    headers={"Origin": "https://testserver"})
+        self.assertEqual(saved_key.status_code, 200)
+        self.assertEqual(saved_key.json(), {"api_key_configured": True})
+        self.assertNotIn(fake_key, saved_key.text)
+        key_path = self.state / "ai-organize" / "siliconflow-api-key"
+        self.assertEqual(key_path.stat().st_mode & 0o777, 0o600)
+
+        enable_model = self.client.put("/api/automation/organize/model-settings",
+                                       json={"provider": "siliconflow", "model": "deepseek-ai/DeepSeek-V4-Flash",
+                                             "model_enabled": True, "scheduler_enabled": False},
+                                       headers={"Origin": "https://testserver"})
+        self.assertEqual(enable_model.status_code, 200)
+        self.assertTrue(self.client.get("/api/automation/organize/status").json()["execution_available"])
+
+        saved = self.client.put("/api/automation/organize/model-settings",
+                                json={"provider": "siliconflow", "model": "deepseek-ai/DeepSeek-V4-Flash",
+                                      "model_enabled": True, "scheduler_enabled": True},
+                                headers={"Origin": "https://testserver"})
+        self.assertEqual(saved.status_code, 200)
+        self.assertTrue(saved.json()["scheduler_enabled"])
+        reread = OrganizerControlStore(self.state / "ai-organize").read()
+        self.assertTrue(reread["api_key_configured"])
+        self.assertTrue(reread["scheduler_enabled"])
+        self.assertTrue(reread["model_enabled"])
+        restarted_model = OrganizerControlStore(self.state / "ai-organize").load_model()
+        self.assertEqual(restarted_model.model, "deepseek-ai/DeepSeek-V4-Flash")
+
+        before = len(self.calls)
+        mocked = self.client.post("/api/automation/organize/connection-test", json={},
+                                  headers={"Origin": "https://testserver"})
+        self.assertEqual(mocked.status_code, 200)
+        self.assertEqual(mocked.json()["kind"], "local_mock")
+        self.assertIn("未连接 SiliconFlow", mocked.json()["message"])
+        self.assertEqual(len(self.calls), before)
+
+        deleted = self.client.delete("/api/automation/organize/api-key", headers={"Origin": "https://testserver"})
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(key_path.exists())
+        after_delete = self.client.get("/api/automation/organize/model-settings").json()
+        self.assertFalse(after_delete["api_key_configured"])
+        self.assertFalse(after_delete["model_enabled"])
 
     def test_scheduler_time_calculation_uses_zone_and_persisted_interval_anchor(self):
         now = datetime(2026, 10, 15, 0, 0, tzinfo=timezone.utc)

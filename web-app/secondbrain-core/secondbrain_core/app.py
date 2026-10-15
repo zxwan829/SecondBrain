@@ -8,11 +8,10 @@ from starlette.responses import FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 
 from .modules.app_auth import AppSessionAuth
-from .modules.auto_organize import create_auto_organize_router
+from .modules.auto_organize import OrganizerControlStore, create_auto_organize_router
 from .modules.capture import CaptureService, create_capture_router
 from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
-from .modules.organizer_config import configured_organizer_model, configured_organizer_scheduler
 from .modules.organizer_engine import OrganizerRunner
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
@@ -52,15 +51,17 @@ def create_app():
     app_password_file = os.environ["SB_APP_PASSWORD_FILE"]
     auth = AppSessionAuth(app_password_file, origins, ttl)
     hermes = HermesAPI()
+    organizer_controls = OrganizerControlStore(Path(approval_root) / "ai-organize")
+    organizer_options = organizer_controls.read()
     organizer = OrganizerRunner(approval_root, review_root, hermes,
-                                model=configured_organizer_model(),
-                                scheduler_enabled=configured_organizer_scheduler())
+                                model=organizer_controls.load_model(),
+                                scheduler_enabled=organizer_options["scheduler_enabled"])
     capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root,
                              processors=MultimodalCaptureProcessors(hermes))
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root, organizer))
-    app.include_router(create_auto_organize_router(auth, organizer))
+    app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
     app.include_router(create_core_router(service, review_root, auth,
                                           promote_enabled=promote_enabled,

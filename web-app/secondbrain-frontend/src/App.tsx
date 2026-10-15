@@ -952,7 +952,8 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
 }
 
 type OrganizeSettings = { enabled: boolean; mode: 'fixed_time' | 'interval'; interval_hours: number; daily_time: string; timezone: string };
-type OrganizeStatus = { execution_available: boolean; state: string; last_run_at?: string | null; next_run_at?: string | null; configured_next_run_at?: string | null; last_draft_count?: number | null; last_error?: { message?: string } | null; blocked_reason?: string; coverage_warnings?: { session_id: string; state: string }[] };
+type OrganizerModelSettings = { provider: 'siliconflow'; model: string; model_enabled: boolean; scheduler_enabled: boolean; monthly_soft_budget_cny: number; api_key_configured: boolean };
+type OrganizeStatus = { execution_available: boolean; state: string; last_run_at?: string | null; next_run_at?: string | null; configured_next_run_at?: string | null; last_draft_count?: number | null; last_error?: { message?: string } | null; blocked_reason?: string; coverage_warnings?: { session_id: string; state: string }[]; budget?: { daily_requests?: number; daily_limit?: number; daily_remaining?: number; monthly_estimated_cny?: number; monthly_soft_limit_cny?: number; monthly_remaining_estimate_cny?: number } };
 
 function organizerTime(value: string | null | undefined, locale: Locale) {
   if (!value) return locale === 'en' ? 'None' : '尚无记录';
@@ -964,6 +965,8 @@ function AutomationSettingsPage({ locale }: { locale: Locale }) {
   const en = locale === 'en';
   const [settings, setSettings] = useState<OrganizeSettings | null>(null);
   const [status, setStatus] = useState<OrganizeStatus | null>(null);
+  const [modelSettings, setModelSettings] = useState<OrganizerModelSettings | null>(null);
+  const [apiKey, setApiKey] = useState('');
   const [reason, setReason] = useState('');
   const [message, setMessage] = useState('');
   const [saving, setSaving] = useState(false);
@@ -971,27 +974,74 @@ function AutomationSettingsPage({ locale }: { locale: Locale }) {
     void Promise.all([
       fetch('/api/automation/organize/settings', { credentials: 'same-origin' }).then((response) => response.ok ? response.json() : Promise.reject(new Error('settings_unavailable'))),
       fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => response.ok ? response.json() : Promise.reject(new Error('status_unavailable'))),
-    ]).then(([config, currentStatus]) => { setSettings(config); setStatus(currentStatus); setReason(String(currentStatus.blocked_reason ?? '')); })
+      fetch('/api/automation/organize/model-settings', { credentials: 'same-origin' }).then((response) => response.ok ? response.json() : Promise.reject(new Error('model_settings_unavailable'))),
+    ]).then(([config, currentStatus, modelConfig]) => { setSettings(config); setStatus(currentStatus); setReason(String(currentStatus.blocked_reason ?? '')); setModelSettings(modelConfig); })
       .catch(() => setMessage(en ? 'Settings could not be loaded.' : '自动整理设置暂时无法读取。'));
   }, [en]);
   const update = (values: Partial<OrganizeSettings>) => setSettings((current) => current ? { ...current, ...values } : current);
   const save = async () => {
-    if (!settings || saving) return;
+    if (!settings || !modelSettings || saving) return;
     setSaving(true); setMessage('');
     try {
       const response = await fetch('/api/automation/organize/settings', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) { setMessage(en ? 'Settings could not be saved.' : '设置保存失败，请稍后重试。'); return; }
       setSettings(payload); setMessage(en ? 'Settings saved.' : '设置已保存。');
+      const modelResponse = await fetch('/api/automation/organize/model-settings', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(modelSettings) });
+      const modelPayload = await modelResponse.json().catch(() => ({}));
+      if (!modelResponse.ok) { setMessage(en ? 'Model settings could not be saved.' : '模型设置保存失败。'); return; }
+      setModelSettings(modelPayload);
       void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((result) => result.ok ? result.json() : null)
         .then((currentStatus) => { if (currentStatus) { setStatus(currentStatus); setReason(String(currentStatus.blocked_reason ?? '')); } }).catch(() => undefined);
     } catch { setMessage(en ? 'Settings could not be saved.' : '设置保存失败，请稍后重试。'); }
     finally { setSaving(false); }
   };
+  const saveKey = async () => {
+    if (!apiKey || saving) return;
+    setSaving(true); setMessage('');
+    try {
+      const response = await fetch('/api/automation/organize/api-key', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: apiKey }) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) { setMessage(en ? 'API key could not be saved.' : 'API Key 保存失败。'); return; }
+      setApiKey(''); setModelSettings((current) => current ? { ...current, api_key_configured: Boolean(payload.api_key_configured) } : current);
+      setMessage(en ? 'API key saved; its value is not shown again.' : 'API Key 已安全保存，不会再次显示。');
+    } catch { setMessage(en ? 'API key could not be saved.' : 'API Key 保存失败。'); }
+    finally { setSaving(false); }
+  };
+  const deleteKey = async () => {
+    if (!modelSettings || saving) return;
+    setSaving(true);
+    try {
+      const response = await fetch('/api/automation/organize/api-key', { method: 'DELETE', credentials: 'same-origin' });
+      if (!response.ok) { setMessage(en ? 'API key could not be deleted.' : 'API Key 删除失败。'); return; }
+      setModelSettings({ ...modelSettings, api_key_configured: false, model_enabled: false });
+      setMessage(en ? 'API key deleted.' : 'API Key 已删除。');
+    } catch { setMessage(en ? 'API key could not be deleted.' : 'API Key 删除失败。'); }
+    finally { setSaving(false); }
+  };
+  const mockConnectionTest = async () => {
+    const response = await fetch('/api/automation/organize/connection-test', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const payload = await response.json().catch(() => ({}));
+    setMessage(response.ok ? String(payload.message) : (en ? 'Local mock configuration check failed.' : '本地 Mock 配置检查失败。'));
+  };
   return <section className="automation-settings-page">
     <header><p className="eyebrow">SECONDBRAIN <span>/</span> {en ? 'SETTINGS' : '设置'}</p><h1>{en ? 'AI smart organization' : 'AI 智能整理'}</h1><p>{en ? 'Choose how new Hermes conversations may be proposed as Review drafts.' : '设置如何从新增 Hermes 对话中提取 Review 草稿。'}</p></header>
-    {!settings ? <p role="status">{message || (en ? 'Loading…' : '正在加载…')}</p> : <>
-      <label className="automation-toggle"><input type="checkbox" checked={settings.enabled} onChange={(event) => update({ enabled: event.target.checked })} />{en ? 'Enable automatic organization' : '启用自动整理'}</label>
+    {!settings || !modelSettings ? <p role="status">{message || (en ? 'Loading…' : '正在加载…')}</p> : <>
+      <section className="organizer-model-settings" aria-label={en ? 'Organizer model settings' : 'Organizer 模型设置'}>
+        <h2>{en ? 'Model service' : '模型服务'}</h2>
+        <label>{en ? 'Provider' : '服务商'} <select value={modelSettings.provider} disabled><option value="siliconflow">SiliconFlow</option></select></label>
+        <label>{en ? 'Verified model' : '已验证模型'} <select value={modelSettings.model} onChange={(event) => setModelSettings({ ...modelSettings, model: event.target.value })}><option value="deepseek-ai/DeepSeek-V4-Flash">deepseek-ai/DeepSeek-V4-Flash</option></select></label>
+        <p>{en ? 'API key' : 'API Key'}：{modelSettings.api_key_configured ? (en ? 'Configured' : '已配置') : (en ? 'Not configured' : '未配置')}</p>
+        <label>{en ? 'Replace API key' : '设置或替换 API Key'} <input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
+        <button type="button" disabled={!apiKey || saving} onClick={() => void saveKey()}>{en ? 'Save key' : '保存密钥'}</button>
+        <button type="button" disabled={!modelSettings.api_key_configured || saving} onClick={() => void deleteKey()}>{en ? 'Delete key' : '删除密钥'}</button>
+        <button type="button" onClick={() => void mockConnectionTest()}>{en ? 'Run local mock check' : '执行本地 Mock 检查'}</button>
+        <p>{en ? 'This check never contacts SiliconFlow and does not validate the remote key.' : '此检查不会连接 SiliconFlow，也不会验证远端密钥。'}</p>
+        <label className="automation-toggle"><input type="checkbox" checked={modelSettings.model_enabled} onChange={(event) => setModelSettings({ ...modelSettings, model_enabled: event.target.checked })} />{en ? 'Enable model for future manual runs' : '允许后续手动整理使用模型'}</label>
+        <label className="automation-toggle"><input type="checkbox" checked={modelSettings.scheduler_enabled} onChange={(event) => setModelSettings({ ...modelSettings, scheduler_enabled: event.target.checked })} />{en ? 'Enable scheduler on next Core start' : '在 Core 下次启动时启用定时器'}</label>
+        <p>{en ? `Monthly soft budget: ¥${modelSettings.monthly_soft_budget_cny}; estimated use: ¥${status?.budget?.monthly_estimated_cny ?? 0}; estimated remaining: ¥${status?.budget?.monthly_remaining_estimate_cny ?? modelSettings.monthly_soft_budget_cny}; daily requests: ${status?.budget?.daily_requests ?? 0}/${status?.budget?.daily_limit ?? 12} (${status?.budget?.daily_remaining ?? 12} remaining). Estimates are not a provider bill.` : `月度软预算：¥${modelSettings.monthly_soft_budget_cny}；本月估算：¥${status?.budget?.monthly_estimated_cny ?? 0}；估算剩余：¥${status?.budget?.monthly_remaining_estimate_cny ?? modelSettings.monthly_soft_budget_cny}；今日请求：${status?.budget?.daily_requests ?? 0}/${status?.budget?.daily_limit ?? 12}（剩余 ${status?.budget?.daily_remaining ?? 12} 次）。本地估算不等于供应商账单。`}</p>
+      </section>
+      <label className="automation-toggle"><input type="checkbox" checked={settings.enabled} onChange={(event) => update({ enabled: event.target.checked })} />{en ? 'Allow scheduled runs (requires the separate scheduler switch)' : '允许按计划整理（还需单独启用 Scheduler）'}</label>
       <fieldset><legend>{en ? 'Schedule' : '执行方式'}</legend>
         <label><input type="radio" name="organize-mode" checked={settings.mode === 'interval'} onChange={() => update({ mode: 'interval' })} />{en ? 'Every interval' : '按固定间隔'}</label>
         {settings.mode === 'interval' && <select aria-label={en ? 'Interval in hours' : '间隔小时数'} value={settings.interval_hours} onChange={(event) => update({ interval_hours: Number(event.target.value) })}>{[1, 2, 3, 4, 6, 8, 12, 24].map((hours) => <option key={hours} value={hours}>{en ? `Every ${hours} hours` : `每 ${hours} 小时`}</option>)}</select>}
