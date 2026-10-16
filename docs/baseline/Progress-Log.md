@@ -2,6 +2,12 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — PR #8 修复合成 Harness 缺少同源 Origin
+
+- 按 ChatGPT 评论 `6211898290` 的最小范围，仅修复 Hermes/Core Runner Harness 的 HTTP 客户端默认请求头，不改 Core 认证规则或测试框架。两个场景共用 `core_client()`，默认对登录、创建 Session、启动 Run 等请求发送 `Origin: http://127.0.0.1:8000`。
+- 新增 MockTransport 回归逐项检查登录、创建 Session、启动 Run 三个 POST 都携带准确 Origin。Harness 诊断测试 **10 passed**；Core Web App BFF 与授权测试 **25 passed**；Python 编译与 `git diff --check` 通过。保留一条既有 Starlette/httpx 弃用提示。
+- 上一获批 Run [38876367881](https://github.com/zxwan829/SecondBrain/actions/runs/38876367881) 的 HTTP 403 经复审定位为 Harness 创建 Session 漏传 Origin；自动学习、跨会话召回、纠错及关闭记忆行为仍 UNKNOWN。此次未触发 Runner；后续真实 Hermes/Core 记忆闭环需新的用户授权。修复 SHA 与推送状态以 PR #8 最新 head 为准。
+
 # 2026-10-16 — PR #8 DSM 路由/cgroup 兼容性修正（仅静态与只读核验）
 
 - 按 PR 评论 `6211166377`，保持 Core 源码、Dockerfile、已导出 Core 镜像和 Hermes 版本不变；未加载镜像、建目录/容器/网络、运行 Compose/合成场景或触发 Runner。此前一次 NAS E2E 条件授权仍未使用。

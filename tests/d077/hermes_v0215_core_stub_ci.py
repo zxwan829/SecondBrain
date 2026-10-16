@@ -35,6 +35,7 @@ SUBNET = "172.29.78.0/24"
 STUB_PORT = 19002
 HERMES_PORT = 8642
 CORE_PORT = 8000
+CORE_ORIGIN = f"http://127.0.0.1:{CORE_PORT}"
 STUB_NAME = f"d077-v0215-stub-{RUN_SUFFIX}"
 CORE_CONTAINER = f"d077-v0215-core-{RUN_SUFFIX}"
 OFF_CORE_CONTAINER = f"d077-v0215-core-off-{RUN_SUFFIX}"
@@ -482,6 +483,17 @@ def run_chat(client, session_id, text, key):
     return run_id, state.json().get("status"), round(time.monotonic() - started, 3), events.text
 
 
+def core_client(*, transport=None):
+    options = {
+        "base_url": CORE_ORIGIN,
+        "headers": {"Origin": CORE_ORIGIN},
+        "timeout": 30,
+    }
+    if transport is not None:
+        options["transport"] = transport
+    return httpx.Client(**options)
+
+
 def direct_messages(session_id, *, order, limit=100, offset=0):
     response = httpx.get(f"http://hermes:{HERMES_PORT}/api/sessions/{session_id}/messages",
                          params={"inline_images": "false", "limit": limit, "offset": offset, "order": order},
@@ -498,7 +510,7 @@ def enabled_scenario():
     started = time.monotonic()
     set_scenario_stage("login")
     roots = {"memory": pathlib.Path(os.environ["SB_PERSONAL_MEMORY_ROOT"])}
-    client = httpx.Client(base_url=f"http://127.0.0.1:{CORE_PORT}", timeout=30)
+    client = core_client()
     login = client.post("/api/auth/login", json={"password": APP_PASSWORD},
                         headers={"Origin": f"http://127.0.0.1:{CORE_PORT}"})
     login.raise_for_status()
@@ -721,7 +733,7 @@ def enabled_scenario():
 
 def flags_off_scenario():
     set_scenario_stage("flags_off_login")
-    client = httpx.Client(base_url=f"http://127.0.0.1:{CORE_PORT}", timeout=30)
+    client = core_client()
     login = client.post("/api/auth/login", json={"password": APP_PASSWORD},
                         headers={"Origin": f"http://127.0.0.1:{CORE_PORT}"})
     login.raise_for_status()

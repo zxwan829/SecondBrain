@@ -16,6 +16,27 @@ import hermes_v0215_core_stub_ci as harness  # noqa: E402
 
 
 class HarnessDiagnosticTests(unittest.TestCase):
+    def test_default_core_origin_is_sent_on_login_session_and_run_posts(self):
+        origins = []
+
+        def respond(request):
+            origins.append((request.url.path, request.headers.get("origin")))
+            if request.url.path == "/api/chat/sessions":
+                return harness.httpx.Response(200, json={"session_id": "synthetic-session"})
+            if request.url.path.endswith("/runs"):
+                return harness.httpx.Response(200, json={"run_id": "synthetic-run"})
+            return harness.httpx.Response(200, json={"ok": True})
+
+        with harness.core_client(transport=harness.httpx.MockTransport(respond)) as client:
+            client.post("/api/auth/login", json={"password": "synthetic"}).raise_for_status()
+            session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+            client.post(f"/api/chat/sessions/{session}/runs", json={"input": "synthetic"})
+
+        self.assertEqual([path for path, _ in origins], [
+            "/api/auth/login", "/api/chat/sessions", "/api/chat/sessions/synthetic-session/runs"
+        ])
+        self.assertEqual([origin for _, origin in origins], [harness.CORE_ORIGIN] * 3)
+
     def test_failure_record_reports_stage_exception_and_http_status_only(self):
         request = harness.httpx.Request("GET", "https://private.example/token=secret-value")
         response = harness.httpx.Response(503, request=request)
