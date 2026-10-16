@@ -11,6 +11,8 @@ import http.server
 import json
 import os
 import pathlib
+import re
+import socket
 import shutil
 import subprocess
 import sys
@@ -133,17 +135,132 @@ class StubHandler(http.server.BaseHTTPRequestHandler):
             self.respond(500, json.dumps({"error": type(exc).__name__}).encode())
 
 
+def probe_http(url, *, headers=None):
+    try:
+        req = urllib.request.Request(url, headers=headers or {})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            return f"http_{response.status}"
+    except urllib.error.HTTPError as exc:
+        return f"http_{exc.code}"
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, ConnectionRefusedError):
+            return "connection_refused"
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return "connect_or_read_timeout"
+        return f"url_error_{type(reason).__name__}"
+    except (TimeoutError, socket.timeout):
+        return "connect_or_read_timeout"
+    except ConnectionRefusedError:
+        return "connection_refused"
+    except Exception as exc:
+        return f"probe_error_{type(exc).__name__}"
+
+
+class HealthProbeError(RuntimeError):
+    def __init__(self, summary):
+        super().__init__("hermes_health_probe_failed")
+        self.summary = summary
+
+
 def wait_http(url, *, headers=None, expected=200, timeout=90):
     deadline = time.monotonic() + timeout
+    counts = {}
+    last = "not_probed"
     while time.monotonic() < deadline:
+        last = probe_http(url, headers=headers)
+        counts[last] = counts.get(last, 0) + 1
+        if last == f"http_{expected}":
+            return {"probe": "host_published", "result": last, "counts": counts}
+        time.sleep(1)
+    if any(key.startswith("http_") for key in counts):
+        category = "http_status_not_ok"
+    elif counts.get("connection_refused") == sum(counts.values()):
+        category = "connection_refused_no_listener"
+    elif any("timeout" in key for key in counts):
+        category = "connection_or_response_timeout"
+    else:
+        category = "no_successful_http_response"
+    raise HealthProbeError({"probe": "host_published", "category": category,
+                            "last": last, "counts": counts, "timeout_seconds": timeout})
+
+
+def capture_hermes_diagnostics(health_summary):
+    """Emit bounded startup diagnostics without exposing config or credentials."""
+    state = run("docker", "inspect", CONTAINER, "--format", "{{json .State}}", check=False)
+    try:
+        raw_state = json.loads(state.stdout) if state.returncode == 0 else {}
+        state_json = {key: raw_state.get(key) for key in
+                      ("Status", "Running", "ExitCode", "OOMKilled", "StartedAt", "FinishedAt")}
+        state_json["error_present"] = bool(raw_state.get("Error"))
+        if state.returncode != 0:
+            state_json = {"inspect": "unavailable"}
+    except json.JSONDecodeError:
+        state_json = {"inspect": "invalid_json"}
+
+    local_probe_code = r'''import json, os, socket, urllib.error, urllib.request
+try:
+    req=urllib.request.Request("http://127.0.0.1:8642/health", headers={"Authorization":"Bearer "+os.environ.get("API_SERVER_KEY", "")})
+    with urllib.request.urlopen(req, timeout=2) as r: result="http_%d" % r.status
+except urllib.error.HTTPError as e: result="http_%d" % e.code
+except urllib.error.URLError as e:
+    reason=e.reason
+    result="connection_refused" if isinstance(reason, ConnectionRefusedError) else ("timeout" if isinstance(reason, (TimeoutError, socket.timeout)) else "url_error_"+type(reason).__name__)
+except (TimeoutError, socket.timeout): result="timeout"
+except ConnectionRefusedError: result="connection_refused"
+except Exception as e: result="probe_error_"+type(e).__name__
+print(result)'''
+    local = run("docker", "exec", CONTAINER, "/opt/hermes/.venv/bin/python3", "-c",
+                local_probe_code, check=False)
+    local_result = local.stdout.strip() if local.returncode == 0 else "exec_unavailable"
+    host_result = probe_http(f"http://127.0.0.1:{HERMES_PORT}/health",
+                             headers={"Authorization": f"Bearer {API_SERVER_KEY}"})
+
+    inspect_code = r'''import json, os, pathlib, subprocess
+paths=["/opt/hermes/.venv/bin/hermes", "/opt/data", "/opt/data/config.yaml", "/opt/data/gateway.log"]
+meta={}
+for value in paths:
+ p=pathlib.Path(value)
+ try:
+  s=p.stat(); meta[value]={"exists":True,"mode":oct(s.st_mode & 0o777),"uid":s.st_uid,"gid":s.st_gid,"is_dir":p.is_dir()}
+ except Exception as e: meta[value]={"exists":False,"error":type(e).__name__}
+procs=subprocess.run(["ps","-eo","pid=,stat=,comm="],text=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,check=False)
+processes=[line.strip() for line in procs.stdout.splitlines() if "hermes" in line.lower() or "gateway" in line.lower()][:12]
+port_hex="21C0"
+listeners=[]
+for name in ("/proc/net/tcp","/proc/net/tcp6"):
+ try:
+  for line in pathlib.Path(name).read_text().splitlines()[1:]:
+   cols=line.split()
+   if len(cols)>3 and cols[1].rsplit(":",1)[-1].upper()==port_hex and cols[3]=="0A": listeners.append(name)
+ except Exception: pass
+try:
+ lines=pathlib.Path("/opt/data/gateway.log").read_text(errors="replace").splitlines()
+ excerpt="\n".join(lines[-40:])[-6000:]
+except Exception as e: excerpt="<unavailable:"+type(e).__name__+">"
+print(json.dumps({"euid":os.geteuid(),"paths":meta,"processes":processes,"port_8642_listening":bool(listeners),"listener_tables":listeners,"gateway_log_excerpt":excerpt},sort_keys=True))'''
+    details = run("docker", "exec", CONTAINER, "/opt/hermes/.venv/bin/python3", "-c",
+                  inspect_code, check=False)
+    payload = {}
+    if details.returncode == 0:
         try:
-            req = urllib.request.Request(url, headers=headers or {})
-            with urllib.request.urlopen(req, timeout=3) as response:
-                if response.status == expected:
-                    return response.read()
-        except Exception:
-            time.sleep(1)
-    raise RuntimeError("http_health_timeout")
+            payload = json.loads(details.stdout)
+        except json.JSONDecodeError:
+            payload = {"container_diagnostics": "invalid_json"}
+    else:
+        payload = {"container_diagnostics": "exec_unavailable"}
+
+    excerpt = payload.pop("gateway_log_excerpt", "")
+    for secret in (API_KEY, API_SERVER_KEY, APP_PASSWORD):
+        excerpt = excerpt.replace(secret, "[REDACTED]")
+    excerpt = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [REDACTED]", excerpt)
+    excerpt = re.sub(r"(?i)(api[_-]?server[_-]?key|api[_-]?key|token|secret|password)(\s*[:=]\s*)[^\s,;]+", r"\1\2[REDACTED]", excerpt)
+    excerpt = re.sub(r"https?://\S+", "[URL_REDACTED]", excerpt)
+    excerpt = "\n".join(excerpt.splitlines()[-30:])[:4000]
+    payload["gateway_log_excerpt_redacted"] = excerpt
+    print(json.dumps({"event": "hermes_startup_diagnostic", "health": health_summary,
+                      "container_local_probe": local_result, "host_published_probe": host_result,
+                      "container_state": state_json, "details": payload}, sort_keys=True), flush=True)
 
 
 def assert_stub_only_egress(container):
@@ -202,6 +319,14 @@ mcp_servers: {{}}
             "/opt/hermes/.venv/bin/hermes gateway run --no-supervise >/opt/data/gateway.log 2>&1", timeout=10)
         headers = {"Authorization": f"Bearer {API_SERVER_KEY}"}
         wait_http(f"http://127.0.0.1:{HERMES_PORT}/health", headers=headers)
+    except HealthProbeError as exc:
+        try:
+            capture_hermes_diagnostics(exc.summary)
+        except Exception as diagnostic_error:
+            print(json.dumps({"event": "hermes_startup_diagnostic_failed",
+                              "error_type": type(diagnostic_error).__name__}), flush=True)
+        run("docker", "rm", "-f", CONTAINER, timeout=30, check=False)
+        raise
     except Exception:
         run("docker", "rm", "-f", CONTAINER, timeout=30, check=False)
         raise
