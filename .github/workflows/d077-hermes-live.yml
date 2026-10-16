@@ -1,10 +1,6 @@
 name: D077 Hermes synthetic live memory evaluation
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/d077-hermes-live.yml"
-      - "tests/d077/hermes_live_ci.py"
   workflow_dispatch:
 
 permissions:
@@ -16,12 +12,8 @@ concurrency:
 
 jobs:
   synthetic-live-evaluation:
-    # Same-repository testing only; never run with secrets on fork PRs.
-    if: >-
-      github.repository == 'zxwan829/SecondBrain' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event.pull_request.head.repo.full_name == github.repository &&
-        github.head_ref == 'test/d077-hermes-live'))
+    # Never expose the private test secret to pull-request triggered code.
+    if: github.repository == 'zxwan829/SecondBrain' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
