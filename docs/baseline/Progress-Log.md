@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D078 Issue #14 Hermes 工具审批开发
+
+- 按 Issue #14 最新用户决策与 ChatGPT 复审 #6217729826，从 GitHub 最新 `main` `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc` 建立隔离分支 `codex/d078-issue14-approval`；未改正式 `main` 工作区及未跟踪项 `typescript`。
+- 基于 Hermes v0.22.2 固定源码 Commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8` 复用官方 `pre_tool_call` / Run Approval API。插件对每次 `terminal`、`process_manage`、`execute_code` 调用发起独立审批；YOLO、审批策略关闭、策略检查异常或命令无法精确呈现时阻断。Core 仅接受 `once` / `deny`，将 SSE 审批事件绑定用户、Session、Run、request ID 与参数摘要，设置 240 秒审批期限并拒绝重放、过期、篡改及跨 Session 请求。浏览器提供同源登录后的批准一次/拒绝卡片；断线或无消费者不自动放行。
+- File Hook 对 Hermes Session、内部状态、配置、凭据、日志、待审区及内部记忆路径实施规范化与符号链接检查；搜索这些路径的祖先目录也阻断。保留普通业务文件读取/捕获写入，不创建全局读白名单；禁止通用 file 工具写 Skills，使用官方 `skills.write_approval` 待审队列和 CLI 审核。
+- 固定 Hermes 配置模板继续将 API terminal toolset 关闭；Skill 说明要求在审批链路实际运行验收前不启用。D077 Core JSONL 个人记忆、来源、召回与纠错代码未改。审批状态目前只保存在单进程 Core 内存，Core 重启即失效；不是 OS sandbox，用户批准的命令仍以 Hermes worker OS 权限执行。
+- 本地定向测试：Core BFF **14 passed**；Run Approval Registry **5 passed**；Hermes Hook **8 passed**；前端审批事件解析 **2 passed**；前端 TypeScript typecheck 通过。没有运行全套 Core 回归、GitHub Runner、真实 Hermes、模型、NAS 或生产数据测试。
+- **状态：DEV-TESTED / NOT DEPLOYED / NOT ACCEPTED。** PR 审核后仍需在隔离环境验证真实固定版 Hermes 的审批事件到 UI、一次性响应、超时/断线 fail-closed 与 Skills CLI 审核；之后另行审批生产安装、配置合并、重启及运行验收。此记录不授权恢复生产 terminal。
+
 # 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
 
 - PR [#6](https://github.com/zxwan829/SecondBrain/pull/6) 的最终 head `0efe462cd8dbe6067b25d1e51cf69e1309cc42f7` 经独立代码复审，纠错需规范化完整等价且唯一，失败/取消/停止的 Run 清理 pending 状态；跨平台 Core 测试不再使用 `/private/tmp` 垫片。

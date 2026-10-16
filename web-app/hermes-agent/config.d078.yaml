@@ -1,0 +1,19 @@
+# Merge into the active Hermes v0.22.2 profile only after the D078 package is installed.
+# This fragment intentionally keeps API terminal closed until Run/SSE approval has been
+# validated against the deployed, fixed Hermes build.
+plugins:
+  enabled:
+    - secondbrain-d078-guard
+
+skills:
+  write_approval: true
+
+approvals:
+  mode: manual
+  timeout: 240
+  cron_mode: deny
+  single_query_mode: deny
+  unattended_mode: deny
+
+platform_toolsets:
+  api_server: [file, skills, vision]

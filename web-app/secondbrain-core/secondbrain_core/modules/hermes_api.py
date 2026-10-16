@@ -262,3 +262,11 @@ class HermesAPI:
 
     async def stop_run(self, run_id):
         return await self.json_request("POST", f"/v1/runs/{self._safe_id(run_id)}/stop", body={})
+
+    async def resolve_run_approval(self, run_id, request_id, choice):
+        """Resolve one Hermes API Run approval; never expose session/always grants."""
+        if choice not in {"once", "deny"}:
+            raise HTTPException(status_code=400, detail="Only approve once or deny is supported")
+        return await self.json_request(
+            "POST", f"/v1/runs/{self._safe_id(run_id)}/approval",
+            body={"request_id": self._safe_id(request_id), "choice": choice})

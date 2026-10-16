@@ -402,3 +402,11 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 **对当前阶段的改动：** 明确同意为上述目标返工；暂停无关 UI/模块扩张，以隔离读核验和合成样本测试为下一步最高优先级。测试普通对话不提示搜索、跨会话继承、用户纠正、冲突与精确数值回源、低风险自动学习，记录准确性/误召回、时延、模型费用、安全界限；先出路线对比和最小返工任务，然后经单独授权代码施工与生产变更。原 V1 MUST 与生产缺口继续完整列于 `00-CURRENT.md`。
 
 **状态：** 决策/文档层已批准，**不代表**已测试、已编码、已升级、已部署或已验收。2026-10-16 本次仅更新 GitHub 正式文档，未授权修改 NAS、Hermes、密钥、生产模型/Scheduler、正式 Knowledge 或真实用户数据出站。下次从 `Personal-Intelligence-Product-Spec.md` Phase 0 与 `00-CURRENT.md` 新增 NEXT 执行。
+
+## D078 — 2026-10-16 Hermes Agent 工具审批（APPROVED）
+
+**决定：** 保留 Hermes 原生 Agent、terminal、file、Skills 与自主学习能力；通过服务端强制权限检查控制高风险工具。每次 terminal/process/code 调用都必须经用户对该 Run 请求的单次批准；浏览器仅提供“批准一次/拒绝”，拒绝、过期、断线、无法识别或重复审批不得执行。审批绑定 App 用户、Session、Run、Hermes request ID 和精确参数摘要。不得依赖提示词，也不得提供长期/会话级放行。
+
+File 继续按已授权的业务路径工作；Hermes Session、内部状态、敏感配置与凭据须在读取/搜索/路径解析时保护，覆盖祖先搜索与符号链接。Knowledge 保持只读、Capture 保持现有安全写入边界。Skills 自主提议继续可用，但启用原生 `skills.write_approval`；首阶段用 Hermes CLI 审核，通用 file 工具不得绕过待审队列。D077 Core JSONL 是唯一个人记忆权威存储，D077 学习、来源、召回与纠错行为不因 D078 改变。
+
+**实现与部署边界：** 优先复用 Hermes v0.22.2 固定版本 `pre_tool_call` Hook、Run Approval API 和 Skills 审核机制及现有 SecondBrain Core/BFF；不新增审批服务或数据库。API terminal toolset 在真实固定版端到端审批链路通过前必须保持关闭。批准执行的命令仍以 Hermes worker OS 权限运行，该机制不是 OS sandbox；Core 当前进程内审批状态需单进程运行，重启即失效。源码实现与合成测试不等于部署或生产验收，NAS 安装、配置变更、重启及启用 terminal 均须单独授权。
