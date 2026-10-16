@@ -145,8 +145,21 @@ class PersonalLearningTests(unittest.TestCase):
         no_id = FakeHermes(messages=[{
             "session_id": "synthetic-session", "role": "user", "text": text,
         }])
-        self.assertEqual(__import__("asyncio").run(pipeline.complete_run("run-no-source", no_id)), 0)
+        self.assertEqual(asyncio.run(pipeline.complete_run("run-no-source", no_id)), 0)
         self.assertEqual(self.store.active_view(), [])
+
+    def test_repeated_text_uses_newest_matching_message_as_source(self):
+        text = "I prefer concise summaries."
+        pipeline = PersonalLearningPipeline(self.store)
+        # Hermes order=latest contract: newest row comes first.
+        hermes = FakeHermes(messages=[
+            {"id": "newest-message", "session_id": "synthetic-session", "role": "user", "text": text},
+            {"id": "older-message", "session_id": "synthetic-session", "role": "user", "text": text},
+        ])
+        pipeline.register_run("run-repeated-text", "synthetic-session", text)
+        self.assertEqual(asyncio.run(pipeline.complete_run("run-repeated-text", hermes)), 1)
+        self.assertEqual(self.store.active_view()[0]["source_ref"],
+                         "synthetic-session:newest-message")
 
     def test_sensitive_or_instruction_like_text_is_not_learned(self):
         pipeline = PersonalLearningPipeline(self.store)

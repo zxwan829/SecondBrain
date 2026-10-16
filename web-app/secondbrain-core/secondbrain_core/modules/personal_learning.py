@@ -189,7 +189,10 @@ class PersonalLearningPipeline:
         session_id, submitted_text = pending
         page = await hermes.list_messages(session_id, limit=100, order="latest")
         rows = page.get("messages", [])
-        source = next((row for row in reversed(rows)
+        # Hermes order=latest returns newest messages first; when identical user
+        # text appears more than once, bind the learned candidate to this run's
+        # newest matching persisted message.
+        source = next((row for row in rows
                        if row.get("role") == "user" and row.get("text") == submitted_text
                        and row.get("session_id", session_id) == session_id and row.get("id")), None)
         if source is None:

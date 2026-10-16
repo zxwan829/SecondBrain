@@ -20,6 +20,15 @@
 - 按 PR 后续审核移除测试对 macOS `/private/tmp` 的硬编码，使用平台默认临时目录并规范化路径；模块测试 **8 passed**，全套仍为 **137 passed、2 subtests passed**。本机验证通过；尚未宣称 Linux CI 已运行。
 - 本轮未合并、部署、调用付费模型或访问 NAS。修正提交与 PR #4 head、审核状态以当前 GitHub 为准。
 
+# 2026-10-16 — D077 Phase 1-B and Linux Core test portability (Issue #5)
+
+- 从 GitHub 最新 `main` `8c45f281d0d3e7a52c2cb62934a84392524dbe40` 的独立临时 Clone 开始；未修改正式 Clone 或未跟踪项 `typescript`。同一集成分支包含 Phase 1-B 和跨平台测试路径修复。
+- Phase 1-B 增加默认关闭的 `SB_PERSONAL_LEARNING_ENABLED`。启用还要求 `SB_PERSONAL_MEMORY_ENABLED=true` 和已有绝对路径 Memory root；不启用时不扫描对话或注入记忆。Chat 前仅作小规模确定性相关性筛选，复用 Memory Core active/redaction 视图；Chat input 原样发送，相关记忆走现有 Hermes API `instructions` 字段。
+- Run 后仅在 `run.completed` SSE 或状态为 completed 时读取同 Session 持久消息；必须匹配原始用户文本及有 ID 的消息来源后才提炼和写入。候选提炼器可注入，当前默认实现只抽取有限的明确偏好表达，过滤已知敏感/指令样式文本；无付费模型调用。重复消息源绑定 newest-order 消息有回归覆盖。
+- 按固定 Hermes v0.21.5 upstream commit `749220ef0007f8d87bd1531f1c24b0fe93816385` 的 API Server 源码核对：`/v1/runs` 支持 `instructions` 并将其传给 Agent 的 ephemeral system prompt。Hermes 真实 v0.21.5 运行是否实际遵循注入、模型是否自主学习，以及进程重启/多 Worker 下 pending Run 状态行为尚未验证；本地 Mock 仅证明 SecondBrain 适配器传递该字段与 Core 触发逻辑。
+- Linux portability 子项将五处 Core 测试夹具改用平台临时目录，移除 Linux workflow 对 `/private/tmp` 的创建垫片，并新增静态防回归检查。GitHub workflow 仍为手动触发、Ubuntu 24.04、无 secrets。
+- 本地完整 Core 测试、Linux CI 结果及本次 commit/PR 状态以本次提交收尾记录为准。未升级 Hermes、部署 NAS、处理真实个人数据或调用付费模型；未合并 PR。
+
 # 2026-09-28
 
 - Hermes Docker 正式环境稳定，固定 IP 172.18.0.2。
