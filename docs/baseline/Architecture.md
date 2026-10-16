@@ -5,7 +5,7 @@ type: architecture
 ---
 # SecondBrain V1/V2 Architecture
 
-本文件记录已批准的架构与信任边界；新智能伙伴目标见 `Personal-Intelligence-Product-Spec.md`（D077）。其中已批准的是产品能力和现有服务/数据边界；Memory Provider、具体目录/索引与主动规划内部实现仍属待验证技术选型，不能当成现网实现。运行版本、部署阶段、测试结果和未完成施工不在此维护，分别见 `00-CURRENT.md`、`Environment-Baseline.md` 与 `Progress-Log.md`。
+本文件记录已批准的架构与信任边界；智能伙伴产品目标见 `Decision-Log.md` D077；当前业务范围与验收见 `00-CURRENT.md`。其中已批准的是产品能力和现有服务/数据边界；Memory Provider、具体目录/索引与主动规划内部实现仍属待验证技术选型，不能当成现网实现。运行版本、部署阶段、测试结果和未完成施工不在此维护，分别见 `00-CURRENT.md`、`Environment-Baseline.md` 与 `Progress-Log.md`。
 
 ## 1. 稳定架构边界
 
@@ -37,6 +37,16 @@ type: architecture
 - Knowledge Promote 与普通业务写入分离。进入正式 Knowledge 必须人工审核；Memo、Calendar、新闻订阅等未来业务按各自授权的 Core API 执行 CRUD，不统一进入 Promote。
 - Hermes 负责对话、Agent 执行、原生 Session/Skills 与经验证的学习/回忆能力；SecondBrain Core 负责业务状态、Capture 生命周期、审批记录、Organizer 配置/游标/作业、受控 Review 草稿及目标中的长期个人记忆业务接口。不要重新实现 Hermes Agent Runtime。
 - **个人记忆与知识分权：** SecondBrain 持久、可导出和可纠错的个人记忆可以自动更新，但只能使用收窄的 Core 记忆操作边界；Hermes 自有记忆不是正式知识或长期个人资料的唯一 SoT。是否经 Hermes 原生 Provider / 钩子或 BFF 适配，待隔离实验比较。
+
+### D077 智能伙伴的能力分层（批准方向，不等于全部上线）
+
+用户入口为 Web App/Core，微信经验证后加入同一业务入口。自然语言意图区分普通 Chat、Journal、Task 和 Capture：明确“记一下/建待办/收录”才能触发对应语义写入；普通闲聊不自动形成 Journal/Raw/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。
+
+**双闭环**：Personal Learning Loop 在授权范围由 Core 建立带来源、时间、推断标记、版本、纠错/撤销的个人记忆；Knowledge Integrity Loop 仍为 Raw → Review → 用户明确批准 → Core Promote → 正式 Knowledge，不把外部材料摘要和模型推断当成用户事实。
+
+**四层逻辑记忆（不是四套数据库）：** L1 稳定身份/偏好/长期目标；L2 项目、关系、当前任务与近期话题；L3 关键事件、日记、决策、纠正和经验；L4 原始证据、Raw/Review、Journal/Projects/正式 Knowledge。相关上下文按需装载，精确日期、金额、版本和冲突必须回源核验，不将推断强写成已证实事实。当前持久个人记忆权威是 Core JSONL；Hermes 的原生 Session/Skills 与缓存不可成为另一个业务 SoT。
+
+**建议与自主边界：** 主动建议应与目标、项目、待办、事件关联，携带依据并支持去重、节流、关闭；建议不等于执行。Skills 可以形成候选经验，但重要修改须经原生待审核流程；文件/命令/出站行为遵守 D078 强制权限。Journal 只新增/按日追加原文，提醒的任务落盘与通知送达分开验收。
 
 ## 3. 核心数据流
 
@@ -98,4 +108,4 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 - App 到 Hermes：Compose 内部服务发现及受认证 API；不发布 Hermes API 端口到宿主或公网。
 - App 到业务文件：通过显式根路径和模块服务访问 Inbox、Review、Knowledge 等数据区；Private 不在允许根路径内。
 - 新业务优先扩展 Core 模块与 API；只有确认超出模块化单体能力后才重新评估部署边界。不得为了未来设想预建空模块、复杂插件机制或数据库。
-- 用户批准的最高目标、目标效果和阶段路线见 `Personal-Intelligence-Product-Spec.md`；原 V1 业务细则仍以 `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
+- 用户批准的最高产品方向见 `Decision-Log.md` D077，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
