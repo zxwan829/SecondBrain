@@ -6,11 +6,18 @@
 
 - Phase 0-B2 记录的 GitHub Actions 证据为 **15/15 Runs**。该数字表示对应 Run 执行成功，不等同于学习效果通过；跨 Session 继承、纠错后失效/更新及主动召回仍记录有缺陷，故不能宣称自动学习闭环验收通过。供应商 Token/费用估值不等同账户最终账单。本轮没有部署 NAS、升级生产 Hermes 或处理真实个人数据。
 - 按 GitHub Issue #3 / D077 Phase 1-A，在独立临时 Clone 从当时 GitHub 最新 `main` 开始（基线 `7a308f846ecfa192a135d165f8b41791140a1f6e`）。正式工作目录的 `.git/FETCH_HEAD` 写入仍受限，因此未触碰原目录或未跟踪项 `typescript`。
-- 新增标准库优先、append-only JSONL Personal Memory Store，数据根由 `SB_PERSONAL_MEMORY_ROOT` 显式注入，必须预先存在、Core UID 所有且权限私有；`SB_PERSONAL_MEMORY_ENABLED` 默认 `false`。关闭时不创建数据根、不扫描会话、不启动任务。每个事件保留来源、类别、事实类型、时间、修订和状态；纠正追加新修订，撤销/失效保留历史；幂等键和源引用去重；并发写入使用文件锁与 `fsync`。日志异常或半写 fail-closed，不自动截断或重写历史。
+- 新增标准库优先、append-only JSONL Personal Memory Store，数据根由 `SB_PERSONAL_MEMORY_ROOT` 显式注入，必须预先存在、Core UID 所有且权限私有；`SB_PERSONAL_MEMORY_ENABLED` 默认 `false`。关闭时不创建数据根、不扫描会话、不启动任务。每个事件保留来源、类别、事实类型、时间、修订和状态；纠正追加新修订，撤销/失效保留历史；候选级幂等去重；并发写入使用文件锁与 `fsync`。日志异常或半写 fail-closed，不自动截断或重写历史。
 - 增加受 AppSessionAuth 保护的 Core API：创建、少量 active recall 候选、按 ID 查修订历史、纠正、撤销、失效。推断不进入 active recall；精确事实回传来源指针并标记 `source_required`，不声称已读取/核验原件。此切片不接 Hermes、聊天自动提炼、外部 Provider、RAG、Journal/Task、Knowledge Promote 或 Private。
-- 合成测试使用 `/private/tmp` 临时目录和独立 Python 3.12 venv，无生产挂载、NAS、模型或真实个人数据。`tests/test_personal_memory.py` 覆盖重启恢复、更新历史、撤销、精确来源、推断排除、幂等、重复来源、并发追加、损坏日志 fail-closed、符号链接拒绝及鉴权；`test_web_app_bff.py` 新增真实 Core app 工厂上的默认关闭/注入根 API 测试。初轮测试发现并修正两处测试夹具问题后，针对性测试 **18 passed**。兼容 FastAPI/Pydantic v1/v2。
+- 合成测试使用 `/private/tmp` 临时目录和独立 Python 3.12 venv，无生产挂载、NAS、模型或真实个人数据。`tests/test_personal_memory.py` 覆盖重启恢复、更新历史、撤销、精确来源、推断排除、候选幂等、同源多事实、并发追加、损坏日志 fail-closed、符号链接拒绝及鉴权；`test_web_app_bff.py` 新增真实 Core app 工厂上的默认关闭/注入根 API 测试。初轮测试发现并修正两处测试夹具问题后，针对性测试 **18 passed**。兼容 FastAPI/Pydantic v1/v2。
 - 验证收尾：Core 全套回归 **136 passed、2 subtests passed**；`compileall`、`git diff --check` 通过。仅有 Starlette `TestClient` 关于 `httpx` 的弃用提示，不影响结果。
 - **状态：** Commit `007f8ba` 已推送；PR [#4](https://github.com/zxwan829/SecondBrain/pull/4) 已打开且当前 GitHub 报告可合并。未部署、未进行真实数据验证或用户验收。Phase 1-B 才处理聊天候选提炼与 pre-turn 召回；真实会话出站和部署另行批准。
+
+# 2026-10-16 — D077 Phase 1-A PR #4 review fixes
+
+- 按 PR #4 最新审核修正同一来源消息的多事实入库：每个候选使用显式幂等键或由来源、正文、类别和事实类型导出的稳定键；不同候选可以并存，同一候选重放保持 exactly-once。
+- `fact` 类记忆一律要求来源核验，即使请求省略 `exact`。模型使用的 active recall 对 `source_required` 项仅提供中性核验提示、来源指针和状态，不提供未核验原文；认证 history API 保留原文供审计/纠正。缺失来源原件时仍不可把精确主张当作已验证事实。
+- 新增同源双偏好与幂等重放、遗漏 `exact` 且源文件缺失时 recall 脱敏/API 响应与历史原文保留回归。Core 全套 **137 passed、2 subtests passed**；`compileall`、`git diff --check` 通过。仅有 Starlette `TestClient`/httpx 弃用提示。
+- 本轮未合并、部署、调用付费模型或访问 NAS。修正提交与 PR #4 head、审核状态以当前 GitHub 为准。
 
 # 2026-09-28
 

@@ -8,6 +8,7 @@ or creates a production data location.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -150,10 +151,6 @@ class PersonalMemoryStore:
                            for name in ("operation", "source_ref", "content", "category", "fact_kind")):
                         raise ValueError("Idempotency key was already used for a different memory")
                     return prior
-                if event.get("operation") == "create" and any(
-                        row.get("operation") == "create" and row.get("source_ref") == event.get("source_ref")
-                        for row in events):
-                    raise ValueError("Source reference already created a memory")
                 if event.get("operation") in {"correct", "revoked", "expired"}:
                     current = next((row for row in reversed(events)
                                     if row.get("memory_id") == event.get("memory_id")), None)
@@ -241,14 +238,20 @@ class PersonalMemoryStore:
                     raise ValueError
             except (ValueError, AttributeError) as exc:
                 raise ValueError("Expiry must be an ISO-8601 timestamp with timezone") from exc
+        # A source message may yield multiple independent memory candidates. Derive
+        # a stable key from each candidate's identity so replay is exactly-once per
+        # fact, without treating the whole source message as a single memory.
+        candidate_key = idempotency_key or "candidate-" + hashlib.sha256(_json_bytes({
+            "source_type": source_type, "source_ref": source_ref.strip(), "content": content,
+            "category": category, "fact_kind": fact_kind,
+        })).hexdigest()
         event = {"schema": 1, "event_id": str(uuid.uuid4()), "memory_id": str(uuid.uuid4()),
                  "revision": 1, "operation": "create", "content": content, "category": category,
                  "fact_kind": fact_kind, "source_type": source_type, "source_ref": source_ref.strip(),
-                 "exact": bool(exact), "verification_status": "source_required" if exact else "not_required",
+                 "exact": bool(exact),
+                 "verification_status": "source_required" if exact or category == "fact" else "not_required",
                  "recorded_at": _now(), "status": status, "expires_at": expires_at,
-                 "idempotency_key": idempotency_key}
-        # A source message may create at most one memory. Exact replay is handled by the key above;
-        # a second key for an already-used source is rejected to avoid silent duplicate learning.
+                 "idempotency_key": candidate_key}
         return self._append(event)
 
     def _current(self, memory_id: str) -> dict[str, Any]:
@@ -327,7 +330,15 @@ class PersonalMemoryStore:
             text = row["content"].get("text", "")
             if needle and needle not in text.casefold() and needle not in row["category"].casefold():
                 continue
-            result.append({**row, "source": {"type": row["source_type"], "ref": row["source_ref"]}})
+            recalled = dict(row)
+            if row.get("verification_status") == "source_required":
+                # This is the model-facing context view. Keep the provenance and
+                # verification requirement, but never pass the unsupported claim
+                # itself as usable truth. The authenticated history endpoint keeps
+                # the original text for audit and correction.
+                recalled["content"] = {"text": "Source verification required before using this fact."}
+                recalled["recall_status"] = "source_required"
+            result.append({**recalled, "source": {"type": row["source_type"], "ref": row["source_ref"]}})
         result.sort(key=lambda row: (row["recorded_at"], row["memory_id"]), reverse=True)
         return result[:limit]
 
