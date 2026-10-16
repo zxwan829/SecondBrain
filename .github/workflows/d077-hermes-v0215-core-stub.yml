@@ -45,6 +45,11 @@ jobs:
         working-directory: web-app/secondbrain-core
         run: python -m pip install -e .
 
+      - name: Build ephemeral Core peer image
+        env:
+          CORE_IMAGE: d077-v0215-core:${{ github.run_id }}-${{ github.run_attempt }}
+        run: docker build --tag "$CORE_IMAGE" web-app/secondbrain-core
+
       - name: Run real Hermes API + Core BFF against deterministic local stub
         env:
           GITHUB_RUN_ID: ${{ github.run_id }}
@@ -56,9 +61,11 @@ jobs:
         env:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          CORE_IMAGE: d077-v0215-core:${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          cid="$(docker ps -aq --filter 'name=d077-v0215-hermes-' --filter 'label=d077.issue=7' --filter "label=d077.run=$RUN_ID-$RUN_ATTEMPT")"
-          if [[ -n "$cid" ]]; then docker rm -f "$cid"; fi
-          nid="$(docker network ls -q --filter 'name=d077-v0215-core-' --filter 'label=d077.issue=7' --filter "label=d077.run=$RUN_ID-$RUN_ATTEMPT")"
-          if [[ -n "$nid" ]]; then docker network rm "$nid"; fi
+          mapfile -t containers < <(docker ps -aq --filter 'label=d077.issue=7' --filter "label=d077.run=$RUN_ID-$RUN_ATTEMPT")
+          if ((${#containers[@]})); then docker rm -f "${containers[@]}"; fi
+          mapfile -t networks < <(docker network ls -q --filter 'label=d077.issue=7' --filter "label=d077.run=$RUN_ID-$RUN_ATTEMPT")
+          if ((${#networks[@]})); then docker network rm "${networks[@]}"; fi
+          if docker image inspect "$CORE_IMAGE" >/dev/null 2>&1; then docker image rm "$CORE_IMAGE"; fi
