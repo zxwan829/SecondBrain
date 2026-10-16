@@ -2,14 +2,47 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
-# 2026-10-16 — D078 Issue #14 Hermes 工具审批开发
+## 2026-10-16 — D078 PR #16 固定 Hermes Hook 与审批对象核验（本地合成，未部署）
 
-- 按 Issue #14 最新用户决策与 ChatGPT 复审 #6217729826，从 GitHub 最新 `main` `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc` 建立隔离分支 `codex/d078-issue14-approval`；未改正式 `main` 工作区及未跟踪项 `typescript`。
-- 基于 Hermes v0.22.2 固定源码 Commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8` 复用官方 `pre_tool_call` / Run Approval API。插件对每次 `terminal`、`process_manage`、`execute_code` 调用发起独立审批；YOLO、审批策略关闭、策略检查异常或命令无法精确呈现时阻断。Core 仅接受 `once` / `deny`，将 SSE 审批事件绑定用户、Session、Run、request ID 与参数摘要，设置 240 秒审批期限并拒绝重放、过期、篡改及跨 Session 请求。浏览器提供同源登录后的批准一次/拒绝卡片；断线或无消费者不自动放行。
-- File Hook 对 Hermes Session、内部状态、配置、凭据、日志、待审区及内部记忆路径实施规范化与符号链接检查；搜索这些路径的祖先目录也阻断。保留普通业务文件读取/捕获写入，不创建全局读白名单；禁止通用 file 工具写 Skills，使用官方 `skills.write_approval` 待审队列和 CLI 审核。
-- 固定 Hermes 配置模板继续将 API terminal toolset 关闭；Skill 说明要求在审批链路实际运行验收前不启用。D077 Core JSONL 个人记忆、来源、召回与纠错代码未改。审批状态目前只保存在单进程 Core 内存，Core 重启即失效；不是 OS sandbox，用户批准的命令仍以 Hermes worker OS 权限执行。
-- 本地定向测试：Core BFF **14 passed**；Run Approval Registry **5 passed**；Hermes Hook **9 passed**；前端审批事件解析 **2 passed**；前端 TypeScript typecheck、Vite build 通过。没有运行全套 Core 回归、GitHub Runner、真实 Hermes、模型、NAS 或生产数据测试。
-- **状态：DEV-TESTED / NOT DEPLOYED / NOT ACCEPTED。** PR 审核后仍需在隔离环境验证真实固定版 Hermes 的审批事件到 UI、一次性响应、超时/断线 fail-closed 与 Skills CLI 审核；之后另行审批生产安装、配置合并、重启及运行验收。此记录不授权恢复生产 terminal。
+- 按 ChatGPT 复审评论 [#6218417694](https://github.com/zxwan829/SecondBrain/pull/16#issuecomment-6218417694)，核对固定 Hermes v0.22.2 upstream commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8`。源码注册的内置 file 工具为 `read_file`、`write_file`、`patch`、`search_files`，4 个 schema 的路径属性均为 `path`。`patch` 的内容式多文件模式没有顶层 path，D078 guard 因无可审查路径而 fail-closed。`process_manage` 属 terminal toolset，参数为 action/session_id/data/timeout/offset/limit；`execute_code` 属 code_execution toolset，公开参数为 code/reset。当前 NAS API toolset 保持 `file,skills,vision`，本轮未接触 NAS。
+- 使用该固定源码的 Hermes `PluginManager`、临时 `$HERMES_HOME` 与合成 profile 真实加载仓库 D078 插件；通过 Hermes 实际 lifecycle `pre_tool_call` dispatch 验证 terminal `approval.request` 事件、拒绝时阻断以及 once 允许到 tool-dispatch 边界；没有调用 agent、provider 或真实 terminal handler。事件使用 v0.22.2 API Server `_approval_request_event` 构造。测试将仅 `TERMINAL_ENV=local` 配置值替身为 local；没有验证真实 terminal 进程启动或 OS 隔离。Sensitive Session 路径读及 Skills 路径 generic `write_file` 均由已加载插件实际拒绝。
+- 源码显示 Hermes terminal 执行时会经 `_resolve_command_cwd` 选择 Session cwd、后端默认 cwd或映射路径。为让审批内容明确对应实际执行上下文，D078 现要求 terminal 提供 canonical absolute `workdir`、仅接受 local backend 和固定 v0.22.2 合同中的参数；其他 backend/非 canonical cwd/额外参数 fail-closed。`process_manage` 与 `execute_code` 的动作/目标/代码参数也按固定 schema 检查。为防其他 `pre_tool_call` Hook 在审批后改写目标，发现任何其他执行 Hook 时 fail-closed。
+- Core 校验固定工具允许参数及必需 workdir，审批 digest 继续覆盖完整 canonical `{tool, arguments}`；UI 校验显示命令与 terminal/code 参数一致，显式显示 workdir，并公开全量参数。UI 警示改为准确说明获批程序仍可自行启动程序或访问文件；这是审批门禁，不是 OS 沙箱。
+- 针对性测试：Guard/Core approval registry/BFF **34 passed**；前端审批卡 **3 passed**；前端 TypeScript typecheck 通过；`git diff --check` 通过。实际 Hermes 源码 Hook smoke 为 synthetic deny/once、敏感 Session read deny 和 Skills generic write deny 均通过，无工具执行与模型请求。
+- 当前证据不证明实际 API Run 触发了生产容器里的插件，也不证明命令的所有程序副作用可静态审计；任意用户批准的 executable 仍以 Hermes worker OS 权限执行。Hermes 上游 `tool_executor._pre_tool_block` 在 plugin hook dispatch 异常时会 fail-open，所以生产 API terminal 必须保持关闭，直到部署环境验证插件已加载且无其他执行 Hook；不能把此次源代码 smoke 当作生产强制策略验收。Session file 拒绝也只有在插件实际部署加载后生效。
+- 文档冲突按 PR #15 分支 `docs/d077-governance-stage-20261016` 处理：本 PR 继承其基于 PR #13 的较新 `00-CURRENT`、Decision-Log D078、Progress 及 Environment-Baseline；保留 PR #13 的真实 D077 NAS 部署记录和 PR #15 的 D078 决策，不复制旧 main 快照或改写 Environment 基线。PR #16 是堆叠 PR，需先审核/处理 PR #13 与 #15，再合并本实现。没有修改 NAS、生产配置、Compose、凭据或生产模型设置；没有 Runner、合并或部署。
+
+## 2026-10-16 — Issue #14 工具权限核验与 D078 业务决策（部分加固已部署，方案实施进行中）
+
+- 按 [Issue #14 报告](https://github.com/zxwan829/SecondBrain/issues/14#issuecomment-6216831918)，Hermes v0.22.2 API Server 先前启用 `file,skills,terminal,vision`，且 terminal 为 local/unsandboxed；Codex 将 API toolsets 收窄到 `file,skills,vision` 并仅重启 Hermes。配置解析器确认 terminal 已移出 API Run；Hermes API health 200、Dashboard 302、Core healthy，D077 Memory/Learning flags 未变。该项为**已部署的临时保护**，并非已完成受监督执行方案；历史配置备份与哈希见 Issue #14。
+- 同轮核验发现 API `file` 尚缺通用读取授权根限制：worker 可遍历 Session 目录，合成 Session 路径未被默认 read denylist 拒绝；凭据字段输出脱敏并不等于访问拒绝。本轮没有读取真实 Session 或 Secret，没有模型运行。真实模型浏览器体验仍等待安全边界确认。
+- [Issue #14 源码结论](https://github.com/zxwan829/SecondBrain/issues/14#issuecomment-6217044891)：Hermes 原生 Skills `skills.write_approval` 提供暂存并由 CLI 审核的门槛；普通 file 没有通用逐次读取审批，Run approval API 不能自动变成 file/terminal gate；Core 尚未连接浏览器审批桥。Skills 开关及强制不可绕过的验证尚未部署。
+- **用户最新批准 D078 原则**（[Issue #14 决策记录](https://github.com/zxwan829/SecondBrain/issues/14#issuecomment-6217209671)）：保留 Hermes 原生自主能力，危险 terminal 改为按需申请/批准，敏感 Session/config/file 读取强制受控，重要 Skills 写入审核；普通低风险知识读取/Capture 自动执行，Core JSONL 唯一个人记忆 SoT。先前“永久关闭 file/terminal”建议已被覆盖。Codex 正在研究最小可实施技术方案，**不得提前写成已实施/测试/部署**。
+- 文档此次由 ChatGPT 独立补齐状态和正式决策，没有修改 NAS、Compose、代码、运行工具配置、模型凭据或真实数据；PR #13 仍独立待审，文档更新基于其最新 `788b61a` 快照另建分支。
+
+
+# 2026-10-16 — D077 Issue #12 Hermes v0.22.2 单次部署尝试与回滚
+
+> **历史记录，已被后续成功部署取代。** 本段只保留首次启动观察不足后回滚的事实；后续部署、运行和合成闭环证据见下方 resumed deployment 记录及 Issue #14 更新。
+
+- 用户授权评论 [#6215289230](https://github.com/zxwan829/SecondBrain/issues/12#issuecomment-6215289230)；本次按约 45 分钟边界执行一次。GitHub `main` 与远端 ref 均为 `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc`；PR #8/#9/#10 均 OPEN 未合并，未使用其分支代码。
+- 目标 Hermes 镜像身份核验为 linux/amd64，Digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05`、Image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41`。Core 候选 `secondbrain-app:d077-b6e30f3`（Image ID `sha256:7cce77d702cb51f0c318c91c427d95cff887a99caebb12b9cad287b388b1049c`）已存在，但未部署。
+- 在受限快照后，只启动了一次 v0.22.2 Hermes。候选 Compose 通过 `docker compose config -q`；保留默认 dispatcher，显式设置 `API_SERVER_ENABLED=true`、保留 `HERMES_DASHBOARD=true`，并为 Core 候选准备了默认关闭状态下的独立 memory root/flags。s6/PID1 与容器启动流程可见，日志显示 schema 46→50 migration、gateway/dashboard s6 service started；检查时 8642 和 9119 未监听，未发现明确 fatal error。API 启用变量有效，Hermes profile `.env` 未覆盖该变量。
+- **结论限定：** v0.22.2 本次运行期间未取得可验收的 API/Dashboard 监听，启动根因 `UNKNOWN`；观察结束时容器已回滚。回滚后的旧 v0.21.5 约一分钟后才开始监听，因此“短时未监听”不足以证明新版最终无法启动。受单次部署授权和止损边界限制，没有继续等待、改配置重启或再试一次。未启动 Core 候选，没有创建 Session/Run/SSE 或记忆数据；记忆四步闭环为 `NOT RUN`。未调用模型、Runner 或真实个人数据。
+- 回滚完成后正式 Compose SHA-256 恢复为 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`（属主 1026:100、0640）。当前 Hermes v0.21.5 Image ID `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`，API 8642 / Dashboard 9119 容器内监听、API health 200；App 原镜像 `secondbrain-app:d076-organizer-b34319a` health 200，App→Hermes health 200。Personal Memory/Learning flags absent，`personal-memory` 目录不存在；Private 未挂载、Knowledge RO、Promote=false。其他 NAS 服务与家庭网络未触碰。
+- 回滚资产在 `/volume1/docker/secondbrain/rollback/d077-issue12-v0222-predeploy-20261016T1225Z/`：原 Compose SHA `93fd215b…785398d`；Hermes 预部署状态归档 SHA `33bea50efaf70c1541ad2ed0cac6263e2d174889b18e81fd386100f2c3aff845`；SHA256SUMS 中 8 个文件全部通过。尝试后的 Hermes 数据目录另存为 `hermes-data.after-attempt/`，未删除。受限目录约 2.0 GiB；当时可用空间约 861 GiB。脱敏启动日志、候选 Compose 和运行摘要均在该目录，权限为 0600/父目录 0700。
+- 当前 D077 仍为 `NOT DEPLOYED / NOT VERIFIED`；本 Issue 单次授权已消费。执行摘要已回复 [Issue #12](https://github.com/zxwan829/SecondBrain/issues/12#issuecomment-6215598399)，等待 ChatGPT 审核。任何后续 v0.22.2 启动/记忆闭环尝试均需新的有界授权，并应先为启动观察时长设置明确门槛。
+
+# 2026-10-16 — D077 Issue #12 resumed deployment and synthetic memory loop
+
+- 用户新授权评论 [#6215695514](https://github.com/zxwan829/SecondBrain/issues/12#issuecomment-6215695514) 覆盖 SecondBrain NAS Hermes v0.22.2 启动诊断、必要最小配置调整/重启、D077 Core 部署与合成记忆闭环；禁止付费模型、真实数据、Private 和无关服务/网络影响。项目规则、当前基线、Agent-Rules、D077 Product Spec 及 Issue #12 已核对。原主 Clone 的 `main`/未跟踪 `typescript` 未触碰；Core 镜像使用当时 GitHub `main`/远端 HEAD `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc`，未用或合并 PR #8/#9/#10。
+- Hermes 目标是 v0.22.2 linux/amd64 Digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05`，Image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41`。原 Hermes 配置迁移到 schema 50 后以 SHA-256 `cdee7b148aa314536e24986f8f0dd57ea5999350e46c6b3bfd65c25a37eecac9` 备份；只读数据/配置内容未输出。Core image `secondbrain-app:d077-b6e30f3` / Image ID `sha256:7cce77d702cb51f0c318c91c427d95cff887a99caebb12b9cad287b388b1049c`，源代码 commit `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc`。
+- 正式 Compose 从 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d` 更新到 `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`（属主/权限 `1026:100 / 0640`）。只切 Hermes 固定镜像、显式启用 API Server、App Core 镜像与 Memory/Learning flags；Hermes 原 dispatcher、Dashboard、端口映射、网络和卷权限保持既有边界。Compose `config -q` 通过。
+- Hermes 首次启动时 s6/gateway/dashboard 均启动，8642 API 与 9119 Dashboard 在约 2 分钟后可连接；两端 health/listener 实测通过，未应用代码修复。旧尝试的根因仍为 `UNKNOWN`，本次证明在更长观察后服务能够就绪。为禁止外部模型调用，测试期间将 Hermes profile 临时指向 Core 容器内地址的确定性 Stub（已有 `secondbrain_default` 网络，无新容器/网络/宿主端口），并关闭 Hermes 内置记忆选项。测试结束后原 config 以同一 SHA 原样恢复，Hermes 最终重启时间为 `2026-10-16T12:55:22.167231091Z`，随后执行 16 次、每分钟一次的稳定性观察（2026-10-16 12:57:09–13:12:14 UTC，15 分 5 秒）：16/16 均为 running、restart count 0、API HTTP 200、Dashboard TCP 可连接；完整脱敏结果保存在受限快照目录。
+- Core `SB_PERSONAL_MEMORY_ENABLED=true`、`SB_PERSONAL_LEARNING_ENABLED=true`；独立路径 `/var/lib/secondbrain-core/personal-memory` 对应宿主 Core state 子目录，`1026:100 / 0700`。以虚构偏好执行 4 个新 Session、4 个 Run 和 4 条完整 SSE：自动保存及 `user_message` 来源关联、跨 Session 旧偏好上下文、用户纠正的 JSONL 修订、纠正后新偏好注入且旧偏好不再注入均通过。Core Active API 在纠正后返回 1 条 active item、source type `user_message`，历史 2 个 revisions。
+- 本地 Stub 收到 15 次请求，全部发往 `http://secondbrain-app:19001/v1`；其中 4 个流式主 Run 请求里，跨 Session/纠正前两次含旧偏好上下文，纠正后请求只含新偏好。Stub 未保存 prompt/body，只保留布尔观测；无付费 API、真实模型或真实个人数据请求。四条流式请求均含 Hermes tool definitions，但 Stub 返回普通完成消息、未发 tool call；故本次没有工具执行证据，也不能据此评价真实模型行为。Gateway 另有 API bind `0.0.0.0` / local unsandboxed terminal 的安全提醒；8642 未发布宿主端口，现有 Compose 网络只附加 App 和 Hermes，挂载/capabilities 未放宽。这是后续需审视的运行风险，不构成本次工具行为验收。
+- 清理：4 个合成 Session 定向删除并通过列表确认缺失；合成记忆 JSONL 保存到 root-only 测试证据后，从活动 memory 根目录删除 JSONL/lock，保留启用所需的空 `0700` 目录；Stub 进程及 App `/tmp` 脚本/观测文件已停止并移除。没有增加 Docker 容器、网络、发布端口；Private 未挂载、Knowledge RO、Promote OFF，其他 NAS 容器/家庭网络未变。
+- 快照 `/volume1/docker/secondbrain/rollback/d077-issue12-authorized-20261016T124238Z/` 为 `0700 root:root`，文件 `0600 root:root`；包括部署前 Compose、Hermes 数据快照、迁移后原 config、候选 Compose、脱敏日志、Stub 布尔证据、合成 JSONL、测试摘要。旧 Issue #12 回滚目录未改动。未触发 Runner、未部署 PR #8/#9/#10/#13、未合并或发起真实模型请求。D077 NAS 部署与合成闭环为 **PASS**；真实模型质量及用户验收仍 **NOT TESTED / PENDING**。
 
 # 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
 
@@ -905,3 +938,12 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 设置页收拢为模型配置、自动整理、预算与运行三组；桌面双栏/预算横跨整行，窄屏单栏；统一控件尺寸并减少留白。服务商和唯一支持型号 `deepseek-ai/DeepSeek-V4-Flash` 显示为只读值，不再呈现单选下拉框。未改 Core 鉴权、Key 存储、预算门禁或任何 API 调用范围。
 - 验证：新增前端 `organizer-settings.test.tsx` **3 passed**，覆盖 Mock loading/success、授权/API 错误、网络异常、唯一模型呈现、模型/Scheduler 默认关闭且不调用 Organizer run；`npm run typecheck` 与 `npm run build` 通过。未部署 NAS、未调用真实 API、未使用 Key、未读取 Hermes/业务数据。
 - **状态：** 代码修复待 Commit/Push；尚未部署。生产仍为 `b34319a`；需部署后由用户在浏览器验收最终视觉布局和交互。
+
+# 2026-10-16 — D077 Issue #14 Hermes API 工具限制与浏览器体验准备
+
+- 按 Issue #14 只核验并调整 SecondBrain Hermes 与相关文档。修改前保存 /volume1/docker/secondbrain/hermes/data/config.yaml 到 /volume1/docker/secondbrain/rollback/d077-issue14-api-toolset-20261016T1334Z/config.yaml.before；原配置 SHA-256 cdee7b148aa314536e24986f8f0dd57ea5999350e46c6b3bfd65c25a37eecac9，备份属主/权限 root:root / 0600，目录 root:root / 0700。
+- v0.22.2 原生配置解析确认 API Server 工具集合原为 file, skills, terminal, vision；terminal.backend=local，因此普通 Chat/Run 确有本地命令执行能力。仅在 Hermes profile 加入 platform_toolsets.api_server: [file, skills, vision]，不影响 CLI 配置或其他 NAS 服务。重启后固定版本 resolver 实际结果为 file, skills, vision，terminal 已从 API Server 工具集合移除；文件、Skills 和视觉工具仍在。File tool 的 HERMES_WRITE_SAFE_ROOT 仍只包含三个 Capture 根；Knowledge 挂载只读，Private 未挂载，Promote 关闭。
+- 安全路径核对：Agent/Gateway 进程 UID/GID 1026:100、有效/可用 capability 为 0；容器非 privileged。/proc/self/environ 被设备路径检查拒绝；/opt/data/config.yaml 本身不在 read denylist，但固定版本把 Hermes Home 下的 config.yaml 标为 secret-bearing source，并在 file-read YAML redaction 中处理凭据字段。仅用合成 api_key、secret、password_hash 标记验证三项值均被脱敏；未查看、输出或改写任何真实凭据值。没有通过模型实际调用工具。 Hermes file tool 没有通用 read-root allowlist；/opt/data/sessions 目录对 worker 可读/遍历，合成 Session 路径不被 read denylist 拒绝。未列目录或读取真实 Session 内容。这是浏览器真实模型体验的阻断项；需要对 Session 路径增加最小读取拒绝或等效官方隔离。
+- 仅重启 secondbrain-hermes。重启后 Hermes 容器运行、API 8642/health 返回 200、Dashboard 9119/ 返回登录重定向 302；Core Docker health 为 healthy，宿主 127.0.0.1:9120 使用受信 Host 192.168.3.27 请求 /health 返回 200，Memory/Learning flags 仍 true，专用记忆目录 1026:100 / 0700 且无文件。正式浏览器入口 https://zxwan520.com:63013/health TLS 校验成功并返回 200。没有创建 Session/Run，没有模型请求、真实数据处理或付费调用。
+- 浏览器体验准备：使用已验证入口登录后打开 Chat，创建新 Session。先自然表达合成偏好“技术问题我更喜欢简短回答，最好用三条要点”，不要说“请记住”；新建 Session 后问一个相关但不提示回忆的问题，观察是否自然采用偏好；再纠正为“两条要点”，另开 Session 验证新规则生效且旧规则不再出现；最后提一个无关问题观察是否避免主动提及偏好。全程只用虚构内容。真实模型行为与费用未由本次核验覆盖，执行前用户需确认当前模型/费用。
+- 状态：危险的 API local-terminal 工具已移除，必要工具和记忆配置保持；本次不代表真实模型学习质量验收。在补齐 Hermes Session 文件读取边界前不进行真实模型体验；之后还需用户选择模型并确认费用。配置回滚点如上；回滚时恢复 config.yaml.before 到 Hermes 数据路径、保留 1026:100 / 0640，然后只重启 Hermes。

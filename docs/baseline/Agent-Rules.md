@@ -14,7 +14,7 @@ type: agent-rules
 - `00-CURRENT.md` 是 V1 全量范围与当前开发/验收状态的唯一入口。`Environment-Baseline.md` 只代表标注日期的最近运行证据，不是实时监控；未重新核验的当前运行事实标记 `UNKNOWN`。历史实施和失败证据只放 `Progress-Log.md`。
 - 业务细则遵循正式 Business Specification；稳定模块和信任边界遵循 `Architecture.md`；正式取舍遵循 `Decision-Log.md`。旧决策不得覆盖新决定，历史记录不得冒充当前状态。
 - Hermes 是当前唯一 Runtime 主线；OpenClaw 已退出当前候选。优先复用 Hermes 官方 Session/Run/SSE/Skill 接口，不重复实现 Agent Runtime。
-- **D077 最高产品目标：** 自然对话主动联想长期记忆与知识、获准互动默认自主学习低风险偏好经验、跨会话可纠正、逐渐主动规划。新任务先核对 `Personal-Intelligence-Product-Spec.md`；不把“能手动检索”当作该目标验收通过。下一优先事项是 Phase 0 只读能力核验和合成数据隔离实验。
+- **D077 最高产品目标：** 自然对话主动联想长期记忆与知识、获准互动默认自主学习低风险偏好经验、跨会话可纠正、逐渐主动规划。新任务先核对 `Personal-Intelligence-Product-Spec.md`；不把“能手动检索”当作该目标验收通过。Phase 0 已完成；D077 已在 NAS 运行且合成记忆闭环通过，真实模型和用户浏览器行为仍待验收。当前权限工作以 Issue #14 及 D078 为准。
 
 ## SecondBrain 数据与安全边界
 
@@ -25,6 +25,13 @@ type: agent-rules
 - 普通 Capture/Organizer 写入不得扩展到 SecondBrain 根目录、Knowledge 或 Private。Journal 只可按正式规格以专用新增/追加边界开放，不授予普通 Agent 通用写权。
 - **既有 D076 Organizer** 只整理新增用户消息；不得把 AI 推断冒充用户经历或决定。Organizer 模型结果只进入 Review；生产数据出站需明确授权，并满足模型、凭据、输入/输出、超时、并发和费用门禁。Token 估算或软预算不得宣称为供应商硬费用上限。
 - **D077 Personal Learning Loop** 与正式知识整理不同：可在明确授权范围内自动提炼低风险个人偏好/经验，但只能通过收窄、可追溯/纠正的记忆通道，不得未经确认自动写入正式 Knowledge、覆盖 Journal 原文、扩大 Hermes 写权限或访问 Private；新的真实对话学习处理、外部模型数据出站及生产启用仍需单独确认。
+
+## D078 Agent 工具监督边界（2026-10-16 已批准的产品规则）
+
+- **能力保留、执行受控：** 不以永久关闭 `file`、`terminal`、`skills` 作为最终设计。普通低风险聊天、获准 Knowledge 读取和 Capture 按既有范围自动进行；敏感文件、跨 Session 读取、危险命令及重要 Skills 修改必须由真实的服务端强制规则或人工审批控制，禁止仅靠提示词声明“请先询问”。
+- **已部署与目标分开：** 根据 Issue #14 最近记录，API Server 当前保留 `file, skills, vision`，已移除 `terminal`；这是审批接入前的临时保护，不代表最终取消 Agent 执行能力。v0.22.2 尚无通用的文件读取逐次审批；`skills.write_approval` 原生暂存/CLI 审核可用但尚未报告在生产启用；Web 审批桥与受监督 terminal 仍处于方案/施工阶段，**不得写作已部署**。
+- **审批原则：** API terminal 只有在按动作/命令范围的真正强制审批、拒绝和审计完成后才能恢复；文件读取/搜索不得绕过 Session、state、Secret 访问控制；Skills 写审核不得被普通 `file` 写入旁路绕过。Core JSONL 是唯一个人记忆权威存储，不能扩大 Hermes 写入 Core memory 的权限。
+- **验收与授权：** 安全专项只做针对性真实权限验证，不重复大型 Runner/Harness。外部/付费模型调用与真实个人数据出站仍须分别获批；保护 Private、Knowledge RO、Promote OFF、NAS 其他服务与家庭网络。
 
 ## SecondBrain 专属执行边界
 

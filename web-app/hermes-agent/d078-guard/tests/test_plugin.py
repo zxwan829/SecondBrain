@@ -25,9 +25,12 @@ class D078PluginTests(unittest.TestCase):
         (self.business / "capture.md").write_text("synthetic", encoding="utf-8")
         self.backend_patch = patch.object(plugin, "_terminal_backend_type", return_value="local")
         self.backend_patch.start()
+        self.hooks_patch = patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False)
+        self.hooks_patch.start()
 
     def tearDown(self):
         self.backend_patch.stop()
+        self.hooks_patch.stop()
         self.temp.cleanup()
 
     def test_session_state_config_and_search_ancestors_are_denied(self):
@@ -107,6 +110,13 @@ class D078PluginTests(unittest.TestCase):
                 "command": "pwd", "workdir": str(self.business)})
         self.assertEqual(result["action"], "block")
         self.assertIn("terminal_review_ambiguous", result["message"])
+
+    def test_execution_fails_closed_when_another_hook_can_rewrite_approved_args(self):
+        with patch.object(plugin, "_approval_mode_bypass", return_value=False), \
+             patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=True):
+            result = plugin.pre_tool_call("execute_code", {"code": "print('synthetic')"})
+        self.assertEqual(result["action"], "block")
+        self.assertIn("execution_binding_ambiguous", result["message"])
 
     def test_process_and_code_approval_require_reviewable_pinned_arguments(self):
         with patch.object(plugin, "_approval_mode_bypass", return_value=False):

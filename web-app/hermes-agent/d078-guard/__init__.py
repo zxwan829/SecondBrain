@@ -213,6 +213,12 @@ def _terminal_backend_type():
     return _get_env_config().get("env_type")
 
 
+def _conflicting_pre_tool_call_hooks():
+    """Fail closed if another hook can rewrite args after this plugin binds approval."""
+    from hermes_cli.plugins import iter_hook_callbacks
+    return any(callback is not pre_tool_call for callback in iter_hook_callbacks("pre_tool_call"))
+
+
 def _approval_mode_bypass():
     """YOLO or approval-off settings must never downgrade this gate to auto-allow."""
     try:
@@ -229,6 +235,8 @@ def _pre_tool_call(tool_name=None, args=None, **kwargs):
     if name in _EXECUTION_TOOLS:
         if _approval_mode_bypass():
             return {"action": "block", "message": "BLOCKED: terminal approval policy is unavailable or disabled (approval_policy_unavailable)."}
+        if _conflicting_pre_tool_call_hooks():
+            return {"action": "block", "message": "BLOCKED: another pre_tool_call hook may alter the approved execution arguments (execution_binding_ambiguous)."}
         reason = _ambiguous_execution(name, arguments)
         if reason:
             return {"action": "block", "message": "BLOCKED: " + reason + " (terminal_review_ambiguous)."}
