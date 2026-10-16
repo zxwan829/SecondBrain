@@ -27,7 +27,9 @@
 - Run 后仅在 `run.completed` SSE 或状态为 completed 时读取同 Session 持久消息；必须匹配原始用户文本及有 ID 的消息来源后才提炼和写入。候选提炼器可注入，当前默认实现只抽取有限的明确偏好表达，过滤已知敏感/指令样式文本；无付费模型调用。重复消息源绑定 newest-order 消息有回归覆盖。
 - 按固定 Hermes v0.21.5 upstream commit `749220ef0007f8d87bd1531f1c24b0fe93816385` 的 API Server 源码核对：`/v1/runs` 支持 `instructions` 并将其传给 Agent 的 ephemeral system prompt。Hermes 真实 v0.21.5 运行是否实际遵循注入、模型是否自主学习，以及进程重启/多 Worker 下 pending Run 状态行为尚未验证；本地 Mock 仅证明 SecondBrain 适配器传递该字段与 Core 触发逻辑。
 - Linux portability 子项将五处 Core 测试夹具改用平台临时目录，移除 Linux workflow 对 `/private/tmp` 的创建垫片，并新增静态防回归检查。GitHub workflow 仍为手动触发、Ubuntu 24.04、无 secrets。
-- 本地完整 Core 测试、Linux CI 结果及本次 commit/PR 状态以本次提交收尾记录为准。未升级 Hermes、部署 NAS、处理真实个人数据或调用付费模型；未合并 PR。
+- 集成分支全套 Core 测试 **146 passed、2 subtests passed**；`compileall` 与 `git diff --check` 通过。GitHub Actions 单次 Ubuntu 24.04 Linux workflow run [38856373579](https://github.com/zxwan829/SecondBrain/actions/runs/38856373579) 成功，Core 全套与 compileall 均通过。Action 提示 `checkout@v4` / `setup-python@v5` Node.js 20 运行时弃用，未影响本次结果。
+- Phase 1-A PR #4 于本日已合并入 main；本 Issue #5 变更在 PR [#6](https://github.com/zxwan829/SecondBrain/pull/6)，当前 OPEN，未合并。集成分支最终 commit 记录在该 PR head。
+- 未升级 Hermes、部署 NAS、处理真实个人数据或调用付费模型。未验证真实 v0.21.5 运行行为、模型学习质量、跨进程 pending 状态恢复或用户体验；这些仍需独立审核/授权。
 
 # 2026-09-28
 
