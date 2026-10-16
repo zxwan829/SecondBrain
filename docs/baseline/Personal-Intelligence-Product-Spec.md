@@ -106,7 +106,7 @@ NAS 文件业务 SoT：20-Knowledge / 30-Projects / 40-Memory / 50-Journal
 
 ## 7. 分阶段路线、返工和验收
 
-### Phase 0：下一次工作会话优先执行的**只读核验与隔离实验**（NEXT；未授权生产改动）
+### Phase 0：初始只读核验与隔离实验（历史路线，已部分完成；不是当前 NEXT）
 1. 从 GitHub 最新 main 与最后 NAS 运行快照核实：当前 Chat→Hermes 请求路径、Hermes 版本/能力、原生记忆/学习是否开启、会话读取、知识召回方式、`40-Memory` 内容/权限、Organizer 状态；不得把文档快照当作实时运行结果。
 2. 读当前安装版本的实际接口/配置，再按必要性核对 Hermes 官方 stable 的 Memory Provider、pre-turn recall、post-turn learning、Skills 自主学习、调度支持；区分“官方最新版存在”和“当前版本已具备”。
 3. 在完全隔离的测试会话及**合成数据**里做 4 组基准：不提示搜索的主动联想；跨会话自动记忆；纠正后更新；需要数字/版本时自动读取来源。记录成功/遗漏/误召回、token、时延和调用费用。
@@ -155,4 +155,4 @@ NAS 文件业务 SoT：20-Knowledge / 30-Projects / 40-Memory / 50-Journal
 
 - 本次仅批准**正式产品方向和文档更新**，不是批准立即修改生产、自动处理真实个人数据、升级 Hermes 或部署新组件。
 - ChatGPT 主导业务目标、架构拆解、取舍与验收；Codex 执行经授权的只读核验、隔离实验、代码实现、测试与部署。已有 `AGENTS.md`、`Agent-Rules.md`、中央治理手册优先；同步更新现有基线，避免新增并行状态文件。
-- **下一次开工顺序：** 阅读本文件 → `00-CURRENT.md` → `Architecture.md` → `Decision-Log.md` D077 → `Agent-Rules.md` → Phase 0；先证实主动记忆/学习的技术通路，再确定返工范围。
+- **恢复工作阅读顺序（2026-10-17）：** 先读 `00-CURRENT.md` 的“当前阶段暂停与 NEXT”→本产品规格→`Environment-Baseline.md` 最新运行快照→`Agent-Rules.md` D078→`Decision-Log.md`。Phase 0 是原定验证路线，已由 D077 合成记忆闭环与 D078 隔离工具验证部分覆盖；未完成的真实模型行为、真实浏览器验收仍列为 NEXT，不能因合成测试已通过而宣称产品已验收。用户恢复前不启动新开发或生产调用。
