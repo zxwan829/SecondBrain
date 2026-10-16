@@ -235,7 +235,18 @@ mcp_servers: {}
         cmd("docker","exec","-d",CONTAINER,"/bin/sh","-c",
             "/opt/hermes/.venv/bin/hermes gateway run --no-supervise >/opt/data/gateway.log 2>&1",
             timeout=10)
-        wait_gateway()
+        try:
+            wait_gateway()
+        except Exception:
+            diag = cmd("docker","exec",CONTAINER,"/bin/sh","-c",
+                "tail -n 65 /opt/data/gateway.log 2>/dev/null || true",check=False)
+            # Container has no real provider key, only a synthetic placeholder.
+            for line in diag.stdout.splitlines()[-40:]:
+                if any(word in line.lower() for word in
+                       ("error", "fail", "traceback", "exception", "api server",
+                        "port", "gateway", "usage", "invalid", "permission")):
+                    print("D077_GATEWAY_DIAG", line[:350], flush=True)
+            raise
 
         # 15 synthetic turns: learning, natural cross-session recall, correction,
         # relevance, unknown exact facts. Never insert real-person information.
