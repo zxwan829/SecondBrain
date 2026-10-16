@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — PR #8 NAS SecondBrain 容器只读环境核验
+
+- 按 PR #8 最新 ChatGPT 审核和用户评论 `6210066948`，仅经现有 SSH/已配置只读 Docker 管理权限核验 `secondbrain-app`、`secondbrain-hermes`、其 Compose 与 `secondbrain_default` 网络。普通 Docker socket 权限不足，使用既有 `sudo -n` 权限读取；未改 SSH/known_hosts 权限、sudoers 或 NAS 配置。没有执行容器内命令、HTTP 业务请求、日志读取或任何生产写操作。
+- **VERIFIED：**两个容器 ID、状态/health、启动时间、image ID/tag/digest、架构/revision、Compose labels、过滤后的服务结构、端口、网络端点、HostConfig 安全/资源字段与 bind mount 源/目标/RW 均已核对。App healthy、UID:GID 1026:100、只读 rootfs、drop ALL capabilities；Hermes running、amd64 固定 digest 对应 revision `749220ef`、root、rootfs 可写、无 cap drop、1.5 GiB memory limit。Compose SHA-256 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d` 与 2026-10-15 记录一致。`secondbrain_default` 为非 internal bridge，当前仅附加 App/Hermes；App 发布端口绑定 localhost，Hermes 9119 绑定 NAS LAN，8642 未发布。
+- **边界发现：**App mounts 指向正式 Core state、Review、Knowledge/Inbox 与 RO Secrets；Hermes mounts 指向正式 Hermes data、Raw/Review/KnowledgeAssets Inbox，并把整个 SecondBrain 根目录 RO 挂到 `/secondbrain`。这与历史基线“Private 无挂载”不一致：没有独立 Private mount，但不能据此声称其不可被 Hermes 看到。本次未检查该目录是否存在、未读取内容；Hermes Safe Root 环境配置、DSM ACL、服务 API 和 egress 均 UNKNOWN。目录元数据仅对指定挂载源执行 stat 与第一层普通文件计数；未打印名称或读取内容。App Secrets 只读了 `0600 1026:100` 元数据。已知回滚目录存在 `0700 root:root`，未检查快照文件。
+- **与阶段状态区分：**这两个 Compose 服务不是可丢弃测试容器，本轮没有把它们作为 Harness 执行环境。Phase 1-C 仍 BLOCKED；没有 NAS 联调、容器/网络/卷创建、付费模型、Runner、部署或合并。以上仅是环境元数据核验。
+- **最小后续方案（仅计划）：**待另行授权后，建立独立 Compose project 和唯一 run label；使用固定 Hermes digest、待审 Core 镜像与确定性 Stub，单一 `internal: true` 网络、无宿主端口映射；仅挂载临时合成 Profile/Core state/Inbox（优先 tmpfs），不引用当前 Compose、业务路径、Secrets 或生产 data/state。设置资源/时限，Run 前证明无 LAN/公网/正式服务路径，Run 后按 label 清理并验证容器、网络、镜像/临时目录残留为零。回滚只删除本轮命名资产，不触碰现有服务；若隔离前提无法验证则不执行。
+- 文档同步：更新 `Environment-Baseline.md` 最新快照、历史 Private 描述及独立测试方案；更新 `00-CURRENT.md` 仍 BLOCKED 的状态与安全发现。未修改代码、Compose、测试环境或 NAS。
+
 # 2026-10-16 — D077 Phase 1-C 最后一次授权 Runner：网络预检通过，记忆场景受阻
 
 - 按 PR #8 审核评论 `6209817827` 和用户授权评论 `6209838408`，触发且仅触发一次手动 GitHub Ubuntu Runner：[Run 38863667562](https://github.com/zxwan829/SecondBrain/actions/runs/38863667562)。启动前本地工作区干净、PR head 与选定 branch 均为已审核 `9ade521811c59877ef526daec5d2a672d02a5e07`；Actions 实际 `headSha` 与之相同。固定 Hermes v0.21.5 amd64 镜像 ID/OCI revision 核验、Core 依赖安装和临时 Core peer 镜像构建均通过。

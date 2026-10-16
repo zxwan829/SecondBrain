@@ -1,12 +1,29 @@
 ---
 created: 2026-09-28
-updated: 2026-10-15
+updated: 2026-10-16
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
 
-本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。**它不是实时监控**：以下快照来自 2026-10-15 的受控 App-only 部署及接口验收；历史部署过程、旧状态、失败复盘和逐次证据见 `Progress-Log.md`。不记录任何密钥或明文环境配置。
+本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。**它不是实时监控**：最新容器元数据来自 2026-10-16 一次获批只读审计；未运行联调、未读取配置值/私人内容，也未改变服务。历史部署过程、旧状态、失败复盘和逐次证据见 `Progress-Log.md`。不记录任何密钥或明文环境配置。
+
+## 最新只读运行快照（2026-10-16）
+
+- NAS 为 DS920+ `192.168.3.27`。两容器均归属 Compose Project `secondbrain`，配置路径 `/volume1/docker/secondbrain/compose.yaml`；Compose SHA-256 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`，与 2026-10-15 基线相同。过滤后的 Compose 结构只有 `hermes`、`secondbrain-app` 两服务。
+- `secondbrain-app`：容器 `f3da36a01343…`，运行/healthy；镜像 `secondbrain-app:d076-organizer-b34319a`，ID `sha256:6070c617…`，代码 revision `b34319af0b928ef6781b9ff4c0cc4ab8bb80c1c0`；UID:GID `1026:100`、只读根文件系统、非 privileged、drop ALL capabilities、`no-new-privileges`。宿主仅绑定 `127.0.0.1:9120→8000/tcp`。未配置 Docker memory/CPU/PID 上限。启动时间 `2026-10-15T14:59:58.435790470Z`。
+- `secondbrain-hermes`：容器 `f6703ca3e3d4…`，running，未配置 healthcheck；固定镜像 `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`，image ID `sha256:e1e87aec…`，架构 `linux/amd64`，revision `749220ef0007f8d87bd1531f1c24b0fe93816385`（对应已记录 Hermes v0.21.5 源码）。容器以 root 运行、根文件系统可写、未 drop capabilities、非 privileged；memory 上限 1.5 GiB，无 CPU/PID 上限。宿主绑定 `192.168.3.27:9119→9119/tcp`，API 8642 无宿主端口绑定。启动时间 `2026-10-14T08:03:44.970619297Z`。
+- 两容器唯一共同网络为 `secondbrain_default`，bridge、`internal=false`、子网 `172.18.0.0/16`；本次网络 inspect 显示该网络只有 App（`172.18.0.3`）和 Hermes（`172.18.0.2`）两个端点。容器网络成员彼此隔离于其他 Docker 网络，但 `internal=false` 不阻止普通 bridge 出站；本次没有探测 LAN/公网出站。Hermes 的 9119 端口仍绑定 NAS LAN 地址。
+- **实际挂载边界：** App 以 RW 挂载 Core state、Review、KnowledgeAssets Inbox；以 RO 挂载 `20-Knowledge` 和两项 Secret 文件。Hermes 以 RW 挂载 `/volume1/docker/secondbrain/hermes/data→/opt/data`、SecondBrain `00-Inbox`/`10-Review` 与 KnowledgeAssets Inbox；另以 RO 将整个 `/volume1/SecBR/SecondBrain→/secondbrain` 根目录挂入。没有单独的 Private bind mount，但根目录范围比历史文字“Private 未挂载”宽；本次未查 Private 是否存在或读取其内容，故不能再声称 Private 不可被 Hermes 看见。Hermes 的 Safe Root 环境配置未读取，实际写入白名单为 UNKNOWN。
+- 仅检查了挂载源的 POSIX 元数据：Core state `0700 1026:100`（根层 regular files 0）；Hermes data `0700 1026:10000`（根层 regular files 57）；SecondBrain 根 `0500 1026:100`；Inbox `0700 1026:100`（根层文件 2）；Review `0700 1026:100`（24）；`20-Knowledge` `0700 1026:100`（2）；KnowledgeAssets Inbox `0700 1026:100`（24）。计数仅针对目录第一层普通文件，不含子目录、文件名或内容，也不是总磁盘占用。两个 App Secret 文件只核对存在、`0600 1026:100`，未读取内容。已知回滚目录存在，目录权限 `0700 root:root`；没有读取或校验其中文件。
+- ACL 细节、DSM Container Manager GUI 状态、Synology Drive 同步状态、其他 NAS 服务的网络配置、路由/PBR/WireGuard/AdGuard、业务 API 可用性和容器实际出站状态均未核验。挂载列表未出现单独的 Obsidian/Synology Drive 路径；这不代表同步服务状态已核验。
+- 与 2026-10-15 快照相比：容器 ID、镜像 ID、启动时间、Compose SHA 与历史值一致；本次补充发现 Hermes 容器安全参数较宽松，且整棵 SecondBrain 根目录 RO 挂入。现有两个服务不是隔离测试资产：App/Core state、Hermes profile/data 和业务 Inbox/Review 均指向正式路径，因此本轮没有通过它们执行合成 Run。
+
+### 下一阶段隔离联调（仅方案，未执行）
+
+在获得独立授权后，使用固定 Hermes digest 和待审 Core commit 创建独立测试 Compose Project；仅创建带唯一 run label 的临时 Hermes、Core 与确定性 Stub 容器，连接一个 `internal: true` 专用网络，不发布宿主端口。只提供临时合成 Profile/Core state/合成 Inbox（优先 tmpfs，必要时单一专用临时目录）；不挂载正式 Compose、`/volume1/SecBR/SecondBrain`、KnowledgeAssets、Private、现有 Hermes data/Core state 或 Secrets。设置 CPU、内存、PIDs 和超时上限；执行前验证测试容器只连 internal 网络且不能访问 LAN/外网，随后验证 API/SSE 与合成记忆场景，最后按唯一 run label 清理并断言容器、网络、临时目录/镜像均无残留。
+
+风险是 NAS 容量/CPU 竞争、测试定义误引用生产 bind mount，以及 `internal` 网络隔离配置错误。接受条件为测试前配置/挂载/网络清单通过白名单断言、所有请求只落在本地 Stub、合成闭环标记 PASS、退出后资源清零。此方案需另行批准临时容器/网络/文件创建及清理；失败时只清理同一 run label 的测试资产，不触碰正式容器或回滚正式服务。当前回滚目录仅供既有 App 恢复，不应用于此测试。
 
 ## NAS 与 Compose
 
@@ -23,7 +40,9 @@ type: environment-baseline
 
 上述为 2026-10-15 本次部署后的核验快照。新 App 源码来自 GitHub `b34319af0b928ef6781b9ff4c0cc4ab8bb80c1c0`；Hermes 容器、镜像和启动时间保持不变。Promote 未启用。
 
-## 挂载与权限边界（最近记录的实际配置）
+## 挂载与权限边界（历史快照，2026-10-15）
+
+下表保留部署时记录；与上方 2026-10-16 只读 inspect 有差异时以上方为当前证据。特别是 Hermes 的 SecondBrain 根只读 bind mount 实际覆盖整棵根目录，因此旧文字“Private 无挂载/不访问”不再能描述当前可见范围。
 
 | 容器 | 数据/用途 | 容器路径 | 访问模式/身份 |
 |---|---|---|---|
@@ -35,7 +54,7 @@ type: environment-baseline
 | Hermes | SecondBrain 根 | `/secondbrain` | RO |
 | Hermes | `00-Inbox`、`10-Review`、KnowledgeAssets Inbox 捕获根 | `/secondbrain-write/00-Inbox`、`/secondbrain-write/10-Review`、`/knowledge-assets/00-Inbox` | 三个捕获目录 RW；safe root 只列出这三项 |
 | Hermes | `20-Knowledge` | 无 RW 子挂载，仅经 `/secondbrain` 读取 | RO |
-| 两者 | Private | 无挂载 | 不访问 |
+| 两者 | Private | 2026-10-15 记录为无单独挂载；2026-10-16 确认 Hermes 挂载 SecondBrain 根目录，Private 是否存在/可见未检查 | UNKNOWN；不可据旧快照宣称不可访问 |
 
 App 最近记录的身份为 UID/GID `1026:100`，只读根文件系统、独立 `/tmp` 64 MiB tmpfs。`SB_PROMOTE_ENABLED=false`；Hermes STT 默认关闭。以上值须在下一次生产操作前重新 inspect，不可仅靠文档视为当前事实。
 
