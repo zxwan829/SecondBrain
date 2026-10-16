@@ -68,6 +68,15 @@ class HarnessDiagnosticTests(unittest.TestCase):
         self.assertEqual(record["exception_class"], "ProbeHTTPStatusError")
         self.assertEqual(record["http_status"], 404)
 
+    def test_configured_egress_target_parser_rejects_noncanonical_values(self):
+        with patch.dict("os.environ", {"D077_DENY_EGRESS_TARGETS": "192.168.3.1:443,192.168.3.27:5001"}):
+            self.assertEqual(harness.configured_egress_targets(),
+                             [("192.168.3.1", 443), ("192.168.3.27", 5001)])
+        for value in ("https://192.168.3.1:443", "192.168.3.999:443", "192.168.3.1:0", "host:443"):
+            with patch.dict("os.environ", {"D077_DENY_EGRESS_TARGETS": value}):
+                with self.assertRaises(ValueError):
+                    harness.configured_egress_targets()
+
     def test_scenario_wrapper_emits_marker_without_exception_message(self):
         output = io.StringIO()
 

@@ -1,4 +1,7 @@
 FROM python:3.12-slim
+ARG D077_SOURCE_SHA=unknown
+LABEL org.opencontainers.image.revision=${D077_SOURCE_SHA} \
+      com.secondbrain.test.task=d077-phase1c
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng \

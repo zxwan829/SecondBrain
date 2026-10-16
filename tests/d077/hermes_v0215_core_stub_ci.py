@@ -52,7 +52,8 @@ STUB_RELEASE = threading.Event()
 SCENARIO_STAGE = "startup"
 
 
-DIAGNOSTIC_MODES = {"--network-preflight", "--enabled-scenario", "--flags-off", "--egress-probe"}
+DIAGNOSTIC_MODES = {"--network-preflight", "--hermes-network-preflight", "--enabled-scenario",
+                    "--flags-off", "--egress-probe"}
 SAFE_STAGE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -752,6 +753,33 @@ def external_tcp_probe():
         return "blocked_" + type(exc).__name__
 
 
+def configured_egress_targets():
+    targets = []
+    for value in filter(None, os.environ.get("D077_DENY_EGRESS_TARGETS", "").split(",")):
+        match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})", value.strip())
+        if not match or any(int(octet) > 255 for octet in match.group(1).split(".")):
+            raise ValueError("invalid_egress_target")
+        port = int(match.group(2))
+        if not 1 <= port <= 65535:
+            raise ValueError("invalid_egress_target")
+        targets.append((match.group(1), port))
+    return targets
+
+
+def tcp_target_probe(host, port):
+    try:
+        connection = socket.create_connection((host, port), timeout=2)
+        connection.close()
+        return "reachable"
+    except Exception as exc:
+        return "blocked_" + type(exc).__name__
+
+
+def configured_egress_probe_results():
+    return {f"{host}:{port}": tcp_target_probe(host, port)
+            for host, port in configured_egress_targets()}
+
+
 def network_preflight():
     set_scenario_stage("network_health_probes")
     deadline = time.monotonic() + 90
@@ -770,10 +798,12 @@ def network_preflight():
         time.sleep(1)
     result = {"core_local_health": core_health, "core_to_hermes_health": hermes_health,
               "core_to_stub_health": stub_health, "probe_counts": counts,
-              "core_public_tcp_egress": external_tcp_probe()}
+              "core_public_tcp_egress": external_tcp_probe(),
+              "configured_egress_targets": configured_egress_probe_results()}
     print("D077_NETWORK_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
     if (core_health != "http_200" or hermes_health != "http_200" or stub_health != "http_200"
-            or result["core_public_tcp_egress"] == "reachable"):
+            or result["core_public_tcp_egress"] == "reachable"
+            or any(value == "reachable" for value in result["configured_egress_targets"].values())):
         set_scenario_stage("network_preflight_assertions")
         failed_http_status = next((int(value[5:]) for value in
                                    (core_health, hermes_health, stub_health)
@@ -785,10 +815,26 @@ def network_preflight():
 
 def egress_probe_mode():
     set_scenario_stage("public_egress_probe")
-    result = external_tcp_probe()
-    print(json.dumps({"public_tcp_egress": result}, sort_keys=True), flush=True)
-    if result == "reachable":
+    result = {"public_tcp_egress": external_tcp_probe(),
+              "configured_targets": configured_egress_probe_results()}
+    print(json.dumps(result, sort_keys=True), flush=True)
+    if result["public_tcp_egress"] == "reachable" or any(
+            value == "reachable" for value in result["configured_targets"].values()):
         raise RuntimeError("public_egress_not_blocked")
+
+
+def hermes_network_preflight():
+    set_scenario_stage("hermes_to_stub_health")
+    stub_health = probe_http("http://stub:19002/__test/health")
+    egress = {"public_tcp_egress": external_tcp_probe(),
+              "configured_targets": configured_egress_probe_results()}
+    result = {"hermes_to_stub_health": stub_health, **egress}
+    print("D077_HERMES_NETWORK_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
+    if (stub_health != "http_200" or egress["public_tcp_egress"] == "reachable"
+            or any(value == "reachable" for value in egress["configured_targets"].values())):
+        if re.fullmatch(r"http_\d{3}", stub_health) and stub_health != "http_200":
+            raise ProbeHTTPStatusError(int(stub_health[5:]))
+        raise RuntimeError("hermes_network_preflight_failed")
 
 
 def serve_stub():
@@ -831,19 +877,25 @@ def assert_network_boundary():
     stub_probe = run_in_container(STUB_NAME, "--egress-probe", check=False)
     if stub_probe.returncode:
         raise RuntimeError("stub_egress_preflight_failed")
-    hermes_probe_code = r'''import json,socket,urllib.request
+    hermes_probe_code = r'''import json,os,socket
+results={"public_tcp_egress":"blocked"}
 try:
- with urllib.request.urlopen("http://stub:19002/__test/health",timeout=3) as r: stub="http_%d"%r.status
-except Exception as e: stub="error_"+type(e).__name__
-try:
- s=socket.create_connection(("1.1.1.1",443),timeout=2); s.close(); egress="reachable"
-except Exception as e: egress="blocked_"+type(e).__name__
-print(json.dumps({"hermes_to_stub_health":stub,"hermes_public_tcp_egress":egress},sort_keys=True))
-if stub!="http_200" or egress=="reachable": raise SystemExit(1)'''
+ s=socket.create_connection(("1.1.1.1",443),timeout=2); s.close(); results["public_tcp_egress"]="reachable"
+except Exception as e: results["public_tcp_egress"]="blocked_"+type(e).__name__
+targets={}
+for value in filter(None,os.environ.get("D077_DENY_EGRESS_TARGETS","").split(",")):
+ host,port=value.rsplit(":",1)
+ try:
+  s=socket.create_connection((host,int(port)),timeout=2); s.close(); targets[value]="reachable"
+ except Exception as e: targets[value]="blocked_"+type(e).__name__
+results["configured_targets"]=targets
+print(json.dumps(results,sort_keys=True))
+if results["public_tcp_egress"]=="reachable" or any(v=="reachable" for v in targets.values()): raise SystemExit(1)'''
     hermes = run("docker", "exec", CONTAINER, "/opt/hermes/.venv/bin/python3", "-c",
                  hermes_probe_code, check=False)
     if hermes.stdout:
-        print("D077_HERMES_NETWORK_PREFLIGHT " + hermes.stdout.strip(), flush=True)
+        for line in hermes.stdout.splitlines():
+            print("D077_HERMES_EGRESS " + line, flush=True)
     if hermes.returncode:
         raise RuntimeError("hermes_network_preflight_failed")
     core = run_in_container(CORE_CONTAINER, "--network-preflight", check=False)
@@ -924,6 +976,8 @@ def main():
         raise SystemExit(run_diagnostic_mode("--network-preflight", network_preflight))
     elif "--egress-probe" in sys.argv:
         raise SystemExit(run_diagnostic_mode("--egress-probe", egress_probe_mode))
+    elif "--hermes-network-preflight" in sys.argv:
+        raise SystemExit(run_diagnostic_mode("--hermes-network-preflight", hermes_network_preflight))
     elif "--enabled-scenario" in sys.argv:
         raise SystemExit(run_diagnostic_mode("--enabled-scenario", enabled_scenario))
     elif "--flags-off" in sys.argv:

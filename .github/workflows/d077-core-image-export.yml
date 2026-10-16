@@ -1,0 +1,46 @@
+name: D077 Core linux-amd64 image export (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-core-image:
+    if: github.repository == 'zxwan829/SecondBrain'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout selected commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build and verify immutable Core image
+        working-directory: web-app/secondbrain-core
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE: secondbrain-d077-core:${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          docker build --platform linux/amd64 --build-arg "D077_SOURCE_SHA=$SOURCE_SHA" --tag "$IMAGE" .
+          docker image inspect "$IMAGE" --format 'ID={{.Id}} OS={{.Os}} ARCH={{.Architecture}} REVISION={{index .Config.Labels "org.opencontainers.image.revision"}} TASK={{index .Config.Labels "com.secondbrain.test.task"}}'
+          test "$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA"
+          test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "com.secondbrain.test.task"}}')" = d077-phase1c
+          mkdir -p "$RUNNER_TEMP/d077-core-export"
+          docker save --output "$RUNNER_TEMP/d077-core-export/core-linux-amd64.tar" "$IMAGE"
+          cd "$RUNNER_TEMP/d077-core-export"
+          shasum -a 256 core-linux-amd64.tar > SHA256SUMS
+          docker image inspect "$IMAGE" --format '{"image_id":"{{.Id}}","os":"{{.Os}}","architecture":"{{.Architecture}}","source_sha":"{{index .Config.Labels "org.opencontainers.image.revision"}}","test_task":"{{index .Config.Labels "com.secondbrain.test.task"}}"}' > metadata.json
+
+      - name: Upload verified image archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: d077-core-linux-amd64-${{ github.sha }}
+          path: ${{ runner.temp }}/d077-core-export/
+          if-no-files-found: error
+          retention-days: 7

@@ -39,7 +39,7 @@ source: GitHub SecondBrain Monorepo
 | **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
 | Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | PROD-PARTIAL：Commit `55977c8` 的统一 Composer 已部署至 63013，Inbox 与首页快速收录共用现有 Capture API；认证 API smoke 通过 | 用户验收拖放、粘贴、IME、成功清空/失败保留及手机选择；音频处理器和微信渠道 |
 | Review 读取 | Web App 统一会话下展示列表/详情、来源和内容 | ACCEPTED：现有 D071 Dashboard v0.2.4；独立 App 63013 HTTPS 浏览器已显示 8 条真实 Review 与详情 | 独立 App 用户最终验收；补齐正式审批状态/动作部署 |
-| Organizer 自动整理（D076） | 设置页管理 SiliconFlow/已验证模型、服务端 API Key、软预算状态、模型和 Scheduler 开关及计划；执行仍产出 Review 草稿并记录 usage/预算/游标 | PROD-DEPLOYED：`b34319a` App-only 部署，模型/Scheduler/Promote 关闭、Knowledge RO；2026-10-16 只读审计发现 Hermes 将整个 SecondBrain 根目录以 RO 挂载，故 Private 当前隔离状态为 UNKNOWN / RISK，之前“Private 未挂载”仅属历史快照。浏览器验收发现 Mock 检查缺少可见反馈；`c619f56` 起的本地 UI 修复新增 loading/成功/错误反馈、三组响应式布局和唯一模型只读展示；本地交互测试 3 passed、typecheck/build 通过 | 此修复尚未部署；部署后待用户验收设置页交互与布局及既有 Chat/Inbox/Review。真实用户数据出站及 Scheduler 启用仍须另行批准；软预算非供应商硬上限 |
+| Organizer 自动整理（D076） | 设置页管理 SiliconFlow/已验证模型、服务端 API Key、软预算状态、模型和 Scheduler 开关及计划；执行仍产出 Review 草稿并记录 usage/预算/游标 | PROD-DEPLOYED：`b34319a` App-only 部署，模型/Scheduler/Promote 关闭、Knowledge RO；2026-10-16 只读审计记录 Hermes RO 挂载 `/volume1/SecBR/SecondBrain`，规范 Private `/volume1/SecBR/Private` 是其兄弟目录，未发现该 Private 的直接挂载证据；未完整核验所有访问路径，无 Private 访问/泄露证据。浏览器验收发现 Mock 检查缺少可见反馈；`c619f56` 起的本地 UI 修复新增 loading/成功/错误反馈、三组响应式布局和唯一模型只读展示；本地交互测试 3 passed、typecheck/build 通过 | 此修复尚未部署；部署后待用户验收设置页交互与布局及既有 Chat/Inbox/Review。真实用户数据出站及 Scheduler 启用仍须另行批准；软预算非供应商硬上限 |
 | Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | DEV-TESTED：阶段 A 15 项测试；生产关闭 | 收口权限、统一登录安全边界、正式部署、HTTPS 用户验收 |
 | Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
 | Journal | 用户原文留存；目标支持新增/按日期追加，不允许普通 Agent 随意覆写 | NOT DONE：生产未开放专用写入 | 按 D064 执行；**业务是目标能力，但 Web App V1 的快捷录入属于 SHOULD，不能擅自冒充核心 MUST** |
@@ -61,7 +61,7 @@ source: GitHub SecondBrain Monorepo
 | Agent Health / 状态 | UNAVAILABLE | 接入可信可解释的 Agent 状态；位置可在 Home 或次级系统区 |
 | 模块注册 / Home 与 Calendar 聚合 | UNKNOWN / 未完成验收 | 导航模块注册、页面契约、Home widget 扩展；模拟未来模块无需重构 Shell |
 | Responsive / Desktop/iPad/Mobile | PROD-PARTIAL：Mac/PC 和 iPhone 视觉接受 | iPad 基本可用、iPhone Safari 功能回归、跨设备真实操作 |
-| Private exclusion / Human Approval | UNVERIFIED / RISK（2026-10-16）：Hermes RO 挂载整个 SecondBrain 根目录，若 Private 位于其下且权限允许，存在读取风险；未检查 Private 内容/存在性或 ACL，不能认定已访问或已泄露 | 独立安全整改：最小 allowlist 挂载、非 root/能力限制、静态审查及 Private 拒绝访问验证 |
+| Private exclusion / Human Approval | 设计继续禁止 Private 挂载、读取、扫描、索引、摘要或进入记忆训练输入。静态运行挂载记录未显示规范 Private `/volume1/SecBR/Private` 被直接挂载；它与只读挂载的 `/volume1/SecBR/SecondBrain` 是兄弟目录。所有可能访问路径未完整验收；没有 Private 被访问/泄露的证据 | 原有 Private 权限设计不变；不作为 Phase 1-C 阻断，也不增加独立整改或探针任务 |
 
 **Web App V1 SHOULD，单独跟踪、不自动阻断 MUST DONE：** Quick Capture、Journal quick entry、badges、notifications、session continuation、keyboard shortcuts、contextual actions、Agent 状态动画。具体完成情况需在对应业务施工时核实。
 
@@ -71,7 +71,7 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|
 | Hermes Knowledge 直接写风险 | MITIGATED / DEPLOYED：Hermes Knowledge RW 子挂载已移除，仅 `/secondbrain` RO；safe root 限于三个已核验捕获目录。普通文件工具及终端写探针均被拒；Daily/Universal Capture 与 Dashboard Review 回归通过 | 保持该权限边界；跟进重建后的原生 Chat 重连异常；不以 Hermes Knowledge RW 作为回退 |
 | Core 写权限与审批认证 | DEV-TESTED：App 单次登录会话与 Core 审批 API 已在本地整合；生产仍 Promote=false、Knowledge RO | 验证 App 部署边界及 Agent 无法取得 App 会话；生产审批仍关闭，需单独授权部署和验收 |
-| Private | UNVERIFIED / RISK：设计仍禁止访问；当前 Hermes 整体 SecondBrain 根 RO mount 使 Private 是否可见未知，未读取内容 | 另行验证 mount allowlist / ACL 与 Private 拒绝访问；未完成前不得标记生产隔离已验收 |
+| Private | 设计边界维持：不挂载、不读、不扫描、不索引、不摘要、不用于个人记忆。只读挂载清单未见规范 Private 的直接挂载，且其为 SecondBrain 根目录的兄弟路径；所有有效访问路径未全面验收，但无访问/泄露证据 | 按既有设计执行；不新增权限改造、ACL 探针或 Phase 1-C 阻断 |
 | 多端与数据同步 | PARTIAL | 核实 Web App 桌面/iPad/手机主要动作及 Obsidian Mac↔NAS 文件实际双向传播 |
 | 生产部署、恢复、安全收尾 | PARTIAL | 真实运行检查、变更快照和回退，收口开发期 unrestricted sudoers；验收与文档 Git 收口 |
 
@@ -82,7 +82,7 @@ source: GitHub SecondBrain Monorepo
 | 无提示主动关联 | NOT VERIFIED：旧 Knowledge Retrieval V0 已 ACCEPTED，但仅证明可用搜索/读取；不能证明自动联想 | 不说“搜索知识库”，自然对话能正确使用相关长期记忆；精确事实自动回源 |
 | Personal Memory Core（Phase 1-A） | DEV-TESTED：默认关闭、独立注入根、追加式来源/修订记录；同一来源可保存多个不同候选并稳定幂等；未核验事实在模型召回视图中脱敏并要求回源；不表示生产已部署 | PR #4 已合并；后续阶段回归结果见 Progress-Log；生产未部署、未接真实数据 |
 | 自主个人记忆学习（Phase 1-B） | DEV-TESTED：默认关闭的 Core 候选提炼与相关记忆召回挂钩；成功 Run 必须匹配 Run 前消息 ID 水位之后新增的持久消息。纠错要求去除已知表达前缀后与唯一记忆完整等价；歧义时不写；失败/取消/停止清理 pending。使用现有 Hermes `instructions` 请求字段注入受限上下文，用户 input 不改写。真实 Hermes v0.21.5 运行兼容性、长期在线行为和用户验收 UNKNOWN | PR #6 已独立审核并合并；生产启用、真实 Hermes/会话数据和模型行为验证仍须另行授权 |
-| 真实 Hermes/Core 记忆链路（Phase 1-C） | **BLOCKED：**获批的唯一一次手动 Runner [Run 38863667562](https://github.com/zxwan829/SecondBrain/actions/runs/38863667562) 在网络预检后，Core `--enabled-scenario` 退出码 1，无场景结果或最终 PASS；Harness 未转发 stderr，具体失败阶段 UNKNOWN，不能判定业务缺陷或完整闭环通过，后续 flag-off 未执行。2026-10-16 只读 NAS 审计确认 App healthy、Hermes 固定 v0.21.5 镜像 running；现有容器挂载正式 Core state、Hermes data 和业务目录，没有作为隔离测试资产使用。发现 Hermes 以 root/可写根文件系统运行，并将整个 SecondBrain 根目录 RO 挂入；Private 可见性与 Safe Root 配置 UNKNOWN。只读审计没有改变 E2E 状态 | Runner 授权已用尽；NAS 当前服务不能直接承载合成 Run。PR #8 已加入限长脱敏 Harness 失败标记及 8 项本地单元测试（8 passed），语法检查通过；这仅验证诊断格式与脱敏，不验证 Hermes/Core E2E。NAS 独立 Compose 方案已明确项目名、临时路径、固定镜像、Core 源码 SHA、资源门槛及 run-label 清理。新 Runner/NAS 创建资源均需另行授权。未执行联调/部署、未触发 Runner、未调用付费模型、未读取私人文件 |
+| 真实 Hermes/Core 记忆链路（Phase 1-C） | **BLOCKED：**获批的唯一一次手动 Runner [Run 38863667562](https://github.com/zxwan829/SecondBrain/actions/runs/38863667562) 在网络预检后，Core `--enabled-scenario` 退出码 1，无场景结果或最终 PASS；Harness 未转发 stderr，具体失败阶段 UNKNOWN，不能判定业务缺陷或完整闭环通过，后续 flag-off 未执行。2026-10-16 只读 NAS 审计确认 App healthy、Hermes 固定 v0.21.5 镜像 running；现有容器挂载正式 Core state、Hermes data 和业务目录，没有作为隔离测试资产使用。只读挂载清单未见规范 Private 直接挂载，但所有有效访问路径未完整核验；没有访问/泄露证据，这不构成 Phase 1-C 阻断。只读审计没有改变 E2E 状态 | Runner 授权已用尽；NAS 当前服务不能直接承载合成 Run。PR #8 已加 Harness 脱敏诊断和离线单测。适配代码提供 Linux/amd64 Core 导出工作流、镜像归档身份校验、独立 Compose 与原场景 Harness `compose exec` 入口；本地无 Docker，镜像归档尚未生成，Compose 未在 NAS 验证。NAS 执行、Runner、付费模型、部署需另行授权 |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
 | 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
 | 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |

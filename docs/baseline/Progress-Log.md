@@ -7,9 +7,17 @@
 - 按 ChatGPT 审核评论 `6210190381` 与用户授权评论 `6210207099`，仅修改 `tests/d077/hermes_v0215_core_stub_ci.py`、新增本地诊断单测并更新现有基线；未访问 NAS、未启动容器、未触发 Runner、未调用模型或业务 API。
 - Harness 的 `--enabled-scenario`、`--flags-off`、网络预检和 egress 探测现在由统一失败边界捕获；单条 `D077_HARNESS_FAILURE` 仅输出 allowlist mode/stage、异常类名、HTTP status（适用时）与退出码。不会打印异常消息、Traceback、stderr、URL、prompt、环境变量或 provider 响应。进程超时及无 marker 的 peer 退出使用不含原始输出的降级诊断。HTTP 非 200 与连接拒绝/超时继续分别分类；Phase 1-C E2E 仍 BLOCKED。
 - 新增离线单测覆盖 HTTP 状态/传输异常区分、模式与阶段白名单、异常消息脱敏、scenario 失败 marker、peer 退出降级和超时诊断。验证：**8 passed**；Harness 与单测两个 Python 文件的内存语法编译通过；`git diff --check` 通过。没有运行 Core 全量套件或任何集成 Harness。
-- NAS 方案细化为独立 project `sb-d077-phase1c-<run-id>`、唯一暂存根 `/volume1/docker/secondbrain-test/d077-phase1c/<run-id>/`、Hermes 固定 digest、当前 Core 源码基线 `955fc16d808349af661e49fc4c33b449db0a0fce`（正式测试须使用最终复审 SHA）、仅 internal network、无发布端口/生产挂载/Secret、非 root/只读/丢弃 capabilities、合计约 2.5 GiB/2 CPU/256 PIDs 的容器硬上限、资源准入阈值、最长 20 分钟和按 run label 清理/显式残留断言。方案仍是提案，不创建资产。
-- CURRENT 与 Environment-Baseline 已将 Private 标为 **UNVERIFIED / RISK**：Hermes 的整个 SecondBrain 根目录 RO mount 可能使其可见，但未检查 Private 是否存在/权限或任何内容，也没有证据表明它已被读取。需要独立安全整改确认最小 allowlist、非 root/capabilities 与拒绝访问。既有 NAS 服务不参与 Phase 1-C 联调。
-- 下一步：仅在 ChatGPT 复审本提交后，另行请求 NAS 创建测试资源或新的 Runner 授权；本轮无 NAS 操作、Runner、部署、合并或真实数据访问。
+- 先前提交只记录了 Compose 方案提案，没有可执行 NAS Compose/Harness 适配。其后复审评论 `6210362039` 要求先解决 Core 镜像离线来源、Harness 与 Compose 调用兼容、资源/网络/清理断言；本次已补充相应静态适配（见下一条进度记录）。
+- Private 事实更正：规范路径 `/volume1/SecBR/Private` 与只读挂载 `/volume1/SecBR/SecondBrain` 是兄弟目录。静态挂载记录未见规范 Private 直接挂载；未全面验证所有有效访问路径，但没有 Private 被访问或泄露的证据。不读取/探测 Private，不改变原权限设计，不作为 Phase 1-C 阻断。
+- 下一步：Core image export workflow 需要未来另行授权后手动运行；NAS 资源、Compose 版本和 deny-target IP/端口也需在独立授权时只读核实。本轮无 NAS 操作、Runner、部署、合并或真实数据访问。
+
+# 2026-10-16 — PR #8 NAS Compose / Core 离线镜像执行适配（仅静态）
+
+- 按复审评论 `6210362039`，新增手动 `.github/workflows/d077-core-image-export.yml`，在 GitHub Linux x86_64 上从所选 SHA 构建并导出带 revision/task 标签的 `linux/amd64` Core 镜像 tar、SHA256 和元数据；归档保留 7 天。没有触发该 workflow；当前无已核验 Core 镜像归档，且本机无 Docker/Podman/Buildah，因此 NAS 执行前仍需独立 Runner 授权生成 artifact，再按 SHA/架构/镜像 ID 离线校验并导入，不允许 NAS 在线 pull/build。
+- 新增仅用于本实验的 `compose.nas-isolated.yaml` 和 `nas_compose_harness.py`：唯一 project/run ID；无端口、构建、生产路径或 Docker socket；单 `internal` 网络；固定 Hermes digest；预加载 SHA 匹配 Core image；非 root、只读 rootfs、cap-drop/no-new-privileges 与内存/CPU/PID 限额。Driver 通过 `docker compose exec` 调用现有 `--network-preflight`、enabled 和 flag-off Harness 场景；提供至少两个外部 deny-target，运行时检查 Compose 展开、实际容器参数、镜像身份、网络子网/路由冲突，并按双标签精确清理容器/网络、唯一本轮 image tag 和唯一临时目录。所有命令路径仍须之后授权的 NAS 实测。
+- 资源合计上限约 2.5 GiB / 2 CPU / 256 PIDs，运行建议门槛 MemAvailable ≥4 GiB、目标卷余量 ≥6 GiB，单场景 10 分钟、整次操作 20 分钟。临时根固定在 `/volume1/docker/secondbrain-test/d077-phase1c/<run-id>/`；若父目录、目标路由或 Compose 功能无法核验，driver fail closed。
+- Private 文档已改为：规范路径与挂载路径是兄弟目录、没有直接挂载证据、所有访问路径未完全验收、无访问/泄露证据；不新增独立整改任务、不改变现有权限设计、不阻塞 Phase 1-C。
+- 本地验证：Harness 单测 **9 passed**、NAS driver 纯函数单测 **3 passed**、4 个 Python 文件内存编译、Compose/Workflow YAML 语法解析和 `git diff --check` 均通过；Docker/Compose 不可用，未运行 Compose、Runner、NAS 或任何 Core/Hermes 集成测试。Phase 1-C 仍 BLOCKED，未部署、未合并、未调用模型。
 
 # 2026-10-16 — PR #8 NAS SecondBrain 容器只读环境核验
 

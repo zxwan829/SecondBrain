@@ -1,0 +1,140 @@
+# Candidate isolated Phase 1-C test only. Never include in production Compose.
+x-common: &common
+  image: ${D077_CORE_IMAGE:?load and verify the matching Core image archive first}
+  user: ${D077_UID:?set non-root runtime uid}:${D077_GID:?set non-root runtime gid}
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 96
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+  volumes:
+    - type: bind
+      source: ${D077_RUN_ROOT:?use the exact per-run temporary root}/harness.py
+      target: /tmp/harness.py
+      read_only: true
+  networks: [isolated]
+  labels: &test-labels
+    d077.task: phase1c
+    d077.run: ${D077_RUN_ID}
+
+services:
+  hermes:
+    image: nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db
+    entrypoint: [/bin/sh, -c]
+    command: ["exec /opt/hermes/.venv/bin/hermes gateway run --no-supervise"]
+    user: ${D077_UID}:${D077_GID}
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1536m
+    cpus: 1.0
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${D077_RUN_ROOT}/hermes-home
+        target: /opt/data
+      - type: bind
+        source: ${D077_RUN_ROOT}/harness.py
+        target: /tmp/harness.py
+        read_only: true
+    environment:
+      HERMES_HOME: /opt/data
+      HOME: /opt/data
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      API_SERVER_KEY: d077-hermes-api-server-synthetic-key
+      D077_DENY_EGRESS_TARGETS: ${D077_DENY_EGRESS_TARGETS:?provide verified NAS and router IP:port targets}
+    labels: *test-labels
+    networks: [isolated]
+
+  stub:
+    <<: *common
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 32
+    command: [python, /tmp/harness.py, --stub]
+    environment:
+      D077_STUB_URL: http://stub:19002
+      D077_DENY_EGRESS_TARGETS: ${D077_DENY_EGRESS_TARGETS}
+
+  core:
+    <<: *common
+    mem_limit: 768m
+    cpus: 0.75
+    environment:
+      HOME: /test-data/home
+      LANG: C.UTF-8
+      PORT: "8000"
+      SB_REVIEW_ROOT: /test-data/review
+      SB_KNOWLEDGE_ROOT: /test-data/knowledge
+      SB_PROMOTE_STATE_ROOT: /test-data/promote
+      SB_CAPTURE_RAW_ROOT: /test-data/raw
+      SB_DASHBOARD_ORIGINS: http://127.0.0.1:8000
+      SB_CORE_ALLOWED_HOSTS: 127.0.0.1,localhost
+      SB_APP_PASSWORD_FILE: /test-data/app-password
+      SB_HERMES_API_KEY_FILE: /test-data/hermes-key
+      SB_HERMES_API_URL: http://hermes:8642
+      SB_PERSONAL_MEMORY_ENABLED: "true"
+      SB_PERSONAL_LEARNING_ENABLED: "true"
+      SB_PERSONAL_MEMORY_ROOT: /test-data/memory
+      SB_PROMOTE_ENABLED: "false"
+      SB_ORGANIZER_MODEL_ENABLED: "false"
+      SB_ORGANIZER_SCHEDULER_ENABLED: "false"
+      API_SERVER_KEY: d077-hermes-api-server-synthetic-key
+      D077_STUB_URL: http://stub:19002
+      D077_DENY_EGRESS_TARGETS: ${D077_DENY_EGRESS_TARGETS}
+    volumes:
+      - type: bind
+        source: ${D077_RUN_ROOT}/core-enabled
+        target: /test-data
+      - type: bind
+        source: ${D077_RUN_ROOT}/harness.py
+        target: /tmp/harness.py
+        read_only: true
+    command: [/bin/sh, -c, "python -m secondbrain_core >/test-data/core.log 2>&1 & exec sleep 1200"]
+
+  core-off:
+    <<: *common
+    mem_limit: 768m
+    cpus: 0.75
+    environment:
+      HOME: /test-data/home
+      LANG: C.UTF-8
+      PORT: "8000"
+      SB_REVIEW_ROOT: /test-data/review
+      SB_KNOWLEDGE_ROOT: /test-data/knowledge
+      SB_PROMOTE_STATE_ROOT: /test-data/promote
+      SB_CAPTURE_RAW_ROOT: /test-data/raw
+      SB_DASHBOARD_ORIGINS: http://127.0.0.1:8000
+      SB_CORE_ALLOWED_HOSTS: 127.0.0.1,localhost
+      SB_APP_PASSWORD_FILE: /test-data/app-password
+      SB_HERMES_API_KEY_FILE: /test-data/hermes-key
+      SB_HERMES_API_URL: http://hermes:8642
+      SB_PERSONAL_MEMORY_ENABLED: "false"
+      SB_PERSONAL_LEARNING_ENABLED: "false"
+      SB_PERSONAL_MEMORY_ROOT: /test-data/memory
+      SB_PROMOTE_ENABLED: "false"
+      SB_ORGANIZER_MODEL_ENABLED: "false"
+      SB_ORGANIZER_SCHEDULER_ENABLED: "false"
+      API_SERVER_KEY: d077-hermes-api-server-synthetic-key
+      D077_STUB_URL: http://stub:19002
+      D077_DENY_EGRESS_TARGETS: ${D077_DENY_EGRESS_TARGETS}
+    volumes:
+      - type: bind
+        source: ${D077_RUN_ROOT}/core-disabled
+        target: /test-data
+      - type: bind
+        source: ${D077_RUN_ROOT}/harness.py
+        target: /tmp/harness.py
+        read_only: true
+    command: [/bin/sh, -c, "python -m secondbrain_core >/test-data/core.log 2>&1 & exec sleep 1200"]
+
+networks:
+  isolated:
+    internal: true
+    labels: *test-labels
