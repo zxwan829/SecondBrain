@@ -411,7 +411,7 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 **状态：** 决策/文档层已批准，**不代表**已测试、已编码、已升级、已部署或已验收。2026-10-16 本次仅更新 GitHub 正式文档，未授权修改 NAS、Hermes、密钥、生产模型/Scheduler、正式 Knowledge 或真实用户数据出站。实际下一步只以 `00-CURRENT.md` 的 NEXT 为准；原 Phase 0 只作为历史阶段验证方案。
 
 
-## D078 — 2026-10-16 Hermes 原生能力保留与按需监督执行（APPROVED PRODUCT DIRECTION / IMPLEMENTATION PENDING）
+## D078 — 2026-10-16 Hermes 原生能力保留与按需监督执行（APPROVED DECISION）
 
 **背景与替代关系：** D077 已完成 Hermes v0.22.2 + Core JSONL 在 NAS 的合成记忆闭环，但真实模型与浏览器体验未验收（Issue [#12](https://github.com/zxwan829/SecondBrain/issues/12)）。Issue [#14](https://github.com/zxwan829/SecondBrain/issues/14) 发现普通 API Chat 原有 `terminal.backend=local`、且 `file` 可访问其他 Hermes Session 路径。初步已从 API toolsets 去掉 terminal，保留 file/skills/vision。随后用户明确推翻“简单长期禁用 file/terminal”方案，要求 **「受控或者受监督即可，不要限制」**、**「一起，改按需申请，不可以直接限制 hermes 的原生能力，要保持可控」**。此条是对 D077 的**权限与自主学习产品原则补充**，不取消 Private/Promote/Knowledge 既有强制边界。
 
@@ -423,6 +423,6 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 3. **Terminal：** 最终目标是按需申请，用户看到具体命令/用途/风险后明确批准才执行；普通 API terminal 在真正技术审批门禁完成前**继续暂时关闭**，不能先打开后依赖模型“自觉申请”。
 4. **Skills：** 允许模型发现、提出、生成可复用 Skills；重要 create/edit/patch/delete 先暂存并审核。优先复用 Hermes `skills.write_approval`；如果 `file` 等路径可绕过 Skills 审批，必须补足文件系统或动作级约束。暂可 CLI 审核；网页端审批是后续可用性目标，不得宣称现有浏览器支持。
 
-**已验证的能力限制（不是完成状态）：** Hermes v0.22.2 无通用文件读取按路径逐次审批、无所有普通文件动作的通用审批；原生 Run approval endpoint 只处理已有工具 gate，不能自动使 file/terminal 变为受控；Core 尚无完整 approval.request SSE→BFF→Web UI→批准/拒绝链。上述来自 Issue #14 源码/配置诊断。部署中的 toolsets 为 `file, skills, vision`（普通 terminal 已移除），Skills 写批准还未报告生产启用。**D078 当前为方案设计/执行待验收，不是权限整改完成。**
+**已验证的能力限制（不是完成状态）：** Hermes v0.22.2 无通用文件读取按路径逐次审批、无所有普通文件动作的通用审批；原生 Run approval endpoint 只处理已有工具 gate，不能自动使 file/terminal 变为受控；Core 尚无完整 approval.request SSE→BFF→Web UI→批准/拒绝链。上述来自 Issue #14 源码/配置诊断。部署中的 toolsets 为 `file, skills, vision`（普通 terminal 已移除），Skills 写批准还未报告生产启用。**该段为 2026-10-16 的历史能力评估，不表示 2026-10-17 的现网状态；部署及验收进度仅见 `00-CURRENT.md` / `Environment-Baseline.md`。**
 
 **实施取舍：** Upstream First，先复用原生已有审批和固定 v0.22.2 的最小工具/路径隔离，不开发大型通用审批框架或第二 Runtime；但不能用“简单”掩盖权限绕过。分离只读设计、代码测试、NAS 配置部署、真实权限验证、浏览器体验五种状态。变更权限、镜像、生产数据与使用外部付费模型各按授权边界执行，且不影响其他 NAS 服务或家庭网络。正式历史和下一步由 `Progress-Log.md` / `00-CURRENT.md` 单独维护。
