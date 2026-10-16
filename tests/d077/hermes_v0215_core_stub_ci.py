@@ -92,6 +92,20 @@ FAILURE_CODES = {
     "prerequisite_not_passed",
     "scenario_execution_error",
     "scenario_result_missing",
+    "scenario_http_status_error",
+    "scenario_http_4xx",
+    "scenario_http_5xx",
+    "scenario_http_transport_error",
+    "stub_http_status_error",
+    "stub_transport_error",
+    "stub_state_unavailable",
+    "stub_state_invalid",
+    "stub_control_unavailable",
+    "scenario_response_shape_error",
+    "scenario_container_lifecycle_error",
+    "scenario_data_path_error",
+    "scenario_timeout",
+    "scenario_unexpected_exception",
 }
 
 
@@ -484,18 +498,46 @@ def model_requests_since(index):
     return stub_state()["requests"][index:]
 
 
-def model_requests_for_input(requests, input_text):
-    """Associate captured Stub requests with a Run using its unchanged user input."""
-    return [request for request in requests if contains_text(request, input_text)]
+def last_user_input(request):
+    messages = request.get("messages", [])
+    user_contents = [row.get("content") for row in messages
+                     if isinstance(row, dict) and row.get("role") == "user"]
+    return user_contents[-1] if user_contents else None
 
 
-def unique_model_request_for_input(requests, input_text):
-    matched = model_requests_for_input(requests, input_text)
+def model_requests_for_run_input(requests, input_text):
+    """Associate every provider call in the capture window with an exact final user turn."""
+    matched = [request for request in requests if last_user_input(request) == input_text]
     if not matched:
         raise HarnessAssertionError("input_was_rewritten_or_missing")
-    if len(matched) != 1:
-        raise HarnessAssertionError("stub_request_ambiguous")
-    return matched[0]
+    return matched
+
+
+def scenario_failure_code(exc):
+    if isinstance(exc, HarnessAssertionError):
+        return exc.failure_code if exc.failure_code in FAILURE_CODES else "scenario_unexpected_exception"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = http_status_from_exception(exc)
+        if isinstance(status, int) and 400 <= status < 500:
+            return "scenario_http_4xx"
+        if isinstance(status, int) and 500 <= status < 600:
+            return "scenario_http_5xx"
+        return "scenario_http_status_error"
+    if isinstance(exc, httpx.RequestError):
+        return "scenario_http_transport_error"
+    if isinstance(exc, urllib.error.HTTPError):
+        return "stub_http_status_error"
+    if isinstance(exc, urllib.error.URLError):
+        return "stub_transport_error"
+    if isinstance(exc, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        return "scenario_container_lifecycle_error"
+    if isinstance(exc, (FileNotFoundError, PermissionError)):
+        return "scenario_data_path_error"
+    if isinstance(exc, (TimeoutError,)):
+        return "scenario_timeout"
+    if isinstance(exc, (json.JSONDecodeError, KeyError, TypeError, IndexError, AttributeError)):
+        return "scenario_response_shape_error"
+    return "scenario_unexpected_exception"
 
 
 def personal_memory_context_for_input(request, input_text):
@@ -503,7 +545,7 @@ def personal_memory_context_for_input(request, input_text):
     messages = request.get("messages", [])
     user_contents = [row.get("content") for row in messages
                      if isinstance(row, dict) and row.get("role") == "user"]
-    if user_contents.count(input_text) != 1:
+    if not user_contents or user_contents[-1] != input_text:
         raise HarnessAssertionError("input_was_rewritten_or_missing")
 
     blocks = []
@@ -522,9 +564,20 @@ def personal_memory_context_for_input(request, input_text):
     return "\n".join(blocks)
 
 
+def all_memory_contexts_for_run(requests, input_text):
+    matched = model_requests_for_run_input(requests, input_text)
+    return [personal_memory_context_for_input(request, input_text) for request in matched]
+
+
 def assert_memory_candidates_filtered(request, input_text, candidates):
     memory_context = personal_memory_context_for_input(request, input_text)
     if any(candidate in memory_context for candidate in candidates):
+        raise HarnessAssertionError("revoked_expired_inference_filter_failed")
+
+
+def assert_run_memory_candidates_filtered(requests, input_text, candidates):
+    contexts = all_memory_contexts_for_run(requests, input_text)
+    if any(candidate in context for context in contexts for candidate in candidates):
         raise HarnessAssertionError("revoked_expired_inference_filter_failed")
 
 
@@ -536,9 +589,7 @@ def run_scenario(results, name, action, *, requires=()):
     try:
         value = action()
     except Exception as exc:
-        code = getattr(exc, "failure_code", None)
-        if code not in FAILURE_CODES:
-            code = "scenario_execution_error"
+        code = scenario_failure_code(exc)
         results[name] = {"status": "FAIL", "failure_code": code}
         return None
     results[name] = {"status": "PASS", "failure_code": None}
@@ -610,17 +661,25 @@ def is_user_stop_status(status):
 
 def stub_state():
     url = os.environ.get("D077_STUB_URL", "http://stub:19002") + "/__test/state"
-    with urllib.request.urlopen(url, timeout=5) as response:
-        return json.loads(response.read())
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            return json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError):
+        raise HarnessAssertionError("stub_state_unavailable") from None
+    except (json.JSONDecodeError, TypeError):
+        raise HarnessAssertionError("stub_state_invalid") from None
 
 
 def control_stub(payload):
     url = os.environ.get("D077_STUB_URL", "http://stub:19002") + "/__test/control"
     request = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                      headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=5) as response:
-        if response.status != 200:
-            raise RuntimeError("stub_control_failed")
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            if response.status != 200:
+                raise HarnessAssertionError("stub_control_unavailable")
+    except (urllib.error.URLError, TimeoutError):
+        raise HarnessAssertionError("stub_control_unavailable") from None
 
 
 def wait_stub_blocked(timeout):
@@ -727,8 +786,8 @@ def enabled_scenario():
         requests = model_requests_since(before)
         if not requests:
             raise HarnessAssertionError("initial_run_failed")
-        target_request = unique_model_request_for_input(requests, initial)
-        if contains_text(target_request, "personal_memory_json"):
+        memory_contexts = all_memory_contexts_for_run(requests, initial)
+        if any(context for context in memory_contexts):
             raise HarnessAssertionError("initial_run_had_memory_context")
         rows = client.get("/api/personal-memory").json()["items"]
         learned = {row["content"]["text"]: row for row in rows}
@@ -796,9 +855,8 @@ def enabled_scenario():
         requests = model_requests_since(before)
         if status != "completed" or "run.completed" not in events or not requests:
             raise HarnessAssertionError("cross_session_run_failed")
-        target_request = unique_model_request_for_input(requests, question)
-        if (not contains_text(target_request, "personal_memory_json")
-                or not contains_text(target_request, "concise summaries")):
+        memory_contexts = all_memory_contexts_for_run(requests, question)
+        if any("concise summaries" not in context for context in memory_contexts):
             raise HarnessAssertionError("cross_session_instructions_not_observed_by_stub")
 
     run_scenario(results, "cross_session_recall", cross_session, requires=("initial_learning_source",))
@@ -824,9 +882,9 @@ def enabled_scenario():
         requests = model_requests_since(before)
         if status != "completed" or "run.completed" not in events or not requests:
             raise HarnessAssertionError("corrected_recall_run_failed")
-        target_request = unique_model_request_for_input(requests, question)
-        prompt = "\n".join(str(row.get("content", "")) for row in target_request.get("messages", []))
-        if "concise paragraphs" not in prompt or "concise summaries" in prompt:
+        memory_contexts = all_memory_contexts_for_run(requests, question)
+        if any("concise paragraphs" not in context or "concise summaries" in context
+               for context in memory_contexts):
             raise HarnessAssertionError("corrected_context_stale")
 
     set_scenario_stage("corrected_cross_session_recall")
@@ -855,9 +913,9 @@ def enabled_scenario():
         requests = model_requests_since(before)
         if status != "completed" or "run.completed" not in events or not requests:
             raise HarnessAssertionError("revoked_expired_inference_filter_failed")
-        target_request = unique_model_request_for_input(requests, question)
-        assert_memory_candidates_filtered(target_request, question,
-                                          ("metric units", "imaginary unit labels", "cobalt project names"))
+        assert_run_memory_candidates_filtered(
+            requests, question, ("metric units", "imaginary unit labels", "cobalt project names")
+        )
 
     set_scenario_stage("revoked_expired_inference_filter")
     run_scenario(results, "revoked_expired_inference_filter", inactive_memory_filter,
@@ -873,8 +931,10 @@ def enabled_scenario():
         finally:
             control_stub({"fail_remaining": 0})
         requests = model_requests_since(before)
-        if not model_requests_for_input(requests, question):
-            raise HarnessAssertionError("provider_failure_not_observed_by_stub")
+        try:
+            model_requests_for_run_input(requests, question)
+        except HarnessAssertionError as exc:
+            raise HarnessAssertionError("provider_failure_not_observed_by_stub") from exc
         if not is_provider_failure_status(status) or "run.failed" not in events:
             raise HarnessAssertionError("provider_failure_wrong_terminal_state")
         active_text = {row.get("content", {}).get("text")
@@ -895,7 +955,9 @@ def enabled_scenario():
             run_id = start_chat(client, session, question, "d077-v0215-stop-run")
             if not wait_stub_blocked(timeout=12):
                 raise HarnessAssertionError("stop_request_not_observed")
-            if not model_requests_for_input(model_requests_since(before), question):
+            try:
+                model_requests_for_run_input(model_requests_since(before), question)
+            except HarnessAssertionError:
                 raise HarnessAssertionError("stop_request_not_observed")
             stopped = client.post(f"/api/chat/runs/{run_id}/stop", json={})
             stopped.raise_for_status()
@@ -934,8 +996,8 @@ def enabled_scenario():
         requests = model_requests_since(before)
         if status != "completed" or "run.completed" not in events or not requests:
             raise HarnessAssertionError("unrelated_run_failed")
-        target_request = unique_model_request_for_input(requests, question)
-        if contains_text(target_request, "personal_memory_json"):
+        memory_contexts = all_memory_contexts_for_run(requests, question)
+        if any(memory_contexts):
             raise HarnessAssertionError("unrelated_topic_received_memory_context")
 
     set_scenario_stage("unrelated_topic_filter")
@@ -955,9 +1017,9 @@ def enabled_scenario():
         requests = model_requests_since(before)
         if status != "completed" or "run.completed" not in events or not requests:
             raise HarnessAssertionError("exact_fact_run_failed")
-        target_request = unique_model_request_for_input(requests, question)
-        prompt = "\n".join(str(row.get("content", "")) for row in target_request.get("messages", []))
-        if "Source verification required" not in prompt or "NOVA-17" in prompt:
+        memory_contexts = all_memory_contexts_for_run(requests, question)
+        if any("Source verification required" not in context or "NOVA-17" in context
+               for context in memory_contexts):
             raise HarnessAssertionError("exact_fact_source_gate_failed")
 
     set_scenario_stage("exact_fact_source_gate")
@@ -988,8 +1050,8 @@ def flags_off_scenario():
             memory_root = pathlib.Path(os.environ["SB_PERSONAL_MEMORY_ROOT"])
             if status != "completed" or "run.completed" not in events or not requests:
                 raise HarnessAssertionError("flags_off_chat_failed")
-            target_request = unique_model_request_for_input(requests, "I prefer lavender section titles.")
-            if memory_root.exists() or contains_text(target_request, "personal_memory_json"):
+            memory_contexts = all_memory_contexts_for_run(requests, "I prefer lavender section titles.")
+            if memory_root.exists() or any(memory_contexts):
                 raise HarnessAssertionError("flags_off_memory_enabled")
         finally:
             client.close()

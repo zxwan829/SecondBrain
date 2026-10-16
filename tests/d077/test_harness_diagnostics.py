@@ -67,23 +67,23 @@ class HarnessDiagnosticTests(unittest.TestCase):
         self.assertNotIn("private.example", encoded)
         self.assertNotIn("raw prompt", encoded)
 
-    def test_cross_session_stub_request_is_selected_by_original_run_input(self):
+    def test_run_input_association_accepts_all_calls_and_ignores_other_run_interference(self):
+        question = "How should you format my summaries and units?"
         requests = [
-            {"messages": [{"role": "user", "content": "earlier unrelated request"}]},
-            {"messages": [{"role": "user", "content": "How should you format my summaries and units?"},
+            {"messages": [{"role": "system", "content": question},
+                          {"role": "user", "content": "another Run input"}]},
+            {"messages": [{"role": "user", "content": question},
+                          {"role": "assistant", "content": "tool call"}]},
+            {"messages": [{"role": "user", "content": "earlier turn"},
+                          {"role": "user", "content": question},
                           {"role": "system", "content": "<personal_memory_json>synthetic</personal_memory_json>"}]},
         ]
 
-        selected = harness.model_requests_for_input(
-            requests, "How should you format my summaries and units?"
-        )
+        selected = harness.model_requests_for_run_input(requests, question)
 
-        self.assertEqual(selected, [requests[1]])
+        self.assertEqual(selected, [requests[1], requests[2]])
         with self.assertRaisesRegex(harness.HarnessAssertionError, "input_was_rewritten_or_missing"):
-            harness.unique_model_request_for_input(requests, "missing synthetic input")
-        with self.assertRaisesRegex(harness.HarnessAssertionError, "stub_request_ambiguous"):
-            harness.unique_model_request_for_input([requests[1], requests[1]],
-                                                   "How should you format my summaries and units?")
+            harness.model_requests_for_run_input(requests, "missing synthetic input")
 
     def test_hermes_v0215_provider_failure_and_stop_status_contracts_are_strict(self):
         self.assertTrue(harness.is_provider_failure_status("failed"))
@@ -126,6 +126,23 @@ class HarnessDiagnosticTests(unittest.TestCase):
                 request, question, ("metric units", "imaginary unit labels", "cobalt project names")
             )
 
+    def test_inactive_filter_fails_if_only_one_of_multiple_run_requests_leaks(self):
+        question = "Which metric units, imaginary unit labels, and project names do I prefer?"
+        candidates = ("metric units", "imaginary unit labels", "cobalt project names")
+        requests = [
+            {"messages": [{"role": "user", "content": question},
+                          {"role": "system", "content": "<personal_memory_json>{}</personal_memory_json>"}]},
+            {"messages": [{"role": "user", "content": "unrelated run"},
+                          {"role": "system", "content": "<personal_memory_json>metric units</personal_memory_json>"}]},
+            {"messages": [{"role": "user", "content": question},
+                          {"role": "system", "content": "<personal_memory_json>{'inference':'cobalt project names'}</personal_memory_json>"}]},
+        ]
+
+        with self.assertRaisesRegex(
+            harness.HarnessAssertionError, "revoked_expired_inference_filter_failed"
+        ):
+            harness.assert_run_memory_candidates_filtered(requests, question, candidates)
+
     def test_failure_record_exposes_only_allowlisted_cross_session_code(self):
         error = harness.HarnessAssertionError("cross_session_instructions_not_observed_by_stub")
         record = harness.failure_record("--enabled-scenario", "cross_session_recall", error)
@@ -167,6 +184,45 @@ class HarnessDiagnosticTests(unittest.TestCase):
             "corrected_recall": {"status": "BLOCKED", "failure_code": "prerequisite_not_passed"},
         })
         self.assertEqual(harness.scenario_status(results), "FAIL")
+
+    def test_scenario_exceptions_map_to_fixed_safe_codes(self):
+        provider_error = harness.httpx.HTTPStatusError(
+            "private prompt and token", request=harness.httpx.Request("GET", "http://core/private"),
+            response=harness.httpx.Response(503),
+        )
+        flags_off_error = harness.httpx.HTTPStatusError(
+            "private prompt and token", request=harness.httpx.Request("POST", "http://core/private"),
+            response=harness.httpx.Response(403),
+        )
+        cases = [
+            ("failed_run_no_learning", provider_error, "scenario_http_5xx"),
+            ("flags_off", flags_off_error, "scenario_http_4xx"),
+            ("network", harness.httpx.ConnectError("private prompt"), "scenario_http_transport_error"),
+            ("stub", harness.urllib.error.URLError("secret host"), "stub_transport_error"),
+            ("container", subprocess.TimeoutExpired("docker", 5), "scenario_container_lifecycle_error"),
+            ("shape", KeyError("private field"), "scenario_response_shape_error"),
+            ("unknown", RuntimeError("secret prompt"), "scenario_unexpected_exception"),
+        ]
+
+        for name, error, expected_code in cases:
+            with self.subTest(name=name):
+                results = {}
+
+                def fail(error=error):
+                    raise error
+
+                harness.run_scenario(results, name, fail)
+                self.assertEqual(results[name], {"status": "FAIL", "failure_code": expected_code})
+                self.assertNotIn("private", json.dumps(results))
+                self.assertNotIn("secret", json.dumps(results))
+
+    def test_stub_state_and_control_failures_have_safe_fixed_codes(self):
+        error = harness.urllib.error.URLError("private host and credentials")
+        with patch.object(harness.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaisesRegex(harness.HarnessAssertionError, "stub_state_unavailable"):
+                harness.stub_state()
+            with self.assertRaisesRegex(harness.HarnessAssertionError, "stub_control_unavailable"):
+                harness.control_stub({"release": True})
 
     def test_scenario_result_parser_fails_closed_without_leaking_output(self):
         parsed = harness.scenario_result_from_output("secret prompt", "D077_ENABLED_RESULT")
