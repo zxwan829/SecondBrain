@@ -41,7 +41,7 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -euo pipefail
-          python3 -B tests/d077/hermes_live_ci.py
+          python3 -B docs/benchmarks/d077-hermes-live/hermes_live_ci.py
       - name: Clean up temporary Docker assets
         if: always()
         shell: bash
