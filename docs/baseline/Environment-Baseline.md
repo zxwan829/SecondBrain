@@ -1,12 +1,12 @@
 ---
 created: 2026-09-28
-updated: 2026-10-15
+updated: 2026-10-16
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
 
-本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。**它不是实时监控**：以下快照来自 2026-10-15 的受控 App-only 部署及接口验收；历史部署过程、旧状态、失败复盘和逐次证据见 `Progress-Log.md`。不记录任何密钥或明文环境配置。
+本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。**它不是实时监控**：以下为 2026-10-16 Hermes v0.22.2 部署尝试回滚后的只读快照；升级失败与回滚证据见 `Progress-Log.md`。不记录任何密钥或明文环境配置。
 
 ## NAS 与 Compose
 
@@ -14,14 +14,22 @@ type: environment-baseline
 - 正式 Compose：`/volume1/docker/secondbrain/compose.yaml`；Compose Project `secondbrain`；Docker 网络 `secondbrain_default`。部署前 SHA-256：`e318d4167666877e415203f637eda63a38cde41b01e5d58855dee29ce50a1149`；本次仅更新 App build context 与 image 字段后的 SHA-256：`93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`。
 - 项目目标为两个服务：`secondbrain-hermes` 与 `secondbrain-app`。Container Manager GUI 曾出现旧容器行/旧定义缓存；最后已记录状态为管理界面定义未完成对齐。当前 GUI 状态未在本次核实，标记 `UNKNOWN`；这是部署管理风险，不改变 Docker 运行态记录。
 
-## 最近已核验的容器快照（2026-10-15）
+## 最近已核验的容器快照（2026-10-16 回滚后）
 
 | 服务 | 容器 ID | 镜像 / Image ID | 状态 | 入口/说明 |
 |---|---|---|---|---|
 | `secondbrain-app` | `f3da36a01343e764ac051d81c99fac7e6186c947629dd312301c8547e28c3f82` | `secondbrain-app:d076-organizer-b34319a` / `sha256:6070c61789737bf64b57d7aab726c4bcee20564f2e6df5584344dcc568d9196f` | healthy；启动 `2026-10-15T14:59:58.43579047Z`；运行身份 `1026:100` | 宿主 `127.0.0.1:9120`；LAN-only DSM HTTPS `https://zxwan520.com:63013` |
-| `secondbrain-hermes` | `f6703ca3e3d41856b6e35348f28cd1c7f833ffb9ab31b19e958656540eed8ac6` | `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db` / `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6` | running；启动 `2026-10-14T08:03:44.970619297Z`；v0.21.5 / upstream `749220ef` | LAN HTTP `192.168.3.27:9119`；LAN-only DSM HTTPS `https://zxwan520.com:63012`；API 8642 不发布宿主端口 |
+| `secondbrain-hermes` | `53ad4601ba4b9b067aeb782cbf520244ea0a557a076bcf553ff4455061c35171` | `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db` / `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6` | running；启动 `2026-10-16T11:52:19.749685969Z`（数据恢复后）；v0.21.5 / upstream `749220ef` | LAN HTTP `192.168.3.27:9119`；LAN-only DSM HTTPS `https://zxwan520.com:63012`；API 8642 不发布宿主端口 |
 
-上述为 2026-10-15 本次部署后的核验快照。新 App 源码来自 GitHub `b34319af0b928ef6781b9ff4c0cc4ab8bb80c1c0`；Hermes 容器、镜像和启动时间保持不变。Promote 未启用。
+上述为 2026-10-16 回滚后的运行快照。App 仍为 GitHub `b34319af0b928ef6781b9ff4c0cc4ab8bb80c1c0` 构建；Hermes 已恢复 v0.21.5 与升级前 state。两服务 `/health` 均返回 200；Promote 未启用。
+
+## D077 Hermes v0.22.2 部署尝试（2026-10-16，已回滚）
+
+- 目标镜像 `nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05` 已核实为 `linux/amd64`，但替换后容器虽运行，内部 API 8642 与 Dashboard 9119 均未监听。v0.22.2 未进入可用状态；未运行 Session/Run/SSE 或模型请求。
+- Compose 已恢复到 SHA-256 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`。个人记忆 flags 未配置（默认 false），专用 `personal-memory` 空目录已移除。Hermes v0.21.5 state 已由校验归档恢复；升级尝试后的状态仍保留供后续审查。
+- 回滚资产：`/volume1/docker/secondbrain/rollback/d077-v0222-predeploy-20261016T114324Z/`，目录 `0700 root:root`，归档与清单文件 `0600 root:root`。升级前 Hermes state tar SHA-256：`ef497b20177ab8e563c176472806e7b51875af01692c971edebe54faeda24c7b`。目录内另有 `hermes-data-after-v0222-attempt/` 保存失败状态。
+- 新 Core/App image `secondbrain-app:d077-b6e30f3` 与源码 `/volume1/docker/secondbrain/app-build-source-d077-b6e30f3/web-app` 保留但未激活；当前 App 仍使用 `secondbrain-app:d076-organizer-b34319a`。未重启其他 NAS 服务或修改家庭网络。
+- 最后核验：Private 无挂载；Knowledge RO；`SB_PROMOTE_ENABLED=false`；Hermes API key 文件仍只读挂载且权限受限，正文未读取；API 8642 不发布宿主端口。
 
 ## 挂载与权限边界（最近记录的实际配置）
 

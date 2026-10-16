@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D077 Hermes v0.22.2 NAS 部署尝试与回滚
+
+- 按本轮授权核对 GitHub `main` 为 `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc`；PR #8 仍 OPEN、未合并，PR #9 为 OPEN Draft。部署使用 main 上已合并的 Phase 1-B Core；未合并任何 PR。
+- Core Memory/Learning/BFF 定向本地测试 **35 passed**（1 条既有 Starlette/httpx 弃用警告）；NAS App 镜像 `secondbrain-app:d077-b6e30f3` 构建成功，前端 typecheck/build 通过。Hermes 固定镜像 `linux/amd64`、Digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05` 与上游 v0.22.2 commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8` 对应。
+- 只对 Compose `hermes` 服务尝试 v0.22.2：容器状态为 running，但内部 API 8642 与 Dashboard 9119 均未监听；容器环境含 API key（仅核验存在及长度，未读取/输出正文）、bind `0.0.0.0` 和端口 8642。脱敏日志未给出足够的最小修复证据，按边界停止排障并回滚。未执行 Run/SSE、未创建 Session、未调用真实模型/付费 API、未处理真实业务对话。
+- 已恢复升级前 Compose SHA-256 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d` 和 Hermes v0.21.5 digest。升级前 Hermes state 归档 `/volume1/docker/secondbrain/rollback/d077-v0222-predeploy-20261016T114324Z/hermes-data.tar` SHA-256 `ef497b20177ab8e563c176472806e7b51875af01692c971edebe54faeda24c7b`；归档完整性校验通过。v0.22.2 尝试后状态另保留于该目录下 `hermes-data-after-v0222-attempt/`，未删除。当前 Hermes 与 App `/health` 均为 200。
+- App 保持原容器与镜像 `secondbrain-app:d076-organizer-b34319a`。运行时权限仍为 Private 无挂载、Knowledge RO、`SB_PROMOTE_ENABLED=false`；记忆环境变量未留在 Compose，空的 `personal-memory` 目录已移除。新 Core/App image 与版本化源码暂存目录保留但未激活；临时 Hermes 启动容器已清理。
+- **结论：部署未完成，D077 生产记忆未启用或验收。** v0.22.2 API 未监听的具体根因仍 UNKNOWN；本轮不继续扩大诊断。后续需针对固定版本 API Server 的启动日志/配置差异另行审查，再授权新的最小部署尝试。
+
 # 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
 
 - PR [#6](https://github.com/zxwan829/SecondBrain/pull/6) 的最终 head `0efe462cd8dbe6067b25d1e51cf69e1309cc42f7` 经独立代码复审，纠错需规范化完整等价且唯一，失败/取消/停止的 Run 清理 pending 状态；跨平台 Core 测试不再使用 `/private/tmp` 垫片。

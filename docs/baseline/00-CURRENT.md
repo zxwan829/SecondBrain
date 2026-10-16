@@ -81,7 +81,7 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|
 | 无提示主动关联 | NOT VERIFIED：旧 Knowledge Retrieval V0 已 ACCEPTED，但仅证明可用搜索/读取；不能证明自动联想 | 不说“搜索知识库”，自然对话能正确使用相关长期记忆；精确事实自动回源 |
 | Personal Memory Core（Phase 1-A） | DEV-TESTED：默认关闭、独立注入根、追加式来源/修订记录；同一来源可保存多个不同候选并稳定幂等；未核验事实在模型召回视图中脱敏并要求回源；不表示生产已部署 | PR #4 已合并；后续阶段回归结果见 Progress-Log；生产未部署、未接真实数据 |
-| 自主个人记忆学习（Phase 1-B） | DEV-TESTED：默认关闭的 Core 候选提炼与相关记忆召回挂钩；成功 Run 必须匹配 Run 前消息 ID 水位之后新增的持久消息。纠错要求去除已知表达前缀后与唯一记忆完整等价；歧义时不写；失败/取消/停止清理 pending。使用现有 Hermes `instructions` 请求字段注入受限上下文，用户 input 不改写。真实 Hermes v0.21.5 运行兼容性、长期在线行为和用户验收 UNKNOWN | PR #6 已独立审核并合并；生产启用、真实 Hermes/会话数据和模型行为验证仍须另行授权 |
+| 自主个人记忆学习（Phase 1-B） | DEV-TESTED：默认关闭的 Core 候选提炼与相关记忆召回挂钩；成功 Run 必须匹配 Run 前消息 ID 水位之后新增的持久消息。纠错要求去除已知表达前缀后与唯一记忆完整等价；歧义时不写；失败/取消/停止清理 pending。使用现有 Hermes `instructions` 请求字段注入受限上下文，用户 input 不改写。2026-10-16 曾尝试部署 Hermes v0.22.2，但容器运行而 API 8642 / Dashboard 9119 未监听，已回滚；当前 v0.21.5 与 API 已恢复。真实 Run 未执行、记忆开关仍关闭，根因 UNKNOWN | PR #6 已独立审核并合并；生产启用、真实 Hermes/会话数据和模型行为验证仍须另行授权 |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
 | 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
 | 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |
@@ -96,7 +96,7 @@ source: GitHub SecondBrain Monorepo
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
 | **Phase 1-A** | **可纠正、可撤销、可溯源的 Personal Memory Core** | 已合成测试；默认关闭、独立根目录与审计历史；实现及审核状态见 PR #4/后续主线 | 不等于生产部署或用户验收 |
-| **Phase 1-B（已合并；DEV-TESTED）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；合成链路通过，默认关闭；Core/Linux 154 passed、2 subtests passed（GitHub Actions Run 38857429530）；测试不再依赖 `/private/tmp` 垫片 | Hermes v0.21.5 实际服务执行、学习质量、真实会话与 NAS 部署均未验证；生产启用须另行批准 |
+| **Phase 1-B（已合并；DEV-TESTED）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；合成链路通过，默认关闭；Core/Linux 154 passed、2 subtests passed（GitHub Actions Run 38857429530）；测试不再依赖 `/private/tmp` 垫片 | Hermes v0.22.2 部署尝试因 API 8642 未监听已回滚；当前 v0.21.5/API healthy，记忆功能仍默认关闭；跨会话与纠错闭环尚未运行 |
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076-organizer-b34319a` healthy；HTTPS health/login/session、Chat capabilities、Inbox、Review 及受保护设置 API smoke 通过；匿名设置 API 401；Hermes 未重启 | 用户浏览器验收新版本设置页、Composer 和手机 Review；真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
