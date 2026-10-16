@@ -9,7 +9,7 @@
 - 保留 Core JSONL 作为唯一个人记忆权威存储，不启用 Hermes 外部 Memory Provider。跨 Session 召回仍由 Core 为每个相关 Run 从其 active/redacted memory view 重新生成 `instructions`；每个 Run 的会话 ID 仅用于消息来源水位，不承担跨会话记忆存储。纠错以 Core 追加修订完成，后续 Session 不再注入已替换的旧文本。
 - 最小适配：将 Chat Run 注释更新为 v0.22.2 的临时系统提示契约；新增离线集成回归，真实经过 `HermesAPI` HTTP 层验证 `instructions` 和 `session_id` 出站、原始用户输入不改写、合成纠错写入后新 Session 只带当前记忆。未改 Core 业务规则、JSONL 格式、授权逻辑、Private 策略、Hermes Provider 或部署配置。
 - 针对性 Core 测试 **36 passed**（Personal Learning、Personal Memory、App/BFF API），1 条 Starlette/httpx 弃用提示；`docker` 客户端当前不可用，故本轮没有创建/启动容器。未触发 GitHub Runner、未调用模型/付费 API、未操作 NAS 或生产服务；v0.22.2 实际容器的 API/SSE 与模型请求上下文仍为 `UNKNOWN`，不将 Mock/源码结果称为运行验收。
-- 后续部署配置仅需将 Hermes Compose image ref 指向上述 amd64 digest，并在单独授权后核验现有 API 内部 bind/key、App 与 Hermes 网络连通性、Core JSONL 挂载 UID/权限及 Private 缺席；本轮未修改正式 Compose 或运行配置。部署回滚方案为恢复到最近已记录的 Hermes v0.21.5 镜像 digest `sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`，保留 Core 数据卷与 JSONL；实际执行前须重新核验快照和镜像。
+- 后续部署配置需将 Hermes Compose image ref 指向上述 amd64 digest；如要启用记忆，还需经单独授权设置 Core `SB_PERSONAL_MEMORY_ENABLED=true`、`SB_PERSONAL_LEARNING_ENABLED=true`，并把 `SB_PERSONAL_MEMORY_ROOT` 指向 Core state 挂载下预先创建、Core UID 独占的私有目录（权限 `0700`）。实际路径与现有 Hermes API 内部 bind/key、App↔Hermes 网络、Core JSONL 挂载和 Private 缺席均须部署前核验；本轮未修改正式 Compose 或运行配置，记忆仍默认关闭。部署回滚方案为恢复到最近已记录的 Hermes v0.21.5 镜像 digest `sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`，关闭上述 Core 开关并保留 Core 数据卷/JSONL；实际执行前须重新核验快照和镜像。
 
 # 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
 
