@@ -108,4 +108,4 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 - App 到 Hermes：Compose 内部服务发现及受认证 API；不发布 Hermes API 端口到宿主或公网。
 - App 到业务文件：通过显式根路径和模块服务访问 Inbox、Review、Knowledge 等数据区；Private 不在允许根路径内。
 - 新业务优先扩展 Core 模块与 API；只有确认超出模块化单体能力后才重新评估部署边界。不得为了未来设想预建空模块、复杂插件机制或数据库。
-- 用户批准的最高产品方向见 `Decision-Log.md` D077，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
+- 用户批准的最高产品方向见 `Decision-Log.md` D077，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `../business-specs/SecondBrain-Web-App-V1-Business-Spec.md`、`../business-specs/Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
