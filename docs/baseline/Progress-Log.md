@@ -2,6 +2,13 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
+
+- PR [#6](https://github.com/zxwan829/SecondBrain/pull/6) 的最终 head `0efe462cd8dbe6067b25d1e51cf69e1309cc42f7` 经独立代码复审，纠错需规范化完整等价且唯一，失败/取消/停止的 Run 清理 pending 状态；跨平台 Core 测试不再使用 `/private/tmp` 垫片。
+- GitHub Actions Ubuntu 24.04 [Run 38857429530](https://github.com/zxwan829/SecondBrain/actions/runs/38857429530) 完成且成功：**154 passed、2 subtests passed**；Personal Memory 模块 **8 passed**，`compileall` 和 `git diff --check` 通过。保留 Starlette/httpx 与 Actions Node.js 20 弃用提示。手动工作流无模型密钥或外部模型调用。
+- PR #6 经审核以 squash 方式合并至 `main`，合并 Commit `ca26c42aa915e42b6ed0e5edb4f3580a3ae9a128`。状态是 **DEV-TESTED / MERGED / NOT DEPLOYED**，并非真实 Hermes 或用户体验验收。
+- 剩余待独立核实：Hermes v0.21.5 实际执行 `instructions` 的效果、Run 与持久消息的权威关联、长时间无结果的 pending 状态、自动学习质量。所有个人记忆与学习开关仍默认关闭；NAS 生产部署、Hermes 升级、真实个人数据处理或外部提供商调用均未获本次合并授权。
+
 # 2026-10-16 — D077 Phase 0-B2 收口与 Phase 1-A Personal Memory Core
 
 - Phase 0-B2 记录的 GitHub Actions 证据为 **15/15 Runs**。该数字表示对应 Run 执行成功，不等同于学习效果通过；跨 Session 继承、纠错后失效/更新及主动召回仍记录有缺陷，故不能宣称自动学习闭环验收通过。供应商 Token/费用估值不等同账户最终账单。本轮没有部署 NAS、升级生产 Hermes 或处理真实个人数据。
