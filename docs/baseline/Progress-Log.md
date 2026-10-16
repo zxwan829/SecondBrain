@@ -12,7 +12,6 @@
 - 清理证据：workflow 定向 cleanup step 通过，移除了构建出的 Core 镜像 `d077-v0215-core:38862336592-1`（image `e727db4b…`）；Harness 未启动，因而没有创建 Hermes/Core/Stub 容器、internal network 或临时数据目录。GitHub-hosted Runner 在 Job 后销毁。没有触碰本机保留的 `/private/tmp/sb-issue7-venv`、`/private/tmp/secondbrain-issue7-base`，无 NAS/生产影响。
 - 工作更新到 PR [#8](https://github.com/zxwan829/SecondBrain/pull/8)；本记录与 `00-CURRENT.md` 同步修正 Phase 1-C 为 BLOCKED。代码/文档提交 SHA 见 PR 当前 head；未合并、未部署。
 
-> 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
 # 2026-10-16 — D077 Phase 1-C 有界 Hermes 启动诊断
 

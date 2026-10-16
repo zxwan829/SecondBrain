@@ -53,7 +53,31 @@ jobs:
       - name: Run real Hermes API + Core BFF against deterministic local stub
         env:
           GITHUB_RUN_ID: ${{ github.run_id }}
-        run: timeout --signal=TERM --kill-after=10s 16m python tests/d077/hermes_v0215_core_stub_ci.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_file="$(mktemp)"
+          trap 'rm -f "$output_file"' EXIT
+          set +e
+          timeout --signal=TERM --kill-after=10s 16m python tests/d077/hermes_v0215_core_stub_ci.py 2>&1 | tee "$output_file"
+          harness_status=${PIPESTATUS[0]}
+          set -e
+          if ((harness_status != 0)); then
+            exit "$harness_status"
+          fi
+          python - "$output_file" <<'PY'
+          import json
+          import sys
+
+          markers = []
+          with open(sys.argv[1], encoding="utf-8") as output:
+              for line in output:
+                  if line.startswith("D077_V0215_RESULT "):
+                      markers.append(json.loads(line.removeprefix("D077_V0215_RESULT ")))
+          if len(markers) != 1 or markers[0].get("status") != "PASS":
+              raise SystemExit("D077 harness did not emit exactly one successful end-to-end marker")
+          print("D077_CI_SUCCESS_MARKER_VERIFIED")
+          PY
 
       - name: Clean only this run's labeled test assets
         if: always()
