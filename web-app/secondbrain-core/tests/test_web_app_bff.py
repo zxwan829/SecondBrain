@@ -124,6 +124,35 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(response.status_code, 423)
         self.assertEqual(list(self.approvals.iterdir()), [])
 
+    def test_personal_memory_is_default_off_and_uses_only_injected_root(self):
+        disabled_root = self.root / "must-not-be-created" / "40-Memory"
+        env = {**self.env, "SB_PERSONAL_MEMORY_ROOT": str(disabled_root)}
+        with patch.dict(os.environ, env, clear=True), patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+            disabled_app = create_app()
+        disabled_client = TestClient(disabled_app, base_url="https://testserver")
+        self.assertEqual(disabled_client.get("/api/personal-memory").status_code, 404)
+        self.assertFalse(disabled_root.exists())
+        disabled_client.close()
+
+        memory_root = self.root / "isolated" / "40-Memory"
+        memory_root.mkdir(mode=0o700, parents=True)
+        memory_root.chmod(0o700)
+        enabled_env = {**self.env, "SB_PERSONAL_MEMORY_ENABLED": "true",
+                       "SB_PERSONAL_MEMORY_ROOT": str(memory_root)}
+        with patch.dict(os.environ, enabled_env), patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+            enabled_app = create_app()
+        enabled_client = TestClient(enabled_app, base_url="https://testserver")
+        login = enabled_client.post("/api/auth/login", json={"password": "one-owner-test-password"},
+                                    headers={"Origin": "https://testserver"})
+        self.assertEqual(login.status_code, 200)
+        created = enabled_client.post("/api/personal-memory", headers={"Origin": "https://testserver"}, json={
+            "content": {"text": "Synthetic preference"}, "category": "preference",
+            "fact_kind": "user_stated", "source_type": "user_message",
+            "source_ref": "synthetic-app-session:message-1",
+        })
+        self.assertEqual(created.status_code, 201, created.text)
+        enabled_client.close()
+
     def test_home_and_review_are_real_file_backed_data_and_defer_is_persisted(self):
         self.login()
         home = self.client.get("/api/home").json()

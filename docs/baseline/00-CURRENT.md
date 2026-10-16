@@ -80,7 +80,8 @@ source: GitHub SecondBrain Monorepo
 | 新增核心能力 | 当前证据/状态 | 最小成功验收 |
 |---|---|---|
 | 无提示主动关联 | NOT VERIFIED：旧 Knowledge Retrieval V0 已 ACCEPTED，但仅证明可用搜索/读取；不能证明自动联想 | 不说“搜索知识库”，自然对话能正确使用相关长期记忆；精确事实自动回源 |
-| 自主个人记忆学习 | NOT VERIFIED：Hermes 原生 memory/skill 在当前 App Chat 路径是否运作、是否持久化尚未审计 | 获准聊天低风险经验自动形成可导出记忆；跨会话可用，能查看/纠正/撤销 |
+| Personal Memory Core（Phase 1-A） | DEV-TESTED：默认关闭、独立注入根、追加式来源/修订记录；同一来源可保存多个不同候选并稳定幂等；未核验事实在模型召回视图中脱敏并要求回源；未接入聊天自动提炼 | Core API 合成测试 137 passed、2 subtests passed；PR #4 review fixes pushed，待审核；生产未部署、未接真实数据 |
+| 自主个人记忆学习 | NOT IMPLEMENTED：本切片没有从自然对话自动提炼，也没有 Hermes pre-turn 注入或双写 | Phase 1-B：先增加受控候选提炼/召回挂钩和合成评测，再独立验收真实聊天与数据边界 |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
 | 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
 | 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |
@@ -94,8 +95,8 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| **NEXT-0 / 2026-10-17 起首轮** | **D077 智能伙伴技术可行性：只读审计 + 合成数据隔离实验** | 比对 Hermes 原生记忆与 BFF/Core 最小召回两路线；测零提示联想、跨会话学习、纠正、事实回源、时延/费用/误召回；输出可执行返工清单 | **未执行。** 先读 `Personal-Intelligence-Product-Spec.md` Phase 0；核实实际 Hermes/Chat/记忆能力，不凭官方最新版假设；不动生产/真实数据出站 |
-| **NEXT-1（待 NEXT-0 结果）** | **Companion MVP：自动个人学习、主动联想、自然语言日记/待办** | 内部评测通过且保留正式 Knowledge 人工 Promote、安全、可纠错/迁移；再批准实际施工与生产变更 | 物理记忆方案、Provider/Adapter、专用 Journal/Task API、主动建议触发机制待证 |
+| **Phase 1-A（当前切片）** | **可纠正、可撤销、可溯源的 Personal Memory Core** | Core 代码与合成 API/E2E 测试通过；PR #4 review fixes 已推送、待复审；不改变旧 V1 MUST，不表示自动学习或生产可用 | 已在独立临时 Clone 完成开发；提交/CI/审核状态见 PR #4 |
+| **NEXT：Phase 1-B** | **受控提炼与 Chat 召回集成** | 先接入可审计、可关停的合成候选提炼和受控召回；精确事实保留来源回查；确认现有 Hermes 接口边界 | 尚未实现；真实会话数据出站、模型调用和 NAS 部署均需另行批准 |
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076-organizer-b34319a` healthy；HTTPS health/login/session、Chat capabilities、Inbox、Review 及受保护设置 API smoke 通过；匿名设置 API 401；Hermes 未重启 | 用户浏览器验收新版本设置页、Composer 和手机 Review；真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
