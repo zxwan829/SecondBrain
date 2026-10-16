@@ -176,7 +176,7 @@ def wait_http(url, *, headers=None, expected=200, timeout=90):
     if any(key.startswith("http_") for key in counts):
         category = "http_status_not_ok"
     elif counts.get("connection_refused") == sum(counts.values()):
-        category = "connection_refused_no_listener"
+        category = "host_connection_refused"
     elif any("timeout" in key for key in counts):
         category = "connection_or_response_timeout"
     else:
@@ -226,7 +226,7 @@ for value in paths:
  except Exception as e: meta[value]={"exists":False,"error":type(e).__name__}
 procs=subprocess.run(["ps","-eo","pid=,stat=,comm="],text=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,check=False)
 processes=[line.strip() for line in procs.stdout.splitlines() if "hermes" in line.lower() or "gateway" in line.lower()][:12]
-port_hex="21C0"
+port_hex=f"{8642:04X}"
 listeners=[]
 for name in ("/proc/net/tcp","/proc/net/tcp6"):
  try:

@@ -2,6 +2,16 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D077 Phase 1-C 有界 Hermes 启动诊断
+
+- 按 PR #8 最新审核评论 `6209375072`，在同一 PR 仅执行一次手动 GitHub Runner 诊断；没有 Secrets、付费模型、真实个人数据、NAS 或生产访问。固定 Hermes v0.21.5 image digest/config ID/revision 与前次核验一致；镜像拉取和 Core 依赖安装通过。
+- **运行态分类：** 容器 `Running=true`、`ExitCode=0`、`OOMKilled=false`；容器内 `127.0.0.1:8642/health` 返回 `http_200`，证明 Hermes 进程/API 已启动。容器进程列表包含 `hermes`，有效 UID 为 1001；Hermes 可执行文件、`/opt/data`、合成 `config.yaml` 和 `gateway.log` 均存在，目录/配置权限符合测试设置。没有观察到 HTTP 401/404/5xx 等状态异常。
+- Runner 宿主机访问发布端口 `127.0.0.1:18642/health` 的 90 次轮询全部为 `connection_refused`，没有 HTTP 响应。证据将问题缩小为容器内 API 到 Runner 宿主机映射端口的连接/转发路径；具体是 Docker 发布端口还是 Runner 网络边界仍 UNKNOWN。Core 未启动，因此无 `/v1/runs`、SSE、Session/Message、水位或记忆闭环测试结果。Stub 只启动但未收到模型请求；外网拒绝探针也未到达。
+- **脱敏启动日志：** 仅保留最多 30 行/4000 字符；无凭据值、完整配置或 prompt。日志包含 Gateway Starting、SQLite WAL 模式提示、API 监听 `0.0.0.0` 且 local terminal backend 未沙箱的安全警告、warm-up 延迟提示、合成模型 context-length fallback 警告；没有启动异常或 traceback。容器处于 `--internal` 网络，外部 egress deny-path 断言未运行；日志中的安全警告不等于出站访问已验证。
+- **诊断脚本自检事项：** 首次诊断 JSON 的 `/proc/net/tcp` 监听字段为 false，但复核发现该字段所用端口十六进制常量写错（8642 应为 `0x21C2`）；因此该字段不作为本次证据。容器内 HTTP 200 是独立且直接的 API 监听证据。已修正后续脚本的十六进制计算与 host connection-refused 分类名称；遵守一次 Runner 限额，没有再次运行。
+- **清理：** Harness `finally` 移除本次容器、网络与临时目录；workflow 的 Run/Attempt 定向清理步骤通过；GitHub-hosted runner 在 Job 后销毁。无 NAS 或本机容器变化。按审核要求保留 `/private/tmp/sb-issue7-venv` 和 `/private/tmp/secondbrain-issue7-base`，未删除。
+- **验证与交付：** 本地 Core 全套 `pytest -q tests` 为 156 passed、2 subtests passed（1 条既有 Starlette/httpx 弃用警告）；Harness `py_compile`、workflow YAML 解析与 `git diff --check` 通过。诊断 Run [38860620747](https://github.com/zxwan829/SecondBrain/actions/runs/38860620747) 于约 2 分 36 秒结束，E2E 失败、清理通过。最新代码提交 `2b075cf33035257193a385702915e801b961621d`；本次进度及 CURRENT 更新续推 PR [#8](https://github.com/zxwan829/SecondBrain/pull/8)，待 ChatGPT 审核；未合并、未部署。下一步若需继续，需另行批准一种保持网络隔离的 Core→Hermes 内部连通方式诊断/改造；本轮不再尝试。
+
 # 2026-10-16 — D077 Phase 1-C Hermes/Core 隔离运行核验（受阻）
 
 - 从 GitHub 最新 `main` `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc` 的独立临时 Clone 开始；正式工作区及未跟踪项 `typescript` 未触碰。
@@ -9,7 +19,7 @@
 - 固定源码确认 `/v1/runs` 的 `instructions` 进入本次 Run 的 ephemeral system prompt；API Server 由合成 `API_SERVER_KEY` 启用，`API_SERVER_ENABLED` 并非该版本启用条件。均为源码契约，不是运行结果。
 - 当前 Mac 没有 Docker、Podman、Colima 或 OrbStack，因此无法本地启动固定镜像。为使用 Issue 允许的隔离 Linux Runner，本 PR 新增手动 workflow `.github/workflows/d077-hermes-v0215-core-stub.yml` 和 `tests/d077/hermes_v0215_core_stub_ci.py`：固定 image ID/revision、Docker internal network、Core localhost BFF、确定性 OpenAI-compatible Stub、临时数据根、Stub-only 出站探针、精确 label 资产清理。
 - 最小 Core 修复：SSE `run.interrupted` 和状态轮询 `interrupted` 现在均清理 pending；新增两项回归测试。`test_personal_learning.py` + `test_web_app_bff.py`：29 passed。依赖仅安装于 `/private/tmp/sb-issue7-venv`。
-- **Runner Run 38859529705（2026-10-16，唯一受控尝试）：** Ubuntu 24.04 / Docker 28.0.4。固定 index `d4da4a40…` 拉取成功；`linux/amd64`、image ID `e1e87aec…` 和 OCI revision `749220ef0007f8d87bd1531f1c24b0fe93816385` 均通过断言。Core 依赖安装通过。E2E 在 API Server `/health` 等待 90 秒后失败，异常为 `RuntimeError: http_health_timeout`，位置 `create_hermes()` → `wait_http()`；Core 此时尚未启动，故没有 `/v1/runs`、Run/SSE、Session/Message、水位或记忆闭环证据。根因未知；没有第二次重跑，下一步需经 ChatGPT 审核是否先补充脱敏启动日志再做一次定向验证。
+- **Runner Run 38859529705（2026-10-16，首轮尝试）：** Ubuntu 24.04 / Docker 28.0.4。固定 index `d4da4a40…` 拉取成功；`linux/amd64`、image ID `e1e87aec…` 和 OCI revision `749220ef0007f8d87bd1531f1c24b0fe93816385` 均通过断言。Core 依赖安装通过。E2E 在 API Server `/health` 等待 90 秒后失败，异常为 `RuntimeError: http_health_timeout`，位置 `create_hermes()` → `wait_http()`；当时未捕获容器诊断，不能判断容器内 API 状态。后续经 PR 审核批准，在独立记录中完成了有界诊断 Run `38860620747`。
 - **逐项状态：** A 固定镜像/源码 identity `VERIFIED`，API 接收 `instructions` / stub 实际收到 `UNKNOWN`；B Run/SSE/消息排序分页 `BLOCKED`；C 实际 source watermark / Run 关联 `BLOCKED`（Core Mock 回归已测，真实数据 ID 未取到）；D 自主提炼、跨 Session、纠正、撤销/过期/推断过滤、无关话题及精确事实回源 `BLOCKED`；E 本地 Core 中断 cleanup 回归 `VERIFIED`，真实失败/stop/interrupted、flag-off 与重启恢复 `UNKNOWN`；F Runner 总耗时约 2 分 50 秒，外部付费 provider 调用为 0（无外部密钥，容器接入 Docker `--internal` 网络且唯一配置 provider 是本地 stub；外网 deny-path 断言未执行），本地 stub 调用数/记忆文件大小/Run 延迟 `UNKNOWN`。
 - **追加任务 G（Issue 评论 #6209139743）：** 已按要求更新本文件与 `00-CURRENT.md`，并在仓库根 `AGENTS.md` 增加 GitHub Issue/PR 评论驱动协作章节。Phase 1-A PR #4、Phase 1-B PR #6 保持 `MERGED / DEV-TESTED / NOT DEPLOYED`；Phase 1-C 仍受阻，未写成运行通过。
 - **命令与本轮执行证据：** Core 本地命令 `/private/tmp/sb-issue7-venv/bin/python -m pytest -q tests`：156 passed、2 subtests passed；`compileall`、Harness `py_compile`、workflow YAML parse、`git diff --check` 通过。workflow 命令为 `gh workflow run .github/workflows/d077-hermes-v0215-core-stub.yml --ref codex/d077-phase1c`。Harness 计划合成场景包括 preference 两候选、跨 Session 指令、纠正、revoke/expiry/inference 过滤、无关话题、精确事实 `NOVA-17` 回源提示、重复输入 ID/分页、provider failure、stop 和关闭开关；因 API health 超时均未执行，不能记作 VERIFIED。
