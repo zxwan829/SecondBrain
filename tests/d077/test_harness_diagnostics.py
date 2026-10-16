@@ -93,6 +93,39 @@ class HarnessDiagnosticTests(unittest.TestCase):
         self.assertFalse(harness.is_user_stop_status("failed"))
         self.assertFalse(harness.is_user_stop_status("interrupted"))
 
+    def test_inactive_memory_filter_checks_only_tagged_system_memory_block(self):
+        question = "Which metric units, imaginary unit labels, and project names do I prefer?"
+        candidates = ("metric units", "imaginary unit labels", "cobalt project names")
+        request = {"messages": [
+            {"role": "system", "content": "Framework context may mention metric units."},
+            {"role": "user", "content": question},
+            {"role": "system", "content": "<personal_memory_json>{}</personal_memory_json>"},
+        ]}
+
+        harness.assert_memory_candidates_filtered(request, question, candidates)
+
+        for candidate in candidates:
+            with self.subTest(candidate=candidate):
+                request["messages"][-1]["content"] = (
+                    f"<personal_memory_json>{{'candidate': '{candidate}'}}</personal_memory_json>"
+                )
+                with self.assertRaisesRegex(
+                    harness.HarnessAssertionError, "revoked_expired_inference_filter_failed"
+                ):
+                    harness.assert_memory_candidates_filtered(request, question, candidates)
+
+    def test_inactive_memory_filter_requires_exact_original_user_input(self):
+        question = "Which metric units, imaginary unit labels, and project names do I prefer?"
+        request = {"messages": [
+            {"role": "user", "content": question + " Please also infer more."},
+            {"role": "system", "content": "<personal_memory_json>{}</personal_memory_json>"},
+        ]}
+
+        with self.assertRaisesRegex(harness.HarnessAssertionError, "input_was_rewritten_or_missing"):
+            harness.assert_memory_candidates_filtered(
+                request, question, ("metric units", "imaginary unit labels", "cobalt project names")
+            )
+
     def test_failure_record_exposes_only_allowlisted_cross_session_code(self):
         error = harness.HarnessAssertionError("cross_session_instructions_not_observed_by_stub")
         record = harness.failure_record("--enabled-scenario", "cross_session_recall", error)

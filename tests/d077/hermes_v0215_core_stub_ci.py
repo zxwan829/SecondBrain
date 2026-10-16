@@ -498,6 +498,36 @@ def unique_model_request_for_input(requests, input_text):
     return matched[0]
 
 
+def personal_memory_context_for_input(request, input_text):
+    """Return only Core's tagged system memory block after verifying exact user input."""
+    messages = request.get("messages", [])
+    user_contents = [row.get("content") for row in messages
+                     if isinstance(row, dict) and row.get("role") == "user"]
+    if user_contents.count(input_text) != 1:
+        raise HarnessAssertionError("input_was_rewritten_or_missing")
+
+    blocks = []
+    for row in messages:
+        if not isinstance(row, dict) or row.get("role") != "system":
+            continue
+        content = row.get("content")
+        if not isinstance(content, str):
+            continue
+        starts = content.count("<personal_memory_json>")
+        ends = content.count("</personal_memory_json>")
+        if starts != ends:
+            raise HarnessAssertionError("revoked_expired_inference_filter_failed")
+        blocks.extend(re.findall(r"<personal_memory_json>(.*?)</personal_memory_json>",
+                                 content, flags=re.DOTALL))
+    return "\n".join(blocks)
+
+
+def assert_memory_candidates_filtered(request, input_text, candidates):
+    memory_context = personal_memory_context_for_input(request, input_text)
+    if any(candidate in memory_context for candidate in candidates):
+        raise HarnessAssertionError("revoked_expired_inference_filter_failed")
+
+
 def run_scenario(results, name, action, *, requires=()):
     """Run an independent synthetic scene and preserve fail-closed dependencies."""
     if any(results.get(required, {}).get("status") != "PASS" for required in requires):
@@ -826,9 +856,8 @@ def enabled_scenario():
         if status != "completed" or "run.completed" not in events or not requests:
             raise HarnessAssertionError("revoked_expired_inference_filter_failed")
         target_request = unique_model_request_for_input(requests, question)
-        prompt = "\n".join(str(row.get("content", "")) for row in target_request.get("messages", []))
-        if any(value in prompt for value in ("metric units", "imaginary unit labels", "cobalt project names")):
-            raise HarnessAssertionError("revoked_expired_inference_filter_failed")
+        assert_memory_candidates_filtered(target_request, question,
+                                          ("metric units", "imaginary unit labels", "cobalt project names"))
 
     set_scenario_stage("revoked_expired_inference_filter")
     run_scenario(results, "revoked_expired_inference_filter", inactive_memory_filter,
