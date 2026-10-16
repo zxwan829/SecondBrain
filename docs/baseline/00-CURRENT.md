@@ -6,7 +6,7 @@ source: GitHub SecondBrain Monorepo
 ---
 # SecondBrain — 当前交付基线（V1 + Personal Intelligence）
 
-> 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Personal-Intelligence-Product-Spec.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
+> 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
 ## 1. V1 完成定义与当前状态
 
@@ -32,6 +32,24 @@ source: GitHub SecondBrain Monorepo
 6. **历史资产清理（非当前任务）**：10 份未引用 App build source（约 56.4 MiB）仅为候选；正在被 Compose 引用的 D076 构建源、D078 回滚点不可删除；三个 D077 大归档约 4.91 GiB 尚未内容比对。后续需先精确核验引用/校验和并另行获准才可删。禁止批量 Docker prune。
 
 **当前停止条件：** 只完成文档修订、交叉核对与 PR 审阅，不触发新增代码、生产变更、生产 Run、真实模型、凭据/个人数据访问或 NAS 删除。
+
+## D077 产品体验验收契约（批准的目标；真实效果尚未验收）
+
+下列规则从原独立产品方向归并到 CURRENT，作为 Companion MVP 与 V1 业务收口的可重复验收项，不改变当前已部署/合成测试/用户验收之间的状态区别：
+
+| 能力 | 验收动作与通过条件 |
+|---|---|
+| 无检索提示的联想 | 用户只自然谈论相关问题，Agent 能使用确有来源的历史偏好/项目/知识，不要求用户明确说“搜索”；数字、日期、版本须回源 |
+| 跨会话的个人记忆 | 新 Session 在相关时主动使用之前明示的当前偏好；不相关时不强行提起，模型推断不冒充用户事实 |
+| 纠正与失效 | 用户修正或撤销记忆后，后续 Session 不再把旧值当现行，历史修订与原始来源可核验；重复学习不得无限增加条目 |
+| 日记与碎碎念 | 明确“记一下/写日记”时按日期保留原文、时间及来源；普通闲聊不误生成 Journal |
+| 待办与提醒 | 自然语言创建/查看/修改/完成真实待办，存储状态一致；通知是否实际送达单独验证 |
+| 多格式 Capture | Raw 原件不覆盖，Review 可核验并可解释关联；未经明确批准不 Promote，外部文件中的推断不能当用户事实 |
+| 自主 Skill 学习 | 重复反馈可产生可复用经验；重要 Skill 修改经审核，不允许通用 file 绕过 |
+| 主动建议与规划 | 依据真实目标/项目/时间线提出来源可查的建议，支持关闭/节流，不能假称已经执行 |
+| 安全与经济性 | Private 无访问、Knowledge 无直接写入、可恢复、可审计；调用延迟与预算有明确记录，估算不冒充结算 |
+
+**产品路线（目标优先级，不是立即施工授权）：** 先在已部署 D077/D078 基础上完成获准的合成浏览器 Chat/Run/SSE 与跨会话纠错，再经模型/费用/数据范围确认进行有限真实体验；之后补齐自然语言 Journal/Task、微信多格式 Capture、Promote、Projects/Brief/Activity、跨端使用和主动建议。逻辑记忆 L1–L4 的技术细节遵循 `Architecture.md`，不预建四套物理存储；是否引入索引或其他技术只依据效果与成本证据。**当前暂停状态和实际恢复次序仍以上方 NEXT 为准。**
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 
@@ -137,7 +155,7 @@ source: GitHub SecondBrain Monorepo
 
 | 内容 | 权威位置 |
 |---|---|
-| 最高产品目标、核心体验、两种学习/知识闭环、返工路线及 NEXT-0 | `Personal-Intelligence-Product-Spec.md`、决策 D077 |
+| 最高产品目标、核心体验、两种学习/知识闭环、返工路线及 NEXT-0 | `Decision-Log.md` D077 / `Architecture.md`、决策 D077 |
 | V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` |
 | 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
 | 正式决定、理由及替代关系 | `Decision-Log.md` |
