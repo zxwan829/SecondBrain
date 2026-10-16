@@ -1,0 +1,128 @@
+diff --git a/agent/tool_executor.py b/agent/tool_executor.py
+index 79d22e2b..6c61c15e 100644
+--- a/agent/tool_executor.py
++++ b/agent/tool_executor.py
+@@ -71,0 +72,4 @@ logger = logging.getLogger(__name__)
++_PRE_TOOL_CALL_DISPATCH_FAILURE_MESSAGE = (
++    "PRE_TOOL_CALL_HOOK_UNAVAILABLE: tool execution blocked."
++)
++
+@@ -673 +677 @@ def _pre_tool_block(agent, ref: _ToolCallRef):
+-    hook-modified args applied. Hook failures never block."""
++    hook-modified args applied. Dispatcher failures block tool execution."""
+@@ -685 +689,2 @@ def _pre_tool_block(agent, ref: _ToolCallRef):
+-        return None, ref.args
++        logger.error("pre_tool_call hook dispatch failed; blocking tool %s", ref.name)
++        return _PRE_TOOL_CALL_DISPATCH_FAILURE_MESSAGE, ref.args
+diff --git a/tests/agent/test_tool_executor_pre_tool_dispatch.py b/tests/agent/test_tool_executor_pre_tool_dispatch.py
+new file mode 100644
+index 00000000..40584536
+--- /dev/null
++++ b/tests/agent/test_tool_executor_pre_tool_dispatch.py
+@@ -0,0 +1,106 @@
++"""Fail-closed behavior for failures at the pre-tool hook dispatch boundary."""
++
++from types import SimpleNamespace
++from unittest.mock import Mock
++
++import pytest
++
++from agent import tool_executor
++from agent.tool_executor import _ManagedToolResult, _ToolCallRef
++
++
++def _agent():
++    return SimpleNamespace(_tool_guardrails=Mock())
++
++
++def _ref(name="read_file", args=None):
++    return _ToolCallRef(name, args or {"path": "notes.txt"}, "task", "call", [])
++
++
++def test_normal_hook_dispatch_preserves_tool_execution(monkeypatch):
++    args = {"path": "notes.txt"}
++    monkeypatch.setattr(
++        "hermes_cli.plugins._dispatch_pre_tool_call_hooks",
++        lambda *a, **kw: (None, None),
++    )
++
++    assert tool_executor._pre_tool_block(_agent(), _ref(args=args)) == (None, args)
++
++
++@pytest.mark.parametrize(
++    ("name", "args"),
++    [
++        ("read_file", {"path": "notes.txt"}),
++        ("skill_view", {"name": "daily-capture"}),
++    ],
++)
++def test_normal_file_and_skill_calls_still_dispatch(monkeypatch, name, args):
++    monkeypatch.setattr(
++        "hermes_cli.plugins._dispatch_pre_tool_call_hooks",
++        lambda *a, **kw: (None, None),
++    )
++    monkeypatch.setattr(tool_executor, "_run_with_activity_heartbeat", lambda _a, _n, fn: fn())
++    monkeypatch.setattr(tool_executor, "_begin_tool_execution", lambda *_a, **_kw: None)
++    from agent import terminal_approval_batch
++
++    monkeypatch.setattr(terminal_approval_batch, "prepare_current_terminal", lambda _ref: None)
++    agent = _agent()
++    agent._tool_guardrails.before_call.return_value = SimpleNamespace(allows_execution=True)
++    execute = Mock(return_value="ok")
++    state = _ManagedToolResult(None, args, [], False, False)
++
++    result = tool_executor._dispatch_authorized_once(
++        agent,
++        state,
++        _ref(name=name, args=args),
++        execute=execute,
++        scope_block=None,
++        display_index=None,
++        begin_execution=None,
++        authorization_gate=None,
++    )
++
++    assert result == "ok"
++    assert execute.call_args.args == (args,)
++    assert state.blocked is False
++
++
++def test_sensitive_path_hook_block_is_preserved(monkeypatch):
++    denial = "BLOCKED: sensitive path (hermes_private_path)."
++    monkeypatch.setattr(
++        "hermes_cli.plugins._dispatch_pre_tool_call_hooks",
++        lambda *a, **kw: (denial, None),
++    )
++
++    assert tool_executor._pre_tool_block(
++        _agent(), _ref(args={"path": "/tmp/hermes/sessions/private.jsonl"})
++    ) == (denial, {"path": "/tmp/hermes/sessions/private.jsonl"})
++
++
++@pytest.mark.parametrize("error", [ImportError("dispatcher unavailable"), RuntimeError("dispatch failed")])
++def test_dispatcher_failure_blocks_before_tool_execution(monkeypatch, error):
++    def fail(*_args, **_kwargs):
++        raise error
++
++    monkeypatch.setattr("hermes_cli.plugins._dispatch_pre_tool_call_hooks", fail)
++    agent = _agent()
++    state = _ManagedToolResult(None, {"path": "notes.txt"}, [], False, False)
++    ref = _ref()
++    execute = Mock(side_effect=AssertionError("tool must not execute"))
++    monkeypatch.setattr(tool_executor, "_blocked_tool_result", lambda *_a, **_kw: "blocked")
++
++    result = tool_executor._dispatch_authorized_once(
++        agent,
++        state,
++        ref,
++        execute=execute,
++        scope_block=None,
++        display_index=None,
++        begin_execution=None,
++        authorization_gate=None,
++    )
++
++    assert result == "blocked"
++    assert state.blocked is True
++    assert execute.call_count == 0
++    agent._tool_guardrails.before_call.assert_not_called()
