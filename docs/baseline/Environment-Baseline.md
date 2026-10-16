@@ -19,7 +19,9 @@ type: environment-baseline
 
 对 `app-build-source-*`、`compose.yaml.bak-*`、`compose.yaml.pre-*` 和 D074–D078 rollback 目录执行了 `du -sk` 与路径引用检查。候选总占用 5,216,216 KiB（约 4.97 GiB）；其中 rollback 5,152,284 KiB、历史 App build source 63,892 KiB、旧 Compose 快照 40 KiB。当前 Compose 仍引用 `app-build-source-d076-organizer-b34319a`（6144 KiB），须保留；其余 10 个 source 副本合计 57,748 KiB 未被当前 Compose、运行容器挂载或检查的部署/build 脚本引用，可作为后续清理候选。旧 Compose 快照均 4 KiB 且无当前引用，空间收益很小。D077 三个大状态归档总量约 5,145,228 KiB，尺寸接近但未做内容哈希，不能确认重复；D078 当前 Hermes 回滚快照必须保留。没有删除、移动或改动任何审计候选；具体路径与风险见 Progress-Log.md 和本轮 Issue #14 回复。
 
-本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。它不是实时监控：部署快照于 2026-10-16 Issue #12 核验；API 工具权限、定向重启和健康状态于 Issue #14 更新。不记录任何密钥或明文环境配置。
+本文件记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口，并非实时监控。**最新快照是上方 2026-10-17 PR #18 Hermes patched overlay**；下方 D077/D078 Stage 1 条目为历史记录，若容器 ID、镜像、Compose 或回滚点与顶部冲突，以最新核验为准。进入下一阶段前重新只读 inspect，不从文档推断当前实时状态。不记录密钥或明文环境配置。
+
+## 历史 D077/D078 Stage 1 快照（保留供追溯，非当前镜像）
 
 ## NAS 与 Compose
 
