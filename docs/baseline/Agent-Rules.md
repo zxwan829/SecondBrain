@@ -26,10 +26,10 @@ type: agent-rules
 - **既有 D076 Organizer** 只整理新增用户消息；不得把 AI 推断冒充用户经历或决定。Organizer 模型结果只进入 Review；生产数据出站需明确授权，并满足模型、凭据、输入/输出、超时、并发和费用门禁。Token 估算或软预算不得宣称为供应商硬费用上限。
 - **D077 Personal Learning Loop** 与正式知识整理不同：可在明确授权范围内自动提炼低风险个人偏好/经验，但只能通过收窄、可追溯/纠正的记忆通道，不得未经确认自动写入正式 Knowledge、覆盖 Journal 原文、扩大 Hermes 写权限或访问 Private；新的真实对话学习处理、外部模型数据出站及生产启用仍需单独确认。
 
-## D078 Agent 工具监督边界（2026-10-16 已批准的产品规则）
+## D078 Agent 工具监督边界（2026-10-16 决策；2026-10-17 已部署有限验证）
 
 - **能力保留、执行受控：** 不以永久关闭 `file`、`terminal`、`skills` 作为最终设计。普通低风险聊天、获准 Knowledge 读取和 Capture 按既有范围自动进行；敏感文件、跨 Session 读取、危险命令及重要 Skills 修改必须由真实的服务端强制规则或人工审批控制，禁止仅靠提示词声明“请先询问”。
-- **已部署与目标分开：** 根据 Issue #14 最近记录，API Server 当前保留 `file, skills, vision`，已移除 `terminal`；这是审批接入前的临时保护，不代表最终取消 Agent 执行能力。v0.22.2 尚无通用的文件读取逐次审批；`skills.write_approval` 原生暂存/CLI 审核可用但尚未报告在生产启用；Web 审批桥与受监督 terminal 仍处于方案/施工阶段，**不得写作已部署**。
+- **已部署与目标分开（2026-10-17）：** D078 Hermes guard、Skills 原生 `write_approval=true` 及 Core/Web 单次工具审批桥已部署；API Server 当前 toolset 为 `file,skills,vision`，**Terminal 仍未启用**。PR #18 的固定 v0.22.2 fail-closed overlay 已部署并通过有限合成权限验证，但生产真实模型 Chat/Run/SSE 与用户记忆体验尚未验收。审批 UI 已部署不代表 terminal 已开放，Skills 自主学习闭环也尚未验收。当前镜像/权限细节看最新 `Environment-Baseline.md`。
 - **审批原则：** API terminal 只有在按动作/命令范围的真正强制审批、拒绝和审计完成后才能恢复；文件读取/搜索不得绕过 Session、state、Secret 访问控制；Skills 写审核不得被普通 `file` 写入旁路绕过。Core JSONL 是唯一个人记忆权威存储，不能扩大 Hermes 写入 Core memory 的权限。
 - **验收与授权：** 安全专项只做针对性真实权限验证，不重复大型 Runner/Harness。外部/付费模型调用与真实个人数据出站仍须分别获批；保护 Private、Knowledge RO、Promote OFF、NAS 其他服务与家庭网络。
 
@@ -40,3 +40,8 @@ type: agent-rules
 - 生产变更前核实当前 Compose、容器、挂载、身份和健康状态，保存可验证的最小回滚资产；优先 App-only 变更，避免无关服务重建。回滚不得恢复 Hermes Knowledge RW、启用 Promote 或接触 Private。
 - 报告必须区分源码提交、自动化测试、生产部署、运行验证与用户验收；GitHub Push 不代表 NAS 已部署。
 - Container Manager GUI 项目定义曾出现与正式 Compose 不一致的缓存状态。未取得可验证安全流程前，不使用 GUI 项目级操作重建服务；该风险不应阻塞无关 V1 业务开发。
+
+## 当前阶段暂停与恢复条件（2026-10-17）
+
+- 用户已要求**暂停开发，集中收口文档**。本阶段不新增功能、不部署/重启 NAS、不清理历史构建/回滚资料、不进行付费模型调用或真实个人数据出站。仅允许在现有项目治理范围内同步准确的 GitHub 文档与审阅。
+- 后续行动以 `00-CURRENT.md` 的明确 NEXT 为准；重新开发、运行生产合成 Chat/Run、调用模型及涉及用户数据的体验须按各自范围重新取得明确授权。保持 Hermes API Terminal OFF、Private unmounted、Knowledge RO、Promote OFF、Core JSONL SoT。
