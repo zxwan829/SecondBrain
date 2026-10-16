@@ -8,7 +8,7 @@ from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX, RunApprovalR
 
 
 def event(request_id="approval-1", command="pwd"):
-    request = {"schema": 1, "tool": "terminal", "arguments": {"command": command}}
+    request = {"schema": 1, "tool": "terminal", "arguments": {"command": command, "workdir": "/private/tmp/synthetic"}}
     return {"event": "approval.request", "request_id": request_id,
             "description": APPROVAL_PREFIX + json.dumps(request, sort_keys=True, separators=(",", ":"))}
 
@@ -26,6 +26,7 @@ class RunApprovalRegistryTests(unittest.TestCase):
         card = self.card()
         self.assertEqual(card["session_id"], "session-1")
         self.assertEqual(card["command"], "pwd")
+        self.assertEqual(card["workdir"], "/private/tmp/synthetic")
         with self.assertRaises(HTTPException) as wrong_session:
             self.registry.begin_resolution(run_id="run-1", session_id="session-2", request_id="approval-1",
                                            owner="owner", digest=card["command_sha256"], choice="once")
@@ -81,6 +82,13 @@ class RunApprovalRegistryTests(unittest.TestCase):
         for malformed in ({"request_id": "x", "description": "bad"},
                           {"request_id": "x", "description": APPROVAL_PREFIX + "{}"},
                           {"request_id": "x", "description": APPROVAL_PREFIX + json.dumps({"schema": 1, "tool": "terminal", "arguments": {}})}):
+            self.assertIsNone(self.registry.bind_event("run-1", "owner", malformed))
+
+    def test_terminal_card_rejects_missing_or_noncanonical_execution_context(self):
+        for args in ({"command": "pwd"}, {"command": "pwd", "workdir": "relative"},
+                     {"command": "pwd", "workdir": "/tmp/x", "cwd": "/tmp/y"}):
+            request = {"schema": 1, "tool": "terminal", "arguments": args}
+            malformed = {"request_id": "approval-1", "description": APPROVAL_PREFIX + json.dumps(request)}
             self.assertIsNone(self.registry.bind_event("run-1", "owner", malformed))
 
 

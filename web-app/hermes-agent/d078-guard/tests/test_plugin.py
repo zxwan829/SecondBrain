@@ -15,7 +15,7 @@ spec.loader.exec_module(plugin)
 class D078PluginTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.home = self.root / "hermes"
         self.home.mkdir()
         for name in ("sessions", "pending/skills", "logs", "memories", "skills/demo"):
@@ -23,8 +23,11 @@ class D078PluginTests(unittest.TestCase):
         self.business = self.root / "business"
         self.business.mkdir()
         (self.business / "capture.md").write_text("synthetic", encoding="utf-8")
+        self.backend_patch = patch.object(plugin, "_terminal_backend_type", return_value="local")
+        self.backend_patch.start()
 
     def tearDown(self):
+        self.backend_patch.stop()
         self.temp.cleanup()
 
     def test_session_state_config_and_search_ancestors_are_denied(self):
@@ -72,14 +75,64 @@ class D078PluginTests(unittest.TestCase):
 
     def test_each_execution_call_requires_unique_one_call_approval(self):
         with patch.object(plugin, "_approval_mode_bypass", return_value=False):
-            first = plugin.pre_tool_call("terminal", {"command": "pwd"})
-            second = plugin.pre_tool_call("terminal", {"command": "pwd"})
+            args = {"command": "pwd", "workdir": str(self.business)}
+            first = plugin.pre_tool_call("terminal", args)
+            second = plugin.pre_tool_call("terminal", args)
             process = plugin.pre_tool_call("process_manage", {"action": "list"})
+            code = plugin.pre_tool_call("execute_code", {"code": "print('synthetic')", "reset": False})
         self.assertEqual(first["action"], "approve")
         self.assertNotEqual(first["rule_key"], second["rule_key"])
         self.assertEqual(process["action"], "approve")
+        self.assertEqual(code["action"], "approve")
         payload = json.loads(first["message"][len(plugin.APPROVAL_PREFIX):])
-        self.assertEqual(payload, {"schema": 1, "tool": "terminal", "arguments": {"command": "pwd"}})
+        self.assertEqual(payload, {"schema": 1, "tool": "terminal", "arguments": args})
+        self.assertEqual(json.loads(process["message"][len(plugin.APPROVAL_PREFIX):])["arguments"], {"action": "list"})
+        self.assertEqual(json.loads(code["message"][len(plugin.APPROVAL_PREFIX):])["arguments"],
+                         {"code": "print('synthetic')", "reset": False})
+
+    def test_terminal_requires_explicit_absolute_workdir_and_pinned_arguments(self):
+        with patch.object(plugin, "_approval_mode_bypass", return_value=False):
+            missing = plugin.pre_tool_call("terminal", {"command": "pwd"})
+            relative = plugin.pre_tool_call("terminal", {"command": "pwd", "workdir": "business"})
+            unknown = plugin.pre_tool_call("terminal", {
+                "command": "pwd", "workdir": str(self.business), "unknown": "value"})
+        for result in (missing, relative, unknown):
+            self.assertEqual(result["action"], "block")
+            self.assertIn("terminal_review_ambiguous", result["message"])
+
+    def test_terminal_refuses_backend_cwd_remapping(self):
+        with patch.object(plugin, "_approval_mode_bypass", return_value=False), \
+             patch.object(plugin, "_terminal_backend_type", return_value="docker"):
+            result = plugin.pre_tool_call("terminal", {
+                "command": "pwd", "workdir": str(self.business)})
+        self.assertEqual(result["action"], "block")
+        self.assertIn("terminal_review_ambiguous", result["message"])
+
+    def test_process_and_code_approval_require_reviewable_pinned_arguments(self):
+        with patch.object(plugin, "_approval_mode_bypass", return_value=False):
+            bad_process = plugin.pre_tool_call("process_manage", {"action": "kill"})
+            extra_code = plugin.pre_tool_call("execute_code", {"code": "print(1)", "cwd": "/tmp"})
+        self.assertEqual(bad_process["action"], "block")
+        self.assertEqual(extra_code["action"], "block")
+
+    def test_pinned_v0222_file_registry_names_and_path_arguments_are_guarded(self):
+        # Verified against Hermes v0.22.2 fixed source: tools/file_tools.py registers
+        # read_file/write_file/patch/search_files, all with the path parameter.
+        registry_contract = {
+            "read_file": {"path": str(self.home / "sessions" / "synthetic.jsonl")},
+            "write_file": {"path": str(self.home / "config.yaml"), "content": "synthetic"},
+            "patch": {"path": str(self.home / "sessions" / "synthetic.jsonl"),
+                      "old_string": "a", "new_string": "b"},
+            "search_files": {"pattern": "synthetic", "path": str(self.home)},
+        }
+        for tool_name, args in registry_contract.items():
+            self.assertIn(tool_name, plugin._READ_TOOLS | plugin._WRITE_TOOLS)
+            self.assertIn("hermes_private_path", plugin.path_guard(
+                tool_name, args, hermes_home=self.home))
+        # Patch's alternate content-only mode has no top-level path; it must fail closed.
+        self.assertIn("path_guard_missing", plugin.path_guard(
+            "patch", {"mode": "patch", "patch": "*** Update File: ~/.hermes/sessions/x"},
+            hermes_home=self.home))
 
     def test_ambiguous_commands_and_disabled_approval_policy_fail_closed(self):
         with patch.object(plugin, "_approval_mode_bypass", return_value=False):

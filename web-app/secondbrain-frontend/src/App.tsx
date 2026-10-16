@@ -986,8 +986,9 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
         <p>{pendingApproval.scope}</p>
         <p>{en ? 'Review the exact request. Approval applies once to this Run only.' : '请核对以下完整请求；批准仅对本次 Run 生效。'}</p>
         <pre>{pendingApproval.command}</pre>
+        {pendingApproval.workdir && <p>{en ? 'Working directory: ' : '工作目录：'}<code>{pendingApproval.workdir}</code></p>}
         <details><summary>{en ? 'All tool arguments' : '完整工具参数'}</summary><pre>{JSON.stringify(pendingApproval.arguments, null, 2)}</pre></details>
-        <p className="terminal-approval-warning">{en ? 'This is not an OS sandbox. The command runs with Hermes worker permissions. Shell chains, dynamic expansion, and indirect scripts are blocked.' : '这不是操作系统沙箱。命令会以 Hermes worker 的系统权限运行；命令链、动态展开和间接脚本会被拦截。'}</p>
+        <p className="terminal-approval-warning">{en ? 'This is not an OS sandbox. The approved command runs with Hermes worker permissions; an executable may start other programs or access files on its own.' : '这不是操作系统沙箱。获批命令会以 Hermes worker 的系统权限运行；可执行程序仍可能自行启动其他程序或访问文件。'}</p>
         <div><button type="button" disabled={approvalResolving} onClick={() => void resolveTerminalApproval('once')}>{en ? 'Approve once' : '批准一次'}</button>
           <button type="button" disabled={approvalResolving} onClick={() => void resolveTerminalApproval('deny')}>{en ? 'Reject' : '拒绝'}</button></div>
       </section>}

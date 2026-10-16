@@ -4,6 +4,7 @@ export type TerminalApprovalCard = {
   approvalId: string;
   tool: 'terminal' | 'process_manage' | 'execute_code';
   command: string;
+  workdir: string | null;
   arguments: Record<string, unknown>;
   commandSha256: string;
   expiresAt: number;
@@ -26,6 +27,12 @@ export function parseTerminalApproval(payload: Record<string, unknown>, runId: s
       || typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)
       || typeof expiresAt !== 'number' || expiresAt <= Date.now()
       || typeof scope !== 'string' || !scope) return null;
+  const toolArgs = args as Record<string, unknown>;
+  if (tool === 'terminal'
+      && (typeof toolArgs.command !== 'string' || toolArgs.command !== command
+        || typeof toolArgs.workdir !== 'string' || !toolArgs.workdir.startsWith('/'))) return null;
+  if (tool === 'execute_code' && (typeof toolArgs.code !== 'string' || toolArgs.code !== command)) return null;
   return { runId, sessionId, approvalId, tool: tool as TerminalApprovalCard['tool'], command,
-    arguments: args as Record<string, unknown>, commandSha256: digest, expiresAt, scope };
+    workdir: tool === 'terminal' ? toolArgs.workdir as string : null,
+    arguments: toolArgs, commandSha256: digest, expiresAt, scope };
 }

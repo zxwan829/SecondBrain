@@ -23,7 +23,8 @@ _GLOBAL_SECRET_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_e
                         "credentials", "credentials.json", "secrets.json", "auth.json", "token.json"}
 _GLOBAL_SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 _EXECUTABLE_WRAPPERS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "python",
-                        "python2", "python3", "pypy", "node", "ruby", "perl", "php", "eval"}
+                        "python2", "python3", "pypy", "node", "ruby", "perl", "php", "eval",
+                        "env", "busybox", "xargs"}
 _APPROVAL_ARG_MAX = 12_000
 
 
@@ -153,9 +154,23 @@ def _ambiguous_execution(tool_name, args):
     if not isinstance(args, dict):
         return "tool arguments are not structured"
     if tool_name == "terminal":
+        allowed = {"command", "background", "timeout", "workdir", "pty", "notify", "heartbeat",
+                   "persist_on_release"}
+        if set(args) - allowed:
+            return "terminal contains arguments outside the pinned Hermes tool contract"
         command = args.get("command")
         if not isinstance(command, str) or not command.strip() or len(command) > _APPROVAL_ARG_MAX:
             return "terminal command is missing or exceeds the review limit"
+        workdir = args.get("workdir")
+        if not isinstance(workdir, str) or not workdir or not Path(workdir).is_absolute():
+            return "terminal requires an explicit absolute workdir so approval shows the execution directory"
+        if os.path.normpath(workdir) != workdir or str(Path(workdir).resolve(strict=False)) != workdir:
+            return "terminal workdir must be canonical so the approval path matches the local execution cwd"
+        try:
+            if _terminal_backend_type() != "local":
+                return "terminal backend remaps workdirs; this profile cannot display the effective execution cwd"
+        except Exception:
+            return "terminal backend could not be verified for an exact execution cwd"
         try:
             tokens = list(shlex.shlex(command, posix=True, punctuation_chars=";&|<>"))
         except ValueError:
@@ -170,6 +185,20 @@ def _ambiguous_execution(tool_name, args):
         if any(Path(token).suffix.lower() in {".sh", ".bash", ".zsh", ".py", ".js", ".rb", ".pl"}
                for token in tokens[1:]):
             return "indirect script execution cannot be reviewed as a single exact action"
+    elif tool_name == "process_manage":
+        if set(args) - {"action", "session_id", "data", "timeout", "offset", "limit"}:
+            return "process_manage contains arguments outside the pinned Hermes tool contract"
+        if args.get("action") not in {"list", "poll", "log", "wait", "kill", "write", "submit", "close", "handoff"}:
+            return "process_manage action is missing or unsupported"
+        if args.get("action") != "list" and (not isinstance(args.get("session_id"), str) or not args["session_id"]):
+            return "process_manage requires the target session_id for approval"
+    elif tool_name == "execute_code":
+        if set(args) - {"code", "reset"}:
+            return "execute_code contains arguments outside the pinned Hermes tool contract"
+        if not isinstance(args.get("code"), str) or not args["code"].strip():
+            return "execute_code requires non-empty code for approval"
+        if "reset" in args and not isinstance(args["reset"], bool):
+            return "execute_code reset must be boolean"
     try:
         encoded = json.dumps(args, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     except (TypeError, ValueError):
@@ -177,6 +206,11 @@ def _ambiguous_execution(tool_name, args):
     if len(encoded) > _APPROVAL_ARG_MAX:
         return "tool arguments exceed the review limit"
     return None
+
+
+def _terminal_backend_type():
+    from tools.terminal_tool import _get_env_config
+    return _get_env_config().get("env_type")
 
 
 def _approval_mode_bypass():

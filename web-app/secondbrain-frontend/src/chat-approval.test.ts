@@ -3,7 +3,7 @@ import { parseTerminalApproval } from './chat-approval';
 
 const event = {
   event: 'approval.request', run_id: 'run-1', session_id: 'session-1', approval_id: 'req-1',
-  tool: 'terminal', command: 'pwd', arguments: { command: 'pwd' }, command_sha256: 'a'.repeat(64),
+  tool: 'terminal', command: 'pwd', arguments: { command: 'pwd', workdir: '/tmp/synthetic' }, command_sha256: 'a'.repeat(64),
   expires_at: Date.now() + 30_000, scope: 'Local Hermes terminal',
 };
 
@@ -18,5 +18,12 @@ describe('terminal approval event binding', () => {
     expect(parseTerminalApproval({ ...event, expires_at: Date.now() - 1 }, 'run-1', 'session-1')).toBeNull();
     expect(parseTerminalApproval({ ...event, command_sha256: 'bad' }, 'run-1', 'session-1')).toBeNull();
     expect(parseTerminalApproval({ ...event, event: 'approval.responded' }, 'run-1', 'session-1')).toBeNull();
+  });
+
+  it('requires displayed terminal command and workdir to match bound arguments', () => {
+    expect(parseTerminalApproval({ ...event, command: 'id' }, 'run-1', 'session-1')).toBeNull();
+    expect(parseTerminalApproval({ ...event, arguments: { command: 'pwd' } }, 'run-1', 'session-1')).toBeNull();
+    expect(parseTerminalApproval({ ...event, arguments: { command: 'pwd', workdir: 'relative' } }, 'run-1', 'session-1')).toBeNull();
+    expect(parseTerminalApproval(event, 'run-1', 'session-1')?.workdir).toBe('/tmp/synthetic');
   });
 });

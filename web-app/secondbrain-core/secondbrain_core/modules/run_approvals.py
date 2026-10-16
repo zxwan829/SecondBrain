@@ -64,9 +64,25 @@ class RunApprovalRegistry:
                     or request.get("tool") not in {"terminal", "process_manage", "execute_code"}
                     or not isinstance(request.get("arguments"), dict)):
                 return None
-            if request["tool"] == "terminal" and (not isinstance(request["arguments"].get("command"), str)
-                                                     or not request["arguments"]["command"].strip()):
-                return None
+            tool, args = request["tool"], request["arguments"]
+            if tool == "terminal":
+                if (set(args) - {"command", "background", "timeout", "workdir", "pty", "notify",
+                                 "heartbeat", "persist_on_release"}
+                        or not isinstance(args.get("command"), str) or not args["command"].strip()
+                        or not isinstance(args.get("workdir"), str) or not args["workdir"].startswith("/")):
+                    return None
+            elif tool == "execute_code":
+                if (set(args) - {"code", "reset"} or not isinstance(args.get("code"), str)
+                        or not args["code"].strip()
+                        or ("reset" in args and not isinstance(args["reset"], bool))):
+                    return None
+            elif tool == "process_manage":
+                if (set(args) - {"action", "session_id", "data", "timeout", "offset", "limit"}
+                        or args.get("action") not in {"list", "poll", "log", "wait", "kill", "write",
+                                                       "submit", "close", "handoff"}
+                        or (args.get("action") != "list" and
+                            (not isinstance(args.get("session_id"), str) or not args["session_id"]))):
+                    return None
             serialized = _canonical(request)
             digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
             key = (run_id, request_id)
@@ -93,6 +109,7 @@ class RunApprovalRegistry:
         return {"event": "approval.request", "run_id": run_id,
                 "session_id": record["session_id"], "approval_id": request_id,
                 "tool": record["request"]["tool"], "command": command, "arguments": args,
+                "workdir": args.get("workdir") if record["request"]["tool"] == "terminal" else None,
                 "command_sha256": record["digest"], "expires_at": record["expires_at"],
                 "scope": "Local Hermes terminal; executes with the Hermes worker's OS permissions."}
 
