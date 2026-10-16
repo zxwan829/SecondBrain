@@ -1,10 +1,23 @@
 ---
 created: 2026-09-28
-updated: 2026-10-16
+updated: 2026-10-17
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
+
+## 最新核验（2026-10-17，PR #18 / Hermes fail-closed overlay）
+
+- PR #18 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`。Hermes 基于上游 v0.22.2 源码 Commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8` 与补丁 SHA-256 `b53818487205733039378a8e3c7218cc298eca1c39e1a34dec997dd306f855b0`，从官方 amd64 镜像 digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05` 构建一文件 overlay。NAS 当前 Hermes 镜像 tag `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`，Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`，平台 linux/amd64。
+- Compose SHA-256 `6d7b1be1abb4479b93e5cebc473e2f20ba6bddb6bd62ea5019322ef260908818`，属主/模式 `1026:100 / 0640`。仅 Hermes image 引用变更；Hermes 单服务以 `--no-deps --force-recreate` 重建，未触碰 App/Core 或其他服务。当前 `secondbrain-hermes` running，RestartCount 0；API `/health` 200，Dashboard 9119 可达并重定向登录（302）。重建后曾观察到 API 尚未监听，持续等待后服务恢复，无二次重启/回滚。
+- Hermes `Plugin Doctor` 对 `secondbrain-d078-guard` 报告 manifest/import/registration 成功、注册 1 hook。Profile 有 `file,skills,vision`，无 terminal；Skills write approval=true、approval mode=manual。NAS 合成 `docker exec` 验证：敏感 Session 文件 read 被拒、允许的合成业务文件路径通过、Skills 只读工具通过、注入 dispatcher RuntimeError 被 fail-closed 阻断；零模型调用、零 Session 写入。生产 API 未创建 Session/Run。
+- 安全边界重核：Private 无挂载；`/secondbrain` 主挂载 RO，Knowledge 主目录 RO；既有 `/knowledge-assets/00-Inbox` Capture 专用 RW 子挂载保持不变。Promote false。Core 记忆根 `/volume1/docker/secondbrain/core-state/personal-memory` mode 0700、owner `1026:100`，0 files/0 bytes，mtime 与升级前记录相同；未读取内容。API Terminal 保持关闭。
+- 回滚点 `/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/`：目录 0700，`compose.yaml`（SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`）、旧 `plugin.yaml`、恢复元数据均 0600。旧官方 Hermes image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` 保留在 rollback tag `secondbrain-hermes:rollback-v0222-official-20261016T173140Z`。回滚前应重核快照并只恢复 Hermes/manifest；不可回滚 Core state、D077 JSONL 或 App。
+- 上述是运行态与合成权限验证，不代表真实模型、真实个人数据或浏览器学习体验已验收。此前 D078 Stage 1 信息保留在下方历史快照段，凡与本节冲突以本节为当前状态。
+
+## 历史资产审计摘要（2026-10-17，只读）
+
+对 `app-build-source-*`、`compose.yaml.bak-*`、`compose.yaml.pre-*` 和 D074–D078 rollback 目录执行了 `du -sk` 与路径引用检查。候选总占用 5,216,216 KiB（约 4.97 GiB）；其中 rollback 5,152,284 KiB、历史 App build source 63,892 KiB、旧 Compose 快照 40 KiB。当前 Compose 仍引用 `app-build-source-d076-organizer-b34319a`（6144 KiB），须保留；其余 10 个 source 副本合计 57,748 KiB 未被当前 Compose、运行容器挂载或检查的部署/build 脚本引用，可作为后续清理候选。旧 Compose 快照均 4 KiB 且无当前引用，空间收益很小。D077 三个大状态归档总量约 5,145,228 KiB，尺寸接近但未做内容哈希，不能确认重复；D078 当前 Hermes 回滚快照必须保留。没有删除、移动或改动任何审计候选；具体路径与风险见 Progress-Log.md 和本轮 Issue #14 回复。
 
 本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。它不是实时监控：部署快照于 2026-10-16 Issue #12 核验；API 工具权限、定向重启和健康状态于 Issue #14 更新。不记录任何密钥或明文环境配置。
 
