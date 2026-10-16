@@ -2,6 +2,14 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — PR #8 单次 D077 E2E Runner：跨会话阶段受阻
+
+- 按授权评论 `6212465275`，确认 PR #8 OPEN 且 branch HEAD 为 `2d4e35de10b5c3eb6b97623cdb8a9c5c20c95857`，仅触发一次 `.github/workflows/d077-hermes-v0215-core-stub.yml`：[Run 38880843587](https://github.com/zxwan829/SecondBrain/actions/runs/38880843587)，checkout SHA 匹配。Ubuntu 24.04/Docker、固定 Hermes v0.21.5 linux/amd64 image ID `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6` / revision `749220ef0007f8d87bd1531f1c24b0fe93816385`、Core依赖安装及临时 Core 镜像构建通过。
+- 网络预检通过：internal network、无 host port；Core local health、Core→Hermes、Core→Stub 为 HTTP 200，公网 TCP egress 探测阻断。Harness 初始 Run/SSE、记忆候选写入与来源引用、消息排序/分页、同文本去重均越过断言并进入 cross-session recall 阶段。
+- **FAILED / UNKNOWN：**脱敏诊断 `D077_HARNESS_FAILURE {mode=--enabled-scenario, stage=cross_session_recall, exception_class=RuntimeError, http_status=null, exit_code=1}`。异常消息未输出，无法识别具体跨会话断言；因此实际跨会话记忆召回为 UNKNOWN，不能判定 Core/Hermes 业务缺陷。纠错、纠错后召回、过滤/无关内容、失败/停止不学习及 flags-off 均未执行，UNKNOWN；无 `D077_ENABLED_RESULT`、`D077_FLAGS_OFF_RESULT` 或最终 PASS marker。未重跑。
+- 定向 cleanup step 成功并删除本轮 Core 临时镜像 `d077-v0215-core:38880843587-1` / `sha256:d6d6998746aed1756b5d08e57a0d7559a5fbaf2fd882b8987722be049819a8bb`；Harness cleanup 已执行，但无容器/网络清理后 inventory，故不声称残留为零。GitHub-hosted Runner 为临时环境；没有 NAS、真实业务数据、付费模型、生产部署或合并操作。
+- 本次一次性授权已消耗。Phase 1-C 为 **PARTIAL VERIFIED / overall NOT ACCEPTED**；PR #8 与 Issue #7 保持 OPEN。
+
 # 2026-10-16 — PR #8 修正 Hermes v0.21.5 消息顺序/分页测试契约
 
 - 按审核评论 `6212150748` 固定版 Hermes 源码契约修正 Harness：消息 `latest` 和 `oldest` 查询都按 chronological 顺序返回；单条最新分页对应完整列表末尾，单条最旧分页对应列表开头。新增一个离线三消息回归同时覆盖完整列表及两种单条分页。
