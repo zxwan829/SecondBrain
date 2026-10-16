@@ -360,7 +360,7 @@
 
 # 2026-10-10 Web App / Personal OS V1 Specification
 
-- Created and froze `../business-specs/SecondBrain-Web-App-V1-Business-Spec.md` v1.0 canonical.
+- Created and froze `business-specs/SecondBrain-Web-App-V1-Business-Spec.md` v1.0 canonical.
 - Documented Global App Shell, dynamic Home scope, extensible navigation/page contracts, aggregation contracts, reserved Books/People/Personal Events, SoT/runtime/security boundaries, and V1 acceptance criteria.
 - No frontend, Runtime, Hermes, Compose, permission, or business-data changes were made.
 - Next: WEB APP PHASE 0 NATIVE CAPABILITY + SECURITY AUDIT.
