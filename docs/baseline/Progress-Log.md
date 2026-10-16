@@ -2,6 +2,14 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D077 Phase 1-C 最后一次授权 Runner：网络预检通过，记忆场景受阻
+
+- 按 PR #8 审核评论 `6209817827` 和用户授权评论 `6209838408`，触发且仅触发一次手动 GitHub Ubuntu Runner：[Run 38863667562](https://github.com/zxwan829/SecondBrain/actions/runs/38863667562)。启动前本地工作区干净、PR head 与选定 branch 均为已审核 `9ade521811c59877ef526daec5d2a672d02a5e07`；Actions 实际 `headSha` 与之相同。固定 Hermes v0.21.5 amd64 镜像 ID/OCI revision 核验、Core 依赖安装和临时 Core peer 镜像构建均通过。
+- **网络预检 VERIFIED：** 单一 Docker `--internal` 网络、三个测试容器只连该网络、无宿主机端口绑定的断言通过。Hermes→Stub `/__test/health` 为 HTTP 200；Core 本地 `/health`、Core→Hermes 授权 `/health`、Core→Stub `/__test/health` 最终均为 HTTP 200。Core→Hermes 首次 `connection_refused`、下一次 HTTP 200；首次拒绝的具体原因未另测。Stub、Hermes、Core 到 `1.1.1.1:443` 的 TCP 探针均为 `blocked_OSError`。上述探针在任何合成 Run 之前完成。
+- **完整合成记忆闭环 FAILED/BLOCKED：** 网络预检后，Core peer 内的 `--enabled-scenario` 以退出码 1 失败；没有 `D077_ENABLED_RESULT`、`D077_FLAGS_OFF_RESULT` 或最终 `D077_V0215_RESULT status=PASS`，CI 的成功标记门禁使作业失败。`run_in_container()` 只打印子进程 stdout，stderr 被捕获但未输出；本次日志无法确定失败发生在登录、首个 Run 或后续哪一项断言，不能据此认定 Core 或 Hermes 业务缺陷。Run/SSE、消息 ID/顺序、水位学习、跨 Session、纠正、撤销/过期、无关召回和来源核验逐项结果均 UNKNOWN；flag-off 场景在失败后未运行。
+- **清理与边界：** Harness 的 `finally` 对本轮命名容器/网络调用删除；workflow 的 Run/Attempt 标签清理步骤成功。日志显示临时 Core 镜像 `d077-v0215-core:38863667562-1` 已 untag/delete；cleanup 步骤没有列出待删除的本轮容器/网络，但没有显式清理后 inventory，因此残留状态只能以该步骤和一次性 GitHub-hosted Runner 销毁为证。没有 NAS、付费模型、真实个人数据或生产变更；本地保留的 venv/Clone 未清理。
+- **收口：** 本轮 Runner 限额已用尽，没有重试或修改 Harness。最小后续工作是让隔离场景输出有界、脱敏的错误类别/步骤，再交 ChatGPT 审核；新的 Runner 或 NAS 开发环境联调须分别获得明确授权。PR [#8](https://github.com/zxwan829/SecondBrain/pull/8) 保持 OPEN，Issue #7 未关闭；文档提交 SHA 以 PR 当前 head 为准。
+
 # 2026-10-16 — D077 Phase 1-C 单一 internal network Runner（Harness 入口阻断）
 
 - 按 PR #8 最新两条评论 `6209551174`、`6209568543`，在原 PR 分支把测试拓扑收敛为单个 Docker `--internal` 网络中的临时 Hermes/Core/确定性 Stub peer；无宿主机 API 端口，无第二网络、无付费模型或真实数据。Core/Hermes/Stub 均采用非 root、只读根文件系统、丢弃 capabilities、no-new-privileges、资源限制和仅合成数据挂载；Core 镜像在测试网络外构建，测试容器只连 internal network。
