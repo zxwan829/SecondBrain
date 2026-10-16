@@ -1,6 +1,6 @@
 ---
 created: 2026-09-28
-updated: 2026-10-16
+updated: 2026-10-17
 status: current
 type: agent-rules
 ---
@@ -15,6 +15,20 @@ type: agent-rules
 - 业务细则遵循正式 Business Specification；稳定模块和信任边界遵循 `Architecture.md`；正式取舍遵循 `Decision-Log.md`。旧决策不得覆盖新决定，历史记录不得冒充当前状态。
 - Hermes 是当前唯一 Runtime 主线；OpenClaw 已退出当前候选。优先复用 Hermes 官方 Session/Run/SSE/Skill 接口，不重复实现 Agent Runtime。
 - **D077 最高产品目标：** 自然对话主动联想长期记忆与知识、获准互动默认自主学习低风险偏好经验、跨会话可纠正、逐渐主动规划。新任务先核对 `Decision-Log.md` D077、`Architecture.md` 和 `00-CURRENT.md`；不把“能手动检索”当作该目标验收通过。Phase 0 已完成；D077 已在 NAS 运行且合成记忆闭环通过，真实模型和用户浏览器行为仍待验收。当前权限工作以 Issue #14 及 D078 为准。
+
+## 按需读取与 Token 控制（SecondBrain 专属）
+
+- **默认不通读两个长 Log 文档：** `Decision-Log.md` 与 `Progress-Log.md`。日常任务优先读取 `00-CURRENT.md`（当前状态、验收、NEXT）、`Agent-Rules.md`（执行边界）、相关业务规格；需了解设计时按需读取 `Architecture.md`，需核对现网时读取 `Environment-Baseline.md` 最新快照。
+- **追溯才读取：** 当涉及某个正式决定的批准/替代关系、历史事故、测试证据、争议裁定或阶段复盘时，按 D 编号、Issue/PR、日期、关键词定位对应 Log 的必要章节或行范围；不为“熟悉项目”加载全量日志，不让历史状态覆盖 CURRENT。
+- **写入不受此阅读优化限制：** 正式决策变化仍更新 Decision-Log，关键阶段成果/问题/验收证据仍更新 Progress-Log；用户要求全面历史审计时可按需完整阅读。
+
+## GitHub Issue 驱动的项目协作（仅 SecondBrain 中大型任务）
+
+- **ChatGPT 创建并维护任务 Issue：** 当任务有明确施工范围或需要 Codex 执行时，ChatGPT 优先在 SecondBrain 仓库创建 Issue，或在同一未结束 Issue 中追加准确评论，集中记录目标、范围、限制、授权状态、验收标准、交付物和 NEXT；优先复用现有 Issue，不为每一步重复新建。
+- **Codex 以 Issue 为任务契约：** Codex 在动工前读取指定 Issue 最新有效正文、评论及关联 PR/当前基线；按已获授权边界施工，完成后将实现、测试、部署状态、阻塞和后续动作回复到 Issue，必要时关联 PR。评论中新的事实与修订应明确取代过时指令，避免对历史评论照单全收。
+- **ChatGPT 客户端只发简短交接：** 例如「读取 SecondBrain Issue #14 最新任务及授权，按范围执行并在 Issue 回复结果」。详情和验收条件留在 GitHub，不在聊天中重复大段指令；Codex 若无法读取 Issue，应先报告，不凭简短口令猜测操作范围。
+- **权限不靠 Issue 自动扩大：** Issue 中的方案评审、代码开发、PR 合并、NAS 部署、模型费用及真实个人数据访问均为不同操作边界，只有用户已经明确授权的部分可执行；后续评论不得自行扩大用户许可。
+- **轻量例外：** 很小的修补、临时排错、纯解释咨询可直接在聊天中完成，无须机械创建 Issue，也不要求每次维护治理文档。此约定仅适用于 SecondBrain，不写入中央跨项目治理规则。
 
 ## SecondBrain 数据与安全边界
 
