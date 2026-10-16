@@ -17,6 +17,7 @@
 - 按 PR #4 最新审核修正同一来源消息的多事实入库：每个候选使用显式幂等键或由来源、正文、类别和事实类型导出的稳定键；不同候选可以并存，同一候选重放保持 exactly-once。
 - `fact` 类记忆一律要求来源核验，即使请求省略 `exact`。模型使用的 active recall 对 `source_required` 项仅提供中性核验提示、来源指针和状态，不提供未核验原文；认证 history API 保留原文供审计/纠正。缺失来源原件时仍不可把精确主张当作已验证事实。
 - 新增同源双偏好与幂等重放、遗漏 `exact` 且源文件缺失时 recall 脱敏/API 响应与历史原文保留回归。Core 全套 **137 passed、2 subtests passed**；`compileall`、`git diff --check` 通过。仅有 Starlette `TestClient`/httpx 弃用提示。
+- 按 PR 后续审核移除测试对 macOS `/private/tmp` 的硬编码，使用平台默认临时目录并规范化路径；模块测试 **8 passed**，全套仍为 **137 passed、2 subtests passed**。本机验证通过；尚未宣称 Linux CI 已运行。
 - 本轮未合并、部署、调用付费模型或访问 NAS。修正提交与 PR #4 head、审核状态以当前 GitHub 为准。
 
 # 2026-09-28

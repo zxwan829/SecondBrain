@@ -19,8 +19,8 @@ from secondbrain_core.modules.personal_memory import (
 
 class PersonalMemoryStoreTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
-        self.root = Path(self.temp.name) / "40-Memory"
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name).resolve() / "40-Memory"
         self.root.mkdir(mode=0o700)
         self.root.chmod(0o700)
         self.store = PersonalMemoryStore(self.root)
@@ -100,7 +100,7 @@ class PersonalMemoryStoreTests(unittest.TestCase):
         self.assertTrue(all(row["schema"] == 1 for row in rows))
 
     def test_expiry_and_write_permission_fail_closed(self):
-        root2 = Path(self.temp.name) / "40-Memory-expiry"
+        root2 = Path(self.temp.name).resolve() / "40-Memory-expiry"
         root2.mkdir(mode=0o700)
         root2.chmod(0o700)
         store = PersonalMemoryStore(root2)
@@ -143,8 +143,8 @@ class PersonalMemoryStoreTests(unittest.TestCase):
 
 class PersonalMemoryApiTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
-        self.root = Path(self.temp.name)
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name).resolve()
         self.root.chmod(0o700)
         password = self.root / "password"
         password.write_text("synthetic-test-password")
