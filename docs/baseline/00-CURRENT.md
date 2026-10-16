@@ -156,7 +156,7 @@ source: GitHub SecondBrain Monorepo
 | 内容 | 权威位置 |
 |---|---|
 | 最高产品目标、核心体验、两种学习/知识闭环、返工路线及 NEXT-0 | `Decision-Log.md` D077 / `Architecture.md`、决策 D077 |
-| V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` |
+| V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | [Web App V1 业务规格](../business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture 业务规格](../business-specs/Universal-Capture-Business-Spec.md) |
 | 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
 | 正式决定、理由及替代关系 | `Decision-Log.md` |
 | 最近已核验的 NAS 运行快照、权限、端口与恢复入口 | `Environment-Baseline.md` |
