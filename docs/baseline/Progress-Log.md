@@ -2,6 +2,14 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — PR #8 D077 剩余记忆场景集中 Harness 修复
+
+- 按用户的新优先级和审核评论 `6212716139`，只做源码契约审查、Harness 调整、离线测试和文档；不触发 Runner、访问 NAS、部署、调用模型或合并。
+- 固定 Hermes upstream revision `749220ef0007f8d87bd1531f1c24b0fe93816385` 源码确认：`POST /v1/runs` 的 `instructions` 被传为本轮 `ephemeral_system_prompt`；真实 provider 异常落 `failed` / `run.failed`；API `/stop` 即时状态为 `stopping`，用户中断最终状态为 `cancelled`；`interrupted` 保留给网关关闭/重启中断。Harness 先前接受 provider failure=`interrupted`、stop=`failed/interrupted` 的断言过宽，现收紧为确切状态与 Stub 请求证据。Session messages API 的 `limit/offset/order` 参数与请求路径一致，分页断言维持原标准。
+- Harness 将初始记忆、来源、分页/去重、跨会话、纠错、纠错后召回、撤销/过期/推断过滤、失败不学习、停止不学习、无关话题和精确事实回源改为逐场景状态记录。独立场景失败后仍继续；纠错后召回仅在纠错 PASS 时执行，否则标 BLOCKED。失败/停止场景独立于召回结果；启用记忆场景失败后仍运行 flags-off。输出只允许场景名、PASS/FAIL/BLOCKED 和 allowlist `failure_code`，不输出输入、记忆、响应正文、URL 或异常消息。
+- 离线验证：Harness 诊断/契约测试 **18 passed**；Core 全套 **156 passed、2 subtests passed**（1 条 Starlette/httpx 弃用警告）；`py_compile`、`git diff --check` 通过。测试只证明本地代码路径及场景调度逻辑，不等于 Hermes+Core 联调。
+- **逐场景运行结论（本轮未运行 Runner）：** `cross_session_recall` BLOCKED（上一 Runner 的具体失败码 UNKNOWN）；`correction_update` UNKNOWN；`corrected_cross_session_recall` BLOCKED（须依赖纠错 PASS）；`revoked_expired_inference_filter` UNKNOWN；`failed_run_no_learning` UNKNOWN；`stopped_run_no_learning` UNKNOWN；`flags_off` UNKNOWN。下次获准的唯一 Runner 会执行并发出对应固定码，不自动重试。只有完整合成闭环 PASS 后，才进入 NAS 最小集成步骤并另行遵循 NAS 授权/回滚边界。
+
 # 2026-10-16 — PR #8 cross_session_recall 离线诊断
 
 - 按审核评论 `6212575070` 仅检查跨会话阶段。已覆盖现有 Core `PersonalLearningPipeline.instructions_for()` 相关性筛选与 `/api/chat/sessions/{id}/runs` 对 Hermes `instructions` 的转发；相关性及新 Session 请求体由 `test_personal_learning.py` 回归覆盖。Harness 原先只取请求窗口的最后一条 Stub 请求；现改为按原始合成问题关联请求，再分别断言记忆上下文和输入文本，不降低业务标准。

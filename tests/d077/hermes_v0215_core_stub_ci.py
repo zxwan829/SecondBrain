@@ -58,8 +58,40 @@ DIAGNOSTIC_MODES = {"--network-preflight", "--hermes-network-preflight", "--enab
 SAFE_STAGE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 FAILURE_CODES = {
     "cross_session_run_failed",
+    "stub_request_ambiguous",
     "cross_session_instructions_not_observed_by_stub",
     "input_was_rewritten_or_missing",
+    "correction_run_failed",
+    "correction_state_not_updated",
+    "corrected_recall_run_failed",
+    "corrected_context_stale",
+    "revoked_expired_inference_filter_failed",
+    "provider_failure_wrong_terminal_state",
+    "provider_failure_not_observed_by_stub",
+    "failed_run_was_learned",
+    "stop_request_not_observed",
+    "stop_request_not_accepted",
+    "stop_not_terminal",
+    "stop_terminal_state_not_cancelled",
+    "stopped_run_was_learned",
+    "unrelated_run_failed",
+    "unrelated_topic_received_memory_context",
+    "exact_fact_run_failed",
+    "exact_fact_source_gate_failed",
+    "flags_off_chat_failed",
+    "flags_off_memory_enabled",
+    "api_setup_failed",
+    "initial_run_failed",
+    "initial_memory_not_learned",
+    "initial_run_had_memory_context",
+    "source_message_contract_failed",
+    "message_pagination_contract_failed",
+    "duplicate_text_run_failed",
+    "duplicate_text_message_contract_failed",
+    "duplicate_text_memory_created",
+    "prerequisite_not_passed",
+    "scenario_execution_error",
+    "scenario_result_missing",
 }
 
 
@@ -457,6 +489,95 @@ def model_requests_for_input(requests, input_text):
     return [request for request in requests if contains_text(request, input_text)]
 
 
+def unique_model_request_for_input(requests, input_text):
+    matched = model_requests_for_input(requests, input_text)
+    if not matched:
+        raise HarnessAssertionError("input_was_rewritten_or_missing")
+    if len(matched) != 1:
+        raise HarnessAssertionError("stub_request_ambiguous")
+    return matched[0]
+
+
+def run_scenario(results, name, action, *, requires=()):
+    """Run an independent synthetic scene and preserve fail-closed dependencies."""
+    if any(results.get(required, {}).get("status") != "PASS" for required in requires):
+        results[name] = {"status": "BLOCKED", "failure_code": "prerequisite_not_passed"}
+        return None
+    try:
+        value = action()
+    except Exception as exc:
+        code = getattr(exc, "failure_code", None)
+        if code not in FAILURE_CODES:
+            code = "scenario_execution_error"
+        results[name] = {"status": "FAIL", "failure_code": code}
+        return None
+    results[name] = {"status": "PASS", "failure_code": None}
+    return value
+
+
+def scenario_status(results):
+    statuses = {row["status"] for row in results.values()}
+    if "FAIL" in statuses:
+        return "FAIL"
+    if "BLOCKED" in statuses:
+        return "PARTIAL"
+    return "PASS"
+
+
+def scenario_result_from_output(output, marker):
+    prefix = marker + " "
+    rows = [line[len(prefix):] for line in output.splitlines() if line.startswith(prefix)]
+    if not rows:
+        return {"status": "FAIL", "scenarios": {
+            "scenario_result": {"status": "FAIL", "failure_code": "scenario_result_missing"}
+        }}
+    try:
+        result = json.loads(rows[-1])
+    except (TypeError, ValueError):
+        return {"status": "FAIL", "scenarios": {
+            "scenario_result": {"status": "FAIL", "failure_code": "scenario_result_missing"}
+        }}
+    if not isinstance(result, dict) or not isinstance(result.get("scenarios"), dict):
+        return {"status": "FAIL", "scenarios": {
+            "scenario_result": {"status": "FAIL", "failure_code": "scenario_result_missing"}
+        }}
+    raw_scenarios = result["scenarios"]
+    if not raw_scenarios or len(raw_scenarios) > 32:
+        return {"status": "FAIL", "scenarios": {
+            "scenario_result": {"status": "FAIL", "failure_code": "scenario_result_missing"}
+        }}
+    scenarios = {}
+    for name, row in raw_scenarios.items():
+        if (not isinstance(name, str) or not SAFE_STAGE_RE.fullmatch(name)
+                or not isinstance(row, dict) or row.get("status") not in {"PASS", "FAIL", "BLOCKED"}):
+            return {"status": "FAIL", "scenarios": {
+                "scenario_result": {"status": "FAIL", "failure_code": "scenario_result_missing"}
+            }}
+        code = row.get("failure_code")
+        if code is not None and code not in FAILURE_CODES:
+            return {"status": "FAIL", "scenarios": {
+                "scenario_result": {"status": "FAIL", "failure_code": "scenario_result_missing"}
+            }}
+        if row["status"] == "PASS" and code is not None:
+            return {"status": "FAIL", "scenarios": {
+                "scenario_result": {"status": "FAIL", "failure_code": "scenario_result_missing"}
+            }}
+        if row["status"] != "PASS" and code is None:
+            return {"status": "FAIL", "scenarios": {
+                "scenario_result": {"status": "FAIL", "failure_code": "scenario_result_missing"}
+            }}
+        scenarios[name] = {"status": row["status"], "failure_code": code}
+    return {"status": scenario_status(scenarios), "scenarios": scenarios}
+
+
+def is_provider_failure_status(status):
+    return status == "failed"
+
+
+def is_user_stop_status(status):
+    return status == "cancelled"
+
+
 def stub_state():
     url = os.environ.get("D077_STUB_URL", "http://stub:19002") + "/__test/state"
     with urllib.request.urlopen(url, timeout=5) as response:
@@ -538,252 +659,317 @@ def assert_message_order_contract(latest, oldest, latest_page, oldest_page):
 
 
 def enabled_scenario():
-    started = time.monotonic()
-    set_scenario_stage("login")
-    roots = {"memory": pathlib.Path(os.environ["SB_PERSONAL_MEMORY_ROOT"])}
+    results = {}
     client = core_client()
-    login = client.post("/api/auth/login", json={"password": APP_PASSWORD},
-                        headers={"Origin": f"http://127.0.0.1:{CORE_PORT}"})
-    login.raise_for_status()
-    set_scenario_stage("create_initial_session")
-    created = client.post("/api/chat/sessions", json={})
-    created.raise_for_status()
-    session_a = created.json()["session_id"]
+    def setup():
+        set_scenario_stage("login")
+        client.post("/api/auth/login", json={"password": APP_PASSWORD},
+                    headers={"Origin": f"http://127.0.0.1:{CORE_PORT}"}).raise_for_status()
+        set_scenario_stage("create_initial_session")
+        created = client.post("/api/chat/sessions", json={})
+        created.raise_for_status()
+        session_id = created.json().get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise HarnessAssertionError("api_setup_failed")
+        return session_id
+
+    session_a = run_scenario(results, "api_setup", setup)
+    if session_a is None:
+        blocked = ("initial_learning_source", "source_message_contract", "message_pagination_dedup",
+                   "duplicate_text_dedup", "cross_session_recall", "correction_update",
+                   "corrected_cross_session_recall", "revoked_expired_inference_filter",
+                   "unrelated_topic_filter", "exact_fact_source_gate", "failed_run_no_learning",
+                   "stopped_run_no_learning")
+        for name in blocked:
+            run_scenario(results, name, lambda: None, requires=("api_setup",))
+        client.close()
+        summary = {"status": scenario_status(results), "scenarios": results}
+        print("D077_ENABLED_RESULT " + json.dumps(summary, sort_keys=True), flush=True)
+        raise HarnessAssertionError("scenario_execution_error")
 
     initial = "I prefer concise summaries and metric units."
-    before_calls = stub_state()["request_count"]
+    def initial_learning_source():
+        before = stub_state()["request_count"]
+        set_scenario_stage("initial_run_learning")
+        _, status, _, events = run_chat(client, session_a, initial, "d077-v0215-learn-a")
+        if status != "completed" or "run.completed" not in events:
+            raise HarnessAssertionError("initial_run_failed")
+        requests = model_requests_since(before)
+        if not requests:
+            raise HarnessAssertionError("initial_run_failed")
+        target_request = unique_model_request_for_input(requests, initial)
+        if contains_text(target_request, "personal_memory_json"):
+            raise HarnessAssertionError("initial_run_had_memory_context")
+        rows = client.get("/api/personal-memory").json()["items"]
+        learned = {row["content"]["text"]: row for row in rows}
+        if not {"concise summaries", "metric units"}.issubset(learned):
+            raise HarnessAssertionError("initial_memory_not_learned")
+        return learned
+
     set_scenario_stage("initial_run_learning")
-    run_a, status_a, latency_a, events_a = run_chat(client, session_a, initial, "d077-v0215-learn-a")
-    if status_a != "completed" or "run.completed" not in events_a:
-        raise RuntimeError("initial_run_not_completed")
-    req_a = model_requests_since(before_calls)
-    if not req_a or contains_text(req_a[-1], "personal_memory_json"):
-        raise RuntimeError("unexpected_first_run_memory_context")
-    items = client.get("/api/personal-memory").json()["items"]
-    learned = {row["content"]["text"]: row for row in items}
-    if not {"concise summaries", "metric units"}.issubset(learned):
-        raise RuntimeError("synthetic_learning_candidates_missing")
+    run_scenario(results, "initial_learning_source", initial_learning_source, requires=("api_setup",))
+
+    def source_message_contract():
+        message_page = client.get(f"/api/chat/sessions/{session_a}/messages").json()
+        messages = message_page.get("messages", [])
+        source_rows = [row for row in messages if row.get("role") == "user" and row.get("text") == initial]
+        if not source_rows or not source_rows[0].get("id") or not source_rows[0].get("timestamp"):
+            raise HarnessAssertionError("source_message_contract_failed")
+        learned = client.get("/api/personal-memory").json()["items"]
+        if any(row.get("source_ref") != f"{session_a}:{source_rows[0]['id']}" for row in learned
+               if row.get("content", {}).get("text") in {"concise summaries", "metric units"}):
+            raise HarnessAssertionError("source_message_contract_failed")
+
     set_scenario_stage("source_message_contract")
-    message_page = client.get(f"/api/chat/sessions/{session_a}/messages").json()
-    messages = message_page.get("messages", [])
-    source_rows = [row for row in messages if row.get("role") == "user" and row.get("text") == initial]
-    if not source_rows or not source_rows[0].get("id") or not source_rows[0].get("timestamp"):
-        raise RuntimeError("persisted_source_message_contract_missing")
-    if any(row.get("source_ref") != f"{session_a}:{source_rows[0]['id']}" for row in learned.values()
-           if row.get("content", {}).get("text") in {"concise summaries", "metric units"}):
-        raise RuntimeError("memory_source_ref_mismatch")
+    run_scenario(results, "source_message_contract", source_message_contract,
+                 requires=("initial_learning_source",))
+
+    def message_pagination_dedup_contract():
+        set_scenario_stage("message_order_pagination")
+        latest = direct_messages(session_a, order="latest")
+        oldest = direct_messages(session_a, order="oldest")
+        latest_page = direct_messages(session_a, order="latest", limit=1, offset=0)
+        oldest_page = direct_messages(session_a, order="oldest", limit=1, offset=0)
+        try:
+            assert_message_order_contract(latest, oldest, latest_page, oldest_page)
+        except RuntimeError as exc:
+            raise HarnessAssertionError("message_pagination_contract_failed") from exc
 
     set_scenario_stage("message_order_pagination")
-    latest = direct_messages(session_a, order="latest")
-    oldest = direct_messages(session_a, order="oldest")
-    latest_page = direct_messages(session_a, order="latest", limit=1, offset=0)
-    oldest_page = direct_messages(session_a, order="oldest", limit=1, offset=0)
-    assert_message_order_contract(latest, oldest, latest_page, oldest_page)
+    run_scenario(results, "message_pagination_dedup", message_pagination_dedup_contract,
+                 requires=("initial_learning_source",))
 
-    # Same text creates a new persistent user message but must not duplicate memory.
+    def duplicate_text_dedup():
+        before_count = len(client.get("/api/personal-memory").json()["items"])
+        _, status, _, events = run_chat(client, session_a, initial, "d077-v0215-duplicate-text-repeat")
+        if status != "completed" or "run.completed" not in events:
+            raise HarnessAssertionError("duplicate_text_run_failed")
+        repeated_page = client.get(f"/api/chat/sessions/{session_a}/messages").json()
+        repeated_users = [row for row in repeated_page.get("messages", []) if row.get("role") == "user"]
+        repeated_ids = [str(row.get("id", "")) for row in repeated_users if row.get("text") == initial]
+        if len(repeated_ids) < 2 or repeated_ids[0] == repeated_ids[1]:
+            raise HarnessAssertionError("duplicate_text_message_contract_failed")
+        if len(client.get("/api/personal-memory").json()["items"]) != before_count:
+            raise HarnessAssertionError("duplicate_text_memory_created")
+
     set_scenario_stage("duplicate_text_dedup")
-    memory_count_before_repeat = len(client.get("/api/personal-memory").json()["items"])
-    run_repeat, status_repeat, latency_repeat, events_repeat = run_chat(
-        client, session_a, initial, "d077-v0215-duplicate-text-repeat")
-    if status_repeat != "completed" or "run.completed" not in events_repeat:
-        raise RuntimeError("repeated_text_run_failed")
-    repeated_page = client.get(f"/api/chat/sessions/{session_a}/messages").json()
-    repeated_users = [row for row in repeated_page.get("messages", []) if row.get("role") == "user"]
-    repeated_ids = [str(row.get("id", "")) for row in repeated_users if row.get("text") == initial]
-    if len(repeated_ids) < 2 or repeated_ids[0] == repeated_ids[1]:
-        raise RuntimeError("duplicate_text_message_ids_not_distinct")
-    if len(client.get("/api/personal-memory").json()["items"]) != memory_count_before_repeat:
-        raise RuntimeError("duplicate_text_created_duplicate_memory")
+    run_scenario(results, "duplicate_text_dedup", duplicate_text_dedup,
+                 requires=("initial_learning_source",))
 
     set_scenario_stage("cross_session_recall")
-    session_b = client.post("/api/chat/sessions", json={}).json()["session_id"]
-    related = "How should you format my summaries and units?"
-    before_calls = stub_state()["request_count"]
-    run_b, status_b, latency_b, events_b = run_chat(client, session_b, related, "d077-v0215-recall-b")
-    req_b = model_requests_since(before_calls)
-    if status_b != "completed" or "run.completed" not in events_b or not req_b:
-        raise HarnessAssertionError("cross_session_run_failed")
-    target_requests = model_requests_for_input(req_b, related)
-    if len(target_requests) != 1:
-        raise HarnessAssertionError("input_was_rewritten_or_missing")
-    target_request = target_requests[0]
-    if not contains_text(target_request, "personal_memory_json") or not contains_text(
-            target_request, "concise summaries"):
-        raise HarnessAssertionError("cross_session_instructions_not_observed_by_stub")
+
+    def cross_session():
+        session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+        question = "How should you format my summaries and units?"
+        before = stub_state()["request_count"]
+        _, status, _, events = run_chat(client, session, question, "d077-v0215-recall-b")
+        requests = model_requests_since(before)
+        if status != "completed" or "run.completed" not in events or not requests:
+            raise HarnessAssertionError("cross_session_run_failed")
+        target_request = unique_model_request_for_input(requests, question)
+        if (not contains_text(target_request, "personal_memory_json")
+                or not contains_text(target_request, "concise summaries")):
+            raise HarnessAssertionError("cross_session_instructions_not_observed_by_stub")
+
+    run_scenario(results, "cross_session_recall", cross_session, requires=("initial_learning_source",))
+
+    def correction_update():
+        correction = "I used to prefer concise summaries, but now I prefer concise paragraphs."
+        _, status, _, events = run_chat(client, session_a, correction, "d077-v0215-correct-c")
+        if status != "completed" or "run.completed" not in events:
+            raise HarnessAssertionError("correction_run_failed")
+        active = client.get("/api/personal-memory").json()["items"]
+        active_text = {row.get("content", {}).get("text") for row in active}
+        if "concise summaries" in active_text or "concise paragraphs" not in active_text:
+            raise HarnessAssertionError("correction_state_not_updated")
 
     set_scenario_stage("correction_update")
-    correction = "I used to prefer concise summaries, but now I prefer concise paragraphs."
-    run_c, status_c, latency_c, events_c = run_chat(client, session_a, correction, "d077-v0215-correct-c")
-    if status_c != "completed" or "run.completed" not in events_c:
-        raise RuntimeError("correction_run_failed")
-    current = client.get("/api/personal-memory").json()["items"]
-    active_text = {row.get("content", {}).get("text") for row in current}
-    if "concise summaries" in active_text or "concise paragraphs" not in active_text:
-        raise RuntimeError("correction_state_not_updated")
+    run_scenario(results, "correction_update", correction_update, requires=("initial_learning_source",))
+
+    def corrected_recall():
+        session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+        question = "How should you format my summaries now?"
+        before = stub_state()["request_count"]
+        _, status, _, events = run_chat(client, session, question, "d077-v0215-correct-recall-d")
+        requests = model_requests_since(before)
+        if status != "completed" or "run.completed" not in events or not requests:
+            raise HarnessAssertionError("corrected_recall_run_failed")
+        target_request = unique_model_request_for_input(requests, question)
+        prompt = "\n".join(str(row.get("content", "")) for row in target_request.get("messages", []))
+        if "concise paragraphs" not in prompt or "concise summaries" in prompt:
+            raise HarnessAssertionError("corrected_context_stale")
+
     set_scenario_stage("corrected_cross_session_recall")
-    session_corrected = client.post("/api/chat/sessions", json={}).json()["session_id"]
-    before_calls = stub_state()["request_count"]
-    corrected_question = "How should you format my summaries now?"
-    run_d, status_d, latency_d, events_d = run_chat(
-        client, session_corrected, corrected_question, "d077-v0215-correct-recall-d")
-    req_d = model_requests_since(before_calls)
-    if status_d != "completed" or "run.completed" not in events_d or not req_d:
-        raise RuntimeError("corrected_recall_run_failed")
-    corrected_prompt = "\n".join(str(row.get("content", ""))
-                                  for row in req_d[-1].get("messages", []))
-    if "concise paragraphs" not in corrected_prompt or "concise summaries" in corrected_prompt:
-        raise RuntimeError("corrected_context_stale")
+    run_scenario(results, "corrected_cross_session_recall", corrected_recall,
+                 requires=("correction_update",))
 
-    # Revoke, expiry, and unconfirmed inference stay out of model-facing context.
+    def inactive_memory_filter():
+        current = client.get("/api/personal-memory").json()["items"]
+        metric_row = next(row for row in current if row.get("content", {}).get("text") == "metric units")
+        client.post(f"/api/personal-memory/{metric_row['memory_id']}/revoke", json={
+            "source_type": "user_confirmed", "source_ref": "synthetic-correction",
+        }).raise_for_status()
+        client.post("/api/personal-memory", json={
+            "content": {"text": "Prefers imaginary unit labels"}, "category": "preference",
+            "fact_kind": "user_stated", "source_type": "user_confirmed", "source_ref": "synthetic-expiry",
+            "expires_at": "2000-01-01T00:00:00Z",
+        }).raise_for_status()
+        client.post("/api/personal-memory", json={
+            "content": {"text": "Prefers cobalt project names"}, "category": "preference",
+            "fact_kind": "inference", "source_type": "session_note", "source_ref": "synthetic-inference",
+        }).raise_for_status()
+        session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+        question = "Which metric units, imaginary unit labels, and project names do I prefer?"
+        before = stub_state()["request_count"]
+        _, status, _, events = run_chat(client, session, question, "d077-v0215-gated-context-e")
+        requests = model_requests_since(before)
+        if status != "completed" or "run.completed" not in events or not requests:
+            raise HarnessAssertionError("revoked_expired_inference_filter_failed")
+        target_request = unique_model_request_for_input(requests, question)
+        prompt = "\n".join(str(row.get("content", "")) for row in target_request.get("messages", []))
+        if any(value in prompt for value in ("metric units", "imaginary unit labels", "cobalt project names")):
+            raise HarnessAssertionError("revoked_expired_inference_filter_failed")
+
     set_scenario_stage("revoked_expired_inference_filter")
-    metric_row = next(row for row in current if row.get("content", {}).get("text") == "metric units")
-    revoked = client.post(f"/api/personal-memory/{metric_row['memory_id']}/revoke", json={
-        "source_type": "user_confirmed", "source_ref": "synthetic-correction",
-    })
-    revoked.raise_for_status()
-    expired = client.post("/api/personal-memory", json={
-        "content": {"text": "Prefers imaginary unit labels"}, "category": "preference",
-        "fact_kind": "user_stated", "source_type": "user_confirmed", "source_ref": "synthetic-expiry",
-        "expires_at": "2000-01-01T00:00:00Z",
-    })
-    expired.raise_for_status()
-    inferred = client.post("/api/personal-memory", json={
-        "content": {"text": "Prefers cobalt project names"}, "category": "preference",
-        "fact_kind": "inference", "source_type": "session_note", "source_ref": "synthetic-inference",
-    })
-    inferred.raise_for_status()
-    session_c = client.post("/api/chat/sessions", json={}).json()["session_id"]
-    before_calls = stub_state()["request_count"]
-    gated_question = "Which metric units and imaginary unit labels do I prefer?"
-    run_e, status_e, latency_e, events_e = run_chat(
-        client, session_c, gated_question, "d077-v0215-gated-context-e")
-    req_e = model_requests_since(before_calls)
-    if status_e != "completed" or "run.completed" not in events_e or not req_e:
-        raise RuntimeError("gated_context_run_failed")
-    gated_prompt = "\n".join(str(row.get("content", ""))
-                              for row in req_e[-1].get("messages", []))
-    if ("metric units" in gated_prompt or "imaginary unit labels" in gated_prompt
-            or "cobalt project names" in gated_prompt):
-        raise RuntimeError("inactive_or_inferred_memory_injected")
+    run_scenario(results, "revoked_expired_inference_filter", inactive_memory_filter,
+                 requires=("initial_learning_source",))
 
-    # Provider failure is deterministic and must not teach from a failed run.
+    def failed_run_no_learning():
+        session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+        question = "I prefer neon section headings."
+        before = stub_state()["request_count"]
+        control_stub({"fail_remaining": 20})
+        try:
+            _, status, _, events = run_chat(client, session, question, "d077-v0215-provider-failure")
+        finally:
+            control_stub({"fail_remaining": 0})
+        requests = model_requests_since(before)
+        if not model_requests_for_input(requests, question):
+            raise HarnessAssertionError("provider_failure_not_observed_by_stub")
+        if not is_provider_failure_status(status) or "run.failed" not in events:
+            raise HarnessAssertionError("provider_failure_wrong_terminal_state")
+        active_text = {row.get("content", {}).get("text")
+                       for row in client.get("/api/personal-memory").json()["items"]}
+        if "neon section headings" in active_text:
+            raise HarnessAssertionError("failed_run_was_learned")
+
     set_scenario_stage("provider_failure_no_learning")
-    failure_session = client.post("/api/chat/sessions", json={}).json()["session_id"]
-    control_stub({"fail_remaining": 20})
-    run_failed, status_failed, latency_failed, events_failed = run_chat(
-        client, failure_session, "I prefer neon section headings.", "d077-v0215-provider-failure")
-    control_stub({"fail_remaining": 0})
-    if status_failed not in {"failed", "interrupted"}:
-        raise RuntimeError("provider_failure_did_not_fail_run")
-    if "neon section headings" in {row.get("content", {}).get("text")
-                                   for row in client.get("/api/personal-memory").json()["items"]}:
-        raise RuntimeError("failed_run_was_learned")
+    run_scenario(results, "failed_run_no_learning", failed_run_no_learning, requires=("api_setup",))
 
-    # Stop a Run while its provider request is blocked at the local stub.
+    def stopped_run_no_learning():
+        session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+        control_stub({"reset_blocked": True, "delay_next": True})
+        before = stub_state()["request_count"]
+        run_id = None
+        try:
+            question = "I prefer amber section headers."
+            run_id = start_chat(client, session, question, "d077-v0215-stop-run")
+            if not wait_stub_blocked(timeout=12):
+                raise HarnessAssertionError("stop_request_not_observed")
+            if not model_requests_for_input(model_requests_since(before), question):
+                raise HarnessAssertionError("stop_request_not_observed")
+            stopped = client.post(f"/api/chat/runs/{run_id}/stop", json={})
+            stopped.raise_for_status()
+            if stopped.json().get("status") != "stopping":
+                raise HarnessAssertionError("stop_request_not_accepted")
+        finally:
+            control_stub({"release": True})
+        if not run_id:
+            raise HarnessAssertionError("stop_request_not_observed")
+        status = "unknown"
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            polled = client.get(f"/api/chat/runs/{run_id}")
+            if polled.status_code == 200:
+                status = polled.json().get("status", "unknown")
+                if status in {"completed", "failed", "cancelled", "interrupted"}:
+                    break
+            time.sleep(0.5)
+        if status not in {"completed", "failed", "cancelled", "interrupted"}:
+            raise HarnessAssertionError("stop_not_terminal")
+        if not is_user_stop_status(status):
+            raise HarnessAssertionError("stop_terminal_state_not_cancelled")
+        active_text = {row.get("content", {}).get("text")
+                       for row in client.get("/api/personal-memory").json()["items"]}
+        if "amber section headers" in active_text:
+            raise HarnessAssertionError("stopped_run_was_learned")
+
     set_scenario_stage("stopped_run_no_learning")
-    stop_session = client.post("/api/chat/sessions", json={}).json()["session_id"]
-    control_stub({"reset_blocked": True, "delay_next": True})
-    stop_started = time.monotonic()
-    run_stopped = start_chat(client, stop_session, "I prefer amber section headers.",
-                             "d077-v0215-stop-run")
-    if not wait_stub_blocked(timeout=12):
-        raise RuntimeError("stub_did_not_observe_stop_test_request")
-    stop_response = client.post(f"/api/chat/runs/{run_stopped}/stop", json={})
-    stop_response.raise_for_status()
-    control_stub({"release": True})
-    stop_status = "unknown"
-    deadline = time.monotonic() + 25
-    while time.monotonic() < deadline:
-        polled = client.get(f"/api/chat/runs/{run_stopped}")
-        if polled.status_code == 200:
-            stop_status = polled.json().get("status", "unknown")
-            if stop_status in {"stopped", "cancelled", "canceled", "failed", "interrupted", "completed"}:
-                break
-        time.sleep(0.5)
-    if stop_status in {"unknown", "running", "queued", "started", "completed"}:
-        raise RuntimeError("stop_run_terminal_state_unverified")
-    if "amber section headers" in {row.get("content", {}).get("text")
-                                    for row in client.get("/api/personal-memory").json()["items"]}:
-        raise RuntimeError("stopped_run_was_learned")
-    latency_stop = round(time.monotonic() - stop_started, 3)
+    run_scenario(results, "stopped_run_no_learning", stopped_run_no_learning, requires=("api_setup",))
+
+    def unrelated_topic_filter():
+        session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+        question = "What is 13 plus 5?"
+        before = stub_state()["request_count"]
+        _, status, _, events = run_chat(client, session, question, "d077-v0215-unrelated-f")
+        requests = model_requests_since(before)
+        if status != "completed" or "run.completed" not in events or not requests:
+            raise HarnessAssertionError("unrelated_run_failed")
+        target_request = unique_model_request_for_input(requests, question)
+        if contains_text(target_request, "personal_memory_json"):
+            raise HarnessAssertionError("unrelated_topic_received_memory_context")
 
     set_scenario_stage("unrelated_topic_filter")
-    session_unrelated = client.post("/api/chat/sessions", json={}).json()["session_id"]
-    before_calls = stub_state()["request_count"]
-    run_f, status_f, latency_f, events_f = run_chat(
-        client, session_unrelated, "What is 13 plus 5?", "d077-v0215-unrelated-f")
-    req_f = model_requests_since(before_calls)
-    if status_f != "completed" or "run.completed" not in events_f or not req_f:
-        raise RuntimeError("unrelated_run_failed")
-    if contains_text(req_f[-1], "personal_memory_json"):
-        raise RuntimeError("unrelated_topic_received_memory_context")
+    run_scenario(results, "unrelated_topic_filter", unrelated_topic_filter,
+                 requires=("initial_learning_source",))
 
-    # A deterministic exact fact is present only as a source-verification pointer.
+    def exact_fact_source_gate():
+        client.post("/api/personal-memory", json={
+            "content": {"text": "Project code is NOVA-17"}, "category": "fact",
+            "fact_kind": "user_stated", "source_type": "original_file", "source_ref": "project.md",
+            "exact": True,
+        }).raise_for_status()
+        session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+        question = "What is the exact project code from my project file?"
+        before = stub_state()["request_count"]
+        _, status, _, events = run_chat(client, session, question, "d077-v0215-fact-g")
+        requests = model_requests_since(before)
+        if status != "completed" or "run.completed" not in events or not requests:
+            raise HarnessAssertionError("exact_fact_run_failed")
+        target_request = unique_model_request_for_input(requests, question)
+        prompt = "\n".join(str(row.get("content", "")) for row in target_request.get("messages", []))
+        if "Source verification required" not in prompt or "NOVA-17" in prompt:
+            raise HarnessAssertionError("exact_fact_source_gate_failed")
+
     set_scenario_stage("exact_fact_source_gate")
-    fact = client.post("/api/personal-memory", json={
-        "content": {"text": "Project code is NOVA-17"}, "category": "fact",
-        "fact_kind": "user_stated", "source_type": "original_file", "source_ref": "project.md",
-        "exact": True,
-    })
-    fact.raise_for_status()
-    session_f = client.post("/api/chat/sessions", json={}).json()["session_id"]
-    fact_question = "What is the exact project code from my project file?"
-    before_calls = stub_state()["request_count"]
-    run_g, status_g, latency_g, events_g = run_chat(
-        client, session_f, fact_question, "d077-v0215-fact-g")
-    req_g = model_requests_since(before_calls)
-    if status_g != "completed" or "run.completed" not in events_g or not req_g:
-        raise RuntimeError("exact_fact_run_failed")
-    fact_prompt = "\n".join(str(row.get("content", "")) for row in req_g[-1].get("messages", []))
-    if "Source verification required" not in fact_prompt or "NOVA-17" in fact_prompt:
-        raise RuntimeError("exact_fact_not_redacted_or_source_required")
-
+    run_scenario(results, "exact_fact_source_gate", exact_fact_source_gate, requires=("api_setup",))
 
     client.close()
-    state = stub_state()
-    print("D077_ENABLED_RESULT " + json.dumps({
-        "status": "PASS", "source_message_id": source_rows[0]["id"],
-        "initial_latest_message_ids": latest_ids, "duplicate_input_message_ids": repeated_ids[:2],
-        "learned_source_refs": sorted({row.get("source_ref", "") for row in learned.values()
-                                        if row.get("content", {}).get("text") in {"concise summaries", "metric units"}}),
-        "run_ids": [run_a, run_repeat, run_b, run_c, run_d, run_e, run_failed, run_stopped, run_f, run_g],
-        "session_count": 8, "run_count": 10,
-        "run_statuses": [status_a, status_repeat, status_b, status_c, status_d, status_e, status_failed,
-                         "stop:" + stop_status, status_f, status_g],
-        "latency_seconds": [latency_a, latency_repeat, latency_b, latency_c, latency_d, latency_e,
-                            latency_failed, latency_stop, latency_f, latency_g],
-        "stub_provider_calls": state["calls"], "external_provider_calls": 0,
-        "memory_file_bytes": (roots["memory"] / "personal-memory.jsonl").stat().st_size,
-        "assertions": ["API_RUN_SSE", "SOURCE_MESSAGE_ID", "CORE_LEARNING", "CROSS_SESSION_INSTRUCTIONS",
-                       "CORRECTION", "CORRECTED_CROSS_SESSION_RECALL", "REVOKED_EXPIRED_INFERENCE_FILTERED",
-                       "UNRELATED_NO_INJECTION", "EXACT_FACT_SOURCE_REQUIRED", "DUPLICATE_TEXT_IDS_AND_PAGINATION",
-                       "FAILED_RUN_NO_LEARNING", "STOP_NO_LEARNING"],
-    }, sort_keys=True), flush=True)
+    summary = {"status": scenario_status(results), "scenarios": results}
+    print("D077_ENABLED_RESULT " + json.dumps(summary, sort_keys=True), flush=True)
+    if summary["status"] != "PASS":
+        raise HarnessAssertionError("scenario_execution_error")
 
 
 def flags_off_scenario():
-    set_scenario_stage("flags_off_login")
-    client = core_client()
-    login = client.post("/api/auth/login", json={"password": APP_PASSWORD},
-                        headers={"Origin": f"http://127.0.0.1:{CORE_PORT}"})
-    login.raise_for_status()
-    set_scenario_stage("flags_off_run")
-    session = client.post("/api/chat/sessions", json={}).json()["session_id"]
-    before = stub_state()["request_count"]
-    run_id, status, latency, events = run_chat(
-        client, session, "I prefer lavender section titles.", "d077-v0215-flags-off")
-    requests = model_requests_since(before)
-    memory_root = pathlib.Path(os.environ["SB_PERSONAL_MEMORY_ROOT"])
-    if status != "completed" or "run.completed" not in events or not requests:
-        raise RuntimeError("flags_off_chat_failed")
-    if memory_root.exists() or contains_text(requests[-1], "personal_memory_json"):
-        raise RuntimeError("flags_off_created_memory_or_injected_context")
-    client.close()
-    print("D077_FLAGS_OFF_RESULT " + json.dumps({
-        "status": "PASS", "run_id": run_id, "run_status": status,
-        "latency_seconds": latency, "provider_calls": len(requests),
-        "memory_root_exists": memory_root.exists(),
-    }, sort_keys=True), flush=True)
+    results = {}
+
+    def chat_with_memory_disabled():
+        client = core_client()
+        try:
+            set_scenario_stage("flags_off_login")
+            client.post("/api/auth/login", json={"password": APP_PASSWORD},
+                        headers={"Origin": f"http://127.0.0.1:{CORE_PORT}"}).raise_for_status()
+            set_scenario_stage("flags_off_run")
+            session = client.post("/api/chat/sessions", json={}).json()["session_id"]
+            before = stub_state()["request_count"]
+            _, status, _, events = run_chat(
+                client, session, "I prefer lavender section titles.", "d077-v0215-flags-off")
+            requests = model_requests_since(before)
+            memory_root = pathlib.Path(os.environ["SB_PERSONAL_MEMORY_ROOT"])
+            if status != "completed" or "run.completed" not in events or not requests:
+                raise HarnessAssertionError("flags_off_chat_failed")
+            target_request = unique_model_request_for_input(requests, "I prefer lavender section titles.")
+            if memory_root.exists() or contains_text(target_request, "personal_memory_json"):
+                raise HarnessAssertionError("flags_off_memory_enabled")
+        finally:
+            client.close()
+
+    run_scenario(results, "flags_off", chat_with_memory_disabled)
+    summary = {"status": scenario_status(results), "scenarios": results}
+    print("D077_FLAGS_OFF_RESULT " + json.dumps(summary, sort_keys=True), flush=True)
+    if summary["status"] != "PASS":
+        raise HarnessAssertionError(results["flags_off"]["failure_code"])
 
 
 def external_tcp_probe():
@@ -991,18 +1177,25 @@ def controller_main():
         created_names.append(CORE_CONTAINER)
 
         assert_network_boundary()
-        run_in_container(CORE_CONTAINER, "--enabled-scenario")
+        enabled_execution = run_in_container(CORE_CONTAINER, "--enabled-scenario", check=False)
         run("docker", "rm", "-f", CORE_CONTAINER, check=False)
         created_names.remove(CORE_CONTAINER)
 
         start_core_container(temp_root, script_path, uid, gid, memory_enabled=False, label="disabled")
         created_names.append(OFF_CORE_CONTAINER)
-        run_in_container(OFF_CORE_CONTAINER, "--flags-off")
+        flags_off_execution = run_in_container(OFF_CORE_CONTAINER, "--flags-off", check=False)
+        enabled_result = scenario_result_from_output(enabled_execution.stdout, "D077_ENABLED_RESULT")
+        flags_off_result = scenario_result_from_output(flags_off_execution.stdout, "D077_FLAGS_OFF_RESULT")
+        scenario_results = {**enabled_result["scenarios"], **flags_off_result["scenarios"]}
+        overall_status = scenario_status(scenario_results)
         print("D077_V0215_RESULT " + json.dumps({
-            "status": "PASS", "image_id": image_id, "revision": revision,
+            "status": overall_status, "scenarios": scenario_results,
+            "image_id": image_id, "revision": revision,
             "core_image_id": core_image.stdout.strip(), "network": "single_internal",
             "e2e": "synthetic_stub_only", "elapsed_seconds": round(time.monotonic() - started, 3),
         }, sort_keys=True), flush=True)
+        if overall_status != "PASS":
+            raise RuntimeError("synthetic_scenarios_not_passed")
     finally:
         for name in reversed(created_names):
             run("docker", "rm", "-f", name, timeout=30, check=False)

@@ -79,6 +79,19 @@ class HarnessDiagnosticTests(unittest.TestCase):
         )
 
         self.assertEqual(selected, [requests[1]])
+        with self.assertRaisesRegex(harness.HarnessAssertionError, "input_was_rewritten_or_missing"):
+            harness.unique_model_request_for_input(requests, "missing synthetic input")
+        with self.assertRaisesRegex(harness.HarnessAssertionError, "stub_request_ambiguous"):
+            harness.unique_model_request_for_input([requests[1], requests[1]],
+                                                   "How should you format my summaries and units?")
+
+    def test_hermes_v0215_provider_failure_and_stop_status_contracts_are_strict(self):
+        self.assertTrue(harness.is_provider_failure_status("failed"))
+        self.assertFalse(harness.is_provider_failure_status("interrupted"))
+        self.assertFalse(harness.is_provider_failure_status("completed"))
+        self.assertTrue(harness.is_user_stop_status("cancelled"))
+        self.assertFalse(harness.is_user_stop_status("failed"))
+        self.assertFalse(harness.is_user_stop_status("interrupted"))
 
     def test_failure_record_exposes_only_allowlisted_cross_session_code(self):
         error = harness.HarnessAssertionError("cross_session_instructions_not_observed_by_stub")
@@ -94,6 +107,52 @@ class HarnessDiagnosticTests(unittest.TestCase):
         error.failure_code = "secret prompt"
         record = harness.failure_record("--enabled-scenario", "cross_session_recall", error)
         self.assertIsNone(record["failure_code"])
+
+    def test_scenario_runner_continues_independent_case_and_blocks_dependents(self):
+        results = {}
+        executed = []
+
+        def fail_case():
+            executed.append("first")
+            raise harness.HarnessAssertionError("cross_session_run_failed")
+
+        def independent_case():
+            executed.append("independent")
+
+        def dependent_case():
+            executed.append("dependent")
+
+        harness.run_scenario(results, "cross_session_recall", fail_case)
+        harness.run_scenario(results, "failed_run_no_learning", independent_case)
+        harness.run_scenario(results, "corrected_recall", dependent_case,
+                             requires=("cross_session_recall",))
+
+        self.assertEqual(executed, ["first", "independent"])
+        self.assertEqual(results, {
+            "cross_session_recall": {"status": "FAIL", "failure_code": "cross_session_run_failed"},
+            "failed_run_no_learning": {"status": "PASS", "failure_code": None},
+            "corrected_recall": {"status": "BLOCKED", "failure_code": "prerequisite_not_passed"},
+        })
+        self.assertEqual(harness.scenario_status(results), "FAIL")
+
+    def test_scenario_result_parser_fails_closed_without_leaking_output(self):
+        parsed = harness.scenario_result_from_output("secret prompt", "D077_ENABLED_RESULT")
+        encoded = json.dumps(parsed)
+        self.assertEqual(parsed["status"], "FAIL")
+        self.assertEqual(parsed["scenarios"]["scenario_result"]["failure_code"],
+                         "scenario_result_missing")
+        self.assertNotIn("secret", encoded)
+
+    def test_scenario_result_parser_whitelists_fields_and_codes(self):
+        output = 'D077_ENABLED_RESULT {"status":"PASS","scenarios":{"cross_session_recall":' \
+                 '{"status":"FAIL","failure_code":"secret","prompt":"secret prompt"}}}'
+        parsed = harness.scenario_result_from_output(output, "D077_ENABLED_RESULT")
+        encoded = json.dumps(parsed)
+        self.assertEqual(parsed["status"], "FAIL")
+        self.assertEqual(parsed["scenarios"]["scenario_result"]["failure_code"],
+                         "scenario_result_missing")
+        self.assertNotIn("secret", encoded)
+        self.assertNotIn("prompt", encoded)
 
     def test_transport_failure_has_exception_class_without_http_status(self):
         error = harness.httpx.ConnectTimeout("sensitive url and prompt")
