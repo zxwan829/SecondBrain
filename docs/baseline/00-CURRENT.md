@@ -89,6 +89,8 @@ source: GitHub SecondBrain Monorepo
 | 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
 | 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |
 
+**D077 部署状态（2026-10-16）：** Issue #12 单次 Hermes v0.22.2 部署尝试已回滚。新镜像观察期间 API 8642 与 Dashboard 9119 未监听，未取得根因；由于回滚后的 v0.21.5 也约一分钟后才监听，不能据短时无端口证明 v0.22.2 最终启动失败。当前生产仍为 Hermes v0.21.5 与 App `d076-organizer-b34319a`；个人记忆/学习 flags 关闭、Memory root 不存在。D077 生产部署与四步闭环均 **NOT VERIFIED / NOT RUN**，详见 Progress-Log 与 Environment-Baseline。
+
 **工作准则：** 不预设 Hermes v0.21.5 支持最新版官方记忆接口；不因新技术趋势直接上 Jev、世界模型、Honcho、图 DB 或 RAG。分层记忆和 loop 是目标能力的实现方式，先复用、测试现有能力再选型。
 
 ## 3. NOW / BLOCKED / DEFERRED、依赖和阻断

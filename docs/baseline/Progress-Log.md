@@ -1,3 +1,13 @@
+# 2026-10-16 — D077 Issue #12 Hermes v0.22.2 单次部署尝试与回滚
+
+- 用户授权评论 [#6215289230](https://github.com/zxwan829/SecondBrain/issues/12#issuecomment-6215289230)；本次按约 45 分钟边界执行一次。GitHub `main` 与远端 ref 均为 `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc`；PR #8/#9/#10 均 OPEN 未合并，未使用其分支代码。
+- 目标 Hermes 镜像身份核验为 linux/amd64，Digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05`、Image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41`。Core 候选 `secondbrain-app:d077-b6e30f3`（Image ID `sha256:7cce77d702cb51f0c318c91c427d95cff887a99caebb12b9cad287b388b1049c`）已存在，但未部署。
+- 在受限快照后，只启动了一次 v0.22.2 Hermes。候选 Compose 通过 `docker compose config -q`；保留默认 dispatcher，显式设置 `API_SERVER_ENABLED=true`、保留 `HERMES_DASHBOARD=true`，并为 Core 候选准备了默认关闭状态下的独立 memory root/flags。s6/PID1 与容器启动流程可见，日志显示 schema 46→50 migration、gateway/dashboard s6 service started；检查时 8642 和 9119 未监听，未发现明确 fatal error。API 启用变量有效，Hermes profile `.env` 未覆盖该变量。
+- **结论限定：** v0.22.2 本次运行期间未取得可验收的 API/Dashboard 监听，启动根因 `UNKNOWN`；观察结束时容器已回滚。回滚后的旧 v0.21.5 约一分钟后才开始监听，因此“短时未监听”不足以证明新版最终无法启动。受单次部署授权和止损边界限制，没有继续等待、改配置重启或再试一次。未启动 Core 候选，没有创建 Session/Run/SSE 或记忆数据；记忆四步闭环为 `NOT RUN`。未调用模型、Runner 或真实个人数据。
+- 回滚完成后正式 Compose SHA-256 恢复为 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`（属主 1026:100、0640）。当前 Hermes v0.21.5 Image ID `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`，API 8642 / Dashboard 9119 容器内监听、API health 200；App 原镜像 `secondbrain-app:d076-organizer-b34319a` health 200，App→Hermes health 200。Personal Memory/Learning flags absent，`personal-memory` 目录不存在；Private 未挂载、Knowledge RO、Promote=false。其他 NAS 服务与家庭网络未触碰。
+- 回滚资产在 `/volume1/docker/secondbrain/rollback/d077-issue12-v0222-predeploy-20261016T1225Z/`：原 Compose SHA `93fd215b…785398d`；Hermes 预部署状态归档 SHA `33bea50efaf70c1541ad2ed0cac6263e2d174889b18e81fd386100f2c3aff845`；SHA256SUMS 中 8 个文件全部通过。尝试后的 Hermes 数据目录另存为 `hermes-data.after-attempt/`，未删除。受限目录约 2.0 GiB；当时可用空间约 861 GiB。脱敏启动日志、候选 Compose 和运行摘要均在该目录，权限为 0600/父目录 0700。
+- 当前 D077 仍为 `NOT DEPLOYED / NOT VERIFIED`；本 Issue 单次授权已消费。执行摘要已回复 [Issue #12](https://github.com/zxwan829/SecondBrain/issues/12#issuecomment-6215598399)，等待 ChatGPT 审核。任何后续 v0.22.2 启动/记忆闭环尝试均需新的有界授权，并应先为启动观察时长设置明确门槛。
+
 # Progress Log
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
