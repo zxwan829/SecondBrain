@@ -194,8 +194,10 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
                 watermark = None
             instructions = personal_learning.instructions_for(text)
             if instructions:
-                # Hermes v0.21.5 /v1/runs accepts `instructions` as an
-                # ephemeral system prompt; user input remains byte-for-byte intact.
+                # Hermes /v1/runs treats `instructions` as an ephemeral system
+                # prompt (confirmed in the pinned v0.22.2 source); send it on
+                # every relevant turn because it is not persistent session state.
+                # User input remains byte-for-byte intact.
                 run_body["instructions"] = instructions
         result = await hermes.start_run(run_body, key)
         if personal_learning:

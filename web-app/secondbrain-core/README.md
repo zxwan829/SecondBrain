@@ -40,8 +40,12 @@ unchanged.
   Review decisions are read from the existing versioned Core approval store.
 - Hermes BFF routes for Sessions, history, create/fork/update/delete, run,
   streaming events, status recovery, and stop. The adapter normalizes the
-  Hermes v0.21.5 / `749220ef` `data` lists, nested `session.id`, and JSON SSE
-  event payloads. The API key is attached only by the server.
+  deployed v0.21.5 / `749220ef` `data` lists, nested `session.id`, and JSON SSE
+  event payloads. The v0.22.2 pinned source also preserves these routes and
+  maps `/v1/runs.instructions` to that run's ephemeral system prompt. Core
+  regenerates relevant memory instructions per run; Hermes Memory Provider is
+  not enabled, and Core JSONL remains authoritative. The API key is attached
+  only by the server.
 - Promote UI is guarded by Core's `promote_enabled` response and explicit user
   confirmation. Core defaults closed and retains SHA-256/version and audit
   protections.
@@ -51,10 +55,12 @@ unchanged.
 
 ## Not yet verified or delivered
 
-- Authenticated live compatibility against the deployed Hermes v0.21.5 API and
-  service-side key provisioning. NAS read-only checks found port 8642 listening
-  only on Hermes loopback; uncredentialed requests are rejected. App-to-Hermes
-  integration requires a separately authorized internal bind/key configuration.
+- Authenticated live compatibility against deployed Hermes v0.21.5, runtime
+  behavior on v0.22.2, and service-side key provisioning. Source-contract and
+  offline adapter tests do not replace an isolated v0.22.2 + deterministic Stub
+  run. NAS read-only checks found port 8642 listening only on Hermes loopback;
+  uncredentialed requests are rejected. App-to-Hermes integration requires a
+  separately authorized internal bind/key configuration.
 - Remaining V1 business modules and all previously accepted workflow
   regressions in the independent App.
 - Production App/Core image, Compose integration, NAS deployment, DSM HTTPS

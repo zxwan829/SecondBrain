@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D077 Hermes v0.22.2 开发适配准备
+
+- 从 GitHub 最新 `main` `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc` 的独立临时 Clone 建立开发分支；原正式 Clone 的 `main` 和未跟踪项 `typescript` 未改动。PR #8 未修改、未合并。
+- 核对 Hermes v0.22.2 发布源码 Commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8`。固定 Linux amd64 镜像为 `nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05`。在该固定源码中，API Server 保留 `/api/sessions`、`/v1/runs`、Run status/events/stop 路由；`api_server_runs.py` 将请求 `instructions` 映射到 `AIAgent` 的 `ephemeral_system_prompt`。参考：[api_server.py](https://github.com/NousResearch/hermes-agent/blob/d923a5eb487a17c0a68801bba9ef0f56c81040a8/gateway/platforms/api_server.py)、[api_server_runs.py](https://github.com/NousResearch/hermes-agent/blob/d923a5eb487a17c0a68801bba9ef0f56c81040a8/gateway/platforms/api_server_runs.py)。这是源码契约证据，不是 v0.22.2 容器运行证据。
+- 保留 Core JSONL 作为唯一个人记忆权威存储，不启用 Hermes 外部 Memory Provider。跨 Session 召回仍由 Core 为每个相关 Run 从其 active/redacted memory view 重新生成 `instructions`；每个 Run 的会话 ID 仅用于消息来源水位，不承担跨会话记忆存储。纠错以 Core 追加修订完成，后续 Session 不再注入已替换的旧文本。
+- 最小适配：将 Chat Run 注释更新为 v0.22.2 的临时系统提示契约；新增离线集成回归，真实经过 `HermesAPI` HTTP 层验证 `instructions` 和 `session_id` 出站、原始用户输入不改写、合成纠错写入后新 Session 只带当前记忆。未改 Core 业务规则、JSONL 格式、授权逻辑、Private 策略、Hermes Provider 或部署配置。
+- 针对性 Core 测试 **36 passed**（Personal Learning、Personal Memory、App/BFF API），1 条 Starlette/httpx 弃用提示；`docker` 客户端当前不可用，故本轮没有创建/启动容器。未触发 GitHub Runner、未调用模型/付费 API、未操作 NAS 或生产服务；v0.22.2 实际容器的 API/SSE 与模型请求上下文仍为 `UNKNOWN`，不将 Mock/源码结果称为运行验收。
+- 后续部署配置仅需将 Hermes Compose image ref 指向上述 amd64 digest，并在单独授权后核验现有 API 内部 bind/key、App 与 Hermes 网络连通性、Core JSONL 挂载 UID/权限及 Private 缺席；本轮未修改正式 Compose 或运行配置。部署回滚方案为恢复到最近已记录的 Hermes v0.21.5 镜像 digest `sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`，保留 Core 数据卷与 JSONL；实际执行前须重新核验快照和镜像。
+
 # 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
 
 - PR [#6](https://github.com/zxwan829/SecondBrain/pull/6) 的最终 head `0efe462cd8dbe6067b25d1e51cf69e1309cc42f7` 经独立代码复审，纠错需规范化完整等价且唯一，失败/取消/停止的 Run 清理 pending 状态；跨平台 Core 测试不再使用 `/private/tmp` 垫片。

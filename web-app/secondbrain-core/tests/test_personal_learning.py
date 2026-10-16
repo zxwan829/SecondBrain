@@ -126,6 +126,71 @@ class PersonalLearningTests(unittest.TestCase):
         self.assertEqual(len(self.store.history(corrected_id)), 2)
         correction_client.close()
 
+    def test_core_memory_instructions_reach_hermes_run_and_follow_correction(self):
+        old = self.store.create(content={"text": "简洁回答"}, category="preference",
+                                fact_kind="user_stated", source_type="user_message",
+                                source_ref="synthetic-seed:message-1")
+        pipeline = PersonalLearningPipeline(self.store)
+        requests = []
+        reads = {}
+        correction = "我以前偏好简洁回答，现在更喜欢详细分步回答。"
+
+        def handler(request):
+            path = request.url.path
+            if path.startswith("/api/sessions/") and path.endswith("/messages"):
+                session_id = path.split("/")[3]
+                reads[session_id] = reads.get(session_id, 0) + 1
+                rows = []
+                if session_id == "synthetic-correction" and reads[session_id] > 1:
+                    rows = [{"id": "message-correction", "session_id": session_id,
+                             "role": "user", "content": correction}]
+                return httpx.Response(200, json={"object": "list", "data": rows})
+            if path == "/v1/runs" and request.method == "POST":
+                body = json.loads(request.content)
+                requests.append(body)
+                return httpx.Response(202, json={"run_id": f"run-{body['session_id']}", "status": "started"})
+            if path.endswith("/events"):
+                return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                      content=b'data: {"event":"run.completed"}\n\n')
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(handler)
+        hermes = HermesAPI("http://hermes.internal", "synthetic-server-key", transport)
+        app = FastAPI()
+        app.include_router(create_web_app_router(
+            FakeAuth(), hermes, object(), self.root, self.root, personal_learning=pipeline,
+        ))
+        client = TestClient(app, base_url="https://testserver")
+        try:
+            started = client.post("/api/chat/sessions/synthetic-correction/runs",
+                                  json={"input": correction},
+                                  headers={"Idempotency-Key": "correction-run"})
+            self.assertEqual(started.status_code, 200, started.text)
+            self.assertIn("run.completed", client.get("/api/chat/runs/run-synthetic-correction/events").text)
+            self.assertEqual(requests[0]["input"], correction)
+            self.assertEqual(requests[0]["session_id"], "synthetic-correction")
+            self.assertIn("简洁回答", requests[0]["instructions"])
+
+            active = self.store.active_view(limit=10)
+            self.assertNotIn("简洁回答", {row["content"]["text"] for row in active})
+            self.assertIn("详细分步回答", {row["content"]["text"] for row in active})
+            self.assertEqual(next(row["memory_id"] for row in active
+                                  if row["content"]["text"] == "详细分步回答"), old["memory_id"])
+
+            followup = "请用详细分步回答说明测试步骤。"
+            started = client.post("/api/chat/sessions/synthetic-next-session/runs",
+                                  json={"input": followup},
+                                  headers={"Idempotency-Key": "followup-run"})
+            self.assertEqual(started.status_code, 200, started.text)
+            followup_body = requests[1]
+            self.assertEqual(followup_body["input"], followup)
+            self.assertEqual(followup_body["session_id"], "synthetic-next-session")
+            self.assertIn("详细分步回答", followup_body["instructions"])
+            self.assertNotIn("简洁回答", followup_body["instructions"])
+        finally:
+            client.close()
+            transport.close()
+
     def test_unrelated_topics_do_not_receive_memories_and_exact_facts_are_redacted(self):
         self.store.create(content={"text": "Prefers concise answer summaries"}, category="preference",
                           fact_kind="user_stated", source_type="user_message", source_ref="s:m1")
