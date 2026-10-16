@@ -1,5 +1,7 @@
 # Progress Log
 
+> 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
+
 > 2026-10-17 D078 Stage 1 已完成部署；以下为最新运行证据。此前条目保留其记录时的状态。
 
 ## 2026-10-17 — D078 第一阶段 NAS 部署（API Terminal 保持关闭）
@@ -13,9 +15,15 @@
 - 权限/数据边界：App 用户 `1026:100`、只读 rootfs、非 privileged、`no-new-privileges`；Core Memory/Learning flags true，个人记忆目录 `1026:100 / 0700`，0 文件；Private 未挂载，Knowledge RO，Promote OFF。D077 JSONL、Hermes Session 与现有业务数据均未改写；未操作其他 NAS 服务或家庭网络。
 - 首次重启曾因本次配置合并重复添加已存在的 `skills.write_approval` 配置键造成 YAML 重复键，Hermes 回退默认配置且 API 暂时未监听。诊断后只移除本次插入的重复行；Hermes `config check` 通过（另有既有 Home Assistant unknown-toolset warning），重新启动后 API/Dashboard 恢复 200，日志不再报告重复键或配置解析错误。无数据丢失；初次无效配置的 root-only 诊断副本与有效部署前回滚副本都保留。
 - 回滚资料：`/volume1/docker/secondbrain/rollback/d078-stage1-20261016T155327Z/`（目录 `0700 root:root`）。部署前 Compose SHA `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`；部署前 Hermes config SHA `a105f96d187067975b1a519cc4a83386284f4b10419835fba2c3b542e082f2e`；当前 Compose SHA `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`；当前 config SHA `34fe0bdad9d6e5990677b87ffa67cfb8fd237a18462da6958737bff23faf9155`。回滚前再次保存当前配置，恢复两个 before 文件及原属主/0640，然后只重建 App、重启 Hermes；保留 D077 Core state 和 JSONL。
-- **剩余风险 / 验收状态：** Hermes 日志报告 API server network-accessible 且 terminal backend local；API toolset 未包含 terminal、8642 未发布宿主端口，但 API 容器网络仍具备内部访问路径。上游 `_pre_tool_block` 对 plugin hook dispatch 异常可能 fail-open；本次没有真实 API Run，因此不能声称路径守卫已对每个 Agent 工具调用强制执行。Doctor 的 manifest hook 声明警告亦待澄清。API Terminal 保持关闭；不使用真实私人数据，不把当前状态描述为真实模型闭环或用户验收通过。需要后续针对 Hook dispatch 做模型零调用的隔离验证/最小修正，并由用户另行确认模型费用后，才可进行浏览器体验。
+- **剩余风险 / 验收状态：** Hermes 日志报告 API server network-accessible 且 terminal backend local；API toolset 未包含 terminal、8642 未发布宿主端口，但 API 容器网络仍具备内部访问路径。上游 `_pre_tool_block` 对 plugin hook dispatch 异常可能 fail-open；Stage 1 部署当时没有 API Run，因此不能据当时证据声称路径守卫已强制执行。后续固定源码隔离 API Run 与 fail-open 复核见下一节。API Terminal 保持关闭；不使用真实私人数据，不把当前状态描述为真实模型闭环或用户验收通过。
 
-> 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
+## 2026-10-17 — D078 固定源码隔离 API Run 与 Hook 边界复核
+
+- 修正 PR #17 分支中的 D078 `plugin.yaml`，新增 `provides_hooks: [pre_tool_call]`。使用本地 Hermes v0.22.2 固定源码 Commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8` 调用真实 `Plugin Doctor`：runtime discovery、manifest parse、import、registration 全通过，1 hook 注册，无 undeclared hook warning。新增一个最小单测锁住 manifest 声明。
+- 隔离环境使用临时 `HERMES_HOME`、合成 Session sentinel、API 仅启用 file tool、API bind `127.0.0.1`、模型 endpoint 为本机 loopback 确定性 Mock；Mock 未连接任何收费/外部模型，也未配置真实凭据。用 Hermes API `POST /v1/runs` 实际启动一次请求（HTTP 202），Hermes 运行读取合成 Session 的 `read_file` 调用；运行日志记录该调用被 D078 hook 拒绝，固定码 `hermes_private_path`。Run 最终 completed；`/v1/runs/{id}/events` 返回 HTTP 200 且 terminal event 为 `run.completed`；Run output 未包含 sentinel。这是固定源码 API 路径实跑，不是 NAS 容器运行。
+- 本机过程使用 Python 3.12.14，而 Hermes v0.22.2 部署运行时为 Python 3.14；首次隔离请求因临时 venv 缺少 `snowballstemmer` 在工具 batch dispatch 前失败，仅向该临时环境补装该 Hermes 依赖后，第二次 Run 成功。Gateway 同时报告与 API 路径无关的 Python 3.12 Group Chat worker `Path` import error；API loopback Run 和 file dispatch 正常。D078 插件单测覆盖 `search_files` 与 Skills 路径 generic `write_file` 拒绝；本轮没有为 Skills 路径另发 API Run。
+- 上游风险核验：`hermes_cli.plugins_dispatch` 对 `pre_tool_call` callback exception / timeout 会生成 block directive；但 `agent/tool_executor.py::_pre_tool_block` 的外围 `except Exception` 返回 `(None, ref.args)`，即 dispatcher/import 本身异常时仍会继续工具调用。此为固定源码中的真实 fail-open 行为。D078 插件无法捕获其自身未被调用时的异常；本 PR 只修正 manifest capability 声明，不用 monkeypatch 遮盖上游风险。可靠修复需在 Hermes 固定源码/镜像入口增加 fail-closed 行为，或由可验证的强制 API 边界拒绝该路径；本轮未修改 Hermes 源码及 NAS。
+- **结论：** 插件正常加载时，固定源码 API Run 的敏感文件读取实际拦截为 `VERIFIED`；manifest warning 在 PR 分支已修复，NAS 当前安装文件尚未更新；上游 dispatcher/import 故障 fail-open 为 `VERIFIED` 且未修复。API Terminal 仍关闭；目前不具备真实个人资料/浏览器模型体验条件。没有 NAS 写操作、容器重启、真实数据或付费模型请求。
 
 ## 2026-10-16 — D078 PR #16 固定 Hermes Hook 与审批对象核验（本地合成，未部署）
 
