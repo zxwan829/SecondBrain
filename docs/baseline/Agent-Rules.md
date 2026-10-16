@@ -14,7 +14,7 @@ type: agent-rules
 - `00-CURRENT.md` 是 V1 全量范围与当前开发/验收状态的唯一入口。`Environment-Baseline.md` 只代表标注日期的最近运行证据，不是实时监控；未重新核验的当前运行事实标记 `UNKNOWN`。历史实施和失败证据只放 `Progress-Log.md`。
 - 业务细则遵循正式 Business Specification；稳定模块和信任边界遵循 `Architecture.md`；正式取舍遵循 `Decision-Log.md`。旧决策不得覆盖新决定，历史记录不得冒充当前状态。
 - Hermes 是当前唯一 Runtime 主线；OpenClaw 已退出当前候选。优先复用 Hermes 官方 Session/Run/SSE/Skill 接口，不重复实现 Agent Runtime。
-- **D077 最高产品目标：** 自然对话主动联想长期记忆与知识、获准互动默认自主学习低风险偏好经验、跨会话可纠正、逐渐主动规划。新任务先核对 `Personal-Intelligence-Product-Spec.md`；不把“能手动检索”当作该目标验收通过。Phase 0 已完成；D077 已在 NAS 运行且合成记忆闭环通过，真实模型和用户浏览器行为仍待验收。当前权限工作以 Issue #14 及 D078 为准。
+- **D077 最高产品目标：** 自然对话主动联想长期记忆与知识、获准互动默认自主学习低风险偏好经验、跨会话可纠正、逐渐主动规划。新任务先核对 `Decision-Log.md` D077、`Architecture.md` 和 `00-CURRENT.md`；不把“能手动检索”当作该目标验收通过。Phase 0 已完成；D077 已在 NAS 运行且合成记忆闭环通过，真实模型和用户浏览器行为仍待验收。当前权限工作以 Issue #14 及 D078 为准。
 
 ## SecondBrain 数据与安全边界
 
