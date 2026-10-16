@@ -16,7 +16,7 @@ source: GitHub SecondBrain Monorepo
 
 **阶段安排：** 先做 Companion 能力审计和隔离实证，再按验证结果最小返工，随后继续完成旧 V1 所有 MUST 与多端业务收口；不要因新增目标将既有 MUST 静默延期为永久不做。
 
-**总体状态：`NOT DONE`。** 2026-10-15 已将 GitHub `b34319a` 部署到 NAS 的 `secondbrain-app`；当前部署快照、接口验证和回滚点见 `Environment-Baseline.md` 与 `Progress-Log.md`。D077 Hermes v0.22.2 + Core 已在 NAS 启用个人记忆；合成数据四步闭环使用本地确定性 Stub 通过，测试数据已清理。未调用真实或付费模型，未使用真实个人数据；真实模型行为、浏览器使用及用户验收仍待完成。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 只是早期单条合成消息的费用估算，不是本次部署费用或账户账单；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
+**总体状态：NOT DONE。** 2026-10-15 已将 GitHub b34319a 部署到 NAS 的 secondbrain-app；当前部署快照、接口验证和回滚点见 Environment-Baseline.md 与 Progress-Log.md。D077 Hermes v0.22.2 + Core 已在 NAS 启用个人记忆；合成数据四步闭环使用本地确定性 Stub 通过，测试数据已清理。Issue #14 已从 API Server 工具集合移除 local terminal，并验证 Hermes/Core 健康；真实模型行为与用户验收仍待完成；API file 工具仍可尝试读取未加入 denylist 的 Hermes Session 路径，故在补齐文件读取边界前不得进行真实模型浏览器体验。未调用真实或付费模型，未使用真实个人数据。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 只是早期单条合成消息的费用估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。完整交付状态以以下矩阵为准。
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 
@@ -89,9 +89,9 @@ source: GitHub SecondBrain Monorepo
 | 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
 | 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |
 
-**D077 部署状态（2026-10-16）：** 按新授权评论 [#6215695514](https://github.com/zxwan829/SecondBrain/issues/12#issuecomment-6215695514)，Hermes v0.22.2 固定 amd64 Digest 与 GitHub `main` 的 D077 Core 已部署到 NAS。API 8642 与 Dashboard 9119 启动后约 2 分钟可连接；最终配置重启后 16/16 次、覆盖 15 分 5 秒（12:57:09–13:12:14 UTC）的观察通过：容器无重启、API health 每次 200、Dashboard 端口每次可连接。Core 的 `SB_PERSONAL_MEMORY_ENABLED` / `SB_PERSONAL_LEARNING_ENABLED` 为 true，`personal-memory` 独立目录属主 `1026:100`、权限 `0700`，合成测试数据已清理。使用仅有虚构内容的确定性本地 Stub 完成 4 个 Session/Run/SSE：自动保存、来源关联、跨会话上下文、纠正和纠正后上下文均通过。没有付费模型请求或真实个人数据；这不证明真实模型的自然回答质量。Hermes API 不发布宿主端口；Private 未挂载、Knowledge RO、Promote OFF。完整运行、隔离、观察与恢复证据见 Progress-Log 和 Environment-Baseline；真实模型调用及用户验收仍待授权/验收。
+**D077 部署状态（2026-10-16）：** 按 Issue #12 授权评论 #6215695514，Hermes v0.22.2 固定 amd64 Digest 与 GitHub main 的 D077 Core 已部署到 NAS。API 8642 与 Dashboard 9119 在启动后约 2 分钟可连接；最终部署后 16/16 次、15 分 5 秒稳定性观察通过。Core 的 Memory/Learning flags 为 true，专用 personal-memory 根目录 1026:100 / 0700，合成测试数据已清理。确定性本地 Stub 的 4 个合成 Session/Run/SSE 验证自动保存、来源关联、跨会话注入、纠正及纠正后注入均通过；这不证明真实模型学习质量。Issue #14 后，API Server 实际工具集合为 file, skills, vision，不再包含 terminal；仅重启 Hermes 后 API health 200、Dashboard 登录重定向 302、Core health healthy。Private 未挂载、Knowledge RO、Promote OFF。未调用真实或付费模型，也未处理真实个人数据；真实模型浏览器体验还受 API file 读取边界阻断：Hermes Session 目录可由 file 工具进程访问，当前路径 denylist 未覆盖该目录；在最小修复并审核前，不得使用真实个人数据或发送真实模型请求。之后仍需用户选择模型并确认费用。运行和回滚证据见 Environment-Baseline.md 与 Progress-Log.md。
 
-**工作准则：** Hermes v0.22.2 为当前 D077 运行版本；Core JSONL 是个人记忆权威存储，外部 Hermes Memory Provider 未启用。继续以可验证的实际产品行为推进，不因新技术趋势直接上 Jev、世界模型、Honcho、图 DB 或 RAG。真实模型体验需要单独授权。
+**工作准则：** Hermes v0.22.2 为当前 D077 运行版本；Core JSONL 是个人记忆权威存储，外部 Hermes Memory Provider 未启用。继续以可验证的实际产品行为推进，不因新技术趋势直接上 Jev、世界模型、Honcho、图 DB 或 RAG。API Server local terminal 已关闭；file 工具的 Hermes Session 读取边界仍待修复，完成安全审核前不进行真实模型体验；后续仍需用户确认模型与费用。
 
 ## 3. NOW / BLOCKED / DEFERRED、依赖和阻断
 

@@ -6,7 +6,7 @@ type: environment-baseline
 ---
 # Environment Baseline
 
-本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。**它不是实时监控**：以下快照于 2026-10-16 Issue #12 获准部署后核验；启动观察及记忆闭环证据见 `Progress-Log.md`。不记录任何密钥或明文环境配置。
+本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。它不是实时监控：部署快照于 2026-10-16 Issue #12 核验；API 工具权限、定向重启和健康状态于 Issue #14 更新。不记录任何密钥或明文环境配置。
 
 ## NAS 与 Compose
 
@@ -19,9 +19,9 @@ type: environment-baseline
 | 服务 | 容器 ID | 镜像 / Image ID | 状态 | 入口/说明 |
 |---|---|---|---|---|
 | `secondbrain-app` | `064e0782cb61df4a0c9fd3ca6968f494063f85f3870caaa7527e897b7d740cc6` | `secondbrain-app:d077-b6e30f3` / `sha256:7cce77d702cb51f0c318c91c427d95cff887a99caebb12b9cad287b388b1049c` | healthy；启动 `2026-10-16T12:55:04.372325515Z`；运行身份 `1026:100` | 宿主 `127.0.0.1:9120`；D077 Core source `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc` |
-| `secondbrain-hermes` | `2cf7cec6d44dc49de37f0fb16c36f8e71f4bea5747aeecc2782efabf09eeb86f` | `nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05` / `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` | running；v0.22.2；最终配置启动 `2026-10-16T12:55:22.167231091Z`；重启计数 0 | API 8642 容器内 health 200、不发布宿主端口；Dashboard 9119 可连接，仅映射 `192.168.3.27:9119` |
+| secondbrain-hermes | 2cf7cec6d44dc49de37f0fb16c36f8e71f4bea5747aeecc2782efabf09eeb86f | nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05 / sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41 | running；v0.22.2；Issue #14 定向重启时间 2026-10-16T13:34:38.771773364Z | API 8642 容器内 health 200、不发布宿主端口；Dashboard 9119 登录重定向 302，仅映射 192.168.3.27:9119 |
 
-上述为 D077 部署后的运行快照。App `/health` 与 App→Hermes API health 均为 200；Hermes `/health` 为 200，Dashboard listener 可连接。个人记忆/学习 flags 为 true；`SB_PERSONAL_MEMORY_ROOT=/var/lib/secondbrain-core/personal-memory` 对应宿主目录 `/volume1/docker/secondbrain/core-state/personal-memory`，属主/权限 `1026:100 / 0700`，完成合成测试清理后目录为空。`SB_PROMOTE_ENABLED=false`。
+App 容器 Docker health 为 healthy，Core /health 经宿主 127.0.0.1:9120 和受信 Host 192.168.3.27 返回 200；Hermes API 8642/health 为 200，Dashboard 9119/ 返回登录重定向 302。Issue #14 后 Hermes 运行中；App 未重启。个人记忆/学习 flags 为 true；SB_PERSONAL_MEMORY_ROOT=/var/lib/secondbrain-core/personal-memory 对应宿主目录 /volume1/docker/secondbrain/core-state/personal-memory，属主/权限 1026:100 / 0700，本次未新增 Session/Run，目录无文件。SB_PROMOTE_ENABLED=false。浏览器入口 https://zxwan520.com:63013/health 于本轮 TLS 校验成功并返回 200。
 
 ## 挂载与权限边界（最近记录的实际配置）
 
@@ -45,8 +45,9 @@ Organizer Core 私有状态位于现有 Core state 挂载内的 `ai-organize` �
 ## 网络与浏览器入口
 
 - App 通过 Compose 内部网络访问 Hermes；Hermes API `8642` 不映射到宿主端口。
-- Hermes v0.22.2 Gateway 日志警告 API 绑定 `0.0.0.0` 且 terminal backend 为 `local`（unsandboxed）。本次 Docker 网络只附加 `secondbrain-app` 与 `secondbrain-hermes`，8642 未发布宿主端口；本地 Stub 的 4 个流式请求均携带工具定义，但 Stub 未返回 tool call。没有执行工具或放宽挂载/Capabilities；仍需将该警告作为后续运行风险复核，不能把测试配置中的空 `enabled_toolsets` 写成已证明禁用工具。
+- Issue #12 曾观察到 API 工具定义包含 terminal；Issue #14 通过 Hermes v0.22.2 原生 platform_toolsets.api_server 设置移除 API Run 的 terminal。重启后固定版本 resolver 实测 API Server 工具集合为 file, skills, vision；terminal.backend=local 仍是 CLI 配置，但 API Server 请求不获 terminal 工具定义。Docker 网络仅附加 App 与 Hermes，API 8642 不发布宿主端口。
 - Hermes 的策略路由、NAS 双网卡和实际公网出口不在本次检查范围；最新实时路由证据为 `UNKNOWN`。不要仅凭公网 IP 地理位置推断是否经过 `wg0`。
+- API Server 的 file 工具仍保留，以维持 Capture/Knowledge；有效 HERMES_WRITE_SAFE_ROOT 只有三个 Capture 根，Knowledge 同时是只读挂载，Private 无挂载。Hermes worker 进程 UID/GID 1026:100、CapEff/CapPrm 为 0；容器非 privileged。Hermes file safety 对 /proc/self/environ 返回设备路径拒绝；/opt/data/config.yaml 本身不被 read denylist 拒绝，但 _is_secret_file_arg 将 Hermes Home 配置判为 secret-bearing，file-read YAML redaction 对 credential-shaped 值生效。用合成 api_key/secret/password_hash 值做的离线断言 3/3 脱敏；未查看或输出真实凭据值。该 file 工具没有通用 read-root allowlist；/opt/data/sessions 目录对 worker 可读/遍历，合成 Session 路径不被 read denylist 拒绝。未列目录或读取任何 Session 内容。此项是阻止真实模型浏览器体验的残余权限风险；需要最小 session-path 读取拒绝或等效官方隔离后再开放。
 - DSM 63012/63013 反向代理的 LAN-only 规则及登录链曾通过部署测试；本次未重验 DSM 配置、证书或外网可达性。不得由入口历史记录推断公网已开放。
 
 ## Obsidian 同步边界
@@ -54,6 +55,8 @@ Organizer Core 私有状态位于现有 Core state 挂载内的 `ai-organize` �
 - Obsidian 知识/笔记库由 Synology Drive 在 Mac 与 NAS 间同步；最近记录称客户端显示已同步，但双向传播未单独验收。历史 `SynologyDrive stopped` 报告不构成已确认故障；当前客户端连接与 NAS 实际传播状态均为 `UNKNOWN`。此同步只承载知识、笔记与个人资料，不是代码或正式项目文档源。相关历史核验见 `Progress-Log.md`。
 
 ## 恢复入口
+
+- Issue #14 API 工具限制回滚点：/volume1/docker/secondbrain/rollback/d077-issue14-api-toolset-20261016T1334Z/config.yaml.before，SHA-256 cdee7b148aa314536e24986f8f0dd57ea5999350e46c6b3bfd65c25a37eecac9；目录 0700 root:root，文件 0600 root:root。回滚前保存当前 Hermes config，再将此文件恢复到 /volume1/docker/secondbrain/hermes/data/config.yaml、属主/模式 1026:100 / 0640，最后只重启 Hermes。Compose 未改。
 
 - 本次部署快照与回滚材料位于 `/volume1/docker/secondbrain/rollback/d077-issue12-authorized-20261016T124238Z/`：目录 `0700 root:root`、文件 `0600 root:root`。包含部署前 Compose（SHA-256 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`）、部署前 Hermes 数据归档、迁移后原 Hermes config、部署候选 Compose、脱敏启动日志、只含布尔值的 Stub 观测、合成记忆 JSONL 与测试摘要；清单验证通过。此前回滚目录 `/volume1/docker/secondbrain/rollback/d077-issue12-v0222-predeploy-20261016T1225Z/` 保留不动。
 - 回滚方法：先再保存当前 Hermes 数据和当前 Compose；恢复本次快照中的 `compose.before.yaml` 到正式路径并还原属主/0640，然后只对 `hermes` 和 `secondbrain-app` 执行 Compose `up -d --pull never --no-deps`，使其回到原 v0.21.5 与 `d076-organizer-b34319a` 镜像。若旧版不接受迁移后的 Hermes profile，先保留当前 profile，再参考已校验的部署前状态归档恢复；不得直接覆盖或删除当前数据。Personal Memory 子目录保留，真实使用后不得按测试目录清理。
