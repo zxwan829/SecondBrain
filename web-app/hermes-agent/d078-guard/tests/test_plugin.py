@@ -13,6 +13,10 @@ spec.loader.exec_module(plugin)
 
 
 class D078PluginTests(unittest.TestCase):
+    def test_manifest_declares_registered_pre_tool_call_hook(self):
+        manifest = (PLUGIN_PATH.parent / "plugin.yaml").read_text(encoding="utf-8")
+        self.assertRegex(manifest, r"(?m)^provides_hooks:\s*\n\s+-\s+pre_tool_call\s*$")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()

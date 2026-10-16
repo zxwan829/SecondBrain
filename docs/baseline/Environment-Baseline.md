@@ -11,17 +11,17 @@ type: environment-baseline
 ## NAS 与 Compose
 
 - NAS：Synology DS920+，DSM 7.4.1 Build 90080；LAN 地址 `192.168.3.27`。本机与路由器网络设置不由 SecondBrain 文档治理修改。
-- 正式 Compose：`/volume1/docker/secondbrain/compose.yaml`；Compose Project `secondbrain`；Docker 网络 `secondbrain_default`。本次部署前 SHA-256 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`；部署后 SHA-256 `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`，属主/权限 `1026:100 / 0640`。差异仅固定 Hermes 镜像并启用 API、切换已在 NAS 的 D077 Core 镜像、启用 Personal Memory/Learning flags 及其专用根目录。
+- 正式 Compose：`/volume1/docker/secondbrain/compose.yaml`；Compose Project `secondbrain`；Docker 网络 `secondbrain_default`。本次 Stage 1 部署前 SHA-256 `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`；部署后 SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`，属主/权限 `1026:100 / 0640`。Compose 本次只替换 App image tag，未改网络、挂载或其他服务。
 - 项目目标为两个服务：`secondbrain-hermes` 与 `secondbrain-app`。Container Manager GUI 曾出现旧容器行/旧定义缓存；最后已记录状态为管理界面定义未完成对齐。当前 GUI 状态未在本次核实，标记 `UNKNOWN`；这是部署管理风险，不改变 Docker 运行态记录。
 
-## 最近已核验的容器快照（2026-10-16 Issue #12）
+## 最近已核验的容器快照（2026-10-17 Issue #14 / D078 Stage 1）
 
 | 服务 | 容器 ID | 镜像 / Image ID | 状态 | 入口/说明 |
 |---|---|---|---|---|
-| `secondbrain-app` | `064e0782cb61df4a0c9fd3ca6968f494063f85f3870caaa7527e897b7d740cc6` | `secondbrain-app:d077-b6e30f3` / `sha256:7cce77d702cb51f0c318c91c427d95cff887a99caebb12b9cad287b388b1049c` | healthy；启动 `2026-10-16T12:55:04.372325515Z`；运行身份 `1026:100` | 宿主 `127.0.0.1:9120`；D077 Core source `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc` |
-| secondbrain-hermes | 2cf7cec6d44dc49de37f0fb16c36f8e71f4bea5747aeecc2782efabf09eeb86f | nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05 / sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41 | running；v0.22.2；Issue #14 定向重启时间 2026-10-16T13:34:38.771773364Z | API 8642 容器内 health 200、不发布宿主端口；Dashboard 9119 登录重定向 302，仅映射 192.168.3.27:9119 |
+| `secondbrain-app` | `674e7aa05af22a485ec9d769c370dddd0cda88c45d3e9412ee4c23cf3a54173e` | `secondbrain-app:d078-1d92242` / `sha256:3cfeeb01e9c1772c59bfca394722b22b9e87c7ce8d098a9ee5742ac530d41487` | healthy；启动 `2026-10-16T15:58:07.666779883Z`；运行身份 `1026:100`；只读 rootfs、非 privileged、no-new-privileges | 宿主 `127.0.0.1:9120`；Core source 为 main merge commit `1d922422b419f7c6773df1849ce7a7c130392006`（build input PR #16 head `d78a6bfd376c97043ffab0d5fc18371baf33148a` 的 tracked `web-app` archive） |
+| `secondbrain-hermes` | `2cf7cec6d44dc49de37f0fb16c36f8e71f4bea5747aeecc2782efabf09eeb86f` | `nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05` / `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` | running；v0.22.2 / upstream `d923a5eb487a17c0a68801bba9ef0f56c81040a8`；Stage 1 restart `2026-10-16T16:27:20.362558655Z` | API 8642 health 200、仅容器网络；Dashboard 9119 health 200，仅映射 `192.168.3.27:9119` |
 
-App 容器 Docker health 为 healthy，Core /health 经宿主 127.0.0.1:9120 和受信 Host 192.168.3.27 返回 200；Hermes API 8642/health 为 200，Dashboard 9119/ 返回登录重定向 302。Issue #14 后 Hermes 运行中；App 未重启。个人记忆/学习 flags 为 true；SB_PERSONAL_MEMORY_ROOT=/var/lib/secondbrain-core/personal-memory 对应宿主目录 /volume1/docker/secondbrain/core-state/personal-memory，属主/权限 1026:100 / 0700，本次未新增 Session/Run，目录无文件。SB_PROMOTE_ENABLED=false。浏览器入口 https://zxwan520.com:63013/health 于本轮 TLS 校验成功并返回 200。
+App Docker health 为 healthy；Core `/health` 与 App `/` 均 HTTP 200；Hermes API 8642 与 Dashboard 9119 `/health` 均 HTTP 200。D078 Profile 已启用 `secondbrain-d078-guard`，Skills `write_approval=true`、审批 `manual`，API toolset `file,skills,vision`（Terminal 未开放）。插件 Doctor 运行时发现/导入/注册通过，并提示 manifest 缺少 `provides_hooks: pre_tool_call` 声明；合成 Session 路径读与 Skills generic file 写入被拒，Capture safe-root 写入目标允许。上游 Hook dispatch fail-open 风险未通过真实 API Run 验证。Memory/Learning flags 仍 true；memory 根路径 `/volume1/docker/secondbrain/core-state/personal-memory` 为 `1026:100 / 0700`，0 文件；Promote false。Private 无挂载、Knowledge RO。没有新增 Session/Run、没有调用模型；浏览器真模型验收没有执行。
 
 ## 挂载与权限边界（最近记录的实际配置）
 
@@ -55,6 +55,9 @@ Organizer Core 私有状态位于现有 Core state 挂载内的 `ai-organize` �
 - Obsidian 知识/笔记库由 Synology Drive 在 Mac 与 NAS 间同步；最近记录称客户端显示已同步，但双向传播未单独验收。历史 `SynologyDrive stopped` 报告不构成已确认故障；当前客户端连接与 NAS 实际传播状态均为 `UNKNOWN`。此同步只承载知识、笔记与个人资料，不是代码或正式项目文档源。相关历史核验见 `Progress-Log.md`。
 
 ## 恢复入口
+
+- D078 Stage 1 回滚快照：`/volume1/docker/secondbrain/rollback/d078-stage1-20261016T155327Z/`，目录 `0700 root:root`。部署前 `compose.before.yaml` SHA-256 `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`、`hermes-config.before.yaml` SHA-256 `a105f96d187067975b1a519cc4a83386284f4b10419835fba2c3b542e082f2e`、`manifest.txt` SHA-256 `7b0ef1040ab654c585a2030680da29661faa7499f4d8e1b333261d1749e54375`，均 `0600 root:root`。构建源码仅为 main commit `1d922422...` 的 PR #16 合并内容；NAS App 镜像 `secondbrain-app:d078-1d92242` Image ID `sha256:3cfeeb01e9c1772c59bfca394722b22b9e87c7ce8d098a9ee5742ac530d41487`，部署前 App 镜像未删除。
+- 如需回滚，先重新核验并再保存当前 Compose/Profile；恢复本次 `compose.before.yaml` 与 `hermes-config.before.yaml` 到各自原路径，恢复 Compose `1026:100 / 0640`、Hermes config `1026:100 / 0640`，然后只重建/重启 `secondbrain-app` 与 `secondbrain-hermes`。不回退、不删除 Core state、D077 JSONL、Session、Capture 或其他 NAS 数据；不使用整体 `compose down`。
 
 - Issue #14 API 工具限制回滚点：/volume1/docker/secondbrain/rollback/d077-issue14-api-toolset-20261016T1334Z/config.yaml.before，SHA-256 cdee7b148aa314536e24986f8f0dd57ea5999350e46c6b3bfd65c25a37eecac9；目录 0700 root:root，文件 0600 root:root。回滚前保存当前 Hermes config，再将此文件恢复到 /volume1/docker/secondbrain/hermes/data/config.yaml、属主/模式 1026:100 / 0640，最后只重启 Hermes。Compose 未改。
 
