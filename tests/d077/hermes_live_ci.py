@@ -40,13 +40,25 @@ def cmd(*args, input=None, timeout=100, check=True):
     return subprocess.run(args, input=input, text=True, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, timeout=timeout, check=check)
 
-def api_json(path, data=None, method=None, timeout=12):
-    req = urllib.request.Request("http://127.0.0.1:%s%s" % (HERMES_PORT, path),
-        data=(json.dumps(data).encode() if data is not None else None),
-        headers={"Authorization": "Bearer " + API_KEY, "Content-Type": "application/json"},
-        method=method or ("POST" if data is not None else "GET"))
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.status, json.load(resp)
+def api_json(path, data=None, method=None, timeout=15):
+    # Avoid published Docker ports on --internal bridge. Query loopback from
+    # inside the isolated Hermes container via Docker's control channel.
+    payload = json.dumps({"path":path,"data":data,
+                          "method":method or ("POST" if data is not None else "GET")})
+    snippet = """
+import json,sys,urllib.request
+x=json.load(sys.stdin)
+payload=json.dumps(x['data']).encode() if x['data'] is not None else None
+req=urllib.request.Request('http://127.0.0.1:8642'+x['path'], data=payload,
+    headers={'Authorization':'Bearer d077-synthetic-session-only-key',
+             'Content-Type':'application/json'}, method=x['method'])
+with urllib.request.urlopen(req,timeout=12) as r:
+    print(json.dumps({'status':r.status,'data':json.load(r)}))
+"""
+    r = cmd("docker","exec","-i",CONTAINER,"/opt/hermes/.venv/bin/python3",
+            "-c",snippet,input=payload,timeout=timeout+8)
+    x = json.loads(r.stdout)
+    return x["status"],x["data"]
 
 class Proxy(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -200,9 +212,8 @@ def main():
             "--tmpfs","/tmp:rw,nosuid,nodev,size=96m,mode=1777",
             "--tmpfs","/opt/data:rw,nosuid,nodev,size=512m,mode=0700,uid=10001,gid=10001",
             "-e","HERMES_HOME=/opt/data","-e","HOME=/opt/data",
-            "-e","API_SERVER_ENABLED=true","-e","API_SERVER_HOST=0.0.0.0",
+            "-e","API_SERVER_ENABLED=true","-e","API_SERVER_HOST=127.0.0.1",
             "-e","API_SERVER_KEY="+API_KEY,
-            "-p","127.0.0.1:%s:8642" % HERMES_PORT,
             "--entrypoint","/bin/sh",IMAGE,"-c","sleep 1100")
         created_container = CONTAINER
         conf = """model:
