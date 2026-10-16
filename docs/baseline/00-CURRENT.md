@@ -98,11 +98,14 @@ source: GitHub SecondBrain Monorepo
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
 | **Phase 1-A（已部署）** | **可纠正、可撤销、可溯源的 Personal Memory Core** | 独立 Core state 子目录、追加式 JSONL、来源与修订历史；NAS 合成验证通过，测试记录已清理 | 用户浏览器验收与后续真实使用仍待完成 |
+| **D078（当前优先；设计/施工进行中）** | **保留 Hermes 原生自主学习、file、Skills、terminal 能力，以强制监督控制敏感操作** | 用户批准按需申请原则；Issue #14 确认当前 API 只有 `file,skills,vision`，terminal 暂时关闭；v0.22.2 现有工具审批覆盖有限 | 核实最小可执行方案与浏览器批准/拒绝路径，实施并验证前不得将受控 terminal、敏感读取或 Skills 写审核写成已上线 |
 | **Phase 1-B（已部署；合成运行验证）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；Core Linux 回归 154 passed、2 subtests passed（Run 38857429530）；Hermes v0.22.2 + Core + 确定性本地 Stub 四步闭环通过 | 真实模型的学习与回答质量、真实会话及用户验收仍待完成 |
-| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076-organizer-b34319a` healthy；HTTPS health/login/session、Chat capabilities、Inbox、Review 及受保护设置 API smoke 通过；匿名设置 API 401；Hermes 未重启 | 用户浏览器验收新版本设置页、Composer 和手机 Review；真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
+| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | 当前 NAS App `secondbrain-app:d077-b6e30f3` healthy（Issue #12/#14），Core↔Hermes health 可用；D077 合成 Session/Run/SSE 链路通过 | 真实模型和浏览器记忆体验待验收；设置页、Composer、手机 Review、真实 PDF OCR 仍有既有缺口，Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
+
+**当前 NEXT（Issue #14 / D078，决策已批准，实施未完成）：** 保留 Hermes 原生 Agent 能力，以服务端强制的按需申请/批准/拒绝/留痕控制危险 terminal、敏感文件和跨 Session 访问；Skills 的重要修改经审核。普通低风险 Knowledge/Capture 保持自动，Core JSONL 记忆治理不变。优先复用 v0.22.2 原生 Run approval 与 Skills write gate，不能把“存在审批 API”误写成 terminal/file 已受保护。Codex 正在准备最小技术方案，源码覆盖、镜像重建、NAS 执行及真实模型费用均需按治理规则核准。用户浏览器真实记忆验收要在实际访问边界满足后安排。
 
 **不要把阻断项变成无限研究：** 权限和认证须够安全且有证据；其他问题遵循 FAST-EXEC，优先复用现有能力，不提前建设企业级体系。
 
