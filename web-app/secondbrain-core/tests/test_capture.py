@@ -18,8 +18,8 @@ from secondbrain_core.modules.capture import CaptureService, _public_http_url, _
 
 class CaptureServiceTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
-        self.root = Path(self.temp.name)
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name).resolve()
         self.raw = self.root / "raw"
         self.review = self.root / "review"
         self.state = self.root / "state"
@@ -256,8 +256,8 @@ class CaptureServiceTests(unittest.TestCase):
 
 class CaptureApiTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
-        self.root = Path(self.temp.name)
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name).resolve()
         self.raw, self.review, self.knowledge, self.state = [self.root / name for name in ("raw", "review", "knowledge", "state")]
         for path in (self.raw, self.review, self.knowledge, self.state):
             path.mkdir(mode=0o700)

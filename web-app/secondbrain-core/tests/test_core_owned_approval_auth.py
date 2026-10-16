@@ -17,8 +17,8 @@ from secondbrain_core.modules.review_promote.service import PromoteService
 
 class CoreOwnedApprovalAuthTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
-        self.root = Path(self.temp.name)
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name).resolve()
         self.review, self.knowledge, self.state, self.raw = [self.root / n for n in ("review", "knowledge", "state", "raw")]
         for path in (self.review, self.knowledge, self.state, self.raw):
             path.mkdir(mode=0o700)

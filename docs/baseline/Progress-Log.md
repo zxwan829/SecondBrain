@@ -20,6 +20,31 @@
 - 按 PR 后续审核移除测试对 macOS `/private/tmp` 的硬编码，使用平台默认临时目录并规范化路径；模块测试 **8 passed**，全套仍为 **137 passed、2 subtests passed**。本机验证通过；尚未宣称 Linux CI 已运行。
 - 本轮未合并、部署、调用付费模型或访问 NAS。修正提交与 PR #4 head、审核状态以当前 GitHub 为准。
 
+# 2026-10-16 — D077 Phase 1-B and Linux Core test portability (Issue #5)
+
+- 从 GitHub 最新 `main` `8c45f281d0d3e7a52c2cb62934a84392524dbe40` 的独立临时 Clone 开始；未修改正式 Clone 或未跟踪项 `typescript`。同一集成分支包含 Phase 1-B 和跨平台测试路径修复。
+- Phase 1-B 增加默认关闭的 `SB_PERSONAL_LEARNING_ENABLED`。启用还要求 `SB_PERSONAL_MEMORY_ENABLED=true` 和已有绝对路径 Memory root；不启用时不扫描对话或注入记忆。Chat 前仅作小规模确定性相关性筛选，复用 Memory Core active/redaction 视图；Chat input 原样发送，相关记忆走现有 Hermes API `instructions` 字段。
+- Run 后仅在 `run.completed` SSE 或状态为 completed 时读取同 Session 持久消息；必须匹配原始用户文本及有 ID 的消息来源后才提炼和写入。候选提炼器可注入，当前默认实现只抽取有限的明确偏好表达，过滤已知敏感/指令样式文本；无付费模型调用。重复消息源绑定 newest-order 消息有回归覆盖。
+- 按固定 Hermes v0.21.5 upstream commit `749220ef0007f8d87bd1531f1c24b0fe93816385` 的 API Server 源码核对：`/v1/runs` 支持 `instructions` 并将其传给 Agent 的 ephemeral system prompt。Hermes 真实 v0.21.5 运行是否实际遵循注入、模型是否自主学习，以及进程重启/多 Worker 下 pending Run 状态行为尚未验证；本地 Mock 仅证明 SecondBrain 适配器传递该字段与 Core 触发逻辑。
+- Linux portability 子项将五处 Core 测试夹具改用平台临时目录，移除 Linux workflow 对 `/private/tmp` 的创建垫片，并新增静态防回归检查。GitHub workflow 仍为手动触发、Ubuntu 24.04、无 secrets。
+- 集成分支全套 Core 测试 **146 passed、2 subtests passed**；`compileall` 与 `git diff --check` 通过。GitHub Actions 单次 Ubuntu 24.04 Linux workflow run [38856373579](https://github.com/zxwan829/SecondBrain/actions/runs/38856373579) 成功，Core 全套与 compileall 均通过。Action 提示 `checkout@v4` / `setup-python@v5` Node.js 20 运行时弃用，未影响本次结果。
+- Phase 1-A PR #4 于本日已合并入 main；本 Issue #5 变更在 PR [#6](https://github.com/zxwan829/SecondBrain/pull/6)，当前 OPEN，未合并。集成分支最终 commit 记录在该 PR head。
+- 未升级 Hermes、部署 NAS、处理真实个人数据或调用付费模型。未验证真实 v0.21.5 运行行为、模型学习质量、跨进程 pending 状态恢复或用户体验；这些仍需独立审核/授权。
+
+# 2026-10-16 — PR #6 memory accuracy review fixes
+
+- 按最新审核意见修复旧消息可能被误认作新 Run 来源的问题：Chat Run 前读取同 Session 的持久消息 ID 水位；只有成功 Run 后出现、文本与会话匹配且 ID 不在水位中的消息才可作为学习来源。预读失败时 Chat 正常继续，但该 Run 不学习；相同会话存在并发重复输入时两次都跳过学习，避免来源猜配。
+- 收紧纠错目标选择：旧偏好完整短语必须出现在唯一一条当前偏好中；未命中或多条命中均不创建替代项、不改写旧记录。新增旧消息重用、正常新重复文本、并发重复输入、预读故障、歧义纠错和精确纠错回归。
+- 定向测试 **12 passed**；Core 全套 **151 passed、2 subtests passed**。Linux workflow 保持手动/无 secrets，既有 `/private/tmp` 兼容性修复未变。
+- 更新提交与 PR #6 head 以 GitHub 当前状态为准；本轮未重跑 Linux workflow，未部署或合并。
+
+# 2026-10-16 — PR #6 final memory safety fixes
+
+- 纠错目标现在要求去除已知偏好表达前缀后的规范化文本完全等价，拒绝仅凭子串/词片重合改写记忆；多条相同目标仍 fail closed。
+- 新增 pending Run 的 `discard_run`；SSE `run.failed` / `run.cancelled` / `run.canceled` / `run.stopped`、状态 API 对应终态，以及成功返回的 Stop 操作都会清理对应状态。没有加入后台清理任务。
+- 新增单条错误子串命中、失败/停止后相同文本新 Run 成功学习回归。定向测试 **15 passed**；Core 全套 **154 passed、2 subtests passed**。Linux 手动 CI 尚待在本次最终代码提交上运行。
+- 未调用外部模型、访问真实数据或部署 NAS；Linux 临时目录兼容修复保持原样。
+
 # 2026-09-28
 
 - Hermes Docker 正式环境稳定，固定 IP 172.18.0.2。
