@@ -2,6 +2,18 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D077 Phase 1-C 单一 internal network Runner（Harness 入口阻断）
+
+- 按 PR #8 最新两条评论 `6209551174`、`6209568543`，在原 PR 分支把测试拓扑收敛为单个 Docker `--internal` 网络中的临时 Hermes/Core/确定性 Stub peer；无宿主机 API 端口，无第二网络、无付费模型或真实数据。Core/Hermes/Stub 均采用非 root、只读根文件系统、丢弃 capabilities、no-new-privileges、资源限制和仅合成数据挂载；Core 镜像在测试网络外构建，测试容器只连 internal network。
+- 本地 Harness `py_compile`、workflow YAML 解析、`git diff --check` 通过；Core 全套 `pytest -q tests` 为 **156 passed、2 subtests passed**（一条既有 Starlette/httpx 弃用提示）。本机没有 Docker，故容器网络实验需 Runner。
+- 按用户在评论 `6209568543` 的明确授权，只触发一次手动 Ubuntu Runner：[Run 38862336592](https://github.com/zxwan829/SecondBrain/actions/runs/38862336592)，checkout SHA `33623b99d8f7064db36ca70f30e0a8604d44b2cf`。Docker 与 amd64 固定 Hermes digest/image ID/revision 检查通过；Core 临时镜像构建通过。测试 Harness 步骤在约 0.5 秒内无任何 Harness 输出即退出。检查发现脚本只有 `def main()`，缺少 `if __name__ == "__main__": main()`，所以 controller 根本没有运行。
+- **结果严格分类：** workflow job 为 SUCCESS，但 Harness 验证为 **FAILED / NOT EXECUTED**。Docker internal network、Hermes↔Stub、Core↔Hermes/Stub、公网 egress-deny、API Run/SSE、消息 ID/排序、水位学习/跨 Session/纠正/过滤及 flags-off 场景均未执行；不得把绿色 Job 描述为 E2E 通过。没有证据表明 Hermes/Core 运行失败，因为容器创建逻辑没被调用。
+- 已补上 Harness 入口调用，但没有再次触发 Runner，按本轮一次运行上限和“首个阻断即停止”执行。Harness 修复尚未经运行时验证；要继续证明容器互通和记忆闭环，需新的明确授权及新的唯一手动 Runner。
+- 清理证据：workflow 定向 cleanup step 通过，移除了构建出的 Core 镜像 `d077-v0215-core:38862336592-1`（image `e727db4b…`）；Harness 未启动，因而没有创建 Hermes/Core/Stub 容器、internal network 或临时数据目录。GitHub-hosted Runner 在 Job 后销毁。没有触碰本机保留的 `/private/tmp/sb-issue7-venv`、`/private/tmp/secondbrain-issue7-base`，无 NAS/生产影响。
+- 工作更新到 PR [#8](https://github.com/zxwan829/SecondBrain/pull/8)；本记录与 `00-CURRENT.md` 同步修正 Phase 1-C 为 BLOCKED。代码/文档提交 SHA 见 PR 当前 head；未合并、未部署。
+
+> 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
+
 # 2026-10-16 — D077 Phase 1-C 有界 Hermes 启动诊断
 
 - 按 PR #8 最新审核评论 `6209375072`，在同一 PR 仅执行一次手动 GitHub Runner 诊断；没有 Secrets、付费模型、真实个人数据、NAS 或生产访问。固定 Hermes v0.21.5 image digest/config ID/revision 与前次核验一致；镜像拉取和 Core 依赖安装通过。

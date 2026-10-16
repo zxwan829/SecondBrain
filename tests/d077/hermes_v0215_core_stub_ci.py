@@ -847,3 +847,7 @@ def main():
         flags_off_scenario()
     else:
         controller_main()
+
+
+if __name__ == "__main__":
+    main()
