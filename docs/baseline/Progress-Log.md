@@ -8,9 +8,9 @@
 - 按 GitHub Issue #3 / D077 Phase 1-A，在独立临时 Clone 从当时 GitHub 最新 `main` 开始（基线 `7a308f846ecfa192a135d165f8b41791140a1f6e`）。正式工作目录的 `.git/FETCH_HEAD` 写入仍受限，因此未触碰原目录或未跟踪项 `typescript`。
 - 新增标准库优先、append-only JSONL Personal Memory Store，数据根由 `SB_PERSONAL_MEMORY_ROOT` 显式注入，必须预先存在、Core UID 所有且权限私有；`SB_PERSONAL_MEMORY_ENABLED` 默认 `false`。关闭时不创建数据根、不扫描会话、不启动任务。每个事件保留来源、类别、事实类型、时间、修订和状态；纠正追加新修订，撤销/失效保留历史；幂等键和源引用去重；并发写入使用文件锁与 `fsync`。日志异常或半写 fail-closed，不自动截断或重写历史。
 - 增加受 AppSessionAuth 保护的 Core API：创建、少量 active recall 候选、按 ID 查修订历史、纠正、撤销、失效。推断不进入 active recall；精确事实回传来源指针并标记 `source_required`，不声称已读取/核验原件。此切片不接 Hermes、聊天自动提炼、外部 Provider、RAG、Journal/Task、Knowledge Promote 或 Private。
-- 合成测试使用 `/private/tmp` 临时目录和独立 Python 3.12 venv，无生产挂载、NAS、模型或真实个人数据。`tests/test_personal_memory.py` 覆盖重启恢复、更新历史、撤销、精确来源、推断排除、幂等、重复来源、并发追加、损坏日志 fail-closed、符号链接拒绝及鉴权；`test_web_app_bff.py` 新增真实 Core app 工厂上的默认关闭/注入根 API 测试。初轮测试发现并修正两处测试夹具问题后，针对性测试 **18 passed**。兼容 FastAPI/Pydantic v1/v2；仍需跑完整 Core 回归和静态检查。
+- 合成测试使用 `/private/tmp` 临时目录和独立 Python 3.12 venv，无生产挂载、NAS、模型或真实个人数据。`tests/test_personal_memory.py` 覆盖重启恢复、更新历史、撤销、精确来源、推断排除、幂等、重复来源、并发追加、损坏日志 fail-closed、符号链接拒绝及鉴权；`test_web_app_bff.py` 新增真实 Core app 工厂上的默认关闭/注入根 API 测试。初轮测试发现并修正两处测试夹具问题后，针对性测试 **18 passed**。兼容 FastAPI/Pydantic v1/v2。
 - 验证收尾：Core 全套回归 **136 passed、2 subtests passed**；`compileall`、`git diff --check` 通过。仅有 Starlette `TestClient` 关于 `httpx` 的弃用提示，不影响结果。
-- **状态：** 本地开发与合成测试完成；待 Commit/Push/PR，未部署、未进行真实数据验证或用户验收。Phase 1-B 才处理聊天候选提炼与 pre-turn 召回；真实会话出站和部署另行批准。
+- **状态：** Commit `007f8ba` 已推送；PR [#4](https://github.com/zxwan829/SecondBrain/pull/4) 已打开且当前 GitHub 报告可合并。未部署、未进行真实数据验证或用户验收。Phase 1-B 才处理聊天候选提炼与 pre-turn 召回；真实会话出站和部署另行批准。
 
 # 2026-09-28
 

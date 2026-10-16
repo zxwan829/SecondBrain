@@ -95,7 +95,7 @@ source: GitHub SecondBrain Monorepo
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| **Phase 1-A（当前切片）** | **可纠正、可撤销、可溯源的 Personal Memory Core** | Core 代码与合成 API/E2E 测试通过；PR 审核中；不改变旧 V1 MUST，不表示自动学习或生产可用 | 已在独立临时 Clone 完成开发；提交/CI/审核状态见对应 PR |
+| **Phase 1-A（当前切片）** | **可纠正、可撤销、可溯源的 Personal Memory Core** | Core 代码与合成 API/E2E 测试通过；PR #4 已打开待审核；不改变旧 V1 MUST，不表示自动学习或生产可用 | 已在独立临时 Clone 完成开发；提交/CI/审核状态见 PR #4 |
 | **NEXT：Phase 1-B** | **受控提炼与 Chat 召回集成** | 先接入可审计、可关停的合成候选提炼和受控召回；精确事实保留来源回查；确认现有 Hermes 接口边界 | 尚未实现；真实会话数据出站、模型调用和 NAS 部署均需另行批准 |
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076-organizer-b34319a` healthy；HTTPS health/login/session、Chat capabilities、Inbox、Review 及受保护设置 API smoke 通过；匿名设置 API 401；Hermes 未重启 | 用户浏览器验收新版本设置页、Composer 和手机 Review；真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
