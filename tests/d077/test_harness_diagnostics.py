@@ -60,11 +60,40 @@ class HarnessDiagnosticTests(unittest.TestCase):
             "stage": "cross_session_recall",
             "exception_class": "HTTPStatusError",
             "http_status": 503,
+            "failure_code": None,
             "exit_code": 1,
         })
         self.assertNotIn("secret-value", encoded)
         self.assertNotIn("private.example", encoded)
         self.assertNotIn("raw prompt", encoded)
+
+    def test_cross_session_stub_request_is_selected_by_original_run_input(self):
+        requests = [
+            {"messages": [{"role": "user", "content": "earlier unrelated request"}]},
+            {"messages": [{"role": "user", "content": "How should you format my summaries and units?"},
+                          {"role": "system", "content": "<personal_memory_json>synthetic</personal_memory_json>"}]},
+        ]
+
+        selected = harness.model_requests_for_input(
+            requests, "How should you format my summaries and units?"
+        )
+
+        self.assertEqual(selected, [requests[1]])
+
+    def test_failure_record_exposes_only_allowlisted_cross_session_code(self):
+        error = harness.HarnessAssertionError("cross_session_instructions_not_observed_by_stub")
+        record = harness.failure_record("--enabled-scenario", "cross_session_recall", error)
+        self.assertEqual(record["failure_code"], "cross_session_instructions_not_observed_by_stub")
+        self.assertEqual(set(record), {
+            "mode", "stage", "exception_class", "http_status", "failure_code", "exit_code"
+        })
+        self.assertNotIn("secret", json.dumps(record))
+
+    def test_failure_record_discards_unrecognized_failure_code(self):
+        error = RuntimeError("secret prompt")
+        error.failure_code = "secret prompt"
+        record = harness.failure_record("--enabled-scenario", "cross_session_recall", error)
+        self.assertIsNone(record["failure_code"])
 
     def test_transport_failure_has_exception_class_without_http_status(self):
         error = harness.httpx.ConnectTimeout("sensitive url and prompt")

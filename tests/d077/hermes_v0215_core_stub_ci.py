@@ -56,6 +56,19 @@ SCENARIO_STAGE = "startup"
 DIAGNOSTIC_MODES = {"--network-preflight", "--hermes-network-preflight", "--enabled-scenario",
                     "--flags-off", "--egress-probe"}
 SAFE_STAGE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+FAILURE_CODES = {
+    "cross_session_run_failed",
+    "cross_session_instructions_not_observed_by_stub",
+    "input_was_rewritten_or_missing",
+}
+
+
+class HarnessAssertionError(RuntimeError):
+    def __init__(self, failure_code):
+        if failure_code not in FAILURE_CODES:
+            raise ValueError("unsupported_failure_code")
+        super().__init__(failure_code)
+        self.failure_code = failure_code
 
 
 def set_scenario_stage(value):
@@ -79,6 +92,8 @@ def failure_record(mode, stage_name, exc, *, exit_code=1):
         class_name = "UnknownException"
     return {"mode": safe_mode, "stage": safe_stage, "exception_class": class_name,
             "http_status": http_status_from_exception(exc) if exc is not None else None,
+            "failure_code": getattr(exc, "failure_code", None)
+            if getattr(exc, "failure_code", None) in FAILURE_CODES else None,
             "exit_code": exit_code}
 
 
@@ -437,6 +452,11 @@ def model_requests_since(index):
     return stub_state()["requests"][index:]
 
 
+def model_requests_for_input(requests, input_text):
+    """Associate captured Stub requests with a Run using its unchanged user input."""
+    return [request for request in requests if contains_text(request, input_text)]
+
+
 def stub_state():
     url = os.environ.get("D077_STUB_URL", "http://stub:19002") + "/__test/state"
     with urllib.request.urlopen(url, timeout=5) as response:
@@ -582,11 +602,14 @@ def enabled_scenario():
     run_b, status_b, latency_b, events_b = run_chat(client, session_b, related, "d077-v0215-recall-b")
     req_b = model_requests_since(before_calls)
     if status_b != "completed" or "run.completed" not in events_b or not req_b:
-        raise RuntimeError("cross_session_run_failed")
-    if not contains_text(req_b[-1], "personal_memory_json") or not contains_text(req_b[-1], "concise summaries"):
-        raise RuntimeError("cross_session_instructions_not_observed_by_stub")
-    if not contains_text(req_b[-1], related):
-        raise RuntimeError("input_was_rewritten_or_missing")
+        raise HarnessAssertionError("cross_session_run_failed")
+    target_requests = model_requests_for_input(req_b, related)
+    if len(target_requests) != 1:
+        raise HarnessAssertionError("input_was_rewritten_or_missing")
+    target_request = target_requests[0]
+    if not contains_text(target_request, "personal_memory_json") or not contains_text(
+            target_request, "concise summaries"):
+        raise HarnessAssertionError("cross_session_instructions_not_observed_by_stub")
 
     set_scenario_stage("correction_update")
     correction = "I used to prefer concise summaries, but now I prefer concise paragraphs."

@@ -2,6 +2,12 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — PR #8 cross_session_recall 离线诊断
+
+- 按审核评论 `6212575070` 仅检查跨会话阶段。已覆盖现有 Core `PersonalLearningPipeline.instructions_for()` 相关性筛选与 `/api/chat/sessions/{id}/runs` 对 Hermes `instructions` 的转发；相关性及新 Session 请求体由 `test_personal_learning.py` 回归覆盖。Harness 原先只取请求窗口的最后一条 Stub 请求；现改为按原始合成问题关联请求，再分别断言记忆上下文和输入文本，不降低业务标准。
+- 新增严格 allowlist 的 `failure_code`：`cross_session_run_failed`、`cross_session_instructions_not_observed_by_stub`、`input_was_rewritten_or_missing`。日志仍不输出异常消息、输入、记忆内容、URL 或凭据。本地离线 Harness 诊断测试 **14 passed**；Core 个人记忆与 BFF 相关测试 **29 passed**（1 项依赖弃用警告）。
+- 结论：静态/离线证据可排除已测试代码路径中的明显相关性和 instructions 转发错误；无法据此判定 Run 38880843587 当时具体失败分支或验证真实 Hermes 的上下文行为，仍 UNKNOWN。无 Runner、NAS、付费模型、部署或合并操作。等待 ChatGPT 审核，不自动重试。
+
 # 2026-10-16 — PR #8 单次 D077 E2E Runner：跨会话阶段受阻
 
 - 按授权评论 `6212465275`，确认 PR #8 OPEN 且 branch HEAD 为 `2d4e35de10b5c3eb6b97623cdb8a9c5c20c95857`，仅触发一次 `.github/workflows/d077-hermes-v0215-core-stub.yml`：[Run 38880843587](https://github.com/zxwan829/SecondBrain/actions/runs/38880843587)，checkout SHA 匹配。Ubuntu 24.04/Docker、固定 Hermes v0.21.5 linux/amd64 image ID `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6` / revision `749220ef0007f8d87bd1531f1c24b0fe93816385`、Core依赖安装及临时 Core 镜像构建通过。
