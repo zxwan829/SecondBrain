@@ -38,6 +38,13 @@
 - 定向测试 **12 passed**；Core 全套 **151 passed、2 subtests passed**。Linux workflow 保持手动/无 secrets，既有 `/private/tmp` 兼容性修复未变。
 - 更新提交与 PR #6 head 以 GitHub 当前状态为准；本轮未重跑 Linux workflow，未部署或合并。
 
+# 2026-10-16 — PR #6 final memory safety fixes
+
+- 纠错目标现在要求去除已知偏好表达前缀后的规范化文本完全等价，拒绝仅凭子串/词片重合改写记忆；多条相同目标仍 fail closed。
+- 新增 pending Run 的 `discard_run`；SSE `run.failed` / `run.cancelled` / `run.canceled` / `run.stopped`、状态 API 对应终态，以及成功返回的 Stop 操作都会清理对应状态。没有加入后台清理任务。
+- 新增单条错误子串命中、失败/停止后相同文本新 Run 成功学习回归。定向测试 **15 passed**；Core 全套 **154 passed、2 subtests passed**。Linux 手动 CI 尚待在本次最终代码提交上运行。
+- 未调用外部模型、访问真实数据或部署 NAS；Linux 临时目录兼容修复保持原样。
+
 # 2026-09-28
 
 - Hermes Docker 正式环境稳定，固定 IP 172.18.0.2。

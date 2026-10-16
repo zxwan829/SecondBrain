@@ -21,11 +21,12 @@ class FakeAuth:
 
 class FakeHermes:
     def __init__(self, messages=None, before_messages=None, terminal="run.completed",
-                 preflight_error=False):
+                 preflight_error=False, run_id="run-synthetic-1"):
         self.messages = messages or []
         self.before_messages = before_messages or []
         self.terminal = terminal
         self.preflight_error = preflight_error
+        self.run_id = run_id
         self.run_body = None
         self.message_reads = 0
 
@@ -35,7 +36,7 @@ class FakeHermes:
 
     async def start_run(self, body, idempotency_key):
         self.run_body = body
-        return {"run_id": "run-synthetic-1", "status": "started"}
+        return {"run_id": self.run_id, "status": "started"}
 
     async def stream_run(self, run_id):
         async def frames():
@@ -51,6 +52,9 @@ class FakeHermes:
 
     async def get_run(self, run_id):
         return {"run_id": run_id, "status": "completed"}
+
+    async def stop_run(self, run_id):
+        return {"run_id": run_id, "status": "stopped"}
 
 
 class PersonalLearningTests(unittest.TestCase):
@@ -249,6 +253,51 @@ class PersonalLearningTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["memory_id"], old["memory_id"])
         self.assertEqual(candidates[0]["operation"], "correct")
+
+    def test_single_substring_match_does_not_correct_unrelated_preference(self):
+        existing = self.store.create(content={"text": "喜欢短篇电影"}, category="preference",
+                                     fact_kind="user_stated", source_type="user_message", source_ref="s:m1")
+        pipeline = PersonalLearningPipeline(self.store)
+        text = "我以前偏好短篇，现在更喜欢长篇。"
+        self.assertEqual(pipeline.extractor.extract(text, self.store.active_view(limit=10)), [])
+        self.assertEqual(self.store.history(existing["memory_id"])[-1]["content"]["text"], "喜欢短篇电影")
+
+    def test_failed_run_is_discarded_before_identical_input_succeeds(self):
+        text = "I prefer short summaries."
+        pipeline = PersonalLearningPipeline(self.store)
+        failed_hermes = FakeHermes(terminal="run.failed", run_id="run-failed")
+        failed_client, _ = self._run_router(text, failed_hermes, pipeline)
+        failed_client.get("/api/chat/runs/run-failed/events")
+        self.assertNotIn("run-failed", pipeline._pending)
+        failed_client.close()
+
+        success_hermes = FakeHermes(run_id="run-after-failure", messages=[{
+            "id": "fresh-after-failure", "session_id": "synthetic-session", "role": "user", "text": text,
+        }])
+        success_client, _ = self._run_router(text, success_hermes, pipeline)
+        success_client.get("/api/chat/runs/run-after-failure/events")
+        self.assertEqual(self.store.active_view()[0]["source_ref"],
+                         "synthetic-session:fresh-after-failure")
+        success_client.close()
+
+    def test_successful_stop_discards_pending_before_identical_input_succeeds(self):
+        text = "I prefer short summaries."
+        pipeline = PersonalLearningPipeline(self.store)
+        stopped_hermes = FakeHermes(run_id="run-stopped")
+        stopped_client, _ = self._run_router(text, stopped_hermes, pipeline)
+        response = stopped_client.post("/api/chat/runs/run-stopped/stop")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("run-stopped", pipeline._pending)
+        stopped_client.close()
+
+        success_hermes = FakeHermes(run_id="run-after-stop", messages=[{
+            "id": "fresh-after-stop", "session_id": "synthetic-session", "role": "user", "text": text,
+        }])
+        success_client, _ = self._run_router(text, success_hermes, pipeline)
+        success_client.get("/api/chat/runs/run-after-stop/events")
+        self.assertEqual(self.store.active_view()[0]["source_ref"],
+                         "synthetic-session:fresh-after-stop")
+        success_client.close()
 
     def test_hermes_api_adapter_forwards_supported_instructions_without_rewriting_input(self):
         captured = {}

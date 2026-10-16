@@ -47,6 +47,15 @@ def _clean_candidate(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip(" \t,，;；:：。.!！?？"))
 
 
+def _normalize_preference_claim(value: str) -> str:
+    normalized = re.sub(r"\s+", "", value.casefold()).strip("，,。.!！?？;；:")
+    prefix = re.compile(
+        r"^(?:(?:我)?(?:更)?(?:喜欢|偏好|习惯|倾向于)|"
+        r"i(?:usually)?(?:prefer|like|tendto))+"
+    )
+    return prefix.sub("", normalized)
+
+
 def _tokens(value: str) -> set[str]:
     result: set[str] = set()
     for piece in _WORD.findall(value.casefold()):
@@ -79,13 +88,13 @@ class ExplicitPreferenceExtractor:
             old, new = (_clean_candidate(value) for value in match.groups())
             if not new or _SENSITIVE.search(new) or _INSTRUCTION_LIKE.search(new):
                 return []
-            old_claim = re.sub(r"\s+", "", old.casefold())
+            old_claim = _normalize_preference_claim(old)
             matches = []
             for row in active:
-                memory_text = re.sub(r"\s+", "", row.get("content", {}).get("text", "").casefold())
-                # Require the complete old claim to appear in the stored text;
-                # shared words or Chinese bigrams are not enough to mutate history.
-                if old_claim and old_claim in memory_text:
+                memory_claim = _normalize_preference_claim(row.get("content", {}).get("text", ""))
+                # Require full normalized equivalence after known statement
+                # prefixes; substring or token overlap is not enough to mutate.
+                if old_claim and old_claim == memory_claim:
                     matches.append(row)
             # Corrections are fail-closed: only a single sufficiently specific
             # prior preference can be revised. Ambiguous claims are deferred.
@@ -198,6 +207,9 @@ class PersonalLearningPipeline:
             "ambiguous": concurrent_same_input,
         }
 
+    def discard_run(self, run_id: str) -> None:
+        self._pending.pop(run_id, None)
+
     @staticmethod
     def is_success_event(frame: bytes | str) -> bool:
         text = frame.decode("utf-8", errors="replace") if isinstance(frame, bytes) else frame
@@ -209,6 +221,20 @@ class PersonalLearningPipeline:
         except (ValueError, TypeError):
             return False
         return isinstance(event, dict) and event.get("event") == "run.completed"
+
+    @staticmethod
+    def is_discard_event(frame: bytes | str) -> bool:
+        text = frame.decode("utf-8", errors="replace") if isinstance(frame, bytes) else frame
+        payload = text.strip()
+        if payload.startswith("data:"):
+            payload = payload[5:].strip()
+        try:
+            event = json.loads(payload)
+        except (ValueError, TypeError):
+            return False
+        return isinstance(event, dict) and event.get("event") in {
+            "run.failed", "run.cancelled", "run.canceled", "run.stopped",
+        }
 
     async def complete_run(self, run_id: str, hermes) -> int:
         pending = self._pending.get(run_id)

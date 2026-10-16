@@ -215,6 +215,8 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
                     except Exception:
                         # Learning is best-effort and must not break a completed Chat run.
                         pass
+                elif personal_learning and personal_learning.is_discard_event(chunk):
+                    personal_learning.discard_run(hermes._safe_id(run_id))
                 yield chunk
 
         return StreamingResponse(events(), media_type="text/event-stream", headers={
@@ -232,11 +234,17 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
             except Exception:
                 # Learning failure never changes the upstream run status response.
                 pass
+        elif personal_learning and result.get("status") in {"failed", "cancelled", "canceled", "stopped"}:
+            personal_learning.discard_run(safe_run_id)
         return result
 
     @router.post("/chat/runs/{run_id}/stop")
     async def stop_run(request: Request, run_id: str):
         auth.require_action(request, "chat.stop")
-        return await hermes.stop_run(run_id)
+        safe_run_id = hermes._safe_id(run_id)
+        result = await hermes.stop_run(safe_run_id)
+        if personal_learning:
+            personal_learning.discard_run(safe_run_id)
+        return result
 
     return router
