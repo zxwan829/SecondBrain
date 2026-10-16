@@ -16,6 +16,14 @@ import hermes_v0215_core_stub_ci as harness  # noqa: E402
 
 
 class HarnessDiagnosticTests(unittest.TestCase):
+    def test_hermes_message_orders_keep_chronological_lists_and_page_boundaries(self):
+        oldest = [{"id": message_id} for message_id in (1, 2, 3)]
+        latest = [{"id": message_id} for message_id in (1, 2, 3)]
+        oldest_page = [{"id": 1}]
+        latest_page = [{"id": 3}]
+
+        harness.assert_message_order_contract(latest, oldest, latest_page, oldest_page)
+
     def test_default_core_origin_is_sent_on_login_session_and_run_posts(self):
         origins = []
 

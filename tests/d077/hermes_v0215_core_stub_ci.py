@@ -506,6 +506,17 @@ def direct_messages(session_id, *, order, limit=100, offset=0):
     return rows
 
 
+def assert_message_order_contract(latest, oldest, latest_page, oldest_page):
+    latest_ids = [str(row.get("id", "")) for row in latest]
+    oldest_ids = [str(row.get("id", "")) for row in oldest]
+    if (not latest_ids or any(not message_id for message_id in latest_ids + oldest_ids)
+            or latest_ids != oldest_ids or len(set(latest_ids)) != len(latest_ids)):
+        raise RuntimeError("message_order_or_stable_id_contract_failed")
+    if (len(latest_page) != 1 or str(latest_page[0].get("id", "")) != latest_ids[-1]
+            or len(oldest_page) != 1 or str(oldest_page[0].get("id", "")) != oldest_ids[0]):
+        raise RuntimeError("message_pagination_contract_failed")
+
+
 def enabled_scenario():
     started = time.monotonic()
     set_scenario_stage("login")
@@ -545,13 +556,9 @@ def enabled_scenario():
     set_scenario_stage("message_order_pagination")
     latest = direct_messages(session_a, order="latest")
     oldest = direct_messages(session_a, order="oldest")
-    latest_ids = [str(row.get("id", "")) for row in latest]
-    oldest_ids = [str(row.get("id", "")) for row in oldest]
-    if not latest_ids or latest_ids != list(reversed(oldest_ids)) or len(set(latest_ids)) != len(latest_ids):
-        raise RuntimeError("message_order_or_stable_id_contract_failed")
-    first_page = direct_messages(session_a, order="latest", limit=1, offset=0)
-    if not first_page or str(first_page[0].get("id", "")) != latest_ids[0]:
-        raise RuntimeError("message_pagination_contract_failed")
+    latest_page = direct_messages(session_a, order="latest", limit=1, offset=0)
+    oldest_page = direct_messages(session_a, order="oldest", limit=1, offset=0)
+    assert_message_order_contract(latest, oldest, latest_page, oldest_page)
 
     # Same text creates a new persistent user message but must not duplicate memory.
     set_scenario_stage("duplicate_text_dedup")

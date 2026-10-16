@@ -2,6 +2,12 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — PR #8 修正 Hermes v0.21.5 消息顺序/分页测试契约
+
+- 按审核评论 `6212150748` 固定版 Hermes 源码契约修正 Harness：消息 `latest` 和 `oldest` 查询都按 chronological 顺序返回；单条最新分页对应完整列表末尾，单条最旧分页对应列表开头。新增一个离线三消息回归同时覆盖完整列表及两种单条分页。
+- 仅改 `tests/d077/hermes_v0215_core_stub_ci.py` 的两项排序/分页断言与其离线测试，并同步当前 Phase 1-C 状态：Run 38877836363 已验证初始 Run/SSE、合成记忆候选和来源引用；本次测试契约修正未重新触发 Runner。跨会话、纠错和 flags-off 仍 UNKNOWN，Phase 1-C 为 PARTIAL VERIFIED / overall NOT ACCEPTED。
+- 本地验证：D077 Harness 诊断测试与 NAS Harness 单测 **23 passed**；Python 编译、`git diff --check` 通过。无 Runner、NAS、部署或付费模型调用。Commit/Push SHA 以 PR #8 当前 head 为准。
+
 # 2026-10-16 — PR #8 修复合成 Harness 缺少同源 Origin
 
 - 按 ChatGPT 评论 `6211898290` 的最小范围，仅修复 Hermes/Core Runner Harness 的 HTTP 客户端默认请求头，不改 Core 认证规则或测试框架。两个场景共用 `core_client()`，默认对登录、创建 Session、启动 Run 等请求发送 `Origin: http://127.0.0.1:8000`。
