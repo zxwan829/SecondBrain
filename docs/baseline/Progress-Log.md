@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+## 2026-10-16 — Issue #14 工具权限核验与 D078 业务决策（部分加固已部署，方案实施进行中）
+
+- 按 [Issue #14 报告](https://github.com/zxwan829/SecondBrain/issues/14#issuecomment-6216831918)，Hermes v0.22.2 API Server 先前启用 `file,skills,terminal,vision`，且 terminal 为 local/unsandboxed；Codex 将 API toolsets 收窄到 `file,skills,vision` 并仅重启 Hermes。配置解析器确认 terminal 已移出 API Run；Hermes API health 200、Dashboard 302、Core healthy，D077 Memory/Learning flags 未变。该项为**已部署的临时保护**，并非已完成受监督执行方案；历史配置备份与哈希见 Issue #14。
+- 同轮核验发现 API `file` 尚缺通用读取授权根限制：worker 可遍历 Session 目录，合成 Session 路径未被默认 read denylist 拒绝；凭据字段输出脱敏并不等于访问拒绝。本轮没有读取真实 Session 或 Secret，没有模型运行。真实模型浏览器体验仍等待安全边界确认。
+- [Issue #14 源码结论](https://github.com/zxwan829/SecondBrain/issues/14#issuecomment-6217044891)：Hermes 原生 Skills `skills.write_approval` 提供暂存并由 CLI 审核的门槛；普通 file 没有通用逐次读取审批，Run approval API 不能自动变成 file/terminal gate；Core 尚未连接浏览器审批桥。Skills 开关及强制不可绕过的验证尚未部署。
+- **用户最新批准 D078 原则**（[Issue #14 决策记录](https://github.com/zxwan829/SecondBrain/issues/14#issuecomment-6217209671)）：保留 Hermes 原生自主能力，危险 terminal 改为按需申请/批准，敏感 Session/config/file 读取强制受控，重要 Skills 写入审核；普通低风险知识读取/Capture 自动执行，Core JSONL 唯一个人记忆 SoT。先前“永久关闭 file/terminal”建议已被覆盖。Codex 正在研究最小可实施技术方案，**不得提前写成已实施/测试/部署**。
+- 文档此次由 ChatGPT 独立补齐状态和正式决策，没有修改 NAS、Compose、代码、运行工具配置、模型凭据或真实数据；PR #13 仍独立待审，文档更新基于其最新 `788b61a` 快照另建分支。
+
+
 # 2026-10-16 — D077 Issue #12 Hermes v0.22.2 单次部署尝试与回滚
 
 > **历史记录，已被后续成功部署取代。** 本段只保留首次启动观察不足后回滚的事实；后续部署、运行和合成闭环证据见下方 resumed deployment 记录及 Issue #14 更新。
