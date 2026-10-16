@@ -193,7 +193,7 @@ Universal Capture v0/0.1.2 已完成三模型 Raw/Review 双文件验收；现�
 
 > Status: the v1.0 freeze and its attachment-DEFERRED list are historical. Canonical scope is Universal Capture Business Specification v1.1; D049-UC-SCOPE moved URL/Web, PDF, Image/Screenshot, and Audio/Voice to V1 MUST.
 
-The canonical `Universal-Capture-Business-Spec.md` is the Source of Truth for Universal Capture V1 business behavior. V1 MUST, SHOULD, and DEFERRED scope is frozen: text-first Raw/Review capture, collision-safe retry, verified success, explicit partial failure, and Human Approval before Promote. Web/PDF/Office/image/OCR/audio/video/generic attachments, semantic deduplication, QMD/RAG/vector, mandatory association, complex tagging, and transactional rollback remain deferred. Production Skill v0.1.2 and Runtime are unchanged; any alignment requires a separate minimal review and approval.
+The canonical `business-specs/Universal-Capture-Business-Spec.md` is the Source of Truth for Universal Capture V1 business behavior. V1 MUST, SHOULD, and DEFERRED scope is frozen: text-first Raw/Review capture, collision-safe retry, verified success, explicit partial failure, and Human Approval before Promote. Web/PDF/Office/image/OCR/audio/video/generic attachments, semantic deduplication, QMD/RAG/vector, mandatory association, complex tagging, and transactional rollback remain deferred. Production Skill v0.1.2 and Runtime are unchanged; any alignment requires a separate minimal review and approval.
 
 ## D047 — Web App / Personal OS V1 Business Specification (`D047-WEBAPP-SPEC`)
 
@@ -202,7 +202,7 @@ The canonical `Universal-Capture-Business-Spec.md` is the Source of Truth for Un
 - Navigation and page modules must be extensible; Home and Calendar are aggregation layers.
 - Books, People, and Personal Events are reserved future modules.
 - SecondBrain remains SoT and Hermes remains Runtime; no second formal knowledge database or duplicate Agent Runtime.
-- Canonical specification: `SecondBrain-Web-App-V1-Business-Spec.md` v1.0.
+- Canonical specification: `business-specs/SecondBrain-Web-App-V1-Business-Spec.md` v1.0.
 - Next step: Web App Phase 0 native capability + security audit.
 
 ## D048 — SecondBrain Web App Phase 0 Architecture (`D048-WEBAPP-PHASE0`)
@@ -339,7 +339,7 @@ Hermes generic arbitrary-path filesystem API is not an approved SecondBrain Web 
 
 **架构决策：** 第二大脑产品前端改由独立 React/TypeScript/Vite Web App（含自有 Chat UI）掌控，复用已验收 FE-4 视觉；Hermes 仅负责 Agent/Chat/Session/Skill 等运行能力。采用同一 Compose 的两个核心容器：SecondBrain App（前端托管 + Core 业务/API/BFF + 自有登录/轻量审批）与 Hermes（内部运行服务）。浏览器只访问 App 单一 Origin。原 D048-WEBAPP-PHASE0、D054、D066 中的“长期依附 Hermes Dashboard 宿主”选择由此替代；已部署插件仍是过渡生产事实。
 
-**功能零缩减：** `SecondBrain-Web-App-V1-Business-Spec.md` 的 V1 MUST/SHOULD/DEFERRED 及 `Universal-Capture-Business-Spec.md` v1.1（含微信与 Web 输入、文本/URL/PDF/图像/音频）全部不变；Journal、Knowledge Retrieval、Agent/Skills、Obsidian 同步与人工 Promote 规则继续有效。架构迁移必须复测所有已验收功能，不将“界面独立”误当成缩减 Chat/Session/工具行为的理由。
+**功能零缩减：** `business-specs/SecondBrain-Web-App-V1-Business-Spec.md` 的 V1 MUST/SHOULD/DEFERRED 及 `business-specs/Universal-Capture-Business-Spec.md` v1.1（含微信与 Web 输入、文本/URL/PDF/图像/音频）全部不变；Journal、Knowledge Retrieval、Agent/Skills、Obsidian 同步与人工 Promote 规则继续有效。架构迁移必须复测所有已验收功能，不将“界面独立”误当成缩减 Chat/Session/工具行为的理由。
 
 **访问和安全：** 标准客户只交付 LAN HTTP IP+端口，客户公网/Lucky 等单独收费部署，不内置 TLS/证书/反代；本人 V1 保留 LAN/Home-WG `192.168.3.27:9119`，本人 V2 复用 DSM `https://zxwan520.com:63012` 转发到同一 App HTTP 入口。**V1 即需完成 LAN HTTP 与 DSM LAN-only HTTPS 全业务兼容回归**（同源 API、流式 Chat、Cookie/Origin/可信代理头），V2 不应重构 App/容器拓扑；公网可达性与安全开放仍独立验收。审批体验为 App 一次登录、查看后点击批准/暂缓，不要求第二密码或生物识别；Core 保留会话/来源/版本哈希/幂等/审计校验，Hermes 无审批凭据及 Knowledge 写权，Private 隔离。此机制不宣称能数学证明真人点击。
 
@@ -389,8 +389,15 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 
 **背景/用户明确确认：** 用户的 SecondBrain 不是需要用户说“去知识库检索”才记得历史的文件搜索 AI，而是与用户共同成长、形成长期个人认知、能够自然联想已有记忆及知识、主动提出有依据的思考/规划建议的个人 AI 伙伴。用户明确批准：可以从获准互动中**默认自主学习低风险偏好、经验、习惯**，无须逐条人工审核；正式 Knowledge 入库、重要业务规则/高风险动作仍需批准；允许必要返工实现产品目标。
 
+**不可退让的产品体验原则（原产品方向独有内容归并）：**
+- 不要求用户发出“搜索知识库”指令；日常交谈自动关联相关长期记忆与可靠知识，精确事实从原始资料核实。
+- 获准互动持续学习稳定偏好、习惯、目标、重要经历和更正原因；必须区分用户明示、可信重复经验和模型推断，提供来源、历史、撤销和过期控制，不把一次情绪/随口假设直接当永久用户特征。
+- 低风险个人记忆默认可自动更新，但不得自动 Promote 正式 Knowledge 或覆盖 Journal 原文；重大 Skill、权限、生产和外部动作保留用户审批。
+- 主动规划必须有依据、可节流、可关闭，不把建议宣称为已经执行；功能优先，不为技术概念引入第二 Runtime、图数据库或新平台。
+- 原有自然场景保持：碎碎念/日记、待办和提醒、文本/链接/图片/PDF/音频收录、自然聊天、与项目事件相关的建议；用户明确意图触发专用业务 API。非目标包括把所有文件训练进模型参数、用记忆替代证据检索、未经授权自动执行现实动作。
+
 **正式产品决定：**
-1. `Personal-Intelligence-Product-Spec.md` 为新的**最高产品目标、体验契约及演进路线**；现有 V1 业务规格 MUST 不取消，但“采集→Review→Promote→检索 + Web 页面齐备”已不足以单独宣称整个 SecondBrain 目标达成。优先新增可验收的 Companion MVP：自动个人记忆学习、无检索提示的主动关联、跨会话纠正/演进、自然语言 Journal/Task、文件整理与来源核验，逐步提供主动规划建议。
+1. D077 在本 `Decision-Log.md` 记录**最高产品目标及已批准取舍**，`Architecture.md` 管理稳定设计，`00-CURRENT.md` 管理体验验收与路线；现有 V1 业务规格 MUST 不取消，但“采集→Review→Promote→检索 + Web 页面齐备”已不足以单独宣称整个 SecondBrain 目标达成。优先新增可验收的 Companion MVP：自动个人记忆学习、无检索提示的主动关联、跨会话纠正/演进、自然语言 Journal/Task、文件整理与来源核验，逐步提供主动规划建议。
 2. **双闭环：** 个人学习闭环允许在收窄权限下自动形成、更新、纠正、失效个人记忆；正式知识闭环依旧 Raw → Review → 用户明确批准 → Core Promote，不允许 Agent 直接改写正式 Knowledge。保存原件、来源与审计。
 3. **对 D076 的补充/局部替代：** “普通 Chat 不自动 Capture/入正式 Knowledge”持续有效；但它**不阻止**基于获准聊天的受控个人记忆自动学习。Organizer 现有模型、预算、开关与“输出 Review 草稿”职责继续保留，不能把它误认作已实现个人学习；两类任务如何共享游标/调度由实验后决定。
 4. **保留 D064：** “记一下/写日记/建待办”这样的明确自然语言意图可走专用、可验证业务写入；Journal 新增/日期追加无须 Knowledge 人工审批，禁止无授权删除覆盖。此条不准许把普通闲聊全文自动存为 Journal。
@@ -401,10 +408,10 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 
 **对当前阶段的改动：** 明确同意为上述目标返工；暂停无关 UI/模块扩张，以隔离读核验和合成样本测试为下一步最高优先级。测试普通对话不提示搜索、跨会话继承、用户纠正、冲突与精确数值回源、低风险自动学习，记录准确性/误召回、时延、模型费用、安全界限；先出路线对比和最小返工任务，然后经单独授权代码施工与生产变更。原 V1 MUST 与生产缺口继续完整列于 `00-CURRENT.md`。
 
-**状态：** 决策/文档层已批准，**不代表**已测试、已编码、已升级、已部署或已验收。2026-10-16 本次仅更新 GitHub 正式文档，未授权修改 NAS、Hermes、密钥、生产模型/Scheduler、正式 Knowledge 或真实用户数据出站。下次从 `Personal-Intelligence-Product-Spec.md` Phase 0 与 `00-CURRENT.md` 新增 NEXT 执行。
+**状态：** 决策/文档层已批准，**不代表**已测试、已编码、已升级、已部署或已验收。2026-10-16 本次仅更新 GitHub 正式文档，未授权修改 NAS、Hermes、密钥、生产模型/Scheduler、正式 Knowledge 或真实用户数据出站。实际下一步只以 `00-CURRENT.md` 的 NEXT 为准；原 Phase 0 只作为历史阶段验证方案。
 
 
-## D078 — 2026-10-16 Hermes 原生能力保留与按需监督执行（APPROVED PRODUCT DIRECTION / IMPLEMENTATION PENDING）
+## D078 — 2026-10-16 Hermes 原生能力保留与按需监督执行（APPROVED DECISION）
 
 **背景与替代关系：** D077 已完成 Hermes v0.22.2 + Core JSONL 在 NAS 的合成记忆闭环，但真实模型与浏览器体验未验收（Issue [#12](https://github.com/zxwan829/SecondBrain/issues/12)）。Issue [#14](https://github.com/zxwan829/SecondBrain/issues/14) 发现普通 API Chat 原有 `terminal.backend=local`、且 `file` 可访问其他 Hermes Session 路径。初步已从 API toolsets 去掉 terminal，保留 file/skills/vision。随后用户明确推翻“简单长期禁用 file/terminal”方案，要求 **「受控或者受监督即可，不要限制」**、**「一起，改按需申请，不可以直接限制 hermes 的原生能力，要保持可控」**。此条是对 D077 的**权限与自主学习产品原则补充**，不取消 Private/Promote/Knowledge 既有强制边界。
 
@@ -416,6 +423,6 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 3. **Terminal：** 最终目标是按需申请，用户看到具体命令/用途/风险后明确批准才执行；普通 API terminal 在真正技术审批门禁完成前**继续暂时关闭**，不能先打开后依赖模型“自觉申请”。
 4. **Skills：** 允许模型发现、提出、生成可复用 Skills；重要 create/edit/patch/delete 先暂存并审核。优先复用 Hermes `skills.write_approval`；如果 `file` 等路径可绕过 Skills 审批，必须补足文件系统或动作级约束。暂可 CLI 审核；网页端审批是后续可用性目标，不得宣称现有浏览器支持。
 
-**已验证的能力限制（不是完成状态）：** Hermes v0.22.2 无通用文件读取按路径逐次审批、无所有普通文件动作的通用审批；原生 Run approval endpoint 只处理已有工具 gate，不能自动使 file/terminal 变为受控；Core 尚无完整 approval.request SSE→BFF→Web UI→批准/拒绝链。上述来自 Issue #14 源码/配置诊断。部署中的 toolsets 为 `file, skills, vision`（普通 terminal 已移除），Skills 写批准还未报告生产启用。**D078 当前为方案设计/执行待验收，不是权限整改完成。**
+**已验证的能力限制（不是完成状态）：** Hermes v0.22.2 无通用文件读取按路径逐次审批、无所有普通文件动作的通用审批；原生 Run approval endpoint 只处理已有工具 gate，不能自动使 file/terminal 变为受控；Core 尚无完整 approval.request SSE→BFF→Web UI→批准/拒绝链。上述来自 Issue #14 源码/配置诊断。部署中的 toolsets 为 `file, skills, vision`（普通 terminal 已移除），Skills 写批准还未报告生产启用。**该段为 2026-10-16 的历史能力评估，不表示 2026-10-17 的现网状态；部署及验收进度仅见 `00-CURRENT.md` / `Environment-Baseline.md`。**
 
 **实施取舍：** Upstream First，先复用原生已有审批和固定 v0.22.2 的最小工具/路径隔离，不开发大型通用审批框架或第二 Runtime；但不能用“简单”掩盖权限绕过。分离只读设计、代码测试、NAS 配置部署、真实权限验证、浏览器体验五种状态。变更权限、镜像、生产数据与使用外部付费模型各按授权边界执行，且不影响其他 NAS 服务或家庭网络。正式历史和下一步由 `Progress-Log.md` / `00-CURRENT.md` 单独维护。

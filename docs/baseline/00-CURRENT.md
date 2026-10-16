@@ -1,12 +1,12 @@
 ---
 created: 2026-09-30
-updated: 2026-10-16
+updated: 2026-10-17
 status: current
 source: GitHub SecondBrain Monorepo
 ---
 # SecondBrain — 当前交付基线（V1 + Personal Intelligence）
 
-> 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Personal-Intelligence-Product-Spec.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
+> 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
 ## 1. V1 完成定义与当前状态
 
@@ -14,9 +14,42 @@ source: GitHub SecondBrain Monorepo
 
 **新的 Companion MVP 门槛（D077，已批准、仍未整体实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。Personal Memory / Learning Core 已部署并通过本地 Stub 合成闭环，但真实模型行为与用户体验尚待验收。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
 
-**阶段安排：** 先做 Companion 能力审计和隔离实证，再按验证结果最小返工，随后继续完成旧 V1 所有 MUST 与多端业务收口；不要因新增目标将既有 MUST 静默延期为永久不做。
+**阶段安排：** 当前暂停开发；恢复后先按下方 NEXT 验证真实浏览器与记忆体验，再根据效果最小返工并完成原 V1 MUST。已完成的 D077/D078 源码审计和隔离验证不重复开展。
 
 **总体状态：NOT DONE。** D077 Core 与 Hermes v0.22.2 已部署。按 Issue #14 授权，PR #18 已 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`；Hermes 使用固定官方 amd64 digest `a11574…c1bf05` 加一文件 fail-closed 补丁的本地镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`（Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`）。API `/health` 返回 200，Dashboard 9119 可达并按预期重定向登录；插件 Doctor 确认 D078 guard 注册 1 个 hook；API toolset 仍为 `file,skills,vision`，Terminal 未开放，Skills 写入审核 true、审批模式 manual。隔离无模型 Run 验证敏感 Session 文件读取被拒、业务文件与 Skills 只读调用可执行、dispatcher 异常 fail-closed；D077 Memory 目录仍为 `1026:100 / 0700` 且 0 个文件。Private 未挂载、Knowledge 主目录只读（已有 Capture 专用 inbox RW 挂载不变）、Promote 关闭。生产没有创建 Session/Run 或写入个人记忆；真实模型浏览器体验尚未验收。镜像构建与运行证据、回滚方式和本轮历史资产只读审计见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 是旧合成请求估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。
+
+## 当前阶段决议：暂停开发，集中收口文档（2026-10-17）
+
+**状态：DEVELOPMENT PAUSED / DOCUMENTATION CLOSEOUT。** 用户要求此阶段暂停开发；不得因已合并 PR #18、Hermes 新镜像健康或有限合成检查，就自动开展后续业务开发、NAS 变更、付费模型或真实个人数据测试。当前运行快照及 Hermes fail-closed image ID 以 `Environment-Baseline.md` 最新 2026-10-17 条目为准；PR #19 记录部署事实及资产审计，当前文档收口 PR 与其堆叠，尚非 main。D077 Core JSONL 数据没有新写入；Terminal 仍 OFF，Private 不挂载，Knowledge RO（Capture 专用 Inbox RW 子挂载为既有例外），Promote OFF。
+
+**NEXT — 恢复工作时必须按顺序执行（不是当前立即施工授权）：**
+
+1. **文档合并与基线确认**：先审查合并 PR #19 的部署/资产审计记录，再审查合并本次文档收口 PR；确认 `main` 的 CURRENT、AGENTS、Agent-Rules、Environment、Progress 及产品规格引用一致。不得以文档审查为由操作 NAS。
+2. **恢复前只读预检**：用户明确恢复后，读取 NAS 的 Hermes 镜像/digest、API `file,skills,vision`、插件 1 hook、Skills 审核、App/Core/两端 health、Private/Knowledge/Capture/Promote 边界及记忆目录状态，与最新 Environment 快照比对；只读核验不等于真实 Run 验收。
+3. **小范围合成浏览器验收（另行授权）**：使用无敏感虚构偏好，在 SecondBrain Web App 验证登录、Session/Run/SSE、首轮记忆保存、跨 Session 自然召回、更正后旧值失效及无关话题不误注入；记录端到端证据并定向清理测试资产。实际模型须另行确认 provider、每次调用费用上限与测试内容；若可用本地确定性 Mock 则先进行零外发链路核验，不把 Mock 当作真实模型效果。
+4. **有限真实体验（另行授权）**：前项通过后由用户决定允许发送的数据范围、模型与费用上限，亲自做少量浏览器 Chat/Memory 体验，报告质量、延迟、错误与最终验收状态。**未经用户确认不接触真实私人资料。**
+5. **后续业务排期**：再依据原 V1 MUST 与 Companion MVP 的缺口决定 Journal/Task、微信输入、Promote、Projects/Brief/Activity、多端同步等优先级；API Terminal 的单次审批真实链路仍需单独评估与启用授权，绝不因审批 UI 存在而自动开启。
+6. **历史资产清理（非当前任务）**：10 份未引用 App build source（约 56.4 MiB）仅为候选；正在被 Compose 引用的 D076 构建源、D078 回滚点不可删除；三个 D077 大归档约 4.91 GiB 尚未内容比对。后续需先精确核验引用/校验和并另行获准才可删。禁止批量 Docker prune。
+
+**当前停止条件：** 只完成文档修订、交叉核对与 PR 审阅，不触发新增代码、生产变更、生产 Run、真实模型、凭据/个人数据访问或 NAS 删除。
+
+## D077 产品体验验收契约（批准的目标；真实效果尚未验收）
+
+下列规则从原独立产品方向归并到 CURRENT，作为 Companion MVP 与 V1 业务收口的可重复验收项，不改变当前已部署/合成测试/用户验收之间的状态区别：
+
+| 能力 | 验收动作与通过条件 |
+|---|---|
+| 无检索提示的联想 | 用户只自然谈论相关问题，Agent 能使用确有来源的历史偏好/项目/知识，不要求用户明确说“搜索”；数字、日期、版本须回源 |
+| 跨会话的个人记忆 | 新 Session 在相关时主动使用之前明示的当前偏好；不相关时不强行提起，模型推断不冒充用户事实 |
+| 纠正与失效 | 用户修正或撤销记忆后，后续 Session 不再把旧值当现行，历史修订与原始来源可核验；重复学习不得无限增加条目 |
+| 日记与碎碎念 | 明确“记一下/写日记”时按日期保留原文、时间及来源；普通闲聊不误生成 Journal |
+| 待办与提醒 | 自然语言创建/查看/修改/完成真实待办，存储状态一致；通知是否实际送达单独验证 |
+| 多格式 Capture | Raw 原件不覆盖，Review 可核验并可解释关联；未经明确批准不 Promote，外部文件中的推断不能当用户事实 |
+| 自主 Skill 学习 | 重复反馈可产生可复用经验；重要 Skill 修改经审核，不允许通用 file 绕过 |
+| 主动建议与规划 | 依据真实目标/项目/时间线提出来源可查的建议，支持关闭/节流，不能假称已经执行 |
+| 安全与经济性 | Private 无访问、Knowledge 无直接写入、可恢复、可审计；调用延迟与预算有明确记录，估算不冒充结算 |
+
+**产品路线（目标优先级，不是立即施工授权）：** 先在已部署 D077/D078 基础上完成获准的合成浏览器 Chat/Run/SSE 与跨会话纠错，再经模型/费用/数据范围确认进行有限真实体验；之后补齐自然语言 Journal/Task、微信多格式 Capture、Promote、Projects/Brief/Activity、跨端使用和主动建议。逻辑记忆 L1–L4 的技术细节遵循 `Architecture.md`，不预建四套物理存储；是否引入索引或其他技术只依据效果与成本证据。**当前暂停状态和实际恢复次序仍以上方 NEXT 为准。**
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 
@@ -61,7 +94,7 @@ source: GitHub SecondBrain Monorepo
 | Agent Health / 状态 | UNAVAILABLE | 接入可信可解释的 Agent 状态；位置可在 Home 或次级系统区 |
 | 模块注册 / Home 与 Calendar 聚合 | UNKNOWN / 未完成验收 | 导航模块注册、页面契约、Home widget 扩展；模拟未来模块无需重构 Shell |
 | Responsive / Desktop/iPad/Mobile | PROD-PARTIAL：Mac/PC 和 iPhone 视觉接受 | iPad 基本可用、iPhone Safari 功能回归、跨设备真实操作 |
-| Private exclusion / Human Approval | PARTIAL：Private 隔离；Knowledge 旧 RW 风险 | 运行时写入边界、API 拒绝、审核与失败回滚验收 |
+| Private exclusion / Human Approval | PARTIAL：Private 无挂载、Knowledge 主挂载 RO 已验证；仍需真实业务权限及审批验收 | 运行时写入边界、API 拒绝、审核与失败回滚验收 |
 
 **Web App V1 SHOULD，单独跟踪、不自动阻断 MUST DONE：** Quick Capture、Journal quick entry、badges、notifications、session continuation、keyboard shortcuts、contextual actions、Agent 状态动画。具体完成情况需在对应业务施工时核实。
 
@@ -105,7 +138,7 @@ source: GitHub SecondBrain Monorepo
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
 
-**当前 NEXT（Issue #14 / D078）：** 用户审核 D078 Stage 1 部署证据并在浏览器执行合成体验；Terminal 保持关闭，真实个人数据或真实模型使用须按另行授权/费用边界进行。当前 NAS 为 Stage 1，Core JSONL 保持权威来源。部署和只读历史资产审计见 Environment-Baseline.md / Progress-Log.md。
+**恢复后 NEXT：** 以上方“当前阶段决议”的编号步骤为唯一执行顺序；此处不维护第二份 NEXT。Issue #14 仅作为已完成的阶段执行证据及后续任务衔接入口；Terminal 保持关闭。
 
 **不要把阻断项变成无限研究：** 权限和认证须够安全且有证据；其他问题遵循 FAST-EXEC，优先复用现有能力，不提前建设企业级体系。
 
@@ -122,8 +155,8 @@ source: GitHub SecondBrain Monorepo
 
 | 内容 | 权威位置 |
 |---|---|
-| 最高产品目标、核心体验、两种学习/知识闭环、返工路线及 NEXT-0 | `Personal-Intelligence-Product-Spec.md`、决策 D077 |
-| V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` |
+| 最高产品目标、双闭环原则及当前验收路线 | `Decision-Log.md` D077（批准方向）与本文（当前验收/NEXT） |
+| V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | [Web App V1 业务规格](business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture 业务规格](business-specs/Universal-Capture-Business-Spec.md) |
 | 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
 | 正式决定、理由及替代关系 | `Decision-Log.md` |
 | 最近已核验的 NAS 运行快照、权限、端口与恢复入口 | `Environment-Baseline.md` |

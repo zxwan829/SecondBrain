@@ -15,11 +15,9 @@ type: environment-baseline
 - 回滚点 `/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/`：目录 0700，`compose.yaml`（SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`）、旧 `plugin.yaml`、恢复元数据均 0600。旧官方 Hermes image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` 保留在 rollback tag `secondbrain-hermes:rollback-v0222-official-20261016T173140Z`。回滚前应重核快照并只恢复 Hermes/manifest；不可回滚 Core state、D077 JSONL 或 App。
 - 上述是运行态与合成权限验证，不代表真实模型、真实个人数据或浏览器学习体验已验收。此前 D078 Stage 1 信息保留在下方历史快照段，凡与本节冲突以本节为当前状态。
 
-## 历史资产审计摘要（2026-10-17，只读）
+本文件只记录最后一次经验证的运行快照，并非实时监控。上方 2026-10-17 的 Hermes overlay 快照为现行基准；下一次操作必须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 `Progress-Log.md` 与 Issue #14，不作为现行运行或恢复指令。
 
-对 `app-build-source-*`、`compose.yaml.bak-*`、`compose.yaml.pre-*` 和 D074–D078 rollback 目录执行了 `du -sk` 与路径引用检查。候选总占用 5,216,216 KiB（约 4.97 GiB）；其中 rollback 5,152,284 KiB、历史 App build source 63,892 KiB、旧 Compose 快照 40 KiB。当前 Compose 仍引用 `app-build-source-d076-organizer-b34319a`（6144 KiB），须保留；其余 10 个 source 副本合计 57,748 KiB 未被当前 Compose、运行容器挂载或检查的部署/build 脚本引用，可作为后续清理候选。旧 Compose 快照均 4 KiB 且无当前引用，空间收益很小。D077 三个大状态归档总量约 5,145,228 KiB，尺寸接近但未做内容哈希，不能确认重复；D078 当前 Hermes 回滚快照必须保留。没有删除、移动或改动任何审计候选；具体路径与风险见 Progress-Log.md 和本轮 Issue #14 回复。
-
-本文件只记录最近一次有证据的运行环境快照、端口、镜像、挂载、权限与恢复入口。它不是实时监控：部署快照于 2026-10-16 Issue #12 核验；API 工具权限、定向重启和健康状态于 Issue #14 更新。不记录任何密钥或明文环境配置。
+## 常态运行路径与尚待验证的边界
 
 ## NAS 与 Compose
 
@@ -27,14 +25,14 @@ type: environment-baseline
 - 正式 Compose：`/volume1/docker/secondbrain/compose.yaml`；Compose Project `secondbrain`；Docker 网络 `secondbrain_default`。本次 Stage 1 部署前 SHA-256 `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`；部署后 SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`，属主/权限 `1026:100 / 0640`。Compose 本次只替换 App image tag，未改网络、挂载或其他服务。
 - 项目目标为两个服务：`secondbrain-hermes` 与 `secondbrain-app`。Container Manager GUI 曾出现旧容器行/旧定义缓存；最后已记录状态为管理界面定义未完成对齐。当前 GUI 状态未在本次核实，标记 `UNKNOWN`；这是部署管理风险，不改变 Docker 运行态记录。
 
-## 最近已核验的容器快照（2026-10-17 Issue #14 / D078 Stage 1）
+## 历史 Stage 1 容器快照（已被 2026-10-17 patched overlay 取代）
 
 | 服务 | 容器 ID | 镜像 / Image ID | 状态 | 入口/说明 |
 |---|---|---|---|---|
 | `secondbrain-app` | `674e7aa05af22a485ec9d769c370dddd0cda88c45d3e9412ee4c23cf3a54173e` | `secondbrain-app:d078-1d92242` / `sha256:3cfeeb01e9c1772c59bfca394722b22b9e87c7ce8d098a9ee5742ac530d41487` | healthy；启动 `2026-10-16T15:58:07.666779883Z`；运行身份 `1026:100`；只读 rootfs、非 privileged、no-new-privileges | 宿主 `127.0.0.1:9120`；Core source 为 main merge commit `1d922422b419f7c6773df1849ce7a7c130392006`（build input PR #16 head `d78a6bfd376c97043ffab0d5fc18371baf33148a` 的 tracked `web-app` archive） |
 | `secondbrain-hermes` | `2cf7cec6d44dc49de37f0fb16c36f8e71f4bea5747aeecc2782efabf09eeb86f` | `nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05` / `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` | running；v0.22.2 / upstream `d923a5eb487a17c0a68801bba9ef0f56c81040a8`；Stage 1 restart `2026-10-16T16:27:20.362558655Z` | API 8642 health 200、仅容器网络；Dashboard 9119 health 200，仅映射 `192.168.3.27:9119` |
 
-App Docker health 为 healthy；Core `/health` 与 App `/` 均 HTTP 200；Hermes API 8642 与 Dashboard 9119 `/health` 均 HTTP 200。D078 Profile 已启用 `secondbrain-d078-guard`，Skills `write_approval=true`、审批 `manual`，API toolset `file,skills,vision`（Terminal 未开放）。插件 Doctor 运行时发现/导入/注册通过，并提示 manifest 缺少 `provides_hooks: pre_tool_call` 声明；合成 Session 路径读与 Skills generic file 写入被拒，Capture safe-root 写入目标允许。上游 Hook dispatch fail-open 风险未通过真实 API Run 验证。Memory/Learning flags 仍 true；memory 根路径 `/volume1/docker/secondbrain/core-state/personal-memory` 为 `1026:100 / 0700`，0 文件；Promote false。Private 无挂载、Knowledge RO。没有新增 Session/Run、没有调用模型；浏览器真模型验收没有执行。
+该表中的旧 Hermes 容器 ID、镜像及 Plugin Doctor 告警仅属于 Stage 1 历史事实；**现行 Hermes 身份和 Hook 状态一律以上方最新核验为准**。历史演变详见 `Progress-Log.md`。
 
 ## 挂载与权限边界（最近记录的实际配置）
 
@@ -60,25 +58,17 @@ Organizer Core 私有状态位于现有 Core state 挂载内的 `ai-organize` �
 - App 通过 Compose 内部网络访问 Hermes；Hermes API `8642` 不映射到宿主端口。
 - Issue #12 曾观察到 API 工具定义包含 terminal；Issue #14 通过 Hermes v0.22.2 原生 platform_toolsets.api_server 设置移除 API Run 的 terminal。重启后固定版本 resolver 实测 API Server 工具集合为 file, skills, vision；terminal.backend=local 仍是 CLI 配置，但 API Server 请求不获 terminal 工具定义。Docker 网络仅附加 App 与 Hermes，API 8642 不发布宿主端口。
 - Hermes 的策略路由、NAS 双网卡和实际公网出口不在本次检查范围；最新实时路由证据为 `UNKNOWN`。不要仅凭公网 IP 地理位置推断是否经过 `wg0`。
-- API Server 的 file 工具仍保留，以维持 Capture/Knowledge；有效 HERMES_WRITE_SAFE_ROOT 只有三个 Capture 根，Knowledge 同时是只读挂载，Private 无挂载。Hermes worker 进程 UID/GID 1026:100、CapEff/CapPrm 为 0；容器非 privileged。Hermes file safety 对 /proc/self/environ 返回设备路径拒绝；/opt/data/config.yaml 本身不被 read denylist 拒绝，但 _is_secret_file_arg 将 Hermes Home 配置判为 secret-bearing，file-read YAML redaction 对 credential-shaped 值生效。用合成 api_key/secret/password_hash 值做的离线断言 3/3 脱敏；未查看或输出真实凭据值。该 file 工具没有通用 read-root allowlist；/opt/data/sessions 目录对 worker 可读/遍历，合成 Session 路径不被 read denylist 拒绝。未列目录或读取任何 Session 内容。此项是阻止真实模型浏览器体验的残余权限风险；需要最小 session-path 读取拒绝或等效官方隔离后再开放。
+- File/Skills 的现行安全边界：2026-10-17 patched overlay 已通过合成 Session 路径拒绝、允许路径访问、Skills 只读与 Hook 异常阻断；API Terminal 未开放。旧版无路径 guard 的分析只保留在 `Progress-Log.md`，不得作为现网风险结论。真实模型与完整生产 API Run 仍未验收。
 - DSM 63012/63013 反向代理的 LAN-only 规则及登录链曾通过部署测试；本次未重验 DSM 配置、证书或外网可达性。不得由入口历史记录推断公网已开放。
 
 ## Obsidian 同步边界
 
 - Obsidian 知识/笔记库由 Synology Drive 在 Mac 与 NAS 间同步；最近记录称客户端显示已同步，但双向传播未单独验收。历史 `SynologyDrive stopped` 报告不构成已确认故障；当前客户端连接与 NAS 实际传播状态均为 `UNKNOWN`。此同步只承载知识、笔记与个人资料，不是代码或正式项目文档源。相关历史核验见 `Progress-Log.md`。
 
-## 恢复入口
+## 现行恢复入口
 
-- D078 Stage 1 回滚快照：`/volume1/docker/secondbrain/rollback/d078-stage1-20261016T155327Z/`，目录 `0700 root:root`。部署前 `compose.before.yaml` SHA-256 `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`、`hermes-config.before.yaml` SHA-256 `a105f96d187067975b1a519cc4a83386284f4b10419835fba2c3b542e082f2e`、`manifest.txt` SHA-256 `7b0ef1040ab654c585a2030680da29661faa7499f4d8e1b333261d1749e54375`，均 `0600 root:root`。构建源码仅为 main commit `1d922422...` 的 PR #16 合并内容；NAS App 镜像 `secondbrain-app:d078-1d92242` Image ID `sha256:3cfeeb01e9c1772c59bfca394722b22b9e87c7ce8d098a9ee5742ac530d41487`，部署前 App 镜像未删除。
-- 如需回滚，先重新核验并再保存当前 Compose/Profile；恢复本次 `compose.before.yaml` 与 `hermes-config.before.yaml` 到各自原路径，恢复 Compose `1026:100 / 0640`、Hermes config `1026:100 / 0640`，然后只重建/重启 `secondbrain-app` 与 `secondbrain-hermes`。不回退、不删除 Core state、D077 JSONL、Session、Capture 或其他 NAS 数据；不使用整体 `compose down`。
-
-- Issue #14 API 工具限制回滚点：/volume1/docker/secondbrain/rollback/d077-issue14-api-toolset-20261016T1334Z/config.yaml.before，SHA-256 cdee7b148aa314536e24986f8f0dd57ea5999350e46c6b3bfd65c25a37eecac9；目录 0700 root:root，文件 0600 root:root。回滚前保存当前 Hermes config，再将此文件恢复到 /volume1/docker/secondbrain/hermes/data/config.yaml、属主/模式 1026:100 / 0640，最后只重启 Hermes。Compose 未改。
-
-- 本次部署快照与回滚材料位于 `/volume1/docker/secondbrain/rollback/d077-issue12-authorized-20261016T124238Z/`：目录 `0700 root:root`、文件 `0600 root:root`。包含部署前 Compose（SHA-256 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d`）、部署前 Hermes 数据归档、迁移后原 Hermes config、部署候选 Compose、脱敏启动日志、只含布尔值的 Stub 观测、合成记忆 JSONL 与测试摘要；清单验证通过。此前回滚目录 `/volume1/docker/secondbrain/rollback/d077-issue12-v0222-predeploy-20261016T1225Z/` 保留不动。
-- 回滚方法：先再保存当前 Hermes 数据和当前 Compose；恢复本次快照中的 `compose.before.yaml` 到正式路径并还原属主/0640，然后只对 `hermes` 和 `secondbrain-app` 执行 Compose `up -d --pull never --no-deps`，使其回到原 v0.21.5 与 `d076-organizer-b34319a` 镜像。若旧版不接受迁移后的 Hermes profile，先保留当前 profile，再参考已校验的部署前状态归档恢复；不得直接覆盖或删除当前数据。Personal Memory 子目录保留，真实使用后不得按测试目录清理。
-- 本次 App-only 回滚快照：`/volume1/docker/secondbrain/rollback/d076-organizer-predeploy-20261015T145538Z/`；目录 `0700 root:root`、文件 `0600 root:root`，`SHA256SUMS` 已验证。包含部署前 Compose、Core state 元数据、App runtime 元数据和 App 镜像元数据，不含 Secret 或业务内容。旧 App 镜像 `secondbrain-app:d076a1.1-9962001`（`sha256:55f40951620fb8b7043933c724f66cbf22a2326a961d654d8671e877c212bcd3`）可用于回退。恢复前重新核对快照/镜像，只回退 App，保留 Core state；不得整体 `compose down` 或重启 Hermes。
-- D076-A.1 上一 App 镜像 `secondbrain-app:d076a1-55977c8` 及更早镜像按 Progress-Log 的部署记录保留情况为准；本次未核查镜像存量。
-- 生产恢复操作须遵循本文件所列最近快照并先重新核对实际 Compose/数据/镜像；不能直接复制含旧 Hermes 定义的历史 Compose 快照。
+- 当前 Hermes 回滚点：`/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/`。包含原 Hermes Compose、插件 manifest、恢复元数据及固定官方旧镜像 tag；镜像标识与校验和见文件顶部“最新核验”。**仅对 Hermes 定向恢复**，须先重新核验实际配置并取得操作授权；不得回滚 App/Core state、D077 JSONL 或其他 NAS 服务。
+- D078 Stage 1、D077 和更早的恢复步骤属于**历史施工证据**，不在本文件提供可直接复制的旧版回滚命令；其原始路径、哈希及复盘见 `Progress-Log.md` 和对应 Issue，不能用作当前自动回滚方案。
 
 ## 核验触发与历史导航
 

@@ -1,11 +1,11 @@
 ---
-updated: 2026-10-16
+updated: 2026-10-17
 status: current
 type: architecture
 ---
 # SecondBrain V1/V2 Architecture
 
-本文件记录已批准的架构与信任边界；新智能伙伴目标见 `Personal-Intelligence-Product-Spec.md`（D077）。其中已批准的是产品能力和现有服务/数据边界；Memory Provider、具体目录/索引与主动规划内部实现仍属待验证技术选型，不能当成现网实现。运行版本、部署阶段、测试结果和未完成施工不在此维护，分别见 `00-CURRENT.md`、`Environment-Baseline.md` 与 `Progress-Log.md`。
+本文件记录已批准的架构与信任边界；智能伙伴产品目标见 `Decision-Log.md` D077；当前业务范围与验收见 `00-CURRENT.md`。其中已批准的是产品能力和现有服务/数据边界；Memory Provider、具体目录/索引与主动规划内部实现仍属待验证技术选型，不能当成现网实现。运行版本、部署阶段、测试结果和未完成施工不在此维护，分别见 `00-CURRENT.md`、`Environment-Baseline.md` 与 `Progress-Log.md`。
 
 ## 1. 稳定架构边界
 
@@ -36,7 +36,17 @@ type: architecture
 - Core 业务按模块划分服务和 API，通过清晰接口共享一个进程与部署单元。单用户身份由统一 action-policy 接口校验，不提前实现复杂 RBAC。
 - Knowledge Promote 与普通业务写入分离。进入正式 Knowledge 必须人工审核；Memo、Calendar、新闻订阅等未来业务按各自授权的 Core API 执行 CRUD，不统一进入 Promote。
 - Hermes 负责对话、Agent 执行、原生 Session/Skills 与经验证的学习/回忆能力；SecondBrain Core 负责业务状态、Capture 生命周期、审批记录、Organizer 配置/游标/作业、受控 Review 草稿及目标中的长期个人记忆业务接口。不要重新实现 Hermes Agent Runtime。
-- **个人记忆与知识分权：** SecondBrain 持久、可导出和可纠错的个人记忆可以自动更新，但只能使用收窄的 Core 记忆操作边界；Hermes 自有记忆不是正式知识或长期个人资料的唯一 SoT。是否经 Hermes 原生 Provider / 钩子或 BFF 适配，待隔离实验比较。
+- **个人记忆与知识分权：** SecondBrain 持久、可导出和可纠错的个人记忆可以自动更新，但只能使用收窄的 Core 记忆操作边界；Hermes 自有记忆不是正式知识或长期个人资料的唯一 SoT。当前采用 Core JSONL 权威存储，BFF 提供受控记忆召回/学习适配；Hermes 外部原生 Memory Provider 关闭。未来替换机制需独立论证，不能把候选写成现行架构。
+
+### D077 智能伙伴的能力分层（批准方向，不等于全部上线）
+
+用户入口为 Web App/Core，微信经验证后加入同一业务入口。自然语言意图区分普通 Chat、Journal、Task 和 Capture：明确“记一下/建待办/收录”才能触发对应语义写入；普通闲聊不自动形成 Journal/Raw/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。
+
+**双闭环**：Personal Learning Loop 在授权范围由 Core 建立带来源、时间、推断标记、版本、纠错/撤销的个人记忆；Knowledge Integrity Loop 仍为 Raw → Review → 用户明确批准 → Core Promote → 正式 Knowledge，不把外部材料摘要和模型推断当成用户事实。
+
+**四层逻辑记忆（不是四套数据库）：** L1 稳定身份/偏好/长期目标；L2 项目、关系、当前任务与近期话题；L3 关键事件、日记、决策、纠正和经验；L4 原始证据、Raw/Review、Journal/Projects/正式 Knowledge。相关上下文按需装载，精确日期、金额、版本和冲突必须回源核验，不将推断强写成已证实事实。当前持久个人记忆权威是 Core JSONL；Hermes 的原生 Session/Skills 与缓存不可成为另一个业务 SoT。
+
+**建议与自主边界：** 主动建议应与目标、项目、待办、事件关联，携带依据并支持去重、节流、关闭；建议不等于执行。Skills 可以形成候选经验，但重要修改须经原生待审核流程；文件/命令/出站行为遵守 D078 强制权限。Journal 只新增/按日追加原文，提醒的任务落盘与通知送达分开验收。
 
 ## 3. 核心数据流
 
@@ -58,22 +68,13 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 
 **旧 D076 Organizer（保留现有功能边界）：** Core 持久调度器和手动入口共用同一 Organizer、作业锁、消息游标与恢复状态。Organizer 只处理授权来源中新增的用户消息；可携带有限旧上下文，但输出必须区分用户原文与 AI 提炼内容，并保留会话/消息/时间来源。模型接口必须是无工具、受输入/输出/超时/并发/请求预算约束的文本 Adapter。输出只生成 Review 草稿，不写 Knowledge；没有通过安全和费用门槛时执行器必须关闭。
 
-**新增目标：个人学习闭环独立于 Organizer 的正式知识草稿。** 获准的对话和实际结果可以形成可版本化、可撤销的低风险个人记忆；需要避免与 Organizer 重复扫描、重复提炼或自动 Promote。学习触发器/频率/存储方案待 Phase 0 验证后冻结，不能把现有定时整理开关直接当成学习功能开关。
+**新增目标：个人学习闭环独立于 Organizer 的正式知识草稿。** 获准的对话和实际结果可以形成可版本化、可撤销的低风险个人记忆；需要避免与 Organizer 重复扫描、重复提炼或自动 Promote。学习触发和质量仍需真实会话验收，已部署 Core JSONL，不再把存储路线写成未决，不能把现有定时整理开关直接当成学习功能开关。
 
 ### 3.5 Journal、Task 与主动规划（目标行为）
 
 明确的自然语言“记一下/写日记/添加待办”应经 Chat 意图判定调用对应 Core 语义 API，而不是要求用户手动在 UI 中切换模式；模糊、高风险动作先确认。Journal 按 D064 使用 `50-Journal` 专用新增/日期追加，无需正式 Knowledge Promote；普通 Agent 无权覆盖历史内容。待办从同一时间轴演进，增删改状态和消息通知必须以持久状态/实际送达证据为准。
 
 主动规划使用授权的项目、日程、待办、历史经验与近期知识，输出带来源、可去重/节流/关闭的**建议**。建议不等于执行；外发、权限修改、删除和生产操作仍需对应授权。优先复用现有 Hermes 和 Core 的调度/状态能力，不预建新 Agent、第二调度系统或新容器。
-
-### 3.6 四层逻辑记忆（方案方向，不是已实现的物理存储）
-
-- L1：稳定个人背景、偏好、长期目标及约束；少量高频进入上下文。
-- L2：当前项目、关系、待办、近期主题与目标；随对话话题/时间选择。
-- L3：关键日记、事件、决策原因、用户纠正、成功失败经验；保留来源与时间。
-- L4：完整原件、Journal、Projects、正式 Knowledge 与其他获准文件；精确事实核验时按需读取。
-
-上述层级可以使用既有 `40-Memory`、Core 私有状态和文件读取能力承载，不要求四套数据库；自动学习只能对专用记忆区进行受控写入，不能据此扩大 Hermes 对整个 SecondBrain 的 RW 权限。具体文件 schema、Provider/Adapter、缓存与召回算法尚待验证。
 
 ## 4. 数据分区与信任边界
 
@@ -98,4 +99,4 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 - App 到 Hermes：Compose 内部服务发现及受认证 API；不发布 Hermes API 端口到宿主或公网。
 - App 到业务文件：通过显式根路径和模块服务访问 Inbox、Review、Knowledge 等数据区；Private 不在允许根路径内。
 - 新业务优先扩展 Core 模块与 API；只有确认超出模块化单体能力后才重新评估部署边界。不得为了未来设想预建空模块、复杂插件机制或数据库。
-- 用户批准的最高目标、目标效果和阶段路线见 `Personal-Intelligence-Product-Spec.md`；原 V1 业务细则仍以 `SecondBrain-Web-App-V1-Business-Spec.md`、`Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
+- 用户批准的最高产品方向见 `Decision-Log.md` D077，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `business-specs/SecondBrain-Web-App-V1-Business-Spec.md`、`business-specs/Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。

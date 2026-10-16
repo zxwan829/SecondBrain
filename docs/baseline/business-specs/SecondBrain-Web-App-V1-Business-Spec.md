@@ -8,7 +8,7 @@ product: SecondBrain Web App / Personal OS
 
 # SecondBrain Web App / Personal OS V1 Business Specification
 
-> **D077 补充（2026-10-16）：** 本文件的原 Web App V1 MUST/SHOULD/DEFERRED 均保留；用户明确批准的新最高目标及 Companion MVP 见 `Personal-Intelligence-Product-Spec.md`。从此 Web App 不只是漂亮的仪表盘/搜索页面，而是持续了解用户的 AI 伙伴交互入口。新智能能力的实际状态仍以 `00-CURRENT.md` 为准。
+> **D077 补充（2026-10-16）：** 本文件的原 Web App V1 MUST/SHOULD/DEFERRED 均保留；用户明确批准的新最高目标及 Companion MVP 见 `Decision-Log.md` D077（目标与批准决策）、`Architecture.md`（稳定设计）及 `00-CURRENT.md`（MVP 验收和 NEXT）。从此 Web App 不只是漂亮的仪表盘/搜索页面，而是持续了解用户的 AI 伙伴交互入口。新智能能力的实际状态仍以 `00-CURRENT.md` 为准。
 
 ## 1. Product definition
 
