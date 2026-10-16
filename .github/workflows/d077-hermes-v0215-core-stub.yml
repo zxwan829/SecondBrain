@@ -1,11 +1,6 @@
 name: D077 Hermes v0.21.5 + Core local stub
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/d077-hermes-v0215-core-stub.yml
-      - tests/d077/hermes_v0215_core_stub_ci.py
-      - web-app/secondbrain-core/**
   workflow_dispatch:
 
 permissions:
