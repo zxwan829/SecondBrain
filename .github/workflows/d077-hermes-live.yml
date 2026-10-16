@@ -1,0 +1,58 @@
+name: D077 Hermes synthetic live memory evaluation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/d077-hermes-live.yml"
+      - "tests/d077/hermes_live_ci.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: d077-hermes-live-\${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-live-evaluation:
+    # Same-repository testing only; never run with secrets on fork PRs.
+    if: >-
+      github.repository == 'zxwan829/SecondBrain' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.head_ref == 'test/d077-hermes-live'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify isolated runner prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          docker info --format '{{.ServerVersion}}'
+          df -h /
+      - name: Pull fixed Hermes release image
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 240s docker pull --platform linux/amd64 \
+            nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05
+      - name: Run synthetic real-model learning experiment
+        shell: bash
+        timeout-minutes: 15
+        env:
+          SILICONFLOW_D077_KEY: \${{ secrets.SILICONFLOW_D077_KEY }}
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          set -euo pipefail
+          python3 -B tests/d077/hermes_live_ci.py
+      - name: Clean up temporary Docker assets
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f d077-live-agent 2>/dev/null || true
+          docker network rm d077-live-internal 2>/dev/null || true
