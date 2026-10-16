@@ -2,7 +2,29 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+## 2026-10-17 — 阶段暂停与文档收口决议（最新）
+
+- 用户明确要求当前阶段**暂停开发，集中更新基线并记录清晰 NEXT**。本轮仅进行 GitHub 文档一致性修订，不改变 NAS、模型、配置、容器或业务数据。
+- PR #18 已合并，固定 Hermes fail-closed overlay 已部署；PR #19 提供最新运行证据、构建配方及只读资产审计，待合并；本次文档 PR 堆叠在 PR #19 上。两份待合并 PR 的内容不能提前描述为 main 已更新。
+- 恢复顺序：文档合并 → 只读状态核验 → 获准的无敏感合成浏览器 Chat/Session/Run/SSE 和记忆纠错验收 → 单独确认模型、费用和真实数据范围后有限真实体验 → 再排剩余 V1 MUST / Companion 项；Terminal 继续关闭。细项以 `00-CURRENT.md` 为唯一当前 NEXT。
+- NAS 历史资产清理只是只读审计：11 份构建源、10 份 Compose 历史快照、18 份回滚资料合计约 4.97 GiB；10 份未引用旧构建源约 56.4 MiB，三个 D077 大归档约 4.91 GiB 未证明重复；目前**不授权删除**。
+
+
 > 2026-10-17 D078 Stage 1 仍是最新生产部署；本文件顶部较新的源码补丁记录不代表生产变更。每条记录只描述当时状态。
+
+## 2026-10-17 — D078 fail-closed Hermes 镜像升级与运行核验
+
+- PR #18 按授权 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`。基于固定 Hermes v0.22.2 上游源码 `d923a5eb487a17c0a68801bba9ef0f56c81040a8`、已审核补丁 SHA-256 `b53818487205733039378a8e3c7218cc298eca1c39e1a34dec997dd306f855b0` 和官方 amd64 digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05`，以一文件 overlay 构建 NAS 镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`，Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`。镜像构建在缓存官方镜像上完成，Docker build 使用 network none、linux/amd64、2 GiB、CPU 核 0-1；未拉取其他依赖。
+- 部署前回滚快照 `/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/` 保留 Compose、旧 manifest 与恢复元数据；官方旧镜像保留 rollback tag。Compose 新 SHA-256 `6d7b1be1abb4479b93e5cebc473e2f20ba6bddb6bd62ea5019322ef260908818`，只替换 Hermes 镜像引用；只重建 Hermes，无 App/Core/其他 NAS 服务重启。旧 Compose SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`。
+- 启动时 API 未立即监听；未快速回滚或重复重启。持续观察后 API `/health` 返回 200，Dashboard `192.168.3.27:9119` 可达并返回登录重定向 302，容器 running、RestartCount 0。Plugin Doctor 显示 D078 guard 成功加载并注册 1 hook。Profile toolset 为 file/skills/vision，不含 Terminal；Skills 写审批启用、审批模式 manual。
+- 先前本地隔离镜像检查和部署后 NAS 容器内合成调用均通过：敏感 Session 路径读取 BLOCKED，合成允许路径文件 dispatch ALLOWED，Skills 只读工具 ALLOWED，dispatcher 异常 BLOCKED；零模型调用、零 Session 写入。没有通过生产 API 创建 Run。App/Core 保持 healthy；Private 未挂载、Knowledge 主目录只读（既有专用 Capture Inbox RW 不变）、Promote=false。D077 Personal Memory 根仍 `1026:100 / 0700`、0 文件/0 字节，metadata mtime 未变化；未读取其内容。
+- **状态：** Hermes 镜像升级和限定运行验证完成，非完整业务验收。未调用付费模型或处理真实个人资料；真实浏览器记忆体验仍未进行。部署可回退到官方 v0.22.2 digest 与快照 Compose，但不得恢复 API Terminal 或回退 Core Memory 数据。
+
+## 2026-10-17 — NAS 历史构建与回滚资产只读审计
+
+- 只读检查纳入 11 个历史 App 源码副本、10 个旧 Compose 快照和 18 个 D074–D078 rollback 目录。实际分配占用：源码 63,892 KiB、Compose 40 KiB、rollback 5,152,284 KiB，合计 5,216,216 KiB（约 4.97 GiB）。容器挂载不指向这些历史路径；当前 Compose 仍引用 `/volume1/docker/secondbrain/app-build-source-d076-organizer-b34319a`（6144 KiB），其余 10 个 App source 目录（57,748 KiB）不在当前 Compose/检查的部署脚本引用中。10 个 Compose 快照没有当前引用，合计仅 40 KiB。
+- D077 大型状态备份包括 `d077-issue12-authorized-20261016T124238Z`（1,025,656 KiB）、`d077-issue12-v0222-predeploy-20261016T1225Z`（2,059,884 KiB）和 `d077-v0222-predeploy-20261016T114324Z`（2,059,688 KiB）。其 Hermes tar 文件尺寸接近，可能包含重叠状态，但本轮未计算归档内容哈希，无法证明重复；不得据大小相似而删除。最新 D078 当前 Hermes rollback `d078-hermes-hook-failclosed-20261016T173140Z`（12 KiB）必须保留；`d078-stage1-20261016T155327Z`（6560 KiB）也保留。D074/D075/D076 较早回滚目录合计较小且未被运行路径引用，是否淘汰需结合所需恢复历史另行确认。
+- 完整候选路径与各目录分配大小见本轮审计回复。只读审计未读取凭据或业务文件正文；未删除、移动或修改任何候选资产，没有执行 Docker 镜像/容器/卷清理。若要清理，须对候选逐项授权；当前 Compose 引用的 source 目录和 D078 rollback 快照排除在可清理范围外。
 
 ## 2026-10-17 — PR #17 合并与固定 Hermes fail-closed 源码补丁（仅开发，未部署）
 
@@ -352,7 +374,7 @@
 
 # 2026-10-10 Web App / Personal OS V1 Specification
 
-- Created and froze `SecondBrain-Web-App-V1-Business-Spec.md` v1.0 canonical.
+- Created and froze `business-specs/SecondBrain-Web-App-V1-Business-Spec.md` v1.0 canonical.
 - Documented Global App Shell, dynamic Home scope, extensible navigation/page contracts, aggregation contracts, reserved Books/People/Personal Events, SoT/runtime/security boundaries, and V1 acceptance criteria.
 - No frontend, Runtime, Hermes, Compose, permission, or business-data changes were made.
 - Next: WEB APP PHASE 0 NATIVE CAPABILITY + SECURITY AUDIT.
@@ -978,16 +1000,3 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 浏览器体验准备：使用已验证入口登录后打开 Chat，创建新 Session。先自然表达合成偏好“技术问题我更喜欢简短回答，最好用三条要点”，不要说“请记住”；新建 Session 后问一个相关但不提示回忆的问题，观察是否自然采用偏好；再纠正为“两条要点”，另开 Session 验证新规则生效且旧规则不再出现；最后提一个无关问题观察是否避免主动提及偏好。全程只用虚构内容。真实模型行为与费用未由本次核验覆盖，执行前用户需确认当前模型/费用。
 - 状态：危险的 API local-terminal 工具已移除，必要工具和记忆配置保持；本次不代表真实模型学习质量验收。在补齐 Hermes Session 文件读取边界前不进行真实模型体验；之后还需用户选择模型并确认费用。配置回滚点如上；回滚时恢复 config.yaml.before 到 Hermes 数据路径、保留 1026:100 / 0640，然后只重启 Hermes。
 
-## 2026-10-17 — D078 fail-closed Hermes 镜像升级与运行核验
-
-- PR #18 按授权 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`。基于固定 Hermes v0.22.2 上游源码 `d923a5eb487a17c0a68801bba9ef0f56c81040a8`、已审核补丁 SHA-256 `b53818487205733039378a8e3c7218cc298eca1c39e1a34dec997dd306f855b0` 和官方 amd64 digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05`，以一文件 overlay 构建 NAS 镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`，Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`。镜像构建在缓存官方镜像上完成，Docker build 使用 network none、linux/amd64、2 GiB、CPU 核 0-1；未拉取其他依赖。
-+- 部署前回滚快照 `/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/` 保留 Compose、旧 manifest 与恢复元数据；官方旧镜像保留 rollback tag。Compose 新 SHA-256 `6d7b1be1abb4479b93e5cebc473e2f20ba6bddb6bd62ea5019322ef260908818`，只替换 Hermes 镜像引用；只重建 Hermes，无 App/Core/其他 NAS 服务重启。旧 Compose SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`。
-+- 启动时 API 未立即监听；未快速回滚或重复重启。持续观察后 API `/health` 返回 200，Dashboard `192.168.3.27:9119` 可达并返回登录重定向 302，容器 running、RestartCount 0。Plugin Doctor 显示 D078 guard 成功加载并注册 1 hook。Profile toolset 为 file/skills/vision，不含 Terminal；Skills 写审批启用、审批模式 manual。
-+- 先前本地隔离镜像检查和部署后 NAS 容器内合成调用均通过：敏感 Session 路径读取 BLOCKED，合成允许路径文件 dispatch ALLOWED，Skills 只读工具 ALLOWED，dispatcher 异常 BLOCKED；零模型调用、零 Session 写入。没有通过生产 API 创建 Run。App/Core 保持 healthy；Private 未挂载、Knowledge 主目录只读（既有专用 Capture Inbox RW 不变）、Promote=false。D077 Personal Memory 根仍 `1026:100 / 0700`、0 文件/0 字节，metadata mtime 未变化；未读取其内容。
-+- **状态：** Hermes 镜像升级和限定运行验证完成，非完整业务验收。未调用付费模型或处理真实个人资料；真实浏览器记忆体验仍未进行。部署可回退到官方 v0.22.2 digest 与快照 Compose，但不得恢复 API Terminal 或回退 Core Memory 数据。
-
-## 2026-10-17 — NAS 历史构建与回滚资产只读审计
-
-- 只读检查纳入 11 个历史 App 源码副本、10 个旧 Compose 快照和 18 个 D074–D078 rollback 目录。实际分配占用：源码 63,892 KiB、Compose 40 KiB、rollback 5,152,284 KiB，合计 5,216,216 KiB（约 4.97 GiB）。容器挂载不指向这些历史路径；当前 Compose 仍引用 `/volume1/docker/secondbrain/app-build-source-d076-organizer-b34319a`（6144 KiB），其余 10 个 App source 目录（57,748 KiB）不在当前 Compose/检查的部署脚本引用中。10 个 Compose 快照没有当前引用，合计仅 40 KiB。
-- D077 大型状态备份包括 `d077-issue12-authorized-20261016T124238Z`（1,025,656 KiB）、`d077-issue12-v0222-predeploy-20261016T1225Z`（2,059,884 KiB）和 `d077-v0222-predeploy-20261016T114324Z`（2,059,688 KiB）。其 Hermes tar 文件尺寸接近，可能包含重叠状态，但本轮未计算归档内容哈希，无法证明重复；不得据大小相似而删除。最新 D078 当前 Hermes rollback `d078-hermes-hook-failclosed-20261016T173140Z`（12 KiB）必须保留；`d078-stage1-20261016T155327Z`（6560 KiB）也保留。D074/D075/D076 较早回滚目录合计较小且未被运行路径引用，是否淘汰需结合所需恢复历史另行确认。
-- 完整候选路径与各目录分配大小见本轮审计回复。只读审计未读取凭据或业务文件正文；未删除、移动或修改任何候选资产，没有执行 Docker 镜像/容器/卷清理。若要清理，须对候选逐项授权；当前 Compose 引用的 source 目录和 D078 rollback 快照排除在可清理范围外。
