@@ -2,7 +2,14 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
-> 2026-10-17 D078 Stage 1 已完成部署；以下为最新运行证据。此前条目保留其记录时的状态。
+> 2026-10-17 D078 Stage 1 仍是最新生产部署；本文件顶部较新的源码补丁记录不代表生产变更。每条记录只描述当时状态。
+
+## 2026-10-17 — PR #17 合并与固定 Hermes fail-closed 源码补丁（仅开发，未部署）
+
+- PR #17 的 ChatGPT 复审评论 #6220562603 接受 fbee788d；按固定 head 使用标准 GitHub merge API 合并至 main，merge commit `20392ab6dc00bdce2984446349f60bd7c28a263d`。没有绕过 GitHub 审批/合并规则。NAS 插件和 Hermes 镜像未更新。
+- 以 Hermes v0.22.2 固定源码 Commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8` 制作可审核 patch：仅改变 `agent/tool_executor.py::_pre_tool_block` 的 dispatcher/import 异常分支，使其返回固定 `PRE_TOOL_CALL_HOOK_UNAVAILABLE` block；不暴露异常正文或工具参数。健康 dispatch 保留现有 Hook 行为、Hook deny 和 modify 参数路径。补丁与上游回归测试存于 `web-app/hermes-agent/patches/v0.22.2/`。
+- 固定源码补丁定向测试 **6 passed**：正常 `read_file` 与 `skill_view` 仍 dispatch；Hook 对敏感路径的 block 保留；dispatcher 抛 `ImportError` 或 `RuntimeError` 时，真实 `_dispatch_authorized_once` 在 guardrail/执行 callback 前阻断。补丁能对干净的固定源码 checkout 执行 `git apply --check`。
+- PR #17 中的 manifest capability 修复仍未部署；本补丁目前仅为 SecondBrain 源码仓库中的 Hermes v0.22.2 patch，尚未合并、构建自定义镜像或运行于 NAS。下一步须复审补丁，再另行设计固定源/镜像的可复现构建与部署授权。API Terminal 保持关闭；无模型调用、NAS 变更或真实个人数据。
 
 ## 2026-10-17 — D078 第一阶段 NAS 部署（API Terminal 保持关闭）
 

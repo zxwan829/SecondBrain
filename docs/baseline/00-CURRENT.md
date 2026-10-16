@@ -16,7 +16,7 @@ source: GitHub SecondBrain Monorepo
 
 **阶段安排：** 先做 Companion 能力审计和隔离实证，再按验证结果最小返工，随后继续完成旧 V1 所有 MUST 与多端业务收口；不要因新增目标将既有 MUST 静默延期为永久不做。
 
-**总体状态：NOT DONE。** D077 Core 与 Hermes v0.22.2 仍已部署。2026-10-17 按 Issue #14 授权完成 D078 第一阶段：NAS App 更新为 `secondbrain-app:d078-1d92242`（Image ID `sha256:3cfeeb01…d41487`），Hermes 固定 v0.22.2 digest 不变；API toolset 保持 `file,skills,vision`，Terminal 未开放。D078 插件已启用，Skills 写入审核为 true，审批模式为 manual。App/Core 与 Hermes 健康，Private 未挂载、Knowledge 只读、Promote 关闭，Core JSONL 权威路径与数据未变。随后在本地固定 Hermes 源码 Commit `d923a5eb…81040a8` 上通过 loopback Mock 完成一次合成 `/v1/runs`：D078 guard 拦截了 Session 文件读取，Run 完成且响应未含合成 sentinel；这不是 NAS 容器或生产 Run。PR #17 修正分支已补 `provides_hooks: pre_tool_call` 声明并由固定 Hermes Plugin Doctor 验证。仍确认 Hermes 上游 `_pre_tool_block` 对 dispatch/import 异常会 fail-open；当前 SecondBrain 插件无法覆盖此 Hermes 核心边界，因此生产强制策略仍不完整，不能开始真实个人数据浏览器聊天。未调用真实模型、未创建生产 Session/Run；实际运行与回滚证据见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 只是早期单条合成消息的费用估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。完整交付状态以以下矩阵为准。
+**总体状态：NOT DONE。** D077 Core 与 Hermes v0.22.2 仍已部署。2026-10-17 按 Issue #14 授权完成 D078 第一阶段：NAS App 更新为 `secondbrain-app:d078-1d92242`（Image ID `sha256:3cfeeb01…d41487`），Hermes 固定 v0.22.2 digest 不变；API toolset 保持 `file,skills,vision`，Terminal 未开放。D078 插件已启用，Skills 写入审核为 true，审批模式为 manual。App/Core 与 Hermes 健康，Private 未挂载、Knowledge 只读、Promote 关闭，Core JSONL 权威路径与数据未变。随后在本地固定 Hermes 源码 Commit `d923a5eb…81040a8` 上通过 loopback Mock 完成一次合成 `/v1/runs`：D078 guard 拦截了 Session 文件读取，Run 完成且响应未含合成 sentinel；这不是 NAS 容器或生产 Run。PR #17 已按正常 GitHub 流程合并至 main（merge commit `20392ab6…7c28a263d`），补入 `provides_hooks: pre_tool_call` 声明及本地 API Run 证据；NAS 插件尚未更新。固定 Hermes 源码 fail-closed 补丁已提交独立 PR，6 项定向测试通过但尚待复审，未构建或部署镜像。生产权限强制仍需该补丁经过复审、镜像构建和部署验证后才能判断，真实个人数据浏览器体验暂不开放。未调用真实模型、未创建生产 Session/Run；实际运行与回滚证据见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 只是早期单条合成消息的费用估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。完整交付状态以以下矩阵为准。
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 
@@ -89,23 +89,23 @@ source: GitHub SecondBrain Monorepo
 | 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
 | 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |
 
-**D077 / D078 部署状态（2026-10-17）：** D077 v0.22.2 与 Core 的本地 Stub 四步记忆闭环既有证据保留；本次 D078 部署没有写入记忆或创建 Session/Run，记忆目录仍为 `1026:100 / 0700` 且 0 个文件。按 Issue #14 授权，PR #13/#15/#16 依序合并后部署 App `secondbrain-app:d078-1d92242` 与 D078 Hermes 插件；App/Core health 200/healthy，Hermes API 8642 与 Dashboard 9119 health 200。API toolset 仍为 `file,skills,vision`（不含 Terminal），Skills `write_approval=true`、approvals `manual`；Private 未挂载、Knowledge RO、Promote OFF。合成路径守卫分别拒绝 Hermes Session 读取与通用 Skills 写入，允许 Capture safe-root 写入目标。后续固定 Hermes 源码隔离 API Run 成功触发 `read_file` hook 并拒绝合成 Session 文件；不是生产容器运行，具体证据见 Progress-Log.md。PR #17 分支已声明 `provides_hooks: pre_tool_call`，固定版本 Plugin Doctor 验证通过；当前 NAS 安装文件仍是未含该字段的旧版本。Hermes 上游 `_pre_tool_block` 对 dispatch/import 异常仍 fail-open，插件自身无法可靠加固该核心边界；因此生产强制策略和真实浏览器体验仍阻断。未调用真实/付费模型、未使用私人数据。
+**D077 / D078 部署状态（2026-10-17）：** D077 v0.22.2 与 Core 的本地 Stub 四步记忆闭环既有证据保留；本次 D078 部署没有写入记忆或创建 Session/Run，记忆目录仍为 `1026:100 / 0700` 且 0 个文件。按 Issue #14 授权，PR #13/#15/#16 依序合并后部署 App `secondbrain-app:d078-1d92242` 与 D078 Hermes 插件；App/Core health 200/healthy，Hermes API 8642 与 Dashboard 9119 health 200。API toolset 仍为 `file,skills,vision`（不含 Terminal），Skills `write_approval=true`、approvals `manual`；Private 未挂载、Knowledge RO、Promote OFF。合成路径守卫分别拒绝 Hermes Session 读取与通用 Skills 写入，允许 Capture safe-root 写入目标。后续固定 Hermes 源码隔离 API Run 成功触发 `read_file` hook 并拒绝合成 Session 文件；不是生产容器运行，具体证据见 Progress-Log.md。PR #17 已合并至 main（`20392ab6…7c28a263d`），新增 manifest 声明尚未部署到 NAS。固定 Hermes 源码 fail-closed 补丁及 6 项定向回归已提交独立 PR，尚未构建或部署自定义镜像；因此生产强制策略和真实浏览器体验仍阻断。未调用真实/付费模型、未使用私人数据。
 
-**工作准则：** Hermes v0.22.2 为当前 D077/D078 运行版本；Core JSONL 是个人记忆权威存储，外部 Hermes Memory Provider 未启用。API Terminal 必须保持关闭；隔离固定源码 API Run 已验证正常加载时的 Session-read 拦截，但不是生产镜像运行，且上游 dispatch/import 异常 fail-open 尚未修复，不得把生产状态描述为已强制隔离，也不得进行真实个人数据体验。
+**工作准则：** Hermes v0.22.2 为当前 D077/D078 运行版本；Core JSONL 是个人记忆权威存储，外部 Hermes Memory Provider 未启用。API Terminal 必须保持关闭；隔离固定源码 API Run 已验证正常加载时的 Session-read 拦截，但不是生产镜像运行，且固定源码 fail-closed 补丁尚待复审、未部署，不得把生产状态描述为已强制隔离，也不得进行真实个人数据体验。
 
 ## 3. NOW / BLOCKED / DEFERRED、依赖和阻断
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
 | **Phase 1-A（已部署）** | **可纠正、可撤销、可溯源的 Personal Memory Core** | 独立 Core state 子目录、追加式 JSONL、来源与修订历史；NAS 合成验证通过，测试记录已清理 | 用户浏览器验收与后续真实使用仍待完成 |
-| **D078（NAS Stage 1 已部署，未完成用户验收）** | **保留 Hermes 原生 Agent 能力，同时以审批/路径守卫控制高风险操作** | Hermes v0.22.2 profile 已启用 `secondbrain-d078-guard`、`skills.write_approval=true`、审批模式 `manual`；API toolset 仍为 `file,skills,vision`。固定 Hermes 源码隔离 `/v1/runs` 实际触发 Session 文件读取并由 guard 拒绝；固定版本 Plugin Doctor 对 PR #17 分支的新 manifest 声明验证通过。Core 定向测试 43 passed、插件 15 passed、前端审批 3 passed；没有生产 Run/真实模型请求 | 隔离 Run 使用 Mac Python 3.12，非部署容器的 Python 3.14 环境。上游 `tool_executor._pre_tool_block` 的 dispatch/import 异常仍 fail-open；生产安装的插件文件尚未包含 manifest 修复，且此项不会修复上游风险。API Terminal 继续关闭；Private 未挂载、Knowledge RO、Promote OFF。真实个人数据/模型浏览器体验仍不具备条件 |
+| **D078（NAS Stage 1 已部署，未完成用户验收）** | **保留 Hermes 原生 Agent 能力，同时以审批/路径守卫控制高风险操作** | Hermes v0.22.2 profile 已启用 `secondbrain-d078-guard`、`skills.write_approval=true`、审批模式 `manual`；API toolset 仍为 `file,skills,vision`。固定 Hermes 源码隔离 `/v1/runs` 实际触发 Session 文件读取并由 guard 拒绝；固定版本 Plugin Doctor 对 PR #17 的 manifest 声明验证通过；新增固定 Hermes 源码补丁定向测试 6 passed。Core 定向测试 43 passed、插件 15 passed、前端审批 3 passed；没有生产 Run/真实模型请求 | 隔离 Run 使用 Mac Python 3.12，非部署容器的 Python 3.14 环境。fail-closed 源码补丁仍在独立 PR 中，尚未进入或部署到生产 Hermes 镜像；NAS 插件也尚未更新 manifest 修复。API Terminal 继续关闭；Private 未挂载、Knowledge RO、Promote OFF。真实个人数据/模型浏览器体验仍不具备条件 |
 | **Phase 1-B（已部署；合成运行验证）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；Core Linux 回归 154 passed、2 subtests passed（Run 38857429530）；Hermes v0.22.2 + Core + 确定性本地 Stub 四步闭环通过 | 真实模型的学习与回答质量、真实会话及用户验收仍待完成 |
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | 当前 NAS App `secondbrain-app:d078-1d92242` healthy，Image ID `sha256:3cfeeb01…d41487`；Hermes v0.22.2 与 D077 JSONL 状态保留；App/Core 与 Hermes health 可用 | 真实模型和浏览器记忆体验未验收；生产真实 Run/SSE 未执行；设置页、Composer、手机 Review、真实 PDF OCR 仍有既有缺口，Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
 
-**当前 NEXT（Issue #14 / D078）：** PR #17 修复 manifest capability 声明，并补固定源码隔离 API Run 证据；但确认的上游 `_pre_tool_block` dispatch/import 异常 fail-open 仍需在固定 Hermes 源码/镜像或等效强制 API 边界中解决，不能由插件内部安全修复。复审并部署任何 Hermes 核心修复前，保持 API Terminal 关闭，不发送真实个人数据或启动真实模型聊天。现有 NAS 仍是 Stage 1；Core JSONL 不变。具体运行和回滚点见 Environment-Baseline.md / Progress-Log.md。
+**当前 NEXT（Issue #14 / D078）：** 等待固定 Hermes v0.22.2 fail-closed patch PR 复审；通过后再制定可复现镜像构建和最小运行验证，并单独取得 NAS 部署授权。期间保持 API Terminal 关闭，不发送真实个人数据或启动真实模型聊天。当前 NAS 仍是 Stage 1；Core JSONL 不变。实际部署与测试证据见 Environment-Baseline.md / Progress-Log.md。
 
 **不要把阻断项变成无限研究：** 权限和认证须够安全且有证据；其他问题遵循 FAST-EXEC，优先复用现有能力，不提前建设企业级体系。
 
