@@ -233,7 +233,7 @@ class PersonalLearningPipeline:
         except (ValueError, TypeError):
             return False
         return isinstance(event, dict) and event.get("event") in {
-            "run.failed", "run.cancelled", "run.canceled", "run.stopped",
+            "run.failed", "run.cancelled", "run.canceled", "run.stopped", "run.interrupted",
         }
 
     async def complete_run(self, run_id: str, hermes) -> int:

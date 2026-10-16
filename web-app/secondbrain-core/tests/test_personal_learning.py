@@ -299,6 +299,28 @@ class PersonalLearningTests(unittest.TestCase):
                          "synthetic-session:fresh-after-stop")
         success_client.close()
 
+    def test_interrupted_event_discards_pending(self):
+        self.assertTrue(PersonalLearningPipeline.is_discard_event(
+            'data: {"event":"run.interrupted"}'))
+        self.assertFalse(PersonalLearningPipeline.is_success_event(
+            'data: {"event":"run.interrupted"}'))
+
+    def test_interrupted_status_discards_pending(self):
+        pipeline = PersonalLearningPipeline(self.store)
+        pipeline.register_run("run-interrupted", "synthetic-session", "I prefer short summaries.", set())
+        class InterruptedHermes(FakeHermes):
+            async def get_run(self, run_id):
+                return {"run_id": run_id, "status": "interrupted"}
+        hermes = InterruptedHermes(run_id="run-interrupted")
+        app = FastAPI()
+        app.include_router(create_web_app_router(FakeAuth(), hermes, object(), self.root, self.root,
+                                                personal_learning=pipeline))
+        client = TestClient(app, base_url="https://testserver")
+        response = client.get("/api/chat/runs/run-interrupted")
+        self.assertEqual(response.json()["status"], "interrupted")
+        self.assertNotIn("run-interrupted", pipeline._pending)
+        client.close()
+
     def test_hermes_api_adapter_forwards_supported_instructions_without_rewriting_input(self):
         captured = {}
 

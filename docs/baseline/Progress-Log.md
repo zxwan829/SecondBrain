@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D077 Phase 1-C Hermes/Core 隔离运行核验（受阻）
+
+- 从 GitHub 最新 `main` `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc` 的独立临时 Clone 开始；正式工作区及未跟踪项 `typescript` 未触碰。
+- 固定 Hermes v0.21.5 源码为 upstream `749220ef0007f8d87bd1531f1c24b0fe93816385`。只读 Registry manifest/config 交叉核验正确镜像 index 为 `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`，linux/amd64 child config/image ID 为 `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`，revision label 与固定源码 commit 一致。现有 smoke/live workflow 的 `a11574…` 不能作为 v0.21.5 证据；live workflow 会调用付费 SiliconFlow，未运行。
+- 固定源码确认 `/v1/runs` 的 `instructions` 进入本次 Run 的 ephemeral system prompt；API Server 由合成 `API_SERVER_KEY` 启用，`API_SERVER_ENABLED` 并非该版本启用条件。均为源码契约，不是运行结果。
+- 当前 Mac 没有 Docker、Podman、Colima 或 OrbStack，因此无法本地启动固定镜像。尚无已提交的零费用真实 Core + Hermes + local stub runner harness；未拉取/启动镜像、未连接 NAS、未调用模型。没有用不匹配镜像或付费工作流替代。
+- 最小 Core 修复：SSE `run.interrupted` 和状态轮询 `interrupted` 现在均清理 pending；新增两项回归测试。`test_personal_learning.py` + `test_web_app_bff.py`：29 passed。依赖仅安装于 `/private/tmp/sb-issue7-venv`。
+- **状态：** Core 定向修复已测试；Hermes 固定版本 API + Core 端到端、学习/跨 Session/Provider 行为及 Issue #7 其余验收项仍 `UNKNOWN/BLOCKED`。后续最小方案为手动 GitHub-hosted Linux workflow：断言 image ID/revision、容器只连接确定性 stub、Runner 主机运行 Core，记录脱敏证据并验证容器外网拒绝；workflow 成功后才可报告运行验收。无生产变更、费用、NAS 操作或真实数据。
+
 # 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
 
 - PR [#6](https://github.com/zxwan829/SecondBrain/pull/6) 的最终 head `0efe462cd8dbe6067b25d1e51cf69e1309cc42f7` 经独立代码复审，纠错需规范化完整等价且唯一，失败/取消/停止的 Run 清理 pending 状态；跨平台 Core 测试不再使用 `/private/tmp` 垫片。

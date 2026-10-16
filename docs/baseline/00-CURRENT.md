@@ -82,6 +82,7 @@ source: GitHub SecondBrain Monorepo
 | 无提示主动关联 | NOT VERIFIED：旧 Knowledge Retrieval V0 已 ACCEPTED，但仅证明可用搜索/读取；不能证明自动联想 | 不说“搜索知识库”，自然对话能正确使用相关长期记忆；精确事实自动回源 |
 | Personal Memory Core（Phase 1-A） | DEV-TESTED：默认关闭、独立注入根、追加式来源/修订记录；同一来源可保存多个不同候选并稳定幂等；未核验事实在模型召回视图中脱敏并要求回源；不表示生产已部署 | PR #4 已合并；后续阶段回归结果见 Progress-Log；生产未部署、未接真实数据 |
 | 自主个人记忆学习（Phase 1-B） | DEV-TESTED：默认关闭的 Core 候选提炼与相关记忆召回挂钩；成功 Run 必须匹配 Run 前消息 ID 水位之后新增的持久消息。纠错要求去除已知表达前缀后与唯一记忆完整等价；歧义时不写；失败/取消/停止清理 pending。使用现有 Hermes `instructions` 请求字段注入受限上下文，用户 input 不改写。真实 Hermes v0.21.5 运行兼容性、长期在线行为和用户验收 UNKNOWN | PR #6 已独立审核并合并；生产启用、真实 Hermes/会话数据和模型行为验证仍须另行授权 |
+| 真实 Hermes/Core 记忆链路（Phase 1-C） | BLOCKED：已完成固定源码/API 契约核查及 Core `run.interrupted` pending 清理；定向 Core 测试 29 passed。尚无真实 v0.21.5 API + Core 运行证据 | 正确镜像 index 为 `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`，amd64 config/image ID 对应 upstream `749220ef`；当前 Mac 无 Docker/Podman/Colima。现有 smoke workflow 用其他 digest，paid workflow 禁止使用。需要零凭据、stub-only GitHub-hosted runner harness |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
 | 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
 | 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |

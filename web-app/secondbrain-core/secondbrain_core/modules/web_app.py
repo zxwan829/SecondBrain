@@ -234,7 +234,9 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
             except Exception:
                 # Learning failure never changes the upstream run status response.
                 pass
-        elif personal_learning and result.get("status") in {"failed", "cancelled", "canceled", "stopped"}:
+        elif personal_learning and result.get("status") in {
+            "failed", "cancelled", "canceled", "stopped", "interrupted",
+        }:
             personal_learning.discard_run(safe_run_id)
         return result
 
