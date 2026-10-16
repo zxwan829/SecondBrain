@@ -98,14 +98,14 @@ source: GitHub SecondBrain Monorepo
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
 | **Phase 1-A（已部署）** | **可纠正、可撤销、可溯源的 Personal Memory Core** | 独立 Core state 子目录、追加式 JSONL、来源与修订历史；NAS 合成验证通过，测试记录已清理 | 用户浏览器验收与后续真实使用仍待完成 |
-| **D078（当前优先；设计/施工进行中）** | **保留 Hermes 原生自主学习、file、Skills、terminal 能力，以强制监督控制敏感操作** | 用户批准按需申请原则；Issue #14 确认当前 API 只有 `file,skills,vision`，terminal 暂时关闭；v0.22.2 现有工具审批覆盖有限 | 核实最小可执行方案与浏览器批准/拒绝路径，实施并验证前不得将受控 terminal、敏感读取或 Skills 写审核写成已上线 |
+| **D078（DEV-TESTED；PR #16 待复审）** | **保留 Hermes 原生自主学习、file、Skills、terminal 能力，以强制监督控制敏感操作** | 固定 v0.22.2 源码隔离运行中，Hermes PluginManager 实际加载 D078 插件；pre_tool_call 产生原生 `approval.request`，拒绝阻断、一次批准到达 dispatch 边界；真实 API Run/工具执行未调用。内置 file registry 的 4 个工具与 `path` 参数均被覆盖；Session 读取和 Skills 通用写入拒绝 | PR #16 新增 terminal 仅接受明确 canonical absolute `workdir` 且仅 local backend；卡片绑定/展示原命令、全量参数和工作目录；额外 pre_tool_call 修改 Hook、未知参数、非 local 后端均 fail-closed。生产插件尚未部署，API terminal 仍关闭；任意获批 executable 仍非 OS 沙箱。真实镜像运行、真实执行与部署后边界仍待单独审核/授权 |
 | **Phase 1-B（已部署；合成运行验证）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；Core Linux 回归 154 passed、2 subtests passed（Run 38857429530）；Hermes v0.22.2 + Core + 确定性本地 Stub 四步闭环通过 | 真实模型的学习与回答质量、真实会话及用户验收仍待完成 |
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | 当前 NAS App `secondbrain-app:d077-b6e30f3` healthy（Issue #12/#14），Core↔Hermes health 可用；D077 合成 Session/Run/SSE 链路通过 | 真实模型和浏览器记忆体验待验收；设置页、Composer、手机 Review、真实 PDF OCR 仍有既有缺口，Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
 
-**当前 NEXT（Issue #14 / D078，决策已批准，实施未完成）：** 保留 Hermes 原生 Agent 能力，以服务端强制的按需申请/批准/拒绝/留痕控制危险 terminal、敏感文件和跨 Session 访问；Skills 的重要修改经审核。普通低风险 Knowledge/Capture 保持自动，Core JSONL 记忆治理不变。优先复用 v0.22.2 原生 Run approval 与 Skills write gate，不能把“存在审批 API”误写成 terminal/file 已受保护。Codex 正在准备最小技术方案，源码覆盖、镜像重建、NAS 执行及真实模型费用均需按治理规则核准。用户浏览器真实记忆验收要在实际访问边界满足后安排。
+**当前 NEXT（Issue #14 / D078）：** PR #16 已完成固定 Hermes v0.22.2 源码 Hook/审批事件/路径覆盖核验及 terminal 审批对象绑定修复，等待 ChatGPT 复审。生产 API 当前仍为 `file,skills,vision`，terminal 未开放，D078 插件/配置未部署；PR 代码测试不代表生产权限已加固。任意获批可执行文件仍以 Hermes worker OS 权限运行，不提供 OS 沙箱。复审通过后仍需单独部署授权，安装插件/合并配置后先验证实际工具集合、插件加载与 file Session 拒绝；通过后才考虑申请开启 terminal，并完成浏览器端实际 Run/SSE 审批验证。Core JSONL 个人记忆机制不变；真实模型与用户体验仍需另行确认模型/费用。
 
 **不要把阻断项变成无限研究：** 权限和认证须够安全且有证据；其他问题遵循 FAST-EXEC，优先复用现有能力，不提前建设企业级体系。
 

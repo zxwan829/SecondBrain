@@ -2,6 +2,16 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+## 2026-10-16 — D078 PR #16 固定 Hermes Hook 与审批对象核验（本地合成，未部署）
+
+- 按 ChatGPT 复审评论 [#6218417694](https://github.com/zxwan829/SecondBrain/pull/16#issuecomment-6218417694)，核对固定 Hermes v0.22.2 upstream commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8`。源码注册的内置 file 工具为 `read_file`、`write_file`、`patch`、`search_files`，4 个 schema 的路径属性均为 `path`。`patch` 的内容式多文件模式没有顶层 path，D078 guard 因无可审查路径而 fail-closed。`process_manage` 属 terminal toolset，参数为 action/session_id/data/timeout/offset/limit；`execute_code` 属 code_execution toolset，公开参数为 code/reset。当前 NAS API toolset 保持 `file,skills,vision`，本轮未接触 NAS。
+- 使用该固定源码的 Hermes `PluginManager`、临时 `$HERMES_HOME` 与合成 profile 真实加载仓库 D078 插件；通过 Hermes 实际 lifecycle `pre_tool_call` dispatch 验证 terminal `approval.request` 事件、拒绝时阻断以及 once 允许到 tool-dispatch 边界；没有调用 agent、provider 或真实 terminal handler。事件使用 v0.22.2 API Server `_approval_request_event` 构造。测试将仅 `TERMINAL_ENV=local` 配置值替身为 local；没有验证真实 terminal 进程启动或 OS 隔离。Sensitive Session 路径读及 Skills 路径 generic `write_file` 均由已加载插件实际拒绝。
+- 源码显示 Hermes terminal 执行时会经 `_resolve_command_cwd` 选择 Session cwd、后端默认 cwd或映射路径。为让审批内容明确对应实际执行上下文，D078 现要求 terminal 提供 canonical absolute `workdir`、仅接受 local backend 和固定 v0.22.2 合同中的参数；其他 backend/非 canonical cwd/额外参数 fail-closed。`process_manage` 与 `execute_code` 的动作/目标/代码参数也按固定 schema 检查。为防其他 `pre_tool_call` Hook 在审批后改写目标，发现任何其他执行 Hook 时 fail-closed。
+- Core 校验固定工具允许参数及必需 workdir，审批 digest 继续覆盖完整 canonical `{tool, arguments}`；UI 校验显示命令与 terminal/code 参数一致，显式显示 workdir，并公开全量参数。UI 警示改为准确说明获批程序仍可自行启动程序或访问文件；这是审批门禁，不是 OS 沙箱。
+- 针对性测试：Guard/Core approval registry/BFF **34 passed**；前端审批卡 **3 passed**；前端 TypeScript typecheck 通过；`git diff --check` 通过。实际 Hermes 源码 Hook smoke 为 synthetic deny/once、敏感 Session read deny 和 Skills generic write deny 均通过，无工具执行与模型请求。
+- 当前证据不证明实际 API Run 触发了生产容器里的插件，也不证明命令的所有程序副作用可静态审计；任意用户批准的 executable 仍以 Hermes worker OS 权限执行。Hermes 上游 `tool_executor._pre_tool_block` 在 plugin hook dispatch 异常时会 fail-open，所以生产 API terminal 必须保持关闭，直到部署环境验证插件已加载且无其他执行 Hook；不能把此次源代码 smoke 当作生产强制策略验收。Session file 拒绝也只有在插件实际部署加载后生效。
+- 文档冲突按 PR #15 分支 `docs/d077-governance-stage-20261016` 处理：本 PR 继承其基于 PR #13 的较新 `00-CURRENT`、Decision-Log D078、Progress 及 Environment-Baseline；保留 PR #13 的真实 D077 NAS 部署记录和 PR #15 的 D078 决策，不复制旧 main 快照或改写 Environment 基线。PR #16 是堆叠 PR，需先审核/处理 PR #13 与 #15，再合并本实现。没有修改 NAS、生产配置、Compose、凭据或生产模型设置；没有 Runner、合并或部署。
+
 ## 2026-10-16 — Issue #14 工具权限核验与 D078 业务决策（部分加固已部署，方案实施进行中）
 
 - 按 [Issue #14 报告](https://github.com/zxwan829/SecondBrain/issues/14#issuecomment-6216831918)，Hermes v0.22.2 API Server 先前启用 `file,skills,terminal,vision`，且 terminal 为 local/unsandboxed；Codex 将 API toolsets 收窄到 `file,skills,vision` 并仅重启 Hermes。配置解析器确认 terminal 已移出 API Run；Hermes API health 200、Dashboard 302、Core healthy，D077 Memory/Learning flags 未变。该项为**已部署的临时保护**，并非已完成受监督执行方案；历史配置备份与哈希见 Issue #14。

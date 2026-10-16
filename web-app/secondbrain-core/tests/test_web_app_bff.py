@@ -13,6 +13,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.hermes_api import HermesAPI
+from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX
 from secondbrain_core.modules.auto_organize import OrganizerControlStore, OrganizeSettingsStore, next_scheduled_at
 from datetime import datetime, timezone
 
@@ -40,6 +41,7 @@ class WebAppBffTests(unittest.TestCase):
         self.approvals = self.state / "approvals"
         self.approvals.mkdir(mode=0o700)
         self.calls = []
+        self.approval_sse = False
 
         def handler(request):
             self.calls.append(request)
@@ -62,8 +64,18 @@ class WebAppBffTests(unittest.TestCase):
             if request.url.path == "/v1/runs/run-1":
                 return httpx.Response(200, json={"run_id": "run-1", "status": "completed", "output": "done"})
             if request.url.path == "/v1/runs/run-1/events":
+                if self.approval_sse:
+                    request_data = {"schema": 1, "tool": "terminal", "arguments": {"command": "pwd", "workdir": "/tmp/synthetic"}}
+                    description = APPROVAL_PREFIX + json.dumps(request_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                    event = {"event": "approval.request", "run_id": "run-1", "request_id": "approval-1",
+                             "command": "<terminal>", "description": description,
+                             "choices": ["once", "session", "always", "deny"]}
+                    return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                          content=("data: " + json.dumps(event) + "\n\n").encode())
                 return httpx.Response(200, headers={"content-type": "text/event-stream"},
                                       content=b"data: {\"event\":\"tool.started\",\"tool\":\"search_files\",\"preview\":\"query\"}\n\ndata: {\"event\":\"message.delta\",\"delta\":\"done\"}\n\ndata: {\"event\":\"run.completed\",\"output\":\"done\"}\n\n")
+            if request.url.path == "/v1/runs/run-1/approval":
+                return httpx.Response(200, json={"run_id": "run-1", "choice": json.loads(request.content).get("choice"), "resolved": 1})
             if request.url.path == "/v1/runs/run-1/stop":
                 return httpx.Response(200, json={"status": "stopping"})
             return httpx.Response(404, json={"detail": "not found"})
@@ -197,6 +209,55 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(stopped.json()["status"], "stopping")
         self.assertTrue(self.calls)
         self.assertTrue(all(call.headers.get("authorization") == "Bearer server-only-test-key" for call in self.calls))
+
+    def test_terminal_approval_is_session_bound_single_use_and_only_once_or_deny(self):
+        self.login()
+        started = self.client.post("/api/chat/sessions/session-1/runs", json={"input": "synthetic request"},
+                                   headers={"Origin": "https://testserver", "Idempotency-Key": "approval-run"})
+        self.assertEqual(started.status_code, 200)
+        self.approval_sse = True
+        events = self.client.get("/api/chat/runs/run-1/events")
+        event = json.loads(events.content.decode().split("data: ", 1)[1].strip())
+        self.assertEqual(event["event"], "approval.request")
+        self.assertEqual(event["session_id"], "session-1")
+        self.assertEqual(event["command"], "pwd")
+        self.assertIn("worker's OS permissions", event["scope"])
+        # Closing the SSE response without a user decision must never auto-approve.
+        self.assertFalse(any(call.url.path.endswith("/approval") for call in self.calls))
+        body = {"approval_id": event["approval_id"], "command_sha256": event["command_sha256"], "choice": "once"}
+        wrong_session = self.client.post("/api/chat/sessions/session-2/runs/run-1/approval", json=body,
+                                         headers={"Origin": "https://testserver"})
+        self.assertEqual(wrong_session.status_code, 404)
+        persistent = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json={**body, "choice": "always"},
+                                      headers={"Origin": "https://testserver"})
+        self.assertEqual(persistent.status_code, 400)
+        altered = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json={**body, "command_sha256": "0" * 64},
+                                   headers={"Origin": "https://testserver"})
+        self.assertEqual(altered.status_code, 409)
+        approved = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json=body,
+                                    headers={"Origin": "https://testserver"})
+        self.assertEqual(approved.status_code, 200, approved.text)
+        self.assertEqual(approved.json()["choice"], "once")
+        duplicate = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json=body,
+                                     headers={"Origin": "https://testserver"})
+        self.assertEqual(duplicate.status_code, 409)
+        call = next(call for call in self.calls if call.url.path.endswith("/approval"))
+        forwarded = json.loads(call.content)
+        self.assertEqual(forwarded, {"request_id": event["approval_id"], "choice": "once"})
+
+    def test_terminal_approval_rejection_is_forwarded_as_deny(self):
+        self.login()
+        self.client.post("/api/chat/sessions/session-1/runs", json={"input": "synthetic request"},
+                         headers={"Origin": "https://testserver", "Idempotency-Key": "approval-deny-run"})
+        self.approval_sse = True
+        event = json.loads(self.client.get("/api/chat/runs/run-1/events").content.decode().split("data: ", 1)[1].strip())
+        rejected = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json={
+            "approval_id": event["approval_id"], "command_sha256": event["command_sha256"], "choice": "deny",
+        }, headers={"Origin": "https://testserver"})
+        self.assertEqual(rejected.status_code, 200, rejected.text)
+        self.assertEqual(rejected.json()["choice"], "deny")
+        call = next(call for call in self.calls if call.url.path.endswith("/approval"))
+        self.assertEqual(json.loads(call.content)["choice"], "deny")
 
     def test_cookie_scheme_and_exact_proxy_trust(self):
         self.assertIn("secure", self.login().headers["set-cookie"].lower())

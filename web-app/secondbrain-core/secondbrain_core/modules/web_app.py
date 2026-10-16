@@ -1,5 +1,6 @@
 """Browser-facing App auth, Home aggregation, and Hermes BFF routes."""
 import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from .app_auth import AppSessionAuth
 from .hermes_api import HermesAPI
+from .run_approvals import RunApprovalRegistry
 from .review_promote.approval import _read_review
 
 
@@ -64,6 +66,7 @@ def _knowledge_items(knowledge_root, limit=8):
 def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, review_root, knowledge_root,
                           organizer=None, personal_learning=None):
     router = APIRouter(prefix="/api")
+    run_approvals = RunApprovalRegistry()
 
     @router.post("/auth/login")
     def login(request: Request, response: Response, body: dict):
@@ -173,7 +176,7 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
 
     @router.post("/chat/sessions/{session_id}/runs")
     async def start_run(request: Request, session_id: str, body: dict):
-        auth.require_action(request, "chat.run")
+        owner = auth.require_action(request, "chat.run")
         text = body.get("input")
         if not isinstance(text, str) or not text.strip() or len(text) > 100_000:
             raise HTTPException(status_code=400, detail="Message must contain 1-100000 characters")
@@ -198,17 +201,33 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
                 # ephemeral system prompt; user input remains byte-for-byte intact.
                 run_body["instructions"] = instructions
         result = await hermes.start_run(run_body, key)
+        run_approvals.register_run(hermes._safe_id(result["run_id"]), safe_session_id, owner)
         if personal_learning:
             personal_learning.register_run(result["run_id"], safe_session_id, text, watermark)
         return result
 
     @router.get("/chat/runs/{run_id}/events")
     async def run_events(request: Request, run_id: str):
-        auth.require_action(request, "chat.read")
+        owner = auth.require_action(request, "chat.read")
+        safe_run_id = hermes._safe_id(run_id)
         chunks = await hermes.stream_run(run_id)
 
         async def events():
             async for chunk in chunks:
+                outgoing = chunk
+                payload = _sse_payload(chunk)
+                if payload and payload.get("event") == "approval.request":
+                    card = run_approvals.bind_event(safe_run_id, owner, payload)
+                    if card:
+                        outgoing = _sse_frame(card)
+                    else:
+                        request_id = payload.get("request_id")
+                        if isinstance(request_id, str) and request_id:
+                            try:
+                                await hermes.resolve_run_approval(safe_run_id, request_id, "deny")
+                            except HTTPException:
+                                pass  # Native approval timeout is also fail-closed.
+                        outgoing = _sse_frame({"event": "approval.blocked", "failure_code": "approval_event_invalid"})
                 if personal_learning and personal_learning.is_success_event(chunk):
                     try:
                         await personal_learning.complete_run(hermes._safe_id(run_id), hermes)
@@ -217,11 +236,33 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
                         pass
                 elif personal_learning and personal_learning.is_discard_event(chunk):
                     personal_learning.discard_run(hermes._safe_id(run_id))
-                yield chunk
+                yield outgoing
 
         return StreamingResponse(events(), media_type="text/event-stream", headers={
             "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
         })
+
+    @router.post("/chat/sessions/{session_id}/runs/{run_id}/approval")
+    async def resolve_run_approval(request: Request, session_id: str, run_id: str, body: dict):
+        owner = auth.require_action(request, "chat.approve_terminal")
+        safe_run_id = hermes._safe_id(run_id)
+        safe_session_id = hermes._safe_id(session_id)
+        approval_id = body.get("approval_id")
+        digest = body.get("command_sha256")
+        choice = body.get("choice")
+        if not isinstance(approval_id, str) or not isinstance(digest, str):
+            raise HTTPException(status_code=400, detail="Approval identifier and command digest are required")
+        run_approvals.begin_resolution(run_id=safe_run_id, session_id=safe_session_id,
+                                       request_id=hermes._safe_id(approval_id), owner=owner,
+                                       digest=digest, choice=choice)
+        try:
+            result = await hermes.resolve_run_approval(safe_run_id, approval_id, choice)
+        except Exception:
+            run_approvals.finish_resolution(safe_run_id, approval_id, False)
+            raise
+        run_approvals.finish_resolution(safe_run_id, approval_id, True)
+        return {"status": "resolved", "choice": choice,
+                "resolved": result.get("resolved", 0) if isinstance(result, dict) else 0}
 
     @router.get("/chat/runs/{run_id}")
     async def get_run(request: Request, run_id: str):
@@ -242,9 +283,29 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
     async def stop_run(request: Request, run_id: str):
         auth.require_action(request, "chat.stop")
         safe_run_id = hermes._safe_id(run_id)
+        for approval_id in run_approvals.cancel_pending(safe_run_id):
+            try:
+                await hermes.resolve_run_approval(safe_run_id, approval_id, "deny")
+                run_approvals.finish_resolution(safe_run_id, approval_id, True)
+            except HTTPException:
+                run_approvals.finish_resolution(safe_run_id, approval_id, False)
         result = await hermes.stop_run(safe_run_id)
         if personal_learning:
             personal_learning.discard_run(safe_run_id)
         return result
 
     return router
+
+
+def _sse_payload(chunk):
+    try:
+        raw = chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+        data = "\n".join(line[5:].lstrip() for line in raw.splitlines() if line.startswith("data:"))
+        payload = json.loads(data)
+        return payload if isinstance(payload, dict) else None
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return None
+
+
+def _sse_frame(payload):
+    return ("data: " + json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n\n").encode("utf-8")
