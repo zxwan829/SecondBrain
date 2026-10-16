@@ -20,9 +20,12 @@ class FakeAuth:
 
 
 class FakeHermes:
-    def __init__(self, messages=None, terminal="run.completed"):
+    def __init__(self, messages=None, before_messages=None, terminal="run.completed",
+                 preflight_error=False):
         self.messages = messages or []
+        self.before_messages = before_messages or []
         self.terminal = terminal
+        self.preflight_error = preflight_error
         self.run_body = None
         self.message_reads = 0
 
@@ -41,7 +44,10 @@ class FakeHermes:
 
     async def list_messages(self, session_id, limit=100, order="latest"):
         self.message_reads += 1
-        return {"messages": self.messages, "pagination": {}}
+        if self.message_reads == 1 and self.preflight_error:
+            raise RuntimeError("synthetic history unavailable")
+        rows = self.before_messages if self.message_reads == 1 else self.messages
+        return {"messages": rows, "pagination": {}}
 
     async def get_run(self, run_id):
         return {"run_id": run_id, "status": "completed"}
@@ -111,7 +117,7 @@ class PersonalLearningTests(unittest.TestCase):
         self.assertIn("详细分步回答", {row["content"]["text"] for row in active})
         corrected_id = next(row["memory_id"] for row in active
                             if row["content"]["text"] == "详细分步回答")
-        pipeline.register_run("run-correction-replay", "synthetic-correction-session", correction)
+        pipeline.register_run("run-correction-replay", "synthetic-correction-session", correction, set())
         asyncio.run(pipeline.complete_run("run-correction-replay", correction_hermes))
         self.assertEqual(len(self.store.history(corrected_id)), 2)
         correction_client.close()
@@ -138,10 +144,10 @@ class PersonalLearningTests(unittest.TestCase):
         failed_client, _ = self._run_router(text, failed_hermes, pipeline)
         failed_client.get("/api/chat/runs/run-synthetic-1/events")
         self.assertEqual(self.store.active_view(), [])
-        self.assertEqual(failed_hermes.message_reads, 0)
+        self.assertEqual(failed_hermes.message_reads, 1)
         failed_client.close()
 
-        pipeline.register_run("run-no-source", "synthetic-session", text)
+        pipeline.register_run("run-no-source", "synthetic-session", text, set())
         no_id = FakeHermes(messages=[{
             "session_id": "synthetic-session", "role": "user", "text": text,
         }])
@@ -155,8 +161,11 @@ class PersonalLearningTests(unittest.TestCase):
         hermes = FakeHermes(messages=[
             {"id": "newest-message", "session_id": "synthetic-session", "role": "user", "text": text},
             {"id": "older-message", "session_id": "synthetic-session", "role": "user", "text": text},
+        ], before_messages=[
+            {"id": "older-message", "session_id": "synthetic-session", "role": "user", "text": text},
         ])
-        pipeline.register_run("run-repeated-text", "synthetic-session", text)
+        watermark = asyncio.run(pipeline.capture_message_watermark("synthetic-session", hermes))
+        pipeline.register_run("run-repeated-text", "synthetic-session", text, watermark)
         self.assertEqual(asyncio.run(pipeline.complete_run("run-repeated-text", hermes)), 1)
         self.assertEqual(self.store.active_view()[0]["source_ref"],
                          "synthetic-session:newest-message")
@@ -182,6 +191,64 @@ class PersonalLearningTests(unittest.TestCase):
         self.assertEqual(hermes.run_body, {"input": text, "session_id": "synthetic-session"})
         client.close()
         self.assertEqual(self.store.active_view(), [])
+
+    def test_old_identical_message_cannot_be_reused_as_completed_run_source(self):
+        text = "I prefer short summaries."
+        old_row = {"id": "old-message", "session_id": "synthetic-session",
+                   "role": "user", "text": text}
+        hermes = FakeHermes(messages=[old_row], before_messages=[old_row])
+        pipeline = PersonalLearningPipeline(self.store)
+        client, _ = self._run_router(text, hermes, pipeline)
+        client.get("/api/chat/runs/run-synthetic-1/events")
+        self.assertEqual(self.store.active_view(), [])
+        client.close()
+
+    def test_history_watermark_failure_keeps_chat_available_without_learning(self):
+        text = "I prefer short summaries."
+        hermes = FakeHermes(messages=[{
+            "id": "new-message", "session_id": "synthetic-session", "role": "user", "text": text,
+        }], preflight_error=True)
+        pipeline = PersonalLearningPipeline(self.store)
+        client, response = self._run_router(text, hermes, pipeline)
+        self.assertEqual(response.status_code, 200)
+        client.get("/api/chat/runs/run-synthetic-1/events")
+        self.assertEqual(self.store.active_view(), [])
+        client.close()
+
+    def test_concurrent_identical_runs_are_not_learned_ambiguously(self):
+        pipeline = PersonalLearningPipeline(self.store)
+        pipeline.register_run("run-one", "s1", "I prefer concise answers.", set())
+        pipeline.register_run("run-two", "s1", "I prefer concise answers.", set())
+        hermes = FakeHermes(messages=[{
+            "id": "new-message", "session_id": "s1", "role": "user", "text": "I prefer concise answers.",
+        }])
+        self.assertEqual(asyncio.run(pipeline.complete_run("run-one", hermes)), 0)
+        self.assertEqual(asyncio.run(pipeline.complete_run("run-two", hermes)), 0)
+        self.assertEqual(self.store.active_view(), [])
+
+    def test_ambiguous_old_preference_does_not_rewrite_either_memory(self):
+        first = self.store.create(content={"text": "短篇小说"}, category="preference",
+                                  fact_kind="user_stated", source_type="user_message", source_ref="s:m1")
+        second = self.store.create(content={"text": "短篇电影"}, category="preference",
+                                   fact_kind="user_stated", source_type="user_message", source_ref="s:m2")
+        pipeline = PersonalLearningPipeline(self.store)
+        text = "我以前偏好短篇，现在更喜欢长篇。"
+        candidates = pipeline.extractor.extract(text, self.store.active_view(limit=10))
+        self.assertEqual(candidates, [])
+        self.assertIn(first["memory_id"], {row["memory_id"] for row in self.store.active_view(limit=10)})
+        self.assertIn(second["memory_id"], {row["memory_id"] for row in self.store.active_view(limit=10)})
+
+    def test_specific_old_preference_correction_matches_unique_memory(self):
+        old = self.store.create(content={"text": "喜欢短篇小说"}, category="preference",
+                                fact_kind="user_stated", source_type="user_message", source_ref="s:m1")
+        self.store.create(content={"text": "喜欢短篇电影"}, category="preference",
+                          fact_kind="user_stated", source_type="user_message", source_ref="s:m2")
+        pipeline = PersonalLearningPipeline(self.store)
+        text = "我以前偏好短篇小说，现在更喜欢长篇小说。"
+        candidates = pipeline.extractor.extract(text, self.store.active_view(limit=10))
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["memory_id"], old["memory_id"])
+        self.assertEqual(candidates[0]["operation"], "correct")
 
     def test_hermes_api_adapter_forwards_supported_instructions_without_rewriting_input(self):
         captured = {}

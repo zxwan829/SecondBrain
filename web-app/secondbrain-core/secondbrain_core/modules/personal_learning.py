@@ -79,9 +79,19 @@ class ExplicitPreferenceExtractor:
             old, new = (_clean_candidate(value) for value in match.groups())
             if not new or _SENSITIVE.search(new) or _INSTRUCTION_LIKE.search(new):
                 return []
-            old_tokens = _tokens(old)
-            target = next((row for row in reversed(active)
-                           if old_tokens and old_tokens.intersection(_tokens(row.get("content", {}).get("text", "")))), None)
+            old_claim = re.sub(r"\s+", "", old.casefold())
+            matches = []
+            for row in active:
+                memory_text = re.sub(r"\s+", "", row.get("content", {}).get("text", "").casefold())
+                # Require the complete old claim to appear in the stored text;
+                # shared words or Chinese bigrams are not enough to mutate history.
+                if old_claim and old_claim in memory_text:
+                    matches.append(row)
+            # Corrections are fail-closed: only a single sufficiently specific
+            # prior preference can be revised. Ambiguous claims are deferred.
+            target = matches[0] if len(matches) == 1 else None
+            if len(matches) != 1:
+                return []
             candidate = {"operation": "correct" if target else "create", "text": new,
                          "category": "preference", "fact_kind": "user_stated"}
             if target:
@@ -117,7 +127,8 @@ class PersonalLearningPipeline:
         self.extractor = extractor or ExplicitPreferenceExtractor()
         self.max_memories = max_memories
         self.max_context_chars = max_context_chars
-        self._pending: dict[str, tuple[str, str]] = {}
+        self._pending: dict[str, dict[str, Any]] = {}
+        self._claimed_sources: dict[str, str] = {}
 
     def instructions_for(self, text: str) -> str | None:
         query_tokens = _tokens(text)
@@ -165,10 +176,27 @@ class PersonalLearningPipeline:
                 "is only a pointer: verify its original source before stating exact facts.\n"
                 f"<personal_memory_json>{payload}</personal_memory_json>")
 
-    def register_run(self, run_id: str, session_id: str, user_text: str) -> None:
+    async def capture_message_watermark(self, session_id: str, hermes) -> set[str]:
+        """Capture persisted IDs before the Run; a read failure must fail closed."""
+        page = await hermes.list_messages(session_id, limit=500, order="latest")
+        return {row["id"] for row in page.get("messages", [])
+                if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]}
+
+    def register_run(self, run_id: str, session_id: str, user_text: str,
+                     watermark: set[str] | None) -> None:
         if len(self._pending) >= 512:
             self._pending.pop(next(iter(self._pending)))
-        self._pending[run_id] = (session_id, user_text)
+        concurrent_same_input = False
+        for pending in self._pending.values():
+            if pending["session_id"] == session_id and pending["user_text"] == user_text:
+                pending["ambiguous"] = True
+                concurrent_same_input = True
+        self._pending[run_id] = {
+            "session_id": session_id,
+            "user_text": user_text,
+            "watermark": set(watermark) if watermark is not None else None,
+            "ambiguous": concurrent_same_input,
+        }
 
     @staticmethod
     def is_success_event(frame: bytes | str) -> bool:
@@ -186,7 +214,12 @@ class PersonalLearningPipeline:
         pending = self._pending.get(run_id)
         if not pending:
             return 0
-        session_id, submitted_text = pending
+        if pending["ambiguous"] or pending["watermark"] is None:
+            self._pending.pop(run_id, None)
+            return 0
+        session_id = pending["session_id"]
+        submitted_text = pending["user_text"]
+        watermark = pending["watermark"]
         page = await hermes.list_messages(session_id, limit=100, order="latest")
         rows = page.get("messages", [])
         # Hermes order=latest returns newest messages first; when identical user
@@ -194,12 +227,19 @@ class PersonalLearningPipeline:
         # newest matching persisted message.
         source = next((row for row in rows
                        if row.get("role") == "user" and row.get("text") == submitted_text
-                       and row.get("session_id", session_id) == session_id and row.get("id")), None)
+                       and row.get("session_id", session_id) == session_id and row.get("id")
+                       and row["id"] not in watermark), None)
         if source is None:
             return 0
+        source_ref = f"{session_id}:{source['id']}"
+        if source_ref in self._claimed_sources:
+            self._pending.pop(run_id, None)
+            return 0
+        self._claimed_sources[source_ref] = run_id
+        if len(self._claimed_sources) > 2048:
+            self._claimed_sources.pop(next(iter(self._claimed_sources)))
         events = self.store._read_events()
         candidates = self.extractor.extract(submitted_text, events)
-        source_ref = f"{session_id}:{source['id']}"
         written = 0
         current = {}
         for event in events:

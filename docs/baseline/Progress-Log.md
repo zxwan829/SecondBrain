@@ -31,6 +31,13 @@
 - Phase 1-A PR #4 于本日已合并入 main；本 Issue #5 变更在 PR [#6](https://github.com/zxwan829/SecondBrain/pull/6)，当前 OPEN，未合并。集成分支最终 commit 记录在该 PR head。
 - 未升级 Hermes、部署 NAS、处理真实个人数据或调用付费模型。未验证真实 v0.21.5 运行行为、模型学习质量、跨进程 pending 状态恢复或用户体验；这些仍需独立审核/授权。
 
+# 2026-10-16 — PR #6 memory accuracy review fixes
+
+- 按最新审核意见修复旧消息可能被误认作新 Run 来源的问题：Chat Run 前读取同 Session 的持久消息 ID 水位；只有成功 Run 后出现、文本与会话匹配且 ID 不在水位中的消息才可作为学习来源。预读失败时 Chat 正常继续，但该 Run 不学习；相同会话存在并发重复输入时两次都跳过学习，避免来源猜配。
+- 收紧纠错目标选择：旧偏好完整短语必须出现在唯一一条当前偏好中；未命中或多条命中均不创建替代项、不改写旧记录。新增旧消息重用、正常新重复文本、并发重复输入、预读故障、歧义纠错和精确纠错回归。
+- 定向测试 **12 passed**；Core 全套 **151 passed、2 subtests passed**。Linux workflow 保持手动/无 secrets，既有 `/private/tmp` 兼容性修复未变。
+- 更新提交与 PR #6 head 以 GitHub 当前状态为准；本轮未重跑 Linux workflow，未部署或合并。
+
 # 2026-09-28
 
 - Hermes Docker 正式环境稳定，固定 IP 172.18.0.2。

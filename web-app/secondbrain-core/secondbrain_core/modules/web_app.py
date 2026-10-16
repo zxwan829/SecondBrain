@@ -184,7 +184,14 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
             await organizer.baseline_session(hermes._safe_id(session_id))
         safe_session_id = hermes._safe_id(session_id)
         run_body = {"input": text, "session_id": safe_session_id}
+        watermark = None
         if personal_learning:
+            try:
+                # Learning is optional: if the pre-Run history read fails, allow
+                # Chat to proceed but do not learn without a source watermark.
+                watermark = await personal_learning.capture_message_watermark(safe_session_id, hermes)
+            except Exception:
+                watermark = None
             instructions = personal_learning.instructions_for(text)
             if instructions:
                 # Hermes v0.21.5 /v1/runs accepts `instructions` as an
@@ -192,7 +199,7 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
                 run_body["instructions"] = instructions
         result = await hermes.start_run(run_body, key)
         if personal_learning:
-            personal_learning.register_run(result["run_id"], safe_session_id, text)
+            personal_learning.register_run(result["run_id"], safe_session_id, text, watermark)
         return result
 
     @router.get("/chat/runs/{run_id}/events")
