@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: d077-hermes-live-\${{ github.ref }}
+  group: d077-hermes-live-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,7 +45,7 @@ jobs:
         shell: bash
         timeout-minutes: 15
         env:
-          SILICONFLOW_D077_KEY: \${{ secrets.SILICONFLOW_D077_KEY }}
+          SILICONFLOW_D077_KEY: ${{ secrets.SILICONFLOW_D077_KEY }}
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -euo pipefail
