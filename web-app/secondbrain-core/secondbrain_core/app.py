@@ -13,6 +13,7 @@ from .modules.capture import CaptureService, create_capture_router
 from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.personal_memory import PersonalMemoryStore, create_personal_memory_router
+from .modules.personal_learning import PersonalLearningPipeline
 from .modules.organizer_engine import OrganizerRunner
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
@@ -59,21 +60,33 @@ def create_app():
                                 scheduler_enabled=organizer_options["scheduler_enabled"])
     capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root,
                              processors=MultimodalCaptureProcessors(hermes))
-    app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
-    app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root, organizer))
-    app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
-    app.include_router(create_capture_router(auth, capture))
-    # Default-off, separately injected data root. When disabled, Core neither creates
-    # the directory nor scans chat history or starts a background memory task.
     memory_enabled_value = os.environ.get("SB_PERSONAL_MEMORY_ENABLED", "false").strip().lower()
     if memory_enabled_value not in {"true", "false"}:
         raise RuntimeError("SB_PERSONAL_MEMORY_ENABLED must be true or false")
+    learning_enabled_value = os.environ.get("SB_PERSONAL_LEARNING_ENABLED", "false").strip().lower()
+    if learning_enabled_value not in {"true", "false"}:
+        raise RuntimeError("SB_PERSONAL_LEARNING_ENABLED must be true or false")
+    if learning_enabled_value == "true" and memory_enabled_value != "true":
+        raise RuntimeError("Personal learning requires SB_PERSONAL_MEMORY_ENABLED=true")
+    memory_store = None
+    learning = None
     if memory_enabled_value == "true":
         memory_root = os.environ.get("SB_PERSONAL_MEMORY_ROOT", "").strip()
         if not memory_root or not os.path.isabs(memory_root):
             raise RuntimeError("An absolute SB_PERSONAL_MEMORY_ROOT is required when personal memory is enabled")
         memory_store = PersonalMemoryStore(memory_root)
+        if learning_enabled_value == "true":
+            learning = PersonalLearningPipeline(memory_store)
+
+    app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root,
+                                             organizer, personal_learning=learning))
+    app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
+    app.include_router(create_capture_router(auth, capture))
+    # Default-off, separately injected data root. When disabled, Core neither creates
+    # the directory nor scans chat history or starts a background memory task.
+    if memory_enabled_value == "true":
         app.include_router(create_personal_memory_router(auth, memory_store))
     app.include_router(create_core_router(service, review_root, auth,
                                           promote_enabled=promote_enabled,

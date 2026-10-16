@@ -62,7 +62,7 @@ def _knowledge_items(knowledge_root, limit=8):
 
 
 def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, review_root, knowledge_root,
-                          organizer=None):
+                          organizer=None, personal_learning=None):
     router = APIRouter(prefix="/api")
 
     @router.post("/auth/login")
@@ -182,20 +182,50 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
             raise HTTPException(status_code=400, detail="A valid Idempotency-Key is required")
         if organizer:
             await organizer.baseline_session(hermes._safe_id(session_id))
-        return await hermes.start_run({"input": text, "session_id": hermes._safe_id(session_id)}, key)
+        safe_session_id = hermes._safe_id(session_id)
+        run_body = {"input": text, "session_id": safe_session_id}
+        if personal_learning:
+            instructions = personal_learning.instructions_for(text)
+            if instructions:
+                # Hermes v0.21.5 /v1/runs accepts `instructions` as an
+                # ephemeral system prompt; user input remains byte-for-byte intact.
+                run_body["instructions"] = instructions
+        result = await hermes.start_run(run_body, key)
+        if personal_learning:
+            personal_learning.register_run(result["run_id"], safe_session_id, text)
+        return result
 
     @router.get("/chat/runs/{run_id}/events")
     async def run_events(request: Request, run_id: str):
         auth.require_action(request, "chat.read")
         chunks = await hermes.stream_run(run_id)
-        return StreamingResponse(chunks, media_type="text/event-stream", headers={
+
+        async def events():
+            async for chunk in chunks:
+                if personal_learning and personal_learning.is_success_event(chunk):
+                    try:
+                        await personal_learning.complete_run(hermes._safe_id(run_id), hermes)
+                    except Exception:
+                        # Learning is best-effort and must not break a completed Chat run.
+                        pass
+                yield chunk
+
+        return StreamingResponse(events(), media_type="text/event-stream", headers={
             "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
         })
 
     @router.get("/chat/runs/{run_id}")
     async def get_run(request: Request, run_id: str):
         auth.require_action(request, "chat.read")
-        return await hermes.get_run(run_id)
+        safe_run_id = hermes._safe_id(run_id)
+        result = await hermes.get_run(safe_run_id)
+        if personal_learning and result.get("status") == "completed":
+            try:
+                await personal_learning.complete_run(safe_run_id, hermes)
+            except Exception:
+                # Learning failure never changes the upstream run status response.
+                pass
+        return result
 
     @router.post("/chat/runs/{run_id}/stop")
     async def stop_run(request: Request, run_id: str):
