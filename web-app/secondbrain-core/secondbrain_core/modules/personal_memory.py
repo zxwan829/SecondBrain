@@ -97,6 +97,8 @@ class PersonalMemoryStore:
         if not raw.endswith(b"\n"):
             raise MemoryStoreError("Personal memory has an incomplete final record; manual recovery required")
         try:
+            latest_revisions: dict[str, int] = {}
+            event_ids: set[str] = set()
             for line in raw.splitlines():
                 event = json.loads(line)
                 required = {"schema", "event_id", "memory_id", "revision", "operation", "content",
@@ -105,8 +107,22 @@ class PersonalMemoryStore:
                         or event.get("schema") != 1 or type(event.get("revision")) is not int
                         or event["revision"] < 1 or not SAFE_ID.fullmatch(event.get("memory_id", ""))
                         or event.get("operation") not in {"create", "correct", "revoked", "expired"}
-                        or not isinstance(event.get("content"), dict)):
+                        or event.get("status") not in {"active", "pending_verification", "revoked", "expired"}
+                        or event.get("category") not in {"preference", "experience", "project_context", "fact"}
+                        or event.get("fact_kind") not in {"user_stated", "user_confirmed", "inference"}
+                        or event.get("source_type") not in {"user_message", "user_confirmed", "original_file", "session_note"}
+                        or not isinstance(event.get("source_ref"), str)
+                        or not isinstance(event.get("event_id"), str)
+                        or event.get("event_id") in event_ids or not isinstance(event.get("content"), dict)):
                     raise ValueError("invalid event")
+                memory_id = event["memory_id"]
+                previous_revision = latest_revisions.get(memory_id)
+                if ((event["operation"] == "create" and (previous_revision is not None or event["revision"] != 1))
+                        or (event["operation"] != "create" and
+                            (previous_revision is None or event["revision"] != previous_revision + 1))):
+                    raise ValueError("invalid revision sequence")
+                event_ids.add(event["event_id"])
+                latest_revisions[memory_id] = event["revision"]
                 events.append(event)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
             raise MemoryStoreError("Personal memory contains a malformed record; manual recovery required") from exc
