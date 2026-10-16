@@ -167,12 +167,16 @@ def prepare_root(run_id: str, harness_source: pathlib.Path, deny_targets: str,
         raise SafeFailure("runtime_uid", "RootNotAllowed")
     if not harness_source.is_file() or harness_source.is_symlink():
         raise SafeFailure("harness_source", "FileNotFoundError")
-    if not BASE.is_dir() or BASE.is_symlink():
-        raise SafeFailure("approved_parent_preflight", "DirectoryNotFound")
+    created_dirs = ensure_test_base()
     root = BASE / run_id
     if root.exists() or root.is_symlink() or root.resolve(strict=False).parent != BASE.resolve():
+        remove_created_dirs(created_dirs)
         raise SafeFailure("run_root_preflight", "PathConflict")
-    root.mkdir(mode=0o700)
+    try:
+        root.mkdir(mode=0o700)
+    except OSError:
+        remove_created_dirs(created_dirs)
+        raise SafeFailure("run_root_preflight", "PermissionError") from None
     try:
         for name in ("hermes-home", "core-enabled", "core-disabled"):
             (root / name).mkdir(mode=0o700)
@@ -205,7 +209,42 @@ def prepare_root(run_id: str, harness_source: pathlib.Path, deny_targets: str,
     except Exception:
         if root.resolve(strict=False).parent == BASE.resolve() and root.name == run_id:
             shutil.rmtree(root)
+        remove_created_dirs(created_dirs)
         raise
+
+
+def ensure_test_base() -> list[pathlib.Path]:
+    """Create only the approved test parent/root with private permissions."""
+    if BASE.is_symlink() or BASE.parent.is_symlink():
+        raise SafeFailure("approved_parent_preflight", "PathConflict")
+    created: list[pathlib.Path] = []
+    for directory in (BASE.parent, BASE):
+        if directory.exists():
+            if (not directory.is_dir() or not os.access(directory, os.W_OK | os.X_OK)
+                    or directory.stat().st_uid != os.getuid()
+                    or directory.stat().st_mode & 0o077):
+                remove_created_dirs(created)
+                raise SafeFailure("approved_parent_preflight", "PermissionError")
+            continue
+        try:
+            directory.mkdir(mode=0o700)
+            created.append(directory)
+        except OSError:
+            remove_created_dirs(created)
+            raise SafeFailure("approved_parent_preflight", "PermissionError") from None
+    return created
+
+
+def remove_created_dirs(directories: list[pathlib.Path]) -> None:
+    remaining = []
+    for directory in reversed(directories):
+        if directory in (BASE, BASE.parent) and directory.is_dir() and not directory.is_symlink():
+            try:
+                directory.rmdir()
+            except OSError:
+                remaining.append(directory)
+    if remaining:
+        raise SafeFailure("cleanup_parent_inventory", "ResidualAssets")
 
 
 def compose_args(project: str, env_file: pathlib.Path) -> list[str]:
@@ -278,15 +317,155 @@ def inspect_runtime_peer(base: list[str], service: str, expected_network_id: str
             or len(networks) != 1
             or next(iter(networks.values())).get("NetworkID") != expected_network_id):
         raise SafeFailure("runtime_peer_assertions", "IsolationMismatch")
+    verify_runtime_cgroup_limits(details, expected_memory, expected_nano_cpus, expected_pids)
+
+
+def parse_proc_cgroups(text: str) -> dict[str, bool]:
+    controllers: dict[str, bool] = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) != 4 or not fields[2].isdigit() or fields[3] not in {"0", "1"}:
+            raise SafeFailure("cgroup_inventory", "InvalidProcCgroups")
+        controllers[fields[0]] = fields[3] == "1"
+    if not controllers:
+        raise SafeFailure("cgroup_inventory", "EmptyProcCgroups")
+    return controllers
+
+
+def parse_cgroup_mounts(mountinfo: str) -> dict[str, pathlib.Path]:
+    mounts: dict[str, pathlib.Path] = {}
+    for line in mountinfo.splitlines():
+        if " - " not in line:
+            raise SafeFailure("cgroup_inventory", "InvalidMountInfo")
+        left, right = line.split(" - ", 1)
+        before, after = left.split(), right.split()
+        if len(before) < 5 or len(after) < 3:
+            raise SafeFailure("cgroup_inventory", "InvalidMountInfo")
+        if after[0] != "cgroup":
+            continue
+        options = set(after[2].split(","))
+        mountpoint = pathlib.Path(before[4].replace("\\040", " "))
+        for controller in ("cpu", "pids", "memory"):
+            if controller in options:
+                if controller in mounts:
+                    raise SafeFailure("cgroup_inventory", "DuplicateControllerMount")
+                mounts[controller] = mountpoint
+    return mounts
+
+
+def verify_cgroup_v1_support(proc_cgroups: str, mountinfo: str,
+                             docker_warnings: list[str]) -> None:
+    controllers = parse_proc_cgroups(proc_cgroups)
+    mounts = parse_cgroup_mounts(mountinfo)
+    for controller, required_files in {
+        "cpu": ("cpu.cfs_quota_us", "cpu.cfs_period_us"),
+        "pids": ("pids.max",),
+        "memory": ("memory.limit_in_bytes",),
+    }.items():
+        mount = mounts.get(controller)
+        if not controllers.get(controller, False) or mount is None:
+            raise SafeFailure("cgroup_controller_preflight", "ControllerUnavailable")
+        if any(not (mount / filename).is_file() for filename in required_files):
+            raise SafeFailure("cgroup_controller_preflight", "LimitFileUnavailable")
+    lowered = " ".join(docker_warnings).lower()
+    if "no cpu cfs quota support" in lowered or "no cpu cfs period support" in lowered:
+        raise SafeFailure("cgroup_controller_preflight", "CpuQuotaUnsupported")
+
+
+def _cgroup_controller_path(pid: int, controller: str) -> pathlib.Path:
+    if pid <= 0:
+        raise SafeFailure("cgroup_runtime_limits", "InvalidContainerPid")
+    try:
+        cgroup_text = pathlib.Path(f"/proc/{pid}/cgroup").read_text(encoding="ascii")
+        mountinfo = pathlib.Path("/proc/self/mountinfo").read_text(encoding="ascii")
+    except OSError:
+        raise SafeFailure("cgroup_runtime_limits", "CgroupPathUnreadable") from None
+    relative = None
+    for line in cgroup_text.splitlines():
+        fields = line.split(":", 2)
+        if len(fields) != 3 or not fields[0].isdigit():
+            raise SafeFailure("cgroup_runtime_limits", "InvalidCgroupPath")
+        if controller in fields[1].split(","):
+            relative = fields[2]
+    if relative is None:
+        raise SafeFailure("cgroup_runtime_limits", "ControllerPathMissing")
+    for line in mountinfo.splitlines():
+        if " - " not in line:
+            raise SafeFailure("cgroup_runtime_limits", "InvalidMountInfo")
+        left, right = line.split(" - ", 1)
+        before, after = left.split(), right.split()
+        if len(before) < 5 or len(after) < 3 or after[0] != "cgroup":
+            continue
+        if controller not in after[2].split(","):
+            continue
+        root = pathlib.PurePosixPath(before[3].replace("\\040", " "))
+        mountpoint = pathlib.Path(before[4].replace("\\040", " "))
+        cg = pathlib.PurePosixPath(relative)
+        if root == pathlib.PurePosixPath("/"):
+            suffix = str(cg).lstrip("/")
+        elif cg == root or root in cg.parents:
+            suffix = str(cg.relative_to(root))
+        else:
+            continue
+        target = (mountpoint / suffix).resolve(strict=True)
+        if mountpoint.resolve(strict=True) not in target.parents and target != mountpoint.resolve(strict=True):
+            raise SafeFailure("cgroup_runtime_limits", "CgroupPathEscape")
+        return target
+    raise SafeFailure("cgroup_runtime_limits", "ControllerMountMissing")
+
+
+def verify_runtime_cgroup_limits(details: dict, expected_memory: int,
+                                 expected_nano_cpus: int, expected_pids: int) -> None:
+    try:
+        pid = int(details["State"]["Pid"])
+        cpu = _cgroup_controller_path(pid, "cpu")
+        pids = _cgroup_controller_path(pid, "pids")
+        memory = _cgroup_controller_path(pid, "memory")
+        quota = int((cpu / "cpu.cfs_quota_us").read_text(encoding="ascii").strip())
+        period = int((cpu / "cpu.cfs_period_us").read_text(encoding="ascii").strip())
+        pid_limit = int((pids / "pids.max").read_text(encoding="ascii").strip())
+        memory_limit = int((memory / "memory.limit_in_bytes").read_text(encoding="ascii").strip())
+    except SafeFailure:
+        raise
+    except (KeyError, OSError, ValueError, ZeroDivisionError):
+        raise SafeFailure("cgroup_runtime_limits", "LimitValueUnreadable") from None
+    if (quota <= 0 or period <= 0 or quota * 1_000_000_000 != expected_nano_cpus * period
+            or pid_limit != expected_pids or memory_limit != expected_memory):
+        raise SafeFailure("cgroup_runtime_limits", "EffectiveLimitMismatch")
+
+
+def verify_host_cgroup_support() -> None:
+    try:
+        info = json.loads(command(["docker", "info", "--format", "{{json .}}"] ).stdout)
+        proc_cgroups = pathlib.Path("/proc/cgroups").read_text(encoding="ascii")
+        mountinfo = pathlib.Path("/proc/self/mountinfo").read_text(encoding="ascii")
+        warnings = info.get("Warnings") or []
+    except (SafeFailure, OSError, json.JSONDecodeError, AttributeError):
+        raise SafeFailure("cgroup_controller_preflight", "InventoryUnavailable") from None
+    if str(info.get("CgroupVersion")) != "1":
+        # v2 requires a separate, verified cgroup.events/limits implementation.
+        raise SafeFailure("cgroup_controller_preflight", "UnsupportedCgroupVersion")
+    verify_cgroup_v1_support(proc_cgroups, mountinfo, warnings)
 
 
 def docker_route_conflict(network: dict) -> bool:
-    candidate = [ipaddress.ip_network(item["Subnet"], strict=False)
-                 for config in network.get("IPAM", {}).get("Config", [])
-                 for item in [config] if item.get("Subnet")]
+    network_id = network.get("Id", "")
+    if network.get("Driver") != "bridge" or not re.fullmatch(r"[0-9a-f]{64}", network_id):
+        raise SafeFailure("candidate_network_inventory", "UnsupportedNetwork")
+    try:
+        candidate = [ipaddress.ip_network(item["Subnet"], strict=False)
+                     for config in network.get("IPAM", {}).get("Config", [])
+                     for item in [config] if item.get("Subnet")]
+    except (KeyError, TypeError, ValueError):
+        raise SafeFailure("candidate_network_inventory", "InvalidSubnet") from None
     if not candidate:
-        return True
-    networks = command(["docker", "network", "ls", "-q"], check=False).stdout.splitlines()
+        raise SafeFailure("candidate_network_inventory", "SubnetMissing")
+    network_list = command(["docker", "network", "ls", "-q"], check=False)
+    if network_list.returncode:
+        raise SafeFailure("network_inventory", "CommandFailed")
+    networks = network_list.stdout.splitlines()
     # The candidate network is included in this list; compare every subnet from
     # other networks, excluding the exact created network ID.
     for network_id in networks:
@@ -295,38 +474,134 @@ def docker_route_conflict(network: dict) -> bool:
         inspected = command(["docker", "network", "inspect", network_id,
                              "--format", "{{json .IPAM.Config}}"], check=False)
         if inspected.returncode:
-            continue
+            raise SafeFailure("network_inventory", "InspectFailed")
         try:
             configs = json.loads(inspected.stdout)
         except json.JSONDecodeError:
             raise SafeFailure("network_inventory", "InvalidJSON") from None
         for config in configs or []:
             subnet = config.get("Subnet")
-            if subnet and any(left.version == right.version and left.overlaps(right)
-                              for left in candidate for right in [ipaddress.ip_network(subnet, strict=False)]):
-                return True
-    routes = command(["ip", "-j", "route", "show", "table", "all"], check=False)
-    if routes.returncode == 0:
+            if subnet:
+                try:
+                    route_network = ipaddress.ip_network(subnet, strict=False)
+                except ValueError:
+                    raise SafeFailure("network_inventory", "InvalidSubnet") from None
+                if any(left.version == route_network.version and left.overlaps(route_network)
+                       for left in candidate):
+                    return True
+
+    inventories = []
+    rule_texts = []
+    for args, rule_args in ((["ip", "route", "show", "table", "all"], ["ip", "rule", "show"]),
+                            (["ip", "-6", "route", "show", "table", "all"],
+                             ["ip", "-6", "rule", "show"])):
+        routes = command(args, check=False)
+        if routes.returncode:
+            # Proc route files cannot prove complete policy-table coverage.
+            raise SafeFailure("host_route_inventory", "RouteCommandUnavailable")
+        inventories.append(parse_route_inventory(routes.stdout, None))
+        rules = command(rule_args, check=False)
+        if rules.returncode:
+            raise SafeFailure("host_rule_inventory", "RuleCommandUnavailable")
+        rule_texts.append(rules.stdout)
+    routes = [route for rows, _ in inventories for route in rows]
+    tables = set().union(*(table_names for _, table_names in inventories))
+    referenced_tables = set().union(*(rule_table_references(rules) for rules in rule_texts))
+    for table in referenced_tables:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", table):
+            raise SafeFailure("host_rule_inventory", "UnknownRuleTable")
+        # `table all` may omit an empty table and may mix address families.
+        # Query each referenced table in both families to prove completeness.
+        for args in (["ip", "route", "show", "table", table],
+                     ["ip", "-6", "route", "show", "table", table]):
+            result = command(args, check=False)
+            if result.returncode:
+                raise SafeFailure("host_rule_inventory", "RuleTableQueryFailed")
+            if result.stdout.strip():
+                discovered, _ = parse_route_inventory(result.stdout, None)
+                routes.extend(discovered)
+        tables.add(table)
+    for rules in rule_texts:
+        validate_rule_tables(rules, tables)
+    expected_bridges = {f"docker-{network_id[:8]}", f"br-{network_id[:12]}"}
+    return has_host_route_conflict(candidate, routes, expected_bridges)
+
+
+ROUTE_TYPES = {"unicast", "local", "broadcast", "multicast", "blackhole",
+               "unreachable", "prohibit", "throw", "nat", "anycast", "xresolve"}
+
+
+def parse_route_inventory(text: str, family: int | None) -> tuple[list[tuple[ipaddress._BaseNetwork, str | None]], set[str]]:
+    routes: list[tuple[ipaddress._BaseNetwork, str | None]] = []
+    tables: set[str] = set()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise SafeFailure("host_route_inventory", "EmptyRouteInventory")
+    for line in lines:
+        fields = line.split()
+        destination_index = 1 if fields[0] in ROUTE_TYPES else 0
+        if destination_index >= len(fields):
+            raise SafeFailure("host_route_inventory", "InvalidRouteLine")
+        destination = fields[destination_index]
+        table = "main"
+        if "table" in fields:
+            index = fields.index("table")
+            if index + 1 >= len(fields):
+                raise SafeFailure("host_route_inventory", "InvalidRouteTable")
+            table = fields[index + 1]
+        tables.add(table)
+        if destination == "default":
+            continue
         try:
-            route_rows = json.loads(routes.stdout)
-        except json.JSONDecodeError:
-            raise SafeFailure("host_route_inventory", "InvalidJSON") from None
-        for route in route_rows:
-            destination = route.get("dst")
-            if not destination or destination == "default":
+            route = ipaddress.ip_network(destination, strict=False)
+        except ValueError:
+            raise SafeFailure("host_route_inventory", "UnknownRouteFormat") from None
+        if family is not None and route.version != family:
+            raise SafeFailure("host_route_inventory", "RouteFamilyMismatch")
+        # A throw route deliberately yields to the next policy table; it is
+        # not an effective destination route by itself. Other tables are still
+        # inventoried, so any actual overlapping route is detected there.
+        if fields[0] != "throw":
+            device = None
+            if "dev" in fields:
+                index = fields.index("dev")
+                if index + 1 >= len(fields):
+                    raise SafeFailure("host_route_inventory", "InvalidRouteDevice")
+                device = fields[index + 1]
+            routes.append((route, device))
+    return routes, tables
+
+
+def has_host_route_conflict(candidates: list[ipaddress._BaseNetwork],
+                            routes: list[tuple[ipaddress._BaseNetwork, str | None]],
+                            candidate_bridges: set[str]) -> bool:
+    for candidate in candidates:
+        for route, device in routes:
+            if (candidate.version == route.version and candidate == route
+                    and device in candidate_bridges):
                 continue
-            try:
-                route_network = ipaddress.ip_network(destination, strict=False)
-            except ValueError:
-                continue
-            if any(left == route_network for left in candidate):
-                continue
-            if any(left.version == route_network.version and left.overlaps(route_network)
-                   for left in candidate):
+            if candidate.version == route.version and candidate.overlaps(route):
                 return True
-    else:
-        raise SafeFailure("host_route_inventory", "RouteCommandUnavailable")
     return False
+
+
+def validate_rule_tables(text: str, route_tables: set[str]) -> None:
+    missing = rule_table_references(text) - route_tables
+    if missing:
+        raise SafeFailure("host_rule_inventory", "RuleTableMissingFromInventory")
+
+
+def rule_table_references(text: str) -> set[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise SafeFailure("host_rule_inventory", "EmptyRuleInventory")
+    references = set()
+    for line in lines:
+        match = re.fullmatch(r"(\d+):\s+(.+?)\s+lookup\s+(\S+)\s*", line)
+        if not match:
+            raise SafeFailure("host_rule_inventory", "UnknownRuleFormat")
+        references.add(match.group(3))
+    return references
 
 
 def owned_ids(kind: str, run_id: str) -> list[str]:
@@ -338,7 +613,8 @@ def owned_ids(kind: str, run_id: str) -> list[str]:
 
 
 def cleanup(run_id: str, image_tag: str, root: pathlib.Path | None,
-            loaded_source_tag: str | None) -> None:
+            loaded_source_tag: str | None,
+            created_dirs: list[pathlib.Path] | None = None) -> None:
     # Query explicit labels and inspect each resource before removing its ID.
     for kind in ("container", "network"):
         plural = "containers" if kind == "container" else "networks"
@@ -372,6 +648,8 @@ def cleanup(run_id: str, image_tag: str, root: pathlib.Path | None,
         shutil.rmtree(root)
         if root.exists():
             raise SafeFailure("cleanup_path_inventory", "ResidualAssets")
+    if created_dirs:
+        remove_created_dirs(created_dirs)
 
 
 def run_once(args: argparse.Namespace) -> None:
@@ -383,6 +661,7 @@ def run_once(args: argparse.Namespace) -> None:
     # command-scoped `sudo -n` grant, never sudo for this Python process.
     if command(["docker", "version", "--format", "{{.Server.Version}}"], check=False).returncode:
         raise SafeFailure("docker_access_preflight", "PermissionDenied")
+    verify_host_cgroup_support()
     deny_targets = parse_targets(args.deny_target)
     source_sha, expected_image_id = verify_export(args.archive, args.source_sha)
     source_tag = f"{SOURCE_IMAGE_PREFIX}{source_sha}"
@@ -400,6 +679,7 @@ def run_once(args: argparse.Namespace) -> None:
             or hermes.get("Architecture") != "amd64"
             or hermes_labels.get("org.opencontainers.image.revision") != EXPECTED_HERMES_REVISION):
         raise SafeFailure("hermes_image_identity", "IdentityMismatch")
+    created_dirs = [directory for directory in (BASE.parent, BASE) if not directory.exists()]
     root = prepare_root(run_id, args.harness_source, deny_targets, run_tag)
     staged_archive = root / "core-linux-amd64.tar"
     try:
@@ -408,6 +688,7 @@ def run_once(args: argparse.Namespace) -> None:
             raise SafeFailure("staged_archive_identity", "IdentityMismatch")
     except Exception:
         shutil.rmtree(root)
+        remove_created_dirs(created_dirs)
         raise
     project = f"sb-d077-phase1c-{run_id}"
     base = compose_args(project, root / "compose.env")
@@ -468,7 +749,7 @@ def run_once(args: argparse.Namespace) -> None:
                           "cleanup": "PASS"}
     finally:
         cleanup(run_id, run_tag, root if root.exists() else None,
-                None if source_exists else source_tag)
+                None if source_exists else source_tag, created_dirs)
     print("D077_V0215_RESULT " + json.dumps(success_record, sort_keys=True), flush=True)
 
 

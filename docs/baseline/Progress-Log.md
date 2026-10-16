@@ -2,6 +2,14 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — PR #8 DSM 路由/cgroup 兼容性修正（仅静态与只读核验）
+
+- 按 PR 评论 `6211166377`，保持 Core 源码、Dockerfile、已导出 Core 镜像和 Hermes 版本不变；未加载镜像、建目录/容器/网络、运行 Compose/合成场景或触发 Runner。此前一次 NAS E2E 条件授权仍未使用。
+- `nas_compose_harness.py` 改为解析 DSM 可用的 `ip route show table all` / `ip -6 route show table all` 文本输出，并核验 `ip rule show` 表引用；每个引用表在 IPv4/IPv6 下都做精确查询，未知行/缺表/命令失败 fail closed。只忽略 `throw` 控制路由（它会继续查下一策略表），并仅豁免精确匹配本次 Docker bridge 接口的候选路由；其他路由重叠仍阻断。Docker bridge 不匹配、其他 network inspect 失败或 IPAM 格式异常不再跳过。针对测试目录仅创建精确批准路径的缺失父目录，权限 `0700`；结束时只移除本轮创建且为空的父目录，不递归删除未知项。
+- Driver 在导入归档/创建目录之前检查 `/proc/cgroups`、cgroup v1 挂载与 Docker daemon warnings；容器启动后还将以容器 host PID 对照有效 `cpu.cfs_quota_us`、`cpu.cfs_period_us`、`pids.max` 与 `memory.limit_in_bytes`。NAS 只读证据：`ip` JSON 模式不支持，但文本 IPv4/IPv6 route 与 rule 命令可用；新解析器识别 **107 条路由项**（排除 `throw` 控制项），另对 **7 个 policy table** 做 IPv4/IPv6 定向查询；**10 条 rule 行**与表清单均校验通过（含显式核验为空的 `static-table`、`default`）。
+- **NAS 资源阻断：**Docker 为 `CgroupVersion=1`/`cgroupfs`；Docker warnings 明确表示 CPU CFS quota/period 不支持；`/proc/cgroups` 有 cpu/cpuacct/memory、无 pids，挂载及 pids 限额文件也不存在。故不能满足获批的 CPU/PID 硬限制，Driver 会在镜像导入、测试父目录创建及任何容器启动前 fail closed。此前确认的 RAM 与磁盘余量充足不改变该结论。测试父路径当前不存在，权限核验显示其上级 `/volume1/docker` 可写；实际目录创建仅留待未来经审查的执行，未在本轮进行。
+- 验证：NAS Driver 离线单测 **11 passed**；对当前 NAS 只读 route/rule 清单执行同一 parser **PASS**；`py_compile` 与 `git diff --check` 通过。没有运行 Core 全套或 E2E。Phase 1-C 继续 **BLOCKED / E2E NOT RUN**；后续必须先解决测试宿主 CPU/PID 限额能力并由 ChatGPT 审核新 Driver SHA，不能跳过资源硬门槛。
+
 # 2026-10-16 — PR #8 Harness 脱敏诊断与 NAS 隔离方案准备
 
 - 按 ChatGPT 审核评论 `6210190381` 与用户授权评论 `6210207099`，仅修改 `tests/d077/hermes_v0215_core_stub_ci.py`、新增本地诊断单测并更新现有基线；未访问 NAS、未启动容器、未触发 Runner、未调用模型或业务 API。
