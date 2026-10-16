@@ -988,6 +988,6 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 
 ## 2026-10-17 — NAS 历史构建与回滚资产只读审计
 
-- 只读检查纳入 11 个历史 App 源码副本、11 个旧 Compose 快照和 18 个 D074–D078 rollback 目录。实际分配占用：源码 63,892 KiB、Compose 40 KiB、rollback 5,152,284 KiB，合计 5,216,216 KiB（约 4.97 GiB）。容器挂载不指向这些历史路径；当前 Compose 仍引用 `/volume1/docker/secondbrain/app-build-source-d076-organizer-b34319a`（6144 KiB），其余 10 个 App source 目录（57,748 KiB）不在当前 Compose/检查的部署脚本引用中。11 个 Compose 快照没有当前引用，合计仅 40 KiB。
+- 只读检查纳入 11 个历史 App 源码副本、10 个旧 Compose 快照和 18 个 D074–D078 rollback 目录。实际分配占用：源码 63,892 KiB、Compose 40 KiB、rollback 5,152,284 KiB，合计 5,216,216 KiB（约 4.97 GiB）。容器挂载不指向这些历史路径；当前 Compose 仍引用 `/volume1/docker/secondbrain/app-build-source-d076-organizer-b34319a`（6144 KiB），其余 10 个 App source 目录（57,748 KiB）不在当前 Compose/检查的部署脚本引用中。10 个 Compose 快照没有当前引用，合计仅 40 KiB。
 - D077 大型状态备份包括 `d077-issue12-authorized-20261016T124238Z`（1,025,656 KiB）、`d077-issue12-v0222-predeploy-20261016T1225Z`（2,059,884 KiB）和 `d077-v0222-predeploy-20261016T114324Z`（2,059,688 KiB）。其 Hermes tar 文件尺寸接近，可能包含重叠状态，但本轮未计算归档内容哈希，无法证明重复；不得据大小相似而删除。最新 D078 当前 Hermes rollback `d078-hermes-hook-failclosed-20261016T173140Z`（12 KiB）必须保留；`d078-stage1-20261016T155327Z`（6560 KiB）也保留。D074/D075/D076 较早回滚目录合计较小且未被运行路径引用，是否淘汰需结合所需恢复历史另行确认。
 - 完整候选路径与各目录分配大小见本轮审计回复。只读审计未读取凭据或业务文件正文；未删除、移动或修改任何候选资产，没有执行 Docker 镜像/容器/卷清理。若要清理，须对候选逐项授权；当前 Compose 引用的 source 目录和 D078 rollback 快照排除在可清理范围外。
