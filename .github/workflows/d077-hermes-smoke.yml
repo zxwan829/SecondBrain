@@ -1,0 +1,63 @@
+name: D077 Hermes isolated smoke
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/d077-hermes-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: d077-hermes-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image-smoke:
+    if: github.repository == 'zxwan829/SecondBrain'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Show ephemeral runner capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -m
+          df -h /
+          docker version --format '{{.Server.Version}}'
+
+      - name: Pull and inspect fixed upstream amd64 image
+        shell: bash
+        env:
+          IMAGE: nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05
+        run: |
+          set -euo pipefail
+          timeout 240s docker pull --platform linux/amd64 "$IMAGE"
+          docker image inspect "$IMAGE" --format 'OS={{.Os}} ARCH={{.Architecture}} ID={{.Id}}'
+          test "$(docker image inspect "$IMAGE" --format '{{.Architecture}}')" = amd64
+
+      - name: Run disposable offline nonroot container
+        shell: bash
+        env:
+          IMAGE: nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=5s 75s docker run --rm \
+            --network none --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+            --tmpfs /opt/data:rw,nosuid,size=128m,mode=1777 \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --memory 2g --cpus 1 --pids-limit 128 \
+            --user 10001:10001 \
+            --entrypoint /bin/sh "$IMAGE" -c '
+              set -eu
+              echo "CONTAINER_IDENTITY=$(id)"
+              echo "PYTHON=$(command -v python3 || command -v python)"
+              echo "NETWORK_INTERFACES:"
+              cat /proc/net/dev
+              if command -v python3 >/dev/null 2>&1; then python3 -V; else python -V; fi
+              test -w /tmp
+              test -w /opt/data
+              echo "D077_SMOKE_PASS"
+            '
