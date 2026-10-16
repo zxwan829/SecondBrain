@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 import unittest
 import io
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import nas_compose_harness as harness  # noqa: E402
@@ -52,12 +53,47 @@ class NasComposeHarnessTests(unittest.TestCase):
                 "image_id": "sha256:" + "b" * 64,
             }), encoding="utf-8")
 
-            result = harness.verify_export(archive, source_sha)
+            stage = folder / "run-root"
+            stage.mkdir()
+            staged = harness.stage_export_bundle(archive, stage)
+            result = harness.verify_export(staged, source_sha)
 
             self.assertEqual(result, (source_sha, "sha256:" + "b" * 64))
-            archive.write_bytes(b"changed")
+            self.assertTrue((stage / "SHA256SUMS").is_file())
+            self.assertTrue((stage / "metadata.json").is_file())
+            staged.chmod(0o600)
+            staged.write_bytes(b"changed")
             with self.assertRaisesRegex(harness.SafeFailure, "isolated_compose_failed"):
-                harness.verify_export(archive, source_sha)
+                harness.verify_export(staged, source_sha)
+
+    def test_flags_off_data_root_does_not_precreate_memory_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            enabled = root / "enabled"
+            disabled = root / "disabled"
+            enabled.mkdir()
+            disabled.mkdir()
+
+            harness.prepare_core_data(enabled, memory_enabled=True)
+            harness.prepare_core_data(disabled, memory_enabled=False)
+
+            self.assertTrue((enabled / "memory").is_dir())
+            self.assertFalse((disabled / "memory").exists())
+
+    def test_sudo_mode_wraps_only_docker_cli_commands(self):
+        original_prefix = harness.DOCKER_PREFIX
+        try:
+            harness.DOCKER_PREFIX = ["sudo", "-n", "/usr/local/bin/docker"]
+            with mock.patch.object(harness.subprocess, "run") as run:
+                run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+                harness.command(["docker", "version"])
+                harness.command(["ip", "-j", "route"])
+
+            self.assertEqual(run.call_args_list[0].args[0],
+                             ["sudo", "-n", "/usr/local/bin/docker", "version"])
+            self.assertEqual(run.call_args_list[1].args[0], ["ip", "-j", "route"])
+        finally:
+            harness.DOCKER_PREFIX = original_prefix
 
 
 if __name__ == "__main__":

@@ -2,6 +2,15 @@ name: D077 Hermes synthetic live memory evaluation
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Select the already-registered D077 operation
+        type: choice
+        required: true
+        default: synthetic-live
+        options:
+          - synthetic-live
+          - export-core
 
 permissions:
   contents: read
@@ -28,12 +37,14 @@ jobs:
           docker info --format '{{.ServerVersion}}'
           df -h /
       - name: Pull fixed Hermes release image
+        if: inputs.mode != 'export-core'
         shell: bash
         run: |
           set -euo pipefail
           timeout 240s docker pull --platform linux/amd64 \
             nousresearch/hermes-agent@sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05
       - name: Run synthetic real-model learning experiment
+        if: inputs.mode != 'export-core'
         shell: bash
         timeout-minutes: 15
         env:
@@ -42,9 +53,46 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B tests/d077/hermes_live_ci.py
+
+      - name: Build and export the selected Core source commit
+        if: inputs.mode == 'export-core'
+        working-directory: web-app/secondbrain-core
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE: secondbrain-d077-core:${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          docker build --platform linux/amd64 --build-arg "D077_SOURCE_SHA=$SOURCE_SHA" --tag "$IMAGE" .
+          docker image inspect "$IMAGE" --format 'ID={{.Id}} OS={{.Os}} ARCH={{.Architecture}} REVISION={{index .Config.Labels "org.opencontainers.image.revision"}} TASK={{index .Config.Labels "com.secondbrain.test.task"}}'
+          test "$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')" = linux/amd64
+          test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$SOURCE_SHA"
+          test "$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "com.secondbrain.test.task"}}')" = d077-phase1c
+          mkdir -p "$RUNNER_TEMP/d077-core-export"
+          docker save --output "$RUNNER_TEMP/d077-core-export/core-linux-amd64.tar" "$IMAGE"
+          cd "$RUNNER_TEMP/d077-core-export"
+          sha256sum core-linux-amd64.tar > SHA256SUMS
+          docker image inspect "$IMAGE" --format '{"image_id":"{{.Id}}","os":"{{.Os}}","architecture":"{{.Architecture}}","source_sha":"{{index .Config.Labels "org.opencontainers.image.revision"}}","test_task":"{{index .Config.Labels "com.secondbrain.test.task"}}"}' > metadata.json
+
+      - name: Upload verified Core image bundle
+        if: inputs.mode == 'export-core'
+        uses: actions/upload-artifact@v4
+        with:
+          name: d077-core-linux-amd64-${{ github.sha }}
+          path: ${{ runner.temp }}/d077-core-export/
+          if-no-files-found: error
+          retention-days: 7
       - name: Clean up temporary Docker assets
-        if: always()
+        if: always() && inputs.mode != 'export-core'
         shell: bash
         run: |
           docker rm -f d077-live-agent 2>/dev/null || true
           docker network rm d077-live-internal 2>/dev/null || true
+      - name: Remove only the exported Core image tag
+        if: always() && inputs.mode == 'export-core'
+        shell: bash
+        env:
+          IMAGE: secondbrain-d077-core:${{ github.sha }}
+        run: |
+          if docker image inspect "$IMAGE" >/dev/null 2>&1; then docker image rm "$IMAGE"; fi

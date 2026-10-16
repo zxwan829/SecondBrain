@@ -19,6 +19,13 @@
 - Private 文档已改为：规范路径与挂载路径是兄弟目录、没有直接挂载证据、所有访问路径未完全验收、无访问/泄露证据；不新增独立整改任务、不改变现有权限设计、不阻塞 Phase 1-C。
 - 本地验证：Harness 单测 **9 passed**、NAS driver 纯函数单测 **3 passed**、4 个 Python 文件内存编译、Compose/Workflow YAML 语法解析和 `git diff --check` 均通过；Docker/Compose 不可用，未运行 Compose、Runner、NAS 或任何 Core/Hermes 集成测试。Phase 1-C 仍 BLOCKED，未部署、未合并、未调用模型。
 
+# 2026-10-16 — PR #8 NAS 执行准备定向修复（仅本地静态）
+
+- 按最新评论 `6210624972` 最小修正三项阻断：归档暂存现在把 `core-linux-amd64.tar`、`SHA256SUMS`、`metadata.json` 一同复制到唯一 run root，再对暂存 bundle 校验；增加完整 bundle→暂存→校验回归。`core-disabled` 不再创建 `memory` 子目录，memory-enabled 目录仍创建；增加 flags-off 路径回归。
+- Docker 权限采用可选 `--docker-sudo`，只将 Docker CLI 子进程映射为固定 `sudo -n /usr/local/bin/docker`，并在创建 run 目录/导入镜像前做 Docker server 访问预检；Python driver 仍必须以非 root 用户运行，不修改 sudoers、Docker group 或 NAS 权限。回归确认 sudo 前缀只作用于 Docker 命令，不作用于宿主 `ip` 探测。
+- 新建导出 workflow 无法首次调度，故移除 `.github/workflows/d077-core-image-export.yml`，把 `export-core` 作为独立互斥模式并入 `main` 已存在的 `.github/workflows/d077-hermes-live.yml` 手动入口。该模式只构建/校验/导出 Core image artifact，不执行真实模型步骤、不注入其 Secret；默认 `synthetic-live` 模式维持原路径。没有触发该 workflow 或任何 Runner。
+- 本地验证：NAS driver 回归 **5 passed**（含真实临时 bundle 暂存/校验、flags-off 缺失目录、命令级 sudo 路由）；driver/单测内存编译通过；工作流与 Compose YAML 解析通过；`git diff --check` 通过。旧 Harness 诊断套件未能启动，因为该临时 Clone 缺少 `httpx`；未为此安装依赖。未执行 NAS Docker、Compose、镜像导入、生产或真实模型操作。Phase 1-C 仍 BLOCKED，须独立审核最终 SHA 与后续操作授权。
+
 # 2026-10-16 — PR #8 NAS SecondBrain 容器只读环境核验
 
 - 按 PR #8 最新 ChatGPT 审核和用户评论 `6210066948`，仅经现有 SSH/已配置只读 Docker 管理权限核验 `secondbrain-app`、`secondbrain-hermes`、其 Compose 与 `secondbrain_default` 网络。普通 Docker socket 权限不足，使用既有 `sudo -n` 权限读取；未改 SSH/known_hosts 权限、sudoers 或 NAS 配置。没有执行容器内命令、HTTP 业务请求、日志读取或任何生产写操作。

@@ -30,6 +30,7 @@ HERMES_KEY = "d077-hermes-api-server-synthetic-key"
 SOURCE_IMAGE_PREFIX = "secondbrain-d077-core:"
 RUN_IMAGE_PREFIX = "sb-d077-core:"
 LABEL_TASK = "d077.task=phase1c"
+DOCKER_PREFIX = ["docker"]
 
 
 class SafeFailure(RuntimeError):
@@ -70,11 +71,15 @@ def sha256_file(path: pathlib.Path) -> str:
 
 
 def command(args: list[str], *, timeout: int = 90, check: bool = True) -> subprocess.CompletedProcess:
+    if args and args[0] == "docker":
+        args = [*DOCKER_PREFIX, *args[1:]]
     try:
         result = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         raise SafeFailure("command_timeout", "TimeoutExpired") from None
+    except OSError as exc:
+        raise SafeFailure("command_unavailable", type(exc).__name__) from None
     if check and result.returncode:
         raise SafeFailure("command_failed", "CommandError")
     return result
@@ -95,10 +100,13 @@ def verify_export(archive: pathlib.Path, source_sha: str) -> tuple[str, str]:
         raise SafeFailure("archive_preflight", "FileNotFoundError")
     sums = archive.parent / "SHA256SUMS"
     metadata_file = archive.parent / "metadata.json"
-    if not sums.is_file() or not metadata_file.is_file():
+    if (not sums.is_file() or sums.is_symlink()
+            or not metadata_file.is_file() or metadata_file.is_symlink()):
         raise SafeFailure("archive_manifest", "FileNotFoundError")
-    expected = sums.read_text(encoding="ascii").split()
-    if len(expected) < 1 or expected[0] != sha256_file(archive):
+    rows = [line.split(maxsplit=1) for line in sums.read_text(encoding="ascii").splitlines()
+            if line.strip()]
+    if (len(rows) != 1 or len(rows[0]) != 2 or rows[0][1].lstrip("* ") != archive.name
+            or rows[0][0] != sha256_file(archive)):
         raise SafeFailure("archive_checksum", "ChecksumMismatch")
     try:
         metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
@@ -123,6 +131,34 @@ def verify_export(archive: pathlib.Path, source_sha: str) -> tuple[str, str]:
     return source_sha, metadata.get("image_id", "")
 
 
+def stage_export_bundle(source_archive: pathlib.Path, destination: pathlib.Path) -> pathlib.Path:
+    """Copy one verified archive and its two sidecars into the private run root."""
+    if source_archive.is_symlink() or not source_archive.is_file():
+        raise SafeFailure("archive_preflight", "FileNotFoundError")
+    for name in ("SHA256SUMS", "metadata.json"):
+        sidecar = source_archive.parent / name
+        if sidecar.is_symlink() or not sidecar.is_file():
+            raise SafeFailure("archive_manifest", "FileNotFoundError")
+        shutil.copyfile(sidecar, destination / name)
+        (destination / name).chmod(0o400)
+    staged_archive = destination / "core-linux-amd64.tar"
+    shutil.copyfile(source_archive, staged_archive)
+    staged_archive.chmod(0o400)
+    return staged_archive
+
+
+def prepare_core_data(data: pathlib.Path, *, memory_enabled: bool) -> None:
+    subdirs = ["home", "review", "knowledge", "promote", "raw"]
+    if memory_enabled:
+        subdirs.append("memory")
+    for subdir in subdirs:
+        (data / subdir).mkdir(mode=0o700)
+    for filename, content in (("app-password", APP_PASSWORD), ("hermes-key", HERMES_KEY)):
+        target = data / filename
+        target.write_text(content + "\n", encoding="utf-8")
+        target.chmod(0o600)
+
+
 def prepare_root(run_id: str, harness_source: pathlib.Path, deny_targets: str,
                  core_image: str) -> pathlib.Path:
     if not safe_run_id(run_id):
@@ -142,14 +178,8 @@ def prepare_root(run_id: str, harness_source: pathlib.Path, deny_targets: str,
             (root / name).mkdir(mode=0o700)
         (root / "harness.py").write_bytes(harness_source.read_bytes())
         (root / "harness.py").chmod(0o400)
-        for name in ("core-enabled", "core-disabled"):
-            data = root / name
-            for subdir in ("home", "review", "knowledge", "promote", "raw", "memory"):
-                (data / subdir).mkdir(mode=0o700)
-            for filename, content in (("app-password", APP_PASSWORD), ("hermes-key", HERMES_KEY)):
-                target = data / filename
-                target.write_text(content + "\n", encoding="utf-8")
-                target.chmod(0o600)
+        prepare_core_data(root / "core-enabled", memory_enabled=True)
+        prepare_core_data(root / "core-disabled", memory_enabled=False)
         profile = root / "hermes-home" / "config.yaml"
         profile.write_text(
             "model:\n  provider: custom\n  default: d077-deterministic-stub\n"
@@ -348,6 +378,11 @@ def run_once(args: argparse.Namespace) -> None:
     run_id = args.run_id
     if not safe_run_id(run_id):
         raise SafeFailure("run_id", "ValueError")
+    # Validate the effective Docker socket permission before creating the run
+    # directory or importing/tagging any image. This can use an existing
+    # command-scoped `sudo -n` grant, never sudo for this Python process.
+    if command(["docker", "version", "--format", "{{.Server.Version}}"], check=False).returncode:
+        raise SafeFailure("docker_access_preflight", "PermissionDenied")
     deny_targets = parse_targets(args.deny_target)
     source_sha, expected_image_id = verify_export(args.archive, args.source_sha)
     source_tag = f"{SOURCE_IMAGE_PREFIX}{source_sha}"
@@ -368,8 +403,7 @@ def run_once(args: argparse.Namespace) -> None:
     root = prepare_root(run_id, args.harness_source, deny_targets, run_tag)
     staged_archive = root / "core-linux-amd64.tar"
     try:
-        shutil.copyfile(args.archive, staged_archive)
-        staged_archive.chmod(0o400)
+        staged_archive = stage_export_bundle(args.archive, root)
         if verify_export(staged_archive, source_sha) != (source_sha, expected_image_id):
             raise SafeFailure("staged_archive_identity", "IdentityMismatch")
     except Exception:
@@ -445,7 +479,12 @@ def main() -> int:
     parser.add_argument("--archive", required=True, type=pathlib.Path)
     parser.add_argument("--harness-source", required=True, type=pathlib.Path)
     parser.add_argument("--deny-target", action="append", default=[])
+    parser.add_argument("--docker-sudo", action="store_true",
+                        help="use the existing non-interactive sudo grant for /usr/local/bin/docker")
     args = parser.parse_args()
+    global DOCKER_PREFIX
+    if args.docker_sudo:
+        DOCKER_PREFIX = ["sudo", "-n", "/usr/local/bin/docker"]
     signal.signal(signal.SIGALRM, lambda _signum, _frame: (_ for _ in ()).throw(
         SafeFailure("overall_timeout", "TimeoutExpired")))
     signal.alarm(20 * 60)
