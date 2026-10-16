@@ -12,6 +12,17 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — D077 Issue #12 resumed deployment and synthetic memory loop
+
+- 用户新授权评论 [#6215695514](https://github.com/zxwan829/SecondBrain/issues/12#issuecomment-6215695514) 覆盖 SecondBrain NAS Hermes v0.22.2 启动诊断、必要最小配置调整/重启、D077 Core 部署与合成记忆闭环；禁止付费模型、真实数据、Private 和无关服务/网络影响。项目规则、当前基线、Agent-Rules、D077 Product Spec 及 Issue #12 已核对。原主 Clone 的 `main`/未跟踪 `typescript` 未触碰；Core 镜像使用当时 GitHub `main`/远端 HEAD `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc`，未用或合并 PR #8/#9/#10。
+- Hermes 目标是 v0.22.2 linux/amd64 Digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05`，Image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41`。原 Hermes 配置迁移到 schema 50 后以 SHA-256 `cdee7b148aa314536e24986f8f0dd57ea5999350e46c6b3bfd65c25a37eecac9` 备份；只读数据/配置内容未输出。Core image `secondbrain-app:d077-b6e30f3` / Image ID `sha256:7cce77d702cb51f0c318c91c427d95cff887a99caebb12b9cad287b388b1049c`，源代码 commit `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc`。
+- 正式 Compose 从 `93fd215b319864d42d8f2223946329f38217cfa7e954b30069f9850eb785398d` 更新到 `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`（属主/权限 `1026:100 / 0640`）。只切 Hermes 固定镜像、显式启用 API Server、App Core 镜像与 Memory/Learning flags；Hermes 原 dispatcher、Dashboard、端口映射、网络和卷权限保持既有边界。Compose `config -q` 通过。
+- Hermes 首次启动时 s6/gateway/dashboard 均启动，8642 API 与 9119 Dashboard 在约 2 分钟后可连接；两端 health/listener 实测通过，未应用代码修复。旧尝试的根因仍为 `UNKNOWN`，本次证明在更长观察后服务能够就绪。为禁止外部模型调用，测试期间将 Hermes profile 临时指向 Core 容器内地址的确定性 Stub（已有 `secondbrain_default` 网络，无新容器/网络/宿主端口），并关闭 Hermes 内置记忆选项。测试结束后原 config 以同一 SHA 原样恢复，Hermes 最终重启时间为 `2026-10-16T12:55:22.167231091Z`，随后执行 16 次、每分钟一次的稳定性观察（2026-10-16 12:57:09–13:12:14 UTC，15 分 5 秒）：16/16 均为 running、restart count 0、API HTTP 200、Dashboard TCP 可连接；完整脱敏结果保存在受限快照目录。
+- Core `SB_PERSONAL_MEMORY_ENABLED=true`、`SB_PERSONAL_LEARNING_ENABLED=true`；独立路径 `/var/lib/secondbrain-core/personal-memory` 对应宿主 Core state 子目录，`1026:100 / 0700`。以虚构偏好执行 4 个新 Session、4 个 Run 和 4 条完整 SSE：自动保存及 `user_message` 来源关联、跨 Session 旧偏好上下文、用户纠正的 JSONL 修订、纠正后新偏好注入且旧偏好不再注入均通过。Core Active API 在纠正后返回 1 条 active item、source type `user_message`，历史 2 个 revisions。
+- 本地 Stub 收到 15 次请求，全部发往 `http://secondbrain-app:19001/v1`；其中 4 个流式主 Run 请求里，跨 Session/纠正前两次含旧偏好上下文，纠正后请求只含新偏好。Stub 未保存 prompt/body，只保留布尔观测；无付费 API、真实模型或真实个人数据请求。四条流式请求均含 Hermes tool definitions，但 Stub 返回普通完成消息、未发 tool call；故本次没有工具执行证据，也不能据此评价真实模型行为。Gateway 另有 API bind `0.0.0.0` / local unsandboxed terminal 的安全提醒；8642 未发布宿主端口，现有 Compose 网络只附加 App 和 Hermes，挂载/capabilities 未放宽。这是后续需审视的运行风险，不构成本次工具行为验收。
+- 清理：4 个合成 Session 定向删除并通过列表确认缺失；合成记忆 JSONL 保存到 root-only 测试证据后，从活动 memory 根目录删除 JSONL/lock，保留启用所需的空 `0700` 目录；Stub 进程及 App `/tmp` 脚本/观测文件已停止并移除。没有增加 Docker 容器、网络、发布端口；Private 未挂载、Knowledge RO、Promote OFF，其他 NAS 容器/家庭网络未变。
+- 快照 `/volume1/docker/secondbrain/rollback/d077-issue12-authorized-20261016T124238Z/` 为 `0700 root:root`，文件 `0600 root:root`；包括部署前 Compose、Hermes 数据快照、迁移后原 config、候选 Compose、脱敏日志、Stub 布尔证据、合成 JSONL、测试摘要。旧 Issue #12 回滚目录未改动。未触发 Runner、未部署 PR #8/#9/#10/#13、未合并或发起真实模型请求。D077 NAS 部署与合成闭环为 **PASS**；真实模型质量及用户验收仍 **NOT TESTED / PENDING**。
+
 # 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
 
 - PR [#6](https://github.com/zxwan829/SecondBrain/pull/6) 的最终 head `0efe462cd8dbe6067b25d1e51cf69e1309cc42f7` 经独立代码复审，纠错需规范化完整等价且唯一，失败/取消/停止的 Run 清理 pending 状态；跨平台 Core 测试不再使用 `/private/tmp` 垫片。

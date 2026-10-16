@@ -12,11 +12,11 @@ source: GitHub SecondBrain Monorepo
 
 **原 V1 业务交付门槛（保留、不缩水）：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
 
-**新的 Companion MVP 门槛（D077，已批准、尚未实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
+**新的 Companion MVP 门槛（D077，已批准、仍未整体实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。Personal Memory / Learning Core 已部署并通过本地 Stub 合成闭环，但真实模型行为与用户体验尚待验收。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
 
 **阶段安排：** 先做 Companion 能力审计和隔离实证，再按验证结果最小返工，随后继续完成旧 V1 所有 MUST 与多端业务收口；不要因新增目标将既有 MUST 静默延期为永久不做。
 
-**总体状态：`NOT DONE`。** 2026-10-15 已将 GitHub `b34319a` 部署到 NAS 的 `secondbrain-app`；当前 App-only 部署快照、接口验证和回滚点见 `Environment-Baseline.md` 与 `Progress-Log.md`。D076 Organizer 设置页及本地 Mock 检查接口已部署，模型和 Scheduler 均关闭；尚待用户浏览器验收，真实用户数据自动整理未启用。此前一条合成消息完成的 SiliconFlow DeepSeek-V4-Flash 真实 API 闭环仅验证模型链路，¥0.001302 为估算而非账户账单；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
+**总体状态：`NOT DONE`。** 2026-10-15 已将 GitHub `b34319a` 部署到 NAS 的 `secondbrain-app`；当前部署快照、接口验证和回滚点见 `Environment-Baseline.md` 与 `Progress-Log.md`。D077 Hermes v0.22.2 + Core 已在 NAS 启用个人记忆；合成数据四步闭环使用本地确定性 Stub 通过，测试数据已清理。未调用真实或付费模型，未使用真实个人数据；真实模型行为、浏览器使用及用户验收仍待完成。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 只是早期单条合成消息的费用估算，不是本次部署费用或账户账单；视觉兼容性为 `DEFERRED`。完整交付状态以以下矩阵为准。
 
 ## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
 
@@ -28,7 +28,7 @@ source: GitHub SecondBrain Monorepo
 
 | V1 项目 | 要求 / 验收要点 | 当前状态 | 仍需完成 |
 |---|---|---|---|
-| Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | PROD-PARTIAL：Hermes v0.21.5；App 按 `749220ef` 适配真实响应；63013 Chat capabilities/sessions API smoke 通过，已有 Chat 浏览器验收记录 | 本轮未发送 Chat 消息；后续只在出现回归时验证，完整 V1 业务模块仍待接入 |
+| Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | NAS-DEPLOYED：Hermes v0.22.2；App/Core 经 BFF 使用 Sessions/Run/SSE；本次 4 个合成 Run 均通过 | 真实模型行为与用户浏览器验收仍待完成；完整 V1 业务模块仍待接入 |
 | Daily Capture | 低摩擦保存日常素材；不得把内容自动提升成正式 Knowledge | PROD-PARTIAL | 对照 Skill 的正式触发和行为做必要回归 |
 | Knowledge Retrieval | 从批准的目录读取/搜索已存在的正式知识 | ACCEPTED：V0 已生产验收 | 仅在真实效果问题出现时优化，不强行接 RAG |
 | Universal Capture：文本/Markdown/TXT | 保存 Raw、建立 Review、元数据与路径真实落盘、不自动 Promote | PROD-PARTIAL：Hermes 文本 Raw→Review 已验收；D075 App 63013 文本真实 Raw/Review 与 Inbox/Review API 验证通过 | 用户浏览器验收；微信端到端仍未接入 |
@@ -75,13 +75,13 @@ source: GitHub SecondBrain Monorepo
 | 多端与数据同步 | PARTIAL | 核实 Web App 桌面/iPad/手机主要动作及 Obsidian Mac↔NAS 文件实际双向传播 |
 | 生产部署、恢复、安全收尾 | PARTIAL | 真实运行检查、变更快照和回退，收口开发期 unrestricted sudoers；验收与文档 Git 收口 |
 
-### D. 新批准的 Personal Intelligence / Companion MVP（D077；全部待验证）
+### D. 新批准的 Personal Intelligence / Companion MVP（D077；按能力分项跟踪，整体未验收）
 
 | 新增核心能力 | 当前证据/状态 | 最小成功验收 |
 |---|---|---|
 | 无提示主动关联 | NOT VERIFIED：旧 Knowledge Retrieval V0 已 ACCEPTED，但仅证明可用搜索/读取；不能证明自动联想 | 不说“搜索知识库”，自然对话能正确使用相关长期记忆；精确事实自动回源 |
-| Personal Memory Core（Phase 1-A） | DEV-TESTED：默认关闭、独立注入根、追加式来源/修订记录；同一来源可保存多个不同候选并稳定幂等；未核验事实在模型召回视图中脱敏并要求回源；不表示生产已部署 | PR #4 已合并；后续阶段回归结果见 Progress-Log；生产未部署、未接真实数据 |
-| 自主个人记忆学习（Phase 1-B） | DEV-TESTED：默认关闭的 Core 候选提炼与相关记忆召回挂钩；成功 Run 必须匹配 Run 前消息 ID 水位之后新增的持久消息。纠错要求去除已知表达前缀后与唯一记忆完整等价；歧义时不写；失败/取消/停止清理 pending。使用现有 Hermes `instructions` 请求字段注入受限上下文，用户 input 不改写。真实 Hermes v0.21.5 运行兼容性、长期在线行为和用户验收 UNKNOWN | PR #6 已独立审核并合并；生产启用、真实 Hermes/会话数据和模型行为验证仍须另行授权 |
+| Personal Memory Core（Phase 1-A） | NAS-DEPLOYED；独立 `0700` 根目录、追加式 JSONL 来源/修订记录、纠正与失效过滤；真实路径权限核验通过；本次合成记录已清理 | PR #4 已合并；NAS image `secondbrain-app:d077-b6e30f3`；真实数据与用户验收仍待完成 |
+| 自主个人记忆学习（Phase 1-B） | NAS 合成闭环通过：Core 自动保存来源关联、跨 Session 召回、用户纠正和纠正后召回；Hermes v0.22.2 实际模型请求经 Stub 观测到注入上下文。Stub 不评价真实模型的自然学习/回答质量；没有付费模型或真实数据出站 | PR #6 已合并；本次运行证据见 Progress-Log；真实模型质量、用户浏览器体验及长时间使用仍待验收 |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
 | 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
 | 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |
@@ -89,16 +89,16 @@ source: GitHub SecondBrain Monorepo
 | 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
 | 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |
 
-**D077 部署状态（2026-10-16）：** Issue #12 单次 Hermes v0.22.2 部署尝试已回滚。新镜像观察期间 API 8642 与 Dashboard 9119 未监听，未取得根因；由于回滚后的 v0.21.5 也约一分钟后才监听，不能据短时无端口证明 v0.22.2 最终启动失败。当前生产仍为 Hermes v0.21.5 与 App `d076-organizer-b34319a`；个人记忆/学习 flags 关闭、Memory root 不存在。D077 生产部署与四步闭环均 **NOT VERIFIED / NOT RUN**，详见 Progress-Log 与 Environment-Baseline。
+**D077 部署状态（2026-10-16）：** 按新授权评论 [#6215695514](https://github.com/zxwan829/SecondBrain/issues/12#issuecomment-6215695514)，Hermes v0.22.2 固定 amd64 Digest 与 GitHub `main` 的 D077 Core 已部署到 NAS。API 8642 与 Dashboard 9119 启动后约 2 分钟可连接；最终配置重启后 16/16 次、覆盖 15 分 5 秒（12:57:09–13:12:14 UTC）的观察通过：容器无重启、API health 每次 200、Dashboard 端口每次可连接。Core 的 `SB_PERSONAL_MEMORY_ENABLED` / `SB_PERSONAL_LEARNING_ENABLED` 为 true，`personal-memory` 独立目录属主 `1026:100`、权限 `0700`，合成测试数据已清理。使用仅有虚构内容的确定性本地 Stub 完成 4 个 Session/Run/SSE：自动保存、来源关联、跨会话上下文、纠正和纠正后上下文均通过。没有付费模型请求或真实个人数据；这不证明真实模型的自然回答质量。Hermes API 不发布宿主端口；Private 未挂载、Knowledge RO、Promote OFF。完整运行、隔离、观察与恢复证据见 Progress-Log 和 Environment-Baseline；真实模型调用及用户验收仍待授权/验收。
 
-**工作准则：** 不预设 Hermes v0.21.5 支持最新版官方记忆接口；不因新技术趋势直接上 Jev、世界模型、Honcho、图 DB 或 RAG。分层记忆和 loop 是目标能力的实现方式，先复用、测试现有能力再选型。
+**工作准则：** Hermes v0.22.2 为当前 D077 运行版本；Core JSONL 是个人记忆权威存储，外部 Hermes Memory Provider 未启用。继续以可验证的实际产品行为推进，不因新技术趋势直接上 Jev、世界模型、Honcho、图 DB 或 RAG。真实模型体验需要单独授权。
 
 ## 3. NOW / BLOCKED / DEFERRED、依赖和阻断
 
 | 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
 |---|---|---|---|
-| **Phase 1-A** | **可纠正、可撤销、可溯源的 Personal Memory Core** | 已合成测试；默认关闭、独立根目录与审计历史；实现及审核状态见 PR #4/后续主线 | 不等于生产部署或用户验收 |
-| **Phase 1-B（已合并；DEV-TESTED）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；合成链路通过，默认关闭；Core/Linux 154 passed、2 subtests passed（GitHub Actions Run 38857429530）；测试不再依赖 `/private/tmp` 垫片 | Hermes v0.21.5 实际服务执行、学习质量、真实会话与 NAS 部署均未验证；生产启用须另行批准 |
+| **Phase 1-A（已部署）** | **可纠正、可撤销、可溯源的 Personal Memory Core** | 独立 Core state 子目录、追加式 JSONL、来源与修订历史；NAS 合成验证通过，测试记录已清理 | 用户浏览器验收与后续真实使用仍待完成 |
+| **Phase 1-B（已部署；合成运行验证）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；Core Linux 回归 154 passed、2 subtests passed（Run 38857429530）；Hermes v0.22.2 + Core + 确定性本地 Stub 四步闭环通过 | 真实模型的学习与回答质量、真实会话及用户验收仍待完成 |
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | App image `secondbrain-app:d076-organizer-b34319a` healthy；HTTPS health/login/session、Chat capabilities、Inbox、Review 及受保护设置 API smoke 通过；匿名设置 API 401；Hermes 未重启 | 用户浏览器验收新版本设置页、Composer 和手机 Review；真实扫描 PDF 质量仍待验收；DSM Container Manager GUI 旧定义仍单独跟踪。Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
