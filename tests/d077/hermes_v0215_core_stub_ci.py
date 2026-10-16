@@ -49,6 +49,50 @@ CAPTURED = []
 STUB_COUNTER = {"calls": 0, "fail_remaining": 0, "delay_next": False}
 STUB_BLOCKED = threading.Event()
 STUB_RELEASE = threading.Event()
+SCENARIO_STAGE = "startup"
+
+
+DIAGNOSTIC_MODES = {"--network-preflight", "--enabled-scenario", "--flags-off", "--egress-probe"}
+SAFE_STAGE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def set_scenario_stage(value):
+    global SCENARIO_STAGE
+    SCENARIO_STAGE = value if SAFE_STAGE_RE.fullmatch(value) else "unknown_stage"
+
+
+def http_status_from_exception(exc):
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None) or getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        status = getattr(exc, "code", None)
+    return status if isinstance(status, int) and 100 <= status <= 599 else None
+
+
+def failure_record(mode, stage_name, exc, *, exit_code=1):
+    safe_mode = mode if mode in DIAGNOSTIC_MODES else "unknown_mode"
+    safe_stage = stage_name if SAFE_STAGE_RE.fullmatch(stage_name) else "unknown_stage"
+    class_name = type(exc).__name__ if exc is not None else None
+    if class_name is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", class_name):
+        class_name = "UnknownException"
+    return {"mode": safe_mode, "stage": safe_stage, "exception_class": class_name,
+            "http_status": http_status_from_exception(exc) if exc is not None else None,
+            "exit_code": exit_code}
+
+
+def emit_failure(mode, stage_name, exc, *, exit_code=1):
+    print("D077_HARNESS_FAILURE " + json.dumps(
+        failure_record(mode, stage_name, exc, exit_code=exit_code), sort_keys=True), flush=True)
+
+
+def run_diagnostic_mode(mode, action):
+    set_scenario_stage("startup")
+    try:
+        action()
+        return 0
+    except Exception as exc:
+        emit_failure(mode, SCENARIO_STAGE, exc)
+        return 1
 
 
 def run(*args, timeout=60, check=True, capture=True):
@@ -191,6 +235,14 @@ class HealthProbeError(RuntimeError):
     def __init__(self, summary):
         super().__init__("hermes_health_probe_failed")
         self.summary = summary
+        match = re.fullmatch(r"http_(\d{3})", summary.get("last", ""))
+        self.status_code = int(match.group(1)) if match else None
+
+
+class ProbeHTTPStatusError(RuntimeError):
+    def __init__(self, status_code):
+        super().__init__("http_probe_status_not_ok")
+        self.status_code = status_code
 
 
 def wait_http(url, *, headers=None, expected=200, timeout=90):
@@ -443,17 +495,20 @@ def direct_messages(session_id, *, order, limit=100, offset=0):
 
 def enabled_scenario():
     started = time.monotonic()
+    set_scenario_stage("login")
     roots = {"memory": pathlib.Path(os.environ["SB_PERSONAL_MEMORY_ROOT"])}
     client = httpx.Client(base_url=f"http://127.0.0.1:{CORE_PORT}", timeout=30)
     login = client.post("/api/auth/login", json={"password": APP_PASSWORD},
                         headers={"Origin": f"http://127.0.0.1:{CORE_PORT}"})
     login.raise_for_status()
+    set_scenario_stage("create_initial_session")
     created = client.post("/api/chat/sessions", json={})
     created.raise_for_status()
     session_a = created.json()["session_id"]
 
     initial = "I prefer concise summaries and metric units."
     before_calls = stub_state()["request_count"]
+    set_scenario_stage("initial_run_learning")
     run_a, status_a, latency_a, events_a = run_chat(client, session_a, initial, "d077-v0215-learn-a")
     if status_a != "completed" or "run.completed" not in events_a:
         raise RuntimeError("initial_run_not_completed")
@@ -464,6 +519,7 @@ def enabled_scenario():
     learned = {row["content"]["text"]: row for row in items}
     if not {"concise summaries", "metric units"}.issubset(learned):
         raise RuntimeError("synthetic_learning_candidates_missing")
+    set_scenario_stage("source_message_contract")
     message_page = client.get(f"/api/chat/sessions/{session_a}/messages").json()
     messages = message_page.get("messages", [])
     source_rows = [row for row in messages if row.get("role") == "user" and row.get("text") == initial]
@@ -473,6 +529,7 @@ def enabled_scenario():
            if row.get("content", {}).get("text") in {"concise summaries", "metric units"}):
         raise RuntimeError("memory_source_ref_mismatch")
 
+    set_scenario_stage("message_order_pagination")
     latest = direct_messages(session_a, order="latest")
     oldest = direct_messages(session_a, order="oldest")
     latest_ids = [str(row.get("id", "")) for row in latest]
@@ -484,6 +541,7 @@ def enabled_scenario():
         raise RuntimeError("message_pagination_contract_failed")
 
     # Same text creates a new persistent user message but must not duplicate memory.
+    set_scenario_stage("duplicate_text_dedup")
     memory_count_before_repeat = len(client.get("/api/personal-memory").json()["items"])
     run_repeat, status_repeat, latency_repeat, events_repeat = run_chat(
         client, session_a, initial, "d077-v0215-duplicate-text-repeat")
@@ -497,6 +555,7 @@ def enabled_scenario():
     if len(client.get("/api/personal-memory").json()["items"]) != memory_count_before_repeat:
         raise RuntimeError("duplicate_text_created_duplicate_memory")
 
+    set_scenario_stage("cross_session_recall")
     session_b = client.post("/api/chat/sessions", json={}).json()["session_id"]
     related = "How should you format my summaries and units?"
     before_calls = stub_state()["request_count"]
@@ -509,6 +568,7 @@ def enabled_scenario():
     if not contains_text(req_b[-1], related):
         raise RuntimeError("input_was_rewritten_or_missing")
 
+    set_scenario_stage("correction_update")
     correction = "I used to prefer concise summaries, but now I prefer concise paragraphs."
     run_c, status_c, latency_c, events_c = run_chat(client, session_a, correction, "d077-v0215-correct-c")
     if status_c != "completed" or "run.completed" not in events_c:
@@ -517,6 +577,7 @@ def enabled_scenario():
     active_text = {row.get("content", {}).get("text") for row in current}
     if "concise summaries" in active_text or "concise paragraphs" not in active_text:
         raise RuntimeError("correction_state_not_updated")
+    set_scenario_stage("corrected_cross_session_recall")
     session_corrected = client.post("/api/chat/sessions", json={}).json()["session_id"]
     before_calls = stub_state()["request_count"]
     corrected_question = "How should you format my summaries now?"
@@ -531,6 +592,7 @@ def enabled_scenario():
         raise RuntimeError("corrected_context_stale")
 
     # Revoke, expiry, and unconfirmed inference stay out of model-facing context.
+    set_scenario_stage("revoked_expired_inference_filter")
     metric_row = next(row for row in current if row.get("content", {}).get("text") == "metric units")
     revoked = client.post(f"/api/personal-memory/{metric_row['memory_id']}/revoke", json={
         "source_type": "user_confirmed", "source_ref": "synthetic-correction",
@@ -562,6 +624,7 @@ def enabled_scenario():
         raise RuntimeError("inactive_or_inferred_memory_injected")
 
     # Provider failure is deterministic and must not teach from a failed run.
+    set_scenario_stage("provider_failure_no_learning")
     failure_session = client.post("/api/chat/sessions", json={}).json()["session_id"]
     control_stub({"fail_remaining": 20})
     run_failed, status_failed, latency_failed, events_failed = run_chat(
@@ -574,6 +637,7 @@ def enabled_scenario():
         raise RuntimeError("failed_run_was_learned")
 
     # Stop a Run while its provider request is blocked at the local stub.
+    set_scenario_stage("stopped_run_no_learning")
     stop_session = client.post("/api/chat/sessions", json={}).json()["session_id"]
     control_stub({"reset_blocked": True, "delay_next": True})
     stop_started = time.monotonic()
@@ -600,6 +664,7 @@ def enabled_scenario():
         raise RuntimeError("stopped_run_was_learned")
     latency_stop = round(time.monotonic() - stop_started, 3)
 
+    set_scenario_stage("unrelated_topic_filter")
     session_unrelated = client.post("/api/chat/sessions", json={}).json()["session_id"]
     before_calls = stub_state()["request_count"]
     run_f, status_f, latency_f, events_f = run_chat(
@@ -611,6 +676,7 @@ def enabled_scenario():
         raise RuntimeError("unrelated_topic_received_memory_context")
 
     # A deterministic exact fact is present only as a source-verification pointer.
+    set_scenario_stage("exact_fact_source_gate")
     fact = client.post("/api/personal-memory", json={
         "content": {"text": "Project code is NOVA-17"}, "category": "fact",
         "fact_kind": "user_stated", "source_type": "original_file", "source_ref": "project.md",
@@ -653,10 +719,12 @@ def enabled_scenario():
 
 
 def flags_off_scenario():
+    set_scenario_stage("flags_off_login")
     client = httpx.Client(base_url=f"http://127.0.0.1:{CORE_PORT}", timeout=30)
     login = client.post("/api/auth/login", json={"password": APP_PASSWORD},
                         headers={"Origin": f"http://127.0.0.1:{CORE_PORT}"})
     login.raise_for_status()
+    set_scenario_stage("flags_off_run")
     session = client.post("/api/chat/sessions", json={}).json()["session_id"]
     before = stub_state()["request_count"]
     run_id, status, latency, events = run_chat(
@@ -685,6 +753,7 @@ def external_tcp_probe():
 
 
 def network_preflight():
+    set_scenario_stage("network_health_probes")
     deadline = time.monotonic() + 90
     counts = {"core_local": {}, "core_to_hermes": {}, "core_to_stub": {}}
     core_health = hermes_health = stub_health = "not_probed"
@@ -705,10 +774,17 @@ def network_preflight():
     print("D077_NETWORK_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
     if (core_health != "http_200" or hermes_health != "http_200" or stub_health != "http_200"
             or result["core_public_tcp_egress"] == "reachable"):
+        set_scenario_stage("network_preflight_assertions")
+        failed_http_status = next((int(value[5:]) for value in
+                                   (core_health, hermes_health, stub_health)
+                                   if re.fullmatch(r"http_\d{3}", value) and value != "http_200"), None)
+        if failed_http_status is not None:
+            raise ProbeHTTPStatusError(failed_http_status)
         raise RuntimeError("network_preflight_failed")
 
 
 def egress_probe_mode():
+    set_scenario_stage("public_egress_probe")
     result = external_tcp_probe()
     print(json.dumps({"public_tcp_egress": result}, sort_keys=True), flush=True)
     if result == "reachable":
@@ -721,11 +797,18 @@ def serve_stub():
 
 
 def run_in_container(container, mode, *, check=True):
-    result = run("docker", "exec", container, "python", "/tmp/harness.py", mode, check=False, timeout=900)
+    try:
+        result = run("docker", "exec", container, "python", "/tmp/harness.py", mode,
+                     check=False, timeout=900)
+    except subprocess.TimeoutExpired as exc:
+        emit_failure(mode, "peer_process_timeout", exc, exit_code=124)
+        raise RuntimeError("isolated_peer_timeout") from None
     if result.stdout:
         print(result.stdout, end="", flush=True)
     if check and result.returncode:
-        raise RuntimeError(f"isolated_peer_failed:{mode}:{result.returncode}")
+        if not any(line.startswith("D077_HARNESS_FAILURE ") for line in result.stdout.splitlines()):
+            emit_failure(mode, "peer_process_exit", None, exit_code=result.returncode)
+        raise RuntimeError("isolated_peer_failed")
     return result
 
 
@@ -838,13 +921,13 @@ def main():
     if "--stub" in sys.argv:
         serve_stub()
     elif "--network-preflight" in sys.argv:
-        network_preflight()
+        raise SystemExit(run_diagnostic_mode("--network-preflight", network_preflight))
     elif "--egress-probe" in sys.argv:
-        egress_probe_mode()
+        raise SystemExit(run_diagnostic_mode("--egress-probe", egress_probe_mode))
     elif "--enabled-scenario" in sys.argv:
-        enabled_scenario()
+        raise SystemExit(run_diagnostic_mode("--enabled-scenario", enabled_scenario))
     elif "--flags-off" in sys.argv:
-        flags_off_scenario()
+        raise SystemExit(run_diagnostic_mode("--flags-off", flags_off_scenario))
     else:
         controller_main()
 

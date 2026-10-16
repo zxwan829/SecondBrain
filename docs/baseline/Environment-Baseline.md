@@ -19,11 +19,16 @@ type: environment-baseline
 - ACL 细节、DSM Container Manager GUI 状态、Synology Drive 同步状态、其他 NAS 服务的网络配置、路由/PBR/WireGuard/AdGuard、业务 API 可用性和容器实际出站状态均未核验。挂载列表未出现单独的 Obsidian/Synology Drive 路径；这不代表同步服务状态已核验。
 - 与 2026-10-15 快照相比：容器 ID、镜像 ID、启动时间、Compose SHA 与历史值一致；本次补充发现 Hermes 容器安全参数较宽松，且整棵 SecondBrain 根目录 RO 挂入。现有两个服务不是隔离测试资产：App/Core state、Hermes profile/data 和业务 Inbox/Review 均指向正式路径，因此本轮没有通过它们执行合成 Run。
 
-### 下一阶段隔离联调（仅方案，未执行）
+### 下一阶段 NAS 独立临时 Compose 联调（设计已审，未执行）
 
-在获得独立授权后，使用固定 Hermes digest 和待审 Core commit 创建独立测试 Compose Project；仅创建带唯一 run label 的临时 Hermes、Core 与确定性 Stub 容器，连接一个 `internal: true` 专用网络，不发布宿主端口。只提供临时合成 Profile/Core state/合成 Inbox（优先 tmpfs，必要时单一专用临时目录）；不挂载正式 Compose、`/volume1/SecBR/SecondBrain`、KnowledgeAssets、Private、现有 Hermes data/Core state 或 Secrets。设置 CPU、内存、PIDs 和超时上限；执行前验证测试容器只连 internal 网络且不能访问 LAN/外网，随后验证 API/SSE 与合成记忆场景，最后按唯一 run label 清理并断言容器、网络、临时目录/镜像均无残留。
+- **项目与暂存路径：**Compose project 名 `sb-d077-phase1c-<run-id>`；唯一暂存根 `/volume1/docker/secondbrain-test/d077-phase1c/<run-id>/`（计划权限 `0700 root:root`），仅保存精简 Compose、PR 源码归档/测试脚本、Core 镜像归档和脱敏结果。该路径当前是否存在/有空间未核验。Core 源码树在本轮开始时固定于 PR #8 `955fc16d808349af661e49fc4c33b449db0a0fce`，本轮 Core 运行时代码不改；实际运行前须改用最终经 ChatGPT 审核的 PR head SHA，并校验归档哈希。Hermes 固定 `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`。不引用正式 Compose。
+- **拓扑/数据：**只创建临时 `hermes`、`core`、确定性 `stub` 三个服务，单一 `internal: true` 网络，无任何 `ports`、host network、第二网络或 Docker socket。Hermes/Core/Stub 均采用非 root、只读 rootfs、drop ALL capabilities、no-new-privileges；仅开受限 `/tmp` 与运行所需 `tmpfs`（Hermes profile `/opt/data`、Core state `/test-data`、Stub scratch）。若测试脚本需 bind mount，只能从上述唯一暂存根 RO 挂入脚本，不将暂存根或任何 NAS 业务目录作为数据卷。Synthetic API 凭据只在隔离运行时生成/注入，不使用 GitHub/NAS Secret。
+- **Core 构建与网络边界：**从上述最终审核 SHA 构建临时 Core 镜像，镜像必须标记 `d077.task=phase1c` 与唯一 `d077.run=<run-id>`。避免 NAS build 触发未批准下载：优先在 Mac 生成 `linux/amd64` 镜像归档并在授权后传入唯一暂存根；若跨架构构建、基础层或依赖无法离线复现，则停止，不放通 Docker build 网络。测试容器仅连 internal network；运行前 inspect 白名单校验网络成员、无端口绑定、挂载源范围、用户/capabilities，并确认 LAN/公网出口均拒绝；再确认 Core↔Hermes 与 Hermes↔Stub 健康后，才运行合成 Run/SSE/记忆断言。
+- **资源与时限估算：**Hermes 1.5 GiB/1 CPU/128 PIDs，Core 768 MiB/0.75 CPU/96 PIDs，Stub 256 MiB/0.25 CPU/32 PIDs；容器硬上限合计约 **2.5 GiB、2 CPU、256 PIDs**，不含 Docker daemon/build 缓存开销。NAS 当前可用资源 UNKNOWN；授权执行前只读门槛建议 `MemAvailable ≥4 GiB`、目标卷可用空间 `≥6 GiB`，否则停止。单次 Harness 最长 10 分钟，整个准备/运行/清理不超过 20 分钟；超时由容器外控制。
+- **定向回滚/清理：**先分别运行 `docker ps -aq --filter label=d077.task=phase1c --filter label=d077.run=<run-id>` 与 `docker network ls -q --filter label=d077.task=phase1c --filter label=d077.run=<run-id>`，对每个返回 ID 用 `docker inspect` 再验两个 label；只把这些逐一核验的 ID 传给 `docker rm -f <IDs>` / `docker network rm <IDs>`。只 inspect 并删除本轮唯一镜像 tag `sb-d077-core:<run-id>`，最后仅在 run-id 符合安全字符白名单且规范化路径精确等于 `/volume1/docker/secondbrain-test/d077-phase1c/<run-id>/` 时删除该暂存根。清理后重复按 label 查容器/网络、inspect 唯一 image tag，并确认唯一暂存根不存在；任何 label/name 不匹配即停止清理并报告残留。不使用 `docker system prune`、全局 Compose down 或模糊通配符；现有 App/Hermes 容器、网络、卷、路径和 App 回滚目录都不参与回滚。
+- **前置条件与验收：**另获用户对 NAS 临时目录、离线镜像导入/构建、容器/网络创建及定向删除的明确授权；先重新核验资源余量和当前 Docker；审核最终 SHA/归档哈希及 Compose 白名单；镜像/用户/挂载/网络/egress 前置断言全部通过。验收需有网络预检证据、逐项合成 E2E 结果与唯一最终 PASS 标记，以及容器/网络/镜像/暂存根清理后空清单。若任何边界断言失败，不开始 Run。
 
-风险是 NAS 容量/CPU 竞争、测试定义误引用生产 bind mount，以及 `internal` 网络隔离配置错误。接受条件为测试前配置/挂载/网络清单通过白名单断言、所有请求只落在本地 Stub、合成闭环标记 PASS、退出后资源清零。此方案需另行批准临时容器/网络/文件创建及清理；失败时只清理同一 run label 的测试资产，不触碰正式容器或回滚正式服务。当前回滚目录仅供既有 App 恢复，不应用于此测试。
+风险是 NAS 资源竞争、离线镜像归档/跨架构不一致、临时定义误引用生产路径，以及 Docker `internal` 网络边界验证失败。以上方案需新的逐项操作授权；本轮未创建路径、镜像、容器或网络，也未执行任何回滚命令。
 
 ## NAS 与 Compose
 

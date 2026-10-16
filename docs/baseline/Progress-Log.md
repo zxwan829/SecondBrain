@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+# 2026-10-16 — PR #8 Harness 脱敏诊断与 NAS 隔离方案准备
+
+- 按 ChatGPT 审核评论 `6210190381` 与用户授权评论 `6210207099`，仅修改 `tests/d077/hermes_v0215_core_stub_ci.py`、新增本地诊断单测并更新现有基线；未访问 NAS、未启动容器、未触发 Runner、未调用模型或业务 API。
+- Harness 的 `--enabled-scenario`、`--flags-off`、网络预检和 egress 探测现在由统一失败边界捕获；单条 `D077_HARNESS_FAILURE` 仅输出 allowlist mode/stage、异常类名、HTTP status（适用时）与退出码。不会打印异常消息、Traceback、stderr、URL、prompt、环境变量或 provider 响应。进程超时及无 marker 的 peer 退出使用不含原始输出的降级诊断。HTTP 非 200 与连接拒绝/超时继续分别分类；Phase 1-C E2E 仍 BLOCKED。
+- 新增离线单测覆盖 HTTP 状态/传输异常区分、模式与阶段白名单、异常消息脱敏、scenario 失败 marker、peer 退出降级和超时诊断。验证：**8 passed**；Harness 与单测两个 Python 文件的内存语法编译通过；`git diff --check` 通过。没有运行 Core 全量套件或任何集成 Harness。
+- NAS 方案细化为独立 project `sb-d077-phase1c-<run-id>`、唯一暂存根 `/volume1/docker/secondbrain-test/d077-phase1c/<run-id>/`、Hermes 固定 digest、当前 Core 源码基线 `955fc16d808349af661e49fc4c33b449db0a0fce`（正式测试须使用最终复审 SHA）、仅 internal network、无发布端口/生产挂载/Secret、非 root/只读/丢弃 capabilities、合计约 2.5 GiB/2 CPU/256 PIDs 的容器硬上限、资源准入阈值、最长 20 分钟和按 run label 清理/显式残留断言。方案仍是提案，不创建资产。
+- CURRENT 与 Environment-Baseline 已将 Private 标为 **UNVERIFIED / RISK**：Hermes 的整个 SecondBrain 根目录 RO mount 可能使其可见，但未检查 Private 是否存在/权限或任何内容，也没有证据表明它已被读取。需要独立安全整改确认最小 allowlist、非 root/capabilities 与拒绝访问。既有 NAS 服务不参与 Phase 1-C 联调。
+- 下一步：仅在 ChatGPT 复审本提交后，另行请求 NAS 创建测试资源或新的 Runner 授权；本轮无 NAS 操作、Runner、部署、合并或真实数据访问。
+
 # 2026-10-16 — PR #8 NAS SecondBrain 容器只读环境核验
 
 - 按 PR #8 最新 ChatGPT 审核和用户评论 `6210066948`，仅经现有 SSH/已配置只读 Docker 管理权限核验 `secondbrain-app`、`secondbrain-hermes`、其 Compose 与 `secondbrain_default` 网络。普通 Docker socket 权限不足，使用既有 `sudo -n` 权限读取；未改 SSH/known_hosts 权限、sudoers 或 NAS 配置。没有执行容器内命令、HTTP 业务请求、日志读取或任何生产写操作。
