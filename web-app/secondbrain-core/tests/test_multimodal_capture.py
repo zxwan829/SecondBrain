@@ -37,8 +37,8 @@ class ProcessorStub:
 
 class MultimodalCaptureTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
-        root = Path(self.temp.name)
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name).resolve()
         self.raw, self.review, self.state = (root / name for name in ("raw", "review", "state"))
         for path in (self.raw, self.review, self.state):
             path.mkdir(mode=0o700)

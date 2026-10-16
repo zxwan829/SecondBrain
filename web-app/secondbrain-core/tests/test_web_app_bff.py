@@ -19,8 +19,8 @@ from datetime import datetime, timezone
 
 class WebAppBffTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir="/private/tmp")
-        self.root = Path(self.temp.name)
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name).resolve()
         self.review = self.root / "review"
         self.knowledge = self.root / "knowledge"
         self.raw = self.root / "raw"

@@ -23,12 +23,9 @@ jobs:
       - name: Verify Personal Memory tests on native Linux temp directories
         working-directory: web-app/secondbrain-core
         run: python -m pytest -q tests/test_personal_memory.py
-      - name: Run legacy Core suite with ephemeral macOS temp-path compatibility
+      - name: Run Core suite on native Linux temp directories
         working-directory: web-app/secondbrain-core
         run: |
-          # Older Core test files still hardcode /private/tmp; create only on
-          # this disposable Linux runner, without altering application code.
-          sudo install -d -m 1777 /private/tmp
           python -m pytest -q tests
           python -m compileall -q secondbrain_core tests
           git diff --check
