@@ -7,9 +7,14 @@
 - 从 GitHub 最新 `main` `b6e30f3f1b61cb4f821b7db2c2bca994302be6dc` 的独立临时 Clone 开始；正式工作区及未跟踪项 `typescript` 未触碰。
 - 固定 Hermes v0.21.5 源码为 upstream `749220ef0007f8d87bd1531f1c24b0fe93816385`。只读 Registry manifest/config 交叉核验正确镜像 index 为 `nousresearch/hermes-agent@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db`，linux/amd64 child config/image ID 为 `sha256:e1e87aec2e3f5b9863c127a0f21f3b3c237c8717c57c323c7184a49ca12a0df6`，revision label 与固定源码 commit 一致。现有 smoke/live workflow 的 `a11574…` 不能作为 v0.21.5 证据；live workflow 会调用付费 SiliconFlow，未运行。
 - 固定源码确认 `/v1/runs` 的 `instructions` 进入本次 Run 的 ephemeral system prompt；API Server 由合成 `API_SERVER_KEY` 启用，`API_SERVER_ENABLED` 并非该版本启用条件。均为源码契约，不是运行结果。
-- 当前 Mac 没有 Docker、Podman、Colima 或 OrbStack，因此无法本地启动固定镜像。尚无已提交的零费用真实 Core + Hermes + local stub runner harness；未拉取/启动镜像、未连接 NAS、未调用模型。没有用不匹配镜像或付费工作流替代。
+- 当前 Mac 没有 Docker、Podman、Colima 或 OrbStack，因此无法本地启动固定镜像。为使用 Issue 允许的隔离 Linux Runner，本 PR 新增手动 workflow `.github/workflows/d077-hermes-v0215-core-stub.yml` 和 `tests/d077/hermes_v0215_core_stub_ci.py`：固定 image ID/revision、Docker internal network、Core localhost BFF、确定性 OpenAI-compatible Stub、临时数据根、Stub-only 出站探针、精确 label 资产清理。该 harness 尚未在 GitHub Runner 实际执行；本轮无 Hermes image pull/container Run、无 Core+Hermes E2E 结果、未连接 NAS、未调用模型。没有用不匹配镜像或付费工作流替代。
 - 最小 Core 修复：SSE `run.interrupted` 和状态轮询 `interrupted` 现在均清理 pending；新增两项回归测试。`test_personal_learning.py` + `test_web_app_bff.py`：29 passed。依赖仅安装于 `/private/tmp/sb-issue7-venv`。
-- **状态：** Core 定向修复已测试；Hermes 固定版本 API + Core 端到端、学习/跨 Session/Provider 行为及 Issue #7 其余验收项仍 `UNKNOWN/BLOCKED`。后续最小方案为手动 GitHub-hosted Linux workflow：断言 image ID/revision、容器只连接确定性 stub、Runner 主机运行 Core，记录脱敏证据并验证容器外网拒绝；workflow 成功后才可报告运行验收。无生产变更、费用、NAS 操作或真实数据。
+- **状态：** Core 修复及全量测试 `VERIFIED`；Harness 静态语法已核对，固定 Hermes v0.21.5 API + Core 端到端、学习/跨 Session/Provider 行为及 Issue #7 其余运行验收仍 `UNKNOWN/BLOCKED`，直至新增 workflow 在 Runner 成功。此次没有 GitHub Actions Run；workflow 成功后才可报告运行验收。无生产变更、费用、NAS 操作或真实数据。
+- **追加任务 G（Issue 评论 #6209139743）：** 已按要求更新本文件与 `00-CURRENT.md`，并在仓库根 `AGENTS.md` 增加 GitHub Issue/PR 评论驱动协作章节。Phase 1-A PR #4、Phase 1-B PR #6 保持 `MERGED / DEV-TESTED / NOT DEPLOYED`；Phase 1-C 仍受阻，未写成运行通过。
+- **命令与本轮执行证据：** Hermes 容器/真实 Core E2E 命令未执行（本机没有容器运行时，未新增 Runner workflow）；Core 本地命令为 `/private/tmp/sb-issue7-venv/bin/python -m pytest -q tests`（156 passed，2 subtests passed），`compileall` 与 `git diff --check` 通过。唯一合成回归输入是 `I prefer short summaries.`，仅用于验证 interrupted 终态清理，不启动 Hermes。
+- **提交与审查：** 首轮修复 commit `de74905214c9a146388239fd2bb7e9bfa0304afe`；本次所有改动续推到同一 PR [#8](https://github.com/zxwan829/SecondBrain/pull/8)，等待 ChatGPT 审核。未触发 GitHub Actions；Run 链接：无。
+- **隔离资产清理：** 本机未创建 Docker 容器、网络或 Hermes 镜像，未创建 Hermes Session；GitHub Runner 尚未触发。Core 测试产生的 Memory 数据位于 pytest 临时目录并由测试框架清理。Core venv `/private/tmp/sb-issue7-venv` 保留供复现；独立 Clone `/private/tmp/secondbrain-issue7-base` 保留为 PR #8 工作副本。Runner 首次执行后，workflow 仅按本 Run ID/Attempt 标签清理对应容器和网络；拉取的 immutable 镜像保留在临时 Runner 生命周期内。
+- **本轮 Commit/PR：** 首轮修复 `de74905214c9a146388239fd2bb7e9bfa0304afe`；协作规则、E2E Harness、workflow 与基线更新在本 PR 后续 Commit；PR [#8](https://github.com/zxwan829/SecondBrain/pull/8) OPEN，未合并。
 
 # 2026-10-16 — D077 Phase 1-B 最终验收及合并收口
 
