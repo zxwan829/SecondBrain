@@ -35,8 +35,7 @@ source: GitHub SecondBrain Monorepo
 
 ### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批演示（已合并、未部署）
 
-PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`）。保留原 Capture Inbox 预览、下载、partial_success 重试、错误/状态、刷新及 Organizer 入口；同页新增 Notes Drafts 子视图与确定性 Mock 类型/标签/去向建议。五种演示类型、固定演示标签与未识别标签候选明确区分，状态词不作标签；按钮「模拟同意（仅本页）」不会持久化决策或执行写入/移动。前端定向 45 项、typecheck/build/diff-check 据 Codex 报告通过，未独立重跑。**MERGED / NOT DEPLOYED / NOT PERSISTENT APPROVAL / NOT USER ACCEPTED**；后续来源安全审批持久化和 Issue #55 正式词汇库仍需独立设计。本并行状态不改变上方 D084 唯一 NEXT；不自动授权真实 Vault、付费模型或 NAS 变更。
-PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`）。保留原 Capture Inbox 预览、下载、`partial_success` 重试、错误/状态、刷新及 Organizer 入口；同页新增 Notes Drafts 子视图与确定性 Mock 类型/标签/去向建议。五种演示类型、固定演示标签与未识别标签候选明确区分，状态词不作标签；本页模拟同意不会持久化决策或执行写入/移动。D086 / Issue #55 词表及 D084 唯一 NEXT 仍按 main 保留。此后 PR #54 已关闭；原分支新增提交 `6d55bb892362105a2717b31dff0a1bb772d1e408`，包含人工修正保护及 54 项定向回归（typecheck/build/diff-check 通过），**该提交不在 main，尚待决定如何复审纳入**。本轮未访问真实笔记、真实模型、NAS 或生产配置；未部署或用户验收。
+PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`），状态为 **MERGED / NOT DEPLOYED / NOT PERSISTENT APPROVAL / NOT USER ACCEPTED**。合入版本保留 Capture Inbox 预览、下载、`partial_success` 重试、错误/状态、刷新和 Organizer 入口，并在同页加入 Notes Drafts 与确定性 Mock 建议；演示词表与未知候选分开，状态词不作为标签，页面模拟同意不持久化或执行。后续修正由 PR #57 跟踪（当前待审）：保护手动类型/标签修正并明确模拟审批边界；尚未合入或部署。来源安全审批持久化和 Issue #55 正式词汇库仍需独立设计。本段不改变上方 D084 唯一 NEXT，也不授权真实 Vault、付费模型或 NAS 操作。
 
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 
