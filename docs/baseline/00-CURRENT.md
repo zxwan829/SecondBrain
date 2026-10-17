@@ -14,24 +14,24 @@ source: GitHub SecondBrain Monorepo
 
 **新的 Companion MVP 门槛（D077，已批准、尚未整体实现/验收）：** 日常 Chat 无检索提示地关联长期个人记忆与可信知识；获准对话低风险学习、跨 Session 召回与纠正；精确事实回源；自然语言 Journal、简单 Task、Capture 与主动建议。原 V1 MUST 保持不变。D080 两次 GLM-4.5-Air Run 中，首轮自动学习写入通过，跨 Session 自然召回失败；D082 的情境保留修复已进入最新 main，但生产重新验证仍未完成，详见 Issue #28/#30。
 
-**总体状态：NOT DONE。** D084 原功能已部署并通过有限合成验收；PR #49 的 Chat Journal/Task 会话活动留痕修复已于 2026-10-17 合入 main，但尚未部署或用户验收。生产状态仍以 `Environment-Baseline.md` 最近证据为准；Terminal 关闭、Private 未挂载、Knowledge 主目录只读（Capture 专用 inbox RW 例外不变）、Promote 关闭。真实模型记忆质量与修复版浏览器验收未完成。
+**总体状态：NOT DONE。** D084 基础 App 与 Hermes/Guard 已部署；PR #49 的会话活动持久化修复已合入 main，但新版 App 的 2026-10-17 受控部署在导航到 `/chat` 时显示 `Not Found`，已按授权回滚到旧 App。候选版未通过生产验收、未获用户验收；具体运行证据见 `Environment-Baseline.md` 与 Issue #44 评论 #6232678940。真实模型记忆质量仍未验收。
 
 ### 当前工作分层状态（不能互相替代）
 
 | 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
 |---|---|---|---|---|---|
-| D084 后续：Chat 内 Journal/Task 会话活动留痕（Issue #44） | PR #49 已完成 ChatGPT 独立复审并合并 | Core Journal/Task/BFF 35 项、前端 Chat/Capture/timeline 42 项通过；typecheck/build 通过。覆盖跨零点幂等、活动恢复、旧记录日期兼容与 Hermes 时间戳排序 | **已合入 main**，Merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79` | **未部署**；NAS 现有 D084 App 不含本修复 | 待修复版生产合成及浏览器用户验收；未调用真实模型 |
-| D082 个人记忆情境保留修复 | PR #32 已审；随最新 main 保留在本轮集成分支 | 本轮 Core 统一定向组中 `test_personal_learning.py` 17 项通过；此前 D080 真实召回失败不可由源码/Mock 抵消 | 基线 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 的修复未被并行切片覆盖 | 此修复是否已部署，本次可用生产快照未证明，标记 **UNKNOWN** | 生产真实召回复验未完成；浏览器验收未完成 |
-| D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | 已整合至 `codex/d084-unified-integration-20261017`（基于 main `a8019ab1…`）；PR #45 已独立复审并合入 main（merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa`） | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未做真实模型或浏览器验收 |
-| PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #37 两个已审提交已移植至 `codex/d084-unified-integration-20261017`；PR #45 已合入 main，包含 PR #37 的两项已审提交；原 PR #37 仍独立 open，勿重复合并 | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需运行时验证；无真实模型验收 |
+| D084 后续：Chat 内 Journal/Task 会话活动留痕（Issue #44） | PR #49 已完成 ChatGPT 独立复审并合并 | Core Journal/Task/BFF 35 项、前端 Chat/Capture/timeline 42 项通过；typecheck/build 通过。覆盖跨零点幂等、活动恢复、旧记录日期兼容与 Hermes 时间戳排序 | **已合入 main**，Merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79` | **尝试部署后回滚**；旧 App 已恢复健康，候选版因 `/chat` Not Found 未通过 | 未完成生产合成验收；未调用真实模型；待根因修复与新授权后再试 |
+| D082 个人记忆情境保留修复 | PR #32 已审；随 PR #45 合入 main | `test_personal_learning.py` 17 项通过；此前 D080 真实召回失败不可由源码/Mock 抵消 | PR #45 merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa` 的 App 基线保留该修复 | 旧 App 镜像 `d084-c8a2b348` 当前运行；真实召回效果未验证 | 生产真实召回复验未完成；浏览器验收未完成 |
+| D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | PR #45 已合入 main（merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa`） | D084 基础 App `d084-c8a2b348` 正在运行；Journal/Task 私有根权限已核验，既有合成验收有效 | PR #49 会话活动卡版本的部署验收因 `/chat` Not Found 中止；真实模型未调用 |
+| PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #45 已合入 main，包含 PR #37 两项已审提交；原 PR #37 仍独立 open，勿重复合并 | D084 基础 App 包含已合入代码；生产 Hermes API Run 审批链路未完成端到端核验 | 用户验收与真实模型验收未完成 |
 
 本轮以实时 GitHub main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 为基线；与 `dev/parallel-v1-next-20261017` 在 `d7a48fe` 分叉后，main 独有 6 个提交（含 D082 记忆修复及后续治理文档），并行分支独有 3 个功能切片提交。集成分支保留 main 历史并合入 3 个切片；`personal_learning.py` 与其回归测试相对 main 未改动。唯一源码冲突为 `App.tsx` 的 Journal/Task 与通用 Run 审批解析器导入，已人工合并；CURRENT 文档冲突保留 main 文本并在本轮校准。代码审查、定向测试、分支合入、main 合入、NAS 部署、真实模型运行与用户验收分别记录；任一层通过都不自动代表后一层通过。
 
-## D084：统一功能集成已部署（限定合成验收通过）
+## D084：统一功能集成已部署（基础范围的限定合成验收通过）
 
 本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
-**唯一 NEXT：** PR #49 已经 ChatGPT 独立复审、于 2026-10-17 合入 main（merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79`）；当前进入**仅针对新版本 App 的生产部署准备和单独授权**：Codex 可先执行只读 NAS 预检、核对现行 App/Compose 镜像、数据挂载和回滚资产，给出最小变更与回滚清单；未获新的明确 NAS 部署授权不得切换镜像、更新 Compose 或改数据。原 D084 Guard/API 与 Journal/Task 合成验收仍有效，但会话操作卡持久化修复 **MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。部署且通过限定无模型合成验证后，再由用户浏览器验收 Chat 会话内操作记录的刷新/切换恢复。禁止调用真实/付费模型，禁止修改或清理既有 Session、Memory、Atlas、Journal/Task 测试数据。未来 GitHub PR 合并批量授权原 10 次，本次成功使用 1 次，剩余 9 次；该授权不包括 NAS 部署。
+**最新部署结果 / 下一步：** PR #49 已于 2026-10-17 合入 main（merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79`）。新版 App 镜像曾通过 30 秒健康门槛，但真实导航点击“对话”后 `/chat` 返回 `Not Found`；按 Issue #44 授权立即恢复旧 Compose/App，15 秒内恢复 healthy。Hermes/Guard 未重建；新 `chat-activity` 私有目录和校验通过的 App 回滚快照按要求保留。该次部署授权已使用，不自动重试。**唯一 NEXT：** 基于 Issue #44 的可复现 `/chat` Not Found 证据做离线根因定位与最小修复；具备可靠修复依据后，再申请新的限定部署尝试授权。完成生产合成验收前不得做浏览器业务操作。继续禁止调用真实/付费模型、修改或清理历史/真实 Journal、Task、Session、Memory、Atlas 数据。
 
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 
