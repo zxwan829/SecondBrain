@@ -37,6 +37,10 @@ source: GitHub SecondBrain Monorepo
 
 PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0b875c133a314b429` 合入并处理共享 `App.tsx` 冲突。Notes 通过 `/notes` 路由接入桌面/移动侧栏；`VITE_ENABLE_NOTES` 默认关闭，显式开启仍要求 Core `notes.read` 预检成功，Notes 读写继续由 Core 权限门禁控制。NotesPage 懒加载；跨页面导航保留未保存保护。Markdown 正文为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，不扩张 Obsidian 原生兼容承诺。本轮前端定向回归 63 项、typecheck 与 build 通过；PR 仍未合并、未部署、未做用户验收；未访问真实笔记或启动 D085-C2。此并行状态不改变上方 D084 唯一 NEXT。
 
+### 新批准的产品规则：D086 对话收录与标签类型管理
+
+`Decision-Log.md` D086 与 [`业务规范.md`](业务规范.md) 已确认：普通 Chat 保持自然对话，Hermes 可有节制地询问是否收录；用户明确收录或同意后，Core 先将原文存入统一 Inbox，日记意图也须经 Inbox 和用户确认后再写 Journal。Hermes 可在授权范围回顾并主动建议，主动/被动调用分开设每日及每月估算金额额度；标签与类型集中管理，类型最多 10 种，既有有效标签可自动应用。**这些均是批准的目标，尚未按新规则实现、部署或验收**；当前已合入/部署的 Chat 显式 Journal 直写路径仍是既有实现，需后续任务按新规范调整。Issue #55 跟踪标签与类型功能，不授权读取真实 Vault、改写历史文件、启动付费模型或生产变更。本节不改变 D084 唯一 NEXT。
+
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 
 - **#28 — D080-B 真实模型验证：** 2/5 Run 已执行，跨 Session 自然召回失败；剩余 Run 未执行，已有授权不可被解释为此次自动重跑许可。统一真实测试时再确认模型、次数、预算和范围。
@@ -54,7 +58,7 @@ PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0
 | 无检索提示的联想 | 用户只自然谈论相关问题，Agent 能使用确有来源的历史偏好/项目/知识，不要求用户明确说“搜索”；数字、日期、版本须回源 |
 | 跨会话的个人记忆 | 新 Session 在相关时主动使用之前明示的当前偏好；不相关时不强行提起，模型推断不冒充用户事实 |
 | 纠正与失效 | 用户修正或撤销记忆后，后续 Session 不再把旧值当现行，历史修订与原始来源可核验；重复学习不得无限增加条目 |
-| 日记与碎碎念 | 明确“记一下/写日记”时按日期保留原文、时间及来源；普通闲聊不误生成 Journal |
+| 日记与碎碎念 | 明确“记一下/写日记”时先由 Core 保留原文、时间及来源至统一 Inbox；用户确认后才写 Journal；普通闲聊不误生成 Inbox/Journal |
 | 待办与提醒 | 自然语言创建/查看/修改/完成真实待办，存储状态一致；通知是否实际送达单独验证 |
 | 多格式 Capture | Raw 原件不覆盖，Review 可核验并可解释关联；未经明确批准不 Promote，外部文件中的推断不能当用户事实 |
 | 自主 Skill 学习 | 重复反馈可产生可复用经验；重要 Skill 修改经审核，不允许通用 file 绕过 |
@@ -128,7 +132,7 @@ PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0
 | Personal Memory Core（Phase 1-A） | NAS-DEPLOYED；独立 `0700` 根目录、追加式 JSONL 来源/修订记录、纠正与失效过滤；真实路径权限核验通过；本次合成记录已清理 | PR #4 已合并；NAS image `secondbrain-app:d077-b6e30f3`；真实数据与用户验收仍待完成 |
 | 自主个人记忆学习（Phase 1-B） | NAS 合成闭环通过：Core 自动保存来源关联、跨 Session 召回、用户纠正和纠正后召回；Hermes v0.22.2 实际模型请求经 Stub 观测到注入上下文。Stub 不评价真实模型的自然学习/回答质量；没有付费模型或真实数据出站 | PR #6 已合并；本次运行证据见 Progress-Log；真实模型质量、用户浏览器体验及长时间使用仍待验收 |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
-| 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
+| 碎碎念与 Journal 自然语言记录 | D086 已取代 D064 对话直写顺序；现有显式直写代码已合入/部署，但新入口规则 NOT IMPLEMENTED，业务浏览器验收未完成 | 明确“记一下”先经 Core Inbox 保存原话，再经用户确认由专用 Journal API 新增/按日追加；普通闲聊不意外收录或写日记 |
 | 自然语言待办/日程 | D083 Task Core/API、Today 页面和 Chat 显式命令在并行开发分支 DEV-TESTED；尚未合入 main 或部署，生产 `SB_TASK_ROOT` 未配置/核验；提醒发送 **NOT IMPLEMENTED** | 集成后验证真实持久数据/权限；提醒通知必须单独实现并验收，不将待办 CRUD 通过等同提醒送达 |
 | 文件收录→理解→记忆关联 | Capture 有 PROD-PARTIAL，OCR/STT、Review→Promote 缺口仍在 | 保留原件、正确提炼候选/关联，不擅自提升第三方断言为用户事实 |
 | 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
@@ -168,6 +172,7 @@ PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0
 | 内容 | 权威位置 |
 |---|---|
 | 最高产品目标、双闭环原则及当前验收路线 | `Decision-Log.md` D077（批准方向）与本文（当前验收/NEXT） |
+| 笔记、对话收录、标签与类型业务规则 | [业务规范](业务规范.md)；正式取舍见 `Decision-Log.md` D086 |
 | V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | [Web App V1 业务规格](business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture 业务规格](business-specs/Universal-Capture-Business-Spec.md) |
 | 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
 | 正式决定、理由及替代关系 | `Decision-Log.md` |

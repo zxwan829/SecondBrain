@@ -5,7 +5,7 @@ type: architecture
 ---
 # SecondBrain V1/V2 Architecture
 
-本文件记录已批准的架构与信任边界；智能伙伴产品目标见 `Decision-Log.md` D077；当前业务范围与验收见 `00-CURRENT.md`。其中已批准的是产品能力和现有服务/数据边界；Memory Provider、具体目录/索引与主动规划内部实现仍属待验证技术选型，不能当成现网实现。运行版本、部署阶段、测试结果和未完成施工不在此维护，分别见 `00-CURRENT.md`、`Environment-Baseline.md` 与 `Progress-Log.md`。
+本文件记录已批准的架构与信任边界；智能伙伴产品目标见 `Decision-Log.md` D077，对话收录与词汇管理取舍见 D086 和 `业务规范.md`；当前业务范围与验收见 `00-CURRENT.md`。其中已批准的是产品能力和现有服务/数据边界；Memory Provider、具体目录/索引与主动规划内部实现仍属待验证技术选型，不能当成现网实现。运行版本、部署阶段、测试结果和未完成施工不在此维护，分别见 `00-CURRENT.md`、`Environment-Baseline.md` 与 `Progress-Log.md`。
 
 ## 1. 稳定架构边界
 
@@ -40,7 +40,7 @@ type: architecture
 
 ### D077 智能伙伴的能力分层（批准方向，不等于全部上线）
 
-用户入口为 Web App/Core，微信经验证后加入同一业务入口。自然语言意图区分普通 Chat、Journal、Task 和 Capture：明确“记一下/建待办/收录”才能触发对应语义写入；普通闲聊不自动形成 Journal/Raw/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。
+用户入口为 Web App/Core，微信经验证后加入同一业务入口。普通 Chat 可由 Hermes 主动询问是否收录；用户明确收录或同意建议后，Core 先将原文保存到统一业务 Inbox，再经授权转为 Journal、正式 Knowledge 或其他目标。普通闲聊不自动形成 Inbox/Journal/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。明确 Task 意图走其独立业务授权；具体规则见 `业务规范.md`。
 
 **双闭环**：Personal Learning Loop 在授权范围由 Core 建立带来源、时间、推断标记、版本、纠错/撤销的个人记忆；Knowledge Integrity Loop 仍为 Raw → Review → 用户明确批准 → Core Promote → 正式 Knowledge，不把外部材料摘要和模型推断当成用户事实。
 
@@ -54,11 +54,11 @@ type: architecture
 
 浏览器 Chat → App BFF（目标：预先装入少量高相关长期记忆/项目背景；具体接入点待验）→ Hermes Session/Run API → SSE/状态回读 → App 前端。会话历史以 Hermes 持久化 Session API 为来源，不以浏览器临时状态为唯一记录。
 
-普通 Chat **不会自动变成 Journal、Raw 或正式 Knowledge**；但在用户批准的范围内，低风险偏好、经验、目标变化可以在对话后被受控提炼为**可检查/纠正的个人记忆**。遇到日期、数据、决策版本或相互冲突的信息时，Hermes 应自动从有权限的正式资料核验，而非仅凭旧记忆自信作答；无需用户手动要求检索。
+普通 Chat **不会自动变成 Inbox、Journal、Raw 或正式 Knowledge**；Hermes 可在高价值内容出现时征询收录，Core 负责授权和实际保存。在用户批准的范围内，低风险偏好、经验、目标变化可以在对话后被受控提炼为**可检查/纠正的个人记忆**。遇到日期、数据、决策版本或相互冲突的信息时，Hermes 应自动从有权限的正式资料核验，而非仅凭旧记忆自信作答；无需用户手动要求检索。
 
 ### 3.2 Universal Capture
 
-用户明确选择收录 → App Capture API → 独占保存 Raw 原件与来源元数据 → 处理/提取 → 以可核验关系创建 Review。Raw 是不可覆盖的原始证据；失败时保留 Raw 和可恢复状态。Capture 不直接写 Knowledge。
+用户明确选择收录或同意 Hermes 的收录建议 → App/Core Capture API → 独占保存 Raw 原件与来源元数据至统一业务 Inbox → 处理/提取 → 以可核验关系创建 Review。Raw 是不可覆盖的原始证据；失败时保留 Raw 和可恢复状态。Capture 不直接写 Knowledge。
 
 ### 3.3 Review 与 Promote
 
@@ -72,11 +72,11 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 
 ### 3.5 Journal、Task 与主动规划（目标行为）
 
-明确的自然语言“记一下/写日记/添加待办”应由 Chat 识别显式意图并调用对应 Core 语义 API，而不是把这类写入委托给模型任意文件工具；模糊、高风险动作先确认。Journal 按 D064 使用 `50-Journal` 专用新增/日期追加，无需正式 Knowledge Promote；普通 Agent 无权覆盖历史内容。待办从同一时间轴演进，增改状态和提醒通知必须以持久状态/实际送达证据为准。各数据根与实现状态见 `00-CURRENT.md` 和 `Environment-Baseline.md`，不可根据 API 存在推断已部署。
+对话中的“记一下/写日记”按 D086 先由 Core 保存原文至统一 Inbox；用户确认形成日记后再调用 Core 专用 Journal API 新增/按日期追加，无需正式 Knowledge Promote。现有显式命令直写行为是待调整实现，不能视作符合新入口顺序。“添加待办”仍走独立 Core Task 语义 API；普通 Agent 无权覆盖历史 Journal 内容。待办从同一时间轴演进，增改状态和提醒通知必须以持久状态/实际送达证据为准。各数据根与实现状态见 `00-CURRENT.md` 和 `Environment-Baseline.md`，不可根据 API 存在推断已部署。
 
 **D081-D083 Core 合约（已在并行开发分支实现，尚未集成到 main 或部署）：** Journal 使用可选配置 `SB_JOURNAL_ROOT`，存储按日期追加的 JSONL；Core 提供 `GET /api/journal/{day}` 与 `POST /api/journal/entries`，分别校验 `journal.read` / `journal.append`。Task 使用独立可选配置 `SB_TASK_ROOT`，以 `tasks.json` 保存待办和变更历史；Core 提供 `GET/POST /api/tasks` 及 `PATCH /api/tasks/{task_id}`，校验 `task.read` / `task.write`，创建支持幂等键，修改使用乐观版本检查。未配置对应数据根时 API fail-closed，不创建数据目录。生产部署前必须为 Core 单独配置各自受限 RW 根；Hermes 不取得这两个路径的写权限。
 
-**Chat 显式意图（开发分支实现，未集成/部署）：** 只有输入开头匹配 Journal 或 Task 的明确命令才调用上述 API；Journal/Task 成功时不创建额外 Hermes Session/Run，普通 Chat 继续走 Hermes Run。Journal 保留完整原文并追加；Task 的通知/提醒送达尚未实现。路由器匹配是入口分流，不替代 Core 的会话鉴权、输入校验、幂等和专用存储边界。
+**Chat 显式意图（历史实现说明，现行状态见 CURRENT）：** 只有输入开头匹配 Journal 或 Task 的明确命令才调用上述 API；Journal/Task 成功时不创建额外 Hermes Session/Run，普通 Chat 继续走 Hermes Run。Journal 保留完整原文并追加；Task 的通知/提醒送达尚未实现。路由器匹配是入口分流，不替代 Core 的会话鉴权、输入校验、幂等和专用存储边界。D086 要求后续调整 Journal 对话入口，使原文先经 Core Inbox，且转为 Journal 须用户确认。
 
 主动规划使用授权的项目、日程、待办、历史经验与近期知识，输出带来源、可去重/节流/关闭的**建议**。建议不等于执行；外发、权限修改、删除和生产操作仍需对应授权。优先复用现有 Hermes 和 Core 的调度/状态能力，不预建新 Agent、第二调度系统或新容器。
 
@@ -105,4 +105,4 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 - App 到 Hermes：Compose 内部服务发现及受认证 API；不发布 Hermes API 端口到宿主或公网。
 - App 到业务文件：通过显式根路径和模块服务访问 Inbox、Review、Knowledge 等数据区；Private 不在允许根路径内。
 - 新业务优先扩展 Core 模块与 API；只有确认超出模块化单体能力后才重新评估部署边界。不得为了未来设想预建空模块、复杂插件机制或数据库。
-- 用户批准的最高产品方向见 `Decision-Log.md` D077，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `business-specs/SecondBrain-Web-App-V1-Business-Spec.md`、`business-specs/Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
+- 用户批准的最高产品方向见 `Decision-Log.md` D077，对话收录、主动协作和词汇管理见 D086 与 `业务规范.md`，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `business-specs/SecondBrain-Web-App-V1-Business-Spec.md`、`business-specs/Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
