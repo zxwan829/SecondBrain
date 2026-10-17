@@ -4,6 +4,14 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D085-C2b 来源绑定建议与审批持久化（本地开发验证）
+
+- 基于独立分支 `codex/d085-c2b-approval-persistence-20261017` 从 main `1c73b0f3449725815443c22ba503104df0cb8eff` 开始。开发期间 main 合入 D086 词库 PR #58，实时推进至 `18c91f78ec692ad0a522f3b7b3ba12d80bdb115c`。获取并快进到该 main 后重放本地改动；CURRENT 与 Core `app.py` 因并行 D086 增量产生文本冲突，保留 main 的 D086 词库路由/状态记录和 D084 唯一 NEXT，并重新接入 C2b router/state。当前分支以 `18c91f78` 为祖先。
+- 新增 Core `inbox-proposals` 私有状态目录和来源绑定 API，复用 App Session/action-policy、Core 文件锁/原子替换、Notes Core 路径与 ETag、Capture Core capture ID 与 Raw SHA-256；持久保存建议/修正/决定历史、actor、幂等键和来源/词库版本，不保存初始笔记正文副本。来源或词库版本变化将标记 stale；重复决策先按幂等键回放；并发改动使用 expected version 冲突保护。建议只用本地规则 Mock；审批只记录、不排队或执行。
+- 已按更新 main 集成 D086 `VocabularyStore`：类型、有效标签、同义词映射及 revision 全从集中词库读取；初始无规范标签时，正文标签仅列未知候选；前端按 Core 返回的词库快照编辑。服务端以保存的词库快照验证，不信任浏览器传回的允许值。手动类型与移除标签偏好跨刷新及重新生成保留。
+- Core `tests.test_inbox_proposals tests.test_vocabulary tests.test_capture tests.test_notes` **52 passed**；前端 `src/UnifiedInboxPage.test.tsx src/VocabularyPage.test.tsx` **7 passed**；`npm run typecheck`、`npm run build` 通过，build 有既有大型 CanvasEditor chunk 警告。`npm ci` 报告锁定依赖包含 4 个低/中危审计告警，本轮未改依赖或自动修复。Core 测试出现 TestClient/httpx 弃用提示。测试仅访问临时合成 Notes/Capture 根。
+- 已更新 CURRENT 并保留 D084 唯一 NEXT。**开发验证通过，Commit/Push/PR 待最终 diff 审查；NOT MERGED / NOT DEPLOYED / NOT REAL-VAULT-VALIDATED / NOT USER ACCEPTED。** 未读写真实笔记、NAS、生产配置或调用模型。
+
 ## 2026-10-17 — D086 PR #58 同步最新 main 与合并门禁核验
 
 - 按 Issue #55 评论 #6234901749 在原隔离分支核对并获取最新 `origin/main` `1c73b0f3449725815443c22ba503104df0cb8eff`。合并预检发现唯一真实文本冲突为 `docs/baseline/Progress-Log.md`；采用双侧保留，保留 main 的 D085-C2a 最新记录和 D086 复审/实施记录。代码文件无冲突。CURRENT 自动合并保留 main 的 D084 唯一 NEXT，确认未改写。

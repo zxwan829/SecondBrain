@@ -19,6 +19,7 @@ from .modules.journal import JournalStore, create_journal_router
 from .modules.tasks import TaskStore, create_task_router
 from .modules.notes import configured_notes_store, create_notes_router
 from .modules.vocabulary import VocabularyStore, create_vocabulary_router
+from .modules.inbox_proposals import InboxProposalStore, InboxProposalSources, create_inbox_proposal_router
 from .modules.organizer_engine import OrganizerRunner
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
@@ -107,7 +108,11 @@ def create_app():
         os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
     )
     app.include_router(create_notes_router(auth, notes_store))
-    app.include_router(create_vocabulary_router(auth, VocabularyStore(approval_root)))
+    vocabulary_store = VocabularyStore(approval_root)
+    app.include_router(create_vocabulary_router(auth, vocabulary_store))
+    inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")
+    app.include_router(create_inbox_proposal_router(
+        auth, inbox_proposals, InboxProposalSources(capture, notes_store), vocabulary_store))
     # Default-off, separately injected data root. When disabled, Core neither creates
     # the directory nor scans chat history or starts a background memory task.
     if memory_enabled_value == "true":

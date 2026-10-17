@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { notesApi, type NoteCollection } from './api/notes';
-import { DEMO_NOTE_TAGS, DEMO_NOTE_TYPES, makeUnifiedInboxId, suggestInboxClassification, type MockClassification, type UnifiedInboxItem } from './unified-inbox';
+import { makeUnifiedInboxId, suggestInboxClassification, type MockClassification, type UnifiedInboxItem } from './unified-inbox';
 
 type Locale = 'zh-CN' | 'en';
 type CaptureItem = {
@@ -15,7 +15,8 @@ type CaptureItem = {
   content_preview?: string;
   error?: { message?: string } | null;
 };
-type Decision = { status: 'approved_pending' | 'rejected'; value: string };
+type Decision = { status: 'approved_recorded' | 'rejected' | 'stale'; value: string };
+type PersistedProposal = { proposal_id: string; kind: string; status: string; version: number; source_version: string; suggestion: { original: any; current: any }; target_execution_status: string };
 type ProposalProps = {
   id: string;
   title: string;
@@ -29,7 +30,7 @@ type ProposalProps = {
   onApprove: () => void;
   onReject: () => void;
   en: boolean;
-  classificationOptions?: { type: string; tags: string[]; unknownTags: string[]; onTypeChange: (value: string) => void; onTagsChange: (value: string[]) => void };
+  classificationOptions?: { type: string; types: string[]; tags: string[]; tagOptions: string[]; unknownTags: string[]; onTypeChange: (value: string) => void; onTagsChange: (value: string[]) => void };
 };
 
 function Proposal({ id, title, reason, impact, preview, value, decision, decisionRequired, onChange, onApprove, onReject, en, classificationOptions }: ProposalProps) {
@@ -38,32 +39,33 @@ function Proposal({ id, title, reason, impact, preview, value, decision, decisio
     <p>{reason}</p>
     <p className="unified-proposal-impact">{en ? 'Impact scope' : '影响范围'}：{impact}</p>
     {classificationOptions ? <div className="unified-vocabulary-editor">
-      <label>{en ? 'Suggested type (fixed demo vocabulary)' : '建议类型（固定演示词库）'}
-        <select value={classificationOptions.type} onChange={(event) => classificationOptions.onTypeChange(event.target.value)} disabled={Boolean(decision)}>
-          {DEMO_NOTE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+      <label>{en ? 'Suggested type (Core vocabulary)' : '建议类型（Core 集中词库）'}
+        <select value={classificationOptions.type} onChange={(event) => classificationOptions.onTypeChange(event.target.value)} disabled={Boolean(decision) || classificationOptions.types.length === 0}>
+          {classificationOptions.types.map((type) => <option key={type} value={type}>{type}</option>)}
         </select>
       </label>
-      <fieldset disabled={Boolean(decision)}><legend>{en ? 'Known demo tags' : '已知演示标签'}</legend>
-        {DEMO_NOTE_TAGS.map((tag) => <label key={tag}><input type="checkbox" checked={classificationOptions.tags.includes(tag)} onChange={(event) => {
+      <fieldset disabled={Boolean(decision)}><legend>{en ? 'Active Core tags' : 'Core 词库中的有效标签'}</legend>
+        {classificationOptions.tagOptions.map((tag) => <label key={tag}><input type="checkbox" checked={classificationOptions.tags.includes(tag)} onChange={(event) => {
           const next = event.target.checked ? [...classificationOptions.tags, tag] : classificationOptions.tags.filter((item) => item !== tag);
-          classificationOptions.onTagsChange(DEMO_NOTE_TAGS.filter((item) => next.includes(item)));
+          classificationOptions.onTagsChange(classificationOptions.tagOptions.filter((item) => next.includes(item)));
         }} />{tag}</label>)}
       </fieldset>
       {classificationOptions.unknownTags.length > 0 && <p role="status">{en ? 'Unrecognized tag candidates; separate vocabulary approval is required:' : '未识别的标签候选；需单独审批词库：'} {classificationOptions.unknownTags.map((tag) => `#${tag}`).join(' ')}</p>}
-      <small>{en ? 'Synthetic fixed vocabulary only. New vocabulary is not applied by approving this content suggestion.' : '仅使用合成固定词库；批准内容建议不会批准或应用新词。'}</small>
+      <small>{en ? 'Suggestions use the centralized Core vocabulary snapshot. New vocabulary is not applied by approving this content suggestion.' : '建议基于 Core 集中词库快照；批准内容建议不会批准或应用新词。'}</small>
     </div> : <label>{en ? 'Editable proposal' : '可编辑建议'}
       <textarea value={value} onChange={(event) => onChange(event.target.value)} disabled={Boolean(decision)} rows={3} />
     </label>}
     <small>{en ? 'Source preview' : '来源预览'}：{preview || (en ? 'No text preview available.' : '暂无正文预览。')}</small>
     {decision ? <p className={`unified-decision ${decision.status}`} role="status">
-      {decision.status === 'rejected'
-        ? (en ? 'Rejected; original retained.' : '已拒绝；原始内容保留。')
-        : (en ? 'Simulation only: not submitted, persisted, queued, or executed. This status disappears on reload.'
-          : '仅本页模拟同意：未提交、未持久化、未排队、未执行；刷新后消失。')}
+      {decision.status === 'stale' ? (en ? 'Source changed; regenerate and review again.' : '来源已变化；请重新生成并复核。')
+        : decision.status === 'rejected'
+          ? (en ? 'Rejected; original retained.' : '已拒绝；原始内容保留。')
+          : (en ? 'Decision recorded in Core. This records approval only; it is not queued or executed.'
+            : '决定已记录到 Core；这只记录审批，不会排队或执行。')}
     </p> : !decisionRequired ? <p className="unified-decision" role="status">{en
       ? 'Existing type and approved demo tags require no per-note approval under the product rule. Demo only: no metadata is written; unknown tag terms need separate vocabulary approval.'
-      : '按产品规则，既有类型与演示词库中的有效标签无需逐条审批。仅为演示：不会写回属性；未知标签需单独经过词库审批。'}</p> : <footer>
-      <button type="button" onClick={onApprove}>{en ? 'Simulate agreement (not executed)' : '本页模拟同意（未执行）'}</button>
+      : '按产品规则，既有类型与 Core 词库中的有效标签无需逐条审批。本演示不会写回笔记属性；新词仅作为待词库审批候选。'}</p> : <footer>
+      <button type="button" onClick={onApprove}>{en ? 'Record approval (not executed)' : '记录审批（不执行）'}</button>
       <button type="button" onClick={onReject}>{en ? 'Reject' : '拒绝'}</button>
     </footer>}
   </article>;
@@ -81,12 +83,16 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   const [createError, setCreateError] = useState('');
   const [creating, setCreating] = useState(false);
   const createInFlight = useRef(false);
+  const suggestionKeys = useRef<Record<string, string>>({});
+  const decisionKeys = useRef<Record<string, string>>({});
   const [classifications, setClassifications] = useState<Record<string, MockClassification>>({});
   const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [syntheticCaptures, setSyntheticCaptures] = useState<CaptureItem[]>([]);
   const [manuallyRemovedTags, setManuallyRemovedTags] = useState<Record<string, string[]>>({});
   const [manuallySetTypes, setManuallySetTypes] = useState<Record<string, string>>({});
+  const [proposalRecords, setProposalRecords] = useState<Record<string, PersistedProposal[]>>({});
+  const [proposalErrors, setProposalErrors] = useState<Record<string, string>>({});
 
   const load = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -153,6 +159,48 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     return [...captureItems, ...notes].sort((a, b) => (b.capturedAt || '').localeCompare(a.capturedAt || '') || a.id.localeCompare(b.id));
   }, [captures, notes, syntheticCaptures, notesOnly]);
 
+  const refreshProposals = useCallback(async (item: UnifiedInboxItem) => {
+    if (item.captureId === 'synthetic-capture-demo') return;
+    const params = new URLSearchParams({ source_kind: item.source === 'capture' ? 'capture' : 'notes', source_id: item.captureId || `${item.collection}:${item.sourcePath}` });
+    if (item.source === 'notes') { params.set('collection', item.collection || ''); params.set('path', item.sourcePath); }
+    const response = await fetch(`/api/inbox/proposals?${params}`, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const records = Array.isArray(payload.proposals) ? payload.proposals as PersistedProposal[] : [];
+    setProposalRecords((current) => ({ ...current, [item.id]: records }));
+    setProposalErrors((current) => ({ ...current, [item.id]: '' }));
+    const byKind = new Map(records.map((record) => [record.kind, record]));
+    const current = (kind: string) => byKind.get(kind)?.suggestion.current;
+    const type = current('type')?.value;
+    const tags = current('tags');
+    if (records.length) {
+      const mock = suggestInboxClassification(item.content, item.title);
+      const classification = { ...mock, type: type ?? '', tags: tags?.values || [],
+        unknownTagCandidates: tags?.unknown_candidates || [], allowedTypes: current('type')?.vocabulary_values || [],
+        allowedTags: tags?.vocabulary_values || [] } as MockClassification;
+      setClassifications((value) => ({ ...value, [item.id]: classification }));
+      setEdits((value) => ({ ...value, [item.id]: { ...(value[item.id] || {}), type: classification.type, tags: classification.tags.join(', '),
+        journal: current('journal')?.value ?? classification.journalExcerpt, knowledge: current('review')?.value ?? classification.knowledgeReview,
+        project: current('project')?.value ?? classification.projectAssociation } }));
+      for (const kind of ['journal', 'review', 'project']) {
+        const record = byKind.get(kind);
+        if (record && ['approved_recorded', 'rejected', 'stale'].includes(record.status)) {
+          setDecisions((value) => ({ ...value, [`${item.id}:${kind === 'review' ? 'knowledge' : kind}`]: { status: record.status === 'stale' ? 'stale' : record.status === 'rejected' ? 'rejected' : 'approved_recorded', value: current(kind)?.value || '' } }));
+        }
+      }
+      if (['type', 'tags'].some((kind) => byKind.get(kind)?.status === 'stale')) {
+        setDecisions((value) => ({ ...value, [`${item.id}:classification`]: { status: 'stale', value: '' } }));
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    for (const item of items) void refreshProposals(item).catch((cause) => setProposalErrors((current) => ({
+      ...current,
+      [item.id]: cause instanceof Error ? cause.message : (en ? 'Proposals could not be loaded.' : '建议加载失败。'),
+    })));
+  }, [items, refreshProposals]);
+
   const createNote = async (event: React.FormEvent) => {
     event.preventDefault();
     if (createInFlight.current || !title.trim() || !body.trim()) return;
@@ -178,16 +226,26 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     setSyntheticCaptures((current) => current.some((item) => item.capture_id === capture.capture_id) ? current : [capture, ...current]);
   };
 
-  const suggest = (item: UnifiedInboxItem) => {
-    const previous = edits[item.id] || {};
-    const value = suggestInboxClassification(item.content, item.title, manuallyRemovedTags[item.id] || [], manuallySetTypes[item.id] || '');
-    setClassifications((current) => ({ ...current, [item.id]: value }));
-    setEdits((current) => ({ ...current, [item.id]: {
-      type: value.type, tags: previous.tags ?? value.tags.join(', '), unknownTags: value.unknownTagCandidates.join(', '), journal: value.journalExcerpt,
-      knowledge: value.knowledgeReview, project: value.projectAssociation,
-    } }));
+  const suggest = async (item: UnifiedInboxItem) => {
+    if (item.captureId === 'synthetic-capture-demo') return;
+    const source = item.source === 'capture' ? { source_kind: 'capture', source_id: item.captureId } : { source_kind: 'notes', source_id: `${item.collection}:${item.sourcePath}`, collection: item.collection, path: item.sourcePath };
+    const idempotencyKey = suggestionKeys.current[item.id] || (suggestionKeys.current[item.id] = crypto.randomUUID());
+    const response = await fetch('/api/inbox/proposals', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(source) });
+    if (!response.ok) {
+      if (response.status === 409) delete suggestionKeys.current[item.id];
+      throw new Error(response.status === 409 ? (en ? 'The source changed or this request key was already used. Reload before generating suggestions.' : '来源已变化或请求键已使用，请刷新后重新生成建议。') : (en ? `Suggestions could not be saved (HTTP ${response.status}).` : `建议保存失败（HTTP ${response.status}）。`));
+    }
+    delete suggestionKeys.current[item.id];
+    await refreshProposals(item);
   };
-  const edit = (itemId: string, kind: string, value: string) => {
+  const suggestSafely = (item: UnifiedInboxItem) => {
+    void suggest(item).catch((cause) => setProposalErrors((current) => ({
+      ...current,
+      [item.id]: cause instanceof Error ? cause.message : (en ? 'Suggestions could not be saved.' : '建议保存失败。'),
+    })));
+  };
+  const edit = async (item: UnifiedInboxItem, kind: string, value: string) => {
+    const itemId = item.id;
     if (kind === 'type') setManuallySetTypes((current) => ({ ...current, [itemId]: value }));
     if (kind === 'tags') {
       const previous = (edits[itemId]?.tags ?? classifications[itemId]?.tags.join(', ') ?? '').split(',').map((tag) => tag.trim()).filter(Boolean);
@@ -197,12 +255,40 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       setManuallyRemovedTags((current) => ({ ...current, [itemId]: [...new Set([...(current[itemId] || []).filter((tag) => !added.includes(tag.toLocaleLowerCase())), ...removed])] }));
     }
     setEdits((current) => ({ ...current, [itemId]: { ...(current[itemId] || {}), [kind]: value } }));
+    const recordKind = kind === 'knowledge' ? 'review' : kind;
+    const record = proposalRecords[itemId]?.find((candidate) => candidate.kind === recordKind);
+    if (record) {
+      const suggestion = kind === 'type' ? { ...record.suggestion.current, value }
+        : kind === 'tags' ? { ...record.suggestion.current, values: value.split(',').map((tag) => tag.trim()).filter(Boolean) }
+          : { ...record.suggestion.current, value };
+      const response = await fetch(`/api/inbox/proposals/${record.proposal_id}`, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ suggestion, expected_version: record.version }) });
+      if (!response.ok) throw new Error(response.status === 409 || response.status === 412 ? (en ? 'The source or suggestion changed. Reload before editing.' : '来源或建议版本已变化，请刷新后再编辑。') : (en ? `Edit could not be saved (HTTP ${response.status}).` : `修改保存失败（HTTP ${response.status}）。`));
+      await refreshProposals(item);
+    }
+    setProposalErrors((current) => ({ ...current, [itemId]: '' }));
   };
-  const decide = (item: UnifiedInboxItem, kind: string, status: Decision['status']) => {
+  const editSafely = (item: UnifiedInboxItem, kind: string, value: string) => {
+    void edit(item, kind, value).catch((cause) => setProposalErrors((current) => ({ ...current, [item.id]: cause instanceof Error ? cause.message : (en ? 'Edit failed.' : '修改失败。') })));
+  };
+  const decide = async (item: UnifiedInboxItem, kind: string, status: Decision['status']) => {
     const key = `${item.id}:${kind}`;
-    setDecisions((current) => current[key] ? current : ({ ...current, [key]: {
-      status, value: status === 'approved_pending' ? (edits[item.id]?.[kind] ?? '') : '',
-    } }));
+    const recordKind = kind === 'knowledge' ? 'review' : kind;
+    const record = proposalRecords[item.id]?.find((candidate) => candidate.kind === recordKind);
+    if (!record || record.status !== 'suggested') return;
+    const idempotencyKey = decisionKeys.current[record.proposal_id] || (decisionKeys.current[record.proposal_id] = crypto.randomUUID());
+    const response = await fetch(`/api/inbox/proposals/${record.proposal_id}/decision`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ decision: status === 'rejected' ? 'rejected' : 'approved_recorded', expected_version: record.version }) });
+    if (!response.ok) {
+      if (response.status === 409 || response.status === 412) delete decisionKeys.current[record.proposal_id];
+      await refreshProposals(item);
+      setProposalErrors((current) => ({ ...current, [item.id]: response.status === 409 || response.status === 412 ? (en ? 'The source or proposal changed. Reload and review it again.' : '来源或建议已变化，请刷新并重新复核。') : (en ? `Decision could not be saved (HTTP ${response.status}).` : `审批记录保存失败（HTTP ${response.status}）。`) }));
+      return;
+    }
+    delete decisionKeys.current[record.proposal_id];
+    await refreshProposals(item);
+    setProposalErrors((current) => ({ ...current, [item.id]: '' }));
+  };
+  const decideSafely = (item: UnifiedInboxItem, kind: string, status: Decision['status']) => {
+    void decide(item, kind, status).catch((cause) => setProposalErrors((current) => ({ ...current, [item.id]: cause instanceof Error ? cause.message : (en ? 'Decision failed.' : '审批记录失败。') })));
   };
 
   const text = (key: string, fallback: string) => {
@@ -244,13 +330,14 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
           <div className="inbox-item-main"><span className="inbox-type">{item.source === 'capture' ? 'CAPTURE' : 'NOTES'}</span><div><h2>{item.title}</h2><p>{item.sourceRef} · {item.sourcePath}</p></div>{item.status && <span className={`capture-status status-${item.status}`}>{item.status}</span>}</div>
           {item.content && <pre className="inbox-preview">{item.content.slice(0, 700)}</pre>}
           {item.readOnly && <p className="capture-processing-note">{en ? 'This source contains Markdown syntax that the rich-text editor cannot safely rewrite.' : '此来源包含富文本编辑器无法安全回写的 Markdown 特殊语法。'}</p>}
+          {proposalErrors[item.id] && <p role="alert" className="capture-alert">{proposalErrors[item.id]} <button type="button" onClick={() => void refreshProposals(item).catch(() => setProposalErrors((current) => ({ ...current, [item.id]: en ? 'Reload failed; check the Core session and retry.' : '重新加载失败，请检查 Core 会话后重试。' })))}>{en ? 'Reload proposals' : '重新加载建议'}</button></p>}
           <div className="inbox-links">{item.source === 'capture' && item.captureId && !item.sourcePath.startsWith('synthetic://') && <a href={`/api/inbox/${encodeURIComponent(item.captureId)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>}{item.reviewPath && <button type="button" onClick={() => onReview(item.reviewPath!)}>{en ? 'Open Review' : '打开 Review'}</button>}</div>
-          {!classification ? <button type="button" className="unified-suggest-button" onClick={() => suggest(item)}>{text('ai', '')}</button> : <div className="unified-suggestion-list" aria-label={en ? 'Suggestions for human approval' : '待人工逐项审批的建议'}>
-            <p className="unified-mock-boundary">{en ? 'Deterministic local Mock only. Decisions shown here are not persisted or executed.' : '仅确定性本地 Mock。此处显示的审批决定不会持久化或执行。'}</p>
-            <button type="button" className="unified-suggest-button" onClick={() => suggest(item)}>{en ? 'Regenerate Mock suggestions (preserve manual corrections)' : '重新生成 Mock 建议（保留手动修正）'}</button>
+          {!classification ? <button type="button" className="unified-suggest-button" onClick={() => suggestSafely(item)}>{text('ai', '')}</button> : <div className="unified-suggestion-list" aria-label={en ? 'Suggestions for human approval' : '待人工逐项审批的建议'}>
+            <p className="unified-mock-boundary">{en ? 'Deterministic local Mock only. Suggestions and human decisions are persisted by Core; approval never executes a target action.' : '仅确定性本地 Mock。建议和人工决定由 Core 持久化；审批不会执行目标动作。'}</p>
+            <button type="button" className="unified-suggest-button" onClick={() => suggestSafely(item)}>{en ? 'Regenerate Mock suggestions (preserve manual corrections)' : '重新生成 Mock 建议（保留手动修正）'}</button>
             {suggestions.map((suggestion) => <Proposal key={suggestion.kind} id={suggestion.kind} title={suggestion.title} reason={suggestion.reason} impact={suggestion.impact} preview={suggestion.preview} value={suggestion.value} en={en} decision={decisionsFor(suggestion.kind)} decisionRequired={suggestion.kind !== 'classification'}
-              classificationOptions={suggestion.kind === 'classification' ? { type: (DEMO_NOTE_TYPES as readonly string[]).includes(values.type || '') ? values.type || classification.type : classification.type, tags: (values.tags ?? classification.tags.join(', ')).split(/,\s*/).filter((tag) => (DEMO_NOTE_TAGS as readonly string[]).includes(tag)), unknownTags: classification.unknownTagCandidates, onTypeChange: (value) => edit(item.id, 'type', value), onTagsChange: (tags) => edit(item.id, 'tags', tags.join(', ')) } : undefined}
-              onChange={(value) => edit(item.id, suggestion.kind, value)} onApprove={() => decide(item, suggestion.kind, 'approved_pending')} onReject={() => decide(item, suggestion.kind, 'rejected')} />)}
+              classificationOptions={suggestion.kind === 'classification' ? { type: values.type ?? classification.type, types: classification.allowedTypes || [], tags: (values.tags ?? classification.tags.join(', ')).split(/,\s*/).filter((tag) => (classification.allowedTags || []).includes(tag)), tagOptions: classification.allowedTags || [], unknownTags: classification.unknownTagCandidates, onTypeChange: (value) => editSafely(item, 'type', value), onTagsChange: (tags) => editSafely(item, 'tags', tags.join(', ')) } : undefined}
+              onChange={(value) => editSafely(item, suggestion.kind, value)} onApprove={() => decideSafely(item, suggestion.kind, 'approved_recorded')} onReject={() => decideSafely(item, suggestion.kind, 'rejected')} />)}
           </div>}
         </article>;
       }) : <p className="capture-empty">{en ? 'Nothing is waiting in Inbox.' : '收件箱中暂无待处理内容。'}</p>}

@@ -6,6 +6,7 @@ import { suggestInboxClassification } from './unified-inbox';
 
 const noteId = 'synthetic-note-1';
 let created = false;
+let savedProposals: Array<Record<string, any>> = [];
 
 afterEach(() => {
   cleanup();
@@ -18,8 +19,25 @@ function ok(value: unknown, status = 200) {
 
 beforeEach(() => {
   created = false;
+  savedProposals = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.startsWith('/api/inbox/proposals?')) return ok({ proposals: savedProposals });
+    if (url === '/api/inbox/proposals' && init?.method === 'POST') {
+      const kinds = ['type', 'tags', 'journal', 'review', 'project'];
+      savedProposals = kinds.map((kind) => ({ proposal_id: `proposal-${kind}`, kind, status: 'suggested', version: 1, source_version: 'synthetic-etag', target_execution_status: 'not_executed', suggestion: { original: kind === 'type' ? { value: '会议纪要', vocabulary_values: ['日记', '笔记', '头脑风暴', '摘要', '会议纪要'] } : kind === 'tags' ? { values: ['SecondBrain'], unknown_candidates: ['roadmap'], vocabulary_values: ['SecondBrain', 'CRM'] } : { value: '合成建议' }, current: kind === 'type' ? { value: '会议纪要', vocabulary_values: ['日记', '笔记', '头脑风暴', '摘要', '会议纪要'] } : kind === 'tags' ? { values: ['SecondBrain'], unknown_candidates: ['roadmap'], vocabulary_values: ['SecondBrain', 'CRM'] } : { value: '合成建议' } } }));
+      return ok({ proposals: savedProposals, status: 'created' });
+    }
+    if (url.startsWith('/api/inbox/proposals/proposal-') && url.endsWith('/decision')) {
+      const proposal = savedProposals.find((item) => url.includes(item.proposal_id));
+      if (proposal) { proposal.status = JSON.parse(String(init?.body)).decision; proposal.version += 1; }
+      return ok({ proposal });
+    }
+    if (url.startsWith('/api/inbox/proposals/proposal-') && init?.method === 'PUT') {
+      const proposal = savedProposals.find((item) => url.includes(item.proposal_id));
+      if (proposal) { proposal.suggestion.current = JSON.parse(String(init.body)).suggestion; proposal.version += 1; }
+      return ok({ proposal });
+    }
     if (url === '/api/inbox?limit=100') return ok({ items: [{
       capture_id: 'capture-synthetic-1', raw_path: 'raw/meeting.md', review_path: null,
       status: 'completed', source_type: 'synthetic', input_type: 'markdown',
@@ -66,32 +84,39 @@ describe('UnifiedInboxPage', () => {
     expect(noteCard.textContent).toContain(`drafts/${noteId}`);
 
     fireEvent.click(within(noteCard).getByRole('button', { name: '生成确定性 Mock 建议' }));
-    const proposals = within(noteCard).getAllByLabelText('可编辑建议');
+    const proposals = await within(noteCard).findAllByLabelText('可编辑建议');
     expect(proposals).toHaveLength(3);
-    expect((within(noteCard).getByLabelText('建议类型（固定演示词库）') as HTMLSelectElement).value).toBe('会议纪要');
-    expect(within(noteCard).getByText('已知演示标签')).toBeTruthy();
-    expect(within(noteCard).getByText(/既有类型与演示词库中的有效标签无需逐条审批/)).toBeTruthy();
+    expect((within(noteCard).getByLabelText('建议类型（Core 集中词库）') as HTMLSelectElement).value).toBe('会议纪要');
+    expect(within(noteCard).getByText('Core 词库中的有效标签')).toBeTruthy();
+    expect(within(noteCard).getByText(/既有类型与 Core 词库中的有效标签无需逐条审批/)).toBeTruthy();
     expect(within(noteCard).getByText(/单独审批词库/)).toBeTruthy();
 
-    fireEvent.change(within(noteCard).getByLabelText('建议类型（固定演示词库）'), { target: { value: '头脑风暴' } });
+    fireEvent.change(within(noteCard).getByLabelText('建议类型（Core 集中词库）'), { target: { value: '头脑风暴' } });
     fireEvent.click(within(noteCard).getByRole('button', { name: '重新生成 Mock 建议（保留手动修正）' }));
-    expect((within(noteCard).getByLabelText('建议类型（固定演示词库）') as HTMLSelectElement).value).toBe('头脑风暴');
+    expect((within(noteCard).getByLabelText('建议类型（Core 集中词库）') as HTMLSelectElement).value).toBe('头脑风暴');
     const standardTag = within(noteCard).getByLabelText('SecondBrain') as HTMLInputElement;
     expect(standardTag.checked).toBe(true);
     fireEvent.click(standardTag);
     fireEvent.click(within(noteCard).getByRole('button', { name: '重新生成 Mock 建议（保留手动修正）' }));
     expect((within(noteCard).getByLabelText('SecondBrain') as HTMLInputElement).checked).toBe(false);
-    expect(within(noteCard).queryByRole('button', { name: '模拟同意（仅本页）' })).toBeNull();
-    fireEvent.click(within(noteCard).getAllByRole('button', { name: '本页模拟同意（未执行）' })[0]);
-    expect(await within(noteCard).findByText(/未提交、未持久化、未排队、未执行/)).toBeTruthy();
+    expect(within(noteCard).queryByRole('button', { name: '本页模拟同意（未执行）' })).toBeNull();
+    fireEvent.click(within(noteCard).getAllByRole('button', { name: '记录审批（不执行）' })[0]);
+    expect(await within(noteCard).findByText(/决定已记录到 Core/)).toBeTruthy();
     fireEvent.click(within(noteCard).getAllByRole('button', { name: '拒绝' })[1]);
     expect(await within(noteCard).findByText('已拒绝；原始内容保留。')).toBeTruthy();
-    fireEvent.click(within(noteCard).getAllByRole('button', { name: '本页模拟同意（未执行）' })[0]);
+    fireEvent.click(within(noteCard).getAllByRole('button', { name: '记录审批（不执行）' })[0]);
     await waitFor(() => expect(within(noteCard).getAllByRole('status').length).toBeGreaterThanOrEqual(2));
 
-    expect(request.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+    expect(request.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true);
     expect(request.mock.calls.some(([url]) => /\/api\/(journal|promote|capture\/text|tasks)/.test(String(url)))).toBe(false);
     expect(request.mock.calls.filter(([url, init]) => url === '/api/notes' && init?.method === 'POST')).toHaveLength(1);
+
+    cleanup();
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo />);
+    const restoredTitle = await screen.findByText('新建合成会议');
+    const restoredCard = restoredTitle.closest('article') as HTMLElement;
+    expect((await within(restoredCard).findAllByText(/决定已记录到 Core/)).length).toBeGreaterThan(0);
+    expect(within(restoredCard).getByText('已拒绝；原始内容保留。')).toBeTruthy();
   });
 
   it('uses only known demo vocabulary, surfaces unknown hashtags separately, and never emits status as a tag', () => {
@@ -136,7 +161,7 @@ describe('UnifiedInboxPage', () => {
     fireEvent.change(screen.getByLabelText('标题'), { target: { value: '未授权笔记' } });
     fireEvent.change(screen.getByLabelText('正文'), { target: { value: '不可写入' } });
     fireEvent.click(screen.getByRole('button', { name: '新建并收录' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('notes.write denied');
+    expect(await screen.findByText(/notes.write denied/)).toBeTruthy();
     expect(request.mock.calls.some(([url]) => /\/api\/(journal|promote|capture\/text|tasks)/.test(String(url)))).toBe(false);
   });
 });

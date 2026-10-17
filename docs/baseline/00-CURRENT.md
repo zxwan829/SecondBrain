@@ -35,7 +35,7 @@ source: GitHub SecondBrain Monorepo
 
 ### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批演示（已合并、未部署）
 
-PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`），状态为 **MERGED / NOT DEPLOYED / NOT PERSISTENT APPROVAL / NOT USER ACCEPTED**。合入版本保留 Capture Inbox 预览、下载、`partial_success` 重试、错误/状态、刷新和 Organizer 入口，并在同页加入 Notes Drafts 与确定性 Mock 建议；演示词表与未知候选分开，状态词不作为标签，页面模拟同意不持久化或执行。后续修正由 PR #57 跟踪（当前待审）：保护手动类型/标签修正并明确模拟审批边界；尚未合入或部署。来源安全审批持久化和 Issue #55 正式词汇库仍需独立设计。本段不改变上方 D084 唯一 NEXT，也不授权真实 Vault、付费模型或 NAS 操作。
+PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`），状态为 **MERGED / NOT DEPLOYED / NOT PERSISTENT APPROVAL / NOT USER ACCEPTED**。合入版本保留 Capture Inbox 预览、下载、`partial_success` 重试、错误/状态、刷新和 Organizer 入口，并在同页加入 Notes Drafts 与确定性 Mock 建议；演示候选与已知词条分开，状态词不作为标签，页面模拟同意不持久化或执行。PR #57 已合入 `main`（merge `1c73b0f3449725815443c22ba503104df0cb8eff`），加入人工类型/移除标签修正保护和明确模拟审批边界；尚未部署。来源安全审批持久化由下方 C2b 单独实现。本段不改变上方 D084 唯一 NEXT，也不授权真实 Vault、付费模型或 NAS 操作。
 
 ### 并行开发状态：D086 标签与类型中心（Issue #55；已合并、未部署）
 
@@ -47,7 +47,11 @@ PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0
 
 ### 新批准的产品规则：D086 对话收录与标签类型管理
 
-`Decision-Log.md` D086 与 [`业务规范.md`](业务规范.md) 已确认：普通 Chat 保持自然对话，Hermes 可有节制地询问是否收录；用户明确收录或同意后，Core 先将原文存入统一 Inbox，日记意图也须经 Inbox 和用户确认后再写 Journal。Hermes 可在授权范围回顾并主动建议，主动/被动调用分开设每日及每月估算金额额度；标签与类型集中管理，类型最多 10 种，既有有效标签可自动应用。**这些均是批准的目标，尚未按新规则实现、部署或验收**；当前已合入/部署的 Chat 显式 Journal 直写路径仍是既有实现，需后续任务按新规范调整。Issue #55 跟踪标签与类型功能，不授权读取真实 Vault、改写历史文件、启动付费模型或生产变更。本节不改变 D084 唯一 NEXT。
+`Decision-Log.md` D086 与 [`业务规范.md`](业务规范.md) 已确认：普通 Chat 保持自然对话，Hermes 可有节制地询问是否收录；用户明确收录或同意后，Core 先将原文存入统一 Inbox，日记意图也须经 Inbox 和用户确认后再写 Journal。Hermes 可在授权范围回顾并主动建议，主动/被动调用分开设每日及每月估算金额额度；类型/标签集中管理代码已由 PR #58 合入 main，但未部署、未对真实 Vault 盘点或应用元数据。类型最多 10 种，既有有效标签可自动应用。**D086 对话收录及真实内容处理尚未实现、部署或验收**；当前 Chat 显式 Journal 直写路径仍是既有实现，需后续任务按新规范调整。Issue #55 不授权读取真实 Vault、改写历史文件、启动付费模型或生产变更。本节不改变 D084 唯一 NEXT。
+
+### 并行开发状态：D085-C2b 来源绑定建议与审批留痕（待审）
+
+本阶段在独立分支复用 Core 私有状态目录、App Session action policy、Notes ETag、Capture 原件 SHA-256 和已合入的 D086 类型/标签中心，提供确定性本地 Mock 建议、来源版本绑定、审批/拒绝审计记录、幂等重试及冲突检查。Core 只保存来源引用与摘要、建议/人工修正及决定历史；不复制或改写来源、不执行目标动作。前端从 Core 恢复建议和已记录决定；批准仅表示已记录，不进入队列、不写 Journal/Review/Project/知识。完成代码和本地合成验证后提交独立待审 PR；未合并、未部署、未做用户验收。本段不改变 D084 唯一 NEXT，也不授权真实 Vault、付费模型或 NAS 操作。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 
