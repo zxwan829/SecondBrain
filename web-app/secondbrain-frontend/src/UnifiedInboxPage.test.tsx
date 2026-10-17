@@ -36,7 +36,7 @@ beforeEach(() => {
     }
     if (url === '/api/notes/drafts') return ok({ items: created ? [{ path: noteId, title: '新建合成会议' }] : [] });
     if (url === `/api/notes/drafts/${noteId}`) return ok({ collection: 'drafts', path: noteId,
-      content: '# 新建合成会议\n\n讨论 Inbox 审批。 #roadmap\n', etag: 'synthetic-etag', read_only: false, safety_reasons: [] });
+      content: '# 新建合成会议\n\n讨论 Inbox 审批。 #roadmap #SecondBrain\n', etag: 'synthetic-etag', read_only: false, safety_reasons: [] });
     return ok({ detail: `Unexpected request ${url}` }, 404);
   }));
 });
@@ -55,7 +55,7 @@ describe('UnifiedInboxPage', () => {
     expect(demoCard.textContent).toContain('synthetic://capture-demo/meeting.md');
 
     fireEvent.change(screen.getByLabelText('标题'), { target: { value: '新建合成会议' } });
-    fireEvent.change(screen.getByLabelText('正文'), { target: { value: '讨论 Inbox 审批。 #roadmap' } });
+    fireEvent.change(screen.getByLabelText('正文'), { target: { value: '讨论 Inbox 审批。 #roadmap #SecondBrain' } });
     const createButton = screen.getByRole('button', { name: '新建并收录' });
     fireEvent.click(createButton);
     fireEvent.click(createButton);
@@ -70,14 +70,23 @@ describe('UnifiedInboxPage', () => {
     expect(proposals).toHaveLength(3);
     expect((within(noteCard).getByLabelText('建议类型（固定演示词库）') as HTMLSelectElement).value).toBe('会议纪要');
     expect(within(noteCard).getByText('已知演示标签')).toBeTruthy();
-    expect(within(noteCard).getByText(/仅审批此项建议/)).toBeTruthy();
+    expect(within(noteCard).getByText(/既有类型与演示词库中的有效标签无需逐条审批/)).toBeTruthy();
+    expect(within(noteCard).getByText(/单独审批词库/)).toBeTruthy();
 
     fireEvent.change(within(noteCard).getByLabelText('建议类型（固定演示词库）'), { target: { value: '头脑风暴' } });
-    fireEvent.click(within(noteCard).getAllByRole('button', { name: '模拟同意（仅本页）' })[0]);
-    expect(await within(noteCard).findByText(/仅本页模拟同意，未提交执行/)).toBeTruthy();
+    fireEvent.click(within(noteCard).getByRole('button', { name: '重新生成 Mock 建议（保留手动修正）' }));
+    expect((within(noteCard).getByLabelText('建议类型（固定演示词库）') as HTMLSelectElement).value).toBe('头脑风暴');
+    const standardTag = within(noteCard).getByLabelText('SecondBrain') as HTMLInputElement;
+    expect(standardTag.checked).toBe(true);
+    fireEvent.click(standardTag);
+    fireEvent.click(within(noteCard).getByRole('button', { name: '重新生成 Mock 建议（保留手动修正）' }));
+    expect((within(noteCard).getByLabelText('SecondBrain') as HTMLInputElement).checked).toBe(false);
+    expect(within(noteCard).queryByRole('button', { name: '模拟同意（仅本页）' })).toBeNull();
+    fireEvent.click(within(noteCard).getAllByRole('button', { name: '本页模拟同意（未执行）' })[0]);
+    expect(await within(noteCard).findByText(/未提交、未持久化、未排队、未执行/)).toBeTruthy();
     fireEvent.click(within(noteCard).getAllByRole('button', { name: '拒绝' })[1]);
     expect(await within(noteCard).findByText('已拒绝；原始内容保留。')).toBeTruthy();
-    fireEvent.click(within(noteCard).getAllByRole('button', { name: '模拟同意（仅本页）' })[0]);
+    fireEvent.click(within(noteCard).getAllByRole('button', { name: '本页模拟同意（未执行）' })[0]);
     await waitFor(() => expect(within(noteCard).getAllByRole('status').length).toBeGreaterThanOrEqual(2));
 
     expect(request.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
@@ -92,12 +101,22 @@ describe('UnifiedInboxPage', () => {
     expect(result.unknownTagCandidates).toEqual(['roadmap']);
     expect(result.tags).not.toContain('待整理');
     expect(result.projectAssociation).toBe('SecondBrain');
+    const corrected = suggestInboxClassification('项目：SecondBrain\n状态：待整理\n这是 #CRM #SecondBrain #roadmap。', '', ['SecondBrain'], '头脑风暴');
+    expect(corrected.type).toBe('头脑风暴');
+    expect(corrected.tags).toEqual(['CRM']);
+    expect(corrected.unknownTagCandidates).toEqual(['roadmap']);
   });
 
-  it('notes-only section does not fetch or duplicate Capture rows', async () => {
+  it('embedded Notes section skips real Capture fetch but allows a synthetic Capture example in the same view', async () => {
     const request = vi.mocked(fetch);
     render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} notesOnly />);
     expect(await screen.findByRole('heading', { name: '笔记草稿' })).toBeTruthy();
+    expect(request.mock.calls.some(([url]) => String(url).startsWith('/api/inbox'))).toBe(false);
+    cleanup();
+    request.mockClear();
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo notesOnly />);
+    fireEvent.click(await screen.findByRole('button', { name: '添加合成 Capture 示例' }));
+    expect(await screen.findByRole('heading', { name: '合成会议输入.md' })).toBeTruthy();
     expect(request.mock.calls.some(([url]) => String(url).startsWith('/api/inbox'))).toBe(false);
   });
 

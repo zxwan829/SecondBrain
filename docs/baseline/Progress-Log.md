@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D085-C2a PR #54 首轮审查修复与 main 同步
+
+- 读取 PR Review #5557918034、Issue #46 最新评论 #6234341190，并复核最新 main `docs/baseline/业务规范.md`：类型库最多 10 个；既有类型可自动选择、用户手动修正后不得自动覆盖；有效标签可自动应用，手动移除后不得自动加回；新类型/标签词汇须单独审批。词库功能仍归 Issue #55，本 PR 使用明确标记的合成示例词汇，不读取真实词库。`待整理`为状态，不是标签。D086 对话收录只是获批产品方向，未由此启动对话入口实现。
+- 在原 PR 分支将 main `684bb45dbcc58ce7877d9ba3f55643fb80c17a38` 合并进来。并入的 CURRENT/Progress、架构、治理、环境和业务规范改动均保留；D084 当前运行证据及新的唯一 NEXT 原样采用 main 版本；D086 与词库边界亦保留。随后检测到 PR 远端分支新增 main 同步及审查修复提交（`b2000c4`、`75e8cdf`），本地先前推送被安全拒绝；未强推。将远端分支合入时，`App.tsx`、Inbox 页面与测试有冲突，采用远端完整 Capture 主页面嵌入 Notes Drafts 的版本，再叠加本轮最小词表/模拟审批修正；CURRENT 中 D084 唯一 NEXT 未改写。
+- 统一 Inbox 恢复旧 Capture 预览（文本/PDF/图像/音频）、原始来源详情、状态/错误说明、部分成功重试和 Organizer 状态/显式触发；补相应合成回归。分类使用固定合成演示词表（不是 Issue #55 真实/持久词库），将已有类型/标签与新词候选分开，移除的标签/手动更正的类型在重新生成 Mock 建议时受保护；类型和已有标签不显示逐条审批按钮。日记/Review/项目建议的“本页模拟同意”明确未提交、未持久化、未排队/执行，刷新后消失；不写目标系统或更改源文件。
+- 定向前端 3 个文件 **54 passed**；`npm run typecheck`、`npm run build` 通过，`git diff --check` 待最终提交前复核。Build 有大型 CanvasEditor chunk 警告。未读取真实 Vault/笔记、真实标签库，未调用真实模型、未部署 NAS/生产配置，未合并 PR。提交与 Push 待最终 diff 审查。
+
 ## 2026-10-17 — D085-C2a 统一 Inbox 与人工逐项审批（待审 PR）
 
 - 按 Issue #46 最新要求，从 GitHub 最新 main `ed6dc7fd14cc3c0860ddc5609f67cd02098452e9` 创建独立 Worktree/分支 `codex/d085-c2a-unified-inbox-20261017`。新增统一 Inbox 页面，读取现有 Core Capture Inbox 与 Notes `drafts` 集合，提供经 Core 既有权限门禁的新 Drafts 笔记入口；不扫描 authorized/Knowledge/Review/Private 集合。新建合成 Capture 示例仅存在页面内存。
