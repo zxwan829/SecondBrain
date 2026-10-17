@@ -33,6 +33,10 @@ source: GitHub SecondBrain Monorepo
 
 **最新部署结果 / 下一步：** PR #49 已于 2026-10-17 合入 main（merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79`）。新版 App 镜像曾通过 30 秒健康门槛，但真实导航点击“对话”后 `/chat` 返回 `Not Found`；按 Issue #44 授权立即恢复旧 Compose/App，15 秒内恢复 healthy。Hermes/Guard 未重建；新 `chat-activity` 私有目录和校验通过的 App 回滚快照按要求保留。该次部署授权已使用，不自动重试。**唯一 NEXT：** 基于 Issue #44 的可复现 `/chat` Not Found 证据做离线根因定位与最小修复；具备可靠修复依据后，再申请新的限定部署尝试授权。完成生产合成验收前不得做浏览器业务操作。继续禁止调用真实/付费模型、修改或清理历史/真实 Journal、Task、Session、Memory、Atlas 数据。
 
+### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批
+
+从最新 main `ed6dc7fd14cc3c0860ddc5609f67cd02098452e9` 建立独立 Worktree/分支 `codex/d085-c2a-unified-inbox-20261017`。前端把既有 Capture inbox 条目与 Core Notes Drafts 收集到同一页面，允许通过现有 Notes Drafts API 新建；分类、标签、日记摘录、Knowledge Review 和项目关联由确定性本地 Mock 提议，支持逐项编辑、批准待执行或拒绝。批准状态只存在当前页面内：由于现有接口不能安全保存建议与来源的关联，本切片不会写 Journal/Knowledge、创建 Review/副本、移动原件或伪称持久化；跨会话审批留待有来源安全存储接口后实现。合成 Capture 示例仅为开发 UI 内存数据。定向前端 63 项、typecheck、build 通过；无 Core 代码改动。未访问真实笔记、真实模型、生产配置或 NAS，未部署、未做用户验收。此并行状态不改变 D084 唯一 NEXT。
+
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 
 PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0b875c133a314b429` 合入并处理共享 `App.tsx` 冲突。Notes 通过 `/notes` 路由接入桌面/移动侧栏；`VITE_ENABLE_NOTES` 默认关闭，显式开启仍要求 Core `notes.read` 预检成功，Notes 读写继续由 Core 权限门禁控制。NotesPage 懒加载；跨页面导航保留未保存保护。Markdown 正文为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，不扩张 Obsidian 原生兼容承诺。本轮前端定向回归 63 项、typecheck 与 build 通过；PR 仍未合并、未部署、未做用户验收；未访问真实笔记或启动 D085-C2。此并行状态不改变上方 D084 唯一 NEXT。

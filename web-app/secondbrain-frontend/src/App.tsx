@@ -12,6 +12,7 @@ import { TaskPage } from './TaskPage';
 import { notesApi } from './api/notes';
 
 const NotesPage = lazy(() => import('./NotesPage').then((module) => ({ default: module.NotesPage })));
+const UnifiedInboxPage = lazy(() => import('./UnifiedInboxPage').then((module) => ({ default: module.UnifiedInboxPage })));
 const notesFeatureEnabled = () => import.meta.env.VITE_ENABLE_NOTES === 'true';
 import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
@@ -436,7 +437,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
-          : page === 'inbox' ? <InboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
+          : page === 'inbox' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Inbox…' : '正在加载收件箱…'}</div>}><UnifiedInboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} /></Suspense>
           : page === 'chat' ? <ChatPage locale={locale} onGoInbox={() => navigate('inbox')}
             onGoJournal={() => navigate('journal')} onGoToday={() => navigate('today')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
