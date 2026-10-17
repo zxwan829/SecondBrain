@@ -1,13 +1,47 @@
-# SecondBrain project guidance
+# SecondBrain 项目总治理规则
 
-This repository is the canonical source for SecondBrain application code, development tooling, and approved project baseline documents. Read `docs/baseline/00-CURRENT.md` for current status and NEXT actions. **Since D077, the approved product goal is a continuously learning personal AI companion with automatic contextual recall; read `docs/baseline/Decision-Log.md` D077 for the product decision, `docs/baseline/Architecture.md` for the approved design, and `docs/baseline/00-CURRENT.md` for scope, acceptance and NEXT.** For Web App requirements read `docs/baseline/business-specs/SecondBrain-Web-App-V1-Business-Spec.md`; for all Capture/Raw/Review/channel requirements read `docs/baseline/business-specs/Universal-Capture-Business-Spec.md`. These are mandatory business contracts for related work, not status documents. Consult `docs/baseline/Architecture.md`, `docs/baseline/Agent-Rules.md`, and relevant business specifications for task-specific rules. **Token-efficient reading:** do not read either full `docs/baseline/Decision-Log.md` or `docs/baseline/Progress-Log.md` by default; only read the relevant sections/lines when a decision's origin, historical evidence, regression, or dispute actually needs tracing. Use `00-CURRENT.md` for present status and NEXT, `Environment-Baseline.md` for the last evidenced runtime snapshot. Do not use NAS or Synology Drive copies as code or documentation authorities.
+## 一、文档定位与维护原则
 
-Develop on local Git clones. The iMac’s formal clone is `/Users/joe/Documents/Codex/SecondBrain`; the MBA uses an independent clone. The private GitHub repository is the only development and formal documentation authority.
+**本文件是 SecondBrain 项目的总治理文档，负责规定长期有效的协作机制、资料权威来源、管理职责及操作边界。它不是业务进度表，也不是阶段性任务或下一步工作清单。**
 
-**SecondBrain's sole current collaboration workflow (see `docs/baseline/Agent-Rules.md`):** ChatGPT owns requirements, architecture, task boundaries, acceptance criteria, review and Issue closure; it creates or updates the task Issue. Codex reads the latest effective Issue instructions, implements only authorized changes, runs checks, commits/pushes and opens the relevant PR, then reports **execution facts and evidence** in an Issue comment with the PR link. ChatGPT independently reviews code in the PR, posts its acceptance/remaining-work decision in the Issue, determines NEXT and closes the Issue only after acceptance. An Issue is the task-and-acceptance record; a PR is the code-change-and-review record. Avoid duplicating long reports in both. A client handoff can simply say “Read SecondBrain Issue #N and execute within its approved scope; report back to the Issue.” Tiny fixes/ad hoc diagnostics need no mandatory Issue. **This replaces older generic ‘Codex reports, ChatGPT reads’ or ambiguous shared reporting conventions for SecondBrain; follow only this workflow.** Explicit user authorization is still necessary for PR merges, NAS changes, paid models, secrets, or personal-data export.
+**不得因业务开发进度、阶段变化、功能状态、提交记录或临时任务而修改本文件。只有项目管理规则、治理结构、协作分工或长期操作边界确实需要调整时，才按项目约定审核修改。** 阶段状态及下一步变化应更新状态文档，不得反复改写总治理规则。
 
-NAS hosts Docker runtime and business data only. Its Docker project is `/volume1/docker/secondbrain/`, with Core source/build context at `/volume1/docker/secondbrain/core-source/`; business data remains under `/volume1/SecBR/SecondBrain/` and `/volume1/SecBR/KnowledgeAssets/`. GitHub Push does not deploy to NAS, and NAS does not need direct GitHub access. When deployment is authorized, Mac transfers deployment content over SSH and verifies runtime.
+**`docs/baseline/00-CURRENT.md` 是项目进度统一状态入口，也是阶段性任务安排及唯一下一步指示的权威文档。** 新工作先读它，再按需追溯正式规格和相关任务。不得在本文件维护第二份当前状态或下一步指令。
 
-Obsidian remains a knowledge, notes, and personal-material library synchronized bidirectionally between Mac and NAS through Synology Drive. It is not a code or formal development-document source. The client previously showed up to date, but actual bidirectional propagation has not been separately accepted; the historical `SynologyDrive stopped` report is not a confirmed service failure. Codex uses workspace-write sandboxing with verified GitHub/NAS network access; preserve required permission approvals and production-operation boundaries.
+坚持“一处定义、多处引用”：跨项目通用规则以 `Codex-Governance/AGENTS.md` 为准；本项目细化执行规则以 `docs/baseline/Agent-Rules.md` 为准；其他文件仅作必要引用，不复制完整规则，避免多处漂移。
 
-**CURRENT HANDOFF / INTEGRATION GATE (2026-10-17):** The D084 documentation PR #39 is merged. Read `docs/baseline/00-CURRENT.md` for the *single authoritative NEXT*, and `docs/baseline/D084-Integration-and-Validation-Plan.md` for the integration test scope. Historical pause instructions and earlier D080 direct-runtime preflight sequencing are superseded by this handoff. The next engineering task is an explicitly authorized, isolated integration PR based on then-current `main`: preserve main's personal-learning fix, bring in reviewed D081-D083 from `dev/parallel-v1-next-20261017`, then adapt audited open PR #37, and run focused synthetic tests. **This statement records the intended next phase; it is not itself an authorization to start integration, merge the resulting PR, deploy NAS, use real models, or alter production permissions/data.** Stop after synthetic integration evidence and ChatGPT review for user's unified real-test authorization. Continue to keep Terminal OFF, Private unmounted, Knowledge RO except existing Capture inbox, Promote/Scheduler OFF, and D077 Core JSONL as the memory authority. Keep all existing sessions, synthetic assets and rollback materials unless separately authorized to change them.
+## 二、项目资料与阅读顺序
+
+- **代码与正式文档**：SecondBrain 私有 GitHub 仓库是唯一权威来源。各开发设备使用独立的本地 Git 仓库副本。NAS 和同步盘副本不得覆盖正式仓库。
+- **当前状态、未完成事项、阶段任务及唯一下一步**：`docs/baseline/00-CURRENT.md`。
+- **架构、数据流及安全边界**：`docs/baseline/Architecture.md`。
+- **正式产品及技术决策**：`docs/baseline/Decision-Log.md`。
+- **项目专属执行规则与权限细则**：`docs/baseline/Agent-Rules.md`。
+- **网站应用业务规格**：`docs/baseline/business-specs/SecondBrain-Web-App-V1-Business-Spec.md`。
+- **统一收录、原件、审核及输入渠道规格**：`docs/baseline/business-specs/Universal-Capture-Business-Spec.md`。
+- **最近有证据支持的运行环境快照**：`docs/baseline/Environment-Baseline.md`，不能代替实时核验。
+- **历史实施、测试、失败及验收记录**：`docs/baseline/Progress-Log.md`。
+
+**按需阅读，避免无谓消耗：** 日常先读状态文档和相关规则；只有需要追溯决策、故障或证据时，才定位读取历史日志及决策记录的相关章节，不默认通读完整长文档。正式业务规格是对应任务的验收依据，不能由临时任务擅自缩减。
+
+## 三、协作与审核职责
+
+本项目的具体任务流程以 `docs/baseline/Agent-Rules.md` 为准，基本分工如下：
+
+- **用户**：确定业务目标和优先级，批准重要取舍、生产变更和真实数据或付费调用，进行最终体验验收。
+- **ChatGPT**：负责架构和方案、任务边界与验收条件，发布或更新 GitHub 议题，独立审查代码及执行证据，决定后续任务并按规则收口。
+- **Codex**：读取最新有效任务和权限边界，实施、核验、提交代码、创建合并请求，并在议题中报告实际执行结果和证据。
+
+GitHub 议题是任务、执行证据和验收结论的主要记录；合并请求用于展示具体修改与接受代码审查。避免在两个位置复制整篇报告。小型修复或临时排查不强制建立新议题。
+
+未经用户针对具体操作明确授权，不得合并需要审批的正式分支变更、修改 NAS 生产环境、处理秘密凭据、执行付费模型调用或外发个人数据。代码提交不等于部署；测试通过不等于实际运行通过，更不等于用户验收通过。
+
+## 四、开发、生产与数据边界
+
+- **开发设备**：本地 Git 仓库负责代码编辑、构建和受控测试。切换设备前检查提交、分支和未跟踪文件，不能用另一设备的旧副本覆盖最新内容。
+- **NAS**：承载容器服务和业务数据，不作为开发代码及正式文档的权威来源。部署由获授权的开发设备通过安全连接完成，并核验实际运行状态。GitHub 提交不会自动部署到 NAS。
+- **生产目录**：容器项目位于 `/volume1/docker/secondbrain/`，核心源码构建目录位于 `/volume1/docker/secondbrain/core-source/`；业务数据位于 `/volume1/SecBR/SecondBrain/` 和 `/volume1/SecBR/KnowledgeAssets/`。路径是稳定边界描述，实际状态仍须核验。
+- **Obsidian**：作为个人知识、笔记及资料库，通过群晖同步工具在 Mac 与 NAS 之间同步；不承载开发源码或正式治理文档。同步是否有效以实际验证为准。
+- **数据和权限**：Private 默认排除，不允许绕过授权读取或挂载；Knowledge 写入必须遵循受控审核链路。不得因为开发或调试需要擅自扩大普通智能体的文件权限。保留个人记忆的受控数据权威来源，具体设计及现状以正式架构、状态与环境文档为准。
+
+任何涉及生产容器、挂载、网络、权限、秘密或业务数据的操作，都必须先获得对应授权并确认影响和恢复方案。治理文件不构成任何一次具体部署、测试或调用的授权。
