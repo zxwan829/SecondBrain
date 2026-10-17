@@ -20,17 +20,17 @@ source: GitHub SecondBrain Monorepo
 
 | 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
 |---|---|---|---|---|---|
-| D082 个人记忆情境保留修复 | PR #32 已审并合入 main | Core `test_personal_learning.py` 17 项通过（Issue #30）；此前 D080 真实召回失败不可由源码/Mock 抵消 | **main**（记忆修复合入时的 SHA `628bec895e8d95646b5cc583e8ffea8f7e877e10`；非当前 HEAD） | 此修复是否已部署，本次可用生产快照未证明，标记 **UNKNOWN** | 生产真实召回复验未完成；浏览器验收未完成 |
-| D081 Journal、D082 Chat Journal、D083 Task | 各 PR 代码审查通过 | 各切片定向测试通过；统一多模块集成测试尚未执行 | PR #31/#34/#36 合入 `dev/parallel-v1-next-20261017`，HEAD `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`；**未合入 main** | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未对 Journal/Task 集成执行真实模型或浏览器验收 |
-| PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；PR 仍 open | Guard/Core/前端定向测试记录见 PR #37；与并行分支尚未集成 | 独立 PR #37，HEAD `e5332f6fa175d0742cacbaec2fbab40ded4781a4`；**未合入 main** | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需集成后验证；无真实模型验收 |
+| D082 个人记忆情境保留修复 | PR #32 已审；随最新 main 保留在本轮集成分支 | 本轮 Core 统一定向组中 `test_personal_learning.py` 17 项通过；此前 D080 真实召回失败不可由源码/Mock 抵消 | 基线 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 的修复未被并行切片覆盖 | 此修复是否已部署，本次可用生产快照未证明，标记 **UNKNOWN** | 生产真实召回复验未完成；浏览器验收未完成 |
+| D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | 已整合至 `codex/d084-unified-integration-20261017`（基于 main `a8019ab1…`）；PR #45 OPEN，等待独立复审；**未合入 main** | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未做真实模型或浏览器验收 |
+| PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #37 两个已审提交已移植至 `codex/d084-unified-integration-20261017`；PR #45 包含两项已审提交，等待独立复审；原 PR #37 仍 open | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需运行时验证；无真实模型验收 |
 
-在 D084 审计时，main 与并行分支已核实为 diverged：审计基线 `628bec8` 相对并行分支独有 1 个提交（含 D082 记忆修复），并行分支独有 3 个切片集成提交；后续 main 另有文档提交，差异计数须在实际集成前重新核验。集成必须以 main 为基线保留其记忆修复，不能用旧开发分支覆盖 main。代码审查、定向测试、开发分支合入、main 合入、NAS 部署、真实模型运行与用户验收分别记录；任一层通过都不自动代表后一层通过。
+本轮以实时 GitHub main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 为基线；与 `dev/parallel-v1-next-20261017` 在 `d7a48fe` 分叉后，main 独有 6 个提交（含 D082 记忆修复及后续治理文档），并行分支独有 3 个功能切片提交。集成分支保留 main 历史并合入 3 个切片；`personal_learning.py` 与其回归测试相对 main 未改动。唯一源码冲突为 `App.tsx` 的 Journal/Task 与通用 Run 审批解析器导入，已人工合并；CURRENT 文档冲突保留 main 文本并在本轮校准。代码审查、定向测试、分支合入、main 合入、NAS 部署、真实模型运行与用户验收分别记录；任一层通过都不自动代表后一层通过。
 
-## D084：集成前文档基线与统一验收计划（文档已通过复审）
+## D084：统一功能集成与本地合成验证（等待独立复审）
 
-本轮只整理正式文档和测试计划，没有合并功能 PR、运行 NAS、调用模型或改变生产状态。执行路线和测试矩阵见[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)。`Environment-Baseline.md` 的快照时间保持为最近有证据的 2026-10-17；本轮未取得新运行证据，因此不更新快照。
+本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
-**唯一 NEXT（待明确授权启动）：** D084 文档 PR #39 已合入 main，后续治理 PR #40/#41 亦已合入；2026-10-17 最后核验的 main HEAD 为 `786928421e92e0ccec9e5d829d2ccfca35c698e3`，**启动时必须重新读取 GitHub 实际 HEAD**。取得本轮功能集成授权后，从最新 main 建独立集成分支，保留 D082 记忆召回代码修复，接入已审 D081-D083 与尚未合并的 PR #37；解决共享文件冲突，仅做必要本地合成集成测试并提交集成 PR 给 ChatGPT 审计。**在功能 PR 合入 main、NAS 部署、真实 Hermes Run/浏览器验收之前暂停，分别获取用户确认**；不自动重跑 Issue #28 未完成的付费 Run，不清理其测试 Session、Core Memory 或 Atlas 合成资产。D084 及本轮文档校准均不代表功能已集成。
+**唯一 NEXT：** ChatGPT 独立审查指向 `main` 的 [PR #45](https://github.com/zxwan829/SecondBrain/pull/45) 与本地证据；在获准前不合入 main、不部署 NAS、不运行真实 Hermes/付费模型、不处理真实个人数据，也不清理 Issue #28 的 Session、Core Memory 或 Atlas 合成资产。当前源码/合成测试结果为 DEV-TESTED，不能代表运行时审批已验证、生产部署或用户验收。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 

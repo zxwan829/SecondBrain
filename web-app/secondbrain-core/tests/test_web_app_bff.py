@@ -13,7 +13,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.hermes_api import HermesAPI
-from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX
+from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX, FILE_WRITE_APPROVAL_PREFIX
 from secondbrain_core.modules.auto_organize import OrganizerControlStore, OrganizeSettingsStore, next_scheduled_at
 from datetime import datetime, timezone
 
@@ -26,7 +26,9 @@ class WebAppBffTests(unittest.TestCase):
         self.knowledge = self.root / "knowledge"
         self.raw = self.root / "raw"
         self.state = self.root / "state"
-        for path in (self.review, self.knowledge, self.raw, self.state):
+        self.journal = self.root / "journal"
+        self.tasks = self.root / "tasks"
+        for path in (self.review, self.knowledge, self.raw, self.state, self.journal, self.tasks):
             path.mkdir(mode=0o700)
         self.review_content = b"---\ntype: review\nstatus: pending\n---\n# Review title\nReal Review content.\n"
         (self.review / "candidate.md").write_bytes(self.review_content)
@@ -42,6 +44,7 @@ class WebAppBffTests(unittest.TestCase):
         self.approvals.mkdir(mode=0o700)
         self.calls = []
         self.approval_sse = False
+        self.approval_file_sse = False
 
         def handler(request):
             self.calls.append(request)
@@ -64,6 +67,15 @@ class WebAppBffTests(unittest.TestCase):
             if request.url.path == "/v1/runs/run-1":
                 return httpx.Response(200, json={"run_id": "run-1", "status": "completed", "output": "done"})
             if request.url.path == "/v1/runs/run-1/events":
+                if self.approval_file_sse:
+                    request_data = {"schema": 1, "tool": "write_file", "arguments": {
+                        "path": "/knowledge-assets/00-Inbox/synthetic.md", "content": "synthetic"}}
+                    description = FILE_WRITE_APPROVAL_PREFIX + json.dumps(request_data, sort_keys=True,
+                                                                         separators=(",", ":"), ensure_ascii=False)
+                    event = {"event": "approval.request", "run_id": "run-1", "request_id": "file-approval-1",
+                             "description": description, "choices": ["once", "session", "always", "deny"]}
+                    return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                          content=("data: " + json.dumps(event) + "\n\n").encode())
                 if self.approval_sse:
                     request_data = {"schema": 1, "tool": "terminal", "arguments": {"command": "pwd", "workdir": "/tmp/synthetic"}}
                     description = APPROVAL_PREFIX + json.dumps(request_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -85,6 +97,8 @@ class WebAppBffTests(unittest.TestCase):
         self.env = {
             "SB_REVIEW_ROOT": str(self.review),
             "SB_CAPTURE_RAW_ROOT": str(self.raw),
+            "SB_JOURNAL_ROOT": str(self.journal),
+            "SB_TASK_ROOT": str(self.tasks),
             "SB_KNOWLEDGE_ROOT": str(self.knowledge),
             "SB_PROMOTE_STATE_ROOT": str(self.state),
             "SB_DASHBOARD_ORIGINS": "http://testserver,https://testserver",
@@ -182,6 +196,87 @@ class WebAppBffTests(unittest.TestCase):
         refreshed = self.client.get("/api/promote/review/items").json()["items"][0]
         self.assertEqual(refreshed["decision"]["status"], "deferred")
 
+    def test_explicit_journal_intent_is_session_gated_append_only_and_idempotent(self):
+        before_reviews = sorted(path.name for path in self.review.iterdir())
+        unauthenticated = TestClient(self.app, base_url="https://testserver")
+        denied = unauthenticated.post("/api/journal/entries", json={"date": "2026-10-17", "text": "记一下：合成记录"},
+                                      headers={"Origin": "https://testserver", "Idempotency-Key": "synthetic-denied"})
+        self.assertEqual(denied.status_code, 401)
+        unauthenticated.close()
+
+        self.login()
+        headers = {"Origin": "https://testserver", "Idempotency-Key": "synthetic-journal-entry-1"}
+        ordinary_chat = self.client.post("/api/journal/entries", json={
+            "date": "2026-10-17", "text": "今天只是普通聊天内容",
+        }, headers={**headers, "Idempotency-Key": "ordinary-chat"})
+        self.assertEqual(ordinary_chat.status_code, 422)
+        source_text = "记一下：第一行原话\n第二行保持不变 100%"
+        created = self.client.post("/api/journal/entries", json={"date": "2026-10-17", "text": source_text}, headers=headers)
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(created.json()["status"], "created")
+        self.assertEqual(created.json()["entry"]["original_text"], source_text)
+        duplicate = self.client.post("/api/journal/entries", json={"date": "2026-10-17", "text": source_text}, headers=headers)
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertEqual(duplicate.json()["status"], "duplicate")
+        second = self.client.post("/api/journal/entries", json={"date": "2026-10-17", "text": "写日记：追加原文"},
+                                  headers={**headers, "Idempotency-Key": "synthetic-journal-entry-2"})
+        self.assertEqual(second.json()["status"], "created")
+        self.assertEqual(self.client.get("/api/journal/2026-10-17").json()["entries"],
+                         [created.json()["entry"], second.json()["entry"]])
+        self.assertEqual(len((self.journal / "2026-10-17.jsonl").read_text(encoding="utf-8").splitlines()), 2)
+        self.assertEqual(sorted(path.name for path in self.review.iterdir()), before_reviews)
+        self.assertEqual([path.name for path in self.knowledge.iterdir()], ["known.md"])
+        self.assertEqual(self.calls, [])
+
+    def test_unconfigured_journal_fails_clearly_without_creating_a_store(self):
+        with patch.dict(os.environ, {**self.env, "SB_JOURNAL_ROOT": ""}), patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+            app = create_app()
+        client = TestClient(app, base_url="https://testserver")
+        try:
+            client.post("/api/auth/login", json={"password": "one-owner-test-password"}, headers={"Origin": "https://testserver"})
+            response = client.post("/api/journal/entries", json={"text": "记一下：仅合成测试"}, headers={"Origin": "https://testserver", "Idempotency-Key": "disabled-test"})
+            self.assertEqual(response.status_code, 503, response.text)
+            self.assertEqual(response.json()["detail"], "Journal is not enabled")
+            self.assertEqual(list(self.journal.iterdir()), [])
+        finally:
+            client.close()
+
+    def test_task_crud_requires_app_session_and_never_calls_hermes(self):
+        unauthenticated = self.client.post("/api/tasks", json={"title": "未授权"}, headers={"Origin": "https://testserver", "Idempotency-Key": "task-denied"})
+        self.assertEqual(unauthenticated.status_code, 401)
+        self.login()
+        created = self.client.post("/api/tasks", json={"title": "合成待办", "due_date": "2026-10-20", "original_command": "添加待办：合成待办"}, headers={"Origin": "https://testserver", "Idempotency-Key": "task-create-1"})
+        self.assertEqual(created.status_code, 200, created.text)
+        task = created.json()["task"]
+        duplicate = self.client.post("/api/tasks", json={"title": "合成待办", "due_date": "2026-10-20", "original_command": "添加待办：合成待办"}, headers={"Origin": "https://testserver", "Idempotency-Key": "task-create-1"})
+        self.assertEqual(duplicate.json()["status"], "duplicate")
+        listed = self.client.get("/api/tasks?status=open&due_date=2026-10-20").json()["tasks"]
+        self.assertEqual([item["id"] for item in listed], [task["id"]])
+        task_headers = {"Origin": "https://testserver"}
+        modified = self.client.patch(f"/api/tasks/{task['id']}", json={"title": "修改后的任务", "expected_updated_at": task["updated_at"]}, headers=task_headers)
+        self.assertEqual(modified.status_code, 200, modified.text)
+        stale = self.client.patch(f"/api/tasks/{task['id']}", json={"status": "completed", "expected_updated_at": task["updated_at"]}, headers=task_headers)
+        self.assertEqual(stale.status_code, 409)
+        completed = self.client.patch(f"/api/tasks/{task['id']}", json={"status": "completed", "expected_updated_at": modified.json()["task"]["updated_at"]}, headers=task_headers)
+        self.assertEqual(completed.json()["task"]["status"], "completed")
+        reopened = self.client.patch(f"/api/tasks/{task['id']}", json={"status": "open", "expected_updated_at": completed.json()["task"]["updated_at"]}, headers=task_headers)
+        self.assertEqual(reopened.json()["task"]["status"], "open")
+        self.assertEqual(self.calls, [])
+        self.assertTrue((self.tasks / "tasks.json").is_file())
+
+    def test_unconfigured_tasks_fail_closed_without_creating_data(self):
+        with patch.dict(os.environ, {**self.env, "SB_TASK_ROOT": ""}), patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+            app = create_app()
+        client = TestClient(app, base_url="https://testserver")
+        try:
+            client.post("/api/auth/login", json={"password": "one-owner-test-password"}, headers={"Origin": "https://testserver"})
+            response = client.post("/api/tasks", json={"title": "不可写"}, headers={"Origin": "https://testserver", "Idempotency-Key": "disabled-task"})
+            self.assertEqual(response.status_code, 503, response.text)
+            self.assertEqual(response.json()["detail"], "Task is not enabled")
+            self.assertEqual(list(self.tasks.iterdir()), [])
+        finally:
+            client.close()
+
     def test_sessions_runs_sse_and_stop_are_server_side_authenticated(self):
         self.login()
         sessions = self.client.get("/api/chat/sessions").json()
@@ -258,6 +353,27 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(rejected.json()["choice"], "deny")
         call = next(call for call in self.calls if call.url.path.endswith("/approval"))
         self.assertEqual(json.loads(call.content)["choice"], "deny")
+
+    def test_file_write_waits_for_run_bound_user_approval_and_is_single_use(self):
+        self.login()
+        started = self.client.post("/api/chat/sessions/session-1/runs", json={"input": "synthetic request"},
+                                   headers={"Origin": "https://testserver", "Idempotency-Key": "file-write-run"})
+        self.assertEqual(started.status_code, 200)
+        self.approval_file_sse = True
+        events = self.client.get("/api/chat/runs/run-1/events")
+        event = json.loads(events.content.decode().split("data: ", 1)[1].strip())
+        self.assertEqual(event["tool"], "write_file")
+        self.assertEqual(event["run_id"], "run-1")
+        self.assertEqual(event["session_id"], "session-1")
+        self.assertEqual(event["command"], "write_file → /knowledge-assets/00-Inbox/synthetic.md")
+        self.assertFalse(any(call.url.path.endswith("/approval") for call in self.calls))
+        body = {"approval_id": event["approval_id"], "command_sha256": event["command_sha256"], "choice": "once"}
+        approved = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json=body,
+                                    headers={"Origin": "https://testserver"})
+        self.assertEqual(approved.status_code, 200, approved.text)
+        duplicate = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json=body,
+                                     headers={"Origin": "https://testserver"})
+        self.assertEqual(duplicate.status_code, 409)
 
     def test_cookie_scheme_and_exact_proxy_trust(self):
         self.assertIn("secure", self.login().headers["set-cookie"].lower())

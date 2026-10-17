@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D084 Journal / Task / Memory / 文件审批统一集成（本地验证）
+
+- 实时核对 GitHub `main` 为 `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583`、并行分支为 `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`、PR #37 head 为 `e5332f6fa175d0742cacbaec2fbab40ded4781a4`。在独立 clone 创建 `codex/d084-unified-integration-20261017`；合入并行分支 3 个 Journal/Task 切片提交，保留 main 侧 6 个独有提交及 D082 `personal_learning.py` 修复。处理唯一 `00-CURRENT.md` 冲突时保留 main 文本并在本轮校准；PR #37 的两个已审提交按提交粒度移植，避免把其旧分支中对 Journal/Task 的删除带入。`App.tsx` 导入冲突已合并为 Journal/Task 页面与统一 Run 审批卡契约。
+- 统一本地合成验证：Core `tests/test_personal_memory.py tests/test_personal_learning.py tests/test_journal.py tests/test_tasks.py tests/test_run_approvals.py tests/test_capture.py tests/test_web_app_bff.py` **80 passed**；Hermes Guard `tests/test_plugin.py` **22 passed**；前端 Journal/Task/审批/Capture 相关测试 **46 passed**，`npm run typecheck`、`npm run build` 通过。Core 使用隔离 Python 3.12 环境；前端依赖在临时 clone 安装，无 package lock。Starlette/httpx `TestClient` 弃用警告 1 条。`git diff --check` 通过。
+- 环境说明：初次使用系统 Python 3.9.6 收集测试失败，因现有源码的 `str | None` 注解无法由 Python 3.9 评估；未改业务源码，改用本机 Python 3.12 重跑并通过。
+- 未访问 NAS/生产配置、Secret、真实个人数据；未启动 Hermes、未调用真实或付费模型、未创建/修改生产 Session/Memory/Atlas 资产。未合并 main、未部署、未进行浏览器用户验收。提交 `a766c5b409b1042dc1a8bac8b808a8fc82eef19f` 并 Push；PR #45 已创建，指向 `main`，创建时 head 即该 SHA。PR 未合并。当前状态为本地 DEV-TESTED，等待集成 PR 独立审查。
+
 ## 2026-10-17 — D084 集成前文档统一与多功能验收计划（仅文档）
 
 - 从 GitHub 最新 main `628bec895e8d95646b5cc583e8ffea8f7e877e10` 创建独立文档分支。只读核对 `dev/parallel-v1-next-20261017` HEAD `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`；main 独有 1 个提交，开发分支独有 3 个提交。PR #31/#34/#36 已合入该开发分支，未合入 main；PR #37 HEAD `e5332f6fa175d0742cacbaec2fbab40ded4781a4` 仍 OPEN、未合并、未部署。
@@ -13,6 +20,13 @@
 - 定向检查：5 个更新文档的本地 Markdown 链接与代码围栏核对通过，`git diff --check` 通过；确认 Environment 快照未改、CURRENT 中无旧 main SHA/历史 NEXT 文案。未运行业务代码测试。
 - 文档 PR 和逐文件差异见 Issue #38。
 
+## 2026-10-17 — D082 普通 Chat 文件变更单次审批（开发中，未部署）
+
+- Issue #30 最新审核指出真实 Run 在普通对话中执行了文件写入。基于 Hermes v0.22.2 上游固定源码 `d923a5eb487a17c0a68801bba9ef0f56c81040a8`，核对 `pre_tool_call` 提供 session/turn/tool-call/API request 标识；API Server 的每个 `/v1/runs` 将原生 approval session key 绑定到该 Run ID，并通过 Run SSE/API 等待审批。
+- Guard 将 `write_file` 与单目标 replace `patch` 的每次执行都送入 Hermes 原生审批；目标路径先 canonicalize（包含符号链接解析），同一参数映射用于审批摘要与实际分发；敏感 Hermes 状态、凭据与 Skills 仍硬拒绝，含嵌入多文件目标的 V4A patch 保持拒绝。Core 审批桥校验事件 Run ID、用户/Session 所属、完整参数摘要、有效期及单次消费；前端审批卡显示并默认展开写入参数。现有 Capture API 与 D077 JSONL 不变。
+- 针对性验证：Guard `test_plugin.py` **18 passed**；Core Run Approval、BFF 和 Capture **42 passed**；前端审批解析 **5 passed**，`npm run typecheck` 通过。Core 使用现有隔离 Python 3.12 环境，前端依赖仅安装在本次临时 Clone；无 Hermes/NAS 启动、无模型请求。
+- **状态：独立 PR 开发中，未部署。** 未触碰 NAS/生产配置、Session/Memory、Atlas 合成文件或原正式工作区未跟踪项；Terminal 仍关闭。开发与本地测试不代表生产权限验证或真实用户验收。
+
 ## 2026-10-17 — D082 修复跨会话个人记忆召回（进行中）
 
 - Issue #28 的两次真实 GLM-4.5-Air Run 中，首轮合成偏好学习创建 1 条 active 记忆；第二个 Session 的相关问题未召回，触发 `learning-loop-test` Skill 与失败的 `search_files`，按止损规则未重试。原始执行与费用边界见 Issue #28 评论 #6227702593。
@@ -21,6 +35,28 @@
 - D082 指定分支增加情境偏好完整提取与跨 Session BFF 注入/无关主题过滤回归。Core `test_personal_learning.py` 17 项通过；本地 Python 3.9 环境因 Pydantic 无法解析现有 `str | None` 注解未能收集测试，改用隔离 Python 3.12 环境完成验证。
 - 代码与文档仍在未合并 PR 分支，未部署、未运行真实模型复验、未修改 NAS/生产 Memory；后续真实复验需要另行授权。
 
+
+## 2026-10-17 — D083 Issue #35 Task 持久待办最小闭环（开发分支）
+
+- 从最新 `dev/parallel-v1-next-20261017` `74a18ff9e6b787329582cfcaa340dba965537ef8` 创建独立 `codex/d083-task-chat` 工作分支。新增 Core `/api/tasks`：只有在显式 `SB_TASK_ROOT` 指向既存 Core-owned `0700` 专用目录时启用；单 JSON 文件在跨线程锁内原子更新，创建具备持久幂等键，修改使用 `expected_updated_at` 防陈旧覆盖，并记录状态/字段变更历史。支持按状态、截止日期筛选；不提供删除。
+- Chat Composer 仅对 `添加待办：xxx` / `建个待办：xxx` 的句首显式命令直达 Task API，不创建 Hermes Session/Run；显式 `截止：YYYY-MM-DD` 后缀按 ISO 日期提供截止日。成功提示 Today 入口，失败保留原命令并复用同命令重试键。普通对话和 D082 Journal 路径保持各自原路。现有 Today 导航打开持久 Task 列表，支持标题/ISO 截止日修改、完成和恢复。未实现提醒投递及自然语言修改目标猜测。
+- 定向合成验证：Core `tests/test_tasks.py tests/test_web_app_bff.py` **23 passed**（鉴权、未配置 503、存储重载、20 路并发无丢失、幂等冲突、日期/状态查询、乐观冲突、完成/恢复、历史、symlink 拒绝；1 条既有 Starlette/httpx 弃用警告）。前端 Chat + TaskPage **40 passed**；`npm run typecheck`、`npm run build` 和 `git diff --check` 通过。
+- 无 NAS/生产访问或变更、真实 Task/Journal 数据、Secret 或模型调用；未检查生产 Task 配置，因此其状态 UNKNOWN。Issue #28 测试未触及。开发分支未部署；真实浏览器验收待完成；提醒通知 NOT IMPLEMENTED。
+
+## 2026-10-17 — D082 Issue #33 Chat 显式 Journal 记录（开发分支）
+
+- 从 `dev/parallel-v1-next-20261017` 最新已合并基线 `75c83bbcd3ff05b188fabc8f03bdc4eacea2833c` 创建独立工作分支。Chat 输入仅在开头显式出现 `记一下`、`记下来`、`写日记`、`记录一下` 时调用 Journal API；传入完整输入原文，普通消息继续走原 Hermes Run 路径，不创建额外 Chat Session。成功反馈日期和原文保留状态；失败保留输入并在同内容重试时复用 Idempotency-Key。
+- Core 在 Journal 未配置时认证后返回明确 503，不创建数据根；按日追加返回日期。同一幂等键同内容安全回放、不同内容返回 409。未改 Hermes Session/Run/SSE 实现，未触及 Task/Memory/Promote/Terminal/Scheduler。
+- 针对性合成验证：前端 Chat 交互 **36 passed**，覆盖显式成功不触发 Run、普通消息仍走 Hermes、失败输入保留且复用幂等键、未启用明确拒绝；`npm run typecheck` 与 `npm run build` 通过。Core `tests/test_journal.py tests/test_web_app_bff.py` **20 passed**（含幂等键冲突和未配置 503）；出现 1 条 Starlette/httpx `TestClient` 弃用提示。`git diff --check` 通过；未执行真实模型测试。
+- 无 NAS/生产访问或变更、生产 Journal 数据、Issue #28 测试状态/数据、真实模型或秘密访问。当前代码仅为开发分支，不部署；Chat 浏览器用户验收仍待完成。
+
+## 2026-10-17 — D081 Issue #29 Journal explicit-intent slice (local only)
+
+- Started from `dev/parallel-v1-next-20261017` at `d7a48fe3e1f70a40a8b94d4e1e2dacb1d052abaa`, in a separate clone. Added an optional `SB_JOURNAL_ROOT` Core module/router; it mounts only an existing Core-owned `0700` directory. The dedicated API uses the authenticated App owner session, accepts only explicit `记一下` / `记下来` / `写日记` / `记录一下` prefixes, stores the complete original phrase/text with Asia/Shanghai timestamp and source, and appends to a date-scoped JSONL file. `flock`, `O_APPEND`, `O_NOFOLLOW`, private file modes, persistent hashed idempotency keys and partial-write truncation guard append integrity. There is no update/delete route.
+- Added a small `/journal` App page to browse a date and explicitly append a natural-language phrase. Ordinary Chat does not call this API; no Hermes Session/Run/SSE code changed. The page/API are a local Journal entrance, **not** an automatic chat intent integration. Chat integration remains a follow-up design to avoid the parallel Issue #28 hot path.
+- Synthetic verification: Core `tests/test_journal.py` + `tests/test_web_app_bff.py` **18 passed** (explicit vs ordinary phrase, missing session, original text exactness, append/read, duplicate replay, 24 concurrent appends, invalid dates/path, symlink refusal, and no Review/Knowledge/Hermes side effects). Frontend Journal test **1 passed**; `npm run typecheck` and `npm run build` passed. One existing Starlette/httpx deprecation warning appeared.
+- No NAS/production access, mount/ACL/Compose/container changes, real Journal/private data, model calls, Session/Run changes, Promote/Terminal/Scheduler enablement, or production deployment occurred. Production still has no Journal mount. Future deployment requires separately authorized Core-only RW access to the dedicated `/volume1/SecBR/SecondBrain/50-Journal` directory mounted as `/data/SecondBrain/50-Journal` (owned by Core UID and mode `0700`); do not mount the SecondBrain root RW.
+- **State:** DEV-TESTED / NOT DEPLOYED / user browser acceptance pending. PR targets `dev/parallel-v1-next-20261017`; this implementation does not complete Task/Reminder or natural-language invocation from the Chat composer.
 
 ## 2026-10-17 — D080 恢复开发与浏览器验收准备
 

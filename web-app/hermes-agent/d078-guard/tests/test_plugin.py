@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -29,11 +31,14 @@ class D078PluginTests(unittest.TestCase):
         (self.business / "capture.md").write_text("synthetic", encoding="utf-8")
         self.backend_patch = patch.object(plugin, "_terminal_backend_type", return_value="local")
         self.backend_patch.start()
+        self.approval_mode_patch = patch.object(plugin, "_approval_mode_bypass", return_value=False)
+        self.approval_mode_patch.start()
         self.hooks_patch = patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False)
         self.hooks_patch.start()
 
     def tearDown(self):
         self.backend_patch.stop()
+        self.approval_mode_patch.stop()
         self.hooks_patch.stop()
         self.temp.cleanup()
 
@@ -72,6 +77,99 @@ class D078PluginTests(unittest.TestCase):
                                             hermes_home=self.home))
         self.assertIsNone(plugin.path_guard("write_file", {"path": str(self.business / "capture.md")},
                                             hermes_home=self.home))
+
+    def test_generic_file_write_waits_for_run_approval_and_binds_resolved_target(self):
+        alias = self.root / "capture-alias.md"
+        alias.symlink_to(self.business / "capture.md")
+        args = {"path": str(alias), "content": "synthetic replacement"}
+        with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False):
+            first = plugin.pre_tool_call("write_file", args)
+            second = plugin.pre_tool_call("write_file", {"path": str(alias), "content": "synthetic replacement"})
+        self.assertEqual(first["action"], "approve")
+        self.assertTrue(first["message"].startswith(plugin.FILE_WRITE_APPROVAL_PREFIX))
+        self.assertEqual(args["path"], str((self.business / "capture.md").resolve()))
+        self.assertNotEqual(first["rule_key"], second["rule_key"])
+        request = json.loads(first["message"][len(plugin.FILE_WRITE_APPROVAL_PREFIX):])
+        self.assertEqual(request, {"schema": 1, "tool": "write_file", "arguments": args})
+
+    def test_file_writes_block_when_yolo_or_approvals_are_disabled(self):
+        requests = (
+            ("write_file", {"path": str(self.business / "capture.md"), "content": "synthetic"}),
+            ("patch", {"path": str(self.business / "capture.md"), "old_string": "a", "new_string": "b"}),
+        )
+        with patch.object(plugin, "_approval_mode_bypass", return_value=True):
+            results = [plugin.pre_tool_call(name, args) for name, args in requests]
+        for result in results:
+            self.assertEqual(result["action"], "block")
+            self.assertIn("approval_policy_unavailable", result["message"])
+
+    def test_hermes_yolo_and_approval_off_modes_are_detected(self):
+        tools = types.ModuleType("tools")
+        tools.__path__ = []
+        approval = types.ModuleType("tools.approval")
+        context = types.ModuleType("tools.approval_context")
+        self.approval_mode_patch.stop()
+        try:
+            for yolo, mode, expected in ((True, "prompt", True), (False, "off", True),
+                                         (False, "prompt", False)):
+                approval._yolo_active = lambda value=yolo: value
+                context._get_approval_mode = lambda value=mode: value
+                with self.subTest(yolo=yolo, mode=mode), patch.dict(sys.modules, {
+                    "tools": tools, "tools.approval": approval, "tools.approval_context": context
+                }):
+                    self.assertEqual(plugin._approval_mode_bypass(), expected)
+        finally:
+            self.approval_mode_patch.start()
+
+    def test_file_writes_block_when_approval_mode_lookup_raises(self):
+        with patch.object(plugin, "_approval_mode_bypass", side_effect=RuntimeError("synthetic")):
+            result = plugin.pre_tool_call("write_file", {
+                "path": str(self.business / "capture.md"), "content": "synthetic"})
+        self.assertEqual(result["action"], "block")
+        self.assertIn("approval_policy_unavailable", result["message"])
+
+    def test_unreviewed_file_mutations_are_directly_rejected(self):
+        requests = (
+            ("append_file", {"path": str(self.business / "capture.md"), "content": "x"}),
+            ("delete_file", {"path": str(self.business / "capture.md")}),
+            ("move_file", {"source": str(self.business / "capture.md"),
+                            "target": str(self.business / "moved.md")}),
+        )
+        with patch.object(plugin, "_approval_mode_bypass", return_value=False):
+            results = [plugin.pre_tool_call(name, args) for name, args in requests]
+        for result in results:
+            self.assertEqual(result["action"], "block")
+            self.assertIn("file_write_tool_unsupported", result["message"])
+
+    def test_sensitive_skill_and_unverifiable_writes_block_before_approval(self):
+        with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False), \
+             patch.object(plugin, "_hermes_homes", return_value=[self.home]):
+            sensitive = plugin.pre_tool_call("write_file", {
+                "path": str(self.home / "config.yaml"), "content": "synthetic"})
+            skill = plugin.pre_tool_call("patch", {
+                "path": str(self.home / "skills/demo/SKILL.md"), "old_string": "a", "new_string": "b"})
+            missing = plugin.pre_tool_call("patch", {"mode": "patch", "patch": "*** Begin Patch"})
+        for result in (sensitive, skill, missing):
+            self.assertEqual(result["action"], "block")
+        self.assertIn("hermes_private_path", sensitive["message"])
+        self.assertIn("skills_write_gate", skill["message"])
+        self.assertIn("path_guard_missing", missing["message"])
+        with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False):
+            multi_file = plugin.pre_tool_call("patch", {
+                "mode": "patch", "path": str(self.business / "capture.md"), "patch": "*** Update File: other.md"})
+            altered = plugin.pre_tool_call("write_file", {
+                "path": str(self.business / "capture.md"), "content": "x", "cross_profile": True})
+        self.assertEqual(multi_file["action"], "block")
+        self.assertIn("file_write_target_ambiguous", multi_file["message"])
+        self.assertEqual(altered["action"], "block")
+        self.assertIn("file_write_arguments_invalid", altered["message"])
+
+    def test_file_write_blocks_if_another_pre_tool_hook_could_rewrite_target(self):
+        with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=True):
+            result = plugin.pre_tool_call("write_file", {
+                "path": str(self.business / "capture.md"), "content": "synthetic"})
+        self.assertEqual(result["action"], "block")
+        self.assertIn("file_write_binding_ambiguous", result["message"])
 
     def test_generic_file_write_cannot_bypass_skill_write_approval(self):
         self.assertIn("skills_write_gate", plugin.path_guard("write_file", {

@@ -244,7 +244,7 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
 
     @router.post("/chat/sessions/{session_id}/runs/{run_id}/approval")
     async def resolve_run_approval(request: Request, session_id: str, run_id: str, body: dict):
-        owner = auth.require_action(request, "chat.approve_terminal")
+        owner = auth.require_action(request, "chat.approve_tool")
         safe_run_id = hermes._safe_id(run_id)
         safe_session_id = hermes._safe_id(session_id)
         approval_id = body.get("approval_id")

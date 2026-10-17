@@ -45,6 +45,18 @@ unchanged.
 - Promote UI is guarded by Core's `promote_enabled` response and explicit user
   confirmation. Core defaults closed and retains SHA-256/version and audit
   protections.
+- Journal API is always routed but returns an explicit unavailable response unless
+  `SB_JOURNAL_ROOT` names an existing
+  Core-owned `0700` directory. Authenticated writes require an explicit
+  `记一下` / `写日记` phrase, append the original text to a per-date JSONL file,
+  and use a persistent idempotency key. Chat's anchored explicit intent calls this
+  API directly; ordinary Chat and Hermes tools cannot call this path implicitly.
+- Task API is always routed but returns an explicit unavailable response unless
+  `SB_TASK_ROOT` names an existing Core-owned `0700` directory. It uses one
+  locked, atomically replaced JSON store for idempotent create, status/date query,
+  optimistic updates, and traceable state history. Chat accepts only the explicit
+  `添加待办：` / `建个待办：` prefixes; Today provides edit, complete, and reopen.
+  Reminder delivery is not implemented.
 - Tests cover authentication/origin rejection, no-session/forged approval,
   Promote fail-closed, real file reads, deferred status, Hermes server-side
   auth, SSE/stop, and same-origin SPA routing.
@@ -63,6 +75,9 @@ unchanged.
   forwarded scheme is HTTPS.
 - Production Promote. Hermes Knowledge remains read-only; Core Knowledge remains
   read-only and `SB_PROMOTE_ENABLED=false` in production.
+- Journal has only local synthetic tests. It has not been deployed or mounted
+  against the production `50-Journal` directory; no real Journal data was read
+  or written.
 
 Build the single-service candidate image from `web-app/` using `Dockerfile.app`.
 Image building is not deployment. Do not change the production port, Compose,
