@@ -16,6 +16,7 @@
     "verify:fe25": "node scripts/verify-fe25.mjs"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "0.17.6",
     "@tiptap/extension-image": "3.32.0",
     "@tiptap/extension-table": "3.32.0",
     "@tiptap/extension-table-cell": "3.32.0",
@@ -27,8 +28,9 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
-    "react": "latest",
-    "react-dom": "latest",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "simple-mind-map": "0.14.0-fix.3",
     "typescript": "latest",
     "vite": "latest"
   },

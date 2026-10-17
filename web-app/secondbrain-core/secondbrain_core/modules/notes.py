@@ -16,6 +16,9 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}\.md$", re.I)
 _IMAGE_TYPES = {".png": b"\x89PNG\r\n\x1a\n", ".jpg": b"\xff\xd8\xff", ".gif": b"GIF8", ".webp": b"RIFF"}
 MAX_MARKDOWN_BYTES = 1_000_000
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_VISUAL_BYTES = 10 * 1024 * 1024
+_VISUAL_FILENAME = re.compile(r"^[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json$")
+_VISUAL_KINDS = {"mindmap", "excalidraw"}
 
 
 def markdown_safety(content: str) -> list[str]:
@@ -384,8 +387,10 @@ class NotesStore:
 
     def read_attachment(self, collection, relative, filename):
         _, directory = self._path(collection, relative)
-        if not re.fullmatch(r"[0-9a-f]{32}\.(?:png|jpg|gif|webp)", filename):
+        is_visual = bool(_VISUAL_FILENAME.fullmatch(filename))
+        if not is_visual and not re.fullmatch(r"[0-9a-f]{32}\.(?:png|jpg|gif|webp)", filename):
             raise HTTPException(status_code=400, detail="Invalid attachment name")
+        max_bytes = MAX_VISUAL_BYTES if is_visual else MAX_IMAGE_BYTES
         directory_fd = self._open_directory(directory)
         try:
             try:
@@ -409,16 +414,169 @@ class NotesStore:
                 try:
                     info = os.fstat(fd)
                     if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                            or info.st_mode & 0o077 or info.st_size > MAX_IMAGE_BYTES):
+                            or info.st_mode & 0o077 or info.st_size > max_bytes):
                         raise HTTPException(status_code=403, detail="Attachment permissions or size are unsafe")
                     with os.fdopen(fd, "rb", closefd=False) as stream:
-                        return stream.read(MAX_IMAGE_BYTES + 1), Path(filename).suffix.lower()
+                        data = stream.read(max_bytes + 1)
+                        if is_visual:
+                            self._validate_visual_payload(filename.split(".")[1], data.decode("utf-8"))
+                        return data, Path(filename).suffix.lower()
+                except UnicodeDecodeError as exc:
+                    raise HTTPException(status_code=415, detail="Visual asset is not UTF-8 JSON") from exc
                 finally:
                     os.close(fd)
             finally:
                 os.close(folder_fd)
         finally:
             os.close(directory_fd)
+
+    @staticmethod
+    def _validate_visual_payload(kind, content):
+        if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_VISUAL_BYTES:
+            raise HTTPException(status_code=413, detail="Visual asset is too large")
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Visual asset must contain valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="Visual asset must be a JSON object")
+        if kind == "mindmap":
+            pending = [payload]
+            count = 0
+            while pending:
+                node = pending.pop()
+                count += 1
+                if count > 5000 or not isinstance(node, dict) or not isinstance(node.get("data"), dict):
+                    raise HTTPException(status_code=422, detail="Mind map structure is invalid or too large")
+                data = node["data"]
+                if (not isinstance(data.get("text", ""), str) or len(data.get("text", "")) > 20000
+                        or data.get("richText") is True or data.get("image") or data.get("hyperlink")):
+                    raise HTTPException(status_code=422, detail="Mind map node content is not supported safely")
+                children = node.get("children", [])
+                if not isinstance(children, list):
+                    raise HTTPException(status_code=422, detail="Mind map children must be an array")
+                pending.extend(children)
+
+        elif kind == "excalidraw":
+            allowed = {"rectangle", "ellipse", "diamond", "line", "arrow", "text", "freedraw"}
+            elements = payload.get("elements")
+            if payload.get("type") != "excalidraw" or not isinstance(elements, list) or len(elements) > 5000:
+                raise HTTPException(status_code=422, detail="Excalidraw scene structure is invalid")
+            if any(not isinstance(item, dict) or item.get("type") not in allowed for item in elements):
+                raise HTTPException(status_code=422, detail="This Excalidraw element type is not supported")
+            if any(isinstance(item.get("text"), str) and len(item["text"]) > 20000 for item in elements):
+                raise HTTPException(status_code=422, detail="Excalidraw text is too long")
+        else:
+            raise HTTPException(status_code=400, detail="Visual asset kind is not supported")
+        return payload
+
+    def create_visual_asset(self, collection, relative, kind, content, expected):
+        if kind not in _VISUAL_KINDS:
+            raise HTTPException(status_code=400, detail="Visual asset kind is not supported")
+        self._validate_visual_payload(kind, content)
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory)
+        lock_fd = None
+        attachments_fd = None
+        try:
+            lock_fd = os.open(".notes.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                              0o600, dir_fd=directory_fd)
+            lock_info = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.geteuid() or lock_info.st_mode & 0o077:
+                raise HTTPException(status_code=403, detail="Note lock permissions are unsafe")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current = self._read_at(directory_fd, path.name)
+            if not expected or expected.strip('"') != self._digest(current):
+                raise HTTPException(status_code=412, detail="Note changed; reload before saving visual assets")
+            if markdown_safety(current):
+                raise HTTPException(status_code=422, detail="This Markdown note is read-only")
+            try:
+                os.mkdir("attachments", mode=0o700, dir_fd=directory_fd)
+            except FileExistsError:
+                pass
+            attachments_fd = os.open("attachments", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                     | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            info = os.fstat(attachments_fd)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise HTTPException(status_code=403, detail="Attachment directory permissions are unsafe")
+            filename = f"{uuid.uuid4().hex}.{kind}.json"
+            raw = content.encode("utf-8")
+            self._atomic_write(directory / "attachments" / filename, raw, exclusive=True,
+                               directory_fd=attachments_fd)
+            etag = hashlib.sha256(raw).hexdigest()
+            return {"path": f"attachments/{filename}", "filename": filename, "etag": etag}
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Visual asset path could not be opened safely") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    def update_visual_asset(self, collection, relative, filename, content, expected_note, expected_asset):
+        if not _VISUAL_FILENAME.fullmatch(filename):
+            raise HTTPException(status_code=400, detail="Invalid visual asset name")
+        kind = filename.split(".")[1]
+        self._validate_visual_payload(kind, content)
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory)
+        lock_fd = None
+        attachments_fd = None
+        try:
+            lock_fd = os.open(".notes.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                              0o600, dir_fd=directory_fd)
+            lock_info = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.geteuid() or lock_info.st_mode & 0o077:
+                raise HTTPException(status_code=403, detail="Note lock permissions are unsafe")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current = self._read_at(directory_fd, path.name)
+            if not expected_note or expected_note.strip('"') != self._digest(current):
+                raise HTTPException(status_code=412, detail="Note changed; reload before saving visual assets")
+            if markdown_safety(current):
+                raise HTTPException(status_code=422, detail="This Markdown note is read-only")
+            attachments_fd = os.open("attachments", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                     | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            info = os.fstat(attachments_fd)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise HTTPException(status_code=403, detail="Attachment directory permissions are unsafe")
+            old = self._read_attachment_at(attachments_fd, filename, MAX_VISUAL_BYTES)
+            if not expected_asset or expected_asset.strip('"') != hashlib.sha256(old).hexdigest():
+                raise HTTPException(status_code=412, detail="Visual asset changed; reload before saving")
+            raw = content.encode("utf-8")
+            self._atomic_write(directory / "attachments" / filename, raw, directory_fd=attachments_fd)
+            return {"etag": hashlib.sha256(raw).hexdigest()}
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Visual asset path could not be opened safely") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    @staticmethod
+    def _read_attachment_at(directory_fd, filename, max_bytes):
+        try:
+            fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Attachment could not be opened safely") from exc
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077 or info.st_size > max_bytes:
+                raise HTTPException(status_code=403, detail="Attachment permissions or size are unsafe")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                return stream.read(max_bytes + 1)
+        finally:
+            os.close(fd)
 
 
 def configured_notes_store(drafts_root, authorized_roots_json=""):
@@ -488,13 +646,36 @@ def create_notes_router(auth, store):
         data = await file.read(MAX_IMAGE_BYTES + 1)
         return store.upload_image(collection, relative, file.filename, data)
 
+    @router.post("/{collection}/{relative:path}/visual-assets/{kind}")
+    def create_visual_asset(request: Request, response: Response, collection: str, relative: str,
+                            kind: str, body: dict):
+        require(request, "write")
+        result = store.create_visual_asset(collection, relative, kind, body.get("content"),
+                                           request.headers.get("if-match", ""))
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        return result
+
+    @router.put("/{collection}/{relative:path}/attachments/{filename}")
+    def update_visual_asset(request: Request, response: Response, collection: str, relative: str,
+                            filename: str, body: dict):
+        require(request, "write")
+        result = store.update_visual_asset(collection, relative, filename, body.get("content"),
+                                           request.headers.get("if-match", ""),
+                                           request.headers.get("if-asset-match", ""))
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        return result
+
     @router.get("/{collection}/{relative:path}/attachments/{filename}")
     def read_attachment(request: Request, collection: str, relative: str, filename: str):
         require(request, "read")
         data, suffix = store.read_attachment(collection, relative, filename)
-        media_type = {".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}[suffix]
+        media_type = {".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif",
+                      ".webp": "image/webp", ".json": "application/json"}[suffix]
+        headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        if suffix == ".json":
+            headers["ETag"] = f'"{hashlib.sha256(data).hexdigest()}"'
         return Response(content=data, media_type=media_type,
-                         headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+                         headers=headers)
 
     @router.get("/{collection}/{relative:path}")
     def read(request: Request, response: Response, collection: str, relative: str):

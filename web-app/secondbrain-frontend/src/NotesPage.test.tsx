@@ -3,8 +3,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./MarkdownEditor', () => ({
-  MarkdownEditor: ({ value, onChange, disabled }: { value: string; onChange: (value: string) => void; disabled: boolean }) =>
-    <textarea aria-label="合成 Markdown 编辑器" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} />,
+  MarkdownEditor: ({ value, onChange, disabled, onOpenVisualAsset }: { value: string; onChange: (value: string) => void; disabled: boolean; onOpenVisualAsset?: (filename: string) => void }) => <>
+    <textarea aria-label="合成 Markdown 编辑器" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
+    {value.match(/[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json/)?.[0] && <button onClick={() => onOpenVisualAsset?.(value.match(/[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json/)![0])}>打开图形附件</button>}
+  </>,
+}));
+vi.mock('./VisualAssetDialog', () => ({
+  VisualAssetDialog: ({ asset, onSave, onClose }: { asset: { content: string }; onSave: (content: string) => Promise<void>; onClose: () => void }) => <section role="dialog" aria-label="合成图形编辑器">
+    <textarea aria-label="合成图形源" defaultValue={asset.content} />
+    <button onClick={() => onSave((document.querySelector('[aria-label="合成图形源"]') as HTMLTextAreaElement).value)}>保存合成图形</button>
+    <button onClick={onClose}>关闭合成图形</button>
+  </section>,
 }));
 
 import { NotesPage } from './NotesPage';
@@ -137,6 +146,51 @@ describe('NotesPage', () => {
     expect(editor.value).toBe('# Current\n');
     fireEvent.click(screen.getByRole('button', { name: '使用此版本' }));
     expect(editor.value).toBe('# Previous\n');
+  });
+
+  it.each([
+    { kind: 'mindmap' as const, button: '插入思维导图', filename: '11111111111111111111111111111111.mindmap.json' },
+    { kind: 'excalidraw' as const, button: '插入自由画板', filename: '22222222222222222222222222222222.excalidraw.json' },
+  ])('creates, saves, closes, reopens and saves a $kind source again', async ({ kind, button, filename }) => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    let visual = '';
+    let assetVersion = 1;
+    const savedNote = { ...note, etag: 'b'.repeat(64) };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (url.endsWith(`/visual-assets/${kind}`) && init?.method === 'POST') {
+        visual = JSON.parse(String(init.body)).content;
+        return new Response(JSON.stringify({ filename, etag: 'v1' }), { status: 200 });
+      }
+      if (url.endsWith(`/attachments/${filename}`) && !init?.method) return new Response(visual, { status: 200, headers: { ETag: `"v${assetVersion}"` } });
+      if (url.endsWith(`/attachments/${filename}`) && init?.method === 'PUT') {
+        visual = JSON.parse(String(init.body)).content; assetVersion += 1;
+        return new Response(JSON.stringify({ etag: `v${assetVersion}` }), { status: 200 });
+      }
+      if (init?.method === 'PUT') return new Response(JSON.stringify(savedNote), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    fireEvent.click(await screen.findByRole('button', { name: button }));
+    await screen.findByRole('dialog', { name: '合成图形编辑器' });
+    expect(await screen.findByRole('button', { name: '打开图形附件' })).toBeTruthy();
+    const editor = screen.getByLabelText('合成图形源') as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: '{"data":{"text":"first edit"},"children":[]}' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存合成图形' }));
+    await waitFor(() => expect(visual).toContain('first edit'));
+    fireEvent.click(screen.getByRole('button', { name: '关闭合成图形' }));
+    fireEvent.click(screen.getByRole('button', { name: '打开图形附件' }));
+    const reopened = await screen.findByLabelText('合成图形源') as HTMLTextAreaElement;
+    expect(reopened.value).toContain('first edit');
+    fireEvent.change(reopened, { target: { value: '{"data":{"text":"second edit"},"children":[]}' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存合成图形' }));
+    await waitFor(() => expect(visual).toContain('second edit'));
+    expect(assetVersion).toBe(3);
   });
 
 });

@@ -1,6 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { MarkdownEditor } from './MarkdownEditor';
-import { notesApi, type Note, type NoteCollection } from './api/notes';
+import { notesApi, type Note, type NoteCollection, type VisualAsset, type VisualKind } from './api/notes';
+import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
+
+const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module) => ({ default: module.VisualAssetDialog })));
 
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
@@ -15,9 +18,12 @@ export function NotesPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [restorePreview, setRestorePreview] = useState<{ etag: string; content: string } | null>(null);
+  const [visualAsset, setVisualAsset] = useState<VisualAsset | null>(null);
+  const [creatingVisual, setCreatingVisual] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const viewRevision = useRef(0);
   const editSequence = useRef(0);
+  const visualOpenSequence = useRef(0);
   const noteRef = useRef<Note | null>(null);
   const contentRef = useRef('');
   const savedContent = useRef('');
@@ -46,7 +52,10 @@ export function NotesPage() {
     window.clearTimeout(timer.current);
     viewRevision.current += 1;
     editSequence.current += 1;
+    visualOpenSequence.current += 1;
+    setCreatingVisual(false);
     setRestorePreview(null);
+    setVisualAsset(null);
     return viewRevision.current;
   };
 
@@ -143,6 +152,54 @@ export function NotesPage() {
     catch { setMessage('图片附件未保存；正文仍保留。'); throw new Error('图片上传失败'); }
   };
 
+  const createVisual = async (kind: VisualKind) => {
+    const target = noteRef.current;
+    if (!target || target.read_only || creatingVisual || state !== '已保存') return;
+    const revision = viewRevision.current;
+    const body = kind === 'mindmap' ? defaultMindMap() : defaultExcalidraw();
+    setCreatingVisual(true);
+    setMessage('正在创建图形附件…');
+    try {
+      const created = await notesApi.createVisualAsset(target, kind, body);
+      if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(target)) return;
+      const reference = visualLink(kind, created.filename);
+      const current = contentRef.current;
+      change(`${current.trimEnd()}${current.trim() ? '\n\n' : ''}${reference}\n`);
+      setVisualAsset({ filename: created.filename, etag: created.etag, content: body });
+      setMessage('图形源文件已创建；Markdown 相对引用已加入正文。');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '图形附件创建失败；正文没有改变。');
+    } finally {
+      if (viewRevision.current === revision) setCreatingVisual(false);
+    }
+  };
+
+  const openVisual = async (filename: string) => {
+    const target = noteRef.current;
+    const kind = visualKindFromFilename(filename);
+    if (!target || !kind || target.read_only) return;
+    const revision = viewRevision.current;
+    const sequence = ++visualOpenSequence.current;
+    try {
+      const asset = await notesApi.readVisualAsset(target, filename);
+      if (viewRevision.current !== revision || visualOpenSequence.current !== sequence || !noteRef.current || noteKey(noteRef.current) !== noteKey(target)) return;
+      setVisualAsset(asset);
+      setMessage('');
+    } catch (error) {
+      setMessage(error instanceof Error ? `图形附件无法读取：${error.message}` : '图形附件无法读取。');
+    }
+  };
+
+  const saveVisual = async (body: string) => {
+    const target = noteRef.current;
+    const asset = visualAsset;
+    if (!target || !asset) throw new Error('当前笔记或图形附件已切换，请重新打开附件。');
+    const result = await notesApi.saveVisualAsset(target, asset, body);
+    if (!noteRef.current || noteKey(noteRef.current) !== noteKey(target) || visualAsset?.filename !== asset.filename) return;
+    setVisualAsset({ ...asset, content: body, etag: result.etag });
+    setMessage('图形已保存，可关闭后再次打开继续编辑。');
+  };
+
   const restore = async () => {
     const target = noteRef.current;
     if (!target) return;
@@ -175,6 +232,10 @@ export function NotesPage() {
         <div className="notes-document-heading">
           <span>{note ? `${note.collection} / ${note.path}` : '选择笔记或新建 Draft'}</span>
           <span role="status" aria-live="polite">{state}</span>
+          {note && !note.read_only && <>
+            <button type="button" disabled={state !== '已保存' || creatingVisual} onClick={() => void createVisual('mindmap')}>插入思维导图</button>
+            <button type="button" disabled={state !== '已保存' || creatingVisual} onClick={() => void createVisual('excalidraw')}>插入自由画板</button>
+          </>}
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
         </div>
         {restorePreview && <section className="notes-restore-preview" aria-label="历史版本预览">
@@ -186,9 +247,14 @@ export function NotesPage() {
           <div className="notes-safety" role="status">此文件含有当前富文本编辑器不能安全往返的语法（{note.safety_reasons.join('、')}），原始 Markdown 保留只读。</div>
           <pre className="notes-raw-source">{content}</pre>
         </> : <MarkdownEditor key={noteKey(note)} value={content} disabled={false} onChange={change} onImagePaste={pasteImage}
+          onOpenVisualAsset={openVisual}
           assetBase={`/api/notes/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`} /> : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
         {message && <p role="alert" className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
       </section>
     </div>
+    {visualAsset && <Suspense fallback={<p role="status">正在加载图形编辑器…</p>}>
+      <VisualAssetDialog key={`${note ? noteKey(note) : ''}:${visualAsset.filename}`} kind={visualKindFromFilename(visualAsset.filename)!} asset={visualAsset}
+        onSave={saveVisual} onClose={() => setVisualAsset(null)} canSave={state === '已保存'} />
+    </Suspense>}
   </main>;
 }

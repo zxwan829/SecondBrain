@@ -7,6 +7,7 @@ import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableHeader from '@tiptap/extension-table-header';
 import TableCell from '@tiptap/extension-table-cell';
+import { visualKindFromFilename } from './visualAssets';
 
 const supportedMarkdown = (markdown: string, serialized: string) => {
   const normalize = (value: string) => value.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').split('\n')
@@ -22,7 +23,7 @@ const supportedMarkdown = (markdown: string, serialized: string) => {
   return normalize(markdown) === normalize(serialized);
 };
 
-export function MarkdownEditor({ value, disabled, onChange, onImagePaste, assetBase = '' }: { value: string; disabled: boolean; onChange: (markdown: string) => void; onImagePaste?: (file: File) => Promise<string>; assetBase?: string }) {
+export function MarkdownEditor({ value, disabled, onChange, onImagePaste, onOpenVisualAsset, assetBase = '' }: { value: string; disabled: boolean; onChange: (markdown: string) => void; onImagePaste?: (file: File) => Promise<string>; onOpenVisualAsset?: (filename: string) => void; assetBase?: string }) {
   const extensions = useMemo(() => [
     StarterKit,
     Markdown,
@@ -65,6 +66,27 @@ export function MarkdownEditor({ value, disabled, onChange, onImagePaste, assetB
     const generation = ++lifecycle.current;
     return () => { if (lifecycle.current === generation) lifecycle.current += 1; };
   }, [editor, assetBase]);
+
+  useEffect(() => {
+    if (!editor || !assetBase || !onOpenVisualAsset) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest('a');
+      if (!anchor) return;
+      try {
+        const basePath = new URL(assetBase, window.location.origin).pathname.replace(/\/$/, '');
+        const linkPath = new URL(anchor.href, window.location.origin).pathname;
+        if (!linkPath.startsWith(`${basePath}/attachments/`)) return;
+        const filename = decodeURIComponent(linkPath.slice(`${basePath}/attachments/`.length));
+        if (!visualKindFromFilename(filename)) return;
+        event.preventDefault();
+        onOpenVisualAsset(filename);
+      } catch { /* Leave malformed or external links to the browser. */ }
+    };
+    editor.view.dom.addEventListener('click', handleClick, true);
+    return () => editor.view.dom.removeEventListener('click', handleClick, true);
+  }, [editor, assetBase, onOpenVisualAsset]);
 
   useEffect(() => {
     if (!editor) return;
