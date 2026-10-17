@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D084 Journal / Task / Memory / 文件审批统一集成（本地验证）
+
+- 实时核对 GitHub `main` 为 `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583`、并行分支为 `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`、PR #37 head 为 `e5332f6fa175d0742cacbaec2fbab40ded4781a4`。在独立 clone 创建 `codex/d084-unified-integration-20261017`；合入并行分支 3 个 Journal/Task 切片提交，保留 main 侧 6 个独有提交及 D082 `personal_learning.py` 修复。处理唯一 `00-CURRENT.md` 冲突时保留 main 文本并在本轮校准；PR #37 的两个已审提交按提交粒度移植，避免把其旧分支中对 Journal/Task 的删除带入。`App.tsx` 导入冲突已合并为 Journal/Task 页面与统一 Run 审批卡契约。
+- 统一本地合成验证：Core `tests/test_personal_memory.py tests/test_personal_learning.py tests/test_journal.py tests/test_tasks.py tests/test_run_approvals.py tests/test_capture.py tests/test_web_app_bff.py` **80 passed**；Hermes Guard `tests/test_plugin.py` **22 passed**；前端 Journal/Task/审批/Capture 相关测试 **46 passed**，`npm run typecheck`、`npm run build` 通过。Core 使用隔离 Python 3.12 环境；前端依赖在临时 clone 安装，无 package lock。Starlette/httpx `TestClient` 弃用警告 1 条。`git diff --check` 通过。
+- 环境说明：初次使用系统 Python 3.9.6 收集测试失败，因现有源码的 `str | None` 注解无法由 Python 3.9 评估；未改业务源码，改用本机 Python 3.12 重跑并通过。
+- 未访问 NAS/生产配置、Secret、真实个人数据；未启动 Hermes、未调用真实或付费模型、未创建/修改生产 Session/Memory/Atlas 资产。未合并 main、未部署、未进行浏览器用户验收。当前状态为本地 DEV-TESTED，等待集成 PR 独立审查。
+
 ## 2026-10-17 — D084 集成前文档统一与多功能验收计划（仅文档）
 
 - 从 GitHub 最新 main `628bec895e8d95646b5cc583e8ffea8f7e877e10` 创建独立文档分支。只读核对 `dev/parallel-v1-next-20261017` HEAD `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`；main 独有 1 个提交，开发分支独有 3 个提交。PR #31/#34/#36 已合入该开发分支，未合入 main；PR #37 HEAD `e5332f6fa175d0742cacbaec2fbab40ded4781a4` 仍 OPEN、未合并、未部署。
