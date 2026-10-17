@@ -33,9 +33,10 @@ source: GitHub SecondBrain Monorepo
 
 **最新部署结果 / 下一步：** PR #49 已于 2026-10-17 合入 main（merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79`）。按 Issue #44 评论 #6233322671 的一次授权，仅部署 App：使用 `web-app/Dockerfile.app` 与对应 `web-app` 构建上下文，镜像 `secondbrain-app:pr49-fa2ad412-full` / Image ID `sha256:1c7ed4cb953951eb2ab8691516651d170171305af6172326174e64f4115dd6ca`；120 秒健康门槛通过。隔离无网络 ASGI 检查和生产只读 HTTP smoke 均验证 `/chat 200 text/html`、2 个静态资源 200、匿名 Chat API 401 JSON。Hermes/Guard 容器与镜像未变化。具体运行快照、Compose 哈希、回滚点和未通过的业务验收项见 `Environment-Baseline.md`。**唯一 NEXT：** 恢复浏览器自动化/登录交互后，用新建空白 Hermes Session 和唯一合成内容完成 Journal/Task 系统操作卡、刷新恢复、会话隔离与幂等重试验收；不要读取或改动现有私人会话、Journal/Task 内容。业务合成验收仍未通过，不调用真实/付费模型，不修改或清理历史/真实 Journal、Task、Session、Memory、Atlas 数据。
 
-### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批
+### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批演示（已合并、未部署）
 
-PR #54 原分支 `codex/d085-c2a-unified-inbox-20261017` 已同步最新 main `684bb45dbcc58ce7877d9ba3f55643fb80c17a38`；同步保留 main 中 D084 最新部署/验收证据、唯一 NEXT，以及 D086/Issue #55 规则。原 Capture Inbox 的多格式预览、原始来源详情、错误说明、`partial_success` 重试、Organizer 状态/错误和显式“立即整理”完整保留，Notes Drafts 嵌入其下；合并远端分支更新时选择保留远端对 App 与 Inbox 页面冲突的完整 Capture 主页面结构。分类只使用明确标记的固定合成演示词表（不是 Issue #55 真实/持久词库）；未知标签作为待独立词库确认候选，“待整理”是状态而非标签；对本页手动移除的标签和修正类型在重新生成时予以保护。既有类型/标签按规则无需逐条审批，但演示不写入笔记；日记/Review/项目建议只提供逐项编辑及本页模拟同意/拒绝，明确未提交、未持久、未排队或执行，刷新后消失。Notes 和审批无 Core 写通道变化。定向前端 3 个文件 54 项、typecheck、build 与 diff-check 通过；Build 保留大型 CanvasEditor chunk 警告。未访问真实笔记、真实模型、NAS 或生产配置；未部署、未合并或用户验收。此并行状态不覆盖 D084 唯一 NEXT。
+PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`）。保留原 Capture Inbox 预览、下载、partial_success 重试、错误/状态、刷新及 Organizer 入口；同页新增 Notes Drafts 子视图与确定性 Mock 类型/标签/去向建议。五种演示类型、固定演示标签与未识别标签候选明确区分，状态词不作标签；按钮「模拟同意（仅本页）」不会持久化决策或执行写入/移动。前端定向 45 项、typecheck/build/diff-check 据 Codex 报告通过，未独立重跑。**MERGED / NOT DEPLOYED / NOT PERSISTENT APPROVAL / NOT USER ACCEPTED**；后续来源安全审批持久化和 Issue #55 正式词汇库仍需独立设计。本并行状态不改变上方 D084 唯一 NEXT；不自动授权真实 Vault、付费模型或 NAS 变更。
+PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`）。保留原 Capture Inbox 预览、下载、`partial_success` 重试、错误/状态、刷新及 Organizer 入口；同页新增 Notes Drafts 子视图与确定性 Mock 类型/标签/去向建议。五种演示类型、固定演示标签与未识别标签候选明确区分，状态词不作标签；本页模拟同意不会持久化决策或执行写入/移动。D086 / Issue #55 词表及 D084 唯一 NEXT 仍按 main 保留。此后 PR #54 已关闭；原分支新增提交 `6d55bb892362105a2717b31dff0a1bb772d1e408`，包含人工修正保护及 54 项定向回归（typecheck/build/diff-check 通过），**该提交不在 main，尚待决定如何复审纳入**。本轮未访问真实笔记、真实模型、NAS 或生产配置；未部署或用户验收。
 
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 
