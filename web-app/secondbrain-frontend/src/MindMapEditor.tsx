@@ -14,21 +14,34 @@ export function MindMapEditor({ content, onChange }: { content: string; onChange
     let cancelled = false;
     let instance: MindMapInstance | null = null;
     let capture: (() => void) | null = null;
-    void import('simple-mind-map').then(({ default: MindMap }) => {
+    void Promise.all([import('simple-mind-map'), import('simple-mind-map/src/plugins/Drag.js')]).then(([{ default: MindMap }, { default: Drag }]) => {
       if (cancelled || !container.current) return;
       const parsed = JSON.parse(initial.current) as Record<string, unknown>;
-      const root = parsed as MindMapTree;
+      // getData(true) returns { layout, root, theme, view }; older default
+      // assets used the node tree directly. Accept both persisted shapes.
+      const root = (parsed.root ?? parsed) as MindMapTree;
       if (!root || typeof root.data?.text !== 'string' || !Array.isArray(root.children)) {
         throw new Error('脑图源文件结构无效。');
       }
+      const theme = typeof parsed.theme === 'string'
+        ? parsed.theme
+        : parsed.theme && typeof parsed.theme === 'object' && 'template' in parsed.theme && typeof parsed.theme.template === 'string'
+          ? parsed.theme.template
+          : 'default';
+      const themeConfig = parsed.theme && typeof parsed.theme === 'object' && 'config' in parsed.theme
+        ? parsed.theme.config
+        : undefined;
+      MindMap.usePlugin(Drag);
       instance = new MindMap({
-        ...parsed,
         el: container.current,
         data: root,
         layout: typeof parsed.layout === 'string' ? parsed.layout : 'mindMap',
-        theme: 'default',
+        theme,
+        themeConfig,
         fit: true,
       });
+      const view = (instance as MindMapInstance & { view?: { setTransformData: (data: unknown) => void } }).view;
+      if (parsed.view && view) view.setTransformData(parsed.view);
       mapRef.current = instance;
       capture = () => {
         if (mapRef.current === instance) onChangeRef.current(JSON.stringify(instance?.getData(true), null, 2));

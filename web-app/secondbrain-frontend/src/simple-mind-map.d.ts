@@ -12,10 +12,17 @@ declare module 'simple-mind-map' {
     off(name: string, callback: (...args: unknown[]) => void): void;
     destroy(): void;
     resize(): void;
+    view?: { setTransformData(data: unknown): void };
   };
 
   const MindMap: {
     new(options: Record<string, unknown> & { el: HTMLElement; data: MindMapTree }): MindMapInstance;
+    usePlugin(plugin: unknown): typeof MindMap;
   };
   export default MindMap;
+}
+
+declare module 'simple-mind-map/src/plugins/Drag.js' {
+  const Drag: unknown;
+  export default Drag;
 }

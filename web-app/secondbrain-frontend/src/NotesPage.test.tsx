@@ -9,11 +9,16 @@ vi.mock('./MarkdownEditor', () => ({
   </>,
 }));
 vi.mock('./VisualAssetDialog', () => ({
-  VisualAssetDialog: ({ asset, onSave, onClose }: { asset: { content: string }; onSave: (content: string) => Promise<void>; onClose: () => void }) => <section role="dialog" aria-label="合成图形编辑器">
-    <textarea aria-label="合成图形源" defaultValue={asset.content} />
-    <button onClick={() => onSave((document.querySelector('[aria-label="合成图形源"]') as HTMLTextAreaElement).value)}>保存合成图形</button>
-    <button onClick={onClose}>关闭合成图形</button>
-  </section>,
+  VisualAssetDialog: ({ asset, onSave, onClose }: { asset: { content: string }; onSave: (content: string) => Promise<void>; onClose: () => void }) => {
+    const [saving, setSaving] = React.useState(false);
+    const [value, setValue] = React.useState(asset.content);
+    const save = async () => { setSaving(true); try { await onSave(value); } finally { setSaving(false); } };
+    return <section role="dialog" aria-label="合成图形编辑器">
+      <textarea aria-label="合成图形源" value={value} onChange={(event) => setValue(event.target.value)} />
+      <button disabled={saving} onClick={() => void save()}>保存合成图形</button>
+      <button disabled={saving} onClick={onClose}>关闭合成图形</button>
+    </section>;
+  },
 }));
 
 import { NotesPage } from './NotesPage';
@@ -191,6 +196,63 @@ describe('NotesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存合成图形' }));
     await waitFor(() => expect(visual).toContain('second edit'));
     expect(assetVersion).toBe(3);
+  });
+
+  it('blocks note switching until a graph attachment save settles', async () => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    let resolveVisual!: (response: Response) => void;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }, { id: 'personal', kind: 'authorized' }] }), { status: 200 });
+      if (url === '/api/notes/drafts' || url === '/api/notes/personal') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (url.endsWith('/visual-assets/mindmap') && init?.method === 'POST') return new Response(JSON.stringify({ filename: '11111111111111111111111111111111.mindmap.json', etag: 'v1' }), { status: 200 });
+      if (url.endsWith('/attachments/11111111111111111111111111111111.mindmap.json') && init?.method === 'PUT') return new Promise<Response>((resolve) => { resolveVisual = resolve; });
+      if (init?.method === 'PUT') return new Response(JSON.stringify({ ...note, content: JSON.parse(String(init.body)).content, etag: 'b'.repeat(64) }), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    fireEvent.click(await screen.findByRole('button', { name: '插入思维导图' }));
+    const source = await screen.findByLabelText('合成图形源') as HTMLTextAreaElement;
+    fireEvent.change(source, { target: { value: '{"data":{"text":"pending graph"},"children":[]}' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存合成图形' }));
+    await waitFor(() => expect(resolveVisual).toBeTypeOf('function'));
+    expect(screen.getByRole('button', { name: '关闭合成图形' })).toHaveProperty('disabled', true);
+    fireEvent.change(document.getElementById('notes-collection')!, { target: { value: 'personal' } });
+    expect(screen.getByText('当前笔记正在保存，请等待保存完成后再切换。')).toBeTruthy();
+    expect(document.getElementById('notes-collection')).toHaveProperty('value', 'drafts');
+    await act(async () => { resolveVisual(new Response(JSON.stringify({ etag: 'v2' }), { status: 200 })); });
+    expect(await screen.findByText('图形已保存，可关闭后再次打开继续编辑。')).toBeTruthy();
+  });
+
+  it.each([412, 500])('keeps the inserted Markdown link visible when its reference save returns %i', async (status) => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    let referenceFailed = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (url.endsWith('/visual-assets/mindmap') && init?.method === 'POST') return new Response(JSON.stringify({ filename: '11111111111111111111111111111111.mindmap.json', etag: 'v1' }), { status: 200 });
+      if (init?.method === 'PUT' && !referenceFailed) { referenceFailed = true; return new Response(JSON.stringify({ detail: 'synthetic reference failure' }), { status }); }
+      if (init?.method === 'PUT') return new Response(JSON.stringify({ ...note, content: JSON.parse(String(init.body)).content, etag: 'b'.repeat(64) }), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    fireEvent.click(await screen.findByRole('button', { name: '插入思维导图' }));
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    await screen.findByText(/图形源文件已创建，但 Markdown 引用未确认保存；正文保留在编辑区。/);
+    expect(editor.value).toContain('attachments/11111111111111111111111111111111.mindmap.json');
+    expect(screen.queryByRole('dialog', { name: '合成图形编辑器' })).toBeNull();
+    if (status === 500) {
+      fireEvent.click(screen.getByRole('button', { name: '重试保存图形引用' }));
+      await screen.findByRole('dialog', { name: '合成图形编辑器' });
+    } else {
+      expect(screen.getByText('版本冲突')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: '重试保存图形引用' })).toBeNull();
+    }
   });
 
 });
