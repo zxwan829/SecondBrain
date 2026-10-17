@@ -1,6 +1,6 @@
 name: secondbrain-d078-guard
 version: 1.0.0
-description: Fail-closed SecondBrain terminal approval and Hermes private-path guard.
+description: Run-bound SecondBrain file-write and terminal approval, plus fail-closed Hermes private-path guard.
 kind: standalone
 provides_hooks:
   - pre_tool_call

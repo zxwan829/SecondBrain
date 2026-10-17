@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 APPROVAL_PREFIX = "SECONDBRAIN_TERMINAL_APPROVAL_V1:"
+FILE_WRITE_APPROVAL_PREFIX = "SECONDBRAIN_FILE_WRITE_APPROVAL_V1:"
 _EXECUTION_TOOLS = {"terminal", "process_manage", "execute_code"}
 _READ_TOOLS = {"read_file", "search_files", "list_directory", "directory_tree", "find_files",
                "file_info", "list_files", "glob_files"}
@@ -109,8 +110,39 @@ def _path_values(value, key=""):
     elif isinstance(value, list):
         for child in value:
             yield from _path_values(child, key)
-    elif key in _PATH_KEYS and isinstance(value, str):
+    elif key in _PATH_KEYS:
         yield value
+
+
+def _canonicalize_write_paths(args, cwd=None):
+    """Resolve each explicit write target before it is shown for approval and executed.
+
+    Hermes dispatches the same mutable argument mapping after the hook returns. Replacing
+    path-bearing arguments here makes the approved digest and the eventual tool target use
+    the same absolute, symlink-resolved paths.
+    """
+    base = Path(cwd or os.getcwd()).expanduser().resolve(strict=False)
+    target_keys = {"path", "file_path", "directory", "root", "target", "source"}
+    seen = 0
+
+    def visit(value, key=""):
+        nonlocal seen
+        if isinstance(value, dict):
+            return {child_key: visit(child, str(child_key).lower()) for child_key, child in value.items()}
+        if isinstance(value, list):
+            return [visit(child, key) for child in value]
+        if key in target_keys:
+            seen += 1
+            resolved = _resolve(value, base)
+            if resolved is None:
+                raise ValueError("write path cannot be safely resolved")
+            return str(resolved)
+        return value
+
+    normalized = visit(args)
+    if not seen:
+        raise ValueError("write path is missing")
+    return normalized
 
 
 def path_guard(tool_name, args, *, hermes_home=None, cwd=None):
@@ -248,6 +280,44 @@ def _pre_tool_call(tool_name=None, args=None, **kwargs):
     blocked = path_guard(name, arguments)
     if blocked:
         return {"action": "block", "message": blocked}
+    if name in _WRITE_TOOLS:
+        # Generic Agent writes are never implicit. The Core Run/SSE approval bridge
+        # presents the exact, normalized operation and permits only a one-call decision.
+        # Refuse if another hook could rewrite the approved arguments before dispatch.
+        if _conflicting_pre_tool_call_hooks():
+            return {"action": "block", "message": "BLOCKED: another pre_tool_call hook may alter the approved file target (file_write_binding_ambiguous)."}
+        if name == "write_file" and (set(arguments) != {"path", "content"}
+                                      or not isinstance(arguments.get("content"), str)):
+            return {"action": "block", "message": "BLOCKED: write_file arguments are outside the pinned review contract (file_write_arguments_invalid)."}
+        if name == "patch" and (arguments.get("mode") == "patch" or "patch" in arguments):
+            # v0.22.2's V4A dialect embeds one or more file names inside patch text and
+            # ignores the top-level path. Do not approve a summary path that differs from
+            # the handler's actual targets.
+            return {"action": "block", "message": "BLOCKED: multi-file patch targets cannot be verified for one approval (file_write_target_ambiguous)."}
+        if name == "patch" and (set(arguments) - {"path", "old_string", "new_string", "replace_all", "mode"}
+                                 or arguments.get("mode", "replace") != "replace"
+                                 or not isinstance(arguments.get("old_string"), str)
+                                 or not isinstance(arguments.get("new_string"), str)
+                                 or ("replace_all" in arguments and not isinstance(arguments["replace_all"], bool))):
+            return {"action": "block", "message": "BLOCKED: patch arguments are outside the pinned single-target review contract (file_write_arguments_invalid)."}
+        try:
+            normalized = _canonicalize_write_paths(arguments)
+            blocked = path_guard(name, normalized)
+        except Exception:
+            return {"action": "block", "message": "BLOCKED: file write target could not be verified (file_write_target_unavailable)."}
+        if blocked:
+            return {"action": "block", "message": blocked}
+        # The dispatcher uses this same dictionary after hooks complete. Mutating it
+        # here ensures the tool receives exactly the path represented by the approval.
+        arguments.clear()
+        arguments.update(normalized)
+        message = FILE_WRITE_APPROVAL_PREFIX + json.dumps(
+            {"schema": 1, "tool": name, "arguments": arguments},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        if len(message) > _APPROVAL_ARG_MAX:
+            return {"action": "block", "message": "BLOCKED: file write request exceeds the review limit (file_write_review_too_large)."}
+        return {"action": "approve", "message": message,
+                "rule_key": "secondbrain-file-write:" + secrets.token_hex(24)}
     return None
 
 

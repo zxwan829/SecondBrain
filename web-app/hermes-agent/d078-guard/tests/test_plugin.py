@@ -73,6 +73,50 @@ class D078PluginTests(unittest.TestCase):
         self.assertIsNone(plugin.path_guard("write_file", {"path": str(self.business / "capture.md")},
                                             hermes_home=self.home))
 
+    def test_generic_file_write_waits_for_run_approval_and_binds_resolved_target(self):
+        alias = self.root / "capture-alias.md"
+        alias.symlink_to(self.business / "capture.md")
+        args = {"path": str(alias), "content": "synthetic replacement"}
+        with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False):
+            first = plugin.pre_tool_call("write_file", args)
+            second = plugin.pre_tool_call("write_file", {"path": str(alias), "content": "synthetic replacement"})
+        self.assertEqual(first["action"], "approve")
+        self.assertTrue(first["message"].startswith(plugin.FILE_WRITE_APPROVAL_PREFIX))
+        self.assertEqual(args["path"], str((self.business / "capture.md").resolve()))
+        self.assertNotEqual(first["rule_key"], second["rule_key"])
+        request = json.loads(first["message"][len(plugin.FILE_WRITE_APPROVAL_PREFIX):])
+        self.assertEqual(request, {"schema": 1, "tool": "write_file", "arguments": args})
+
+    def test_sensitive_skill_and_unverifiable_writes_block_before_approval(self):
+        with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False), \
+             patch.object(plugin, "_hermes_homes", return_value=[self.home]):
+            sensitive = plugin.pre_tool_call("write_file", {
+                "path": str(self.home / "config.yaml"), "content": "synthetic"})
+            skill = plugin.pre_tool_call("patch", {
+                "path": str(self.home / "skills/demo/SKILL.md"), "old_string": "a", "new_string": "b"})
+            missing = plugin.pre_tool_call("patch", {"mode": "patch", "patch": "*** Begin Patch"})
+        for result in (sensitive, skill, missing):
+            self.assertEqual(result["action"], "block")
+        self.assertIn("hermes_private_path", sensitive["message"])
+        self.assertIn("skills_write_gate", skill["message"])
+        self.assertIn("path_guard_missing", missing["message"])
+        with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False):
+            multi_file = plugin.pre_tool_call("patch", {
+                "mode": "patch", "path": str(self.business / "capture.md"), "patch": "*** Update File: other.md"})
+            altered = plugin.pre_tool_call("write_file", {
+                "path": str(self.business / "capture.md"), "content": "x", "cross_profile": True})
+        self.assertEqual(multi_file["action"], "block")
+        self.assertIn("file_write_target_ambiguous", multi_file["message"])
+        self.assertEqual(altered["action"], "block")
+        self.assertIn("file_write_arguments_invalid", altered["message"])
+
+    def test_file_write_blocks_if_another_pre_tool_hook_could_rewrite_target(self):
+        with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=True):
+            result = plugin.pre_tool_call("write_file", {
+                "path": str(self.business / "capture.md"), "content": "synthetic"})
+        self.assertEqual(result["action"], "block")
+        self.assertIn("file_write_binding_ambiguous", result["message"])
+
     def test_generic_file_write_cannot_bypass_skill_write_approval(self):
         self.assertIn("skills_write_gate", plugin.path_guard("write_file", {
             "path": str(self.home / "skills/demo/SKILL.md")}, hermes_home=self.home))

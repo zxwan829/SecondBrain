@@ -9,7 +9,7 @@ import todayLandscapeUrl from './assets/today-lake-background.png';
 import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 import { JournalPage } from './JournalPage';
 import { TaskPage } from './TaskPage';
-import { parseTerminalApproval, type TerminalApprovalCard } from './chat-approval';
+import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
 import { isExplicitJournalIntent } from './journal-intent';
 import { parseExplicitTaskCommand } from './task-intent';
@@ -695,7 +695,7 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [runId, setRunId] = useState('');
-  const [pendingApproval, setPendingApproval] = useState<TerminalApprovalCard | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<RunToolApprovalCard | null>(null);
   const [approvalResolving, setApprovalResolving] = useState(false);
   const [inputMode, setInputMode] = useState<'chat' | 'capture'>('chat');
   const [pendingAttachment, setPendingAttachment] = useState<File | null>(null);
@@ -916,10 +916,10 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
           const failure = typeof payload.error === 'string' && payload.error ? ` · ${chatFailureLabel(payload.error, locale)}` : failed ? (en ? ' · tool reported an error' : ' · 工具报告错误') : '';
           setProgress(`${chatToolStageLabel(eventName.replace('tool.', ''), locale)}: ${name}${detail}${failure}`);
         } else if (eventName === 'approval.request') {
-          const card = parseTerminalApproval(payload, activeRun, sessionId);
+          const card = parseRunToolApproval(payload, activeRun, sessionId);
           if (card) {
             setPendingApproval(card); setApprovalResolving(false);
-            setProgress(en ? 'Terminal action is waiting for your approval.' : '终端操作等待你的审批。');
+            setProgress(en ? 'A file or terminal action is waiting for your approval.' : '文件或终端操作等待你的审批。');
           } else {
             setError(en ? 'An invalid approval request was blocked.' : '无效审批请求已被拦截。');
           }
@@ -969,7 +969,7 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
     } finally { abortRef.current = null; setRunId(''); setBusy(false); }
   };
 
-  const resolveTerminalApproval = async (choice: 'once' | 'deny') => {
+  const resolveRunToolApproval = async (choice: 'once' | 'deny') => {
     const approval = pendingApproval;
     if (!approval || approvalResolving) return;
     setApprovalResolving(true);
@@ -1037,15 +1037,17 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
       <div className="chat-message-list">{messages.map((message) => <article key={message.id} className={`chat-message ${message.role}`}><span>{message.role === 'user' ? (en ? 'You' : '你') : 'Hermes'}</span><p>{message.text || (busy && message.role === 'assistant' ? progress : '')}</p></article>)}{!messages.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
       {progress && <div className="chat-progress" role="status">{progress}</div>}{journalNotice && <p className="chat-progress" role="status">{journalNotice}</p>}{taskNotice && <p className="chat-progress" role="status">{taskNotice}</p>}{error && <p className="chat-error" role="alert">{error}</p>}
       {pendingApproval && <section className="terminal-approval-card" aria-labelledby="terminal-approval-title">
-        <h3 id="terminal-approval-title">{en ? 'Terminal action approval' : '终端操作审批'}</h3>
+        <h3 id="terminal-approval-title">{en ? 'Run action approval' : '运行操作审批'}</h3>
         <p>{pendingApproval.scope}</p>
-        <p>{en ? 'Review the exact request. Approval applies once to this Run only.' : '请核对以下完整请求；批准仅对本次 Run 生效。'}</p>
+        <p>{en ? 'Review the exact request. Approval applies once to this Run and this tool call only.' : '请核对完整请求；批准仅对本次 Run 的这一次工具调用生效。'}</p>
         <pre>{pendingApproval.command}</pre>
         {pendingApproval.workdir && <p>{en ? 'Working directory: ' : '工作目录：'}<code>{pendingApproval.workdir}</code></p>}
-        <details><summary>{en ? 'All tool arguments' : '完整工具参数'}</summary><pre>{JSON.stringify(pendingApproval.arguments, null, 2)}</pre></details>
-        <p className="terminal-approval-warning">{en ? 'This is not an OS sandbox. The approved command runs with Hermes worker permissions; an executable may start other programs or access files on its own.' : '这不是操作系统沙箱。获批命令会以 Hermes worker 的系统权限运行；可执行程序仍可能自行启动其他程序或访问文件。'}</p>
-        <div><button type="button" disabled={approvalResolving} onClick={() => void resolveTerminalApproval('once')}>{en ? 'Approve once' : '批准一次'}</button>
-          <button type="button" disabled={approvalResolving} onClick={() => void resolveTerminalApproval('deny')}>{en ? 'Reject' : '拒绝'}</button></div>
+        <details open={pendingApproval.tool === 'write_file' || pendingApproval.tool === 'patch'}><summary>{en ? 'All tool arguments' : '完整工具参数'}</summary><pre>{JSON.stringify(pendingApproval.arguments, null, 2)}</pre></details>
+        {pendingApproval.tool === 'terminal' || pendingApproval.tool === 'process_manage' || pendingApproval.tool === 'execute_code'
+          ? <p className="terminal-approval-warning">{en ? 'This is not an OS sandbox. The approved action runs with Hermes worker permissions.' : '这不是操作系统沙箱。获批操作会以 Hermes worker 的系统权限运行。'}</p>
+          : <p className="terminal-approval-warning">{en ? 'Only this exact file operation is approved. Knowledge, Private, Hermes state, and Skills protections remain in force.' : '批准仅覆盖这一次精确文件操作；Knowledge、Private、Hermes 状态及 Skills 保护仍有效。'}</p>}
+        <div><button type="button" disabled={approvalResolving} onClick={() => void resolveRunToolApproval('once')}>{en ? 'Approve once' : '批准一次'}</button>
+          <button type="button" disabled={approvalResolving} onClick={() => void resolveRunToolApproval('deny')}>{en ? 'Reject' : '拒绝'}</button></div>
       </section>}
       <div className="unified-mode-switch" role="group" aria-label={en ? 'Input destination' : '输入去向'}><button type="button" className={inputMode === 'chat' ? 'is-active' : ''} onClick={() => setInputMode('chat')}>{en ? 'Chat' : '对话'}</button><button type="button" className={inputMode === 'capture' ? 'is-active' : ''} onClick={() => setInputMode('capture')}>{en ? 'Save to SecondBrain' : '收录到第二大脑'}</button></div>
       {inputMode === 'chat' ? <form className={`chat-composer ${chatDragOver ? 'is-drag-over' : ''}`} onSubmit={send} onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setChatDragOver(true); } }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setChatDragOver(false); }} onDrop={handleChatDrop}><textarea value={input} onChange={(event) => setInput(event.target.value)} onPaste={handleChatPaste} placeholder={en ? 'Message Hermes…' : '发送消息给 Hermes…'} rows={3} disabled={busy} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><div><small>{en ? 'Enter to send · Shift+Enter for a new line' : 'Enter 发送 · Shift+Enter 换行'}</small><button type="button" onClick={() => attachmentInput.current?.click()} disabled={busy}>{en ? '＋ Attachment' : '＋ 附件'}</button><input ref={attachmentInput} className="unified-file-input" type="file" accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp,.gif,.wav,.mp3,.m4a,.aac,.ogg,.flac" onChange={handleChatFile} />{busy ? <button type="button" onClick={() => void stop()} disabled={!runId}>{en ? 'Stop' : '停止'}</button> : <button type="submit" disabled={!input.trim() || Boolean(pendingAttachment)}>{en ? 'Send' : '发送'}</button>}</div>{pendingAttachment && <div className="chat-attachment-warning" role="status">{pendingPreview && <img src={pendingPreview} alt={pendingAttachment.name} />}<span>{pendingAttachment.name} · {(pendingAttachment.size / 1048576).toFixed(2)} MiB</span><button type="button" onClick={() => enterCaptureMode(pendingAttachment)}>{en ? 'Switch to capture' : '切换到收录'}</button><button type="button" onClick={() => { setPendingAttachment(null); setAttachmentNotice(''); }}>{en ? 'Remove' : '移除'}</button></div>}{attachmentNotice && <p className="chat-attachment-warning" role="status">{attachmentNotice}</p>}</form> : <UnifiedCaptureComposer key={pendingAttachment ? `${pendingAttachment.name}-${pendingAttachment.lastModified}` : 'capture'} locale={locale} onComplete={() => window.dispatchEvent(new Event('sb-inbox-refresh'))} onGoInbox={onGoInbox} initialFile={pendingAttachment} initialValue={input} onDraftChange={setInput} onAttachmentChange={setPendingAttachment} onAttachmentConsumed={() => setPendingAttachment(null)} />}
