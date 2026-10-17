@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MarkdownEditor } from './MarkdownEditor';
 import { notesApi, type Note } from './api/notes';
@@ -17,6 +17,30 @@ function ImageRoundTripHarness({ onSaved }: { onSaved: (note: Note) => void }) {
 }
 
 describe('MarkdownEditor', () => {
+  it('does not insert a delayed image upload after switching documents', async () => {
+    let resolveUpload!: (url: string) => void;
+    const upload = new Promise<string>((resolve) => { resolveUpload = resolve; });
+    const onSecondChange = vi.fn();
+    function SwitchingHarness() {
+      const [documentId, setDocumentId] = useState('first');
+      return <>
+        <button type="button" onClick={() => setDocumentId('second')}>切换笔记</button>
+        <MarkdownEditor key={documentId} value={`# ${documentId}\n`} disabled={false}
+          onChange={documentId === 'second' ? onSecondChange : vi.fn()} onImagePaste={() => upload}
+          assetBase={`/api/notes/drafts/${documentId}`} />
+      </>;
+    }
+    const { container } = render(<SwitchingHarness />);
+    await waitFor(() => expect(container.querySelector('.tiptap')).toBeTruthy());
+    const image = new File(['synthetic'], 'synthetic.png', { type: 'image/png' });
+    fireEvent.paste(container.querySelector('.tiptap') as HTMLElement, { clipboardData: { files: [image], getData: () => '' } });
+    fireEvent.click(screen.getByRole('button', { name: '切换笔记' }));
+    await screen.findByRole('heading', { level: 1, name: 'second' });
+    await act(async () => { resolveUpload('/api/notes/drafts/first/attachments/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'); await upload; });
+    expect(container.querySelector('.tiptap img')).toBeNull();
+    expect(onSecondChange).not.toHaveBeenCalled();
+  });
+
   it('opens ordinary Markdown structure without dropping its main blocks', async () => {
     const onChange = vi.fn();
     const { container } = render(<MarkdownEditor value={'# Heading\n\n**bold text**\n\n- first\n- second\n\n> quote\n\n[link](https://example.com)\n\nline one  \nline two\n\n`inline code`\n\n```js\nconst n = 1;\n```\n\n\\*escaped literal\\*\n\n![image](attachments/sample.png)\n\n| Name | Value |\n| --- | --- |\n| one | 1 |\n'} disabled={false} onChange={onChange} />);

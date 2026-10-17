@@ -31,6 +31,9 @@ export function MarkdownEditor({ value, disabled, onChange, onImagePaste, assetB
   ], []);
   const syncing = useRef(true);
   const rejected = useRef(false);
+  const lifecycle = useRef(0);
+  const documentIdentity = useRef(assetBase);
+  documentIdentity.current = assetBase;
   const [roundTripSafe, setRoundTripSafe] = useState(true);
   const displayMarkdown = (markdown: string) => assetBase ? markdown.replace(/\]\((attachments\/[^)]+)\)/g, `](${assetBase}/$1)`) : markdown;
   const sourceMarkdown = (markdown: string) => {
@@ -47,12 +50,21 @@ export function MarkdownEditor({ value, disabled, onChange, onImagePaste, assetB
       const image = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith('image/'));
       if (!image || !onImagePaste) return false;
       event.preventDefault();
+      const identity = assetBase;
+      const generation = lifecycle.current;
+      const targetEditor = editor;
       void onImagePaste(image).then((url) => {
-        editor?.commands.insertContent({ type: 'image', attrs: { src: url, alt: 'image' } });
+        if (lifecycle.current !== generation || documentIdentity.current !== identity || !targetEditor || targetEditor.isDestroyed) return;
+        targetEditor.commands.insertContent({ type: 'image', attrs: { src: url, alt: 'image' } });
       }).catch(() => undefined);
       return true;
     } },
     onUpdate: ({ editor: current }) => { if (!syncing.current && !rejected.current) onChange(sourceMarkdown(current.getMarkdown())); } });
+
+  useEffect(() => {
+    const generation = ++lifecycle.current;
+    return () => { if (lifecycle.current === generation) lifecycle.current += 1; };
+  }, [editor, assetBase]);
 
   useEffect(() => {
     if (!editor) return;

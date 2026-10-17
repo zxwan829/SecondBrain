@@ -22,6 +22,7 @@ export function NotesPage() {
   const contentRef = useRef('');
   const savedContent = useRef('');
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const pendingSaves = useRef(0);
 
   const setCurrent = (next: Note | null, body = '') => {
     noteRef.current = next;
@@ -34,6 +35,10 @@ export function NotesPage() {
     catch { setItems([]); setMessage('笔记列表暂时无法读取，请检查登录会话和目录授权。'); }
   }, [collection]);
   const protectUnsaved = () => {
+    if (pendingSaves.current > 0) {
+      setMessage('当前笔记正在保存，请等待保存完成后再切换。');
+      return false;
+    }
     const dirty = !!noteRef.current && contentRef.current !== savedContent.current;
     return !dirty || window.confirm('当前笔记有尚未保存的修改。离开后这些修改可能丢失，仍要继续吗？');
   };
@@ -51,7 +56,10 @@ export function NotesPage() {
     }).catch(() => setMessage('Notes 尚未配置，或当前登录会话无效。'));
   }, []);
   useEffect(() => { if (collections.some((item) => item.id === collection)) void refresh(collection); }, [collection, collections, refresh]);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(timer.current);
+    viewRevision.current += 1;
+  }, []);
 
   const open = async (path: string) => {
     if (!protectUnsaved()) return;
@@ -69,8 +77,12 @@ export function NotesPage() {
 
   const save = useCallback((target: Note, body: string, revision: number, sequence: number) => {
     const key = noteKey(target);
+    pendingSaves.current += 1;
     setState('保存中…');
     saveQueue.current = saveQueue.current.catch(() => undefined).then(async () => {
+      // A navigation can happen while this save waits behind another request.
+      // Never dispatch a queued write for a document that is no longer active.
+      if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== key) return;
       // Use the most recently confirmed ETag for this note. An older response
       // always advances that ETag before a later queued body is sent.
       const current = noteRef.current;
@@ -83,7 +95,7 @@ export function NotesPage() {
       if (contentRef.current === saved.content && editSequence.current === sequence) {
         setContent(saved.content); setState('已保存'); setMessage('');
       } else {
-        setState('未保存');
+        setState(pendingSaves.current > 1 ? '保存中…' : '未保存');
       }
       void refresh(target.collection);
     }).catch((error: unknown) => {
@@ -91,6 +103,8 @@ export function NotesPage() {
       const status = (error as Error & { status?: number }).status;
       setState(status === 412 ? '版本冲突' : '保存失败');
       setMessage(status === 412 ? '文件已在其他位置修改。当前输入仍保留；请复制未保存内容后重新载入再合并。' : '保存失败。当前输入仍保留，可检查授权后重试。');
+    }).finally(() => {
+      pendingSaves.current = Math.max(0, pendingSaves.current - 1);
     });
   }, [refresh]);
 
