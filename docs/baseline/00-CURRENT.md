@@ -14,12 +14,13 @@ source: GitHub SecondBrain Monorepo
 
 **新的 Companion MVP 门槛（D077，已批准、尚未整体实现/验收）：** 日常 Chat 无检索提示地关联长期个人记忆与可信知识；获准对话低风险学习、跨 Session 召回与纠正；精确事实回源；自然语言 Journal、简单 Task、Capture 与主动建议。原 V1 MUST 保持不变。D080 两次 GLM-4.5-Air Run 中，首轮自动学习写入通过，跨 Session 自然召回失败；D082 的情境保留修复已进入最新 main，但生产重新验证仍未完成，详见 Issue #28/#30。
 
-**总体状态：NOT DONE。** 以下状态以 2026-10-17 核验的 GitHub refs 与各 PR 证据为准；生产状态只引用 `Environment-Baseline.md` 的 2026-10-17 快照，不是本轮实时核验。PR #18 的 Hermes v0.22.2 fail-closed overlay 已在 NAS 部署并通过有限合成权限检查；Terminal 关闭、Private 未挂载、Knowledge 主目录只读（Capture 专用 inbox RW 例外不变）、Promote 关闭。真实模型记忆质量、Journal/Task 的生产运行及浏览器用户验收未完成。
+**总体状态：NOT DONE。** D084 原功能已部署并通过有限合成验收；PR #49 的 Chat Journal/Task 会话活动留痕修复已于 2026-10-17 合入 main，但尚未部署或用户验收。生产状态仍以 `Environment-Baseline.md` 最近证据为准；Terminal 关闭、Private 未挂载、Knowledge 主目录只读（Capture 专用 inbox RW 例外不变）、Promote 关闭。真实模型记忆质量与修复版浏览器验收未完成。
 
 ### 当前工作分层状态（不能互相替代）
 
 | 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
 |---|---|---|---|---|---|
+| D084 后续：Chat 内 Journal/Task 会话活动留痕（Issue #44） | PR #49 已完成 ChatGPT 独立复审并合并 | Core Journal/Task/BFF 35 项、前端 Chat/Capture/timeline 42 项通过；typecheck/build 通过。覆盖跨零点幂等、活动恢复、旧记录日期兼容与 Hermes 时间戳排序 | **已合入 main**，Merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79` | **未部署**；NAS 现有 D084 App 不含本修复 | 待修复版生产合成及浏览器用户验收；未调用真实模型 |
 | D082 个人记忆情境保留修复 | PR #32 已审；随最新 main 保留在本轮集成分支 | 本轮 Core 统一定向组中 `test_personal_learning.py` 17 项通过；此前 D080 真实召回失败不可由源码/Mock 抵消 | 基线 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 的修复未被并行切片覆盖 | 此修复是否已部署，本次可用生产快照未证明，标记 **UNKNOWN** | 生产真实召回复验未完成；浏览器验收未完成 |
 | D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | 已整合至 `codex/d084-unified-integration-20261017`（基于 main `a8019ab1…`）；PR #45 已独立复审并合入 main（merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa`） | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未做真实模型或浏览器验收 |
 | PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #37 两个已审提交已移植至 `codex/d084-unified-integration-20261017`；PR #45 已合入 main，包含 PR #37 的两项已审提交；原 PR #37 仍独立 open，勿重复合并 | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需运行时验证；无真实模型验收 |
@@ -30,11 +31,11 @@ source: GitHub SecondBrain Monorepo
 
 本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
-**唯一 NEXT（D084 用户体验与后续安全验证）：** D084 已经用户授权并完成生产定向部署，见 Issue #44 评论 #6231864344。Hermes v0.22.2 fail-closed 镜像保持不变，新版 Guard 显式目录 Plugin Doctor `--ci` 通过（1 hook / 0 tools / 0 findings），API HTTP 200；App 已切换为 `secondbrain-app:d084-c8a2b348`，healthy。Journal/Task 专用根 `1026:100 / 0700`，合成 Journal 追加/读回及 Task 创建/更新/完成/读回 PASS；原有挂载边界未变，13 个回滚快照文件通过 SHA-256 校验，合成数据已保留。**下一步先由用户进行浏览器功能体验验收**，随后再按 Issue #28/#30 的未完成项分别设计真实 Hermes 文件审批链路与跨 Session 记忆召回验证；真实或付费模型 Run 仍须单独明确授权。禁止因本次合成 PASS 宣称真实模型/用户验收完成；不清理既有 Session、Memory、Atlas 或测试条目。用户授权的五次部署尝试在首次成功后终止，余额 0。状态：MERGED / DEPLOYED / SYNTHETIC VERIFIED / NOT REAL-MODEL VERIFIED / NOT USER ACCEPTED。
+**唯一 NEXT：** PR #49 已经 ChatGPT 独立复审、于 2026-10-17 合入 main（merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79`）；当前进入**仅针对新版本 App 的生产部署准备和单独授权**：Codex 可先执行只读 NAS 预检、核对现行 App/Compose 镜像、数据挂载和回滚资产，给出最小变更与回滚清单；未获新的明确 NAS 部署授权不得切换镜像、更新 Compose 或改数据。原 D084 Guard/API 与 Journal/Task 合成验收仍有效，但会话操作卡持久化修复 **MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。部署且通过限定无模型合成验证后，再由用户浏览器验收 Chat 会话内操作记录的刷新/切换恢复。禁止调用真实/付费模型，禁止修改或清理既有 Session、Memory、Atlas、Journal/Task 测试数据。未来 GitHub PR 合并批量授权原 10 次，本次成功使用 1 次，剩余 9 次；该授权不包括 NAS 部署。
 
-## D085-C1：Notes 主应用导航接入（待审）
+### 并行开发状态：D085-C1 Notes 主应用导航接入
 
-NotesPage 通过 `/notes` 路由接入现有桌面/移动端侧栏，并支持刷新和深链。`VITE_ENABLE_NOTES` 默认关闭；显式启用后仍需 Core `GET /api/notes` 的 `notes.read` 授权成功才显示入口。笔记读写继续由 Core `notes.read` / `notes.write` 强制鉴权。NotesPage 使用懒加载；Markdown 正文仍为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，Obsidian 原生兼容性不作扩张承诺。PR #50 等待复审，按 Review #5557254254 最小修复跨页面未保存保护；这是并行开发分支状态，不取代上方 D084 唯一 NEXT。未合并、未部署、未做用户验收。D085-C2 未启动。
+PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0b875c133a314b429` 合入并处理共享 `App.tsx` 冲突。Notes 通过 `/notes` 路由接入桌面/移动侧栏；`VITE_ENABLE_NOTES` 默认关闭，显式开启仍要求 Core `notes.read` 预检成功，Notes 读写继续由 Core 权限门禁控制。NotesPage 懒加载；跨页面导航保留未保存保护。Markdown 正文为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，不扩张 Obsidian 原生兼容承诺。本轮前端定向回归 63 项、typecheck 与 build 通过；PR 仍未合并、未部署、未做用户验收；未访问真实笔记或启动 D085-C2。此并行状态不改变上方 D084 唯一 NEXT。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 

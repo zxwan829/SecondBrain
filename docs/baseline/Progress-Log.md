@@ -4,13 +4,25 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
-## 2026-10-17 — D085-C1 Notes 主应用导航接入（开发分支）
+## 2026-10-17 — D085-C1 PR #50 同步最新 main 与导航回归
 
-- 基于最新 GitHub `main` `b6342e77c717d3074f39745b4f210740367a7f2f` 建立独立 Worktree `codex/d085-c1-notes-navigation-20261017`。新增 Notes 懒加载页面路由和侧栏入口；仅在 `VITE_ENABLE_NOTES=true` 且 Core `GET /api/notes` 经 `notes.read` 授权成功后展示，拒绝/不可用时隐藏入口并将 Notes 深链退回首页。移动端复用现有菜单。未改 API/Core 鉴权。
-- 初始定向测试 `App.navigation.test.tsx`、`NotesPage.test.tsx`、`MindMapEditor.test.tsx` **17 passed**；`npm run typecheck` 与 `npm run build` 通过。构建确认 NotesPage 独立异步 chunk（530.91 kB），CanvasEditor chunk 为 2,325.54 kB 并触发 Vite 大 chunk 提示；导航入口并未把 NotesPage 静态并入主入口。`git diff --check` 通过。配套 D085-C1 文档说明本地开关、授权边界、Markdown/图形资产语义与回滚方式。初始 Commit `fbc81d2ae0464f08ee89a5ceed6cf667be1a866a` 已推送至 PR #50。
-- Review #5557254254 的 P0 已在原分支修复：NotesPage 向应用壳注册统一离开守卫，检查 Markdown dirty、失败/冲突保留的未保存正文、在途写入及图形编辑器 dirty/saving；侧栏与移动端共用入口受保护，用户拒绝浏览器后退时恢复原 Notes 历史位置。测试改为真实 NotesPage + 合成 API/编辑器替身，覆盖拒绝/确认、后退恢复、正文保存中和脑图未保存状态。P1 已恢复 D084 生产体验验收与 Issue #28/#30 后续授权门槛为唯一 NEXT，并把 D085-C1 明确记录为并行 PR 状态。
-- 复审定向测试 **21 passed**；`npm run typecheck`、`npm run build`、`git diff --check` 通过。NotesPage 仍为独立异步 chunk（531.15 kB）；CanvasEditor 为 2,325.54 kB，Vite 大 chunk 提示仍在。此次无真实笔记、NAS、生产配置或 D085-C2 操作。
-- 仅使用临时 Mock 响应；未读取或写入真实笔记、未改生产配置、未部署 NAS、未启动 C2。此分支/PR待审不代表合并、生产运行或用户验收。
+- 按 Review #5557295754，在原分支 `codex/d085-c1-notes-navigation-20261017` 合并 GitHub 最新 main `468971b49b1bf63b98930ee0b875c133a314b429`。合并保留 main 的 D084 PR #49 合并状态、唯一 NEXT（仅生产部署预检待单独授权）及 D084 Chat Journal/Task 最新证据；同时保留本 PR Notes 路由、功能开关、Core `notes.read` 门禁和未保存离开保护。`App.tsx` 手动合并 Journal「日记」命名、D084 Chat 活动导航回调与 D085 Review/Inbox 历史路由管理；CURRENT 和 Progress-Log 以 main 为底稿，补记 D085-C1 并行状态及此同步证据。
+- main 同步新增 Core Chat Journal/Task 活动持久化代码、前端 Chat 时间线与相关测试；前端 `App.navigation.test.tsx`、`NotesPage.test.tsx`、`MindMapEditor.test.tsx`、`capture-flow.test.tsx`、`chat-activity.test.ts` **63 passed**。`npm run typecheck` 与 `npm run build` 通过；NotesPage 仍为独立异步 chunk（531.15 kB），CanvasEditor 为 2,325.54 kB 并保留 Vite 大 chunk 提示。`git diff --check` 通过。此次未运行未受影响的 Core 回归。
+- 未访问 NAS、真实笔记、生产配置或 C2；未合并 main、部署或操作真实业务数据。PR #50 仍待复审及 GitHub 可合并状态确认。
+
+## 2026-10-17 — D084 PR #49 跨日 Journal 幂等与 Hermes 时间排序窄修
+
+- 按 PR #49 ChatGPT Review #5557199112，在原分支修复跨 Asia/Shanghai 日期零点的响应丢失重试：Core 使用 Journal 根目录私有全局锁串行化写入，并在权威日期 JSONL 中查找 operation ID；同键同内容返回原日期/记录，同键内容或 Session 冲突仍拒绝。没有引入旁路索引或历史数据迁移。
+- 新增 Journal Store 跨日并发唯一性回归及 BFF 跨零点响应丢失/重试回归；验证单条业务记录、同一操作活动恢复及原始 Journal 日期保留。Hermes API 原样传递上游 timestamp；前端现在保留字符串/数字，并将 ISO、Unix 秒、毫秒统一为时间线排序值。
+- 追加兼容 Review #6232338966：旧 Journal JSONL 缺少 `date` 时，重复响应/活动投影仅在内存中以所属文件名 `YYYY-MM-DD` 补日期；定向回归证明原文件字节不变，且不会在重试日期新增记录。Core `tests/test_journal.py tests/test_tasks.py tests/test_web_app_bff.py` **35 passed**；前端 `src/capture-flow.test.tsx src/chat-activity.test.ts` **42 passed**（本次未改前端，复用前次通过证据）；`npm run typecheck`、`npm run build`、`git diff --check` 通过。Core 有 1 条既有 Starlette/httpx TestClient 弃用警告。隔离测试工具生成的 `web-app/secondbrain-core/uv.lock` 保留并排除于提交。
+- 更新 CURRENT 与本日志。代码保留在 PR #49 原分支，等待 ChatGPT 对指定 Review 的复审；**DEV-TESTED / PR OPEN / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。未访问 NAS/生产数据/Secret，未运行模型或清理历史资产。
+
+## 2026-10-17 — D084 Chat Journal / Task 会话活动留痕修复（开发验证）
+
+- 按 Issue #44 评论 #6231983901，从最新 main `76872e55ce6d966628723ce4336e121b946dd768` 建立独立分支 `codex/session-bound-journal-task-activity-20261017`。Core 在 Journal/Task 的既有幂等业务记录中原子保存 session_id 与 operation_id；活动列表通过 App 鉴权及 Hermes Session 存在性检查，从权威业务记录重建成功活动，并在私有 Core state 中持久记录失败活动。旧记录无 session_id 时不迁移；Hermes 历史与 Run/SSE 未改写。
+- Chat 先用正常 API 确保 Session，再提交显式 Journal/Task 原文与操作键；将 Core 活动和 Hermes 消息按记录时间合并呈现，并在切换 Session 时隔离异步响应。sessionStorage 仅保存未确认操作的重试上下文，Core/业务记录仍是持久权威来源。操作卡呈现「系统操作」、结果、原文、日记日期/待办当前状态及导航；左侧「日志」改为「日记」。Fork 不复制来源活动；已删除/不存在 Session 的活动读请求返回 404。
+- 定向合成验证：Core `tests/test_journal.py tests/test_tasks.py tests/test_web_app_bff.py` **31 passed**，覆盖未登录、Session 存在性/隔离、幂等与跨 Session 冲突、投影写入失败后重启 Core 从 Journal 记录恢复、Task 状态更新投影、fork/delete 隔离和验证失败不显示成功。前端 `src/capture-flow.test.tsx src/chat-activity.test.ts` **41 passed**，包括 Journal/Task 操作、业务落盘后响应丢失的同键恢复、跨刷新恢复、Session 切换隔离、时间线排序，以及现有 Chat/SSE/Capture/审批交互；中间一次全组重跑有 1 项 Review 滚动测试间歇失败，单测及最终完整重跑均通过。Chat/Task/跨 Session/timeline 定向用例 **8 passed**。`npm run typecheck`、`npm run build`、`git diff --check` 通过。Core 有 1 条既有 Starlette/httpx TestClient 弃用警告。
+- Commit `8d4e56e6fad25f9ff8bae5dd9fc2e4bcfb71fcfe` 已 Push 至独立分支；PR #49 已创建并指向 `main`，当前 OPEN、未合并。**状态：DEV-TESTED / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED。** 未访问 NAS、未修改生产数据或配置、未调用模型；未写入或清理 Hermes Session/消息，也未改变 D082 记忆 SoT。后续 PR 复审后再由用户验收修复版浏览器行为。
 
 ## 2026-10-17 — D084 Journal / Task / Memory / 文件审批统一集成（本地验证）
 
