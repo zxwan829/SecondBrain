@@ -5,7 +5,6 @@ import json
 import os
 import re
 import stat
-import tempfile
 import uuid
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -111,18 +110,17 @@ class NotesStore:
         return path, path.parent
 
     @staticmethod
-    def _read(path):
-        if path.is_symlink():
-            raise HTTPException(status_code=403, detail="Symlink files are not allowed")
+    def _read_at(directory_fd, filename):
         try:
-            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Note not found")
         except OSError as exc:
             raise HTTPException(status_code=403, detail="Note could not be opened safely") from exc
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size > MAX_MARKDOWN_BYTES:
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077 or info.st_size > MAX_MARKDOWN_BYTES):
                 raise HTTPException(status_code=403, detail="Note file permissions or size are unsafe")
             with os.fdopen(fd, "rb", closefd=False) as stream:
                 data = stream.read(MAX_MARKDOWN_BYTES + 1)
@@ -132,6 +130,28 @@ class NotesStore:
             return data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(status_code=415, detail="Note is not UTF-8 Markdown") from exc
+
+    @staticmethod
+    def _open_directory(path):
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Directory could not be opened safely") from exc
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+            os.close(fd)
+            raise HTTPException(status_code=403, detail="Directory permissions are unsafe")
+        return fd
+
+    @classmethod
+    def _read(cls, path):
+        if path.is_symlink():
+            raise HTTPException(status_code=403, detail="Symlink files are not allowed")
+        directory_fd = cls._open_directory(path.parent)
+        try:
+            return cls._read_at(directory_fd, path.name)
+        finally:
+            os.close(directory_fd)
 
     @staticmethod
     def _digest(content):
@@ -196,32 +216,43 @@ class NotesStore:
             raise HTTPException(status_code=413, detail="Markdown note is too large")
 
     @staticmethod
-    def _atomic_write(path, data, exclusive=False):
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if path.parent.is_symlink():
-            raise HTTPException(status_code=403, detail="Symlink paths are not allowed")
-        fd, temp_name = tempfile.mkstemp(prefix=".notes-", dir=path.parent)
+    def _atomic_write(path, data, exclusive=False, directory_fd=None):
+        owned_fd = directory_fd is None
+        if owned_fd:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if path.parent.is_symlink():
+                raise HTTPException(status_code=403, detail="Symlink paths are not allowed")
+            directory_fd = NotesStore._open_directory(path.parent)
+        temp_name = f".notes-{uuid.uuid4().hex}.tmp"
+        fd = None
         try:
-            os.fchmod(fd, 0o600)
+            fd = os.open(temp_name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+                         0o600, dir_fd=directory_fd)
             with os.fdopen(fd, "wb") as stream:
+                fd = None
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-            if exclusive and path.exists():
-                raise HTTPException(status_code=409, detail="Note already exists")
-            os.replace(temp_name, path)
-            os.chmod(path, 0o600, follow_symlinks=False)
-            dir_fd = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
+            if exclusive:
+                try:
+                    os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+                    raise HTTPException(status_code=409, detail="Note already exists")
+                except FileNotFoundError:
+                    pass
+            os.replace(temp_name, path.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            os.chmod(path.name, 0o600, dir_fd=directory_fd, follow_symlinks=False)
+            os.fsync(directory_fd)
         except Exception:
             try:
-                os.unlink(temp_name)
+                os.unlink(temp_name, dir_fd=directory_fd)
             except FileNotFoundError:
                 pass
             raise
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if owned_fd:
+                os.close(directory_fd)
 
     def update(self, collection, relative, content, expected):
         if collection not in self.roots:
@@ -230,55 +261,85 @@ class NotesStore:
         if markdown_safety(content):
             raise HTTPException(status_code=422, detail="This Markdown contains unsupported syntax and cannot be saved through the rich-text editor")
         path, directory = self._path(collection, relative, create=collection == "drafts")
-        lock_path = directory / ".notes.lock"
+        directory_fd = self._open_directory(directory)
         try:
-            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            lock_fd = os.open(directory / ".notes.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except OSError as exc:
+            os.close(directory_fd)
             raise HTTPException(status_code=403, detail="Note lock could not be opened safely") from exc
+        history_fd = None
         try:
             lock_info = os.fstat(lock_fd)
             if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.geteuid()
                     or lock_info.st_mode & 0o077):
                 raise HTTPException(status_code=403, detail="Note lock permissions are unsafe")
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            current = self._read(path)
+            current = self._read_at(directory_fd, path.name)
             current_etag = self._digest(current)
             if not expected or expected.strip('"') != current_etag:
                 raise HTTPException(status_code=412, detail="Note changed; reload before saving")
             if markdown_safety(current):
                 raise HTTPException(status_code=422, detail="This Markdown contains unsupported syntax and is read-only")
-            history = directory / ".history"
-            history.mkdir(mode=0o700, exist_ok=True)
-            if history.is_symlink():
-                raise HTTPException(status_code=403, detail="History path cannot be a symlink")
-            previous = history / f"{current_etag}.md"
-            if not previous.exists():
-                self._atomic_write(previous, current.encode("utf-8"), exclusive=True)
-            elif previous.is_symlink() or self._read(previous) != current:
-                raise HTTPException(status_code=409, detail="History entry is not safe to replace")
-            self._atomic_write(path, content.encode("utf-8"))
+            try:
+                os.mkdir(".history", mode=0o700, dir_fd=directory_fd)
+            except FileExistsError:
+                pass
+            history_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                 | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            history_info = os.fstat(history_fd)
+            if not stat.S_ISDIR(history_info.st_mode) or history_info.st_uid != os.geteuid() or history_info.st_mode & 0o077:
+                raise HTTPException(status_code=403, detail="History directory permissions are unsafe")
+            previous_name = f"{current_etag}.md"
+            try:
+                previous = self._read_at(history_fd, previous_name)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                self._atomic_write(directory / ".history" / previous_name, current.encode("utf-8"),
+                                   exclusive=True, directory_fd=history_fd)
+            else:
+                if previous != current:
+                    raise HTTPException(status_code=409, detail="History entry is not safe to replace")
+            self._atomic_write(path, content.encode("utf-8"), directory_fd=directory_fd)
         finally:
+            if history_fd is not None:
+                os.close(history_fd)
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
                 os.close(lock_fd)
+                os.close(directory_fd)
         return {"collection": collection, "path": relative, "content": content, "etag": self._digest(content),
                 "read_only": False, "safety_reasons": []}
 
     def history(self, collection, relative):
         _, directory = self._path(collection, relative)
-        history = directory / ".history"
-        if history.is_symlink():
-            raise HTTPException(status_code=403, detail="History path cannot be a symlink")
-        if not history.exists():
-            return {"versions": []}
-        versions = []
-        for item in sorted(history.glob("*.md"), key=lambda entry: entry.lstat().st_mtime_ns)[-20:]:
-            if item.is_symlink() or not re.fullmatch(r"[0-9a-f]{64}\.md", item.name):
-                continue
-            content = self._read(item)
-            versions.append({"etag": item.stem, "content": content})
-        return {"versions": versions}
+        directory_fd = self._open_directory(directory)
+        try:
+            try:
+                history_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                     | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            except FileNotFoundError:
+                return {"versions": []}
+            except OSError as exc:
+                raise HTTPException(status_code=403, detail="History directory could not be opened safely") from exc
+            try:
+                info = os.fstat(history_fd)
+                if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                    raise HTTPException(status_code=403, detail="History directory permissions are unsafe")
+                names = [name for name in os.listdir(history_fd) if re.fullmatch(r"[0-9a-f]{64}\.md", name)]
+                candidates = sorted(names, key=lambda name: os.stat(name, dir_fd=history_fd, follow_symlinks=False).st_mtime_ns)[-20:]
+                versions = []
+                for name in candidates:
+                    content = self._read_at(history_fd, name)
+                    if self._digest(content) != name[:-3]:
+                        raise HTTPException(status_code=409, detail="History entry hash does not match its content")
+                    versions.append({"etag": name[:-3], "content": content})
+                return {"versions": versions}
+            finally:
+                os.close(history_fd)
+        finally:
+            os.close(directory_fd)
 
     def upload_image(self, collection, relative, filename, data):
         _, directory = self._path(collection, relative)
@@ -296,41 +357,68 @@ class NotesStore:
                 image.verify()
         except (UnidentifiedImageError, OSError, ValueError) as exc:
             raise HTTPException(status_code=415, detail="Image data is invalid") from exc
-        attachments = directory / "attachments"
-        attachments.mkdir(mode=0o700, exist_ok=True)
-        if attachments.is_symlink():
-            raise HTTPException(status_code=403, detail="Attachment path cannot be a symlink")
-        name = f"{uuid.uuid4().hex}{suffix}"
-        self._atomic_write(attachments / name, data, exclusive=True)
+        directory_fd = self._open_directory(directory)
+        try:
+            try:
+                os.mkdir("attachments", mode=0o700, dir_fd=directory_fd)
+            except FileExistsError:
+                pass
+            try:
+                attachments_fd = os.open("attachments", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                         | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            except OSError as exc:
+                raise HTTPException(status_code=403, detail="Attachment path cannot be opened safely") from exc
+            try:
+                attachment_info = os.fstat(attachments_fd)
+                if (not stat.S_ISDIR(attachment_info.st_mode) or attachment_info.st_uid != os.geteuid()
+                        or attachment_info.st_mode & 0o077):
+                    raise HTTPException(status_code=403, detail="Attachment directory permissions are unsafe")
+                name = f"{uuid.uuid4().hex}{suffix}"
+                self._atomic_write(directory / "attachments" / name, data, exclusive=True,
+                                   directory_fd=attachments_fd)
+            finally:
+                os.close(attachments_fd)
+        finally:
+            os.close(directory_fd)
         return {"path": f"attachments/{name}", "url": f"/api/notes/{collection}/{relative}/attachments/{name}"}
 
     def read_attachment(self, collection, relative, filename):
         _, directory = self._path(collection, relative)
         if not re.fullmatch(r"[0-9a-f]{32}\.(?:png|jpg|gif|webp)", filename):
             raise HTTPException(status_code=400, detail="Invalid attachment name")
-        folder = directory / "attachments"
-        path = folder / filename
-        if folder.is_symlink() or path.is_symlink():
-            raise HTTPException(status_code=403, detail="Symlink attachments are not allowed")
+        directory_fd = self._open_directory(directory)
         try:
-            path.resolve(strict=True).relative_to(directory.resolve(strict=True))
-        except (ValueError, FileNotFoundError):
-            raise HTTPException(status_code=403, detail="Attachment is outside the note directory")
-        try:
-            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="Attachment not found")
-        except OSError as exc:
-            raise HTTPException(status_code=403, detail="Attachment could not be opened safely") from exc
-        try:
-            info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                    or info.st_mode & 0o077 or info.st_size > MAX_IMAGE_BYTES):
-                raise HTTPException(status_code=403, detail="Attachment permissions or size are unsafe")
-            with os.fdopen(fd, "rb", closefd=False) as stream:
-                return stream.read(MAX_IMAGE_BYTES + 1), Path(filename).suffix.lower()
+            try:
+                folder_fd = os.open("attachments", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                    | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="Attachment directory not found")
+            except OSError as exc:
+                raise HTTPException(status_code=403, detail="Symlink attachments are not allowed") from exc
+            try:
+                folder_info = os.fstat(folder_fd)
+                if (not stat.S_ISDIR(folder_info.st_mode) or folder_info.st_uid != os.geteuid()
+                        or folder_info.st_mode & 0o077):
+                    raise HTTPException(status_code=403, detail="Attachment directory permissions are unsafe")
+                try:
+                    fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=folder_fd)
+                except FileNotFoundError:
+                    raise HTTPException(status_code=404, detail="Attachment not found")
+                except OSError as exc:
+                    raise HTTPException(status_code=403, detail="Attachment could not be opened safely") from exc
+                try:
+                    info = os.fstat(fd)
+                    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                            or info.st_mode & 0o077 or info.st_size > MAX_IMAGE_BYTES):
+                        raise HTTPException(status_code=403, detail="Attachment permissions or size are unsafe")
+                    with os.fdopen(fd, "rb", closefd=False) as stream:
+                        return stream.read(MAX_IMAGE_BYTES + 1), Path(filename).suffix.lower()
+                finally:
+                    os.close(fd)
+            finally:
+                os.close(folder_fd)
         finally:
-            os.close(fd)
+            os.close(directory_fd)
 
 
 def configured_notes_store(drafts_root, authorized_roots_json=""):
@@ -340,6 +428,11 @@ def configured_notes_store(drafts_root, authorized_roots_json=""):
         roots = json.loads(authorized_roots_json or "{}")
         if not isinstance(roots, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in roots.items()):
             raise ValueError
+        # Missing Knowledge config is not evidence that an ordinary Notes root
+        # is separate from formal Knowledge. Keep Drafts available, fail closed
+        # for extra roots until Core can positively check the protected tree.
+        if roots and not os.environ.get("SB_KNOWLEDGE_ROOT", "").strip():
+            raise ValueError("SB_KNOWLEDGE_ROOT is required for ordinary Notes roots")
         store = NotesStore(drafts_root, roots)
         protected = [os.environ.get(key, "").strip() for key in
                      ("SB_KNOWLEDGE_ROOT", "SB_REVIEW_ROOT", "SB_CAPTURE_RAW_ROOT", "SB_JOURNAL_ROOT", "SB_PRIVATE_ROOT")]

@@ -1,4 +1,5 @@
 import tempfile
+import os
 import unittest
 import concurrent.futures
 from io import BytesIO
@@ -9,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from secondbrain_core.modules.notes import NotesStore, create_notes_router, markdown_safety
+from secondbrain_core.modules.notes import NotesStore, configured_notes_store, create_notes_router, markdown_safety
 
 
 class NotesStoreTests(unittest.TestCase):
@@ -145,17 +146,67 @@ class NotesStoreTests(unittest.TestCase):
         actual_write = NotesStore._atomic_write
         calls = 0
 
-        def fail_document_write(path, data, exclusive=False):
+        def fail_document_write(path, data, exclusive=False, directory_fd=None):
             nonlocal calls
             calls += 1
             if calls == 2:
                 raise OSError("synthetic disk failure")
-            return actual_write(path, data, exclusive)
+            return actual_write(path, data, exclusive, directory_fd)
 
         with patch.object(NotesStore, "_atomic_write", side_effect=fail_document_write):
             with self.assertRaises(OSError):
                 self.store.update("drafts", note["path"], "# New\n", note["etag"])
         self.assertEqual(self.store.read("drafts", note["path"])["content"], "# Original\n")
+
+    def test_authorized_roots_fail_closed_without_knowledge_root_and_reject_overlap(self):
+        drafts = Path(self.temp.name) / "draft-config"
+        drafts.mkdir(mode=0o700)
+        knowledge = Path(self.temp.name) / "knowledge"
+        knowledge.mkdir(mode=0o700)
+        ordinary = Path(self.temp.name) / "ordinary-config"
+        ordinary.mkdir(mode=0o700)
+        with patch.dict(os.environ, {"SB_KNOWLEDGE_ROOT": ""}):
+            with self.assertRaises(RuntimeError):
+                configured_notes_store(str(drafts.resolve()), '{"personal": "' + str(ordinary.resolve()) + '"}')
+        with patch.dict(os.environ, {"SB_KNOWLEDGE_ROOT": str(knowledge)}):
+            with self.assertRaises(RuntimeError):
+                configured_notes_store(str(drafts.resolve()), '{"personal": "' + str(knowledge.resolve()) + '"}')
+            self.assertIsNotNone(configured_notes_store(str(drafts.resolve()), '{"personal": "' + str(ordinary.resolve()) + '"}'))
+
+    def test_history_symlink_is_rejected_without_reading_external_content(self):
+        note = self.store.create("# History\n")
+        self.store.update("drafts", note["path"], "# Changed\n", note["etag"])
+        history = self.drafts / note["path"] / ".history"
+        target = Path(self.temp.name) / "external-history"
+        target.mkdir(mode=0o700)
+        (target / (note["etag"] + ".md")).write_text("# Outside\n")
+        (target / (note["etag"] + ".md")).chmod(0o600)
+        history.rename(history.with_name(".history-old"))
+        history.symlink_to(target, target_is_directory=True)
+        with self.assertRaises(HTTPException) as blocked:
+            self.store.history("drafts", note["path"])
+        self.assertEqual(blocked.exception.status_code, 403)
+        self.assertEqual((target / (note["etag"] + ".md")).read_text(), "# Outside\n")
+
+    def test_attachment_symlink_is_rejected_for_upload_and_read(self):
+        note = self.store.create("# Attachments\n")
+        directory = self.drafts / note["path"]
+        external = Path(self.temp.name) / "external-attachments"
+        external.mkdir(mode=0o700)
+        filename = "a" * 32 + ".png"
+        outside = external / filename
+        outside.write_bytes(b"synthetic")
+        outside.chmod(0o600)
+        (directory / "attachments").symlink_to(external, target_is_directory=True)
+        with self.assertRaises(HTTPException) as read_blocked:
+            self.store.read_attachment("drafts", note["path"], filename)
+        self.assertEqual(read_blocked.exception.status_code, 403)
+        buffer = BytesIO()
+        Image.new("RGB", (1, 1), color="red").save(buffer, format="PNG")
+        with self.assertRaises(HTTPException) as upload_blocked:
+            self.store.upload_image("drafts", note["path"], "input.png", buffer.getvalue())
+        self.assertEqual(upload_blocked.exception.status_code, 403)
+        self.assertEqual(outside.read_bytes(), b"synthetic")
 
 
 if __name__ == "__main__":

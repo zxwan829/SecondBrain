@@ -3,6 +3,7 @@ import { MarkdownEditor } from './MarkdownEditor';
 import { notesApi, type Note, type NoteCollection } from './api/notes';
 
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
+const noteKey = (value: Note) => `${value.collection}:${value.path}`;
 
 export function NotesPage() {
   const [collections, setCollections] = useState<NoteCollection[]>([]);
@@ -13,13 +14,36 @@ export function NotesPage() {
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [restorePreview, setRestorePreview] = useState<{ etag: string; content: string } | null>(null);
   const timer = useRef<number | undefined>(undefined);
-  const sequence = useRef(0);
+  const viewRevision = useRef(0);
+  const editSequence = useRef(0);
+  const noteRef = useRef<Note | null>(null);
+  const contentRef = useRef('');
+  const savedContent = useRef('');
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
 
+  const setCurrent = (next: Note | null, body = '') => {
+    noteRef.current = next;
+    contentRef.current = body;
+    savedContent.current = body;
+    setNote(next); setContent(body);
+  };
   const refresh = useCallback(async (target = collection) => {
     try { const result = await notesApi.list(target); setItems(result.items); }
     catch { setItems([]); setMessage('笔记列表暂时无法读取，请检查登录会话和目录授权。'); }
   }, [collection]);
+  const protectUnsaved = () => {
+    const dirty = !!noteRef.current && contentRef.current !== savedContent.current;
+    return !dirty || window.confirm('当前笔记有尚未保存的修改。离开后这些修改可能丢失，仍要继续吗？');
+  };
+  const beginTransition = () => {
+    window.clearTimeout(timer.current);
+    viewRevision.current += 1;
+    editSequence.current += 1;
+    setRestorePreview(null);
+    return viewRevision.current;
+  };
 
   useEffect(() => {
     void notesApi.collections().then(({ collections: value }) => {
@@ -30,61 +54,96 @@ export function NotesPage() {
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
   const open = async (path: string) => {
-    setLoading(true); setMessage(''); window.clearTimeout(timer.current);
+    if (!protectUnsaved()) return;
+    const revision = beginTransition();
+    const targetCollection = collection;
+    setLoading(true); setMessage('');
     try {
-      const loaded = await notesApi.read(collection, path);
-      setNote(loaded); setContent(loaded.content); setState('已保存');
+      const loaded = await notesApi.read(targetCollection, path);
+      if (viewRevision.current !== revision) return;
+      setCurrent(loaded, loaded.content); setState('已保存');
       setMessage(loaded.read_only ? `此文件含有当前富文本编辑器不能安全往返的语法（${loaded.safety_reasons.join('、')}），已保留原文并设为只读。` : '');
-    } catch { setMessage('笔记读取失败，原有内容未更改。'); }
-    finally { setLoading(false); }
+    } catch { if (viewRevision.current === revision) setMessage('笔记读取失败，原有内容未更改。'); }
+    finally { if (viewRevision.current === revision) setLoading(false); }
   };
 
-  const save = useCallback(async (target: Note, body: string, ticket: number) => {
+  const save = useCallback((target: Note, body: string, revision: number, sequence: number) => {
+    const key = noteKey(target);
     setState('保存中…');
-    try {
-      const saved = await notesApi.save(target, body);
-      if (sequence.current !== ticket) return;
-      setNote(saved); setContent(saved.content); setState('已保存'); setMessage('');
+    saveQueue.current = saveQueue.current.catch(() => undefined).then(async () => {
+      // Use the most recently confirmed ETag for this note. An older response
+      // always advances that ETag before a later queued body is sent.
+      const current = noteRef.current;
+      const basis = current && noteKey(current) === key ? current : target;
+      const saved = await notesApi.save(basis, body);
+      if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== key) return;
+      noteRef.current = saved;
+      savedContent.current = saved.content;
+      setNote(saved);
+      if (contentRef.current === saved.content && editSequence.current === sequence) {
+        setContent(saved.content); setState('已保存'); setMessage('');
+      } else {
+        setState('未保存');
+      }
       void refresh(target.collection);
-    } catch (error) {
-      if (sequence.current !== ticket) return;
+    }).catch((error: unknown) => {
+      if (viewRevision.current !== revision || editSequence.current !== sequence) return;
       const status = (error as Error & { status?: number }).status;
       setState(status === 412 ? '版本冲突' : '保存失败');
       setMessage(status === 412 ? '文件已在其他位置修改。当前输入仍保留；请复制未保存内容后重新载入再合并。' : '保存失败。当前输入仍保留，可检查授权后重试。');
-    }
+    });
   }, [refresh]);
 
   const change = (body: string) => {
+    contentRef.current = body;
     setContent(body); setState('未保存'); setMessage('');
-    if (!note || note.read_only) return;
+    const target = noteRef.current;
+    if (!target || target.read_only) return;
     window.clearTimeout(timer.current);
-    const ticket = ++sequence.current;
-    timer.current = window.setTimeout(() => void save(note, body, ticket), 900);
+    const sequence = ++editSequence.current;
+    const revision = viewRevision.current;
+    timer.current = window.setTimeout(() => save(target, body, revision, sequence), 900);
   };
 
   const createDraft = async () => {
+    if (!protectUnsaved()) return;
+    const revision = beginTransition();
     setLoading(true); setMessage('');
     try {
       const created = await notesApi.create('# 未命名笔记\n\n');
-      setCollection('drafts'); setNote(created); setContent(created.content); setState('已保存');
+      if (viewRevision.current !== revision) return;
+      setCollection('drafts'); setCurrent(created, created.content); setState('已保存');
       void refresh('drafts');
-    } catch { setMessage('Drafts 尚未配置，或创建失败；没有创建笔记。'); }
-    finally { setLoading(false); }
+    } catch { if (viewRevision.current === revision) setMessage('Drafts 尚未配置，或创建失败；没有创建笔记。'); }
+    finally { if (viewRevision.current === revision) setLoading(false); }
   };
 
+  const selectCollection = (next: string) => {
+    if (next === collection || !protectUnsaved()) return;
+    beginTransition(); setCollection(next); setCurrent(null); setState('已保存'); setMessage('');
+  };
   const pasteImage = async (file: File) => {
-    if (!note) throw new Error('请先创建或打开一篇笔记');
-    try { const uploaded = await notesApi.upload(note, file); return uploaded.url; }
+    const target = noteRef.current;
+    if (!target) throw new Error('请先创建或打开一篇笔记');
+    try { const uploaded = await notesApi.upload(target, file); return uploaded.url; }
     catch { setMessage('图片附件未保存；正文仍保留。'); throw new Error('图片上传失败'); }
   };
 
   const restore = async () => {
-    if (!note) return;
+    const target = noteRef.current;
+    if (!target) return;
     try {
-      const result = await notesApi.history(note);
+      const result = await notesApi.history(target);
       if (!result.versions.length) { setMessage('暂无可恢复版本。'); return; }
-      change(result.versions[result.versions.length - 1].content);
+      setRestorePreview(result.versions[result.versions.length - 1]);
+      setMessage('已载入最近的历史版本预览；当前正文尚未改变。');
     } catch { setMessage('历史版本读取失败。'); }
+  };
+  const confirmRestore = () => {
+    if (!restorePreview || !protectUnsaved()) return;
+    change(restorePreview.content);
+    setRestorePreview(null);
+    setMessage('历史版本已放入编辑区，确认保存前仍可继续修改。');
   };
 
   return <main className="notes-page">
@@ -93,7 +152,7 @@ export function NotesPage() {
     <div className="notes-layout">
       <aside className="notes-sidebar" aria-label="笔记目录">
         <label htmlFor="notes-collection">笔记目录</label>
-        <select id="notes-collection" value={collection} onChange={(event) => { setCollection(event.target.value); setNote(null); setContent(''); }}>
+        <select id="notes-collection" value={collection} onChange={(event) => selectCollection(event.target.value)}>
           {collections.map((item) => <option key={item.id} value={item.id}>{item.kind === 'drafts' ? 'Drafts' : item.id}</option>)}
         </select>
         <ul>{items.map((item) => <li key={item.path}><button type="button" onClick={() => void open(item.path)}>{item.title}</button></li>)}</ul>
@@ -104,10 +163,15 @@ export function NotesPage() {
           <span role="status" aria-live="polite">{state}</span>
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
         </div>
+        {restorePreview && <section className="notes-restore-preview" aria-label="历史版本预览">
+          <h2>最近历史版本预览</h2><pre>{restorePreview.content}</pre>
+          <button type="button" onClick={() => setRestorePreview(null)}>取消</button>
+          <button type="button" onClick={confirmRestore}>使用此版本</button>
+        </section>}
         {note ? note.read_only ? <>
           <div className="notes-safety" role="status">此文件含有当前富文本编辑器不能安全往返的语法（{note.safety_reasons.join('、')}），原始 Markdown 保留只读。</div>
           <pre className="notes-raw-source">{content}</pre>
-        </> : <MarkdownEditor value={content} disabled={false} onChange={change} onImagePaste={pasteImage}
+        </> : <MarkdownEditor key={noteKey(note)} value={content} disabled={false} onChange={change} onImagePaste={pasteImage}
           assetBase={`/api/notes/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`} /> : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
         {message && <p role="alert" className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
       </section>
