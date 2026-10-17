@@ -18,29 +18,37 @@ export type UnifiedInboxItem = {
 export type MockClassification = {
   type: string;
   tags: string[];
+  unknownTagCandidates: string[];
   reason: string;
   journalExcerpt: string;
   knowledgeReview: string;
   projectAssociation: string;
 };
 
+export const DEMO_NOTE_TYPES = ['日记', '笔记', '头脑风暴', '摘要', '会议纪要'] as const;
+export const DEMO_NOTE_TAGS = ['笔记', 'CRM', 'SecondBrain'] as const;
+const DEMO_TAG_SET = new Set<string>(DEMO_NOTE_TAGS);
+const SYSTEM_STATUSES = new Set(['待整理', '整理中', '已整理']);
+
 /** Deterministic local-only classifier. It never calls a model or external service. */
 export function suggestInboxClassification(content: string, title = ''): MockClassification {
   const text = `${title}\n${content}`;
   const journalIntent = /^\s*(?:记一下|记下来|写日记|记录一下)(?:[：:,，\s]+|$)/.test(content);
-  const type = journalIntent ? '日记'
+  const proposedType = journalIntent ? '日记'
     : /会议|纪要|参会|议程/.test(text) ? '会议纪要'
       : /头脑风暴|brainstorm|发散/.test(text) ? '头脑风暴'
         : /摘要|总结|summary/i.test(text) ? '摘要' : '笔记';
-  const tags = [...new Set(Array.from(text.matchAll(/(?:^|\s)#([\p{L}\p{N}_-]{1,40})/gu), (match) => match[1]))].slice(0, 5);
-  const project = text.match(/项目\s*[：:]\s*([^\n，,。]+)/)?.[1]?.trim()
-    || text.match(/#(SecondBrain|[A-Za-z][A-Za-z0-9_-]{2,})/)?.[1]
-    || '';
+  const type = (DEMO_NOTE_TYPES as readonly string[]).includes(proposedType) ? proposedType : '笔记';
+  const bodyTags = [...new Set(Array.from(text.matchAll(/(?:^|\s)#([\p{L}\p{N}_-]{1,40})/gu), (match) => match[1]))].slice(0, 5);
+  const tags = bodyTags.filter((tag) => DEMO_TAG_SET.has(tag));
+  const unknownTagCandidates = bodyTags.filter((tag) => !DEMO_TAG_SET.has(tag) && !SYSTEM_STATUSES.has(tag));
+  const project = text.match(/项目\s*[：:]\s*([^\n，,。]+)/)?.[1]?.trim() || '';
   const excerpt = content.trim().slice(0, 1200);
   const summary = content.trim().replace(/\s+/g, ' ').slice(0, 240);
   return {
     type,
-    tags: tags.length ? tags : ['待整理'],
+    tags,
+    unknownTagCandidates,
     reason: journalIntent ? '命中显式日记表达。'
       : type === '会议纪要' ? '内容包含会议或纪要线索。'
         : type === '头脑风暴' ? '内容包含头脑风暴线索。'

@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ChatPage, InboxPage, ReviewPage, scrollReviewItemIntoView, sortByCapturedAt } from './App';
 import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 
@@ -636,6 +636,45 @@ describe('D075.1 capture interactions', () => {
     expect(screen.getByText(/处理超时；原始文件已保留/)).toBeTruthy();
     expect(screen.queryByText(/Image OCR exceeded its time limit/)).toBeNull();
     expect(screen.getByRole('button', { name: '重试处理' })).toBeTruthy();
+  });
+
+  it('preserves Capture preview details and retries a synthetic partial-success item', async () => {
+    const capture = { capture_id: 'd'.repeat(32), source_type: 'text', input_type: 'md', captured_at: '2026-10-14T00:00:00Z', raw_path: 'raw/retry.md', review_path: null, status: 'partial_success', display_filename: 'retry.md', source_url: 'https://example.test/source', error: { code: 'processing_failed', message: 'Retry the synthetic item.' } };
+    let retryCount = 0;
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/inbox') return ok({ items: [retryCount ? { ...capture, status: 'completed' } : capture] });
+      if (url === '/api/automation/organize/status') return ok({ execution_available: false, blocked_reason: 'Synthetic test: disabled' });
+      if (url.endsWith('/preview')) return new Response('# Synthetic preview body', { status: 200 });
+      if (url.endsWith('/retry') && init?.method === 'POST') { retryCount += 1; return ok({ status: 'accepted' }); }
+      return ok({});
+    });
+    vi.stubGlobal('fetch', request);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+    expect(await screen.findByRole('heading', { name: 'retry.md' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '预览与详情' }));
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+    expect(await screen.findByText('# Synthetic preview body')).toBeTruthy();
+    expect(screen.getByText('https://example.test/source')).toBeTruthy();
+    fireEvent.click(within(screen.getByRole('dialog')).getAllByRole('button', { name: '关闭' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: '重试处理' }));
+    await waitFor(() => expect(request.mock.calls.some(([url, init]) => String(url).endsWith('/retry') && init?.method === 'POST')).toBe(true));
+    expect(await screen.findByText('已完成')).toBeTruthy();
+  });
+
+  it('loads Organizer status and exposes its controlled action only when available', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/automation/organize/status') return ok({ execution_available: true, blocked_reason: '' });
+      if (String(input) === '/api/automation/organize/run' && init?.method === 'POST') return ok({ status: 'no_new_messages' });
+      return ok({ items: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+    const run = await screen.findByRole('button', { name: '立即整理' });
+    await waitFor(() => expect((run as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(run);
+    expect(await screen.findByText('没有新增对话，无需整理。')).toBeTruthy();
+    expect(request.mock.calls.some(([url, init]) => String(url) === '/api/automation/organize/run' && init?.method === 'POST')).toBe(true);
   });
 
   it('shows the validated upload filename instead of PDF metadata and falls back to the legacy Raw filename', async () => {

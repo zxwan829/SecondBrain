@@ -2,6 +2,7 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UnifiedInboxPage } from './UnifiedInboxPage';
+import { suggestInboxClassification } from './unified-inbox';
 
 const noteId = 'synthetic-note-1';
 let created = false;
@@ -66,21 +67,38 @@ describe('UnifiedInboxPage', () => {
 
     fireEvent.click(within(noteCard).getByRole('button', { name: '生成确定性 Mock 建议' }));
     const proposals = within(noteCard).getAllByLabelText('可编辑建议');
-    expect(proposals).toHaveLength(4);
-    expect((proposals[0] as HTMLTextAreaElement).value).toMatch(/会议纪要/);
+    expect(proposals).toHaveLength(3);
+    expect((within(noteCard).getByLabelText('建议类型（固定演示词库）') as HTMLSelectElement).value).toBe('会议纪要');
+    expect(within(noteCard).getByText('已知演示标签')).toBeTruthy();
     expect(within(noteCard).getByText(/仅审批此项建议/)).toBeTruthy();
 
-    fireEvent.change(proposals[0], { target: { value: '头脑风暴\nSecondBrain, roadmap' } });
-    fireEvent.click(within(noteCard).getAllByRole('button', { name: '批准此建议' })[0]);
-    expect(await within(noteCard).findByText(/已批准待后续执行/)).toBeTruthy();
+    fireEvent.change(within(noteCard).getByLabelText('建议类型（固定演示词库）'), { target: { value: '头脑风暴' } });
+    fireEvent.click(within(noteCard).getAllByRole('button', { name: '模拟同意（仅本页）' })[0]);
+    expect(await within(noteCard).findByText(/仅本页模拟同意，未提交执行/)).toBeTruthy();
     fireEvent.click(within(noteCard).getAllByRole('button', { name: '拒绝' })[1]);
     expect(await within(noteCard).findByText('已拒绝；原始内容保留。')).toBeTruthy();
-    fireEvent.click(within(noteCard).getAllByRole('button', { name: '批准此建议' })[0]);
+    fireEvent.click(within(noteCard).getAllByRole('button', { name: '模拟同意（仅本页）' })[0]);
     await waitFor(() => expect(within(noteCard).getAllByRole('status').length).toBeGreaterThanOrEqual(2));
 
     expect(request.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
     expect(request.mock.calls.some(([url]) => /\/api\/(journal|promote|capture\/text|tasks)/.test(String(url)))).toBe(false);
     expect(request.mock.calls.filter(([url, init]) => url === '/api/notes' && init?.method === 'POST')).toHaveLength(1);
+  });
+
+  it('uses only known demo vocabulary, surfaces unknown hashtags separately, and never emits status as a tag', () => {
+    const result = suggestInboxClassification('项目：SecondBrain\n状态：待整理\n这是 #CRM #roadmap #待整理。');
+    expect(result.type).toBe('笔记');
+    expect(result.tags).toEqual(['CRM']);
+    expect(result.unknownTagCandidates).toEqual(['roadmap']);
+    expect(result.tags).not.toContain('待整理');
+    expect(result.projectAssociation).toBe('SecondBrain');
+  });
+
+  it('notes-only section does not fetch or duplicate Capture rows', async () => {
+    const request = vi.mocked(fetch);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} notesOnly />);
+    expect(await screen.findByRole('heading', { name: '笔记草稿' })).toBeTruthy();
+    expect(request.mock.calls.some(([url]) => String(url).startsWith('/api/inbox'))).toBe(false);
   });
 
   it('keeps Capture available when Notes permission is denied and reports a denied draft write', async () => {

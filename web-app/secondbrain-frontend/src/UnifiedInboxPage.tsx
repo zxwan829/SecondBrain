@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { notesApi, type NoteCollection } from './api/notes';
-import { makeUnifiedInboxId, suggestInboxClassification, type MockClassification, type UnifiedInboxItem } from './unified-inbox';
+import { DEMO_NOTE_TAGS, DEMO_NOTE_TYPES, makeUnifiedInboxId, suggestInboxClassification, type MockClassification, type UnifiedInboxItem } from './unified-inbox';
 
 type Locale = 'zh-CN' | 'en';
 type CaptureItem = {
@@ -28,30 +28,45 @@ type ProposalProps = {
   onApprove: () => void;
   onReject: () => void;
   en: boolean;
+  classificationOptions?: { type: string; tags: string[]; unknownTags: string[]; onTypeChange: (value: string) => void; onTagsChange: (value: string[]) => void };
 };
 
-function Proposal({ id, title, reason, impact, preview, value, decision, onChange, onApprove, onReject, en }: ProposalProps) {
+function Proposal({ id, title, reason, impact, preview, value, decision, onChange, onApprove, onReject, en, classificationOptions }: ProposalProps) {
   return <article className="unified-proposal" data-proposal={id}>
     <header><h4>{title}</h4><span>{en ? 'Mock AI suggestion' : '模拟 AI 建议'}</span></header>
     <p>{reason}</p>
     <p className="unified-proposal-impact">{en ? 'Impact scope' : '影响范围'}：{impact}</p>
-    <label>{en ? 'Editable proposal' : '可编辑建议'}
+    {classificationOptions ? <div className="unified-vocabulary-editor">
+      <label>{en ? 'Suggested type (fixed demo vocabulary)' : '建议类型（固定演示词库）'}
+        <select value={classificationOptions.type} onChange={(event) => classificationOptions.onTypeChange(event.target.value)} disabled={Boolean(decision)}>
+          {DEMO_NOTE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+        </select>
+      </label>
+      <fieldset disabled={Boolean(decision)}><legend>{en ? 'Known demo tags' : '已知演示标签'}</legend>
+        {DEMO_NOTE_TAGS.map((tag) => <label key={tag}><input type="checkbox" checked={classificationOptions.tags.includes(tag)} onChange={(event) => {
+          const next = event.target.checked ? [...classificationOptions.tags, tag] : classificationOptions.tags.filter((item) => item !== tag);
+          classificationOptions.onTagsChange(DEMO_NOTE_TAGS.filter((item) => next.includes(item)));
+        }} />{tag}</label>)}
+      </fieldset>
+      {classificationOptions.unknownTags.length > 0 && <p role="status">{en ? 'Unrecognized tag candidates; separate vocabulary approval is required:' : '未识别的标签候选；需单独审批词库：'} {classificationOptions.unknownTags.map((tag) => `#${tag}`).join(' ')}</p>}
+      <small>{en ? 'Synthetic fixed vocabulary only. New vocabulary is not applied by approving this content suggestion.' : '仅使用合成固定词库；批准内容建议不会批准或应用新词。'}</small>
+    </div> : <label>{en ? 'Editable proposal' : '可编辑建议'}
       <textarea value={value} onChange={(event) => onChange(event.target.value)} disabled={Boolean(decision)} rows={3} />
-    </label>
+    </label>}
     <small>{en ? 'Source preview' : '来源预览'}：{preview || (en ? 'No text preview available.' : '暂无正文预览。')}</small>
     {decision ? <p className={`unified-decision ${decision.status}`} role="status">
       {decision.status === 'rejected'
         ? (en ? 'Rejected; original retained.' : '已拒绝；原始内容保留。')
-        : (en ? 'Approved for follow-up, but no provenance-safe target writer is available. Nothing was moved or rewritten; this page-only status will reset on reload.'
-          : '已批准待后续执行：目前没有能安全保留来源引用的目标写入接口，因此未分流、未改写。此审批状态仅在本页有效，刷新后会重置。')}
+        : (en ? 'Simulated agreement on this page only; nothing was submitted or executed. This status resets on reload.'
+          : '仅本页模拟同意，未提交执行；未分流、未改写，刷新后会重置。')}
     </p> : <footer>
-      <button type="button" onClick={onApprove}>{en ? 'Approve this suggestion' : '批准此建议'}</button>
+      <button type="button" onClick={onApprove}>{en ? 'Simulate agreement on this page' : '模拟同意（仅本页）'}</button>
       <button type="button" onClick={onReject}>{en ? 'Reject' : '拒绝'}</button>
     </footer>}
   </article>;
 }
 
-export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = import.meta.env.DEV }: { locale: Locale; onReview: (reviewPath: string) => void; showSyntheticCaptureDemo?: boolean }) {
+export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = import.meta.env.DEV, notesOnly = false }: { locale: Locale; onReview: (reviewPath: string) => void; showSyntheticCaptureDemo?: boolean; notesOnly?: boolean }) {
   const en = locale === 'en';
   const [captures, setCaptures] = useState<CaptureItem[]>([]);
   const [notes, setNotes] = useState<UnifiedInboxItem[]>([]);
@@ -71,7 +86,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   const load = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
     setCaptureError(''); setNotesError('');
-    const captureTask = fetch('/api/inbox?limit=100', { credentials: 'same-origin' }).then(async (response) => {
+    const captureTask = notesOnly ? Promise.resolve([] as CaptureItem[]) : fetch('/api/inbox?limit=100', { credentials: 'same-origin' }).then(async (response) => {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return Array.isArray(payload.items) ? payload.items as CaptureItem[] : [];
@@ -107,7 +122,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       setNotesError(en ? 'Notes are unavailable under the current Core session or configuration.' : '当前 Core 会话或配置未开放 Notes；Capture 收件箱仍可单独使用。');
     }
     setLoading(false);
-  }, [en]);
+  }, [en, notesOnly]);
 
   useEffect(() => {
     void load(true);
@@ -117,7 +132,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   }, [load]);
 
   const items = useMemo(() => {
-    const captureItems = [...captures, ...syntheticCaptures].map((item) => ({
+    const captureItems = (notesOnly ? [] : [...captures, ...syntheticCaptures]).map((item) => ({
       id: makeUnifiedInboxId('capture', 'raw', item.capture_id),
       source: 'capture' as const,
       sourceRef: item.capture_id,
@@ -131,7 +146,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       reviewPath: item.review_path,
     }));
     return [...captureItems, ...notes].sort((a, b) => (b.capturedAt || '').localeCompare(a.capturedAt || '') || a.id.localeCompare(b.id));
-  }, [captures, notes, syntheticCaptures]);
+  }, [captures, notes, syntheticCaptures, notesOnly]);
 
   const createNote = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -162,7 +177,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     const value = suggestInboxClassification(item.content, item.title);
     setClassifications((current) => ({ ...current, [item.id]: value }));
     setEdits((current) => ({ ...current, [item.id]: {
-      type: value.type, tags: value.tags.join(', '), journal: value.journalExcerpt,
+      type: value.type, tags: value.tags.join(', '), unknownTags: value.unknownTagCandidates.join(', '), journal: value.journalExcerpt,
       knowledge: value.knowledgeReview, project: value.projectAssociation,
     } }));
   };
@@ -186,10 +201,11 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     return map[key] || fallback;
   };
 
-  return <section className="capture-page unified-inbox-page" aria-labelledby="unified-inbox-title">
-    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="unified-inbox-title">{text('inbox', '统一收件箱')}</h1><p className="workspace-subtitle">{text('subtitle', '')}</p><p className="unified-inbox-boundary">{text('local', '')}</p></div>
+  return <section className={notesOnly ? 'unified-notes-inbox' : 'capture-page unified-inbox-page'} aria-labelledby="unified-inbox-title">
+    {!notesOnly && <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="unified-inbox-title">{text('inbox', '统一收件箱')}</h1><p className="workspace-subtitle">{text('subtitle', '')}</p><p className="unified-inbox-boundary">{text('local', '')}</p></div>
       {showSyntheticCaptureDemo && <button type="button" className="capture-secondary" onClick={addSyntheticCapture}>{en ? 'Add synthetic Capture' : '添加合成 Capture 示例'}</button>}
-    </header>
+    </header>}
+    {notesOnly && <h2 id="unified-inbox-title">{en ? 'Notes drafts' : '笔记草稿'}</h2>}
     <form className="unified-note-create" onSubmit={(event) => void createNote(event)}>
       <h2>{text('createTitle', '')}</h2>
       <label>{en ? 'Title' : '标题'}<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={160} required /></label>
@@ -197,7 +213,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       {createError && <p role="alert" className="capture-alert">{createError}</p>}
       <button type="submit" disabled={creating || !title.trim() || !body.trim()}>{creating ? (en ? 'Saving…' : '保存中…') : text('create', '')}</button>
     </form>
-    {captureError && <p role="alert" className="capture-alert">{captureError}</p>}
+    {!notesOnly && captureError && <p role="alert" className="capture-alert">{captureError}</p>}
     {notesError && <p className="capture-processing-note" role="status">{notesError}</p>}
     <div className="inbox-list unified-inbox-list" aria-live="polite">
       {loading ? <p>{en ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => {
@@ -216,7 +232,8 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
           {item.readOnly && <p className="capture-processing-note">{en ? 'This source contains Markdown syntax that the rich-text editor cannot safely rewrite.' : '此来源包含富文本编辑器无法安全回写的 Markdown 特殊语法。'}</p>}
           <div className="inbox-links">{item.source === 'capture' && item.captureId && <a href={`/api/inbox/${encodeURIComponent(item.captureId)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>}{item.reviewPath && <button type="button" onClick={() => onReview(item.reviewPath!)}>{en ? 'Open Review' : '打开 Review'}</button>}</div>
           {!classification ? <button type="button" className="unified-suggest-button" onClick={() => suggest(item)}>{text('ai', '')}</button> : <div className="unified-suggestion-list" aria-label={en ? 'Suggestions for human approval' : '待人工逐项审批的建议'}>
-            {suggestions.map((suggestion) => <Proposal key={suggestion.kind} id={suggestion.kind} title={suggestion.title} reason={suggestion.reason} impact={suggestion.impact} preview={suggestion.preview} value={suggestion.value} en={en} decision={decisionsFor(suggestion.kind)}
+          {suggestions.map((suggestion) => <Proposal key={suggestion.kind} id={suggestion.kind} title={suggestion.title} reason={suggestion.reason} impact={suggestion.impact} preview={suggestion.preview} value={suggestion.value} en={en} decision={decisionsFor(suggestion.kind)}
+              classificationOptions={suggestion.kind === 'classification' ? { type: (DEMO_NOTE_TYPES as readonly string[]).includes(values.type || '') ? values.type || classification.type : classification.type, tags: (values.tags ?? classification.tags.join(', ')).split(/,\s*/).filter((tag) => (DEMO_NOTE_TAGS as readonly string[]).includes(tag)), unknownTags: classification.unknownTagCandidates, onTypeChange: (value) => edit(item.id, 'type', value), onTagsChange: (tags) => edit(item.id, 'tags', tags.join(', ')) } : undefined}
               onChange={(value) => edit(item.id, suggestion.kind, value)} onApprove={() => decide(item, suggestion.kind, 'approved_pending')} onReject={() => decide(item, suggestion.kind, 'rejected')} />)}
           </div>}
         </article>;
