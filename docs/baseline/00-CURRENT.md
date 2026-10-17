@@ -30,11 +30,11 @@ source: GitHub SecondBrain Monorepo
 
 本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
-**唯一 NEXT：** D085-C1 已提交为 PR #50（基于 main `b6342e77c717d3074f39745b4f210740367a7f2f`），等待独立代码审查。实现将 Notes 接入主应用导航、路由与移动端菜单，并保留默认关闭的功能开关及 Core 权限门禁；定向合成测试、typecheck 和 build 通过，详见 `Progress-Log.md`。仅使用临时合成数据；C1 不改生产配置、不部署 NAS、不访问真实笔记。PR 待审期间不得启动 C2。PR 审查完成后由用户决定是否合并及后续阶段；代码审查、测试、部署和用户验收分别记录。
+**唯一 NEXT（D084 用户体验与后续安全验证）：** D084 已经用户授权并完成生产定向部署，见 Issue #44 评论 #6231864344。Hermes v0.22.2 fail-closed 镜像保持不变，新版 Guard 显式目录 Plugin Doctor `--ci` 通过（1 hook / 0 tools / 0 findings），API HTTP 200；App 已切换为 `secondbrain-app:d084-c8a2b348`，healthy。Journal/Task 专用根 `1026:100 / 0700`，合成 Journal 追加/读回及 Task 创建/更新/完成/读回 PASS；原有挂载边界未变，13 个回滚快照文件通过 SHA-256 校验，合成数据已保留。**下一步先由用户进行浏览器功能体验验收**，随后再按 Issue #28/#30 的未完成项分别设计真实 Hermes 文件审批链路与跨 Session 记忆召回验证；真实或付费模型 Run 仍须单独明确授权。禁止因本次合成 PASS 宣称真实模型/用户验收完成；不清理既有 Session、Memory、Atlas 或测试条目。用户授权的五次部署尝试在首次成功后终止，余额 0。状态：MERGED / DEPLOYED / SYNTHETIC VERIFIED / NOT REAL-MODEL VERIFIED / NOT USER ACCEPTED。
 
 ## D085-C1：Notes 主应用导航接入（待审）
 
-NotesPage 通过 `/notes` 路由接入现有桌面/移动端侧栏，并支持刷新和深链。`VITE_ENABLE_NOTES` 默认关闭；显式启用后仍需 Core `GET /api/notes` 的 `notes.read` 授权成功才显示入口。笔记读写继续由 Core `notes.read` / `notes.write` 强制鉴权。NotesPage 使用懒加载；Markdown 正文仍为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，Obsidian 原生兼容性不作扩张承诺。PR #50 等待独立代码审查；未合并、未部署、未做用户验收。D085-C2 未启动。
+NotesPage 通过 `/notes` 路由接入现有桌面/移动端侧栏，并支持刷新和深链。`VITE_ENABLE_NOTES` 默认关闭；显式启用后仍需 Core `GET /api/notes` 的 `notes.read` 授权成功才显示入口。笔记读写继续由 Core `notes.read` / `notes.write` 强制鉴权。NotesPage 使用懒加载；Markdown 正文仍为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，Obsidian 原生兼容性不作扩张承诺。PR #50 等待复审，按 Review #5557254254 最小修复跨页面未保存保护；这是并行开发分支状态，不取代上方 D084 唯一 NEXT。未合并、未部署、未做用户验收。D085-C2 未启动。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 

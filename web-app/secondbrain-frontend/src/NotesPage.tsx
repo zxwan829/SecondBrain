@@ -8,7 +8,7 @@ const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module)
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
 
-export function NotesPage() {
+export function NotesPage({ onRegisterNavigationGuard }: { onRegisterNavigationGuard?: (guard: (() => boolean) | null) => void }) {
   const [collections, setCollections] = useState<NoteCollection[]>([]);
   const [collection, setCollection] = useState('drafts');
   const [items, setItems] = useState<{ path: string; title: string }[]>([]);
@@ -29,6 +29,7 @@ export function NotesPage() {
   const noteRef = useRef<Note | null>(null);
   const contentRef = useRef('');
   const savedContent = useRef('');
+  const visualNavigationRisk = useRef(false);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingSaves = useRef(0);
 
@@ -42,14 +43,17 @@ export function NotesPage() {
     try { const result = await notesApi.list(target); setItems(result.items); }
     catch { setItems([]); setMessage('笔记列表暂时无法读取，请检查登录会话和目录授权。'); }
   }, [collection]);
-  const protectUnsaved = () => {
+  const canNavigateAway = useCallback(() => {
     if (pendingSaves.current > 0) {
       setMessage('当前笔记正在保存，请等待保存完成后再切换。');
       return false;
     }
-    const dirty = !!noteRef.current && contentRef.current !== savedContent.current;
-    return !dirty || window.confirm('当前笔记有尚未保存的修改。离开后这些修改可能丢失，仍要继续吗？');
-  };
+    const dirty = (!!noteRef.current && contentRef.current !== savedContent.current)
+      || visualNavigationRisk.current || unpersistedVisual !== null;
+    return !dirty || window.confirm('当前笔记或图形有尚未保存的修改。离开后这些修改可能丢失，仍要继续吗？');
+  }, [unpersistedVisual]);
+  const protectUnsaved = canNavigateAway;
+  const updateVisualNavigationRisk = useCallback((risk: boolean) => { visualNavigationRisk.current = risk; }, []);
   const beginTransition = () => {
     window.clearTimeout(timer.current);
     viewRevision.current += 1;
@@ -67,6 +71,10 @@ export function NotesPage() {
       setCollections(value); if (value.length) setCollection(value[0].id);
     }).catch(() => setMessage('Notes 尚未配置，或当前登录会话无效。'));
   }, []);
+  useEffect(() => {
+    onRegisterNavigationGuard?.(canNavigateAway);
+    return () => onRegisterNavigationGuard?.(null);
+  }, [canNavigateAway, onRegisterNavigationGuard]);
   useEffect(() => { if (collections.some((item) => item.id === collection)) void refresh(collection); }, [collection, collections, refresh]);
   useEffect(() => () => {
     window.clearTimeout(timer.current);
@@ -309,7 +317,7 @@ export function NotesPage() {
     </div>
     {visualAsset && <Suspense fallback={<p role="status">正在加载图形编辑器…</p>}>
       <VisualAssetDialog key={`${note ? noteKey(note) : ''}:${visualAsset.filename}`} kind={visualKindFromFilename(visualAsset.filename)!} asset={visualAsset}
-        onSave={saveVisual} onClose={() => setVisualAsset(null)} canSave={state === '已保存'} />
+        onSave={saveVisual} onClose={() => setVisualAsset(null)} onNavigationRiskChange={updateVisualNavigationRisk} canSave={state === '已保存'} />
     </Suspense>}
   </main>;
 }

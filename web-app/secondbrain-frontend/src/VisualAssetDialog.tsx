@@ -1,14 +1,15 @@
-import React, { lazy, Suspense, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { VisualAsset, VisualKind } from './api/notes';
 
 const MindMapEditor = lazy(() => import('./MindMapEditor').then((module) => ({ default: module.MindMapEditor })));
 const CanvasEditor = lazy(() => import('./CanvasEditor').then((module) => ({ default: module.CanvasEditor })));
 
-export function VisualAssetDialog({ kind, asset, onSave, onClose, canSave = true }: {
+export function VisualAssetDialog({ kind, asset, onSave, onClose, onNavigationRiskChange, canSave = true }: {
   kind: VisualKind;
   asset: VisualAsset;
   onSave: (content: string) => Promise<void>;
   onClose: () => void;
+  onNavigationRiskChange?: (risk: boolean) => void;
   canSave?: boolean;
 }) {
   const [content, setContent] = useState(asset.content);
@@ -16,6 +17,11 @@ export function VisualAssetDialog({ kind, asset, onSave, onClose, canSave = true
   const [error, setError] = useState('');
   const savedContent = useRef(asset.content);
   const dirty = content !== savedContent.current;
+
+  useEffect(() => {
+    onNavigationRiskChange?.(dirty || saving);
+    return () => onNavigationRiskChange?.(false);
+  }, [dirty, onNavigationRiskChange, saving]);
 
   const close = () => {
     if (dirty && !window.confirm('图形有未保存的修改，仍要关闭吗？')) return;

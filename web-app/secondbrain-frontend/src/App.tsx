@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchHome, type Home } from './api/home';
 import { adaptHome, type DataKind, type ListItem } from './api/home-adapter';
 import { DEMO_KPI_DELTAS, DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
@@ -248,9 +248,13 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [error, setError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname, enableNotes));
+  const pageRef = useRef(page);
+  pageRef.current = page;
   const [routeRevision, setRouteRevision] = useState(0);
   const [notesAvailable, setNotesAvailable] = useState(false);
   const [notesGateChecked, setNotesGateChecked] = useState(!enableNotes);
+  const notesNavigationGuard = useRef<(() => boolean) | null>(null);
+  const navigationIndex = useRef(typeof history.state?.sbNavigationIndex === 'number' ? history.state.sbNavigationIndex as number : 0);
   const t = messages[locale];
 
   useEffect(() => {
@@ -262,8 +266,32 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     fetchHome().then((data) => { if (mounted) setHome(data); }).catch(() => { if (mounted) setError(true); });
     return () => { mounted = false; };
   }, []);
+  const registerNotesNavigationGuard = useCallback((guard: (() => boolean) | null) => {
+    notesNavigationGuard.current = guard;
+  }, []);
+  const pushAppPath = useCallback((path: string) => {
+    const nextIndex = navigationIndex.current + 1;
+    history.pushState({ ...history.state, sbNavigationIndex: nextIndex }, '', path);
+    navigationIndex.current = nextIndex;
+  }, []);
+
   useEffect(() => {
-    const onPop = () => { setPage(pageFromPath(location.pathname, enableNotes)); setRouteRevision((value) => value + 1); };
+    if (typeof history.state?.sbNavigationIndex !== 'number') {
+      history.replaceState({ ...history.state, sbNavigationIndex: navigationIndex.current }, '', location.href);
+    }
+  }, []);
+  useEffect(() => {
+    const onPop = (event: PopStateEvent) => {
+      const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/');
+      if (pageRef.current === 'notes' && !isNotesPath && notesNavigationGuard.current && !notesNavigationGuard.current()) {
+        const targetIndex = typeof event.state?.sbNavigationIndex === 'number' ? event.state.sbNavigationIndex as number : null;
+        const direction = targetIndex === null ? -1 : Math.sign(targetIndex - navigationIndex.current);
+        history.go(direction > 0 ? -1 : 1);
+        return;
+      }
+      if (typeof event.state?.sbNavigationIndex === 'number') navigationIndex.current = event.state.sbNavigationIndex as number;
+      setPage(pageFromPath(location.pathname, enableNotes)); setRouteRevision((value) => value + 1);
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, [enableNotes]);
@@ -282,7 +310,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   useEffect(() => {
     const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/');
     if (isNotesPath && (!enableNotes || (notesGateChecked && !notesAvailable))) {
-      history.replaceState({}, '', '/');
+      history.replaceState(history.state, '', '/');
       setPage('home');
       setRouteRevision((value) => value + 1);
     }
@@ -291,13 +319,14 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const view = useMemo(() => adaptHome(home), [home]);
   const changeLocale = () => setLocale((current) => current === 'zh-CN' ? 'en' : 'zh-CN');
   const navigate = (item: string) => {
+    if (pageRef.current === 'notes' && item !== 'notes' && notesNavigationGuard.current && !notesNavigationGuard.current()) return;
     const destination = navItems.find((entry) => entry.id === item);
     if (destination && 'route' in destination && destination.route) {
-      if (location.pathname !== destination.route || location.search) history.pushState({}, '', destination.route);
+      if (location.pathname !== destination.route || location.search) pushAppPath(destination.route);
       setPage(destination.id); setRouteRevision((value) => value + 1); setMenuOpen(false); return;
     }
     if (page !== 'home') {
-        history.pushState({}, '', '/'); setPage('home');
+        pushAppPath('/'); setPage('home');
     }
     const target = document.getElementById(anchorByNav[item] ?? 'top');
     window.requestAnimationFrame(() => target?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
@@ -353,7 +382,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </div>
 
         {page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
-          ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage /></Suspense>
+          ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage onRegisterNavigationGuard={registerNotesNavigationGuard} /></Suspense>
           : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
           : page === 'today' ? <TaskPage locale={locale} /> : page === 'home' ? <>
         <header className="workspace-header">
@@ -405,8 +434,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </section>
 
-        </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} onBack={() => navigate('home')} />
-          : page === 'inbox' ? <InboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); history.pushState({}, '', `/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
+        </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
+          : page === 'inbox' ? <InboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
           : page === 'chat' ? <ChatPage locale={locale} onGoInbox={() => navigate('inbox')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
@@ -541,7 +570,7 @@ function captureStatus(status: string, en: boolean) {
   return captureStatusLabel(status, en ? 'en' : 'zh-CN');
 }
 
-export function ReviewPage({ locale, onBack, initialReviewPath = null }: { locale: Locale; onBack: () => void; initialReviewPath?: string | null }) {
+export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHistory = (path: string) => history.pushState({}, '', path) }: { locale: Locale; onBack: () => void; initialReviewPath?: string | null; pushHistory?: (path: string) => void }) {
   const t = messages[locale];
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
@@ -654,7 +683,7 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
 
   const selectReview = (item: ReviewItem) => {
     const query = new URLSearchParams({ review_path: item.review_path });
-    history.pushState({}, '', `/review?${query}`);
+    pushHistory(`/review?${query}`);
     setMobileListOpen(false);
     void loadDetail(item);
   };

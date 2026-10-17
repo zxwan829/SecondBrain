@@ -8,6 +8,8 @@ Notes navigation is disabled unless the frontend build receives `VITE_ENABLE_NOT
 
 NotesPage and its editor dependencies are lazy-loaded so the normal route does not eagerly load the Notes editing bundle. Mobile navigation uses the existing shared sidebar, so it observes the same feature and Core gates.
 
+Before the app shell changes pages or the browser history leaves `/notes`, NotesPage supplies a navigation guard to the shell. It blocks while any Notes write is in flight and asks before discarding unsaved Markdown or visual-asset edits. A declined browser back restores the Notes history entry. Core remains the authority for all read/write operations.
+
 ## Markdown and visual-asset boundary
 
 Markdown remains the authoritative note body. Frontmatter, Obsidian wikilinks/embeds, and other unsupported syntax must remain protected by the editor's existing round-trip safeguards; this navigation integration does not reinterpret or migrate note content. Mindmap and Excalidraw JSON assets can be edited and reopened inside SecondBrain according to D085-B. Obsidian does not natively edit those JSON assets without a compatible plugin.
