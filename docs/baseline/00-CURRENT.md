@@ -12,33 +12,21 @@ source: GitHub SecondBrain Monorepo
 
 **原 V1 业务交付门槛（保留、不缩水）：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
 
-**新的 Companion MVP 门槛（D077，已批准、仍未整体实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。Personal Memory / Learning Core 已部署并通过本地 Stub 合成闭环，但真实模型行为与用户体验尚待验收。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
+**新的 Companion MVP 门槛（D077，已批准、仍未整体实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。Personal Memory / Learning Core 已部署并通过本地 Stub 合成闭环；D080 真实测试中自动学习写入通过，但跨 Session 自然召回失败。D082 定向修复正在独立分支开发，尚未合并、部署或真实复验。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
 
-**阶段安排：** D080 已恢复开发。本轮 A 阶段准备已完成，文档更新已提交审核；生产真实 Hermes Run、模型调用及私人数据仍需单独授权。既有 D077/D078 源码审计和隔离验证不重复开展。
+**阶段安排：** D080 有界真实模型测试已执行至 2 次 Run，并因跨 Session 召回异常停止；D082 正在修复已定位的 Core 偏好提取问题。后续生产复验仍需单独授权；既有 D077/D078 源码审计和隔离验证不重复开展。
 
-**总体状态：NOT DONE。** D079 已按范围结项；D080 正在准备真实浏览器合成验收，生产 Run 仍待单独授权。PR #19/#21/#22/#24 已依序合并，当前 main 为 `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D077 Core 与 Hermes v0.22.2 已部署。按 Issue #14 授权，PR #18 已 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`；Hermes 使用固定官方 amd64 digest `a11574…c1bf05` 加一文件 fail-closed 补丁的本地镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`（Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`）。API `/health` 返回 200，Dashboard 9119 可达并按预期重定向登录；插件 Doctor 确认 D078 guard 注册 1 个 hook；API toolset 仍为 `file,skills,vision`，Terminal 未开放，Skills 写入审核 true、审批模式 manual。隔离无模型 Run 验证敏感 Session 文件读取被拒、业务文件与 Skills 只读调用可执行、dispatcher 异常 fail-closed；D077 Memory 目录仍为 `1026:100 / 0700` 且 0 个文件。Private 未挂载、Knowledge 主目录只读（已有 Capture 专用 inbox RW 挂载不变）、Promote 关闭。生产没有创建 Session/Run 或写入个人记忆；真实模型浏览器体验尚未验收。镜像构建与运行证据、回滚方式和本轮历史资产只读审计见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 是旧合成请求估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。
+**总体状态：NOT DONE。** D079 已按范围结项；D080 已执行 2 次真实 GLM-4.5-Air Run：首轮合成偏好自动学习写入通过，第二个 Session 的无提示召回失败并触发止损。Core JSONL 仅保存“先给简短结论”，丢失“写技术说明时”情境和逗号后的要点，导致相关性筛选未注入 instructions；Run/SSE Adapter 与 Hermes v0.22.2 `/v1/runs` instructions 契约有支持证据。D082 修复分支正在开发，尚未合并、部署或复验；证据见 Issue #30。PR #19/#21/#22/#24 已依序合并，当前 main 为 `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D077 Core 与 Hermes v0.22.2 已部署。按 Issue #14 授权，PR #18 已 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`；Hermes 使用固定官方 amd64 digest `a11574…c1bf05` 加一文件 fail-closed 补丁的本地镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`（Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`）。API `/health` 返回 200，Dashboard 9119 可达并按预期重定向登录；插件 Doctor 确认 D078 guard 注册 1 个 hook；API toolset 仍为 `file,skills,vision`，Terminal 未开放，Skills 写入审核 true、审批模式 manual。隔离无模型 Run 验证敏感 Session 文件读取被拒、业务文件与 Skills 只读调用可执行、dispatcher 异常 fail-closed；D077 Memory 目录仍为 `1026:100 / 0700` 且 0 个文件。Private 未挂载、Knowledge 主目录只读（已有 Capture 专用 inbox RW 挂载不变）、Promote 关闭。D080 已创建 2 个合成测试 Session 页面并写入 1 条合成 Core 记忆；跨 Session 真实召回尚未验收。镜像构建与运行证据、回滚方式和本轮历史资产只读审计见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 是旧合成请求估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。
 
-## 当前阶段决议：D080 恢复开发与真实浏览器验收准备（2026-10-17）
+## 当前阶段决议：D082 跨 Session 记忆召回修复（2026-10-17）
 
-**状态：D080 A 阶段准备已完成、文档更新已提交审核；B 阶段生产合成 Run 未获授权。** 用户在本次聊天中明确恢复开发；Issue #25 授权的是 A 阶段准备。PR #19、#21、#22、#24 均已合并至 `main`，最新为 PR #24 merge commit `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D079 的只读运行预检及零外发本地合成链路已结项；PR #24 增补真实 AppSessionAuth + Web App 路由 + FakeHermes 的登录、Session、Run/SSE、学习和新 Session 召回集成回归。该结果不证明真实 Hermes Run、浏览器体验或模型自然学习质量。
+**状态：代码修复与本地定向验证完成，等待 ChatGPT 复审；未合并、未部署、未真实复验。** D080 的两次真实 GLM-4.5-Air Run 显示：Run 1 从自然偏好表达写入一条 active Core 记忆；Run 2 新 Session 未召回，期间触发 `learning-loop-test` Skill，`search_files` 报错且最终要求提供文件路径，按异常止损停止后续测试。Core JSONL 的合成记忆只保留“先给简短结论”，提取时丢失“写技术说明时”语境并在逗号处截断，因此相关性筛选没有为 Run 2 注入 instructions。Hermes v0.22.2 `/v1/runs` 支持 `instructions`，Core Adapter 原样转发；已知主因在 Core 偏好提取，不是已证实的 Hermes API 故障。详细实测见 Issue #28，根因与 PR 证据见 Issue #30。
 
-本阶段只准备与验证零外发链路、修正当前基线并提交 PR。生产 API Run、Core Memory 持久写入、真实模型调用、凭据读取、私人资料访问、NAS 配置/容器变更仍不在授权内。当前运行状态只能引用 `Environment-Baseline.md` 最近的 2026-10-17 快照；本 Issue 未重新探测生产环境。
+D082 在 `fix/d082-real-memory-recall` 分支保留情境并完整提取逗号连接的偏好，新增 BFF 跨 Session 指令注入及无关主题不注入回归。Core `test_personal_learning.py` 17 项通过；使用 Python 3.12 隔离环境。该结果是本地合成代码验证，不代表真实 Hermes 模型召回通过。
 
-**最短浏览器验收步骤（生产执行须另行授权）：**
+**安全与部署状态：** 本轮未改 NAS、生产 Compose、容器、配置或 Memory；未触发真实 Run。API Terminal 仍关闭、Private 不挂载、Knowledge 只读、Promote 关闭，当前生产状态引用 `Environment-Baseline.md` 最近快照。D077 Core JSONL 仍是唯一个人记忆权威。
 
-1. 打开已配置的 SecondBrain Web App HTTPS 入口并登录，进入“对话”，新建 Session A。
-2. 自然表达一条虚构稳定偏好，例如“我写技术说明时喜欢先给简短结论，再列三条要点”，不要求系统保存；查看正常 Run/SSE 回复。
-3. 新建 Session B，提出相关但不提示回忆的问题，例如“帮我整理这次测试的说明”，观察是否自然采用该偏好且不过度复述背景。
-4. 在 Session B 明确更正为“两条要点”，等待回复完成；新建 Session C，再问相关问题，确认新偏好生效且旧偏好不再作为当前事实。
-5. 在 Session C 提一个无关问题，确认不会牵强提及该个人偏好。只使用虚构内容，不上传文件、不引用真实项目资料。
-
-本地零外发证据：PR #24 的单条集成测试通过真实 AppSessionAuth 和 Web App API 路由，以 FakeHermes 替代外部 Hermes，覆盖登录、Session 创建、Run、SSE 完成、Core 学习及另一 Session 的 instructions 召回。既有定向用例覆盖纠错/失效、无关主题过滤、失败/停止不学习；D078 Guard 已有独立隔离测试。此次不重复运行既有 44 项 Core / 15 项 Guard 测试。以上均非真实生产浏览器验证。
-
-**真实体验授权前置项：** D077 自动记忆是否被自然表达触发、真实 Hermes 上下文效果和回答质量必须经实际模型 Run 判断。执行生产浏览器步骤预计最多 5 次 Run；模型供应商/精确型号和当前费率在本轮未核实，费用上限因此为 UNKNOWN，不能把旧估算或软预算当作账单上限。下一步需先在不读取 Secret 的前提下确认实际 provider/model 与当前单价，拟定不超过 5 次调用的明确预算，再由用户单独授权生产合成 Session/Run、记忆写入和测试资产清理策略。不得使用真实私人数据或自动切换模型。
-
-**NEXT：** A 阶段文档审核收口后，申请一次有界的生产合成浏览器测试授权。只有该测试通过且用户决定模型、费用和数据边界后，才进入真实体验。API Terminal 继续关闭；Private 不挂载、Knowledge 只读、Promote 关闭等边界不因本阶段改变。
-
-**本阶段停止条件：** 不执行生产 Session/Run、模型请求、记忆写入、NAS 配置/容器修改、Secret/私人资料访问或资产清理。遇到需要这些权限才能继续的步骤，报告具体授权需求并停止。
+**NEXT：** ChatGPT 审核 D082 PR；若批准，再单独决定是否授权部署与一次有界真实复验。代码 Push 或 PR 合并均不代表部署、真实记忆验收或用户体验通过。
 
 ## D077 产品体验验收契约（批准的目标；真实效果尚未验收）
 

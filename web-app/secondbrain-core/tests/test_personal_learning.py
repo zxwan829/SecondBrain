@@ -180,6 +180,27 @@ class PersonalLearningTests(unittest.TestCase):
         self.assertEqual(hermes.run_body["input"], followup_text)
         client.close()
 
+    def test_contextual_preference_survives_extraction_and_reaches_related_new_session_run(self):
+        original = "我写技术说明时喜欢先给简短结论，再列三条要点。"
+        candidates = PersonalLearningPipeline(self.store).extractor.extract(original, [])
+        self.assertEqual(len(candidates), 1)
+        learned_text = candidates[0]["text"]
+        self.assertIn("写技术说明时", learned_text)
+        self.assertIn("先给简短结论，再列三条要点", learned_text)
+        self.store.create(content={"text": learned_text}, category="preference",
+                          fact_kind="user_stated", source_type="user_message", source_ref="synthetic-a:m1")
+
+        pipeline = PersonalLearningPipeline(self.store)
+        followup = "帮我整理这次测试的说明"
+        hermes = FakeHermes()
+        client, _ = self._run_router(followup, hermes, pipeline,
+                                     session_id="synthetic-session-b")
+        self.assertEqual(hermes.run_body["input"], followup)
+        self.assertIn("personal_memory_json", hermes.run_body["instructions"])
+        self.assertIn(learned_text, hermes.run_body["instructions"])
+        self.assertIsNone(pipeline.instructions_for("简单解释一下彩虹形成的原因"))
+        client.close()
+
     def test_unrelated_topics_do_not_receive_memories_and_exact_facts_are_redacted(self):
         self.store.create(content={"text": "Prefers concise answer summaries"}, category="preference",
                           fact_kind="user_stated", source_type="user_message", source_ref="s:m1")

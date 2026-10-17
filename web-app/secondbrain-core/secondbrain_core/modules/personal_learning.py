@@ -33,6 +33,11 @@ _PREFERENCE_PATTERNS = (
     re.compile(r"(?:我(?:(?:通常|一般|更)?(?:喜欢|偏好|习惯|倾向于))|(?:通常|一般|更)?(?:喜欢|偏好|习惯|倾向于))([^，,。！？；;\n]{2,160})", re.I),
     re.compile(r"\bI\s+(?:usually\s+)?(?:prefer|like|tend to)\s+([^,.;!?\n]{2,160})", re.I),
 )
+_CONTEXTUAL_PREFERENCE = re.compile(
+    r"我(?P<context>[^，,。！？；;\n]{1,80}?)(?:时|的时候)"
+    r"(?:通常|一般|更)?(?:喜欢|偏好|习惯|倾向于)"
+    r"(?P<claim>[^。！？；;\n]{2,160})", re.I,
+)
 _CORRECTIONS = (
     re.compile(r"(?:我)?(?:以前|之前)(?:更)?(?:喜欢|偏好)([^，,。！？；;\n]{2,100}?)[，,;；]?(?:但是|但|而)?(?:我)?(?:现在|如今)(?:更)?(?:喜欢|偏好)([^，,。！？；;\n]{2,160})", re.I),
     re.compile(r"\bI\s+used\s+to\s+(?:prefer|like)\s+([^,.;!?\n]{2,100})[,;]?(?:\s+but\s+)?(?:now\s+)?I\s+(?:prefer|like)\s+([^,.;!?\n]{2,160})", re.I),
@@ -108,8 +113,20 @@ class ExplicitPreferenceExtractor:
             return [candidate]
 
         candidates = []
+        contextual_spans = []
+        for match in _CONTEXTUAL_PREFERENCE.finditer(text):
+            context = _clean_candidate(match.group("context"))
+            claim = _clean_candidate(match.group("claim"))
+            statement = f"{context}时喜欢{claim}"
+            if (len(statement) >= 2 and not _SENSITIVE.search(statement)
+                    and not _INSTRUCTION_LIKE.search(statement)):
+                candidates.append({"operation": "create", "text": statement,
+                                   "category": "preference", "fact_kind": "user_stated"})
+                contextual_spans.append(match.span())
         for pattern in _PREFERENCE_PATTERNS:
             for match in pattern.finditer(text):
+                if any(start <= match.start() < end for start, end in contextual_spans):
+                    continue
                 statement = _clean_candidate(match.group(1))
                 if (len(statement) < 2 or _SENSITIVE.search(statement)
                         or _INSTRUCTION_LIKE.search(statement)):
