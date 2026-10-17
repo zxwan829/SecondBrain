@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.personal_learning import PersonalLearningPipeline
 from secondbrain_core.modules.personal_memory import PersonalMemoryStore
+from secondbrain_core.modules.app_auth import AppSessionAuth
 from secondbrain_core.modules.hermes_api import HermesAPI
 from secondbrain_core.modules.web_app import create_web_app_router
 
@@ -29,6 +30,11 @@ class FakeHermes:
         self.run_id = run_id
         self.run_body = None
         self.message_reads = 0
+        self.created_sessions = 0
+
+    async def create_session(self, body):
+        self.created_sessions += 1
+        return {"session_id": f"synthetic-session-{self.created_sessions}", "title": "Synthetic"}
 
     @staticmethod
     def _safe_id(value):
@@ -125,6 +131,54 @@ class PersonalLearningTests(unittest.TestCase):
         asyncio.run(pipeline.complete_run("run-correction-replay", correction_hermes))
         self.assertEqual(len(self.store.history(corrected_id)), 2)
         correction_client.close()
+
+    def test_authenticated_zero_egress_chat_run_sse_learns_then_recalls_in_new_session(self):
+        password_file = self.root / "app.password"
+        password_file.write_text("synthetic-owner-password-only", encoding="utf-8")
+        password_file.chmod(0o600)
+        auth = AppSessionAuth(str(password_file), ["https://testserver"])
+        pipeline = PersonalLearningPipeline(self.store)
+        learned_text = "我偏好先给简短结论。"
+        hermes = FakeHermes(messages=[{
+            "id": "synthetic-message-1", "session_id": "synthetic-session-1",
+            "role": "user", "text": learned_text,
+        }])
+        app = FastAPI()
+        app.include_router(create_web_app_router(
+            auth, hermes, object(), self.root, self.root,
+            personal_learning=pipeline,
+        ))
+        client = TestClient(app, base_url="https://testserver")
+
+        login = client.post("/api/auth/login", json={"password": "synthetic-owner-password-only"},
+                            headers={"Origin": "https://testserver"})
+        self.assertEqual(login.status_code, 200)
+        created = client.post("/api/chat/sessions", json={}, headers={"Origin": "https://testserver"})
+        self.assertEqual(created.status_code, 200)
+        first_session = created.json()["session_id"]
+        started = client.post(
+            f"/api/chat/sessions/{first_session}/runs", json={"input": learned_text},
+            headers={"Origin": "https://testserver", "Idempotency-Key": "synthetic-learn-run"},
+        )
+        self.assertEqual(started.status_code, 200)
+        events = client.get(f"/api/chat/runs/{started.json()['run_id']}/events")
+        self.assertEqual(events.status_code, 200)
+        self.assertIn("text/event-stream", events.headers["content-type"])
+        self.assertIn("run.completed", events.text)
+        self.assertEqual(self.store.active_view()[0]["content"]["text"], "先给简短结论")
+
+        followup_session = client.post(
+            "/api/chat/sessions", json={}, headers={"Origin": "https://testserver"},
+        ).json()["session_id"]
+        followup_text = "请用简短结论方式整理测试步骤。"
+        followup = client.post(
+            f"/api/chat/sessions/{followup_session}/runs", json={"input": followup_text},
+            headers={"Origin": "https://testserver", "Idempotency-Key": "synthetic-recall-run"},
+        )
+        self.assertEqual(followup.status_code, 200)
+        self.assertIn("先给简短结论", hermes.run_body["instructions"])
+        self.assertEqual(hermes.run_body["input"], followup_text)
+        client.close()
 
     def test_unrelated_topics_do_not_receive_memories_and_exact_facts_are_redacted(self):
         self.store.create(content={"text": "Prefers concise answer summaries"}, category="preference",
