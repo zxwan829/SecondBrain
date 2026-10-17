@@ -4,6 +4,12 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D085-C1 PR #50 同步最新 main 与导航回归
+
+- 按 Review #5557295754，在原分支 `codex/d085-c1-notes-navigation-20261017` 合并 GitHub 最新 main `468971b49b1bf63b98930ee0b875c133a314b429`。合并保留 main 的 D084 PR #49 合并状态、唯一 NEXT（仅生产部署预检待单独授权）及 D084 Chat Journal/Task 最新证据；同时保留本 PR Notes 路由、功能开关、Core `notes.read` 门禁和未保存离开保护。`App.tsx` 手动合并 Journal「日记」命名、D084 Chat 活动导航回调与 D085 Review/Inbox 历史路由管理；CURRENT 和 Progress-Log 以 main 为底稿，补记 D085-C1 并行状态及此同步证据。
+- main 同步新增 Core Chat Journal/Task 活动持久化代码、前端 Chat 时间线与相关测试；前端 `App.navigation.test.tsx`、`NotesPage.test.tsx`、`MindMapEditor.test.tsx`、`capture-flow.test.tsx`、`chat-activity.test.ts` **63 passed**。`npm run typecheck` 与 `npm run build` 通过；NotesPage 仍为独立异步 chunk（531.15 kB），CanvasEditor 为 2,325.54 kB 并保留 Vite 大 chunk 提示。`git diff --check` 通过。此次未运行未受影响的 Core 回归。
+- 未访问 NAS、真实笔记、生产配置或 C2；未合并 main、部署或操作真实业务数据。PR #50 仍待复审及 GitHub 可合并状态确认。
+
 ## 2026-10-17 — D084 PR #49 跨日 Journal 幂等与 Hermes 时间排序窄修
 
 - 按 PR #49 ChatGPT Review #5557199112，在原分支修复跨 Asia/Shanghai 日期零点的响应丢失重试：Core 使用 Journal 根目录私有全局锁串行化写入，并在权威日期 JSONL 中查找 operation ID；同键同内容返回原日期/记录，同键内容或 Session 冲突仍拒绝。没有引入旁路索引或历史数据迁移。

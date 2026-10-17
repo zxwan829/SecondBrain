@@ -14,7 +14,7 @@ source: GitHub SecondBrain Monorepo
 
 **新的 Companion MVP 门槛（D077，已批准、尚未整体实现/验收）：** 日常 Chat 无检索提示地关联长期个人记忆与可信知识；获准对话低风险学习、跨 Session 召回与纠正；精确事实回源；自然语言 Journal、简单 Task、Capture 与主动建议。原 V1 MUST 保持不变。D080 两次 GLM-4.5-Air Run 中，首轮自动学习写入通过，跨 Session 自然召回失败；D082 的情境保留修复已进入最新 main，但生产重新验证仍未完成，详见 Issue #28/#30。
 
-**总体状态：NOT DONE。** D084 已部署并通过有限合成验收；用户浏览器验收发现显式 Chat Journal/Task 操作没有会话持久历史，当前按 Issue #44 评论 #6231983901 在独立分支开发 Core session-bound activity 修复。修复未合入、未部署、未用户验收。生产状态仍以 `Environment-Baseline.md` 最近证据为准；Terminal 关闭、Private 未挂载、Knowledge 主目录只读（Capture 专用 inbox RW 例外不变）、Promote 关闭。真实模型记忆质量与浏览器修复验收未完成。
+**总体状态：NOT DONE。** D084 原功能已部署并通过有限合成验收；PR #49 的 Chat Journal/Task 会话活动留痕修复已于 2026-10-17 合入 main，但尚未部署或用户验收。生产状态仍以 `Environment-Baseline.md` 最近证据为准；Terminal 关闭、Private 未挂载、Knowledge 主目录只读（Capture 专用 inbox RW 例外不变）、Promote 关闭。真实模型记忆质量与修复版浏览器验收未完成。
 
 ### 当前工作分层状态（不能互相替代）
 
@@ -32,6 +32,10 @@ source: GitHub SecondBrain Monorepo
 本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
 **唯一 NEXT：** PR #49 已经 ChatGPT 独立复审、于 2026-10-17 合入 main（merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79`）；当前进入**仅针对新版本 App 的生产部署准备和单独授权**：Codex 可先执行只读 NAS 预检、核对现行 App/Compose 镜像、数据挂载和回滚资产，给出最小变更与回滚清单；未获新的明确 NAS 部署授权不得切换镜像、更新 Compose 或改数据。原 D084 Guard/API 与 Journal/Task 合成验收仍有效，但会话操作卡持久化修复 **MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。部署且通过限定无模型合成验证后，再由用户浏览器验收 Chat 会话内操作记录的刷新/切换恢复。禁止调用真实/付费模型，禁止修改或清理既有 Session、Memory、Atlas、Journal/Task 测试数据。未来 GitHub PR 合并批量授权原 10 次，本次成功使用 1 次，剩余 9 次；该授权不包括 NAS 部署。
+
+### 并行开发状态：D085-C1 Notes 主应用导航接入
+
+PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0b875c133a314b429` 合入并处理共享 `App.tsx` 冲突。Notes 通过 `/notes` 路由接入桌面/移动侧栏；`VITE_ENABLE_NOTES` 默认关闭，显式开启仍要求 Core `notes.read` 预检成功，Notes 读写继续由 Core 权限门禁控制。NotesPage 懒加载；跨页面导航保留未保存保护。Markdown 正文为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，不扩张 Obsidian 原生兼容承诺。本轮前端定向回归 63 项、typecheck 与 build 通过；PR 仍未合并、未部署、未做用户验收；未访问真实笔记或启动 D085-C2。此并行状态不改变上方 D084 唯一 NEXT。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 
