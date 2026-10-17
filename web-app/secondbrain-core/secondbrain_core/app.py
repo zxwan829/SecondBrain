@@ -16,6 +16,7 @@ from .modules.personal_memory import PersonalMemoryStore, create_personal_memory
 from .modules.personal_learning import PersonalLearningPipeline
 from .modules.journal import JournalStore, create_journal_router
 from .modules.tasks import TaskStore, create_task_router
+from .modules.notes import configured_notes_store, create_notes_router
 from .modules.organizer_engine import OrganizerRunner
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
@@ -93,6 +94,11 @@ def create_app():
     task_root = os.environ.get("SB_TASK_ROOT", "").strip()
     task_store = TaskStore(task_root) if task_root else None
     app.include_router(create_task_router(auth, task_store))
+    notes_store = configured_notes_store(
+        os.environ.get("SB_NOTES_DRAFTS_ROOT", "").strip(),
+        os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
+    )
+    app.include_router(create_notes_router(auth, notes_store))
     # Default-off, separately injected data root. When disabled, Core neither creates
     # the directory nor scans chat history or starts a background memory task.
     if memory_enabled_value == "true":
