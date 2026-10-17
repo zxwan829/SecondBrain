@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+## 2026-10-17 — D082 修复跨会话个人记忆召回（进行中）
+
+- Issue #28 的两次真实 GLM-4.5-Air Run 中，首轮合成偏好学习创建 1 条 active 记忆；第二个 Session 的相关问题未召回，触发 `learning-loop-test` Skill 与失败的 `search_files`，按止损规则未重试。原始执行与费用边界见 Issue #28 评论 #6227702593。
+- 只读核对该合成 Memory ID 后确认正文为“先给简短结论”，学习器在中文逗号处截断，并丢失“写技术说明时”语境；该文本与“帮我整理这次测试的说明”没有词元重叠，Core `instructions_for` 因而不注入记忆。
+- Hermes v0.22.2 官方 API Server 文档确认 `/v1/runs` 支持可选 `instructions`；Core BFF 调用 HermesAPI 原样转发。主因位于 Core 偏好提取，不是已证实的 Hermes instructions 契约问题。
+- D082 指定分支增加情境偏好完整提取与跨 Session BFF 注入/无关主题过滤回归。Core `test_personal_learning.py` 17 项通过；本地 Python 3.9 环境因 Pydantic 无法解析现有 `str | None` 注解未能收集测试，改用隔离 Python 3.12 环境完成验证。
+- 代码与文档仍在未合并 PR 分支，未部署、未运行真实模型复验、未修改 NAS/生产 Memory；后续真实复验需要另行授权。
+
+
 ## 2026-10-17 — D080 恢复开发与浏览器验收准备
 
 - Issue #25 授权 A 阶段：读取项目规则、D079 最终验收及 PR #24；确认 PR #19/#21/#22/#24 均已合并，当前 main 为 `4afe7ecad7584828c3d3ac6be896b97386c11b02`。原正式 Clone 落后且包含未跟踪 `typescript`，因此在独立临时 Clone 完成文档工作，未改动正式工作区。
