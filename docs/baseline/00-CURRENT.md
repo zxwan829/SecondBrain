@@ -39,7 +39,7 @@ PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1
 
 ### 并行开发状态：D086 标签与类型中心（Issue #55；本地合成切片）
 
-按 Issue #55 评论 #6234480613 从最新 main `e332172dc812ed46dd54685e2d0aa53fe52dd534` 建立隔离开发分支，实现 Core 私有词库、类型/标签/同义词管理 API 与独立 `/vocabulary` 管理页。首发仅含规范的五种初始类型，标签目录保持空白；用户确认、revision/If-Match 并发检查、原子词库与审计写入、禁用标签保留历史引用均由 Core 执行。首轮复审后已在原 PR #58 分支修复规范标签/alias 双向占名、锁文件先验安全校验，并加入含审计的 2 MB fail-closed 容量门槛（不截断审计）；超过容量前仍需设计可校验归档的追加审计存储。Core 定向 11 项通过，前端未改。PR #58 指向 main，OPEN，等待复审。**DEV-TESTED / NOT MERGED / NOT DEPLOYED / NOT REAL-VAULT-VALIDATED / NOT USER ACCEPTED**。此并行状态不改变上方 D084 唯一 NEXT，不授权真实 Vault、付费模型或 NAS 变更。
+按 Issue #55 评论 #6234480613 从 main `e332172dc812ed46dd54685e2d0aa53fe52dd534` 建立隔离开发分支，实现 Core 私有词库、类型/标签/同义词管理 API 与独立 `/vocabulary` 管理页。首发仅含规范的五种初始类型，标签目录保持空白；用户确认、revision/If-Match 并发检查、原子词库与审计写入、禁用标签保留历史引用均由 Core 执行。首轮复审后已在原 PR #58 分支修复规范标签/alias 双向占名、锁文件先验安全校验，并加入含审计的 2 MB fail-closed 容量门槛（不截断审计）；超过容量前仍需设计可校验归档的追加审计存储。随后同步最新 main `1c73b0f3449725815443c22ba503104df0cb8eff`，唯一冲突为 Progress-Log 并已保留两侧记录；D084 唯一 NEXT 沿用最新 main。Core 定向 11 项通过。PR #58 指向 main，OPEN，GitHub 当前 mergeable=true，等待复审。**DEV-REVIEWED / NOT MERGED / NOT DEPLOYED / NOT REAL-VAULT-VALIDATED / NOT USER ACCEPTED**。此并行状态不改变上方 D084 唯一 NEXT，不授权真实 Vault、付费模型或 NAS 变更。
 
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 

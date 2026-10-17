@@ -4,6 +4,12 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D086 PR #58 同步最新 main 与合并门禁核验
+
+- 按 Issue #55 评论 #6234901749 在原隔离分支核对并获取最新 `origin/main` `1c73b0f3449725815443c22ba503104df0cb8eff`。合并预检发现唯一真实文本冲突为 `docs/baseline/Progress-Log.md`；采用双侧保留，保留 main 的 D085-C2a 最新记录和 D086 复审/实施记录。代码文件无冲突。CURRENT 自动合并保留 main 的 D084 唯一 NEXT，确认未改写。
+- 合并提交 `3823af2d4be9973ee14dfdfa24e8d08c1e78ebf5` 已 Push 至原分支 `codex/d086-vocabulary-center-20261017`。同步后 Core `tests/test_vocabulary.py` **11 passed**，`git diff --check` 通过。未运行与冲突无关的前端测试。
+- Push 后 GitHub PR #58 实时状态：OPEN、head `3823af2d4be9973ee14dfdfa24e8d08c1e78ebf5`、base main `1c73b0f3449725815443c22ba503104df0cb8eff`、`mergeable=true`；未合并、未部署，等待审阅/用户后续决定。未访问真实 Vault、NAS、Secret 或模型。
+
 ## 2026-10-17 — D085-C2a PR #54 首轮审查修复与 main 同步
 
 - 读取 PR Review #5557918034、Issue #46 最新评论 #6234341190，并复核最新 main `docs/baseline/业务规范.md`：类型库最多 10 个；既有类型可自动选择、用户手动修正后不得自动覆盖；有效标签可自动应用，手动移除后不得自动加回；新类型/标签词汇须单独审批。词库功能仍归 Issue #55，本 PR 使用明确标记的合成示例词汇，不读取真实词库。`待整理`为状态，不是标签。D086 对话收录只是获批产品方向，未由此启动对话入口实现。
