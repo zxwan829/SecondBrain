@@ -2,6 +2,15 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+## 2026-10-17 — D084 集成前文档统一与多功能验收计划（仅文档）
+
+- 从 GitHub 最新 main `628bec895e8d95646b5cc583e8ffea8f7e877e10` 创建独立文档分支。只读核对 `dev/parallel-v1-next-20261017` HEAD `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`；main 独有 1 个提交，开发分支独有 3 个提交。PR #31/#34/#36 已合入该开发分支，未合入 main；PR #37 HEAD `e5332f6fa175d0742cacbaec2fbab40ded4781a4` 仍 OPEN、未合并、未部署。
+- 更新 CURRENT 的分层状态表和唯一 NEXT，区分代码审查、开发分支合并、本地测试、生产部署、真实模型与浏览器验收。main 独有 D082 `personal_learning` 修复作为未来集成必须保留的基线。
+- Architecture 补记 Journal/Task 专用 Core 根与接口/权限、Chat 显式意图分流及 PR #37 Run 级文件审批提案状态；Agent-Rules 增补并行切片合并、集中集成回归和真实运行前重新授权规则。新增 `D084-Integration-and-Validation-Plan.md`，列出顺序、冲突文件、既有测试目标、统一合成矩阵、生产权限门槛和已知风险。
+- 未改 `Environment-Baseline.md` 的快照时间或内容：本轮没有 NAS 新运行证据。未改业务代码，未合并功能 PR，未访问 NAS、Secret、生产数据或模型。
+- 定向检查：5 个更新文档的本地 Markdown 链接与代码围栏核对通过，`git diff --check` 通过；确认 Environment 快照未改、CURRENT 中无旧 main SHA/历史 NEXT 文案。未运行业务代码测试。
+- 文档 PR 和逐文件差异见 Issue #38。
+
 ## 2026-10-17 — D082 修复跨会话个人记忆召回（进行中）
 
 - Issue #28 的两次真实 GLM-4.5-Air Run 中，首轮合成偏好学习创建 1 条 active 记忆；第二个 Session 的相关问题未召回，触发 `learning-loop-test` Skill 与失败的 `search_files`，按止损规则未重试。原始执行与费用边界见 Issue #28 评论 #6227702593。

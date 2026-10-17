@@ -72,7 +72,11 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 
 ### 3.5 Journal、Task 与主动规划（目标行为）
 
-明确的自然语言“记一下/写日记/添加待办”应经 Chat 意图判定调用对应 Core 语义 API，而不是要求用户手动在 UI 中切换模式；模糊、高风险动作先确认。Journal 按 D064 使用 `50-Journal` 专用新增/日期追加，无需正式 Knowledge Promote；普通 Agent 无权覆盖历史内容。待办从同一时间轴演进，增删改状态和消息通知必须以持久状态/实际送达证据为准。
+明确的自然语言“记一下/写日记/添加待办”应由 Chat 识别显式意图并调用对应 Core 语义 API，而不是把这类写入委托给模型任意文件工具；模糊、高风险动作先确认。Journal 按 D064 使用 `50-Journal` 专用新增/日期追加，无需正式 Knowledge Promote；普通 Agent 无权覆盖历史内容。待办从同一时间轴演进，增改状态和提醒通知必须以持久状态/实际送达证据为准。各数据根与实现状态见 `00-CURRENT.md` 和 `Environment-Baseline.md`，不可根据 API 存在推断已部署。
+
+**D081-D083 Core 合约（已在并行开发分支实现，尚未集成到 main 或部署）：** Journal 使用可选配置 `SB_JOURNAL_ROOT`，存储按日期追加的 JSONL；Core 提供 `GET /api/journal/{day}` 与 `POST /api/journal/entries`，分别校验 `journal.read` / `journal.append`。Task 使用独立可选配置 `SB_TASK_ROOT`，以 `tasks.json` 保存待办和变更历史；Core 提供 `GET/POST /api/tasks` 及 `PATCH /api/tasks/{task_id}`，校验 `task.read` / `task.write`，创建支持幂等键，修改使用乐观版本检查。未配置对应数据根时 API fail-closed，不创建数据目录。生产部署前必须为 Core 单独配置各自受限 RW 根；Hermes 不取得这两个路径的写权限。
+
+**Chat 显式意图（开发分支实现，未集成/部署）：** 只有输入开头匹配 Journal 或 Task 的明确命令才调用上述 API；Journal/Task 成功时不创建额外 Hermes Session/Run，普通 Chat 继续走 Hermes Run。Journal 保留完整原文并追加；Task 的通知/提醒送达尚未实现。路由器匹配是入口分流，不替代 Core 的会话鉴权、输入校验、幂等和专用存储边界。
 
 主动规划使用授权的项目、日程、待办、历史经验与近期知识，输出带来源、可去重/节流/关闭的**建议**。建议不等于执行；外发、权限修改、删除和生产操作仍需对应授权。优先复用现有 Hermes 和 Core 的调度/状态能力，不预建新 Agent、第二调度系统或新容器。
 
@@ -84,11 +88,13 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 | `10-Review` | Core 创建待审核草稿；App 展示来源和审核状态 | AI/Agent 自动 Promote；覆盖人工编辑或审核文件 |
 | `20-Knowledge` | 仅受控 Core Promote Worker 在用户批准后写入 | Hermes 普通 Agent、通用文件工具、未授权业务模块写入 |
 | `40-Memory`（目标） | 在用户授权范围，受控自动学习低风险偏好/经历；记录来源、时间、推断标记、修改/撤销历史 | 以模型猜测覆盖正式项目状态；无边界的文件写入；把 Hermes session 当唯一持久记忆 |
-| `50-Journal` | 按正式 Journal 规则新增/追加 | 普通 Agent 未授权改写、删除既有内容 |
+| `50-Journal` | Core 经 `SB_JOURNAL_ROOT` 专用 RW 根按日期新增/追加原文；需要 `journal.append` | 普通 Agent 未授权改写、删除既有内容；Hermes 不直接取得此存储权限 |
+| Task state | Core 经独立 `SB_TASK_ROOT` 读取/创建/更新持久任务；需要 `task.read` / `task.write` | Hermes 通用文件工具或 Journal API 不得越权访问；缺少专用根时不落盘 |
 | Private | 默认无挂载、无读取、无索引 | 通过检索、自动整理、日志或工具旁路读取 |
 
 - App Session 是浏览器用户操作的服务端认证依据；Core 校验具体操作权限、Origin/Host、版本与幂等，不信任前端传来的身份字段。
 - Hermes Runtime 与 App/Core 的凭据和文件权限必须隔离。Hermes Session 或 Agent 可访问的凭据不能单独证明用户亲自批准。
+- **D078 普通 Chat 文件写入审批实现状态：** 目标是 Guard 在 Hermes 实际工具执行前为每次受支持的通用文件写入发起逐 Run 一次审批，Core 绑定当前用户、Session、Run 和精确参数/目标，拒绝、超时、断线或未授权均不得执行。PR #37 的实现仅覆盖 `write_file` 和单目标 replace `patch`，将未支持写工具与无法绑定目标的多文件 V4A patch fail-closed；该 PR 仍 open、未合入 main，生产不可用，Hermes 真实 API Run 审批恢复链未验证。审批 UI/代码不能作为部署或运行证据。
 - Knowledge 权限边界由只读挂载与 Core 受控写入共同强制；工具级安全根不是操作系统隔离的替代品。
 - 外部模型出站需有明确的数据范围授权、服务端凭据管理和可接受的成本控制；本地估算、`max_tokens`、请求超时或账户级速率限制不能冒充供应商硬费用上限。
 - 自动学习不意味着无限期储存、无条件回忆或向第三方发送数据：限定可用输入、单次 token/延迟/费用预算，允许纠错与撤销；Private 依然绝对排除。
