@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchHome, type Home } from './api/home';
 import { adaptHome, type DataKind, type ListItem } from './api/home-adapter';
 import { DEMO_KPI_DELTAS, DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
@@ -9,6 +9,10 @@ import todayLandscapeUrl from './assets/today-lake-background.png';
 import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 import { JournalPage } from './JournalPage';
 import { TaskPage } from './TaskPage';
+import { notesApi } from './api/notes';
+
+const NotesPage = lazy(() => import('./NotesPage').then((module) => ({ default: module.NotesPage })));
+const notesFeatureEnabled = () => import.meta.env.VITE_ENABLE_NOTES === 'true';
 import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
 import { isExplicitJournalIntent } from './journal-intent';
@@ -95,9 +99,10 @@ export function scrollReviewItemIntoView(container: HTMLElement, target: HTMLEle
   }
 }
 
-function pageFromPath(path: string): Page {
+function pageFromPath(path: string, enableNotes: boolean): Page {
   const route = navItems.find((item) => 'route' in item && item.route !== '/' &&
     (path === item.route || path.startsWith(`${item.route}/`)));
+  if (route?.id === 'notes' && !enableNotes) return 'home';
   if (route) return route.id;
   return 'home';
 }
@@ -106,7 +111,7 @@ const messages = {
   'zh-CN': {
     brand: 'SecondBrain', workspace: '你的工作台', subtitle: '一眼掌握当前状态，专注今日最重要的事情',
     home: '首页', chat: '对话', today: '今日', inbox: '收件箱', review: '待审核', projects: '项目',
-    knowledge: '知识库', brief: '简报', activity: '动态', journal: '日志', settings: '设置',
+    knowledge: '知识库', brief: '简报', activity: '动态', journal: '日志', notes: '笔记', settings: '设置',
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
@@ -138,7 +143,7 @@ const messages = {
   en: {
     brand: 'SecondBrain', workspace: 'Your workspace', subtitle: 'See your current state and focus on what matters today',
     home: 'Home', chat: 'Chat', today: 'Today', inbox: 'Inbox', review: 'Review', projects: 'Projects',
-    knowledge: 'Knowledge', brief: 'Brief', activity: 'Activity', journal: 'Journal', settings: 'Settings',
+    knowledge: 'Knowledge', brief: 'Brief', activity: 'Activity', journal: 'Journal', notes: 'Notes', settings: 'Settings',
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
     returnedItems: 'API entries', agentSupport: 'SecondBrain V1', source: 'Data source',
@@ -181,6 +186,7 @@ const navItems = [
   { id: 'brief', key: 'brief', icon: 'file', section: 'library' },
   { id: 'activity', key: 'activity', icon: 'activity', section: 'library' },
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
+  { id: 'notes', key: 'notes', icon: 'notes', section: 'library', route: '/notes' },
   { id: 'settings', key: 'settings', icon: 'settings', section: 'bottom', route: '/settings' },
 ] as const;
 
@@ -236,12 +242,15 @@ function loginFailureMessage(status: number): string {
 }
 
 function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
+  const enableNotes = notesFeatureEnabled();
   const [locale, setLocale] = useState<Locale>(() => localStorage.getItem('secondbrain.locale') === 'en' ? 'en' : 'zh-CN');
   const [home, setHome] = useState<Home | null>(null);
   const [error, setError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname));
+  const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname, enableNotes));
   const [routeRevision, setRouteRevision] = useState(0);
+  const [notesAvailable, setNotesAvailable] = useState(false);
+  const [notesGateChecked, setNotesGateChecked] = useState(!enableNotes);
   const t = messages[locale];
 
   useEffect(() => {
@@ -254,10 +263,30 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     return () => { mounted = false; };
   }, []);
   useEffect(() => {
-    const onPop = () => { setPage(pageFromPath(location.pathname)); setRouteRevision((value) => value + 1); };
+    const onPop = () => { setPage(pageFromPath(location.pathname, enableNotes)); setRouteRevision((value) => value + 1); };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [enableNotes]);
+
+  useEffect(() => {
+    if (!enableNotes) return;
+    let active = true;
+    void notesApi.collections().then(() => {
+      if (active) { setNotesAvailable(true); setNotesGateChecked(true); }
+    }).catch(() => {
+      if (active) { setNotesAvailable(false); setNotesGateChecked(true); }
+    });
+    return () => { active = false; };
+  }, [enableNotes]);
+
+  useEffect(() => {
+    const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/');
+    if (isNotesPath && (!enableNotes || (notesGateChecked && !notesAvailable))) {
+      history.replaceState({}, '', '/');
+      setPage('home');
+      setRouteRevision((value) => value + 1);
+    }
+  }, [enableNotes, notesAvailable, notesGateChecked, routeRevision]);
 
   const view = useMemo(() => adaptHome(home), [home]);
   const changeLocale = () => setLocale((current) => current === 'zh-CN' ? 'en' : 'zh-CN');
@@ -279,7 +308,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     <nav className={mobile ? 'nav-list mobile-nav-list' : 'nav-list'} aria-label={t.brand}>
       {(['top', 'work', 'library', 'bottom'] as const).map((section) => (
         <div className={`nav-section nav-section-${section}`} key={section}>
-          {navItems.filter((item) => item.section === section).map((item) => (
+          {navItems.filter((item) => item.section === section && (item.id !== 'notes' || (enableNotes && notesAvailable))).map((item) => (
             <button
               type="button"
               key={item.id}
@@ -323,7 +352,10 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <button type="button" className="locale-button" onClick={changeLocale}>{t.localeLabel}</button>
         </div>
 
-        {page === 'journal' ? <JournalPage /> : page === 'today' ? <TaskPage locale={locale} /> : page === 'home' ? <>
+        {page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
+          ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage /></Suspense>
+          : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
+          : page === 'today' ? <TaskPage locale={locale} /> : page === 'home' ? <>
         <header className="workspace-header">
           <div className="workspace-heading">
             <p className="eyebrow">{t.brand.toUpperCase()} <span>/</span> {t.home.toUpperCase()}</p>
@@ -1213,7 +1245,7 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
     home: ['m3 10 9-7 9 7', 'M5 9v11h14V9', 'M9 20v-6h6v6'], message: ['M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z'],
     calendar: ['M8 2v4M16 2v4M3 10h18', 'M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2Z', 'M8 14h3v3H8z'], inbox: ['M4 4h16v16H4z', 'M4 13h4l2 3h4l2-3h4'], check: ['M20 6 9 17l-5-5'], folder: ['M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M3 9h18'],
     book: ['M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 1 4 17.5z', 'M4 17.5A2.5 2.5 0 0 1 6.5 15H20'], file: ['M14 2H6a2 2 0 0 0-2 2v16h16V8z', 'M14 2v6h6', 'M8 13h8M8 17h8'], activity: ['M22 12h-4l-3 9L9 3l-3 9H2'], journal: ['M5 3h14v18H5z', 'M8 7h8M8 11h8M8 15h5'], settings: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z', 'm19.4 15 .1.1 1.4 1.1-1.4 2.4-1.8-.5a8 8 0 0 1-1.4.8l-.3 1.9h-2.8l-.4-1.8a8 8 0 0 1-1.5-.8l-1.8.5-1.4-2.4 1.4-1.2a8 8 0 0 1 0-1.7l-1.4-1.2 1.4-2.4 1.8.5a8 8 0 0 1 1.5-.8l.4-1.8H16l.4 1.8a8 8 0 0 1 1.4.8l1.8-.5 1.4 2.4-1.4 1.2a8 8 0 0 1-.2 1.6Z'],
-    chevron: ['m7 10 5 5 5-5'], chevrons: ['m7 10 5-5 5 5', 'm7 14 5 5 5-5'], menu: ['M4 6h16M4 12h16M4 18h16'], close: ['m6 6 12 12M18 6 6 18'], bolt: ['m13 2-3 8h7l-6 12 2-9H6z'], capture: ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L9 17l-4 1 1-4z'],
+    notes: ['M5 3h14v18H5z', 'M8 7h8M8 11h8M8 15h5'], chevron: ['m7 10 5 5 5-5'], chevrons: ['m7 10 5-5 5 5', 'm7 14 5 5 5-5'], menu: ['M4 6h16M4 12h16M4 18h16'], close: ['m6 6 12 12M18 6 6 18'], bolt: ['m13 2-3 8h7l-6 12 2-9H6z'], capture: ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L9 17l-4 1 1-4z'],
   };
   return <svg className={`icon icon-${name}`} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{(paths[name] ?? paths.file).map((d, i) => <path key={i} d={d} />)}</svg>;
 }
