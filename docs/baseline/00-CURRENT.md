@@ -124,7 +124,7 @@ source: GitHub SecondBrain Monorepo
 | 自主个人记忆学习（Phase 1-B） | NAS 合成闭环通过：Core 自动保存来源关联、跨 Session 召回、用户纠正和纠正后召回；Hermes v0.22.2 实际模型请求经 Stub 观测到注入上下文。Stub 不评价真实模型的自然学习/回答质量；没有付费模型或真实数据出站 | PR #6 已合并；本次运行证据见 Progress-Log；真实模型质量、用户浏览器体验及长时间使用仍待验收 |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
 | 碎碎念与 Journal 自然语言记录 | DEV-TESTED：Issue #29 专用 Core API、App 日记页及 Issue #33 Chat 开头显式短语直达 Journal；按日 append-only JSONL、App 会话鉴权、重试幂等及键内容冲突保护。未部署、未挂载生产 Journal | 本地可创建/读取/按日追加并保留输入原文；普通聊天仍走 Hermes，不写 Journal；未配置时明确拒绝。Chat 浏览器验收待完成；部署需单独授权并仅开放专用 `50-Journal` 目录 |
-| 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |
+| 自然语言待办/日程 | D083 DEV-TESTED（本地合成数据）：Core 私有 JSON 持久化 API、App 会话鉴权、幂等创建、状态/截止日查询、乐观并发更新与变更历史；Chat 句首显式命令创建；Today 页面查看/编辑/完成/恢复。未部署；生产 Task 配置与数据状态 UNKNOWN | 合成测试覆盖持久重载、并发、冲突、未配置拒绝及普通 Chat 分流；明确 `截止：YYYY-MM-DD` 可指定 ISO 截止日；提醒通知 NOT IMPLEMENTED，真实浏览器用户验收待完成 |
 | 文件收录→理解→记忆关联 | Capture 有 PROD-PARTIAL，OCR/STT、Review→Promote 缺口仍在 | 保留原件、正确提炼候选/关联，不擅自提升第三方断言为用户事实 |
 | 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
 | 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |

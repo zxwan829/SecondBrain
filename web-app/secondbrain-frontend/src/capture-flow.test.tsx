@@ -242,6 +242,45 @@ describe('D075.1 capture interactions', () => {
     expect(screen.queryByText(/已保存到 .* Journal/)).toBeNull();
   });
 
+  it('creates an explicit Task directly and preserves its command on failure for same-key retry', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const request = vi.fn().mockResolvedValueOnce(ok({ sessions: [] }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Task update failed safely' }), { status: 500 }))
+      .mockResolvedValueOnce(ok({ status: 'created', task: { title: '测试任务' } }));
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: '添加待办：测试任务 截止：2026-10-20' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/Task update failed safely/);
+    expect((input as HTMLTextAreaElement).value).toBe('添加待办：测试任务 截止：2026-10-20');
+    const firstKey = new Headers(request.mock.calls[1][1].headers).get('Idempotency-Key');
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText(/待办已创建/)).toBeTruthy();
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(request.mock.calls[1][0]).toBe('/api/tasks');
+    expect(JSON.parse(request.mock.calls[1][1].body)).toEqual({ title: '测试任务', due_date: '2026-10-20', original_command: '添加待办：测试任务 截止：2026-10-20' });
+    expect(new Headers(request.mock.calls[2][1].headers).get('Idempotency-Key')).toBe(firstKey);
+    expect(request.mock.calls.every(([url]) => url !== '/api/chat/sessions' && !String(url).includes('/runs'))).toBe(true);
+  });
+
+  it('does not treat an embedded Task phrase as an explicit Chat command', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const request = vi.fn(async (url: string) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-task-synthetic' });
+      if (url === '/api/chat/sessions/session-task-synthetic/runs') return ok({ run_id: 'run-task-synthetic' });
+      if (url === '/api/chat/runs/run-task-synthetic/events') return { ok: false, status: 503, body: null };
+      return ok({ messages: [], sessions: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: '我们后面可以添加待办：写总结' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/api/chat/sessions/session-task-synthetic/runs', expect.objectContaining({ method: 'POST' })));
+    expect(request).not.toHaveBeenCalledWith('/api/tasks', expect.anything());
+  });
+
   it('preserves edited text and a replaced attachment when switching modes repeatedly', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ sessions: [] })));

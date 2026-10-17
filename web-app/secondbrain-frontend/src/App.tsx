@@ -8,9 +8,11 @@ import hermesOrbUrl from './assets/hermes-planet-user.png';
 import todayLandscapeUrl from './assets/today-lake-background.png';
 import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 import { JournalPage } from './JournalPage';
+import { TaskPage } from './TaskPage';
 import { parseTerminalApproval, type TerminalApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
 import { isExplicitJournalIntent } from './journal-intent';
+import { parseExplicitTaskCommand } from './task-intent';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -171,7 +173,7 @@ const messages = {
 const navItems = [
   { id: 'home', key: 'home', icon: 'home', section: 'top', route: '/' },
   { id: 'chat', key: 'chat', icon: 'message', section: 'top', route: '/chat' },
-  { id: 'today', key: 'today', icon: 'calendar', section: 'work' },
+  { id: 'today', key: 'today', icon: 'calendar', section: 'work', route: '/today' },
   { id: 'inbox', key: 'inbox', icon: 'inbox', section: 'work', route: '/inbox' },
   { id: 'review', key: 'review', icon: 'check', section: 'work', route: '/review' },
   { id: 'projects', key: 'projects', icon: 'folder', section: 'library' },
@@ -321,7 +323,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <button type="button" className="locale-button" onClick={changeLocale}>{t.localeLabel}</button>
         </div>
 
-        {page === 'journal' ? <JournalPage /> : page === 'home' ? <>
+        {page === 'journal' ? <JournalPage /> : page === 'today' ? <TaskPage locale={locale} /> : page === 'home' ? <>
         <header className="workspace-header">
           <div className="workspace-heading">
             <p className="eyebrow">{t.brand.toUpperCase()} <span>/</span> {t.home.toUpperCase()}</p>
@@ -703,7 +705,9 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
   const attachmentInput = useRef<HTMLInputElement>(null);
   const abortRef = React.useRef<AbortController | null>(null);
   const journalRetryRef = useRef<{ text: string; key: string } | null>(null);
+  const taskRetryRef = useRef<{ text: string; key: string } | null>(null);
   const [journalNotice, setJournalNotice] = useState('');
+  const [taskNotice, setTaskNotice] = useState('');
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -841,7 +845,31 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
       } finally { setBusy(false); }
       return;
     }
+    const taskCommand = !pendingAttachment ? parseExplicitTaskCommand(input) : null;
+    if (taskCommand) {
+      setError(''); setJournalNotice(''); setTaskNotice(''); setBusy(true); setProgress(en ? 'Saving Task…' : '正在保存待办…');
+      const retry = taskRetryRef.current?.text === input ? taskRetryRef.current : { text: input, key: crypto.randomUUID() };
+      taskRetryRef.current = retry;
+      try {
+        const response = await fetch('/api/tasks', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': retry.key },
+          body: JSON.stringify({ title: taskCommand.title, due_date: taskCommand.due_date, original_command: input }) });
+        const result = await response.json().catch(() => ({})) as { detail?: string; status?: string; task?: { title?: string } };
+        if (!response.ok) {
+          if (response.status === 401) window.location.reload();
+          if (response.status === 503 && result.detail === 'Task is not enabled') throw new Error(en ? 'Task storage is not enabled in this environment. Your command is still here.' : '当前环境未启用 Task 存储，原命令仍保留在输入框中。');
+          if (response.status === 409) throw new Error(en ? 'This retry key was already used for different Task content. Your command is still here.' : '该重试标识已用于其他待办内容，原命令仍保留；请编辑后重新提交。');
+          throw new Error(String(result.detail ?? (en ? `Task creation failed (HTTP ${response.status}). Your command is still here.` : `待办创建失败（HTTP ${response.status}），原命令仍保留在输入框中。`)));
+        }
+        setInput(''); taskRetryRef.current = null; setProgress('');
+        setTaskNotice(en ? `Task created: ${result.task?.title ?? taskCommand.title}. View it in Today. Reminders are not enabled${result.status === 'duplicate' ? ' (safe retry, no duplicate).' : '.'}` : `待办已创建：“${result.task?.title ?? taskCommand.title}”。请到“今日”查看。提醒通知尚未启用${result.status === 'duplicate' ? '（安全重试，未重复创建）。' : '。'}`);
+      } catch (cause) {
+        setProgress(''); setError(cause instanceof Error ? cause.message : (en ? 'Task creation failed. Your command is still here.' : '待办创建失败，原命令仍保留在输入框中。'));
+      } finally { setBusy(false); }
+      return;
+    }
     setJournalNotice('');
+    setTaskNotice('');
     setError(''); setBusy(true); setProgress(en ? 'Starting…' : '正在启动…');
     setMessages((current) => [...current, { id: `local-${Date.now()}`, role: 'user', text: prompt }, { id: `assistant-${Date.now()}`, role: 'assistant', text: '' }]);
     try {
@@ -1007,7 +1035,7 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
     <aside className="chat-sessions"><div className="chat-session-heading"><h1>{en ? 'Chat' : '对话'}</h1><button type="button" onClick={() => void newSession()}>{en ? 'New chat' : '新对话'}</button></div><div className="chat-session-list">{sessions.map((session) => <button type="button" key={session.id} className={session.id === selected ? 'is-selected' : ''} onClick={() => void selectSession(session.id)}><strong>{session.title}</strong><small>{session.updated ? formatDate(session.updated, locale) : session.id.slice(0, 16)}</small></button>)}</div></aside>
     <div className="chat-conversation"><header><div><p className="eyebrow">SECONDBRAIN <span>/</span> {en ? 'CHAT' : '对话'}</p><h2>{sessions.find((session) => session.id === selected)?.title ?? (en ? 'New conversation' : '新对话')}</h2></div><button type="button" onClick={() => void forkSession()} disabled={!selected || busy}>{en ? 'Fork' : '分支会话'}</button></header>
       <div className="chat-message-list">{messages.map((message) => <article key={message.id} className={`chat-message ${message.role}`}><span>{message.role === 'user' ? (en ? 'You' : '你') : 'Hermes'}</span><p>{message.text || (busy && message.role === 'assistant' ? progress : '')}</p></article>)}{!messages.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
-      {progress && <div className="chat-progress" role="status">{progress}</div>}{journalNotice && <p className="chat-progress" role="status">{journalNotice}</p>}{error && <p className="chat-error" role="alert">{error}</p>}
+      {progress && <div className="chat-progress" role="status">{progress}</div>}{journalNotice && <p className="chat-progress" role="status">{journalNotice}</p>}{taskNotice && <p className="chat-progress" role="status">{taskNotice}</p>}{error && <p className="chat-error" role="alert">{error}</p>}
       {pendingApproval && <section className="terminal-approval-card" aria-labelledby="terminal-approval-title">
         <h3 id="terminal-approval-title">{en ? 'Terminal action approval' : '终端操作审批'}</h3>
         <p>{pendingApproval.scope}</p>
