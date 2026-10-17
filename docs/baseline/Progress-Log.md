@@ -22,6 +22,28 @@
 - 代码与文档仍在未合并 PR 分支，未部署、未运行真实模型复验、未修改 NAS/生产 Memory；后续真实复验需要另行授权。
 
 
+## 2026-10-17 — D083 Issue #35 Task 持久待办最小闭环（开发分支）
+
+- 从最新 `dev/parallel-v1-next-20261017` `74a18ff9e6b787329582cfcaa340dba965537ef8` 创建独立 `codex/d083-task-chat` 工作分支。新增 Core `/api/tasks`：只有在显式 `SB_TASK_ROOT` 指向既存 Core-owned `0700` 专用目录时启用；单 JSON 文件在跨线程锁内原子更新，创建具备持久幂等键，修改使用 `expected_updated_at` 防陈旧覆盖，并记录状态/字段变更历史。支持按状态、截止日期筛选；不提供删除。
+- Chat Composer 仅对 `添加待办：xxx` / `建个待办：xxx` 的句首显式命令直达 Task API，不创建 Hermes Session/Run；显式 `截止：YYYY-MM-DD` 后缀按 ISO 日期提供截止日。成功提示 Today 入口，失败保留原命令并复用同命令重试键。普通对话和 D082 Journal 路径保持各自原路。现有 Today 导航打开持久 Task 列表，支持标题/ISO 截止日修改、完成和恢复。未实现提醒投递及自然语言修改目标猜测。
+- 定向合成验证：Core `tests/test_tasks.py tests/test_web_app_bff.py` **23 passed**（鉴权、未配置 503、存储重载、20 路并发无丢失、幂等冲突、日期/状态查询、乐观冲突、完成/恢复、历史、symlink 拒绝；1 条既有 Starlette/httpx 弃用警告）。前端 Chat + TaskPage **40 passed**；`npm run typecheck`、`npm run build` 和 `git diff --check` 通过。
+- 无 NAS/生产访问或变更、真实 Task/Journal 数据、Secret 或模型调用；未检查生产 Task 配置，因此其状态 UNKNOWN。Issue #28 测试未触及。开发分支未部署；真实浏览器验收待完成；提醒通知 NOT IMPLEMENTED。
+
+## 2026-10-17 — D082 Issue #33 Chat 显式 Journal 记录（开发分支）
+
+- 从 `dev/parallel-v1-next-20261017` 最新已合并基线 `75c83bbcd3ff05b188fabc8f03bdc4eacea2833c` 创建独立工作分支。Chat 输入仅在开头显式出现 `记一下`、`记下来`、`写日记`、`记录一下` 时调用 Journal API；传入完整输入原文，普通消息继续走原 Hermes Run 路径，不创建额外 Chat Session。成功反馈日期和原文保留状态；失败保留输入并在同内容重试时复用 Idempotency-Key。
+- Core 在 Journal 未配置时认证后返回明确 503，不创建数据根；按日追加返回日期。同一幂等键同内容安全回放、不同内容返回 409。未改 Hermes Session/Run/SSE 实现，未触及 Task/Memory/Promote/Terminal/Scheduler。
+- 针对性合成验证：前端 Chat 交互 **36 passed**，覆盖显式成功不触发 Run、普通消息仍走 Hermes、失败输入保留且复用幂等键、未启用明确拒绝；`npm run typecheck` 与 `npm run build` 通过。Core `tests/test_journal.py tests/test_web_app_bff.py` **20 passed**（含幂等键冲突和未配置 503）；出现 1 条 Starlette/httpx `TestClient` 弃用提示。`git diff --check` 通过；未执行真实模型测试。
+- 无 NAS/生产访问或变更、生产 Journal 数据、Issue #28 测试状态/数据、真实模型或秘密访问。当前代码仅为开发分支，不部署；Chat 浏览器用户验收仍待完成。
+
+## 2026-10-17 — D081 Issue #29 Journal explicit-intent slice (local only)
+
+- Started from `dev/parallel-v1-next-20261017` at `d7a48fe3e1f70a40a8b94d4e1e2dacb1d052abaa`, in a separate clone. Added an optional `SB_JOURNAL_ROOT` Core module/router; it mounts only an existing Core-owned `0700` directory. The dedicated API uses the authenticated App owner session, accepts only explicit `记一下` / `记下来` / `写日记` / `记录一下` prefixes, stores the complete original phrase/text with Asia/Shanghai timestamp and source, and appends to a date-scoped JSONL file. `flock`, `O_APPEND`, `O_NOFOLLOW`, private file modes, persistent hashed idempotency keys and partial-write truncation guard append integrity. There is no update/delete route.
+- Added a small `/journal` App page to browse a date and explicitly append a natural-language phrase. Ordinary Chat does not call this API; no Hermes Session/Run/SSE code changed. The page/API are a local Journal entrance, **not** an automatic chat intent integration. Chat integration remains a follow-up design to avoid the parallel Issue #28 hot path.
+- Synthetic verification: Core `tests/test_journal.py` + `tests/test_web_app_bff.py` **18 passed** (explicit vs ordinary phrase, missing session, original text exactness, append/read, duplicate replay, 24 concurrent appends, invalid dates/path, symlink refusal, and no Review/Knowledge/Hermes side effects). Frontend Journal test **1 passed**; `npm run typecheck` and `npm run build` passed. One existing Starlette/httpx deprecation warning appeared.
+- No NAS/production access, mount/ACL/Compose/container changes, real Journal/private data, model calls, Session/Run changes, Promote/Terminal/Scheduler enablement, or production deployment occurred. Production still has no Journal mount. Future deployment requires separately authorized Core-only RW access to the dedicated `/volume1/SecBR/SecondBrain/50-Journal` directory mounted as `/data/SecondBrain/50-Journal` (owned by Core UID and mode `0700`); do not mount the SecondBrain root RW.
+- **State:** DEV-TESTED / NOT DEPLOYED / user browser acceptance pending. PR targets `dev/parallel-v1-next-20261017`; this implementation does not complete Task/Reminder or natural-language invocation from the Chat composer.
+
 ## 2026-10-17 — D080 恢复开发与浏览器验收准备
 
 - Issue #25 授权 A 阶段：读取项目规则、D079 最终验收及 PR #24；确认 PR #19/#21/#22/#24 均已合并，当前 main 为 `4afe7ecad7584828c3d3ac6be896b97386c11b02`。原正式 Clone 落后且包含未跟踪 `typescript`，因此在独立临时 Clone 完成文档工作，未改动正式工作区。
