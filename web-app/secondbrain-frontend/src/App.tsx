@@ -12,6 +12,7 @@ import { TaskPage } from './TaskPage';
 import { notesApi } from './api/notes';
 
 const NotesPage = lazy(() => import('./NotesPage').then((module) => ({ default: module.NotesPage })));
+const VocabularyPage = lazy(() => import('./VocabularyPage').then((module) => ({ default: module.VocabularyPage })));
 const UnifiedInboxPage = lazy(() => import('./UnifiedInboxPage').then((module) => ({ default: module.UnifiedInboxPage })));
 const notesFeatureEnabled = () => import.meta.env.VITE_ENABLE_NOTES === 'true';
 import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval';
@@ -113,7 +114,7 @@ const messages = {
   'zh-CN': {
     brand: 'SecondBrain', workspace: '你的工作台', subtitle: '一眼掌握当前状态，专注今日最重要的事情',
     home: '首页', chat: '对话', today: '今日', inbox: '收件箱', review: '待审核', projects: '项目',
-    knowledge: '知识库', brief: '简报', activity: '动态', journal: '日记', notes: '笔记', settings: '设置',
+    knowledge: '知识库', brief: '简报', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', settings: '设置',
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
@@ -145,7 +146,7 @@ const messages = {
   en: {
     brand: 'SecondBrain', workspace: 'Your workspace', subtitle: 'See your current state and focus on what matters today',
     home: 'Home', chat: 'Chat', today: 'Today', inbox: 'Inbox', review: 'Review', projects: 'Projects',
-    knowledge: 'Knowledge', brief: 'Brief', activity: 'Activity', journal: 'Journal', notes: 'Notes', settings: 'Settings',
+    knowledge: 'Knowledge', brief: 'Brief', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', settings: 'Settings',
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
     returnedItems: 'API entries', agentSupport: 'SecondBrain V1', source: 'Data source',
@@ -189,6 +190,7 @@ const navItems = [
   { id: 'activity', key: 'activity', icon: 'activity', section: 'library' },
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
   { id: 'notes', key: 'notes', icon: 'notes', section: 'library', route: '/notes' },
+  { id: 'vocabulary', key: 'vocabulary', icon: 'check', section: 'library', route: '/vocabulary' },
   { id: 'settings', key: 'settings', icon: 'settings', section: 'bottom', route: '/settings' },
 ] as const;
 
@@ -383,7 +385,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <button type="button" className="locale-button" onClick={changeLocale}>{t.localeLabel}</button>
         </div>
 
-        {page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
+        {page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
+          : page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
           ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage onRegisterNavigationGuard={registerNotesNavigationGuard} /></Suspense>
           : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
           : page === 'today' ? <TaskPage locale={locale} /> : page === 'home' ? <>

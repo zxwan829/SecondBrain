@@ -4,12 +4,32 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D086 PR #58 同步最新 main 与合并门禁核验
+
+- 按 Issue #55 评论 #6234901749 在原隔离分支核对并获取最新 `origin/main` `1c73b0f3449725815443c22ba503104df0cb8eff`。合并预检发现唯一真实文本冲突为 `docs/baseline/Progress-Log.md`；采用双侧保留，保留 main 的 D085-C2a 最新记录和 D086 复审/实施记录。代码文件无冲突。CURRENT 自动合并保留 main 的 D084 唯一 NEXT，确认未改写。
+- 合并提交 `3823af2d4be9973ee14dfdfa24e8d08c1e78ebf5` 已 Push 至原分支 `codex/d086-vocabulary-center-20261017`。同步后 Core `tests/test_vocabulary.py` **11 passed**，`git diff --check` 通过。未运行与冲突无关的前端测试。
+- Push 后 GitHub PR #58 实时状态：OPEN、head `3823af2d4be9973ee14dfdfa24e8d08c1e78ebf5`、base main `1c73b0f3449725815443c22ba503104df0cb8eff`、`mergeable=true`；未合并、未部署，等待审阅/用户后续决定。未访问真实 Vault、NAS、Secret 或模型。
+
 ## 2026-10-17 — D085-C2a PR #54 首轮审查修复与 main 同步
 
 - 读取 PR Review #5557918034、Issue #46 最新评论 #6234341190，并复核最新 main `docs/baseline/业务规范.md`：类型库最多 10 个；既有类型可自动选择、用户手动修正后不得自动覆盖；有效标签可自动应用，手动移除后不得自动加回；新类型/标签词汇须单独审批。词库功能仍归 Issue #55，本 PR 使用明确标记的合成示例词汇，不读取真实词库。`待整理`为状态，不是标签。D086 对话收录只是获批产品方向，未由此启动对话入口实现。
 - 在原 PR 分支将 main `684bb45dbcc58ce7877d9ba3f55643fb80c17a38` 合并进来。并入的 CURRENT/Progress、架构、治理、环境和业务规范改动均保留；D084 当前运行证据及新的唯一 NEXT 原样采用 main 版本；D086 与词库边界亦保留。随后检测到 PR 远端分支新增 main 同步及审查修复提交（`b2000c4`、`75e8cdf`），本地先前推送被安全拒绝；未强推。将远端分支合入时，`App.tsx`、Inbox 页面与测试有冲突，采用远端完整 Capture 主页面嵌入 Notes Drafts 的版本，再叠加本轮最小词表/模拟审批修正；CURRENT 中 D084 唯一 NEXT 未改写。
 - 统一 Inbox 恢复旧 Capture 预览（文本/PDF/图像/音频）、原始来源详情、状态/错误说明、部分成功重试和 Organizer 状态/显式触发；补相应合成回归。分类使用固定合成演示词表（不是 Issue #55 真实/持久词库），将已有类型/标签与新词候选分开，移除的标签/手动更正的类型在重新生成 Mock 建议时受保护；类型和已有标签不显示逐条审批按钮。日记/Review/项目建议的“本页模拟同意”明确未提交、未持久化、未排队/执行，刷新后消失；不写目标系统或更改源文件。
 - 定向前端 3 个文件 **54 passed**；`npm run typecheck`、`npm run build` 通过，`git diff --check` 待最终提交前复核。Build 有大型 CanvasEditor chunk 警告。未读取真实 Vault/笔记、真实标签库，未调用真实模型、未部署 NAS/生产配置，未合并 PR。提交与 Push 待最终 diff 审查。
+
+## 2026-10-17 — D086 PR #58 首轮复审窄修
+
+- 按 PR Review #5558136143 / Issue #55 评论 #6234861916 在原分支 `codex/d086-vocabulary-center-20261017` 修复词汇唯一性与锁文件校验顺序。标签创建现在同时检查所有现存 canonical tags 和 synonyms；同义词创建同时检查所有 canonical tags 和 aliases，均按 NFC + casefold 比较。停用历史项继续占名；新增双方向 409 回归覆盖大小写/Unicode 等价输入及停用记录。
+- `.lock` 现在由 `os.open(..., O_CREAT|O_NOFOLLOW, 0600)` 安全尝试打开后先 `fstat` 验证属主、普通文件类型和严格权限，再 flock；不再对现存对象调用 `fchmod`。预置 0640 锁文件测试证明请求 fail-closed，锁权限和原 catalog/audit 字节不变。
+- 明确容量策略：2,000,000-byte 上限同时覆盖 catalog 与内嵌审计。序列化后的下一状态超限时在创建临时文件前返回 HTTP 507；不会替换旧文件、丢弃审计或部分提交。满载后写入会停止，既有数据仍可读取。长期扩展前需另行设计可导出/校验的 append-only 审计分区/归档及快照恢复，再迁移旧嵌入审计；本切片不截断、不自动归档或放宽上限。
+- 仅运行 Core `tests/test_vocabulary.py`：**11 passed**；未改前端，故未重复 frontend typecheck/build。`git diff --check` 通过。未访问真实 Vault、NAS、秘密或模型；未合并。
+
+## 2026-10-17 — D086 标签与类型中心（本地合成切片）
+
+- 按 Issue #55 评论 #6234480613 从 GitHub 最新 main `e332172dc812ed46dd54685e2d0aa53fe52dd534` 建立独立分支 `codex/d086-vocabulary-center-20261017`。Core 私有状态目录下新增版本化词库与同文件审计；以跨进程锁、临时文件原子替换和 `If-Match` revision 防止并发覆盖。管理 API 分离 `vocabulary.read` / `vocabulary.write` 动作并复用 owner session 鉴权。创建类型/标签/永久同义词均要求显式确认；类型最多 10 种，标签禁用保留记录与引用。
+- 管理 UI 新增独立 `/vocabulary` 页面，不编辑笔记 Markdown。只初始化业务规范中的五种类型，标签库为空；系统字段不进入词库。新增纯函数契约测试：手动锁定类型不被自动覆盖、手动移除标签不被自动补回；未来 Vault 候选预览只接收调用者提供候选，不扫描路径、不持久化、不构成盘点授权。
+- 定向验证：Core `tests/test_vocabulary.py` **7 passed**；前端 `src/VocabularyPage.test.tsx` **3 passed**；`npm run typecheck`、`npm run build`、`git diff --check` 通过。Python 测试运行于 `/private/tmp` 独立 venv；前端依赖安装于隔离 clone，npm 显示锁文件中既有 4 项审计告警（2 low、2 moderate），未执行修复或更改 lockfile。构建保留既有大 chunk 警告。
+- Commit `c739619a6fbaf39ec81251ca217e2d982ae87a77` 已 Push；PR #58 指向 `main`，OPEN、未合并。未访问真实 Vault/私人笔记、NAS 或 Secret，未调用模型、未改写历史 frontmatter、未部署。CURRENT 的 D084 唯一 NEXT 原文保持不变，仅增加并行开发状态。
 
 ## 2026-10-17 — D085-C2a 统一 Inbox 与人工逐项审批（待审 PR）
 
