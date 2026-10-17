@@ -1,17 +1,17 @@
 ---
 created: 2026-10-17
 updated: 2026-10-17
-status: proposed-plan
+status: reviewed-plan
 type: integration-plan
 ---
 # D084 — Integration and unified validation plan
 
-This plan is a sequencing and acceptance document, not implementation or deployment authorization. Current state is maintained in [`00-CURRENT.md`](00-CURRENT.md); production evidence remains in [`Environment-Baseline.md`](Environment-Baseline.md). Source audit was performed against main `628bec895e8d95646b5cc583e8ffea8f7e877e10`, parallel development branch `dev/parallel-v1-next-20261017` at `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`, and PR #37 at `e5332f6fa175d0742cacbaec2fbab40ded4781a4`.
+This reviewed plan is a sequencing and acceptance document, not implementation or deployment authorization. PR #39 completed the document-review gate; this file is not permission to start engineering integration. Current state is maintained in [`00-CURRENT.md`](00-CURRENT.md); production evidence remains in [`Environment-Baseline.md`](Environment-Baseline.md). Source audit was performed against main `628bec895e8d95646b5cc583e8ffea8f7e877e10`, parallel development branch `dev/parallel-v1-next-20261017` at `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`, and PR #37 at `e5332f6fa175d0742cacbaec2fbab40ded4781a4`.
 
 ## 1. Integration order and branch safety
 
-1. Review and decide the documentation-only PR for this plan. No feature PR is merged by Issue #38.
-2. When separately authorized, create one integration branch from the then-current GitHub `main`. Preserve the main-only D082 `personal_learning.py` and regression fix; at this audit main is ahead of the parallel branch by one unique commit while the parallel branch has three unique integration commits.
+1. **DONE:** Documentation PR #39 has been reviewed and merged into main. Later documentation-only governance PRs #40/#41 are also merged. No feature PR was merged as part of D084.
+2. **NEXT, pending explicit authorization:** Create one integration branch from the then-current GitHub `main` (never assume the historic audit SHA is still HEAD). Preserve the main-only D082 `personal_learning.py` and regression fix; at the D084 audit baseline main had one unique commit while the parallel branch had three; documentation-only merges since then mean commit counts must be rechecked before integration.
 3. Bring the audited D081 Journal Core/API and D082 Chat Journal / D083 Task slices from `dev/parallel-v1-next-20261017` into that integration branch. Resolve, review, and test conflicts; do not reset or replace main with the parallel branch.
 4. Adapt PR #37's one-time file-write approval changes onto the integrated branch after checking the actual combined Guard/Core/BFF/UI contract. PR #37 is still open and unmerged. Its review approval is not runtime evidence.
 5. Run the focused unified synthetic checks in Section 3. Publish per-scenario `PASS`, `FAIL`, or `BLOCKED` with evidence and stop after development validation. Any NAS operation, production data-root provisioning, real-model request, or real-user-data egress needs its own explicit authorization. Do not merge the integration PR or deploy merely because local tests pass.
@@ -61,3 +61,4 @@ This is a readiness checklist only. No item is authorized by this document.
 - Task reminder delivery is **NOT IMPLEMENTED**.
 - PR #37's approval flow has not been integrated or validated in a real Hermes API Run. Review and unit tests do not prove runtime enforcement.
 - No browser user acceptance, NAS verification, real-model test, or real personal-data processing is part of this documentation task.
+- Open issues #28/#30 retain unresolved cross-Session recall evidence, and #14/#27 hold earlier phase/budget evidence. Their open state does not automatically authorize retries, deployments or model calls; use the single NEXT in `00-CURRENT.md`.
