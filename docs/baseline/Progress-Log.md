@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D086 标签与类型中心（本地合成切片）
+
+- 按 Issue #55 评论 #6234480613 从 GitHub 最新 main `e332172dc812ed46dd54685e2d0aa53fe52dd534` 建立独立分支 `codex/d086-vocabulary-center-20261017`。Core 私有状态目录下新增版本化词库与同文件审计；以跨进程锁、临时文件原子替换和 `If-Match` revision 防止并发覆盖。管理 API 分离 `vocabulary.read` / `vocabulary.write` 动作并复用 owner session 鉴权。创建类型/标签/永久同义词均要求显式确认；类型最多 10 种，标签禁用保留记录与引用。
+- 管理 UI 新增独立 `/vocabulary` 页面，不编辑笔记 Markdown。只初始化业务规范中的五种类型，标签库为空；系统字段不进入词库。新增纯函数契约测试：手动锁定类型不被自动覆盖、手动移除标签不被自动补回；未来 Vault 候选预览只接收调用者传入候选，不扫描路径、不持久化、不构成盘点授权。
+- 定向验证：Core `tests/test_vocabulary.py` **7 passed**；前端 `src/VocabularyPage.test.tsx` **3 passed**；`npm run typecheck`、`npm run build`、`git diff --check` 通过。Python 测试运行于 `/private/tmp` 独立 venv；前端依赖安装于隔离 clone，npm 显示锁文件中既有 4 项审计告警（2 low、2 moderate），未执行修复或更改 lockfile。构建保留既有大 chunk 警告。
+- 未访问真实 Vault/私人笔记、NAS 或 Secret，未调用模型、未改写历史 frontmatter、未部署。CURRENT 的 D084 唯一 NEXT 原文保持不变，仅增加并行开发状态。本分支待提交及 PR。
+
 ## 2026-10-17 — D085-C2a 统一 Inbox 与人工逐项审批（待审 PR）
 
 - 按 Issue #46 最新要求，从 GitHub 最新 main `ed6dc7fd14cc3c0860ddc5609f67cd02098452e9` 创建独立 Worktree/分支 `codex/d085-c2a-unified-inbox-20261017`。新增统一 Inbox 页面，读取现有 Core Capture Inbox 与 Notes `drafts` 集合，提供经 Core 既有权限门禁的新 Drafts 笔记入口；不扫描 authorized/Knowledge/Review/Private 集合。新建合成 Capture 示例仅存在页面内存。

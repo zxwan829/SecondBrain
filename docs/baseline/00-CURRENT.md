@@ -37,6 +37,10 @@ source: GitHub SecondBrain Monorepo
 
 PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`）。保留原 Capture Inbox 预览、下载、partial_success 重试、错误/状态、刷新及 Organizer 入口；同页新增 Notes Drafts 子视图与确定性 Mock 类型/标签/去向建议。五种演示类型、固定演示标签与未识别标签候选明确区分，状态词不作标签；按钮「模拟同意（仅本页）」不会持久化决策或执行写入/移动。前端定向 45 项、typecheck/build/diff-check 据 Codex 报告通过，未独立重跑。**MERGED / NOT DEPLOYED / NOT PERSISTENT APPROVAL / NOT USER ACCEPTED**；后续来源安全审批持久化和 Issue #55 正式词汇库仍需独立设计。本并行状态不改变上方 D084 唯一 NEXT；不自动授权真实 Vault、付费模型或 NAS 变更。
 
+### 并行开发状态：D086 标签与类型中心（Issue #55；本地合成切片）
+
+按 Issue #55 评论 #6234480613 从最新 main `e332172dc812ed46dd54685e2d0aa53fe52dd534` 建立隔离开发分支，实现 Core 私有词库、类型/标签/同义词管理 API 与独立 `/vocabulary` 管理页。首发仅含规范的五种初始类型，标签目录保持空白；用户确认、revision/If-Match 并发检查、原子词库与审计写入、禁用标签保留历史引用均由 Core 执行。没有读取/扫描 Vault 或改写 Markdown。Core 定向 7 项、前端定向 3 项、typecheck/build 已通过；PR 创建与独立审查待进行。**DEV-TESTED / NOT MERGED / NOT DEPLOYED / NOT REAL-VAULT-VALIDATED / NOT USER ACCEPTED**。此并行状态不改变上方 D084 唯一 NEXT，不授权真实 Vault、付费模型或 NAS 变更。
+
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 
 PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0b875c133a314b429` 合入并处理共享 `App.tsx` 冲突。Notes 通过 `/notes` 路由接入桌面/移动侧栏；`VITE_ENABLE_NOTES` 默认关闭，显式开启仍要求 Core `notes.read` 预检成功，Notes 读写继续由 Core 权限门禁控制。NotesPage 懒加载；跨页面导航保留未保存保护。Markdown 正文为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，不扩张 Obsidian 原生兼容承诺。本轮前端定向回归 63 项、typecheck 与 build 通过；PR 仍未合并、未部署、未做用户验收；未访问真实笔记或启动 D085-C2。此并行状态不改变上方 D084 唯一 NEXT。
