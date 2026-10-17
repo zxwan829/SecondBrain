@@ -9,7 +9,7 @@
 - 按 Issue #44 评论 #6231983901，从最新 main `76872e55ce6d966628723ce4336e121b946dd768` 建立独立分支 `codex/session-bound-journal-task-activity-20261017`。Core 在 Journal/Task 的既有幂等业务记录中原子保存 session_id 与 operation_id；活动列表通过 App 鉴权及 Hermes Session 存在性检查，从权威业务记录重建成功活动，并在私有 Core state 中持久记录失败活动。旧记录无 session_id 时不迁移；Hermes 历史与 Run/SSE 未改写。
 - Chat 先用正常 API 确保 Session，再提交显式 Journal/Task 原文与操作键；将 Core 活动和 Hermes 消息按记录时间合并呈现，并在切换 Session 时隔离异步响应。sessionStorage 仅保存未确认操作的重试上下文，Core/业务记录仍是持久权威来源。操作卡呈现「系统操作」、结果、原文、日记日期/待办当前状态及导航；左侧「日志」改为「日记」。Fork 不复制来源活动；已删除/不存在 Session 的活动读请求返回 404。
 - 定向合成验证：Core `tests/test_journal.py tests/test_tasks.py tests/test_web_app_bff.py` **31 passed**，覆盖未登录、Session 存在性/隔离、幂等与跨 Session 冲突、投影写入失败后重启 Core 从 Journal 记录恢复、Task 状态更新投影、fork/delete 隔离和验证失败不显示成功。前端 `src/capture-flow.test.tsx src/chat-activity.test.ts` **41 passed**，包括 Journal/Task 操作、业务落盘后响应丢失的同键恢复、跨刷新恢复、Session 切换隔离、时间线排序，以及现有 Chat/SSE/Capture/审批交互；中间一次全组重跑有 1 项 Review 滚动测试间歇失败，单测及最终完整重跑均通过。Chat/Task/跨 Session/timeline 定向用例 **8 passed**。`npm run typecheck`、`npm run build`、`git diff --check` 通过。Core 有 1 条既有 Starlette/httpx TestClient 弃用警告。
-- **状态：DEV-TESTED / PR 待创建 / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED。** 未访问 NAS、未修改生产数据或配置、未调用模型；未写入或清理 Hermes Session/消息，也未改变 D082 记忆 SoT。后续 PR 复审后再由用户验收修复版浏览器行为。
+- Commit `8d4e56e6fad25f9ff8bae5dd9fc2e4bcfb71fcfe` 已 Push 至独立分支；PR #49 已创建并指向 `main`，当前 OPEN、未合并。**状态：DEV-TESTED / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED。** 未访问 NAS、未修改生产数据或配置、未调用模型；未写入或清理 Hermes Session/消息，也未改变 D082 记忆 SoT。后续 PR 复审后再由用户验收修复版浏览器行为。
 
 ## 2026-10-17 — D084 Journal / Task / Memory / 文件审批统一集成（本地验证）
 
