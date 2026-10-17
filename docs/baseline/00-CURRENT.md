@@ -39,7 +39,7 @@ PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1
 
 ### 并行开发状态：D086 标签与类型中心（Issue #55；本地合成切片）
 
-按 Issue #55 评论 #6234480613 从最新 main `e332172dc812ed46dd54685e2d0aa53fe52dd534` 建立隔离开发分支，实现 Core 私有词库、类型/标签/同义词管理 API 与独立 `/vocabulary` 管理页。首发仅含规范的五种初始类型，标签目录保持空白；用户确认、revision/If-Match 并发检查、原子词库与审计写入、禁用标签保留历史引用均由 Core 执行。没有读取/扫描 Vault 或改写 Markdown。Core 定向 7 项、前端定向 3 项、typecheck/build 已通过；PR 创建与独立审查待进行。**DEV-TESTED / NOT MERGED / NOT DEPLOYED / NOT REAL-VAULT-VALIDATED / NOT USER ACCEPTED**。此并行状态不改变上方 D084 唯一 NEXT，不授权真实 Vault、付费模型或 NAS 变更。
+按 Issue #55 评论 #6234480613 从最新 main `e332172dc812ed46dd54685e2d0aa53fe52dd534` 建立隔离开发分支，实现 Core 私有词库、类型/标签/同义词管理 API 与独立 `/vocabulary` 管理页。首发仅含规范的五种初始类型，标签目录保持空白；用户确认、revision/If-Match 并发检查、原子词库与审计写入、禁用标签保留历史引用均由 Core 执行。没有读取/扫描 Vault 或改写 Markdown。Core 定向 7 项、前端定向 3 项、typecheck/build 已通过。PR #58 指向 main，OPEN，待独立审查。**DEV-TESTED / NOT MERGED / NOT DEPLOYED / NOT REAL-VAULT-VALIDATED / NOT USER ACCEPTED**。此并行状态不改变上方 D084 唯一 NEXT，不授权真实 Vault、付费模型或 NAS 变更。
 
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 
