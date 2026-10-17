@@ -49,6 +49,18 @@ class JournalStoreTests(unittest.TestCase):
             self.store.read("2026-10-17")
         self.assertEqual(outside.read_text(encoding="utf-8"), "sensitive sentinel\n")
 
+    def test_idempotency_replay_is_safe_and_conflicting_text_is_rejected(self):
+        original = "记一下：保持完整原句"
+        created = self.store.append("2026-10-17", original, "same-key")
+        replay = self.store.append("2026-10-17", original, "same-key")
+        self.assertEqual(replay["status"], "duplicate")
+        self.assertEqual(replay["date"], "2026-10-17")
+        self.assertEqual(replay["entry"], created["entry"])
+        self.assertEqual(len(self.store.read("2026-10-17")["entries"]), 1)
+        with self.assertRaises(HTTPException) as conflict:
+            self.store.append("2026-10-17", "记一下：不同内容", "same-key")
+        self.assertEqual(conflict.exception.status_code, 409)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -79,8 +79,11 @@ class JournalStore:
                         existing = [json.loads(line) for line in stream if line.strip()]
                 finally:
                     os.close(read_fd)
-            if any(item.get("id") == key_hash for item in existing):
-                return {"status": "duplicate", "entry": next(item for item in existing if item.get("id") == key_hash)}
+            prior = next((item for item in existing if item.get("id") == key_hash), None)
+            if prior is not None:
+                if prior.get("original_text") != text:
+                    raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different Journal text")
+                return {"status": "duplicate", "date": day, "entry": prior}
             write_fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
             try:
                 info = os.fstat(write_fd)
@@ -100,7 +103,7 @@ class JournalStore:
                 os.fsync(write_fd)
             finally:
                 os.close(write_fd)
-            return {"status": "created", "entry": record}
+            return {"status": "created", "date": day, "entry": record}
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=500, detail="Journal append failed safely") from exc
         finally:
@@ -147,11 +150,15 @@ def create_journal_router(auth, store):
     @router.get("/{day}")
     def read_journal(request: Request, day: str):
         auth.require_action(request, "journal.read")
+        if store is None:
+            raise HTTPException(status_code=503, detail="Journal is not enabled")
         return store.read(day)
 
     @router.post("/entries")
     def append_journal(request: Request, body: dict):
         auth.require_action(request, "journal.append")
-        return store.append(body.get("date"), body.get("text"), request.headers.get("idempotency-key", ""))
+        if store is None:
+            raise HTTPException(status_code=503, detail="Journal is not enabled")
+        return store.append(body.get("date") or store.today(), body.get("text"), request.headers.get("idempotency-key", ""))
 
     return router

@@ -87,8 +87,8 @@ def create_app():
     app.include_router(create_capture_router(auth, capture))
     # Journal writes stay opt-in and use only their dedicated, explicitly mounted root.
     journal_root = os.environ.get("SB_JOURNAL_ROOT", "").strip()
-    if journal_root:
-        app.include_router(create_journal_router(auth, JournalStore(journal_root)))
+    journal_store = JournalStore(journal_root) if journal_root else None
+    app.include_router(create_journal_router(auth, journal_store))
     # Default-off, separately injected data root. When disabled, Core neither creates
     # the directory nor scans chat history or starts a background memory task.
     if memory_enabled_value == "true":

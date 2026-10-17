@@ -175,6 +175,73 @@ describe('D075.1 capture interactions', () => {
     expect(screen.getByRole('button', { name: '对话' })).toBeTruthy();
   });
 
+  it('routes an explicit Journal phrase directly without creating a Hermes run', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const request = vi.fn().mockResolvedValueOnce(ok({ sessions: [] })).mockResolvedValueOnce(ok({ status: 'created', date: '2026-10-17' }));
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    const original = '  记一下：测试时完整保留空格  ';
+    fireEvent.change(input, { target: { value: original } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText(/已保存到 2026-10-17 的 Journal，原话已保留/)).toBeTruthy();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls[1][0]).toBe('/api/journal/entries');
+    expect(JSON.parse(request.mock.calls[1][1].body)).toEqual({ text: original });
+    expect(new Headers(request.mock.calls[1][1].headers).get('Idempotency-Key')).toBeTruthy();
+    expect((input as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('keeps ordinary chat input on the Hermes run route', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const request = vi.fn(async (url: string) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-synthetic' });
+      if (url === '/api/chat/sessions/session-synthetic/runs') return ok({ run_id: 'run-synthetic' });
+      if (url === '/api/chat/runs/run-synthetic/events') return { ok: false, status: 503, body: null };
+      return ok({ messages: [], sessions: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: '今天天气不错' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/api/chat/sessions/session-synthetic/runs', expect.objectContaining({ method: 'POST' })));
+    expect(request).not.toHaveBeenCalledWith('/api/journal/entries', expect.anything());
+  });
+
+  it('keeps explicit Journal text on failure and safely retries with the same idempotency key', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const request = vi.fn().mockResolvedValueOnce(ok({ sessions: [] }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Journal append failed safely' }), { status: 500 }))
+      .mockResolvedValueOnce(ok({ status: 'created', date: '2026-10-17' }));
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: '记一下：失败后保留' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/Journal append failed safely/);
+    expect((input as HTMLTextAreaElement).value).toBe('记一下：失败后保留');
+    const firstKey = new Headers(request.mock.calls[1][1].headers).get('Idempotency-Key');
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText(/已保存到 2026-10-17 的 Journal/)).toBeTruthy();
+    expect(new Headers(request.mock.calls[2][1].headers).get('Idempotency-Key')).toBe(firstKey);
+    expect(request.mock.calls.every(([url]) => url === '/api/chat/sessions?limit=50&offset=0' || url === '/api/journal/entries')).toBe(true);
+  });
+
+  it('reports disabled Journal without clearing the input or pretending it was saved', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const request = vi.fn().mockResolvedValueOnce(ok({ sessions: [] }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Journal is not enabled' }), { status: 503 }));
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: '记一下：Journal 未启用' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/当前环境未启用 Journal/);
+    expect((input as HTMLTextAreaElement).value).toBe('记一下：Journal 未启用');
+    expect(screen.queryByText(/已保存到 .* Journal/)).toBeNull();
+  });
+
   it('preserves edited text and a replaced attachment when switching modes repeatedly', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ sessions: [] })));

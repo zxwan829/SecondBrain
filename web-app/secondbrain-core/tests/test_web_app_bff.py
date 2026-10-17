@@ -216,6 +216,19 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual([path.name for path in self.knowledge.iterdir()], ["known.md"])
         self.assertEqual(self.calls, [])
 
+    def test_unconfigured_journal_fails_clearly_without_creating_a_store(self):
+        with patch.dict(os.environ, {**self.env, "SB_JOURNAL_ROOT": ""}), patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+            app = create_app()
+        client = TestClient(app, base_url="https://testserver")
+        try:
+            client.post("/api/auth/login", json={"password": "one-owner-test-password"}, headers={"Origin": "https://testserver"})
+            response = client.post("/api/journal/entries", json={"text": "记一下：仅合成测试"}, headers={"Origin": "https://testserver", "Idempotency-Key": "disabled-test"})
+            self.assertEqual(response.status_code, 503, response.text)
+            self.assertEqual(response.json()["detail"], "Journal is not enabled")
+            self.assertEqual(list(self.journal.iterdir()), [])
+        finally:
+            client.close()
+
     def test_sessions_runs_sse_and_stop_are_server_side_authenticated(self):
         self.login()
         sessions = self.client.get("/api/chat/sessions").json()
