@@ -2,13 +2,13 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
-# 2026-10-17 — D081 Issue #29 Journal explicit-intent slice (local only)
+## 2026-10-17 — D081 Issue #29 Journal explicit-intent slice (local only)
 
 - Started from `dev/parallel-v1-next-20261017` at `d7a48fe3e1f70a40a8b94d4e1e2dacb1d052abaa`, in a separate clone. Added an optional `SB_JOURNAL_ROOT` Core module/router; it mounts only an existing Core-owned `0700` directory. The dedicated API uses the authenticated App owner session, accepts only explicit `记一下` / `记下来` / `写日记` / `记录一下` prefixes, stores the complete original phrase/text with Asia/Shanghai timestamp and source, and appends to a date-scoped JSONL file. `flock`, `O_APPEND`, `O_NOFOLLOW`, private file modes, persistent hashed idempotency keys and partial-write truncation guard append integrity. There is no update/delete route.
 - Added a small `/journal` App page to browse a date and explicitly append a natural-language phrase. Ordinary Chat does not call this API; no Hermes Session/Run/SSE code changed. The page/API are a local Journal entrance, **not** an automatic chat intent integration. Chat integration remains a follow-up design to avoid the parallel Issue #28 hot path.
 - Synthetic verification: Core `tests/test_journal.py` + `tests/test_web_app_bff.py` **18 passed** (explicit vs ordinary phrase, missing session, original text exactness, append/read, duplicate replay, 24 concurrent appends, invalid dates/path, symlink refusal, and no Review/Knowledge/Hermes side effects). Frontend Journal test **1 passed**; `npm run typecheck` and `npm run build` passed. One existing Starlette/httpx deprecation warning appeared.
 - No NAS/production access, mount/ACL/Compose/container changes, real Journal/private data, model calls, Session/Run changes, Promote/Terminal/Scheduler enablement, or production deployment occurred. Production still has no Journal mount. Future deployment requires separately authorized Core-only RW access to the dedicated `/volume1/SecBR/SecondBrain/50-Journal` directory mounted as `/data/SecondBrain/50-Journal` (owned by Core UID and mode `0700`); do not mount the SecondBrain root RW.
-- **State:** DEV-TESTED / NOT DEPLOYED / ChatGPT code review pending / user browser acceptance pending. PR targets `dev/parallel-v1-next-20261017`; this implementation does not complete Task/Reminder or natural-language invocation from the Chat composer.
+- **State:** DEV-TESTED / NOT DEPLOYED / user browser acceptance pending. PR targets `dev/parallel-v1-next-20261017`; this implementation does not complete Task/Reminder or natural-language invocation from the Chat composer.
 
 ## 2026-10-17 — D080 恢复开发与浏览器验收准备
 
