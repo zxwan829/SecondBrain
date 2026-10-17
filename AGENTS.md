@@ -17,6 +17,7 @@
 - **架构、数据流及安全边界**：`docs/baseline/Architecture.md`。
 - **正式产品及技术决策**：`docs/baseline/Decision-Log.md`。
 - **项目专属执行规则与权限细则**：`docs/baseline/Agent-Rules.md`。
+- **笔记、对话收录、标签与类型业务规范**：`docs/baseline/业务规范.md`；批准方向与当前实现状态须分别核对决策日志和 CURRENT。
 - **网站应用业务规格**：`docs/baseline/business-specs/SecondBrain-Web-App-V1-Business-Spec.md`。
 - **统一收录、原件、审核及输入渠道规格**：`docs/baseline/business-specs/Universal-Capture-Business-Spec.md`。
 - **最近有证据支持的运行环境快照**：`docs/baseline/Environment-Baseline.md`，不能代替实时核验。

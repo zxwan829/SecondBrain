@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D085-C2a PR #54 首轮审查修复与 main 同步
+
+- 读取 PR Review #5557918034、Issue #46 最新评论 #6234341190，并复核最新 main `docs/baseline/业务规范.md`：类型库最多 10 个；既有类型可自动选择、用户手动修正后不得自动覆盖；有效标签可自动应用，手动移除后不得自动加回；新类型/标签词汇须单独审批。词库功能仍归 Issue #55，本 PR 使用明确标记的合成示例词汇，不读取真实词库。`待整理`为状态，不是标签。D086 对话收录只是获批产品方向，未由此启动对话入口实现。
+- 在原 PR 分支将 main `684bb45dbcc58ce7877d9ba3f55643fb80c17a38` 合并进来。并入的 CURRENT/Progress、架构、治理、环境和业务规范改动均保留；D084 当前运行证据及新的唯一 NEXT 原样采用 main 版本；D086 与词库边界亦保留。没有文档冲突或源码冲突。
+- 统一 Inbox 恢复旧 Capture 预览（文本/PDF/图像/音频）、原始来源详情、状态/错误说明、部分成功重试和 Organizer 状态/显式触发；补相应合成回归。分类使用固定合成演示词表（不是 Issue #55 真实/持久词库），将已有类型/标签与新词候选分开，移除的标签/手动更正的类型在重新生成 Mock 建议时受保护；类型和已有标签不显示逐条审批按钮。日记/Review/项目建议的“本页模拟同意”明确未提交、未持久化、未排队/执行，刷新后消失；不写目标系统或更改源文件。
+- 定向前端 3 个文件 **51 passed**；`npm run typecheck`、`npm run build` 与 `git diff --check` 通过，Build 有大型 CanvasEditor chunk 警告。未读取真实 Vault/笔记、真实标签库，未调用真实模型、未部署 NAS/生产配置，未合并 PR。
+
 ## 2026-10-17 — D085-C2a 统一 Inbox 与人工逐项审批（待审 PR）
 
 - 按 Issue #46 最新要求，从 GitHub 最新 main `ed6dc7fd14cc3c0860ddc5609f67cd02098452e9` 创建独立 Worktree/分支 `codex/d085-c2a-unified-inbox-20261017`。新增统一 Inbox 页面，读取现有 Core Capture Inbox 与 Notes `drafts` 集合，提供经 Core 既有权限门禁的新 Drafts 笔记入口；不扫描 authorized/Knowledge/Review/Private 集合。新建合成 Capture 示例仅存在页面内存。
@@ -1097,3 +1104,14 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 仅重启 secondbrain-hermes。重启后 Hermes 容器运行、API 8642/health 返回 200、Dashboard 9119/ 返回登录重定向 302；Core Docker health 为 healthy，宿主 127.0.0.1:9120 使用受信 Host 192.168.3.27 请求 /health 返回 200，Memory/Learning flags 仍 true，专用记忆目录 1026:100 / 0700 且无文件。正式浏览器入口 https://zxwan520.com:63013/health TLS 校验成功并返回 200。没有创建 Session/Run，没有模型请求、真实数据处理或付费调用。
 - 浏览器体验准备：使用已验证入口登录后打开 Chat，创建新 Session。先自然表达合成偏好“技术问题我更喜欢简短回答，最好用三条要点”，不要说“请记住”；新建 Session 后问一个相关但不提示回忆的问题，观察是否自然采用偏好；再纠正为“两条要点”，另开 Session 验证新规则生效且旧规则不再出现；最后提一个无关问题观察是否避免主动提及偏好。全程只用虚构内容。真实模型行为与费用未由本次核验覆盖，执行前用户需确认当前模型/费用。
 - 状态：危险的 API local-terminal 工具已移除，必要工具和记忆配置保持；本次不代表真实模型学习质量验收。在补齐 Hermes Session 文件读取边界前不进行真实模型体验；之后还需用户选择模型并确认费用。配置回滚点如上；回滚时恢复 config.yaml.before 到 Hermes 数据路径、保留 1026:100 / 0640，然后只重启 Hermes。
+
+## 2026-10-17 — D084 PR #49 App-only 受控部署（一次授权）
+
+- 按 Issue #44 用户授权评论 #6233322671 部署 PR #49 合并版 App，Hermes/Guard 保持不变。构建输入固定为 merge commit fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79 的 web-app 归档（SHA-256 8dbb4d78f523ee69e59d214a6430528b299e922141a8af36ae778af06423c4d7），使用 web-app/Dockerfile.app 和 web-app 上下文。前端 npm run typecheck 与 npm run build 通过，静态根 /app/static 含 index.html 和 Vite assets；npm ci 报告 4 项 audit findings（2 low、2 moderate），没有升级依赖。
+- 在 NAS 隔离容器（network none、read-only rootfs、仅临时 tmpfs、无数据挂载）用 ASGI TestClient 验证 /chat 200 text/html、引用的 JS/CSS 各 200，匿名 GET /api/chat/sessions 401 application/json。没有模型调用或生产数据访问。
+- 构建镜像 secondbrain-app:pr49-fa2ad412-full，Image ID sha256:1c7ed4cb953951eb2ab8691516651d170171305af6172326174e64f4115dd6ca。持久构建源目录 /volume1/docker/secondbrain/app-build-source-pr49-fa2ad412/web-app 与构建输入逐文件一致。
+- 部署前当前 App 为 d084-c8a2b348、Compose SHA-256 33f45f5cdca72cea05ddd21a265d129bc770684dfb6b1b9d3790cb12725fa0b9；rollback/d084-pr49-app-20261017T100900Z 的 SHA256SUMS 已复核通过，旧镜像仍存在。仅修改 Compose App build context/image；新 SHA-256 28636decfc08e47f57d2a671c68ecc6861cdf7653b860f12f73c020dcc1d6e06，属主/模式 1026:100 / 0640。Compose config 校验通过。
+- 仅执行 docker compose up -d --no-deps --force-recreate --wait --wait-timeout 120 secondbrain-app。App 容器 272b9fee7e62cf4b6b9c39f82d8c1e2eeceffaee82215a9cf34dc35098570601 在 120 秒内 healthy，RestartCount 0，用户 1026:100。生产直连 GET /health 与 /chat 均 200；2 个静态资源均 200；匿名 Chat sessions API 返回 401 JSON。
+- Hermes 容器 057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79、镜像 ID sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a、启动时间和 RestartCount 均未变化。Journal、Task、chat-activity 根仍为 1026:100 / 0700；Review 与 Capture Inbox RW、Knowledge RO、Core state RW；未发现 Private 挂载；SB_PROMOTE_ENABLED=false。没有扩大权限、写入 Journal/Task 业务数据或清理资产。
+- 生产登录态业务验收未完成：Edge 自动化在浏览器扩展界面阻断；没有提交表单、创建 Session 或写入记录。因而 Journal/Task 系统操作卡、刷新恢复、跨 Session 隔离和幂等重试保持 NOT VERIFIED。没有调用真实/付费模型。后续需恢复浏览器自动化后，使用新空白 Session 与唯一合成数据续验；不要读取或修改现有私人会话和真实 Journal/Task 内容。
+- 代码提交/PR #49 已在 main；本日志和 CURRENT、Environment-Baseline 的本次事实更新单独提交，生产镜像 Push 不涉及 GitHub 代码变更，也不代表浏览器用户验收。
