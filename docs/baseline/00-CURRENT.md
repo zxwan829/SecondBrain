@@ -20,7 +20,7 @@ source: GitHub SecondBrain Monorepo
 
 | 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
 |---|---|---|---|---|---|
-| D084 后续：Chat 内 Journal/Task 会话活动留痕（Issue #44） | PR #49 修复版已 Push，待 ChatGPT 对 Review #5557199112 复审 | Core Journal/Task/BFF 34 项、前端 Chat/Capture/timeline 42 项通过；typecheck/build 通过。新增跨上海零点响应丢失重试/并发唯一记录、活动恢复及 Hermes 秒/毫秒时间戳排序回归 | 独立分支 `codex/session-bound-journal-task-activity-20261017`，基于 main `76872e55…`；**未合并** | **未部署**；既有 D084 运行版本未包含本修复 | 用户此前发现的缺口待修复版浏览器验收；未做模型调用 |
+| D084 后续：Chat 内 Journal/Task 会话活动留痕（Issue #44） | PR #49 修复版已 Push，待 ChatGPT 对 Review #5557199112 复审 | Core Journal/Task/BFF 35 项、前端 Chat/Capture/timeline 42 项通过；typecheck/build 通过。覆盖跨零点幂等、活动恢复、旧记录从文件名恢复日期且不改原文件，以及 Hermes 秒/毫秒时间戳排序 | 独立分支 `codex/session-bound-journal-task-activity-20261017`，基于 main `76872e55…`；**未合并** | **未部署**；既有 D084 运行版本未包含本修复 | 用户此前发现的缺口待修复版浏览器验收；未做模型调用 |
 | D082 个人记忆情境保留修复 | PR #32 已审；随最新 main 保留在本轮集成分支 | 本轮 Core 统一定向组中 `test_personal_learning.py` 17 项通过；此前 D080 真实召回失败不可由源码/Mock 抵消 | 基线 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 的修复未被并行切片覆盖 | 此修复是否已部署，本次可用生产快照未证明，标记 **UNKNOWN** | 生产真实召回复验未完成；浏览器验收未完成 |
 | D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | 已整合至 `codex/d084-unified-integration-20261017`（基于 main `a8019ab1…`）；PR #45 已独立复审并合入 main（merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa`） | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未做真实模型或浏览器验收 |
 | PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #37 两个已审提交已移植至 `codex/d084-unified-integration-20261017`；PR #45 已合入 main，包含 PR #37 的两项已审提交；原 PR #37 仍独立 open，勿重复合并 | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需运行时验证；无真实模型验收 |

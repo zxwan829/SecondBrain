@@ -350,6 +350,37 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(activity[0]["operation_id"], "midnight-lost-response")
         self.assertEqual(activity[0]["journal_date"], "2026-10-17")
 
+    def test_legacy_journal_retry_uses_filename_date_without_rewriting_record(self):
+        self.login()
+        key = "legacy-journal-without-date"
+        text = "记一下：旧格式记录"
+        day = "2026-10-12"
+        legacy_path = self.journal / f"{day}.jsonl"
+        original = (json.dumps({
+            "id": hashlib.sha256(key.encode("ascii")).hexdigest(),
+            "operation_id": key,
+            "session_id": "session-1",
+            "created_at": "2026-10-12T11:12:13+08:00",
+            "source": "web_app_explicit_intent",
+            "original_text": text,
+        }, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        legacy_path.write_bytes(original)
+        legacy_path.chmod(0o600)
+
+        with patch("secondbrain_core.modules.journal.JournalStore.today", return_value="2026-10-18"):
+            response = self.client.post("/api/journal/entries", json={
+                "text": text, "session_id": "session-1",
+            }, headers={"Origin": "https://testserver", "Idempotency-Key": key})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "duplicate")
+        self.assertEqual(response.json()["date"], day)
+        self.assertEqual(response.json()["entry"]["date"], day)
+        activities = self.client.get("/api/chat/sessions/session-1/activities").json()["activities"]
+        self.assertEqual(len(activities), 1)
+        self.assertEqual(activities[0]["journal_date"], day)
+        self.assertEqual(legacy_path.read_bytes(), original)
+        self.assertFalse((self.journal / "2026-10-18.jsonl").exists())
+
     def test_hermes_message_timestamp_is_preserved_as_returned(self):
         self.message_timestamp = 1792195200
         payload = asyncio.run(self.hermes.list_messages("session-1"))

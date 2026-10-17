@@ -86,10 +86,15 @@ class JournalStore:
                     raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different Journal text")
                 if prior.get("session_id") != session_id:
                     raise HTTPException(status_code=409, detail="Idempotency-Key belongs to a different Chat Session")
-                prior_day = prior.get("date")
-                if not isinstance(prior_day, str) or not _DATE.fullmatch(prior_day):
+                record_day = prior.get("date")
+                if record_day is None:
+                    # Older JSONL rows may omit date; the containing filename
+                    # is the authoritative day and must not be guessed or written back.
+                    record_day = prior_day
+                    prior = {**prior, "date": record_day}
+                if not isinstance(record_day, str) or not _DATE.fullmatch(record_day):
                     raise HTTPException(status_code=500, detail="Existing Journal entry has an invalid date")
-                return {"status": "duplicate", "date": prior_day, "entry": prior}
+                return {"status": "duplicate", "date": record_day, "entry": prior}
 
             lock_path = self.root / f".{day}.lock"
             lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
