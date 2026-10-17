@@ -1000,3 +1000,9 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - 浏览器体验准备：使用已验证入口登录后打开 Chat，创建新 Session。先自然表达合成偏好“技术问题我更喜欢简短回答，最好用三条要点”，不要说“请记住”；新建 Session 后问一个相关但不提示回忆的问题，观察是否自然采用偏好；再纠正为“两条要点”，另开 Session 验证新规则生效且旧规则不再出现；最后提一个无关问题观察是否避免主动提及偏好。全程只用虚构内容。真实模型行为与费用未由本次核验覆盖，执行前用户需确认当前模型/费用。
 - 状态：危险的 API local-terminal 工具已移除，必要工具和记忆配置保持；本次不代表真实模型学习质量验收。在补齐 Hermes Session 文件读取边界前不进行真实模型体验；之后还需用户选择模型并确认费用。配置回滚点如上；回滚时恢复 config.yaml.before 到 Hermes 数据路径、保留 1026:100 / 0640，然后只重启 Hermes。
 
+# 2026-10-17 — D080 恢复开发与浏览器验收准备
+
+- Issue #25 授权 A 阶段：读取项目规则、D079 最终验收及 PR #24；确认 PR #19/#21/#22/#24 均已合并，当前 main 为 `4afe7ecad7584828c3d3ac6be896b97386c11b02`。原正式 Clone 落后且包含未跟踪 `typescript`，因此在独立临时 Clone 完成文档工作，未改动正式工作区。
+- 将 `00-CURRENT.md` 中过时的“DEVELOPMENT PAUSED”现行状态改为 D080 恢复开发；记录 PR #24 本地 FakeHermes 集成覆盖和边界，列出最短合成浏览器验收步骤，并明确生产 Run/模型/预算仍需单独授权。
+- PR #24 本地测试已提供零外发认证→Session→Run/SSE→学习→跨 Session 召回证据；纠错/过滤/失败停止由既有定向测试覆盖。本轮未重复 44/15 测试，也未修改生产代码。
+- 未做 NAS 写入、生产 Session/Run、模型调用、Secret/真实数据访问或清理。真实 Hermes 自然学习与浏览器效果仍未验证；实际 provider/model/费率未核实，下一阶段最多 5 次 Run 的费用上限仍为 UNKNOWN。
