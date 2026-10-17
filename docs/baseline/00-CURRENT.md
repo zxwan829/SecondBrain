@@ -123,7 +123,7 @@ source: GitHub SecondBrain Monorepo
 | Personal Memory Core（Phase 1-A） | NAS-DEPLOYED；独立 `0700` 根目录、追加式 JSONL 来源/修订记录、纠正与失效过滤；真实路径权限核验通过；本次合成记录已清理 | PR #4 已合并；NAS image `secondbrain-app:d077-b6e30f3`；真实数据与用户验收仍待完成 |
 | 自主个人记忆学习（Phase 1-B） | NAS 合成闭环通过：Core 自动保存来源关联、跨 Session 召回、用户纠正和纠正后召回；Hermes v0.22.2 实际模型请求经 Stub 观测到注入上下文。Stub 不评价真实模型的自然学习/回答质量；没有付费模型或真实数据出站 | PR #6 已合并；本次运行证据见 Progress-Log；真实模型质量、用户浏览器体验及长时间使用仍待验收 |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
-| 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
+| 碎碎念与 Journal 自然语言记录 | DEV-TESTED：Issue #29 并行分支已实现专用 Core API、App 日记页、显式短语门禁、按日 append-only JSONL、App 会话鉴权和幂等；定向合成测试通过。未部署、未挂载生产 Journal、未接 Chat 热路径 | 本地可创建/读取/按日追加并保留原话；普通闲聊不写入。后续需 ChatGPT 审核 PR；聊天内显式意图路由另行设计，部署需单独授权并仅开放专用 `50-Journal` 目录 |
 | 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |
 | 文件收录→理解→记忆关联 | Capture 有 PROD-PARTIAL，OCR/STT、Review→Promote 缺口仍在 | 保留原件、正确提炼候选/关联，不擅自提升第三方断言为用户事实 |
 | 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
