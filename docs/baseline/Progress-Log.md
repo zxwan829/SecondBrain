@@ -4,6 +4,20 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D084 PR #49 跨日 Journal 幂等与 Hermes 时间排序窄修
+
+- 按 PR #49 ChatGPT Review #5557199112，在原分支修复跨 Asia/Shanghai 日期零点的响应丢失重试：Core 使用 Journal 根目录私有全局锁串行化写入，并在权威日期 JSONL 中查找 operation ID；同键同内容返回原日期/记录，同键内容或 Session 冲突仍拒绝。没有引入旁路索引或历史数据迁移。
+- 新增 Journal Store 跨日并发唯一性回归及 BFF 跨零点响应丢失/重试回归；验证单条业务记录、同一操作活动恢复及原始 Journal 日期保留。Hermes API 原样传递上游 timestamp；前端现在保留字符串/数字，并将 ISO、Unix 秒、毫秒统一为时间线排序值。
+- 追加兼容 Review #6232338966：旧 Journal JSONL 缺少 `date` 时，重复响应/活动投影仅在内存中以所属文件名 `YYYY-MM-DD` 补日期；定向回归证明原文件字节不变，且不会在重试日期新增记录。Core `tests/test_journal.py tests/test_tasks.py tests/test_web_app_bff.py` **35 passed**；前端 `src/capture-flow.test.tsx src/chat-activity.test.ts` **42 passed**（本次未改前端，复用前次通过证据）；`npm run typecheck`、`npm run build`、`git diff --check` 通过。Core 有 1 条既有 Starlette/httpx TestClient 弃用警告。隔离测试工具生成的 `web-app/secondbrain-core/uv.lock` 保留并排除于提交。
+- 更新 CURRENT 与本日志。代码保留在 PR #49 原分支，等待 ChatGPT 对指定 Review 的复审；**DEV-TESTED / PR OPEN / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。未访问 NAS/生产数据/Secret，未运行模型或清理历史资产。
+
+## 2026-10-17 — D084 Chat Journal / Task 会话活动留痕修复（开发验证）
+
+- 按 Issue #44 评论 #6231983901，从最新 main `76872e55ce6d966628723ce4336e121b946dd768` 建立独立分支 `codex/session-bound-journal-task-activity-20261017`。Core 在 Journal/Task 的既有幂等业务记录中原子保存 session_id 与 operation_id；活动列表通过 App 鉴权及 Hermes Session 存在性检查，从权威业务记录重建成功活动，并在私有 Core state 中持久记录失败活动。旧记录无 session_id 时不迁移；Hermes 历史与 Run/SSE 未改写。
+- Chat 先用正常 API 确保 Session，再提交显式 Journal/Task 原文与操作键；将 Core 活动和 Hermes 消息按记录时间合并呈现，并在切换 Session 时隔离异步响应。sessionStorage 仅保存未确认操作的重试上下文，Core/业务记录仍是持久权威来源。操作卡呈现「系统操作」、结果、原文、日记日期/待办当前状态及导航；左侧「日志」改为「日记」。Fork 不复制来源活动；已删除/不存在 Session 的活动读请求返回 404。
+- 定向合成验证：Core `tests/test_journal.py tests/test_tasks.py tests/test_web_app_bff.py` **31 passed**，覆盖未登录、Session 存在性/隔离、幂等与跨 Session 冲突、投影写入失败后重启 Core 从 Journal 记录恢复、Task 状态更新投影、fork/delete 隔离和验证失败不显示成功。前端 `src/capture-flow.test.tsx src/chat-activity.test.ts` **41 passed**，包括 Journal/Task 操作、业务落盘后响应丢失的同键恢复、跨刷新恢复、Session 切换隔离、时间线排序，以及现有 Chat/SSE/Capture/审批交互；中间一次全组重跑有 1 项 Review 滚动测试间歇失败，单测及最终完整重跑均通过。Chat/Task/跨 Session/timeline 定向用例 **8 passed**。`npm run typecheck`、`npm run build`、`git diff --check` 通过。Core 有 1 条既有 Starlette/httpx TestClient 弃用警告。
+- Commit `8d4e56e6fad25f9ff8bae5dd9fc2e4bcfb71fcfe` 已 Push 至独立分支；PR #49 已创建并指向 `main`，当前 OPEN、未合并。**状态：DEV-TESTED / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED。** 未访问 NAS、未修改生产数据或配置、未调用模型；未写入或清理 Hermes Session/消息，也未改变 D082 记忆 SoT。后续 PR 复审后再由用户验收修复版浏览器行为。
+
 ## 2026-10-17 — D084 Journal / Task / Memory / 文件审批统一集成（本地验证）
 
 - 实时核对 GitHub `main` 为 `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583`、并行分支为 `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`、PR #37 head 为 `e5332f6fa175d0742cacbaec2fbab40ded4781a4`。在独立 clone 创建 `codex/d084-unified-integration-20261017`；合入并行分支 3 个 Journal/Task 切片提交，保留 main 侧 6 个独有提交及 D082 `personal_learning.py` 修复。处理唯一 `00-CURRENT.md` 冲突时保留 main 文本并在本轮校准；PR #37 的两个已审提交按提交粒度移植，避免把其旧分支中对 Journal/Task 的删除带入。`App.tsx` 导入冲突已合并为 Journal/Task 页面与统一 Run 审批卡契约。

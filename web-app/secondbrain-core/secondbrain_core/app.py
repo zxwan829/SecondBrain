@@ -14,6 +14,7 @@ from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.personal_memory import PersonalMemoryStore, create_personal_memory_router
 from .modules.personal_learning import PersonalLearningPipeline
+from .modules.chat_activity import ChatActivityStore, create_chat_activity_router
 from .modules.journal import JournalStore, create_journal_router
 from .modules.tasks import TaskStore, create_task_router
 from .modules.notes import configured_notes_store, create_notes_router
@@ -81,19 +82,25 @@ def create_app():
         if learning_enabled_value == "true":
             learning = PersonalLearningPipeline(memory_store)
 
+    chat_activity_store = ChatActivityStore(Path(approval_root) / "chat-activity")
+    journal_root = os.environ.get("SB_JOURNAL_ROOT", "").strip()
+    journal_store = JournalStore(journal_root) if journal_root else None
+    task_root = os.environ.get("SB_TASK_ROOT", "").strip()
+    task_store = TaskStore(task_root) if task_root else None
+
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.chat_activity_store = chat_activity_store
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root,
                                              organizer, personal_learning=learning))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
-    # Journal writes stay opt-in and use only their dedicated, explicitly mounted root.
-    journal_root = os.environ.get("SB_JOURNAL_ROOT", "").strip()
-    journal_store = JournalStore(journal_root) if journal_root else None
-    app.include_router(create_journal_router(auth, journal_store))
-    task_root = os.environ.get("SB_TASK_ROOT", "").strip()
-    task_store = TaskStore(task_root) if task_root else None
-    app.include_router(create_task_router(auth, task_store))
+    # Journal/Task business records are authoritative and the activity index is
+    # repairable under the private Core state root; Hermes has no state mount.
+    app.include_router(create_chat_activity_router(auth, hermes, chat_activity_store,
+                                                   journal_store, task_store))
+    app.include_router(create_journal_router(auth, journal_store, hermes, chat_activity_store))
+    app.include_router(create_task_router(auth, task_store, hermes, chat_activity_store))
     notes_store = configured_notes_store(
         os.environ.get("SB_NOTES_DRAFTS_ROOT", "").strip(),
         os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),

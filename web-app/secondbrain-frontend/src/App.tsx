@@ -13,6 +13,7 @@ import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval'
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
 import { isExplicitJournalIntent } from './journal-intent';
 import { parseExplicitTaskCommand } from './task-intent';
+import { activityTimeLabel, mergeChatTimeline, type ChatActivity, type ChatHistoryMessage } from './chat-activity';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -106,7 +107,7 @@ const messages = {
   'zh-CN': {
     brand: 'SecondBrain', workspace: '你的工作台', subtitle: '一眼掌握当前状态，专注今日最重要的事情',
     home: '首页', chat: '对话', today: '今日', inbox: '收件箱', review: '待审核', projects: '项目',
-    knowledge: '知识库', brief: '简报', activity: '动态', journal: '日志', settings: '设置',
+    knowledge: '知识库', brief: '简报', activity: '动态', journal: '日记', settings: '设置',
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
@@ -375,7 +376,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
 
         </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} onBack={() => navigate('home')} />
           : page === 'inbox' ? <InboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); history.pushState({}, '', `/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
-          : page === 'chat' ? <ChatPage locale={locale} onGoInbox={() => navigate('inbox')} />
+          : page === 'chat' ? <ChatPage locale={locale} onGoInbox={() => navigate('inbox')}
+            onGoJournal={() => navigate('journal')} onGoToday={() => navigate('today')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
@@ -683,13 +685,17 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null }: { local
 }
 
 type ChatSession = { id: string; title: string; updated?: string | number };
-type ChatMessage = { id: string; role: 'user' | 'assistant'; text: string };
+type ChatMessage = ChatHistoryMessage;
 
-export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () => void }) {
+export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onGoToday = () => undefined }: {
+  locale: Locale; onGoInbox: () => void; onGoJournal?: () => void; onGoToday?: () => void;
+}) {
   const en = locale === 'en';
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [selected, setSelected] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activities, setActivities] = useState<ChatActivity[]>([]);
+  const timeline = mergeChatTimeline(messages, activities);
   const [input, setInput] = useState('');
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -704,10 +710,9 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
   const [pendingPreview, setPendingPreview] = useState('');
   const attachmentInput = useRef<HTMLInputElement>(null);
   const abortRef = React.useRef<AbortController | null>(null);
-  const journalRetryRef = useRef<{ text: string; key: string } | null>(null);
-  const taskRetryRef = useRef<{ text: string; key: string } | null>(null);
-  const [journalNotice, setJournalNotice] = useState('');
-  const [taskNotice, setTaskNotice] = useState('');
+  const selectedSessionRef = useRef('');
+  const contentLoadRef = useRef(0);
+  const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -742,25 +747,75 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
     return next;
   };
 
-  const loadMessages = async (sessionId: string) => {
-    const payload = await api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`);
-    const raw = Array.isArray(payload.messages) ? payload.messages : Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : [];
-    setMessages(raw.flatMap((value, index) => {
-      if (!value || typeof value !== 'object') return [];
-      const row = value as Record<string, unknown>;
-      const role = String(row.role ?? row.type ?? '');
-      if (role !== 'user' && role !== 'assistant') return [];
-      let text = row.text ?? row.content ?? row.message ?? '';
-      if (Array.isArray(text)) text = text.flatMap((part) => part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string' ? [(part as Record<string, unknown>).text] : []).join('\n');
-      if (typeof row.text === 'string') text = row.text;
-      return typeof text === 'string' && text ? [{ id: String(row.id ?? index), role, text } as ChatMessage] : [];
-    }));
+  const pendingActivityKey = (sessionId: string) => `secondbrain.chat.pendingActivity:${sessionId}`;
+  const clearPendingActivity = (sessionId: string, operationId: string) => {
+    try {
+      const raw = sessionStorage.getItem(pendingActivityKey(sessionId));
+      const saved = raw ? JSON.parse(raw) as { operation_id?: string } : null;
+      if (saved?.operation_id === operationId) sessionStorage.removeItem(pendingActivityKey(sessionId));
+    } catch { sessionStorage.removeItem(pendingActivityKey(sessionId)); }
+  };
+
+  const loadSessionContent = async (sessionId: string) => {
+    const requestId = ++contentLoadRef.current;
+    const [historyResult, activityResult] = await Promise.allSettled([
+      api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`),
+      api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/activities`),
+    ]);
+    if (requestId !== contentLoadRef.current || selectedSessionRef.current !== sessionId) return;
+    if (historyResult.status === 'fulfilled') {
+      const payload = historyResult.value;
+      const raw = Array.isArray(payload.messages) ? payload.messages : Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : [];
+      setMessages(raw.flatMap((value, index) => {
+        if (!value || typeof value !== 'object') return [];
+        const row = value as Record<string, unknown>;
+        const role = String(row.role ?? row.type ?? '');
+        if (role !== 'user' && role !== 'assistant') return [];
+        let text = row.text ?? row.content ?? row.message ?? '';
+        if (Array.isArray(text)) text = text.flatMap((part) => part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string' ? [(part as Record<string, unknown>).text] : []).join('\n');
+        if (typeof row.text === 'string') text = row.text;
+        return typeof text === 'string' && text ? [{ id: String(row.id ?? index), role, text,
+          timestamp: typeof row.timestamp === 'string' || typeof row.timestamp === 'number' ? row.timestamp : null } as ChatMessage] : [];
+      }));
+    }
+    if (activityResult.status === 'fulfilled') {
+      const payload = activityResult.value;
+      const loaded = Array.isArray(payload.activities) ? payload.activities as ChatActivity[] : [];
+      const scoped = loaded.filter((item) => item.session_id === sessionId);
+      setActivities(scoped);
+      const rawPending = sessionStorage.getItem(pendingActivityKey(sessionId));
+      if (rawPending) {
+        try {
+          const pending = JSON.parse(rawPending) as { session_id: string; operation_id: string; text: string; kind: 'journal' | 'task' };
+          if (pending.session_id === sessionId) {
+            const resolved = scoped.find((item) => item.operation_id === pending.operation_id && item.status === 'succeeded');
+            if (resolved) {
+              clearPendingActivity(sessionId, pending.operation_id);
+              if (activityRetryRef.current?.key === pending.operation_id) activityRetryRef.current = null;
+            } else {
+              activityRetryRef.current = { sessionId, text: pending.text, key: pending.operation_id, kind: pending.kind };
+              setInput((current) => current || pending.text);
+              if (!scoped.some((item) => item.operation_id === pending.operation_id)) {
+                setActivities((current) => [...current.filter((item) => item.operation_id !== pending.operation_id), {
+                  event_id: `pending:${pending.operation_id}`, operation_id: pending.operation_id, session_id: sessionId,
+                  kind: pending.kind, status: 'unknown', original_text: pending.text, occurred_at: new Date().toISOString(), transient: true,
+                }]);
+              }
+            }
+          }
+        } catch { sessionStorage.removeItem(pendingActivityKey(sessionId)); }
+      }
+    }
+    if (historyResult.status === 'rejected') setError(historyResult.reason instanceof Error
+      ? chatFailureLabel(historyResult.reason.message, locale) : chatFailureLabel('Could not load session history', locale));
+    else if (activityResult.status === 'rejected') setError(en ? 'System operation history is temporarily unavailable.' : '系统操作历史暂时不可用。');
   };
 
   const selectSession = async (sessionId: string) => {
+    selectedSessionRef.current = sessionId;
     setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
-    setError(''); setMessages([]);
-    try { await loadMessages(sessionId); } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not load session history', locale)); }
+    setError(''); setMessages([]); setActivities([]); setInput('');
+    try { await loadSessionContent(sessionId); } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not load session history', locale)); }
   };
 
   const pollRun = async (activeRun: string, sessionId: string) => {
@@ -771,7 +826,8 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
       if (terminal.has(status)) {
           if (status === 'failed' || status === 'error' || status === 'interrupted') setError(chatFailureLabel(String(result.error ?? (status === 'interrupted' ? 'Hermes run was interrupted' : 'Hermes run failed')), locale));
         setProgress(chatStatusLabel(status, locale));
-        await loadMessages(sessionId); await reloadSessions(sessionId);
+        if (selectedSessionRef.current === sessionId) await loadSessionContent(sessionId);
+        await reloadSessions(sessionId);
         sessionStorage.removeItem('secondbrain.chat.activeRun');
         sessionStorage.removeItem('secondbrain.chat.activeSession');
         return true;
@@ -790,7 +846,7 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
       const activeRun = sessionStorage.getItem('secondbrain.chat.activeRun') ?? '';
       const activeSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? preferred;
       if (activeRun && activeSession) {
-        setSelected(activeSession); setBusy(true); setRunId(activeRun);
+        selectedSessionRef.current = activeSession; setSelected(activeSession); setBusy(true); setRunId(activeRun);
         setProgress(en ? 'Checking the interrupted connection…' : '正在核对中断的连接…');
         try { await pollRun(activeRun, activeSession); }
         catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not recover run status', locale)); }
@@ -805,7 +861,8 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
       const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
       const id = String(payload.session_id ?? '');
       if (!id) throw new Error('Hermes did not return a session identifier');
-      await reloadSessions(id); setSelected(id); setMessages([]); localStorage.setItem('secondbrain.chat.session', id);
+      await reloadSessions(id); selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
+      localStorage.setItem('secondbrain.chat.session', id);
     } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not create session', locale)); }
   };
 
@@ -819,66 +876,118 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
     } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not fork session', locale)); }
   };
 
+  const ensureSelectedSession = async () => {
+    const existing = selectedSessionRef.current;
+    if (existing) return existing;
+    const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
+    const sessionId = String(payload.session_id ?? '');
+    if (!sessionId) throw new Error('Hermes did not return a session identifier');
+    selectedSessionRef.current = sessionId; setSelected(sessionId); setMessages([]); setActivities([]);
+    localStorage.setItem('secondbrain.chat.session', sessionId);
+    await reloadSessions(sessionId);
+    return sessionId;
+  };
+
+  const updateVisibleActivity = (sessionId: string, activity: ChatActivity) => {
+    if (selectedSessionRef.current !== sessionId) return;
+    setActivities((current) => [...current.filter((item) => item.event_id !== activity.event_id && item.operation_id !== activity.operation_id), activity]);
+  };
+
+  const submitExplicitActivity = async (kind: 'journal' | 'task', originalText: string,
+                                       taskCommand?: { title: string; due_date: string | null }) => {
+    setError(''); setBusy(true); setProgress(en ? 'Saving system operation…' : '正在保存系统操作…');
+    let sessionId = '';
+    try {
+      sessionId = await ensureSelectedSession();
+      let saved: { session_id?: string; operation_id?: string; text?: string; kind?: 'journal' | 'task'; key?: string } | null = null;
+      try { saved = JSON.parse(sessionStorage.getItem(pendingActivityKey(sessionId)) ?? 'null'); } catch { saved = null; }
+      const retry = activityRetryRef.current?.sessionId === sessionId && activityRetryRef.current.text === originalText
+        && activityRetryRef.current.kind === kind
+        ? activityRetryRef.current.key
+        : saved?.session_id === sessionId && saved.text === originalText && saved.kind === kind
+          ? String(saved.operation_id ?? saved.key ?? crypto.randomUUID()) : crypto.randomUUID();
+      activityRetryRef.current = { sessionId, text: originalText, key: retry, kind };
+      sessionStorage.setItem(pendingActivityKey(sessionId), JSON.stringify({ session_id: sessionId,
+        operation_id: retry, text: originalText, kind }));
+      updateVisibleActivity(sessionId, { event_id: `pending:${retry}`, operation_id: retry, session_id: sessionId,
+        kind, status: 'processing', original_text: originalText, occurred_at: new Date().toISOString(), transient: true });
+
+      const url = kind === 'journal' ? '/api/journal/entries' : '/api/tasks';
+      const body = kind === 'journal'
+        ? { text: originalText, session_id: sessionId }
+        : { title: taskCommand?.title, due_date: taskCommand?.due_date, original_command: originalText, session_id: sessionId };
+      const response = await fetch(url, { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': retry }, body: JSON.stringify(body) });
+      const result = await response.json().catch(() => ({})) as {
+        detail?: string; status?: string; date?: string;
+        task?: { id?: string; title?: string; due_date?: string | null; status?: 'open' | 'completed'; created_at?: string };
+        activity?: ChatActivity;
+      };
+      if (!response.ok) {
+        if (response.status === 401) { window.location.reload(); return; }
+        const currentError = kind === 'journal' && response.status === 503 && result.detail === 'Journal is not enabled'
+          ? (en ? 'Journal is not enabled in this environment. Your text is still here.' : '当前环境未启用日记，原文仍保留在输入框中。')
+          : kind === 'task' && response.status === 503 && result.detail === 'Task is not enabled'
+            ? (en ? 'Task storage is not enabled in this environment. Your command is still here.' : '当前环境未启用待办存储，原命令仍保留在输入框中。')
+            : response.status === 409
+              ? (en ? 'This retry key conflicts with a different operation. Your input is still here.' : '该重试标识与其他操作冲突，原文仍保留在输入框中。')
+              : apiFailureLabel(result.detail, response.status, locale, 'chat');
+        const failed = result.activity ?? { event_id: `local:${kind}:${retry}`, operation_id: retry, session_id: sessionId,
+          kind, status: response.status >= 500 ? 'unknown' as const : 'failed' as const, original_text: originalText,
+          occurred_at: new Date().toISOString(), transient: true };
+        updateVisibleActivity(sessionId, failed);
+        if (selectedSessionRef.current === sessionId) { setInput(originalText); setProgress(''); setError(currentError); }
+        return;
+      }
+
+      const activity = result.activity ?? (kind === 'journal'
+        ? { event_id: `journal:${retry}`, operation_id: retry, session_id: sessionId, kind: 'journal' as const,
+          status: 'succeeded' as const, original_text: originalText, occurred_at: new Date().toISOString(), journal_date: result.date }
+        : { event_id: `task:${retry}`, operation_id: retry, session_id: sessionId, kind: 'task' as const,
+          status: 'succeeded' as const, original_text: originalText, occurred_at: result.task?.created_at ?? new Date().toISOString(),
+          task_id: result.task?.id, task_title: result.task?.title ?? taskCommand?.title,
+          task_due_date: result.task?.due_date ?? taskCommand?.due_date, task_status: result.task?.status ?? 'open' });
+      updateVisibleActivity(sessionId, activity);
+      clearPendingActivity(sessionId, retry);
+      activityRetryRef.current = null;
+      if (selectedSessionRef.current === sessionId) { setInput(''); setProgress(''); }
+      await loadSessionContent(sessionId);
+    } catch (cause) {
+      const errorMessage = cause instanceof Error ? chatFailureLabel(cause.message, locale)
+        : kind === 'journal' ? (en ? 'Journal save failed. Your text is still here.' : '日记保存失败，原文仍保留在输入框中。')
+          : (en ? 'Task creation failed. Your command is still here.' : '待办创建失败，原命令仍保留在输入框中。');
+      if (sessionId) updateVisibleActivity(sessionId, { event_id: `local:${kind}:${activityRetryRef.current?.key ?? 'unknown'}`,
+        operation_id: activityRetryRef.current?.key ?? 'unknown', session_id: sessionId, kind, status: 'unknown',
+        original_text: originalText, occurred_at: new Date().toISOString(), transient: true });
+      if (!sessionId || selectedSessionRef.current === sessionId) { setProgress(''); setError(errorMessage); setInput(originalText); }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const send = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = input.trim();
     if (!prompt || busy) return;
     if (!pendingAttachment && isExplicitJournalIntent(input)) {
-      setError(''); setJournalNotice(''); setBusy(true); setProgress(en ? 'Saving to Journal…' : '正在保存到 Journal…');
-      const retry = journalRetryRef.current?.text === input ? journalRetryRef.current : { text: input, key: crypto.randomUUID() };
-      journalRetryRef.current = retry;
-      try {
-        const response = await fetch('/api/journal/entries', { method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': retry.key }, body: JSON.stringify({ text: input }) });
-        const result = await response.json().catch(() => ({})) as { detail?: string; date?: string; status?: string };
-        if (!response.ok) {
-          if (response.status === 401) window.location.reload();
-          if (response.status === 503 && result.detail === 'Journal is not enabled') throw new Error(en ? 'Journal is not enabled in this environment. Your text is still here.' : '当前环境未启用 Journal，原文仍保留在输入框中。');
-          if (response.status === 409) throw new Error(en ? 'This retry key was already used for different text. Your text is still here.' : '该重试标识已用于其他内容，原文仍保留；请编辑后重新提交。');
-          throw new Error(String(result.detail ?? (en ? `Journal save failed (HTTP ${response.status}). Your text is still here.` : `Journal 保存失败（HTTP ${response.status}），原文仍保留在输入框中。`)));
-        }
-        const date = String(result.date ?? '');
-        setInput(''); journalRetryRef.current = null;
-        setProgress(''); setJournalNotice(en ? `Saved to Journal for ${date}; the original text was preserved${result.status === 'duplicate' ? ' (safe retry, no duplicate).' : '.'}` : `已保存到 ${date} 的 Journal，原话已保留${result.status === 'duplicate' ? '（安全重试，未重复追加）。' : '。'}`);
-      } catch (cause) {
-        setProgress(''); setError(cause instanceof Error ? cause.message : (en ? 'Journal save failed. Your text is still here.' : 'Journal 保存失败，原文仍保留在输入框中。'));
-      } finally { setBusy(false); }
+      await submitExplicitActivity('journal', input);
       return;
     }
     const taskCommand = !pendingAttachment ? parseExplicitTaskCommand(input) : null;
     if (taskCommand) {
-      setError(''); setJournalNotice(''); setTaskNotice(''); setBusy(true); setProgress(en ? 'Saving Task…' : '正在保存待办…');
-      const retry = taskRetryRef.current?.text === input ? taskRetryRef.current : { text: input, key: crypto.randomUUID() };
-      taskRetryRef.current = retry;
-      try {
-        const response = await fetch('/api/tasks', { method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': retry.key },
-          body: JSON.stringify({ title: taskCommand.title, due_date: taskCommand.due_date, original_command: input }) });
-        const result = await response.json().catch(() => ({})) as { detail?: string; status?: string; task?: { title?: string } };
-        if (!response.ok) {
-          if (response.status === 401) window.location.reload();
-          if (response.status === 503 && result.detail === 'Task is not enabled') throw new Error(en ? 'Task storage is not enabled in this environment. Your command is still here.' : '当前环境未启用 Task 存储，原命令仍保留在输入框中。');
-          if (response.status === 409) throw new Error(en ? 'This retry key was already used for different Task content. Your command is still here.' : '该重试标识已用于其他待办内容，原命令仍保留；请编辑后重新提交。');
-          throw new Error(String(result.detail ?? (en ? `Task creation failed (HTTP ${response.status}). Your command is still here.` : `待办创建失败（HTTP ${response.status}），原命令仍保留在输入框中。`)));
-        }
-        setInput(''); taskRetryRef.current = null; setProgress('');
-        setTaskNotice(en ? `Task created: ${result.task?.title ?? taskCommand.title}. View it in Today. Reminders are not enabled${result.status === 'duplicate' ? ' (safe retry, no duplicate).' : '.'}` : `待办已创建：“${result.task?.title ?? taskCommand.title}”。请到“今日”查看。提醒通知尚未启用${result.status === 'duplicate' ? '（安全重试，未重复创建）。' : '。'}`);
-      } catch (cause) {
-        setProgress(''); setError(cause instanceof Error ? cause.message : (en ? 'Task creation failed. Your command is still here.' : '待办创建失败，原命令仍保留在输入框中。'));
-      } finally { setBusy(false); }
+      await submitExplicitActivity('task', input, taskCommand);
       return;
     }
-    setJournalNotice('');
-    setTaskNotice('');
     setError(''); setBusy(true); setProgress(en ? 'Starting…' : '正在启动…');
-    setMessages((current) => [...current, { id: `local-${Date.now()}`, role: 'user', text: prompt }, { id: `assistant-${Date.now()}`, role: 'assistant', text: '' }]);
+    const messageTime = new Date().toISOString();
+    setMessages((current) => [...current, { id: `local-${Date.now()}`, role: 'user', text: prompt, timestamp: messageTime }, { id: `assistant-${Date.now()}`, role: 'assistant', text: '', timestamp: messageTime }]);
     try {
       let sessionId = selected;
       if (!sessionId) {
         const created = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
         sessionId = String(created.session_id ?? '');
         if (!sessionId) throw new Error('Hermes did not return a session identifier');
-        setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
+        selectedSessionRef.current = sessionId; setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
         await reloadSessions(sessionId);
       }
       const idempotencyKey = crypto.randomUUID();
@@ -949,7 +1058,7 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
         if (part.done) { if (buffer.trim()) consume(buffer); break; }
       }
       if (sawTerminal) {
-        await loadMessages(sessionId); await reloadSessions(sessionId);
+        await loadSessionContent(sessionId); await reloadSessions(sessionId);
         sessionStorage.removeItem('secondbrain.chat.activeRun'); sessionStorage.removeItem('secondbrain.chat.activeSession');
       } else {
         setProgress(en ? 'Stream ended; checking run status…' : '连接结束，正在核对任务状态…');
@@ -1034,8 +1143,19 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
   return <section className="chat-page">
     <aside className="chat-sessions"><div className="chat-session-heading"><h1>{en ? 'Chat' : '对话'}</h1><button type="button" onClick={() => void newSession()}>{en ? 'New chat' : '新对话'}</button></div><div className="chat-session-list">{sessions.map((session) => <button type="button" key={session.id} className={session.id === selected ? 'is-selected' : ''} onClick={() => void selectSession(session.id)}><strong>{session.title}</strong><small>{session.updated ? formatDate(session.updated, locale) : session.id.slice(0, 16)}</small></button>)}</div></aside>
     <div className="chat-conversation"><header><div><p className="eyebrow">SECONDBRAIN <span>/</span> {en ? 'CHAT' : '对话'}</p><h2>{sessions.find((session) => session.id === selected)?.title ?? (en ? 'New conversation' : '新对话')}</h2></div><button type="button" onClick={() => void forkSession()} disabled={!selected || busy}>{en ? 'Fork' : '分支会话'}</button></header>
-      <div className="chat-message-list">{messages.map((message) => <article key={message.id} className={`chat-message ${message.role}`}><span>{message.role === 'user' ? (en ? 'You' : '你') : 'Hermes'}</span><p>{message.text || (busy && message.role === 'assistant' ? progress : '')}</p></article>)}{!messages.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
-      {progress && <div className="chat-progress" role="status">{progress}</div>}{journalNotice && <p className="chat-progress" role="status">{journalNotice}</p>}{taskNotice && <p className="chat-progress" role="status">{taskNotice}</p>}{error && <p className="chat-error" role="alert">{error}</p>}
+      <div className="chat-message-list">{timeline.map((item) => item.type === 'message'
+        ? <article key={item.id} className={`chat-message ${item.message.role}`}><span>{item.message.role === 'user' ? (en ? 'You' : '你') : 'Hermes'}</span><p>{item.message.text || (busy && item.message.role === 'assistant' ? progress : '')}</p></article>
+        : <article key={item.id} className={`chat-activity-card status-${item.activity.status}`}>
+          <div className="chat-activity-heading"><strong>{en ? 'System operation' : '系统操作'}</strong><span>{item.activity.status === 'succeeded' ? (en ? 'Succeeded' : '成功') : item.activity.status === 'failed' ? (en ? 'Failed' : '失败') : item.activity.status === 'processing' ? (en ? 'Processing' : '处理中') : (en ? 'Result unknown · retry safely' : '结果待确认 · 可安全重试')}</span></div>
+          <p className="chat-activity-original">{item.activity.original_text}</p>
+          <div className="chat-activity-detail">{item.activity.kind === 'journal'
+            ? <><span>{en ? 'Journal' : '日记'}{item.activity.journal_date ? ` · ${item.activity.journal_date}` : ''}</span><button type="button" onClick={onGoJournal}>{en ? 'Open Journal' : '打开日记'}</button></>
+            : <><span>{item.activity.task_title ?? (en ? 'Task' : '待办')}{item.activity.task_status ? ` · ${item.activity.task_status === 'completed' ? (en ? 'completed' : '已完成') : (en ? 'open' : '未完成')}` : ''}</span><button type="button" onClick={onGoToday}>{en ? 'Open Today' : '打开今日'}</button></>}
+            <time>{activityTimeLabel(item.activity.occurred_at, locale)}</time>
+          </div>
+          {item.activity.detail && <small>{item.activity.detail}</small>}
+        </article>)}{!timeline.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      {progress && <div className="chat-progress" role="status">{progress}</div>}{error && <p className="chat-error" role="alert">{error}</p>}
       {pendingApproval && <section className="terminal-approval-card" aria-labelledby="terminal-approval-title">
         <h3 id="terminal-approval-title">{en ? 'Run action approval' : '运行操作审批'}</h3>
         <p>{pendingApproval.scope}</p>
