@@ -14,13 +14,13 @@ source: GitHub SecondBrain Monorepo
 
 **新的 Companion MVP 门槛（D077，已批准、仍未整体实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。Personal Memory / Learning Core 已部署并通过本地 Stub 合成闭环，但真实模型行为与用户体验尚待验收。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
 
-**阶段安排：** D080 已恢复开发。本轮 A 阶段准备已完成，PR 待审；生产真实 Hermes Run、模型调用及私人数据仍需单独授权。既有 D077/D078 源码审计和隔离验证不重复开展。
+**阶段安排：** D080 已恢复开发。本轮 A 阶段准备已完成，文档更新已提交审核；生产真实 Hermes Run、模型调用及私人数据仍需单独授权。既有 D077/D078 源码审计和隔离验证不重复开展。
 
 **总体状态：NOT DONE。** D079 已按范围结项；D080 正在准备真实浏览器合成验收，生产 Run 仍待单独授权。PR #19/#21/#22/#24 已依序合并，当前 main 为 `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D077 Core 与 Hermes v0.22.2 已部署。按 Issue #14 授权，PR #18 已 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`；Hermes 使用固定官方 amd64 digest `a11574…c1bf05` 加一文件 fail-closed 补丁的本地镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`（Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`）。API `/health` 返回 200，Dashboard 9119 可达并按预期重定向登录；插件 Doctor 确认 D078 guard 注册 1 个 hook；API toolset 仍为 `file,skills,vision`，Terminal 未开放，Skills 写入审核 true、审批模式 manual。隔离无模型 Run 验证敏感 Session 文件读取被拒、业务文件与 Skills 只读调用可执行、dispatcher 异常 fail-closed；D077 Memory 目录仍为 `1026:100 / 0700` 且 0 个文件。Private 未挂载、Knowledge 主目录只读（已有 Capture 专用 inbox RW 挂载不变）、Promote 关闭。生产没有创建 Session/Run 或写入个人记忆；真实模型浏览器体验尚未验收。镜像构建与运行证据、回滚方式和本轮历史资产只读审计见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 是旧合成请求估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。
 
 ## 当前阶段决议：D080 恢复开发与真实浏览器验收准备（2026-10-17）
 
-**状态：D080 A 阶段准备已完成、PR 待审；B 阶段生产合成 Run 未获授权。** 用户在本次聊天中明确恢复开发；Issue #25 授权的是 A 阶段准备。PR #19、#21、#22、#24 均已合并至 `main`，最新为 PR #24 merge commit `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D079 的只读运行预检及零外发本地合成链路已结项；PR #24 增补真实 AppSessionAuth + Web App 路由 + FakeHermes 的登录、Session、Run/SSE、学习和新 Session 召回集成回归。该结果不证明真实 Hermes Run、浏览器体验或模型自然学习质量。
+**状态：D080 A 阶段准备已完成、文档更新已提交审核；B 阶段生产合成 Run 未获授权。** 用户在本次聊天中明确恢复开发；Issue #25 授权的是 A 阶段准备。PR #19、#21、#22、#24 均已合并至 `main`，最新为 PR #24 merge commit `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D079 的只读运行预检及零外发本地合成链路已结项；PR #24 增补真实 AppSessionAuth + Web App 路由 + FakeHermes 的登录、Session、Run/SSE、学习和新 Session 召回集成回归。该结果不证明真实 Hermes Run、浏览器体验或模型自然学习质量。
 
 本阶段只准备与验证零外发链路、修正当前基线并提交 PR。生产 API Run、Core Memory 持久写入、真实模型调用、凭据读取、私人资料访问、NAS 配置/容器变更仍不在授权内。当前运行状态只能引用 `Environment-Baseline.md` 最近的 2026-10-17 快照；本 Issue 未重新探测生产环境。
 
@@ -36,7 +36,7 @@ source: GitHub SecondBrain Monorepo
 
 **真实体验授权前置项：** D077 自动记忆是否被自然表达触发、真实 Hermes 上下文效果和回答质量必须经实际模型 Run 判断。执行生产浏览器步骤预计最多 5 次 Run；模型供应商/精确型号和当前费率在本轮未核实，费用上限因此为 UNKNOWN，不能把旧估算或软预算当作账单上限。下一步需先在不读取 Secret 的前提下确认实际 provider/model 与当前单价，拟定不超过 5 次调用的明确预算，再由用户单独授权生产合成 Session/Run、记忆写入和测试资产清理策略。不得使用真实私人数据或自动切换模型。
 
-**NEXT：** 完成本轮文档 PR 并交 ChatGPT 复审；复审后再申请一次有界的生产合成浏览器测试授权。只有该测试通过且用户决定模型、费用和数据边界后，才进入真实体验。API Terminal 继续关闭；Private 不挂载、Knowledge 只读、Promote 关闭等边界不因本阶段改变。
+**NEXT：** A 阶段文档审核收口后，申请一次有界的生产合成浏览器测试授权。只有该测试通过且用户决定模型、费用和数据边界后，才进入真实体验。API Terminal 继续关闭；Private 不挂载、Knowledge 只读、Promote 关闭等边界不因本阶段改变。
 
 **本阶段停止条件：** 不执行生产 Session/Run、模型请求、记忆写入、NAS 配置/容器修改、Secret/私人资料访问或资产清理。遇到需要这些权限才能继续的步骤，报告具体授权需求并停止。
 
