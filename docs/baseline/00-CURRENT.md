@@ -14,24 +14,31 @@ source: GitHub SecondBrain Monorepo
 
 **新的 Companion MVP 门槛（D077，已批准、仍未整体实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。Personal Memory / Learning Core 已部署并通过本地 Stub 合成闭环，但真实模型行为与用户体验尚待验收。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
 
-**阶段安排：** 当前暂停开发；恢复后先按下方 NEXT 验证真实浏览器与记忆体验，再根据效果最小返工并完成原 V1 MUST。已完成的 D077/D078 源码审计和隔离验证不重复开展。
+**阶段安排：** D080 已恢复开发。本轮 A 阶段准备已完成，文档更新已提交审核；生产真实 Hermes Run、模型调用及私人数据仍需单独授权。既有 D077/D078 源码审计和隔离验证不重复开展。
 
-**总体状态：NOT DONE。** D077 Core 与 Hermes v0.22.2 已部署。按 Issue #14 授权，PR #18 已 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`；Hermes 使用固定官方 amd64 digest `a11574…c1bf05` 加一文件 fail-closed 补丁的本地镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`（Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`）。API `/health` 返回 200，Dashboard 9119 可达并按预期重定向登录；插件 Doctor 确认 D078 guard 注册 1 个 hook；API toolset 仍为 `file,skills,vision`，Terminal 未开放，Skills 写入审核 true、审批模式 manual。隔离无模型 Run 验证敏感 Session 文件读取被拒、业务文件与 Skills 只读调用可执行、dispatcher 异常 fail-closed；D077 Memory 目录仍为 `1026:100 / 0700` 且 0 个文件。Private 未挂载、Knowledge 主目录只读（已有 Capture 专用 inbox RW 挂载不变）、Promote 关闭。生产没有创建 Session/Run 或写入个人记忆；真实模型浏览器体验尚未验收。镜像构建与运行证据、回滚方式和本轮历史资产只读审计见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 是旧合成请求估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。
+**总体状态：NOT DONE。** D079 已按范围结项；D080 正在准备真实浏览器合成验收，生产 Run 仍待单独授权。PR #19/#21/#22/#24 已依序合并，当前 main 为 `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D077 Core 与 Hermes v0.22.2 已部署。按 Issue #14 授权，PR #18 已 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`；Hermes 使用固定官方 amd64 digest `a11574…c1bf05` 加一文件 fail-closed 补丁的本地镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`（Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`）。API `/health` 返回 200，Dashboard 9119 可达并按预期重定向登录；插件 Doctor 确认 D078 guard 注册 1 个 hook；API toolset 仍为 `file,skills,vision`，Terminal 未开放，Skills 写入审核 true、审批模式 manual。隔离无模型 Run 验证敏感 Session 文件读取被拒、业务文件与 Skills 只读调用可执行、dispatcher 异常 fail-closed；D077 Memory 目录仍为 `1026:100 / 0700` 且 0 个文件。Private 未挂载、Knowledge 主目录只读（已有 Capture 专用 inbox RW 挂载不变）、Promote 关闭。生产没有创建 Session/Run 或写入个人记忆；真实模型浏览器体验尚未验收。镜像构建与运行证据、回滚方式和本轮历史资产只读审计见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 是旧合成请求估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。
 
-## 当前阶段决议：暂停开发，集中收口文档（2026-10-17）
+## 当前阶段决议：D080 恢复开发与真实浏览器验收准备（2026-10-17）
 
-**状态：DEVELOPMENT PAUSED / DOCUMENTATION CLOSEOUT。** 用户要求此阶段暂停开发；不得因已合并 PR #18、Hermes 新镜像健康或有限合成检查，就自动开展后续业务开发、NAS 变更、付费模型或真实个人数据测试。当前运行快照及 Hermes fail-closed image ID 以 `Environment-Baseline.md` 最新 2026-10-17 条目为准；PR #19 记录部署事实及资产审计，当前文档收口 PR 与其堆叠，尚非 main。D077 Core JSONL 数据没有新写入；Terminal 仍 OFF，Private 不挂载，Knowledge RO（Capture 专用 Inbox RW 子挂载为既有例外），Promote OFF。
+**状态：D080 A 阶段准备已完成、文档更新已提交审核；B 阶段生产合成 Run 未获授权。** 用户在本次聊天中明确恢复开发；Issue #25 授权的是 A 阶段准备。PR #19、#21、#22、#24 均已合并至 `main`，最新为 PR #24 merge commit `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D079 的只读运行预检及零外发本地合成链路已结项；PR #24 增补真实 AppSessionAuth + Web App 路由 + FakeHermes 的登录、Session、Run/SSE、学习和新 Session 召回集成回归。该结果不证明真实 Hermes Run、浏览器体验或模型自然学习质量。
 
-**NEXT — 恢复工作时必须按顺序执行（不是当前立即施工授权）：**
+本阶段只准备与验证零外发链路、修正当前基线并提交 PR。生产 API Run、Core Memory 持久写入、真实模型调用、凭据读取、私人资料访问、NAS 配置/容器变更仍不在授权内。当前运行状态只能引用 `Environment-Baseline.md` 最近的 2026-10-17 快照；本 Issue 未重新探测生产环境。
 
-1. **文档合并与基线确认**：先审查合并 PR #19 的部署/资产审计记录，再审查合并本次文档收口 PR；确认 `main` 的 CURRENT、AGENTS、Agent-Rules、Environment、Progress 及产品规格引用一致。不得以文档审查为由操作 NAS。
-2. **恢复前只读预检**：用户明确恢复后，读取 NAS 的 Hermes 镜像/digest、API `file,skills,vision`、插件 1 hook、Skills 审核、App/Core/两端 health、Private/Knowledge/Capture/Promote 边界及记忆目录状态，与最新 Environment 快照比对；只读核验不等于真实 Run 验收。
-3. **小范围合成浏览器验收（另行授权）**：使用无敏感虚构偏好，在 SecondBrain Web App 验证登录、Session/Run/SSE、首轮记忆保存、跨 Session 自然召回、更正后旧值失效及无关话题不误注入；记录端到端证据并定向清理测试资产。实际模型须另行确认 provider、每次调用费用上限与测试内容；若可用本地确定性 Mock 则先进行零外发链路核验，不把 Mock 当作真实模型效果。
-4. **有限真实体验（另行授权）**：前项通过后由用户决定允许发送的数据范围、模型与费用上限，亲自做少量浏览器 Chat/Memory 体验，报告质量、延迟、错误与最终验收状态。**未经用户确认不接触真实私人资料。**
-5. **后续业务排期**：再依据原 V1 MUST 与 Companion MVP 的缺口决定 Journal/Task、微信输入、Promote、Projects/Brief/Activity、多端同步等优先级；API Terminal 的单次审批真实链路仍需单独评估与启用授权，绝不因审批 UI 存在而自动开启。
-6. **历史资产清理（非当前任务）**：10 份未引用 App build source（约 56.4 MiB）仅为候选；正在被 Compose 引用的 D076 构建源、D078 回滚点不可删除；三个 D077 大归档约 4.91 GiB 尚未内容比对。后续需先精确核验引用/校验和并另行获准才可删。禁止批量 Docker prune。
+**最短浏览器验收步骤（生产执行须另行授权）：**
 
-**当前停止条件：** 只完成文档修订、交叉核对与 PR 审阅，不触发新增代码、生产变更、生产 Run、真实模型、凭据/个人数据访问或 NAS 删除。
+1. 打开已配置的 SecondBrain Web App HTTPS 入口并登录，进入“对话”，新建 Session A。
+2. 自然表达一条虚构稳定偏好，例如“我写技术说明时喜欢先给简短结论，再列三条要点”，不要求系统保存；查看正常 Run/SSE 回复。
+3. 新建 Session B，提出相关但不提示回忆的问题，例如“帮我整理这次测试的说明”，观察是否自然采用该偏好且不过度复述背景。
+4. 在 Session B 明确更正为“两条要点”，等待回复完成；新建 Session C，再问相关问题，确认新偏好生效且旧偏好不再作为当前事实。
+5. 在 Session C 提一个无关问题，确认不会牵强提及该个人偏好。只使用虚构内容，不上传文件、不引用真实项目资料。
+
+本地零外发证据：PR #24 的单条集成测试通过真实 AppSessionAuth 和 Web App API 路由，以 FakeHermes 替代外部 Hermes，覆盖登录、Session 创建、Run、SSE 完成、Core 学习及另一 Session 的 instructions 召回。既有定向用例覆盖纠错/失效、无关主题过滤、失败/停止不学习；D078 Guard 已有独立隔离测试。此次不重复运行既有 44 项 Core / 15 项 Guard 测试。以上均非真实生产浏览器验证。
+
+**真实体验授权前置项：** D077 自动记忆是否被自然表达触发、真实 Hermes 上下文效果和回答质量必须经实际模型 Run 判断。执行生产浏览器步骤预计最多 5 次 Run；模型供应商/精确型号和当前费率在本轮未核实，费用上限因此为 UNKNOWN，不能把旧估算或软预算当作账单上限。下一步需先在不读取 Secret 的前提下确认实际 provider/model 与当前单价，拟定不超过 5 次调用的明确预算，再由用户单独授权生产合成 Session/Run、记忆写入和测试资产清理策略。不得使用真实私人数据或自动切换模型。
+
+**NEXT：** A 阶段文档审核收口后，申请一次有界的生产合成浏览器测试授权。只有该测试通过且用户决定模型、费用和数据边界后，才进入真实体验。API Terminal 继续关闭；Private 不挂载、Knowledge 只读、Promote 关闭等边界不因本阶段改变。
+
+**本阶段停止条件：** 不执行生产 Session/Run、模型请求、记忆写入、NAS 配置/容器修改、Secret/私人资料访问或资产清理。遇到需要这些权限才能继续的步骤，报告具体授权需求并停止。
 
 ## D077 产品体验验收契约（批准的目标；真实效果尚未验收）
 
