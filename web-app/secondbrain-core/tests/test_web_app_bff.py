@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -45,6 +46,7 @@ class WebAppBffTests(unittest.TestCase):
         self.calls = []
         self.approval_sse = False
         self.approval_file_sse = False
+        self.deleted_sessions = set()
 
         def handler(request):
             self.calls.append(request)
@@ -56,6 +58,8 @@ class WebAppBffTests(unittest.TestCase):
                 return httpx.Response(200, json={"object": "list", "data": [{"id": "session-1", "title": "Existing", "message_count": 1}], "limit": 50, "offset": 0})
             if request.url.path == "/api/sessions/session-1/fork":
                 return httpx.Response(201, json={"object": "hermes.session", "session": {"id": "session-3", "title": "Forked"}})
+            if request.url.path.startswith("/api/sessions/") and request.url.path.count("/") == 3 and request.url.path.rsplit("/", 1)[-1] in self.deleted_sessions:
+                return httpx.Response(404, json={"detail": "session not found"})
             if request.url.path in {"/api/sessions/session-1", "/api/sessions/session-3"}:
                 session_id = request.url.path.rsplit("/", 1)[-1]
                 count = 1 if session_id == "session-1" else 0
@@ -263,6 +267,97 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(reopened.json()["task"]["status"], "open")
         self.assertEqual(self.calls, [])
         self.assertTrue((self.tasks / "tasks.json").is_file())
+
+    def test_session_activity_is_durable_idempotent_session_scoped_and_reconciled(self):
+        self.login()
+        headers = {"Origin": "https://testserver", "Idempotency-Key": "journal-op-1"}
+        body = {"text": "记一下：仅用于 session activity 合成验收", "session_id": "session-1"}
+        with patch.object(self.app.state.chat_activity_store, "upsert",
+                          side_effect=HTTPException(status_code=500, detail="synthetic projection failure")):
+            first = self.client.post("/api/journal/entries", json=body, headers=headers)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["status"], "created")
+        self.assertEqual(first.json()["activity"]["status"], "succeeded")
+        # Rebuild Core and its activity projection from the durable Journal row,
+        # modeling a process restart after business commit but before indexing.
+        self.client.close()
+        with patch.dict(os.environ, self.env), patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+            self.app = create_app()
+        self.client = TestClient(self.app, base_url="https://testserver")
+        self.login()
+        activity = self.client.get("/api/chat/sessions/session-1/activities").json()["activities"]
+        self.assertEqual(len(activity), 1)
+        self.assertEqual(activity[0]["operation_id"], "journal-op-1")
+        self.assertEqual(activity[0]["journal_date"], first.json()["date"])
+        duplicate = self.client.post("/api/journal/entries", json=body, headers=headers)
+        self.assertEqual(duplicate.json()["status"], "duplicate")
+        self.assertEqual(len(list(self.journal.glob("*.jsonl"))), 1)
+
+        # Projection failure is recoverable because the operation reference and
+        # original text committed atomically in the authoritative Journal row.
+        with patch.object(self.app.state.chat_activity_store, "upsert",
+                          side_effect=HTTPException(status_code=500, detail="synthetic projection failure")):
+            task_headers = {"Origin": "https://testserver", "Idempotency-Key": "task-op-1"}
+            task_body = {"title": "会话合成任务", "due_date": "2026-10-20",
+                         "original_command": "添加待办：会话合成任务", "session_id": "session-1"}
+            task_response = self.client.post("/api/tasks", json=task_body, headers=task_headers)
+            self.assertEqual(task_response.status_code, 200, task_response.text)
+            task = task_response.json()["task"]
+            recovered = self.client.get("/api/chat/sessions/session-1/activities").json()["activities"]
+            self.assertEqual({item["event_id"] for item in recovered}, {"journal:journal-op-1", "task:task-op-1"})
+
+        # A same-key retry resolves to the same Task; later CRUD state is
+        # reflected by the activity projection rather than a stale success card.
+        duplicate_task = self.client.post("/api/tasks", json=task_body, headers=task_headers)
+        self.assertEqual(duplicate_task.json()["status"], "duplicate")
+        modified = self.client.patch(f"/api/tasks/{task['id']}",
+                                     json={"title": "更新后的合成任务", "status": "completed",
+                                           "expected_updated_at": task["updated_at"]},
+                                     headers={"Origin": "https://testserver"})
+        self.assertEqual(modified.status_code, 200, modified.text)
+        session_events = self.client.get("/api/chat/sessions/session-1/activities").json()["activities"]
+        task_event = next(item for item in session_events if item["kind"] == "task")
+        self.assertEqual(task_event["task_title"], "更新后的合成任务")
+        self.assertEqual(task_event["task_status"], "completed")
+
+        # Fork has its own activity namespace; unknown/deleted sessions fail
+        # closed instead of exposing the source Session's operations.
+        self.assertEqual(self.client.get("/api/chat/sessions/session-3/activities").json()["activities"], [])
+        self.deleted_sessions.add("session-1")
+        deleted = self.client.get("/api/chat/sessions/session-1/activities")
+        self.assertEqual(deleted.status_code, 404)
+
+    def test_session_activity_requires_login_and_binds_operation_key_to_session(self):
+        unauthenticated = self.client.get("/api/chat/sessions/session-1/activities")
+        self.assertEqual(unauthenticated.status_code, 401)
+        self.login()
+        headers = {"Origin": "https://testserver", "Idempotency-Key": "journal-scope-key"}
+        body = {"text": "记一下：会话隔离", "session_id": "session-1"}
+        self.assertEqual(self.client.post("/api/journal/entries", json=body, headers=headers).status_code, 200)
+        cross_session = self.client.post("/api/journal/entries", json={**body, "session_id": "session-3"}, headers=headers)
+        self.assertEqual(cross_session.status_code, 409)
+        self.assertEqual(self.client.get("/api/chat/sessions/session-3/activities").json()["activities"], [])
+
+        unknown = self.client.get("/api/chat/sessions/not-a-session/activities")
+        self.assertEqual(unknown.status_code, 404)
+
+    def test_session_activity_records_validation_failure_without_claiming_success(self):
+        self.login()
+        response = self.client.post("/api/journal/entries",
+                                    json={"text": "ordinary chat", "session_id": "session-1"},
+                                    headers={"Origin": "https://testserver", "Idempotency-Key": "journal-invalid"})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["activity"]["status"], "failed")
+        activity = self.client.get("/api/chat/sessions/session-1/activities").json()["activities"]
+        self.assertEqual(activity[0]["status"], "failed")
+        self.assertFalse(any(path.suffix == ".jsonl" for path in self.journal.iterdir()))
+        with patch.object(self.app.state.chat_activity_store, "upsert",
+                          side_effect=HTTPException(status_code=500, detail="synthetic activity persistence failure")):
+            unavailable = self.client.post("/api/journal/entries",
+                                           json={"text": "ordinary chat", "session_id": "session-1"},
+                                           headers={"Origin": "https://testserver", "Idempotency-Key": "journal-invalid-unavailable"})
+        self.assertEqual(unavailable.status_code, 500)
+        self.assertNotIn("activity", unavailable.json())
 
     def test_unconfigured_tasks_fail_closed_without_creating_data(self):
         with patch.dict(os.environ, {**self.env, "SB_TASK_ROOT": ""}), patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):

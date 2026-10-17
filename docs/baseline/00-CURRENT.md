@@ -14,12 +14,13 @@ source: GitHub SecondBrain Monorepo
 
 **新的 Companion MVP 门槛（D077，已批准、尚未整体实现/验收）：** 日常 Chat 无检索提示地关联长期个人记忆与可信知识；获准对话低风险学习、跨 Session 召回与纠正；精确事实回源；自然语言 Journal、简单 Task、Capture 与主动建议。原 V1 MUST 保持不变。D080 两次 GLM-4.5-Air Run 中，首轮自动学习写入通过，跨 Session 自然召回失败；D082 的情境保留修复已进入最新 main，但生产重新验证仍未完成，详见 Issue #28/#30。
 
-**总体状态：NOT DONE。** 以下状态以 2026-10-17 核验的 GitHub refs 与各 PR 证据为准；生产状态只引用 `Environment-Baseline.md` 的 2026-10-17 快照，不是本轮实时核验。PR #18 的 Hermes v0.22.2 fail-closed overlay 已在 NAS 部署并通过有限合成权限检查；Terminal 关闭、Private 未挂载、Knowledge 主目录只读（Capture 专用 inbox RW 例外不变）、Promote 关闭。真实模型记忆质量、Journal/Task 的生产运行及浏览器用户验收未完成。
+**总体状态：NOT DONE。** D084 已部署并通过有限合成验收；用户浏览器验收发现显式 Chat Journal/Task 操作没有会话持久历史，当前按 Issue #44 评论 #6231983901 在独立分支开发 Core session-bound activity 修复。修复未合入、未部署、未用户验收。生产状态仍以 `Environment-Baseline.md` 最近证据为准；Terminal 关闭、Private 未挂载、Knowledge 主目录只读（Capture 专用 inbox RW 例外不变）、Promote 关闭。真实模型记忆质量与浏览器修复验收未完成。
 
 ### 当前工作分层状态（不能互相替代）
 
 | 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
 |---|---|---|---|---|---|
+| D084 后续：Chat 内 Journal/Task 会话活动留痕（Issue #44） | PR 待创建并交 ChatGPT 独立复审 | Core Journal/Task/BFF 31 项、前端 Chat/Capture/timeline 41 项最终通过；typecheck/build 通过。中间一次重跑有 1 项 Review 滚动测试间歇失败，单测与最终完整重跑均通过 | 独立分支 `codex/session-bound-journal-task-activity-20261017`，基于 main `76872e55…`；**未合并** | **未部署**；既有 D084 运行版本未包含本修复 | 用户此前发现的缺口待修复版浏览器验收；未做模型调用 |
 | D082 个人记忆情境保留修复 | PR #32 已审；随最新 main 保留在本轮集成分支 | 本轮 Core 统一定向组中 `test_personal_learning.py` 17 项通过；此前 D080 真实召回失败不可由源码/Mock 抵消 | 基线 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 的修复未被并行切片覆盖 | 此修复是否已部署，本次可用生产快照未证明，标记 **UNKNOWN** | 生产真实召回复验未完成；浏览器验收未完成 |
 | D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | 已整合至 `codex/d084-unified-integration-20261017`（基于 main `a8019ab1…`）；PR #45 已独立复审并合入 main（merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa`） | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未做真实模型或浏览器验收 |
 | PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #37 两个已审提交已移植至 `codex/d084-unified-integration-20261017`；PR #45 已合入 main，包含 PR #37 的两项已审提交；原 PR #37 仍独立 open，勿重复合并 | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需运行时验证；无真实模型验收 |
@@ -30,7 +31,7 @@ source: GitHub SecondBrain Monorepo
 
 本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
-**唯一 NEXT：** D084 已经用户授权并完成生产定向部署，见 Issue #44 评论 #6231864344。Hermes v0.22.2 fail-closed 镜像保持不变，新版 Guard 显式目录 Plugin Doctor `--ci` 通过（1 hook / 0 tools / 0 findings），API HTTP 200；App 已切换为 `secondbrain-app:d084-c8a2b348`，healthy。Journal/Task 专用根 `1026:100 / 0700`，合成 Journal 追加/读回及 Task 创建/更新/完成/读回 PASS；原有挂载边界未变，13 个回滚快照文件通过 SHA-256 校验，合成数据已保留。**下一步先由用户进行浏览器功能体验验收**，随后再按 Issue #28/#30 的未完成项分别设计真实 Hermes 文件审批链路与跨 Session 记忆召回验证；真实或付费模型 Run 仍须单独明确授权。禁止因本次合成 PASS 宣称真实模型/用户验收完成；不清理既有 Session、Memory、Atlas 或测试条目。用户授权的五次部署尝试在首次成功后终止，余额 0。状态：MERGED / DEPLOYED / SYNTHETIC VERIFIED / NOT REAL-MODEL VERIFIED / NOT USER ACCEPTED。
+**唯一 NEXT：** 将 Issue #44 的 Chat Journal/Task 会话活动留痕修复提交 PR 指向 `main`，供 ChatGPT 独立复审。该修复从最新 main `76872e55…` 起，已完成 Core/前端定向本地合成验证、typecheck/build；目前 **DEV-TESTED / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。D084 既有版本仍为 `secondbrain-app:d084-c8a2b348`，其 Guard/API/Journal/Task 无模型合成验收见评论 #6231864344；这不代表本修复已部署。禁止自行合并或部署；不清理既有 Session、Memory、Atlas 或测试条目，不调用真实/付费模型。PR 复审后另行安排修复版浏览器验收，并按 Issue #28/#30 的既有门禁处理模型验证。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 

@@ -175,21 +175,56 @@ describe('D075.1 capture interactions', () => {
     expect(screen.getByRole('button', { name: '对话' })).toBeTruthy();
   });
 
-  it('routes an explicit Journal phrase directly without creating a Hermes run', async () => {
+  it('persists an explicit Journal operation in its Hermes session without creating a run', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
-    const request = vi.fn().mockResolvedValueOnce(ok({ sessions: [] })).mockResolvedValueOnce(ok({ status: 'created', date: '2026-10-17' }));
+    let activity: Record<string, unknown> | null = null;
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-synthetic' });
+      if (url === '/api/journal/entries') {
+        const body = JSON.parse(String(init?.body));
+        activity = { event_id: 'journal:one', operation_id: new Headers(init?.headers).get('Idempotency-Key'), session_id: body.session_id, kind: 'journal', status: 'succeeded', original_text: body.text, occurred_at: '2026-10-17T10:00:00Z', journal_date: '2026-10-17' };
+        return ok({ status: 'created', date: '2026-10-17', activity });
+      }
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: activity ? [activity] : [] });
+      return ok({ sessions: [] });
+    });
     vi.stubGlobal('fetch', request);
     render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
     const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
     const original = '  记一下：测试时完整保留空格  ';
     fireEvent.change(input, { target: { value: original } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(await screen.findByText(/已保存到 2026-10-17 的 Journal，原话已保留/)).toBeTruthy();
-    expect(request).toHaveBeenCalledTimes(2);
-    expect(request.mock.calls[1][0]).toBe('/api/journal/entries');
-    expect(JSON.parse(request.mock.calls[1][1].body)).toEqual({ text: original });
-    expect(new Headers(request.mock.calls[1][1].headers).get('Idempotency-Key')).toBeTruthy();
+    expect(await screen.findByText('系统操作')).toBeTruthy();
+    expect(screen.getByText('记一下：测试时完整保留空格')).toBeTruthy();
+    expect(screen.getByText(/2026-10-17/)).toBeTruthy();
+    const journalRequest = request.mock.calls.find(([url]) => url === '/api/journal/entries');
+    expect(JSON.parse(String(journalRequest?.[1]?.body))).toEqual({ text: original, session_id: 'session-synthetic' });
+    expect(new Headers(journalRequest?.[1]?.headers).get('Idempotency-Key')).toBeTruthy();
+    expect(request.mock.calls.some(([url]) => String(url).includes('/runs'))).toBe(false);
     expect((input as HTMLTextAreaElement).value).toBe('');
+  });
+
+  it('restores persisted activity after reload and filters it when switching sessions', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'session-a');
+    const request = vi.fn(async (url: string) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
+        { session_id: 'session-a', title: 'A' }, { session_id: 'session-b', title: 'B' },
+      ] });
+      if (url.endsWith('/activities')) return ok({ activities: url.includes('session-a')
+        ? [{ event_id: 'journal:a', operation_id: 'op-a', session_id: 'session-a', kind: 'journal', status: 'succeeded', original_text: '记一下：仅属于 A', occurred_at: '2026-10-17T10:00:00Z', journal_date: '2026-10-17' }]
+        : [{ event_id: 'task:b', operation_id: 'op-b', session_id: 'session-b', kind: 'task', status: 'succeeded', original_text: '添加待办：仅属于 B', occurred_at: '2026-10-17T10:01:00Z', task_title: 'B 项', task_status: 'open' }] });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      return ok({ sessions: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    expect(await screen.findByText('记一下：仅属于 A')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^B/ }));
+    expect(await screen.findByText('添加待办：仅属于 B')).toBeTruthy();
+    expect(screen.queryByText('记一下：仅属于 A')).toBeNull();
   });
 
   it('keeps ordinary chat input on the Hermes run route', async () => {
@@ -211,57 +246,91 @@ describe('D075.1 capture interactions', () => {
 
   it('keeps explicit Journal text on failure and safely retries with the same idempotency key', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
-    const request = vi.fn().mockResolvedValueOnce(ok({ sessions: [] }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Journal append failed safely' }), { status: 500 }))
-      .mockResolvedValueOnce(ok({ status: 'created', date: '2026-10-17' }));
+    let posts = 0;
+    let activity: Record<string, unknown> | null = null;
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-synthetic' });
+      if (url === '/api/journal/entries') {
+        posts += 1;
+        const body = JSON.parse(String(init?.body));
+        activity = { event_id: 'journal:one', operation_id: new Headers(init?.headers).get('Idempotency-Key'), session_id: body.session_id, kind: 'journal', status: 'succeeded', original_text: body.text, occurred_at: '2026-10-17T10:00:00Z', journal_date: '2026-10-17' };
+        // Simulate the durable business write committing while the HTTP
+        // response is lost; retry with the same key must resolve as duplicate.
+        if (posts === 1) return new Response(JSON.stringify({ detail: 'Journal response was lost after commit' }), { status: 500 });
+        return ok({ status: 'duplicate', date: '2026-10-17', activity });
+      }
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: activity ? [activity] : [] });
+      return ok({ sessions: [] });
+    });
     vi.stubGlobal('fetch', request);
     render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
     const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
     fireEvent.change(input, { target: { value: '记一下：失败后保留' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/Journal append failed safely/);
+    expect((await screen.findByRole('alert')).textContent).toMatch(/服务暂时不可用/);
+    expect(await screen.findByText(/结果待确认/)).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe('记一下：失败后保留');
-    const firstKey = new Headers(request.mock.calls[1][1].headers).get('Idempotency-Key');
+    const firstJournalCall = request.mock.calls.find(([url]) => url === '/api/journal/entries');
+    const firstKey = new Headers(firstJournalCall?.[1]?.headers).get('Idempotency-Key');
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(await screen.findByText(/已保存到 2026-10-17 的 Journal/)).toBeTruthy();
-    expect(new Headers(request.mock.calls[2][1].headers).get('Idempotency-Key')).toBe(firstKey);
-    expect(request.mock.calls.every(([url]) => url === '/api/chat/sessions?limit=50&offset=0' || url === '/api/journal/entries')).toBe(true);
+    await waitFor(() => expect(screen.getByText('成功')).toBeTruthy());
+    const journalCalls = request.mock.calls.filter(([url]) => url === '/api/journal/entries');
+    expect(new Headers(journalCalls[1]?.[1]?.headers).get('Idempotency-Key')).toBe(firstKey);
+    expect(request.mock.calls.some(([url]) => String(url).includes('/runs'))).toBe(false);
   });
 
   it('reports disabled Journal without clearing the input or pretending it was saved', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
-    const request = vi.fn().mockResolvedValueOnce(ok({ sessions: [] }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Journal is not enabled' }), { status: 503 }));
+    const request = vi.fn(async (url: string) => url === '/api/chat/sessions?limit=50&offset=0' ? ok({ sessions: [] })
+      : url === '/api/chat/sessions' ? ok({ session_id: 'session-synthetic' })
+        : url === '/api/journal/entries' ? new Response(JSON.stringify({ detail: 'Journal is not enabled' }), { status: 503 })
+          : ok({ activities: [], messages: [] }));
     vi.stubGlobal('fetch', request);
     render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
     const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
     fireEvent.change(input, { target: { value: '记一下：Journal 未启用' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/当前环境未启用 Journal/);
+    expect((await screen.findByRole('alert')).textContent).toMatch(/当前环境未启用日记/);
     expect((input as HTMLTextAreaElement).value).toBe('记一下：Journal 未启用');
     expect(screen.queryByText(/已保存到 .* Journal/)).toBeNull();
   });
 
   it('creates an explicit Task directly and preserves its command on failure for same-key retry', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
-    const request = vi.fn().mockResolvedValueOnce(ok({ sessions: [] }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Task update failed safely' }), { status: 500 }))
-      .mockResolvedValueOnce(ok({ status: 'created', task: { title: '测试任务' } }));
+    let posts = 0;
+    let activity: Record<string, unknown> | null = null;
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-synthetic' });
+      if (url === '/api/tasks') {
+        posts += 1;
+        const body = JSON.parse(String(init?.body));
+        activity = { event_id: 'task:one', operation_id: new Headers(init?.headers).get('Idempotency-Key'), session_id: body.session_id, kind: 'task', status: 'succeeded', original_text: body.original_command, occurred_at: '2026-10-17T10:00:00Z', task_id: 'task-1', task_title: '测试任务', task_status: 'open' };
+        if (posts === 1) return new Response(JSON.stringify({ detail: 'Task response was lost after commit' }), { status: 500 });
+        return ok({ status: 'duplicate', task: { id: 'task-1', title: '测试任务', due_date: body.due_date, status: 'open', created_at: '2026-10-17T10:00:00Z' }, activity });
+      }
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: activity ? [activity] : [] });
+      return ok({ sessions: [] });
+    });
     vi.stubGlobal('fetch', request);
     render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
     const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
     fireEvent.change(input, { target: { value: '添加待办：测试任务 截止：2026-10-20' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/Task update failed safely/);
+    expect((await screen.findByRole('alert')).textContent).toMatch(/服务暂时不可用/);
+    expect(await screen.findByText(/结果待确认/)).toBeTruthy();
     expect((input as HTMLTextAreaElement).value).toBe('添加待办：测试任务 截止：2026-10-20');
-    const firstKey = new Headers(request.mock.calls[1][1].headers).get('Idempotency-Key');
+    const firstTaskCall = request.mock.calls.find(([url]) => url === '/api/tasks');
+    const firstKey = new Headers(firstTaskCall?.[1]?.headers).get('Idempotency-Key');
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(await screen.findByText(/待办已创建/)).toBeTruthy();
-    expect(request).toHaveBeenCalledTimes(3);
-    expect(request.mock.calls[1][0]).toBe('/api/tasks');
-    expect(JSON.parse(request.mock.calls[1][1].body)).toEqual({ title: '测试任务', due_date: '2026-10-20', original_command: '添加待办：测试任务 截止：2026-10-20' });
-    expect(new Headers(request.mock.calls[2][1].headers).get('Idempotency-Key')).toBe(firstKey);
-    expect(request.mock.calls.every(([url]) => url !== '/api/chat/sessions' && !String(url).includes('/runs'))).toBe(true);
+    await waitFor(() => expect(screen.getByText('成功')).toBeTruthy());
+    const taskCalls = request.mock.calls.filter(([url]) => url === '/api/tasks');
+    expect(JSON.parse(String(taskCalls[0][1]?.body))).toEqual({ title: '测试任务', due_date: '2026-10-20', original_command: '添加待办：测试任务 截止：2026-10-20', session_id: 'session-synthetic' });
+    expect(new Headers(taskCalls[1]?.[1]?.headers).get('Idempotency-Key')).toBe(firstKey);
+    expect(request.mock.calls.some(([url]) => String(url).includes('/runs'))).toBe(false);
   });
 
   it('does not treat an embedded Task phrase as an explicit Chat command', async () => {

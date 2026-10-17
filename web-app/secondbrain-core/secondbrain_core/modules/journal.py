@@ -10,6 +10,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
+from starlette.responses import JSONResponse
+
+from .chat_activity import journal_activity
 
 
 _INTENT = re.compile(r"^\s*(?:记一下|记下来|写日记|记录一下)(?:[：:,，\s]+|$)")
@@ -43,7 +46,7 @@ class JournalStore:
             raise HTTPException(status_code=400, detail="Invalid date") from exc
         return self.root / f"{day}.jsonl"
 
-    def append(self, day, text, idempotency_key):
+    def append(self, day, text, idempotency_key, session_id=None):
         path = self._path(day)
         if not isinstance(text, str) or not text.strip():
             raise HTTPException(status_code=400, detail="An explicit Journal phrase and text are required")
@@ -56,7 +59,8 @@ class JournalStore:
             raise HTTPException(status_code=400, detail="A valid Idempotency-Key is required")
 
         key_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
-        record = {"id": key_hash, "created_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
+        record = {"id": key_hash, "operation_id": idempotency_key, "session_id": session_id,
+                  "date": day, "created_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
                   "source": "web_app_explicit_intent", "original_text": text}
         encoded = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
         lock_path = self.root / f".{day}.lock"
@@ -83,6 +87,8 @@ class JournalStore:
             if prior is not None:
                 if prior.get("original_text") != text:
                     raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different Journal text")
+                if prior.get("session_id") != session_id:
+                    raise HTTPException(status_code=409, detail="Idempotency-Key belongs to a different Chat Session")
                 return {"status": "duplicate", "date": day, "entry": prior}
             write_fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
             try:
@@ -143,8 +149,21 @@ class JournalStore:
             os.close(lock_fd)
         return {"date": day, "entries": entries}
 
+    def session_activities(self, session_id):
+        activities = []
+        for path in self.root.glob("????-??-??.jsonl"):
+            day = path.name[:-6]
+            for record in self.read(day)["entries"]:
+                if record.get("session_id") != session_id:
+                    continue
+                record = {**record, "date": day}
+                event = journal_activity(record, session_id)
+                if event:
+                    activities.append(event)
+        return activities
 
-def create_journal_router(auth, store):
+
+def create_journal_router(auth, store, hermes=None, activity_store=None):
     router = APIRouter(prefix="/api/journal")
 
     @router.get("/{day}")
@@ -155,10 +174,40 @@ def create_journal_router(auth, store):
         return store.read(day)
 
     @router.post("/entries")
-    def append_journal(request: Request, body: dict):
+    async def append_journal(request: Request, body: dict):
         auth.require_action(request, "journal.append")
         if store is None:
             raise HTTPException(status_code=503, detail="Journal is not enabled")
-        return store.append(body.get("date") or store.today(), body.get("text"), request.headers.get("idempotency-key", ""))
+        session_id = body.get("session_id")
+        if session_id is not None:
+            if not isinstance(session_id, str) or not session_id or hermes is None:
+                raise HTTPException(status_code=400, detail="A valid Chat Session is required")
+            await hermes.get_session(session_id)
+        key = request.headers.get("idempotency-key", "")
+        try:
+            result = store.append(body.get("date") or store.today(), body.get("text"), key, session_id)
+        except HTTPException as exc:
+            if (session_id and activity_store is not None and exc.status_code in {400, 413, 422}
+                    and isinstance(body.get("text"), str) and key and 1 <= len(key) <= 255):
+                failed = {"event_id": f"journal:{key}", "operation_id": key, "session_id": session_id,
+                          "kind": "journal", "status": "failed", "original_text": body["text"],
+                          "occurred_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
+                          "detail": exc.detail}
+                # A failed operation has no authoritative Journal row to
+                # reconstruct it from, so only return its activity after the
+                # private failure record is durable.
+                activity_store.upsert(failed)
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "activity": failed})
+            raise
+        event = journal_activity(result["entry"], session_id)
+        if event and activity_store is not None:
+            try:
+                activity_store.upsert(event)
+            except HTTPException:
+                # The same session/operation reference is already durable in
+                # the Journal entry and will repair the projection on read.
+                pass
+            result["activity"] = event
+        return result
 
     return router

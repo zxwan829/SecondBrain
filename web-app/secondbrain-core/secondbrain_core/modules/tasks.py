@@ -10,6 +10,9 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from starlette.responses import JSONResponse
+
+from .chat_activity import task_activity
 
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -124,7 +127,7 @@ class TaskStore:
             raise HTTPException(status_code=400, detail="A valid Idempotency-Key is required")
         return hashlib.sha256(key.encode("ascii")).hexdigest()
 
-    def create(self, title, due_date, idempotency_key, original_command=""):
+    def create(self, title, due_date, idempotency_key, original_command="", session_id=None):
         if not isinstance(title, str) or not title.strip():
             raise HTTPException(status_code=400, detail="Task title is required")
         if len(title.encode("utf-8")) > _MAX_TITLE_BYTES:
@@ -145,16 +148,26 @@ class TaskStore:
                 task = next((item for item in data["tasks"] if item["id"] == prior["task_id"]), None)
                 if task is None:
                     raise HTTPException(status_code=500, detail="Task idempotency record is inconsistent")
+                if task.get("session_id") != session_id:
+                    raise HTTPException(status_code=409, detail="Idempotency-Key belongs to a different Chat Session")
                 return {"status": "duplicate", "task": task}, False
             stamp = _now()
             task = {"id": uuid.uuid4().hex, "title": title.strip(), "due_date": due_date,
                     "status": "open", "created_at": stamp, "updated_at": stamp,
                     "source": "web_app_explicit_task", "original_command": original_command,
+                    "operation_id": idempotency_key, "session_id": session_id,
                     "history": [{"at": stamp, "event": "created", "changes": {"title": title.strip(), "due_date": due_date, "status": "open"}}]}
             data["tasks"].append(task)
             data["idempotency"][key_hash] = {"fingerprint": fingerprint, "task_id": task["id"]}
             return {"status": "created", "task": task}, True
 
+        return self._with_lock(operation)
+
+    def session_activities(self, session_id):
+        def operation(data):
+            items = [task_activity(task, session_id) for task in data["tasks"]
+                     if task.get("session_id") == session_id and task.get("operation_id")]
+            return [item for item in items if item], False
         return self._with_lock(operation)
 
     def list(self, status="open", due_date=None):
@@ -213,7 +226,7 @@ class TaskStore:
         return self._with_lock(operation)
 
 
-def create_task_router(auth, store):
+def create_task_router(auth, store, hermes=None, activity_store=None):
     router = APIRouter(prefix="/api/tasks")
 
     def configured():
@@ -227,11 +240,39 @@ def create_task_router(auth, store):
         return store.list(status, due_date)
 
     @router.post("")
-    def create_task(request: Request, body: dict):
+    async def create_task(request: Request, body: dict):
         auth.require_action(request, "task.write")
         configured()
-        return store.create(body.get("title"), body.get("due_date"),
-                            request.headers.get("idempotency-key", ""), body.get("original_command", ""))
+        session_id = body.get("session_id")
+        if session_id is not None:
+            if not isinstance(session_id, str) or not session_id or hermes is None:
+                raise HTTPException(status_code=400, detail="A valid Chat Session is required")
+            await hermes.get_session(session_id)
+        key = request.headers.get("idempotency-key", "")
+        try:
+            result = store.create(body.get("title"), body.get("due_date"), key,
+                                  body.get("original_command", ""), session_id)
+        except HTTPException as exc:
+            command = body.get("original_command", "")
+            if (session_id and activity_store is not None and exc.status_code in {400, 413}
+                    and isinstance(command, str) and command and key and 1 <= len(key) <= 255):
+                failed_task = {"operation_id": key, "original_command": command, "created_at": _now()}
+                failed = task_activity(failed_task, session_id, status="failed", detail=exc.detail)
+                # There is no Task row to repair a failed-create activity
+                # from, so persist it before returning it to the caller.
+                activity_store.upsert(failed)
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "activity": failed})
+            raise
+        event = task_activity(result["task"], session_id)
+        if event and activity_store is not None:
+            try:
+                activity_store.upsert(event)
+            except HTTPException:
+                # The Task record owns the operation reference and repairs the
+                # projection after a crash or temporary activity-root failure.
+                pass
+            result["activity"] = event
+        return result
 
     @router.patch("/{task_id}")
     def update_task(request: Request, task_id: str, body: dict):
