@@ -9,6 +9,7 @@ from pathlib import Path
 APPROVAL_PREFIX = "SECONDBRAIN_TERMINAL_APPROVAL_V1:"
 FILE_WRITE_APPROVAL_PREFIX = "SECONDBRAIN_FILE_WRITE_APPROVAL_V1:"
 _EXECUTION_TOOLS = {"terminal", "process_manage", "execute_code"}
+_REVIEWED_WRITE_TOOLS = {"write_file", "patch"}
 _READ_TOOLS = {"read_file", "search_files", "list_directory", "directory_tree", "find_files",
                "file_info", "list_files", "glob_files"}
 _WRITE_TOOLS = {"write_file", "patch", "edit_file", "append_file", "delete_file", "move_file",
@@ -264,6 +265,17 @@ def _approval_mode_bypass():
 def _pre_tool_call(tool_name=None, args=None, **kwargs):
     name = str(tool_name or "")
     arguments = args if isinstance(args, dict) else {}
+    if name in _WRITE_TOOLS:
+        # Every mutation depends on the real Hermes approval mechanism. YOLO,
+        # approvals-off, and failures reading policy state must never downgrade it.
+        try:
+            approval_disabled = _approval_mode_bypass()
+        except Exception:
+            approval_disabled = True
+        if approval_disabled:
+            return {"action": "block", "message": "BLOCKED: file write approval policy is unavailable or disabled (approval_policy_unavailable)."}
+        if name not in _REVIEWED_WRITE_TOOLS:
+            return {"action": "block", "message": "BLOCKED: this file mutation has no supported one-time approval contract (file_write_tool_unsupported)."}
     if name in _EXECUTION_TOOLS:
         if _approval_mode_bypass():
             return {"action": "block", "message": "BLOCKED: terminal approval policy is unavailable or disabled (approval_policy_unavailable)."}
