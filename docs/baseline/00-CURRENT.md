@@ -26,11 +26,11 @@ source: GitHub SecondBrain Monorepo
 
 本轮以实时 GitHub main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 为基线；与 `dev/parallel-v1-next-20261017` 在 `d7a48fe` 分叉后，main 独有 6 个提交（含 D082 记忆修复及后续治理文档），并行分支独有 3 个功能切片提交。集成分支保留 main 历史并合入 3 个切片；`personal_learning.py` 与其回归测试相对 main 未改动。唯一源码冲突为 `App.tsx` 的 Journal/Task 与通用 Run 审批解析器导入，已人工合并；CURRENT 文档冲突保留 main 文本并在本轮校准。代码审查、定向测试、分支合入、main 合入、NAS 部署、真实模型运行与用户验收分别记录；任一层通过都不自动代表后一层通过。
 
-## D084：统一功能集成已合入 main（生产预检阻断）
+## D084：统一功能集成已部署（限定合成验收通过）
 
 本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
-**唯一 NEXT：** PR #45 已经用户授权并于 2026-10-17 合入 main（merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa`）；当前进入最小 NAS 部署前只读解阻：现有 UID 1026/GID 100 不能访问 Docker daemon，无法核验实际容器/挂载/镜像；D082 App 回滚目录 `root:root / 0700` 不能读取；Journal/Task 根目录尚不存在；现存 Compose 文件哈希与旧环境快照不同，需先核对差异。仅允许经过明确授权的最小只读 Docker inspect / App 回滚元数据核验，必要目录创建、Compose/镜像改动和部署都须后续单独批准。只读预检证据与最小方案交由 Issue #44 收口；不运行真实 Hermes/付费模型，不处理真实个人数据，不清理 Issue #28 的 Session、Core Memory 或 Atlas 合成资产。当前为 MERGED / NOT DEPLOYED / NOT RUNTIME VERIFIED / NOT USER ACCEPTED。
+**唯一 NEXT：** D084 已经用户授权并完成生产定向部署，见 Issue #44 评论 #6231864344。Hermes v0.22.2 fail-closed 镜像保持不变，新版 Guard 显式目录 Plugin Doctor `--ci` 通过（1 hook / 0 tools / 0 findings），API HTTP 200；App 已切换为 `secondbrain-app:d084-c8a2b348`，healthy。Journal/Task 专用根 `1026:100 / 0700`，合成 Journal 追加/读回及 Task 创建/更新/完成/读回 PASS；原有挂载边界未变，13 个回滚快照文件通过 SHA-256 校验，合成数据已保留。**下一步先由用户进行浏览器功能体验验收**，随后再按 Issue #28/#30 的未完成项分别设计真实 Hermes 文件审批链路与跨 Session 记忆召回验证；真实或付费模型 Run 仍须单独明确授权。禁止因本次合成 PASS 宣称真实模型/用户验收完成；不清理既有 Session、Memory、Atlas 或测试条目。用户授权的五次部署尝试在首次成功后终止，余额 0。状态：MERGED / DEPLOYED / SYNTHETIC VERIFIED / NOT REAL-MODEL VERIFIED / NOT USER ACCEPTED。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 
