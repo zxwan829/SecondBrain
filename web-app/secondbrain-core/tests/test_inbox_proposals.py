@@ -112,7 +112,11 @@ class InboxProposalStoreTests(unittest.TestCase):
         from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
 
         class Auth:
+            denied = set()
+
             def require_action(self, request: Request, action: str):
+                if action in self.denied:
+                    raise HTTPException(status_code=403, detail=f"{action} denied")
                 if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("origin") != "https://testserver":
                     raise HTTPException(status_code=403, detail="trusted origin required")
                 if request.cookies.get("session") != "owner":
@@ -121,6 +125,7 @@ class InboxProposalStoreTests(unittest.TestCase):
 
         class Sources:
             version = "etag-synthetic"
+            notes_store = type("NotesStore", (), {"roots": {"drafts": "/synthetic/drafts"}})()
 
             def resolve(self, source):
                 if source.get("source_kind") != "notes" or source.get("path") != "synthetic.md":
@@ -150,6 +155,11 @@ class InboxProposalStoreTests(unittest.TestCase):
         loaded = client.get("/api/inbox/proposals", params=source)
         self.assertEqual(loaded.status_code, 200)
         self.assertEqual(len(loaded.json()["proposals"]), 5)
+        unauthorized_collection = {**source, "source_kind": "notes", "source_id": "knowledge:synthetic.md",
+                                   "collection": "knowledge", "path": "synthetic.md"}
+        rejected_collection = client.post("/api/inbox/proposals", json=unauthorized_collection,
+                                          headers={"Origin": "https://testserver", "Idempotency-Key": "bad-collection"})
+        self.assertEqual(rejected_collection.status_code, 404)
         journal = next(item for item in loaded.json()["proposals"] if item["kind"] == "journal")
         body = {"decision": "approved_recorded", "expected_version": 1}
         first = client.post(f"/api/inbox/proposals/{journal['proposal_id']}/decision", json=body,
@@ -160,8 +170,76 @@ class InboxProposalStoreTests(unittest.TestCase):
         self.assertEqual(first.status_code, 200)
         self.assertTrue(replay.json()["duplicate"])
         self.assertEqual(replay.json()["proposal"]["status"], "approved_recorded")
+        Auth.denied.add("notes.read")
+        denied_history = client.get(f"/api/inbox/proposals/{journal['proposal_id']}/history")
+        denied_replay = client.post(f"/api/inbox/proposals/{journal['proposal_id']}/decision", json=body,
+                                    headers={"Origin": "https://testserver", "Idempotency-Key": "http-decision"})
+        self.assertEqual(denied_history.status_code, 403)
+        self.assertEqual(denied_replay.status_code, 403)
+        Auth.denied.remove("notes.read")
+        self.assertEqual(client.get(f"/api/inbox/proposals/{journal['proposal_id']}/history").status_code, 200)
         changed = client.get("/api/inbox/proposals", params={**source, "path": "other.md"})
         self.assertEqual(changed.status_code, 404)
+
+    def test_history_does_not_disclose_records_when_source_collection_is_revoked(self):
+        from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
+
+        class Auth:
+            def require_action(self, request, action):
+                if action in {"inbox.proposals.read", "inbox.proposals.write", "notes.read"}:
+                    return "owner"
+                raise HTTPException(status_code=403)
+
+        class Sources:
+            notes_store = type("NotesStore", (), {"roots": {}})()
+
+            def resolve(self, source):
+                raise AssertionError("revoked collection must fail before source resolution")
+
+        app = FastAPI()
+        app.include_router(create_inbox_proposal_router(Auth(), self.store, Sources()))
+        created = self.create()
+        proposal = next(item for item in created["proposals"] if item["kind"] == "journal")
+        self.store.decide(proposal["proposal_id"], "approved_recorded", 1, "owner", "revoked-decision", "etag-1")
+        client = TestClient(app)
+        response = client.get(f"/api/inbox/proposals/{proposal['proposal_id']}/history")
+        replay = client.post(f"/api/inbox/proposals/{proposal['proposal_id']}/decision",
+                             json={"decision": "approved_recorded", "expected_version": 1},
+                             headers={"Idempotency-Key": "revoked-decision"})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(replay.status_code, 404)
+        self.assertNotIn("history", response.json())
+        self.assertNotIn("proposal", replay.json())
+
+    def test_capture_source_requires_the_existing_inbox_original_read_gate(self):
+        from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
+
+        class Auth:
+            def require_action(self, request, action):
+                if action in {"inbox.proposals.read", "inbox.proposals.write"}:
+                    return "owner"
+                raise HTTPException(status_code=403, detail="source read denied")
+
+        class Sources:
+            notes_store = type("NotesStore", (), {"roots": {"drafts": "/synthetic/drafts"}})()
+
+            def resolve(self, source):
+                raise AssertionError("Capture source resolution must not precede its read gate")
+
+        app = FastAPI()
+        app.include_router(create_inbox_proposal_router(Auth(), self.store, Sources()))
+        response = TestClient(app).post("/api/inbox/proposals", json={"source_kind": "capture", "source_id": "a" * 32},
+                                        headers={"Idempotency-Key": "capture-read-denied"})
+        self.assertEqual(response.status_code, 403)
+
+    def test_removed_canonical_tag_suppresses_casefolded_synonyms(self):
+        vocabulary = {**self.vocabulary, "synonyms": [
+            {"tag_id": "sb", "alias": "secondbrain", "enabled": True},
+            {"tag_id": "sb", "alias": "SB", "enabled": True},
+        ]}
+        result = _mock_suggestions("#SECONDbrain #sB", "", {"removed_tags": ["SecondBrain"]}, vocabulary)
+        self.assertEqual(result["tags"]["values"], [])
+        self.assertEqual(result["tags"]["unknown_candidates"], [])
 
     def test_core_source_validation_binds_notes_etag_and_capture_raw_hash(self):
         from secondbrain_core.modules.notes import NotesStore

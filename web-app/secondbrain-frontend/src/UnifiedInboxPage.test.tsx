@@ -7,6 +7,8 @@ import { suggestInboxClassification } from './unified-inbox';
 const noteId = 'synthetic-note-1';
 let created = false;
 let savedProposals: Array<Record<string, any>> = [];
+let savedManualType = '';
+let savedRemovedTags: string[] = [];
 
 afterEach(() => {
   cleanup();
@@ -20,12 +22,20 @@ function ok(value: unknown, status = 200) {
 beforeEach(() => {
   created = false;
   savedProposals = [];
+  savedManualType = '';
+  savedRemovedTags = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith('/api/inbox/proposals?')) return ok({ proposals: savedProposals });
     if (url === '/api/inbox/proposals' && init?.method === 'POST') {
       const kinds = ['type', 'tags', 'journal', 'review', 'project'];
-      savedProposals = kinds.map((kind) => ({ proposal_id: `proposal-${kind}`, kind, status: 'suggested', version: 1, source_version: 'synthetic-etag', target_execution_status: 'not_executed', suggestion: { original: kind === 'type' ? { value: '会议纪要', vocabulary_values: ['日记', '笔记', '头脑风暴', '摘要', '会议纪要'] } : kind === 'tags' ? { values: ['SecondBrain'], unknown_candidates: ['roadmap'], vocabulary_values: ['SecondBrain', 'CRM'] } : { value: '合成建议' }, current: kind === 'type' ? { value: '会议纪要', vocabulary_values: ['日记', '笔记', '头脑风暴', '摘要', '会议纪要'] } : kind === 'tags' ? { values: ['SecondBrain'], unknown_candidates: ['roadmap'], vocabulary_values: ['SecondBrain', 'CRM'] } : { value: '合成建议' } } }));
+      savedProposals = kinds.map((kind) => {
+        const original = kind === 'type' ? { value: '会议纪要', vocabulary_values: ['日记', '笔记', '头脑风暴', '摘要', '会议纪要'] } : kind === 'tags' ? { values: ['SecondBrain'], unknown_candidates: ['roadmap'], vocabulary_values: ['SecondBrain', 'CRM'] } : { value: '合成建议' };
+        const current = kind === 'type' && savedManualType ? { ...original, value: savedManualType }
+          : kind === 'tags' ? { ...original, values: (Array.isArray(original.values) ? original.values : []).filter((tag: string) => !savedRemovedTags.includes(tag)), removed_by_user: savedRemovedTags }
+            : original;
+        return { proposal_id: `proposal-${kind}`, kind, status: 'suggested', version: 1, source_version: 'synthetic-etag', target_execution_status: 'not_executed', suggestion: { original, current } };
+      });
       return ok({ proposals: savedProposals, status: 'created' });
     }
     if (url.startsWith('/api/inbox/proposals/proposal-') && url.endsWith('/decision')) {
@@ -35,7 +45,12 @@ beforeEach(() => {
     }
     if (url.startsWith('/api/inbox/proposals/proposal-') && init?.method === 'PUT') {
       const proposal = savedProposals.find((item) => url.includes(item.proposal_id));
-      if (proposal) { proposal.suggestion.current = JSON.parse(String(init.body)).suggestion; proposal.version += 1; }
+      if (proposal) {
+        proposal.suggestion.current = JSON.parse(String(init.body)).suggestion;
+        if (proposal.kind === 'type') savedManualType = proposal.suggestion.current.value;
+        if (proposal.kind === 'tags') savedRemovedTags = proposal.suggestion.original.values.filter((tag: string) => !proposal.suggestion.current.values.includes(tag));
+        proposal.version += 1;
+      }
       return ok({ proposal });
     }
     if (url === '/api/inbox?limit=100') return ok({ items: [{
@@ -92,11 +107,13 @@ describe('UnifiedInboxPage', () => {
     expect(within(noteCard).getByText(/单独审批词库/)).toBeTruthy();
 
     fireEvent.change(within(noteCard).getByLabelText('建议类型（Core 集中词库）'), { target: { value: '头脑风暴' } });
+    await waitFor(() => expect((within(noteCard).getByLabelText('建议类型（Core 集中词库）') as HTMLSelectElement).value).toBe('头脑风暴'));
     fireEvent.click(within(noteCard).getByRole('button', { name: '重新生成 Mock 建议（保留手动修正）' }));
     expect((within(noteCard).getByLabelText('建议类型（Core 集中词库）') as HTMLSelectElement).value).toBe('头脑风暴');
     const standardTag = within(noteCard).getByLabelText('SecondBrain') as HTMLInputElement;
     expect(standardTag.checked).toBe(true);
     fireEvent.click(standardTag);
+    await waitFor(() => expect(standardTag.checked).toBe(false));
     fireEvent.click(within(noteCard).getByRole('button', { name: '重新生成 Mock 建议（保留手动修正）' }));
     expect((within(noteCard).getByLabelText('SecondBrain') as HTMLInputElement).checked).toBe(false);
     expect(within(noteCard).queryByRole('button', { name: '本页模拟同意（未执行）' })).toBeNull();
@@ -163,5 +180,43 @@ describe('UnifiedInboxPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '新建并收录' }));
     expect(await screen.findByText(/notes.write denied/)).toBeTruthy();
     expect(request.mock.calls.some(([url]) => /\/api\/(journal|promote|capture\/text|tasks)/.test(String(url)))).toBe(false);
+  });
+
+  it('restores the Core value and reports an unsaved edit after an asynchronous save failure', async () => {
+    const request = vi.mocked(fetch);
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('/api/inbox/proposals/proposal-journal') && init?.method === 'PUT') return ok({ detail: 'synthetic failure' }, 500);
+      return original(input, init);
+    });
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} />);
+    const card = (await screen.findByRole('heading', { name: 'Sprint meeting.md' })).closest('article') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: '生成确定性 Mock 建议' }));
+    const textarea = (await within(card).findAllByLabelText('可编辑建议'))[0] as HTMLTextAreaElement;
+    const persistedValue = textarea.value;
+    fireEvent.change(textarea, { target: { value: '未保存的本地修改' } });
+    fireEvent.click(within(card).getAllByRole('button', { name: '保存建议' })[0]);
+    expect(await within(card).findByText('修改未保存（HTTP 500）。')).toBeTruthy();
+    expect(textarea.value).toBe(persistedValue);
+  });
+
+  it('marks an edit conflict and disables approval until the source is reviewed again', async () => {
+    const request = vi.mocked(fetch);
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('/api/inbox/proposals/proposal-type') && init?.method === 'PUT') return ok({ detail: 'synthetic conflict' }, 412);
+      return original(input, init);
+    });
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} />);
+    const card = (await screen.findByRole('heading', { name: 'Sprint meeting.md' })).closest('article') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: '生成确定性 Mock 建议' }));
+    const type = await within(card).findByLabelText('建议类型（Core 集中词库）') as HTMLSelectElement;
+    fireEvent.change(type, { target: { value: '头脑风暴' } });
+    expect(await within(card).findByText(/发生冲突：来源或建议已变化/)).toBeTruthy();
+    expect(type.disabled).toBe(true);
+    expect(within(card).getByText('来源已变化；请重新生成并复核。')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: '重新加载建议' }));
+    await waitFor(() => expect(type.disabled).toBe(false));
+    expect(within(card).queryByText('来源已变化；请重新生成并复核。')).toBeNull();
   });
 });

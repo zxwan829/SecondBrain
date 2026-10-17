@@ -60,17 +60,20 @@ def _mock_suggestions(content, title, preferences, vocabulary):
     if manual_type not in enabled_types:
         manual_type = None
     raw_tags = list(dict.fromkeys(re.findall(r"(?:^|\s)#([\w\u0080-\uffff-]{1,40})", text)))[:5]
-    removed = {unicodedata.normalize("NFC", item).casefold()
-               for item in preferences.get("removed_tags", []) if isinstance(item, str)}
+    normalize_tag = lambda item: unicodedata.normalize("NFC", item).casefold()
+    removed = {normalize_tag(item) for item in preferences.get("removed_tags", []) if isinstance(item, str)}
     system_tags = {unicodedata.normalize("NFC", item).casefold() for item in _SYSTEM_TAGS}
     canonical_tags = {unicodedata.normalize("NFC", value).casefold(): value for value in enabled_tags}
-    tags = [canonical_tags.get(unicodedata.normalize("NFC", item).casefold()) or alias_map.get(unicodedata.normalize("NFC", item).casefold())
-            for item in raw_tags if unicodedata.normalize("NFC", item).casefold() not in removed]
+    canonicalized = [(item, canonical_tags.get(normalize_tag(item)) or alias_map.get(normalize_tag(item)))
+                     for item in raw_tags]
+    tags = [canonical for _, canonical in canonicalized
+            if canonical and normalize_tag(canonical) not in removed]
     tags = list(dict.fromkeys(tag for tag in tags if tag))
     recognized_inputs = set(canonical_tags) | set(alias_map)
-    candidates = [item for item in raw_tags if unicodedata.normalize("NFC", item).casefold() not in removed
-                  and unicodedata.normalize("NFC", item).casefold() not in system_tags
-                  and unicodedata.normalize("NFC", item).casefold() not in recognized_inputs]
+    candidates = [item for item, canonical in canonicalized
+                  if normalize_tag(item) not in system_tags and normalize_tag(item) not in recognized_inputs
+                  and normalize_tag(item) not in removed
+                  and (canonical is None or normalize_tag(canonical) not in removed)]
     project = re.search(r"项目\s*[：:]\s*([^\n，,。]+)", text)
     return {
         "type": {"value": manual_type or (detected if detected in enabled_types else (enabled_types[0] if enabled_types else "")),
@@ -468,6 +471,23 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
     def actor(request, action):
         return auth.require_action(request, f"inbox.proposals.{action}")
 
+    def authorize_source(request, source):
+        kind = source.get("source_kind")
+        if kind == "notes":
+            collection, path = source.get("collection"), source.get("path")
+            if (not isinstance(collection, str) or collection not in getattr(sources.notes_store, "roots", {})
+                    or not isinstance(path, str) or source.get("source_id") != f"{collection}:{path}"):
+                raise HTTPException(status_code=404, detail="Notes source not found")
+            auth.require_action(request, "notes.read")
+            return
+        if kind == "capture":
+            if not isinstance(source.get("source_id"), str) or not _CAPTURE_ID.fullmatch(source["source_id"]):
+                raise HTTPException(status_code=404, detail="Capture source not found")
+            # Capture originals are exposed by the existing Inbox read gate.
+            auth.require_action(request, "inbox.read")
+            return
+        raise HTTPException(status_code=404, detail="Inbox source not found")
+
     def current(record, user):
         if vocabulary_store is not None and record["vocabulary_version"] != vocabulary_store.read().get("revision"):
             raise HTTPException(status_code=409, detail="Vocabulary changed; regenerate this suggestion")
@@ -486,6 +506,7 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
             source["collection"] = collection
         if path is not None:
             source["path"] = path
+        authorize_source(request, source)
         canonical, version, _, _ = sources.resolve(source)
         vocabulary_version = vocabulary_store.read().get("revision") if vocabulary_store is not None else None
         return store.for_source(canonical, version, user, vocabulary_version)
@@ -494,6 +515,7 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
     def create_suggestions(request: Request, body: dict):
         user = actor(request, "write")
         source = {key: body.get(key) for key in ("source_kind", "source_id", "collection", "path") if body.get(key) is not None}
+        authorize_source(request, source)
         canonical, version, content, title = sources.resolve(source)
         preferences = store.preferences(canonical)
         vocabulary = vocabulary_store.read() if vocabulary_store is not None else {
@@ -507,6 +529,7 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
     def history(request: Request, proposal_id: str):
         user = actor(request, "read")
         record = store.get(proposal_id)
+        authorize_source(request, _source_from_record(record))
         try:
             version = current(record, user)
             if version != record["source_version"]:
@@ -514,17 +537,16 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
         except HTTPException as exc:
             if exc.status_code not in {404, 409, 415, 422}:
                 raise
-            record = store.mark_stale(proposal_id, "source_unavailable", user)
+            store.mark_stale(proposal_id, "source_unavailable", user)
+            raise HTTPException(status_code=409, detail="Source is unavailable; proposal history is unavailable") from exc
         return {"proposal": record, "history": record["history"]}
 
     @router.put("/{proposal_id}")
     def edit_suggestion(request: Request, proposal_id: str, body: dict):
         user = actor(request, "write")
         key = request.headers.get("idempotency-key", "")
-        replay = store.idempotent_result(proposal_id, "value", body.get("suggestion"), body.get("expected_version"), user, key)
-        if replay is not None:
-            return {"proposal": replay, "duplicate": True}
         record = store.get(proposal_id)
+        authorize_source(request, _source_from_record(record))
         try:
             version = current(record, user)
         except HTTPException as exc:
@@ -532,6 +554,9 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
                 store.mark_stale(proposal_id, "source_unavailable", user)
                 raise HTTPException(status_code=409, detail="Source is unavailable; suggestion is stale") from exc
             raise
+        replay = store.idempotent_result(proposal_id, "value", body.get("suggestion"), body.get("expected_version"), user, key)
+        if replay is not None:
+            return {"proposal": replay, "duplicate": True}
         return {"proposal": store.edit(proposal_id, body.get("suggestion"), body.get("expected_version"), user,
                                         key, version), "duplicate": False}
 
@@ -539,10 +564,8 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
     def decide(request: Request, proposal_id: str, body: dict):
         user = actor(request, "write")
         key = request.headers.get("idempotency-key", "")
-        replay = store.idempotent_result(proposal_id, "decision", body.get("decision"), body.get("expected_version"), user, key)
-        if replay is not None:
-            return {"proposal": replay, "duplicate": True}
         record = store.get(proposal_id)
+        authorize_source(request, _source_from_record(record))
         try:
             version = current(record, user)
         except HTTPException as exc:
@@ -550,6 +573,9 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
                 store.mark_stale(proposal_id, "source_unavailable", user)
                 raise HTTPException(status_code=409, detail="Source is unavailable; suggestion is stale") from exc
             raise
+        replay = store.idempotent_result(proposal_id, "decision", body.get("decision"), body.get("expected_version"), user, key)
+        if replay is not None:
+            return {"proposal": replay, "duplicate": True}
         return {"proposal": store.decide(proposal_id, body.get("decision"), body.get("expected_version"), user,
                                          key, version), "duplicate": False}
 
