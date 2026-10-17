@@ -24,4 +24,13 @@ describe('Chat timeline', () => {
     expect(timeline.map((item) => item.type === 'message' ? item.message.id : item.activity.event_id))
       .toEqual(['m1', 'm2', 'journal-1']);
   });
+
+  it('sorts Hermes Unix-second and millisecond timestamps with ISO activity times', () => {
+    const timeline = mergeChatTimeline([
+      { id: 'after', role: 'assistant', text: 'after', timestamp: 1792195380000 },
+      { id: 'before', role: 'user', text: 'before', timestamp: 1792195200 },
+    ], [activity('journal-mid', '2026-10-17T00:02:00Z')]);
+    expect(timeline.map((item) => item.type === 'message' ? item.message.id : item.activity.event_id))
+      .toEqual(['before', 'journal-mid', 'after']);
+  });
 });

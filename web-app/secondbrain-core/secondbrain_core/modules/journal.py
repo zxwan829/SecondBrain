@@ -63,58 +63,70 @@ class JournalStore:
                   "date": day, "created_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
                   "source": "web_app_explicit_intent", "original_text": text}
         encoded = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-        lock_path = self.root / f".{day}.lock"
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        # Serialize every Journal append across dates. The JSONL files remain
+        # authoritative, so retries can recover after a lost response without
+        # relying on a separate index that could become stale.
+        operation_lock_path = self.root / ".operations.lock"
+        operation_lock_fd = os.open(operation_lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
-            lock_stat = os.fstat(lock_fd)
-            if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != os.geteuid() or lock_stat.st_mode & 0o077:
-                raise HTTPException(status_code=500, detail="Journal lock file is not private")
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            try:
-                read_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            except FileNotFoundError:
-                existing = []
-            else:
-                try:
-                    info = os.fstat(read_fd)
-                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
-                        raise HTTPException(status_code=500, detail="Journal file is not private")
-                    with os.fdopen(read_fd, "r", encoding="utf-8", closefd=False) as stream:
-                        existing = [json.loads(line) for line in stream if line.strip()]
-                finally:
-                    os.close(read_fd)
-            prior = next((item for item in existing if item.get("id") == key_hash), None)
+            operation_lock_stat = os.fstat(operation_lock_fd)
+            if (not stat.S_ISREG(operation_lock_stat.st_mode) or operation_lock_stat.st_uid != os.geteuid()
+                    or operation_lock_stat.st_mode & 0o077):
+                raise HTTPException(status_code=500, detail="Journal operation lock file is not private")
+            fcntl.flock(operation_lock_fd, fcntl.LOCK_EX)
+            prior = None
+            for prior_path in sorted(self.root.glob("????-??-??.jsonl")):
+                prior_day = prior_path.name[:-6]
+                prior_rows = self.read(prior_day)["entries"]
+                prior = next((item for item in prior_rows if item.get("id") == key_hash), None)
+                if prior is not None:
+                    break
             if prior is not None:
                 if prior.get("original_text") != text:
                     raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different Journal text")
                 if prior.get("session_id") != session_id:
                     raise HTTPException(status_code=409, detail="Idempotency-Key belongs to a different Chat Session")
-                return {"status": "duplicate", "date": day, "entry": prior}
-            write_fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                prior_day = prior.get("date")
+                if not isinstance(prior_day, str) or not _DATE.fullmatch(prior_day):
+                    raise HTTPException(status_code=500, detail="Existing Journal entry has an invalid date")
+                return {"status": "duplicate", "date": prior_day, "entry": prior}
+
+            lock_path = self.root / f".{day}.lock"
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
             try:
-                info = os.fstat(write_fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
-                    raise HTTPException(status_code=500, detail="Journal file is not private")
-                old_size = info.st_size
+                lock_stat = os.fstat(lock_fd)
+                if (not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != os.geteuid()
+                        or lock_stat.st_mode & 0o077):
+                    raise HTTPException(status_code=500, detail="Journal lock file is not private")
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                write_fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 try:
-                    written = os.write(write_fd, encoded)
-                    if written != len(encoded):
-                        raise OSError("Incomplete Journal append")
-                except OSError:
-                    # The exclusive file lock makes rollback of a partial append safe.
-                    if os.fstat(write_fd).st_size > old_size:
-                        os.ftruncate(write_fd, old_size)
-                        os.fsync(write_fd)
-                    raise
-                os.fsync(write_fd)
+                    info = os.fstat(write_fd)
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                        raise HTTPException(status_code=500, detail="Journal file is not private")
+                    old_size = info.st_size
+                    try:
+                        written = os.write(write_fd, encoded)
+                        if written != len(encoded):
+                            raise OSError("Incomplete Journal append")
+                    except OSError:
+                        # The exclusive file lock makes rollback of a partial append safe.
+                        if os.fstat(write_fd).st_size > old_size:
+                            os.ftruncate(write_fd, old_size)
+                            os.fsync(write_fd)
+                        raise
+                    os.fsync(write_fd)
+                finally:
+                    os.close(write_fd)
             finally:
-                os.close(write_fd)
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
             return {"status": "created", "date": day, "entry": record}
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=500, detail="Journal append failed safely") from exc
         finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
+            fcntl.flock(operation_lock_fd, fcntl.LOCK_UN)
+            os.close(operation_lock_fd)
 
     def read(self, day):
         path = self._path(day)

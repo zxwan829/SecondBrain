@@ -775,7 +775,7 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
         if (Array.isArray(text)) text = text.flatMap((part) => part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string' ? [(part as Record<string, unknown>).text] : []).join('\n');
         if (typeof row.text === 'string') text = row.text;
         return typeof text === 'string' && text ? [{ id: String(row.id ?? index), role, text,
-          timestamp: typeof row.timestamp === 'string' ? row.timestamp : null } as ChatMessage] : [];
+          timestamp: typeof row.timestamp === 'string' || typeof row.timestamp === 'number' ? row.timestamp : null } as ChatMessage] : [];
       }));
     }
     if (activityResult.status === 'fulfilled') {

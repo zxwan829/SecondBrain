@@ -47,6 +47,7 @@ class WebAppBffTests(unittest.TestCase):
         self.approval_sse = False
         self.approval_file_sse = False
         self.deleted_sessions = set()
+        self.message_timestamp = "2026-10-15T01:02:03Z"
 
         def handler(request):
             self.calls.append(request)
@@ -65,7 +66,7 @@ class WebAppBffTests(unittest.TestCase):
                 count = 1 if session_id == "session-1" else 0
                 return httpx.Response(200, json={"object": "hermes.session", "session": {"id": session_id, "message_count": count}})
             if request.url.path.endswith("/messages"):
-                return httpx.Response(200, json={"object": "list", "session_id": "session-1", "data": [{"id": "message-1", "session_id": "session-1", "role": "user", "timestamp": "2026-10-15T01:02:03Z", "content": [{"type": "text", "text": "hello"}]}], "pagination": {"limit": 100, "offset": 50, "order": "oldest", "returned": 1}})
+                return httpx.Response(200, json={"object": "list", "session_id": "session-1", "data": [{"id": "message-1", "session_id": "session-1", "role": "user", "timestamp": self.message_timestamp, "content": [{"type": "text", "text": "hello"}]}], "pagination": {"limit": 100, "offset": 50, "order": "oldest", "returned": 1}})
             if request.url.path == "/v1/runs":
                 return httpx.Response(202, json={"run_id": "run-1", "status": "started"})
             if request.url.path == "/v1/runs/run-1":
@@ -326,6 +327,33 @@ class WebAppBffTests(unittest.TestCase):
         self.deleted_sessions.add("session-1")
         deleted = self.client.get("/api/chat/sessions/session-1/activities")
         self.assertEqual(deleted.status_code, 404)
+
+    def test_lost_journal_response_retried_after_shanghai_midnight_recovers_one_row_and_activity(self):
+        self.login()
+        headers = {"Origin": "https://testserver", "Idempotency-Key": "midnight-lost-response"}
+        body = {"text": "记一下：跨零点重试合成记录", "session_id": "session-1"}
+        with patch("secondbrain_core.modules.journal.JournalStore.today", side_effect=["2026-10-17", "2026-10-18"]):
+            first = self.client.post("/api/journal/entries", json=body, headers=headers)
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(first.json()["status"], "created")
+            # Intentionally discard the first response, as if the client lost it.
+            retry = self.client.post("/api/journal/entries", json=body, headers=headers)
+        self.assertEqual(retry.status_code, 200, retry.text)
+        self.assertEqual(retry.json()["status"], "duplicate")
+        self.assertEqual(retry.json()["date"], "2026-10-17")
+        # Count raw durable business rows without consulting the response projection.
+        records = [json.loads(line) for path in self.journal.glob("????-??-??.jsonl")
+                   for line in path.read_text(encoding="utf-8").splitlines() if line]
+        self.assertEqual(len(records), 1)
+        activity = self.client.get("/api/chat/sessions/session-1/activities").json()["activities"]
+        self.assertEqual(len(activity), 1)
+        self.assertEqual(activity[0]["operation_id"], "midnight-lost-response")
+        self.assertEqual(activity[0]["journal_date"], "2026-10-17")
+
+    def test_hermes_message_timestamp_is_preserved_as_returned(self):
+        self.message_timestamp = 1792195200
+        payload = asyncio.run(self.hermes.list_messages("session-1"))
+        self.assertEqual(payload["messages"][0]["timestamp"], 1792195200)
 
     def test_session_activity_requires_login_and_binds_operation_key_to_session(self):
         unauthenticated = self.client.get("/api/chat/sessions/session-1/activities")

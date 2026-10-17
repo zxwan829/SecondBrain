@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D084 PR #49 跨日 Journal 幂等与 Hermes 时间排序窄修
+
+- 按 PR #49 ChatGPT Review #5557199112，在原分支修复跨 Asia/Shanghai 日期零点的响应丢失重试：Core 使用 Journal 根目录私有全局锁串行化写入，并在权威日期 JSONL 中查找 operation ID；同键同内容返回原日期/记录，同键内容或 Session 冲突仍拒绝。没有引入旁路索引或历史数据迁移。
+- 新增 Journal Store 跨日并发唯一性回归及 BFF 跨零点响应丢失/重试回归；验证单条业务记录、同一操作活动恢复及原始 Journal 日期保留。Hermes API 原样传递上游 timestamp；前端现在保留字符串/数字，并将 ISO、Unix 秒、毫秒统一为时间线排序值。
+- 定向验证：Core `tests/test_journal.py tests/test_tasks.py tests/test_web_app_bff.py` **34 passed**；前端 `src/capture-flow.test.tsx src/chat-activity.test.ts` **42 passed**；`npm run typecheck`、`npm run build`、`git diff --check` 通过。Core 有 1 条既有 Starlette/httpx TestClient 弃用警告。隔离测试工具生成的 `web-app/secondbrain-core/uv.lock` 保留并排除于提交。
+- 更新 CURRENT 与本日志。代码保留在 PR #49 原分支，等待 ChatGPT 对指定 Review 的复审；**DEV-TESTED / PR OPEN / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。未访问 NAS/生产数据/Secret，未运行模型或清理历史资产。
+
 ## 2026-10-17 — D084 Chat Journal / Task 会话活动留痕修复（开发验证）
 
 - 按 Issue #44 评论 #6231983901，从最新 main `76872e55ce6d966628723ce4336e121b946dd768` 建立独立分支 `codex/session-bound-journal-task-activity-20261017`。Core 在 Journal/Task 的既有幂等业务记录中原子保存 session_id 与 operation_id；活动列表通过 App 鉴权及 Hermes Session 存在性检查，从权威业务记录重建成功活动，并在私有 Core state 中持久记录失败活动。旧记录无 session_id 时不迁移；Hermes 历史与 Run/SSE 未改写。

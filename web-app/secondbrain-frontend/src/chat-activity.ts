@@ -19,14 +19,19 @@ export type ChatHistoryMessage = {
   id: string;
   role: 'user' | 'assistant';
   text: string;
-  timestamp?: string | null;
+  timestamp?: string | number | null;
 };
 
 export type ChatTimelineItem =
-  | { type: 'message'; id: string; timestamp?: string | null; sequence: number; message: ChatHistoryMessage }
+  | { type: 'message'; id: string; timestamp?: string | number | null; sequence: number; message: ChatHistoryMessage }
   | { type: 'activity'; id: string; timestamp?: string | null; sequence: number; activity: ChatActivity };
 
-function timeValue(value?: string | null): number | null {
+function timeValue(value?: string | number | null): number | null {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    // Hermes may return Unix seconds or JavaScript milliseconds.
+    return Math.abs(value) < 1_000_000_000_000 ? value * 1000 : value;
+  }
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;

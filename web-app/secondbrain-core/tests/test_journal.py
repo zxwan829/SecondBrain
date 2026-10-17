@@ -61,6 +61,19 @@ class JournalStoreTests(unittest.TestCase):
             self.store.append("2026-10-17", "记一下：不同内容", "same-key")
         self.assertEqual(conflict.exception.status_code, 409)
 
+    def test_idempotency_is_global_across_dates_and_concurrent_retries(self):
+        text = "记一下：零点前已写入但响应丢失"
+        days = ("2026-10-17", "2026-10-18")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda day: self.store.append(day, text, "midnight-retry", "session-a"), days))
+        self.assertCountEqual([result["status"] for result in results], ["created", "duplicate"])
+        created = next(result for result in results if result["status"] == "created")
+        duplicate = next(result for result in results if result["status"] == "duplicate")
+        self.assertEqual(duplicate["date"], created["date"])
+        rows = [row for path in self.root.glob("????-??-??.jsonl") for row in self.store.read(path.stem)["entries"]]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["operation_id"], "midnight-retry")
+
 
 if __name__ == "__main__":
     unittest.main()
