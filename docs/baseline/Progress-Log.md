@@ -2,6 +2,13 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+## 2026-10-17 — D083 Issue #35 Task 持久待办最小闭环（开发分支）
+
+- 从最新 `dev/parallel-v1-next-20261017` `74a18ff9e6b787329582cfcaa340dba965537ef8` 创建独立 `codex/d083-task-chat` 工作分支。新增 Core `/api/tasks`：只有在显式 `SB_TASK_ROOT` 指向既存 Core-owned `0700` 专用目录时启用；单 JSON 文件在跨线程锁内原子更新，创建具备持久幂等键，修改使用 `expected_updated_at` 防陈旧覆盖，并记录状态/字段变更历史。支持按状态、截止日期筛选；不提供删除。
+- Chat Composer 仅对 `添加待办：xxx` / `建个待办：xxx` 的句首显式命令直达 Task API，不创建 Hermes Session/Run；显式 `截止：YYYY-MM-DD` 后缀按 ISO 日期提供截止日。成功提示 Today 入口，失败保留原命令并复用同命令重试键。普通对话和 D082 Journal 路径保持各自原路。现有 Today 导航打开持久 Task 列表，支持标题/ISO 截止日修改、完成和恢复。未实现提醒投递及自然语言修改目标猜测。
+- 定向合成验证：Core `tests/test_tasks.py tests/test_web_app_bff.py` **23 passed**（鉴权、未配置 503、存储重载、20 路并发无丢失、幂等冲突、日期/状态查询、乐观冲突、完成/恢复、历史、symlink 拒绝；1 条既有 Starlette/httpx 弃用警告）。前端 Chat + TaskPage **40 passed**；`npm run typecheck`、`npm run build` 和 `git diff --check` 通过。
+- 无 NAS/生产访问或变更、真实 Task/Journal 数据、Secret 或模型调用；未检查生产 Task 配置，因此其状态 UNKNOWN。Issue #28 测试未触及。开发分支未部署；真实浏览器验收待完成；提醒通知 NOT IMPLEMENTED。
+
 ## 2026-10-17 — D082 Issue #33 Chat 显式 Journal 记录（开发分支）
 
 - 从 `dev/parallel-v1-next-20261017` 最新已合并基线 `75c83bbcd3ff05b188fabc8f03bdc4eacea2833c` 创建独立工作分支。Chat 输入仅在开头显式出现 `记一下`、`记下来`、`写日记`、`记录一下` 时调用 Journal API；传入完整输入原文，普通消息继续走原 Hermes Run 路径，不创建额外 Chat Session。成功反馈日期和原文保留状态；失败保留输入并在同内容重试时复用 Idempotency-Key。
