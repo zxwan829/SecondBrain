@@ -1,5 +1,7 @@
 # Progress Log
 
+> 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
+
 ## 2026-10-17 — D082 修复跨会话个人记忆召回（进行中）
 
 - Issue #28 的两次真实 GLM-4.5-Air Run 中，首轮合成偏好学习创建 1 条 active 记忆；第二个 Session 的相关问题未召回，触发 `learning-loop-test` Skill 与失败的 `search_files`，按止损规则未重试。原始执行与费用边界见 Issue #28 评论 #6227702593。
@@ -8,7 +10,6 @@
 - D082 指定分支增加情境偏好完整提取与跨 Session BFF 注入/无关主题过滤回归。Core `test_personal_learning.py` 17 项通过；本地 Python 3.9 环境因 Pydantic 无法解析现有 `str | None` 注解未能收集测试，改用隔离 Python 3.12 环境完成验证。
 - 代码与文档仍在未合并 PR 分支，未部署、未运行真实模型复验、未修改 NAS/生产 Memory；后续真实复验需要另行授权。
 
-> 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
 ## 2026-10-17 — D080 恢复开发与浏览器验收准备
 
