@@ -7,6 +7,7 @@ import aiCubeUrl from './assets/ai-cube-user.png';
 import hermesOrbUrl from './assets/hermes-planet-user.png';
 import todayLandscapeUrl from './assets/today-lake-background.png';
 import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
+import { JournalPage } from './JournalPage';
 import { parseTerminalApproval, type TerminalApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
 
@@ -176,7 +177,7 @@ const navItems = [
   { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library' },
   { id: 'brief', key: 'brief', icon: 'file', section: 'library' },
   { id: 'activity', key: 'activity', icon: 'activity', section: 'library' },
-  { id: 'journal', key: 'journal', icon: 'journal', section: 'library', soon: true },
+  { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
   { id: 'settings', key: 'settings', icon: 'settings', section: 'bottom', route: '/settings' },
 ] as const;
 
@@ -286,7 +287,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
             >
               <Icon name={item.icon} size={18} />
               <span className="nav-label">{t[item.key]}</span>
-              {'soon' in item && item.soon && <span className="nav-soon">{t.soon}</span>}
+              {'soon' in item && item.soon === true && <span className="nav-soon">{t.soon}</span>}
             </button>
           ))}
         </div>
@@ -319,7 +320,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <button type="button" className="locale-button" onClick={changeLocale}>{t.localeLabel}</button>
         </div>
 
-        {page === 'home' ? <>
+        {page === 'journal' ? <JournalPage /> : page === 'home' ? <>
         <header className="workspace-header">
           <div className="workspace-heading">
             <p className="eyebrow">{t.brand.toUpperCase()} <span>/</span> {t.home.toUpperCase()}</p>

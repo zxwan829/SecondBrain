@@ -14,6 +14,7 @@ from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.personal_memory import PersonalMemoryStore, create_personal_memory_router
 from .modules.personal_learning import PersonalLearningPipeline
+from .modules.journal import JournalStore, create_journal_router
 from .modules.organizer_engine import OrganizerRunner
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
@@ -84,6 +85,10 @@ def create_app():
                                              organizer, personal_learning=learning))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
+    # Journal writes stay opt-in and use only their dedicated, explicitly mounted root.
+    journal_root = os.environ.get("SB_JOURNAL_ROOT", "").strip()
+    if journal_root:
+        app.include_router(create_journal_router(auth, JournalStore(journal_root)))
     # Default-off, separately injected data root. When disabled, Core neither creates
     # the directory nor scans chat history or starts a background memory task.
     if memory_enabled_value == "true":

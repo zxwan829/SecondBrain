@@ -26,7 +26,8 @@ class WebAppBffTests(unittest.TestCase):
         self.knowledge = self.root / "knowledge"
         self.raw = self.root / "raw"
         self.state = self.root / "state"
-        for path in (self.review, self.knowledge, self.raw, self.state):
+        self.journal = self.root / "journal"
+        for path in (self.review, self.knowledge, self.raw, self.state, self.journal):
             path.mkdir(mode=0o700)
         self.review_content = b"---\ntype: review\nstatus: pending\n---\n# Review title\nReal Review content.\n"
         (self.review / "candidate.md").write_bytes(self.review_content)
@@ -85,6 +86,7 @@ class WebAppBffTests(unittest.TestCase):
         self.env = {
             "SB_REVIEW_ROOT": str(self.review),
             "SB_CAPTURE_RAW_ROOT": str(self.raw),
+            "SB_JOURNAL_ROOT": str(self.journal),
             "SB_KNOWLEDGE_ROOT": str(self.knowledge),
             "SB_PROMOTE_STATE_ROOT": str(self.state),
             "SB_DASHBOARD_ORIGINS": "http://testserver,https://testserver",
@@ -181,6 +183,38 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(deferred.json()["status"], "deferred")
         refreshed = self.client.get("/api/promote/review/items").json()["items"][0]
         self.assertEqual(refreshed["decision"]["status"], "deferred")
+
+    def test_explicit_journal_intent_is_session_gated_append_only_and_idempotent(self):
+        before_reviews = sorted(path.name for path in self.review.iterdir())
+        unauthenticated = TestClient(self.app, base_url="https://testserver")
+        denied = unauthenticated.post("/api/journal/entries", json={"date": "2026-10-17", "text": "记一下：合成记录"},
+                                      headers={"Origin": "https://testserver", "Idempotency-Key": "synthetic-denied"})
+        self.assertEqual(denied.status_code, 401)
+        unauthenticated.close()
+
+        self.login()
+        headers = {"Origin": "https://testserver", "Idempotency-Key": "synthetic-journal-entry-1"}
+        ordinary_chat = self.client.post("/api/journal/entries", json={
+            "date": "2026-10-17", "text": "今天只是普通聊天内容",
+        }, headers={**headers, "Idempotency-Key": "ordinary-chat"})
+        self.assertEqual(ordinary_chat.status_code, 422)
+        source_text = "记一下：第一行原话\n第二行保持不变 100%"
+        created = self.client.post("/api/journal/entries", json={"date": "2026-10-17", "text": source_text}, headers=headers)
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(created.json()["status"], "created")
+        self.assertEqual(created.json()["entry"]["original_text"], source_text)
+        duplicate = self.client.post("/api/journal/entries", json={"date": "2026-10-17", "text": source_text}, headers=headers)
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertEqual(duplicate.json()["status"], "duplicate")
+        second = self.client.post("/api/journal/entries", json={"date": "2026-10-17", "text": "写日记：追加原文"},
+                                  headers={**headers, "Idempotency-Key": "synthetic-journal-entry-2"})
+        self.assertEqual(second.json()["status"], "created")
+        self.assertEqual(self.client.get("/api/journal/2026-10-17").json()["entries"],
+                         [created.json()["entry"], second.json()["entry"]])
+        self.assertEqual(len((self.journal / "2026-10-17.jsonl").read_text(encoding="utf-8").splitlines()), 2)
+        self.assertEqual(sorted(path.name for path in self.review.iterdir()), before_reviews)
+        self.assertEqual([path.name for path in self.knowledge.iterdir()], ["known.md"])
+        self.assertEqual(self.calls, [])
 
     def test_sessions_runs_sse_and_stop_are_server_side_authenticated(self):
         self.login()
