@@ -35,7 +35,7 @@ source: GitHub SecondBrain Monorepo
 
 ### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批
 
-PR #54 原分支 `codex/d085-c2a-unified-inbox-20261017` 已同步最新 main `684bb45dbcc58ce7877d9ba3f55643fb80c17a38`；同步保留 main 中 D084 最新部署/验收证据、唯一 NEXT，以及 D086/Issue #55 规则。统一视图保留旧 Capture 的多格式预览、原始来源详情、错误说明、`partial_success` 重试、Organizer 状态与显式“立即整理”，并合入 Notes Drafts。分类只使用明确标记的固定合成演示词表（不是 Issue #55 真实/持久词库）；未知类型/标签作为待独立词库确认候选，“待整理”是状态而非标签；对本页手动移除的标签和修正类型在重新生成时予以保护。既有类型/标签按规则无需逐条审批，但演示不写入笔记；日记/Review/项目建议只提供逐项编辑及本页模拟同意/拒绝，明确未提交、未持久、未排队或执行，刷新后消失。Notes 和审批无 Core 写通道变化。定向前端 3 个文件 51 项、typecheck、build 与 diff-check 通过；Build 保留大型 CanvasEditor chunk 警告。未访问真实笔记、真实模型、NAS 或生产配置；未部署、未合并或用户验收。此并行状态不覆盖 D084 唯一 NEXT。
+PR #54 原分支 `codex/d085-c2a-unified-inbox-20261017` 已同步最新 main `684bb45dbcc58ce7877d9ba3f55643fb80c17a38`；同步保留 main 中 D084 最新部署/验收证据、唯一 NEXT，以及 D086/Issue #55 规则。原 Capture Inbox 的多格式预览、原始来源详情、错误说明、`partial_success` 重试、Organizer 状态/错误和显式“立即整理”完整保留，Notes Drafts 嵌入其下；合并远端分支更新时选择保留远端对 App 与 Inbox 页面冲突的完整 Capture 主页面结构。分类只使用明确标记的固定合成演示词表（不是 Issue #55 真实/持久词库）；未知标签作为待独立词库确认候选，“待整理”是状态而非标签；对本页手动移除的标签和修正类型在重新生成时予以保护。既有类型/标签按规则无需逐条审批，但演示不写入笔记；日记/Review/项目建议只提供逐项编辑及本页模拟同意/拒绝，明确未提交、未持久、未排队或执行，刷新后消失。Notes 和审批无 Core 写通道变化。定向前端 3 个文件 54 项、typecheck、build 与 diff-check 通过；Build 保留大型 CanvasEditor chunk 警告。未访问真实笔记、真实模型、NAS 或生产配置；未部署、未合并或用户验收。此并行状态不覆盖 D084 唯一 NEXT。
 
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 
