@@ -21,8 +21,8 @@ source: GitHub SecondBrain Monorepo
 | 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
 |---|---|---|---|---|---|
 | D082 个人记忆情境保留修复 | PR #32 已审；随最新 main 保留在本轮集成分支 | 本轮 Core 统一定向组中 `test_personal_learning.py` 17 项通过；此前 D080 真实召回失败不可由源码/Mock 抵消 | 基线 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 的修复未被并行切片覆盖 | 此修复是否已部署，本次可用生产快照未证明，标记 **UNKNOWN** | 生产真实召回复验未完成；浏览器验收未完成 |
-| D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | 已整合至 `codex/d084-unified-integration-20261017`（基于 main `a8019ab1…`）；待集成 PR 复审，**未合入 main** | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未做真实模型或浏览器验收 |
-| PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #37 两个已审提交已移植至 `codex/d084-unified-integration-20261017`；集成 PR 待复审，原 PR 未合并 | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需运行时验证；无真实模型验收 |
+| D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | 已整合至 `codex/d084-unified-integration-20261017`（基于 main `a8019ab1…`）；PR #45 OPEN，等待独立复审；**未合入 main** | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未做真实模型或浏览器验收 |
+| PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #37 两个已审提交已移植至 `codex/d084-unified-integration-20261017`；PR #45 包含两项已审提交，等待独立复审；原 PR #37 仍 open | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需运行时验证；无真实模型验收 |
 
 本轮以实时 GitHub main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 为基线；与 `dev/parallel-v1-next-20261017` 在 `d7a48fe` 分叉后，main 独有 6 个提交（含 D082 记忆修复及后续治理文档），并行分支独有 3 个功能切片提交。集成分支保留 main 历史并合入 3 个切片；`personal_learning.py` 与其回归测试相对 main 未改动。唯一源码冲突为 `App.tsx` 的 Journal/Task 与通用 Run 审批解析器导入，已人工合并；CURRENT 文档冲突保留 main 文本并在本轮校准。代码审查、定向测试、分支合入、main 合入、NAS 部署、真实模型运行与用户验收分别记录；任一层通过都不自动代表后一层通过。
 
@@ -30,7 +30,7 @@ source: GitHub SecondBrain Monorepo
 
 本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
-**唯一 NEXT：** 提交集成 PR 指向 `main` 并交 ChatGPT 独立审查；在获准前不合入 main、不部署 NAS、不运行真实 Hermes/付费模型、不处理真实个人数据，也不清理 Issue #28 的 Session、Core Memory 或 Atlas 合成资产。当前源码/合成测试结果为 DEV-TESTED，不能代表运行时审批已验证、生产部署或用户验收。
+**唯一 NEXT：** ChatGPT 独立审查指向 `main` 的 [PR #45](https://github.com/zxwan829/SecondBrain/pull/45) 与本地证据；在获准前不合入 main、不部署 NAS、不运行真实 Hermes/付费模型、不处理真实个人数据，也不清理 Issue #28 的 Session、Core Memory 或 Atlas 合成资产。当前源码/合成测试结果为 DEV-TESTED，不能代表运行时审批已验证、生产部署或用户验收。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 
