@@ -4,12 +4,12 @@ import unittest
 
 from fastapi import HTTPException
 
-from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX, RunApprovalRegistry
+from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX, FILE_WRITE_APPROVAL_PREFIX, RunApprovalRegistry
 
 
 def event(request_id="approval-1", command="pwd"):
     request = {"schema": 1, "tool": "terminal", "arguments": {"command": command, "workdir": "/private/tmp/synthetic"}}
-    return {"event": "approval.request", "request_id": request_id,
+    return {"event": "approval.request", "run_id": "run-1", "request_id": request_id,
             "description": APPROVAL_PREFIX + json.dumps(request, sort_keys=True, separators=(",", ":"))}
 
 
@@ -90,6 +90,56 @@ class RunApprovalRegistryTests(unittest.TestCase):
             request = {"schema": 1, "tool": "terminal", "arguments": args}
             malformed = {"request_id": "approval-1", "description": APPROVAL_PREFIX + json.dumps(request)}
             self.assertIsNone(self.registry.bind_event("run-1", "owner", malformed))
+
+    def test_file_write_card_is_run_session_owner_and_exact_argument_bound(self):
+        args = {"path": "/knowledge-assets/00-Inbox/synthetic.md", "content": "synthetic content"}
+        request = {"schema": 1, "tool": "write_file", "arguments": args}
+        incoming = {"event": "approval.request", "run_id": "run-1", "request_id": "file-approval-1", "description": FILE_WRITE_APPROVAL_PREFIX +
+                    json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)}
+        card = self.registry.bind_event("run-1", "owner", incoming)
+        self.assertEqual(card["tool"], "write_file")
+        self.assertEqual(card["command"], "write_file → /knowledge-assets/00-Inbox/synthetic.md")
+        self.assertEqual(card["arguments"], args)
+        self.assertIn("one file mutation", card["scope"].lower())
+        with self.assertRaises(HTTPException) as wrong_run:
+            self.registry.begin_resolution(run_id="run-2", session_id="session-1", request_id="file-approval-1",
+                                           owner="owner", digest=card["command_sha256"], choice="once")
+        self.assertEqual(wrong_run.exception.status_code, 404)
+        with self.assertRaises(HTTPException) as wrong_session:
+            self.registry.begin_resolution(run_id="run-1", session_id="session-2", request_id="file-approval-1",
+                                           owner="owner", digest=card["command_sha256"], choice="once")
+        self.assertEqual(wrong_session.exception.status_code, 404)
+        with self.assertRaises(HTTPException) as changed:
+            self.registry.begin_resolution(run_id="run-1", session_id="session-1", request_id="file-approval-1",
+                                           owner="owner", digest="0" * 64, choice="once")
+        self.assertEqual(changed.exception.status_code, 409)
+        self.registry.begin_resolution(run_id="run-1", session_id="session-1", request_id="file-approval-1",
+                                       owner="owner", digest=card["command_sha256"], choice="once")
+        with self.assertRaises(HTTPException) as replay:
+            self.registry.begin_resolution(run_id="run-1", session_id="session-1", request_id="file-approval-1",
+                                           owner="owner", digest=card["command_sha256"], choice="once")
+        self.assertEqual(replay.exception.status_code, 409)
+
+    def test_file_write_rejects_unscoped_or_ambiguous_targets(self):
+        malformed_requests = (
+            {"schema": 1, "tool": "write_file", "arguments": {"path": "relative.md", "content": "x"}},
+            {"schema": 1, "tool": "write_file", "arguments": {"path": "/safe/a.md", "content": "x", "cross_profile": True}},
+            {"schema": 1, "tool": "patch", "arguments": {"mode": "patch", "patch": "*** Begin Patch"}},
+            {"schema": 1, "tool": "delete_file", "arguments": {"path": "/safe/a.md"}},
+        )
+        for index, request in enumerate(malformed_requests):
+            incoming = {"request_id": f"file-invalid-{index}", "description": FILE_WRITE_APPROVAL_PREFIX +
+                        json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)}
+            incoming.update({"event": "approval.request", "run_id": "run-1"})
+            self.assertIsNone(self.registry.bind_event("run-1", "owner", incoming))
+
+    def test_file_write_event_from_different_run_is_rejected(self):
+        request = {"schema": 1, "tool": "write_file", "arguments": {
+            "path": "/knowledge-assets/00-Inbox/synthetic.md", "content": "synthetic"}}
+        incoming = {"event": "approval.request", "run_id": "run-other", "request_id": "file-other-run",
+                    "description": FILE_WRITE_APPROVAL_PREFIX + json.dumps(request, sort_keys=True,
+                                                                          separators=(",", ":"))}
+        self.assertIsNone(self.registry.bind_event("run-1", "owner", incoming))
 
 
 if __name__ == "__main__":

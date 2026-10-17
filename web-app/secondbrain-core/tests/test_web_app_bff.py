@@ -13,7 +13,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.hermes_api import HermesAPI
-from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX
+from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX, FILE_WRITE_APPROVAL_PREFIX
 from secondbrain_core.modules.auto_organize import OrganizerControlStore, OrganizeSettingsStore, next_scheduled_at
 from datetime import datetime, timezone
 
@@ -42,6 +42,7 @@ class WebAppBffTests(unittest.TestCase):
         self.approvals.mkdir(mode=0o700)
         self.calls = []
         self.approval_sse = False
+        self.approval_file_sse = False
 
         def handler(request):
             self.calls.append(request)
@@ -64,6 +65,15 @@ class WebAppBffTests(unittest.TestCase):
             if request.url.path == "/v1/runs/run-1":
                 return httpx.Response(200, json={"run_id": "run-1", "status": "completed", "output": "done"})
             if request.url.path == "/v1/runs/run-1/events":
+                if self.approval_file_sse:
+                    request_data = {"schema": 1, "tool": "write_file", "arguments": {
+                        "path": "/knowledge-assets/00-Inbox/synthetic.md", "content": "synthetic"}}
+                    description = FILE_WRITE_APPROVAL_PREFIX + json.dumps(request_data, sort_keys=True,
+                                                                         separators=(",", ":"), ensure_ascii=False)
+                    event = {"event": "approval.request", "run_id": "run-1", "request_id": "file-approval-1",
+                             "description": description, "choices": ["once", "session", "always", "deny"]}
+                    return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                          content=("data: " + json.dumps(event) + "\n\n").encode())
                 if self.approval_sse:
                     request_data = {"schema": 1, "tool": "terminal", "arguments": {"command": "pwd", "workdir": "/tmp/synthetic"}}
                     description = APPROVAL_PREFIX + json.dumps(request_data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -258,6 +268,27 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(rejected.json()["choice"], "deny")
         call = next(call for call in self.calls if call.url.path.endswith("/approval"))
         self.assertEqual(json.loads(call.content)["choice"], "deny")
+
+    def test_file_write_waits_for_run_bound_user_approval_and_is_single_use(self):
+        self.login()
+        started = self.client.post("/api/chat/sessions/session-1/runs", json={"input": "synthetic request"},
+                                   headers={"Origin": "https://testserver", "Idempotency-Key": "file-write-run"})
+        self.assertEqual(started.status_code, 200)
+        self.approval_file_sse = True
+        events = self.client.get("/api/chat/runs/run-1/events")
+        event = json.loads(events.content.decode().split("data: ", 1)[1].strip())
+        self.assertEqual(event["tool"], "write_file")
+        self.assertEqual(event["run_id"], "run-1")
+        self.assertEqual(event["session_id"], "session-1")
+        self.assertEqual(event["command"], "write_file → /knowledge-assets/00-Inbox/synthetic.md")
+        self.assertFalse(any(call.url.path.endswith("/approval") for call in self.calls))
+        body = {"approval_id": event["approval_id"], "command_sha256": event["command_sha256"], "choice": "once"}
+        approved = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json=body,
+                                    headers={"Origin": "https://testserver"})
+        self.assertEqual(approved.status_code, 200, approved.text)
+        duplicate = self.client.post("/api/chat/sessions/session-1/runs/run-1/approval", json=body,
+                                     headers={"Origin": "https://testserver"})
+        self.assertEqual(duplicate.status_code, 409)
 
     def test_cookie_scheme_and_exact_proxy_trust(self):
         self.assertIn("secure", self.login().headers["set-cookie"].lower())

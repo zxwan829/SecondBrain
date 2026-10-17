@@ -2,6 +2,13 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+## 2026-10-17 — D082 普通 Chat 文件变更单次审批（开发中，未部署）
+
+- Issue #30 最新审核指出真实 Run 在普通对话中执行了文件写入。基于 Hermes v0.22.2 上游固定源码 `d923a5eb487a17c0a68801bba9ef0f56c81040a8`，核对 `pre_tool_call` 提供 session/turn/tool-call/API request 标识；API Server 的每个 `/v1/runs` 将原生 approval session key 绑定到该 Run ID，并通过 Run SSE/API 等待审批。
+- Guard 将 `write_file` 与单目标 replace `patch` 的每次执行都送入 Hermes 原生审批；目标路径先 canonicalize（包含符号链接解析），同一参数映射用于审批摘要与实际分发；敏感 Hermes 状态、凭据与 Skills 仍硬拒绝，含嵌入多文件目标的 V4A patch 保持拒绝。Core 审批桥校验事件 Run ID、用户/Session 所属、完整参数摘要、有效期及单次消费；前端审批卡显示并默认展开写入参数。现有 Capture API 与 D077 JSONL 不变。
+- 针对性验证：Guard `test_plugin.py` **18 passed**；Core Run Approval、BFF 和 Capture **42 passed**；前端审批解析 **5 passed**，`npm run typecheck` 通过。Core 使用现有隔离 Python 3.12 环境，前端依赖仅安装在本次临时 Clone；无 Hermes/NAS 启动、无模型请求。
+- **状态：独立 PR 开发中，未部署。** 未触碰 NAS/生产配置、Session/Memory、Atlas 合成文件或原正式工作区未跟踪项；Terminal 仍关闭。开发与本地测试不代表生产权限验证或真实用户验收。
+
 ## 2026-10-17 — D082 修复跨会话个人记忆召回（进行中）
 
 - Issue #28 的两次真实 GLM-4.5-Air Run 中，首轮合成偏好学习创建 1 条 active 记忆；第二个 Session 的相关问题未召回，触发 `learning-loop-test` Skill 与失败的 `search_files`，按止损规则未重试。原始执行与费用边界见 Issue #28 评论 #6227702593。
