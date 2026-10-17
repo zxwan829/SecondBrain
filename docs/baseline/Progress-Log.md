@@ -10,6 +10,14 @@
 - main 同步新增 Core Chat Journal/Task 活动持久化代码、前端 Chat 时间线与相关测试；前端 `App.navigation.test.tsx`、`NotesPage.test.tsx`、`MindMapEditor.test.tsx`、`capture-flow.test.tsx`、`chat-activity.test.ts` **63 passed**。`npm run typecheck` 与 `npm run build` 通过；NotesPage 仍为独立异步 chunk（531.15 kB），CanvasEditor 为 2,325.54 kB 并保留 Vite 大 chunk 提示。`git diff --check` 通过。此次未运行未受影响的 Core 回归。
 - 未访问 NAS、真实笔记、生产配置或 C2；未合并 main、部署或操作真实业务数据。PR #50 仍待复审及 GitHub 可合并状态确认。
 
+## 2026-10-17 — PR #49 新版 App 受控生产部署失败并回滚
+
+- 按 Issue #44 授权评论 #6232479408，以 PR #49 merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79` 构建候选 App：tag `secondbrain-app:d084-pr49-fa2ad412`，Image ID `sha256:9858d618ab6a7a99dfe2c6cf38fa4989351c32c4405fc64b0959f73bf07d6f45`。构建归档 SHA-256 `617a2569e5db3d700072a68789dd2279bd0ee925e367497eb77f744872172047`。不重跑既有完整测试。
+- 预检确认 Compose SHA `33f45f5cdca72cea05ddd21a265d129bc770684dfb6b1b9d3790cb12725fa0b9`、属主/模式 `1026:100 / 0640`；Core state、Journal、Task 根为 `1026:100 / 0700`。部署前在 `/volume1/docker/secondbrain/rollback/d084-pr49-app-20261017T100900Z/` 建立 App/Compose 快照，目录 `0700`，SHA256SUMS 校验通过。Compose 只更改 App image tag，并用 `--no-deps` 单独重建 App。新镜像 30 秒内 running/healthy，RestartCount 0。
+- 浏览器从导航打开“对话”后 `/chat` 显示 `Not Found`。按异常停止规则立即使用快照恢复 Compose 并只重建 App；旧 tag `secondbrain-app:d084-c8a2b348` / Image ID `sha256:ef60d7de4ff3f3b3edc49cb0d565c45df3b996fe7014fc49ff3446ead7592feb` 在 15 秒内恢复 running/healthy，RestartCount 0，loopback health HTTP 200；Compose 哈希恢复为部署前值。
+- Hermes 容器/image ID、启动时间与 RestartCount 0 均未改变；本次没有对 Hermes/Guard 写入或重建。没有创建 Journal/Task 合成条目、调用模型、改动真实数据、扩大权限或触及其他服务。App 初始化创建的空 `core-state/chat-activity` 目录（`1026:100 / 0700`）及回滚快照均保留，不清理。
+- **结果：PR #49 已合并；候选生产部署已回滚；生产合成验收未完成，未用户验收。** 失败及直接证据报告于 Issue #44 comment #6232678940。此次单次部署授权用完；下一步先离线定位 `/chat` Not Found 的最小根因并提出有证据的修复，之后再请求新受控重试授权。
+
 ## 2026-10-17 — D084 PR #49 跨日 Journal 幂等与 Hermes 时间排序窄修
 
 - 按 PR #49 ChatGPT Review #5557199112，在原分支修复跨 Asia/Shanghai 日期零点的响应丢失重试：Core 使用 Journal 根目录私有全局锁串行化写入，并在权威日期 JSONL 中查找 operation ID；同键同内容返回原日期/记录，同键内容或 Session 冲突仍拒绝。没有引入旁路索引或历史数据迁移。

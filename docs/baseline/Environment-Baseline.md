@@ -6,7 +6,16 @@ type: environment-baseline
 ---
 # Environment Baseline
 
-## 最新核验（2026-10-17，PR #18 / Hermes fail-closed overlay）
+## 最新运行核验（2026-10-17，PR #49 App 部署尝试后已回滚）
+
+- PR #49 merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79` 的候选 App 镜像 `secondbrain-app:d084-pr49-fa2ad412` / Image ID `sha256:9858d618ab6a7a99dfe2c6cf38fa4989351c32c4405fc64b0959f73bf07d6f45` 曾短暂运行并在 30 秒内健康；浏览器导航“对话”到 `/chat` 显示 `Not Found`，按授权立即回滚。候选镜像当前非运行态，保留在本机供后续调查，不视为部署成功。
+- 当前 App 已恢复为 `secondbrain-app:d084-c8a2b348` / Image ID `sha256:ef60d7de4ff3f3b3edc49cb0d565c45df3b996fe7014fc49ff3446ead7592feb`，容器 ID `15f17a917c992d85c534c2bfab13caf237d0b03a006456138520c88faf9fcbd0`，running/healthy、RestartCount 0，用户 `1026:100`；NAS loopback health HTTP 200。旧 App 在回滚后 15 秒内恢复健康。
+- 正式 Compose 已从独立快照恢复，SHA-256 `33f45f5cdca72cea05ddd21a265d129bc770684dfb6b1b9d3790cb12725fa0b9`，属主/模式 `1026:100 / 0640`；当前 App 与 Hermes tag 指向原部署。App 回滚材料保留于 `/volume1/docker/secondbrain/rollback/d084-pr49-app-20261017T100900Z/`，目录 `0700`，快照文件 SHA256SUMS 校验通过。快照记录了部署前 App/Hermes 镜像身份和 Compose 哈希。
+- Hermes 容器仍为 `057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79`，镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`，running、RestartCount 0，启动时间未变。本轮没有对 Hermes/Guard 进行写入或重建；容器身份与部署前一致。
+- 既有 Core state、Journal、Task 根权限保持 `1026:100 / 0700`，现有 Journal/Task 文件 `0600`。候选 App 初始化时在现有 Core state RW 挂载中创建了空的 `chat-activity` 私有目录，权限 `1026:100 / 0700`；其目录和部署前快照均按“不清理”规则保留。没有新增挂载、权限扩大或真实 Journal/Task 写入。
+- 本次生产验收在 Chat 导航处停止；没有执行生产 Journal/Task 合成写入、刷新恢复、跨 Session 隔离或幂等重试。因此这些验收项仍为 **NOT VERIFIED**；本地测试记录沿用 Issue #44 既有证据，没有重跑完整测试。
+
+## 历史 Hermes 核验（2026-10-17，PR #18 / fail-closed overlay）
 
 - PR #18 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`。Hermes 基于上游 v0.22.2 源码 Commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8` 与补丁 SHA-256 `b53818487205733039378a8e3c7218cc298eca1c39e1a34dec997dd306f855b0`，从官方 amd64 镜像 digest `sha256:a11574b7fe8e1631d7d88d556677dac693bc058abf558cdeb899155688c1bf05` 构建一文件 overlay。NAS 当前 Hermes 镜像 tag `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`，Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`，平台 linux/amd64。
 - Compose SHA-256 `6d7b1be1abb4479b93e5cebc473e2f20ba6bddb6bd62ea5019322ef260908818`，属主/模式 `1026:100 / 0640`。仅 Hermes image 引用变更；Hermes 单服务以 `--no-deps --force-recreate` 重建，未触碰 App/Core 或其他服务。当前 `secondbrain-hermes` running，RestartCount 0；API `/health` 200，Dashboard 9119 可达并重定向登录（302）。重建后曾观察到 API 尚未监听，持续等待后服务恢复，无二次重启/回滚。
@@ -15,14 +24,14 @@ type: environment-baseline
 - 回滚点 `/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/`：目录 0700，`compose.yaml`（SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`）、旧 `plugin.yaml`、恢复元数据均 0600。旧官方 Hermes image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` 保留在 rollback tag `secondbrain-hermes:rollback-v0222-official-20261016T173140Z`。回滚前应重核快照并只恢复 Hermes/manifest；不可回滚 Core state、D077 JSONL 或 App。
 - 上述是运行态与合成权限验证，不代表真实模型、真实个人数据或浏览器学习体验已验收。此前 D078 Stage 1 信息保留在下方历史快照段，凡与本节冲突以本节为当前状态。
 
-本文件只记录最后一次经验证的运行快照，并非实时监控。上方 2026-10-17 的 Hermes overlay 快照为现行基准；下一次操作必须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 `Progress-Log.md` 与 Issue #14，不作为现行运行或恢复指令。
+本文件记录最近一次经验证的运行快照，并非实时监控。顶部是 PR #49 App 尝试回滚后的现行 App/Compose/Hermes 运行事实；Hermes overlay 段记录此前已核验的 Guard 配置与 Hook 证据。本轮 Hermes 容器未发生变化，但没有重新读取其插件文件。下一次操作必须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 `Progress-Log.md` 与 Issue #14，不作为现行运行或恢复指令。
 
 ## 常态运行路径与尚待验证的边界
 
 ## NAS 与 Compose
 
 - NAS：Synology DS920+，DSM 7.4.1 Build 90080；LAN 地址 `192.168.3.27`。本机与路由器网络设置不由 SecondBrain 文档治理修改。
-- 正式 Compose：`/volume1/docker/secondbrain/compose.yaml`；Compose Project `secondbrain`；Docker 网络 `secondbrain_default`。本次 Stage 1 部署前 SHA-256 `36c1d6cf14643ad41e5c04ec9ac1374b194dc52ebefbbe6dc6c57d1ac3fdd4a2`；部署后 SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`，属主/权限 `1026:100 / 0640`。Compose 本次只替换 App image tag，未改网络、挂载或其他服务。
+- 正式 Compose：`/volume1/docker/secondbrain/compose.yaml`；Compose Project `secondbrain`；Docker 网络 `secondbrain_default`。PR #49 App 尝试后已恢复到部署前 SHA-256 `33f45f5cdca72cea05ddd21a265d129bc770684dfb6b1b9d3790cb12725fa0b9`，属主/权限 `1026:100 / 0640`。此次尝试仅替换 App image tag，随后由已校验快照恢复；网络、挂载与其他服务未改。
 - 项目目标为两个服务：`secondbrain-hermes` 与 `secondbrain-app`。Container Manager GUI 曾出现旧容器行/旧定义缓存；最后已记录状态为管理界面定义未完成对齐。当前 GUI 状态未在本次核实，标记 `UNKNOWN`；这是部署管理风险，不改变 Docker 运行态记录。
 
 ## 历史 Stage 1 容器快照（已被 2026-10-17 patched overlay 取代）
