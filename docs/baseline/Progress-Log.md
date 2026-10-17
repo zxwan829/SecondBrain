@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D086 PR #58 首轮复审窄修
+
+- 按 PR Review #5558136143 / Issue #55 评论 #6234861916 在原分支 `codex/d086-vocabulary-center-20261017` 修复词汇唯一性与锁文件校验顺序。标签创建现在同时检查所有现存 canonical tags 和 synonyms；同义词创建同时检查所有 canonical tags 和 aliases，均按 NFC + casefold 比较。停用历史项继续占名；新增双方向 409 回归覆盖大小写/Unicode 等价输入及停用记录。
+- `.lock` 现在由 `os.open(..., O_CREAT|O_NOFOLLOW, 0600)` 安全尝试打开后先 `fstat` 验证属主、普通文件类型和严格权限，再 flock；不再对现存对象调用 `fchmod`。预置 0640 锁文件测试证明请求 fail-closed，锁权限和原 catalog/audit 字节不变。
+- 明确容量策略：2,000,000-byte 上限同时覆盖 catalog 与内嵌审计。序列化后的下一状态超限时在创建临时文件前返回 HTTP 507；不会替换旧文件、丢弃审计或部分提交。满载后写入会停止，既有数据仍可读取。长期扩展前需另行设计可导出/校验的 append-only 审计分区/归档及快照恢复，再迁移旧嵌入审计；本切片不截断、不自动归档或放宽上限。
+- 仅运行 Core `tests/test_vocabulary.py`：**11 passed**；未改前端，故未重复 frontend typecheck/build。`git diff --check` 通过。未访问真实 Vault、NAS、秘密或模型；未合并。
+
 ## 2026-10-17 — D086 标签与类型中心（本地合成切片）
 
 - 按 Issue #55 评论 #6234480613 从 GitHub 最新 main `e332172dc812ed46dd54685e2d0aa53fe52dd534` 建立独立分支 `codex/d086-vocabulary-center-20261017`。Core 私有状态目录下新增版本化词库与同文件审计；以跨进程锁、临时文件原子替换和 `If-Match` revision 防止并发覆盖。管理 API 分离 `vocabulary.read` / `vocabulary.write` 动作并复用 owner session 鉴权。创建类型/标签/永久同义词均要求显式确认；类型最多 10 种，标签禁用保留记录与引用。

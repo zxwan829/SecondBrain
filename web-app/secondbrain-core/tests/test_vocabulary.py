@@ -2,6 +2,7 @@ import concurrent.futures
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
@@ -16,6 +17,7 @@ from secondbrain_core.modules.vocabulary import (
     create_vocabulary_router,
     preview_inventory_candidates,
 )
+from secondbrain_core.modules import vocabulary as vocabulary_module
 
 
 class VocabularyStoreTests(unittest.TestCase):
@@ -51,6 +53,58 @@ class VocabularyStoreTests(unittest.TestCase):
         self.assertEqual([entry["operation"] for entry in state["audit"]], ["tag.add", "synonym.add", "tag.set_enabled"])
         self.assertFalse(any("note" in str(entry).lower() for entry in state["audit"]))
         self.assertEqual((self.root / "vocabulary" / "catalog.json").stat().st_mode & 0o777, 0o600)
+
+    def test_tag_name_conflicts_with_existing_synonym_including_disabled_history(self):
+        state = self.store.add_tag("CRM", 0, True)
+        crm = state["tags"][0]
+        state = self.store.add_synonym("Café", crm["id"], state["revision"], True)
+        state = self.store.set_tag_enabled(crm["id"], False, state["revision"], True)
+        with self.assertRaises(HTTPException) as conflict:
+            self.store.add_tag("CAFE\u0301", state["revision"], True)
+        self.assertEqual(conflict.exception.status_code, 409)
+        self.assertEqual(self.store.read()["revision"], state["revision"])
+
+    def test_synonym_conflicts_with_existing_tag_name_including_disabled_history(self):
+        state = self.store.add_tag("CRM", 0, True)
+        crm = state["tags"][0]
+        state = self.store.add_tag("Café", state["revision"], True)
+        sales = state["tags"][1]
+        state = self.store.set_tag_enabled(sales["id"], False, state["revision"], True)
+        with self.assertRaises(HTTPException) as conflict:
+            self.store.add_synonym("CAFE\u0301", crm["id"], state["revision"], True)
+        self.assertEqual(conflict.exception.status_code, 409)
+        self.assertEqual(self.store.read()["revision"], state["revision"])
+
+    def test_existing_unsafe_lock_fails_closed_without_changing_its_permissions(self):
+        state = self.store.add_tag("CRM", 0, True)
+        lock_path = self.root / "vocabulary" / ".lock"
+        catalog_path = self.root / "vocabulary" / "catalog.json"
+        lock_path.chmod(0o640)
+        original_catalog = catalog_path.read_bytes()
+        original_lock_mode = lock_path.stat().st_mode & 0o777
+
+        with self.assertRaises(HTTPException) as unsafe:
+            self.store.add_tag("Sales", state["revision"], True)
+
+        self.assertEqual(unsafe.exception.status_code, 503)
+        self.assertEqual(lock_path.stat().st_mode & 0o777, original_lock_mode)
+        self.assertEqual(catalog_path.read_bytes(), original_catalog)
+        self.assertEqual(len(self.store.read()["audit"]), 1)
+
+    def test_catalog_capacity_fails_closed_without_discarding_audit(self):
+        state = self.store.add_tag("CRM", 0, True)
+        catalog_path = self.root / "vocabulary" / "catalog.json"
+        original_catalog = catalog_path.read_bytes()
+        with patch.object(vocabulary_module, "MAX_CATALOG_BYTES", len(original_catalog) + 1):
+            with self.assertRaises(HTTPException) as capacity:
+                self.store.add_tag("Sales", state["revision"], True)
+
+        self.assertEqual(capacity.exception.status_code, 507)
+        self.assertIn("no catalog or audit data was discarded", capacity.exception.detail)
+        self.assertEqual(catalog_path.read_bytes(), original_catalog)
+        retained = self.store.read()
+        self.assertEqual(retained["revision"], 1)
+        self.assertEqual(len(retained["audit"]), 1)
 
     def test_revision_mismatch_fails_closed_and_type_limit_is_ten_total(self):
         with self.assertRaises(HTTPException) as stale:

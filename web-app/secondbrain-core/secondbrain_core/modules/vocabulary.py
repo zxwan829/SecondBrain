@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 INITIAL_TYPES = ("日记", "笔记", "头脑风暴", "摘要", "会议纪要")
 MAX_TYPES = 10
+MAX_CATALOG_BYTES = 2_000_000
 FRONTMATTER_TYPE_KEY = "类型"
 FRONTMATTER_TAGS_KEY = "tags"
 SYSTEM_METADATA_KEYS = frozenset({"状态", "创建日期", "修改日期"})
@@ -81,7 +82,7 @@ class VocabularyStore:
             try:
                 info = os.fstat(fd)
                 if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                        or info.st_mode & 0o077 or info.st_size > 2_000_000):
+                        or info.st_mode & 0o077 or info.st_size > MAX_CATALOG_BYTES):
                     raise HTTPException(status_code=503, detail="Vocabulary state file is unsafe")
                 with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as stream:
                     state = json.load(stream)
@@ -103,6 +104,11 @@ class VocabularyStore:
 
     def _write_atomic(self, state):
         data = (json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        if len(data) > MAX_CATALOG_BYTES:
+            raise HTTPException(
+                status_code=507,
+                detail="Vocabulary catalog capacity reached; no catalog or audit data was discarded",
+            )
         fd, temporary = tempfile.mkstemp(prefix=".catalog-", dir=self.directory)
         try:
             os.fchmod(fd, 0o600)
@@ -128,15 +134,16 @@ class VocabularyStore:
         self._ensure_directory()
         try:
             lock_fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
-            os.fchmod(lock_fd, 0o600)
         except OSError as exc:
             raise HTTPException(status_code=503, detail="Vocabulary lock unavailable") from exc
+        locked = False
         try:
             lock_info = os.fstat(lock_fd)
             if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.geteuid()
                     or lock_info.st_mode & 0o077):
                 raise HTTPException(status_code=503, detail="Vocabulary lock permissions are unsafe")
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            locked = True
             state = self._read()
             if expected_revision != state["revision"]:
                 raise HTTPException(status_code=412, detail="Vocabulary revision changed; reload before retrying")
@@ -148,13 +155,16 @@ class VocabularyStore:
             return state
         finally:
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                if locked:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
             finally:
                 os.close(lock_fd)
 
     @staticmethod
     def _unique(rows, name):
-        return any(row.get("name", row.get("alias", "")).casefold() == name.casefold() for row in rows)
+        normalized = unicodedata.normalize("NFC", name).casefold()
+        return any(unicodedata.normalize("NFC", row.get("name", row.get("alias", ""))).casefold() == normalized
+                   for row in rows)
 
     def add_type(self, name, expected_revision, confirmed):
         name = _clean_name(name, "type")
@@ -187,8 +197,8 @@ class VocabularyStore:
         name = _clean_name(name, "tag")
 
         def mutate(state):
-            if self._unique(state["tags"], name):
-                raise HTTPException(status_code=409, detail="Tag already exists")
+            if self._unique(state["tags"], name) or self._unique(state["synonyms"], name):
+                raise HTTPException(status_code=409, detail="Tag name conflicts with an existing tag or synonym")
             row = {"id": str(uuid.uuid4()), "name": name, "enabled": True}
             state["tags"].append(row)
             return {"kind": "tag", "id": row["id"], "name": name}
@@ -215,8 +225,8 @@ class VocabularyStore:
             tag = next((item for item in state["tags"] if item["id"] == tag_id), None)
             if tag is None or not tag["enabled"]:
                 raise HTTPException(status_code=404, detail="Active target tag not found")
-            if alias.casefold() == tag["name"].casefold() or self._unique(state["synonyms"], alias):
-                raise HTTPException(status_code=409, detail="Synonym already exists or matches its target")
+            if self._unique(state["tags"], alias) or self._unique(state["synonyms"], alias):
+                raise HTTPException(status_code=409, detail="Synonym conflicts with an existing tag or synonym")
             row = {"id": str(uuid.uuid4()), "alias": alias, "tag_id": tag_id, "enabled": True}
             state["synonyms"].append(row)
             return {"kind": "synonym", "id": row["id"], "tag_id": tag_id, "alias": alias}
