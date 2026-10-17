@@ -12,21 +12,25 @@ source: GitHub SecondBrain Monorepo
 
 **原 V1 业务交付门槛（保留、不缩水）：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
 
-**新的 Companion MVP 门槛（D077，已批准、仍未整体实现/验收）：** 日常 Chat 不提示搜索也能自然关联长期个人记忆与可信知识；获准对话自动学习低风险偏好/经验并跨会话可用，可纠正/过期；准确事实可回源；自然语言 Journal、简单待办与 Universal Capture 共用可信数据基础；初步具备与目标/项目/任务相关的主动建议。Personal Memory / Learning Core 已部署并通过本地 Stub 合成闭环；D080 真实测试中自动学习写入通过，但跨 Session 自然召回失败。D082 定向修复已提交复审，尚未部署或真实复验。**仅满足原 V1 搜索和 UI 功能，不等于实现 SecondBrain 的最终产品目标。**
+**新的 Companion MVP 门槛（D077，已批准、尚未整体实现/验收）：** 日常 Chat 无检索提示地关联长期个人记忆与可信知识；获准对话低风险学习、跨 Session 召回与纠正；精确事实回源；自然语言 Journal、简单 Task、Capture 与主动建议。原 V1 MUST 保持不变。D080 两次 GLM-4.5-Air Run 中，首轮自动学习写入通过，跨 Session 自然召回失败；D082 的情境保留修复已进入最新 main，但生产重新验证仍未完成，详见 Issue #28/#30。
 
-**阶段安排：** D080 有界真实模型测试已执行至 2 次 Run，并因跨 Session 召回异常停止；D082 正在修复已定位的 Core 偏好提取问题。后续生产复验仍需单独授权；既有 D077/D078 源码审计和隔离验证不重复开展。
+**总体状态：NOT DONE。** 以下状态以 2026-10-17 核验的 GitHub refs 与各 PR 证据为准；生产状态只引用 `Environment-Baseline.md` 的 2026-10-17 快照，不是本轮实时核验。PR #18 的 Hermes v0.22.2 fail-closed overlay 已在 NAS 部署并通过有限合成权限检查；Terminal 关闭、Private 未挂载、Knowledge 主目录只读（Capture 专用 inbox RW 例外不变）、Promote 关闭。真实模型记忆质量、Journal/Task 的生产运行及浏览器用户验收未完成。
 
-**总体状态：NOT DONE。** D079 已按范围结项；D080 已执行 2 次真实 GLM-4.5-Air Run：首轮合成偏好自动学习写入通过，第二个 Session 的无提示召回失败并触发止损。Core JSONL 仅保存“先给简短结论”，丢失“写技术说明时”情境和逗号后的要点，导致相关性筛选未注入 instructions；Run/SSE Adapter 与 Hermes v0.22.2 `/v1/runs` instructions 契约有支持证据。D082 修复已完成本地复审，尚未部署或真实复验；证据见 Issue #30。PR #19/#21/#22/#24 已依序合并，当前 main 为 `4afe7ecad7584828c3d3ac6be896b97386c11b02`。D077 Core 与 Hermes v0.22.2 已部署。按 Issue #14 授权，PR #18 已 squash 合并至 main，merge commit `84d1cbaf7daebb188fc93c369fba4a59b80895e5`；Hermes 使用固定官方 amd64 digest `a11574…c1bf05` 加一文件 fail-closed 补丁的本地镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`（Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`）。API `/health` 返回 200，Dashboard 9119 可达并按预期重定向登录；插件 Doctor 确认 D078 guard 注册 1 个 hook；API toolset 仍为 `file,skills,vision`，Terminal 未开放，Skills 写入审核 true、审批模式 manual。隔离无模型 Run 验证敏感 Session 文件读取被拒、业务文件与 Skills 只读调用可执行、dispatcher 异常 fail-closed；D077 Memory 目录仍为 `1026:100 / 0700` 且 0 个文件。Private 未挂载、Knowledge 主目录只读（已有 Capture 专用 inbox RW 挂载不变）、Promote 关闭。D080 已创建 2 个合成测试 Session 页面并写入 1 条合成 Core 记忆；跨 Session 真实召回尚未验收。镜像构建与运行证据、回滚方式和本轮历史资产只读审计见 Environment-Baseline.md / Progress-Log.md。D076 Organizer 模型和 Scheduler 仍关闭；此前 ¥0.001302 是旧合成请求估算，不是本次部署费用或账户账单；视觉兼容性为 DEFERRED。
+### 当前工作分层状态（不能互相替代）
 
-## 当前阶段决议：D082 跨 Session 记忆召回修复（2026-10-17）
+| 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
+|---|---|---|---|---|---|
+| D082 个人记忆情境保留修复 | PR #32 已审并合入 main | Core `test_personal_learning.py` 17 项通过（Issue #30）；此前 D080 真实召回失败不可由源码/Mock 抵消 | **main**，HEAD `628bec895e8d95646b5cc583e8ffea8f7e877e10` | 此修复是否已部署，本次可用生产快照未证明，标记 **UNKNOWN** | 生产真实召回复验未完成；浏览器验收未完成 |
+| D081 Journal、D082 Chat Journal、D083 Task | 各 PR 代码审查通过 | 各切片定向测试通过；统一多模块集成测试尚未执行 | PR #31/#34/#36 合入 `dev/parallel-v1-next-20261017`，HEAD `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`；**未合入 main** | **未部署**；生产 Journal/Task 专用 RW 根未配置/未核验 | 未对 Journal/Task 集成执行真实模型或浏览器验收 |
+| PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；PR 仍 open | Guard/Core/前端定向测试记录见 PR #37；与并行分支尚未集成 | 独立 PR #37，HEAD `e5332f6fa175d0742cacbaec2fbab40ded4781a4`；**未合入 main** | **未部署，生产不可用** | 实际 Hermes API Run 审批链路仍需集成后验证；无真实模型验收 |
 
-**状态：代码修复与本地定向验证已完成并通过 ChatGPT 复审；未部署、未真实复验。** D080 的两次真实 GLM-4.5-Air Run 显示：Run 1 从自然偏好表达写入一条 active Core 记忆；Run 2 新 Session 未召回，期间触发 `learning-loop-test` Skill，`search_files` 报错且最终要求提供文件路径，按异常止损停止后续测试。Core JSONL 的合成记忆只保留“先给简短结论”，提取时丢失“写技术说明时”语境并在逗号处截断，因此相关性筛选没有为 Run 2 注入 instructions。Hermes v0.22.2 `/v1/runs` 支持 `instructions`，Core Adapter 原样转发；已知主因在 Core 偏好提取，不是已证实的 Hermes API 故障。详细实测见 Issue #28，根因与 PR 证据见 Issue #30。
+main 与并行分支当前已核实为 diverged：`main` 独有 1 个提交（含 D082 记忆修复），并行分支独有 3 个切片集成提交。集成必须以 main 为基线保留其记忆修复，不能用旧开发分支覆盖 main。代码审查、定向测试、开发分支合入、main 合入、NAS 部署、真实模型运行与用户验收分别记录；任一层通过都不自动代表后一层通过。
 
-D082 在 `fix/d082-real-memory-recall` 分支保留情境并完整提取逗号连接的偏好，新增 BFF 跨 Session 指令注入及无关主题不注入回归。Core `test_personal_learning.py` 17 项通过；使用 Python 3.12 隔离环境。该结果是本地合成代码验证，不代表真实 Hermes 模型召回通过。
+## D084：集成前文档基线与统一验收计划（文档复审中）
 
-**安全与部署状态：** 本轮未改 NAS、生产 Compose、容器、配置或 Memory；未触发真实 Run。API Terminal 仍关闭、Private 不挂载、Knowledge 只读、Promote 关闭，当前生产状态引用 `Environment-Baseline.md` 最近快照。D077 Core JSONL 仍是唯一个人记忆权威。
+本轮只整理正式文档和测试计划，没有合并功能 PR、运行 NAS、调用模型或改变生产状态。执行路线和测试矩阵见[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)。`Environment-Baseline.md` 的快照时间保持为最近有证据的 2026-10-17；本轮未取得新运行证据，因此不更新快照。
 
-**NEXT：** 合并 D082 代码后，单独决定是否授权部署与一次有界真实复验。代码 Push 或 PR 合并均不代表部署、真实记忆验收或用户体验通过。
+**唯一 NEXT：** ChatGPT 复审并决定是否接受本次文档 PR。文档通过后，再按集成计划创建以最新 main 为基线的功能集成 PR；完成定向合成集成验证后立即暂停，另行申请任何 NAS 部署或真实模型测试授权。当前不合并 D081-D083 功能代码或 PR #37。
 
 ## D077 产品体验验收契约（批准的目标；真实效果尚未验收）
 
@@ -70,7 +74,7 @@ D082 在 `fix/d082-real-memory-recall` 分支保留情境并完整提取逗号�
 | Organizer 自动整理（D076） | 设置页管理 SiliconFlow/已验证模型、服务端 API Key、软预算状态、模型和 Scheduler 开关及计划；执行仍产出 Review 草稿并记录 usage/预算/游标 | PROD-DEPLOYED：`b34319a` App-only 部署，模型/Scheduler/Promote 关闭、Knowledge RO、Private 未挂载。浏览器验收发现 Mock 检查缺少可见反馈；`c619f56` 起的本地 UI 修复新增 loading/成功/错误反馈、三组响应式布局和唯一模型只读展示；本地交互测试 3 passed、typecheck/build 通过 | 此修复尚未部署；部署后待用户验收设置页交互与布局及既有 Chat/Inbox/Review。真实用户数据出站及 Scheduler 启用仍须另行批准；软预算非供应商硬上限 |
 | Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | DEV-TESTED：阶段 A 15 项测试；生产关闭 | 收口权限、统一登录安全边界、正式部署、HTTPS 用户验收 |
 | Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
-| Journal | 用户原文留存；目标支持新增/按日期追加，不允许普通 Agent 随意覆写 | NOT DONE：生产未开放专用写入 | 按 D064 执行；**业务是目标能力，但 Web App V1 的快捷录入属于 SHOULD，不能擅自冒充核心 MUST** |
+| Journal | 用户原文留存；目标支持新增/按日期追加，不允许普通 Agent 随意覆写 | D081 Core/API + D082 显式 Chat 意图在并行开发分支 DEV-TESTED，未合入 main/未部署；生产 `SB_JOURNAL_ROOT` 未配置/核验 | 集成后验证 Core 专用根、授权和日期追加；**业务是目标能力，但 Web App V1 的快捷录入属于 SHOULD，不能擅自冒充核心 MUST** |
 
 ### B. Web App / Personal OS（按正式 V1 Business Spec 逐项枚举）
 
@@ -112,7 +116,7 @@ D082 在 `fix/d082-real-memory-recall` 分支保留情境并完整提取逗号�
 | 自主个人记忆学习（Phase 1-B） | NAS 合成闭环通过：Core 自动保存来源关联、跨 Session 召回、用户纠正和纠正后召回；Hermes v0.22.2 实际模型请求经 Stub 观测到注入上下文。Stub 不评价真实模型的自然学习/回答质量；没有付费模型或真实数据出站 | PR #6 已合并；本次运行证据见 Progress-Log；真实模型质量、用户浏览器体验及长时间使用仍待验收 |
 | 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
 | 碎碎念与 Journal 自然语言记录 | 业务 D064 APPROVED，生产 Journal 写入 NOT DONE | 明确“记一下”即可新增/按日追加原话；普通闲聊不意外写日记 |
-| 自然语言待办/日程 | 旧 Web App Calendar 为 PARTIAL；完整 Task 写入/提醒链路 NOT VERIFIED | 能创建、查看、修改、完成真实待办；提醒送达独立验证 |
+| 自然语言待办/日程 | D083 Task Core/API、Today 页面和 Chat 显式命令在并行开发分支 DEV-TESTED；尚未合入 main 或部署，生产 `SB_TASK_ROOT` 未配置/核验；提醒发送 **NOT IMPLEMENTED** | 集成后验证真实持久数据/权限；提醒通知必须单独实现并验收，不将待办 CRUD 通过等同提醒送达 |
 | 文件收录→理解→记忆关联 | Capture 有 PROD-PARTIAL，OCR/STT、Review→Promote 缺口仍在 | 保留原件、正确提炼候选/关联，不擅自提升第三方断言为用户事实 |
 | 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
 | 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |
@@ -133,7 +137,7 @@ D082 在 `fix/d082-real-memory-recall` 分支保留情境并完整提取逗号�
 | P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
 
-**恢复后 NEXT：** 以上方“当前阶段决议”的编号步骤为唯一执行顺序；此处不维护第二份 NEXT。Issue #14 仅作为已完成的阶段执行证据及后续任务衔接入口；Terminal 保持关闭。
+**依赖矩阵说明：** 本表描述能力交付依赖，不取代 Section 1 的唯一 NEXT。Issue #14 保留 D078 阶段证据；API Terminal 保持关闭。
 
 **不要把阻断项变成无限研究：** 权限和认证须够安全且有证据；其他问题遵循 FAST-EXEC，优先复用现有能力，不提前建设企业级体系。
 
@@ -155,5 +159,6 @@ D082 在 `fix/d082-real-memory-recall` 分支保留情境并完整提取逗号�
 | 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
 | 正式决定、理由及替代关系 | `Decision-Log.md` |
 | 最近已核验的 NAS 运行快照、权限、端口与恢复入口 | `Environment-Baseline.md` |
+| D084 多切片集成顺序、统一合成验收矩阵及真实验证前置门槛 | [集成与统一测试计划](D084-Integration-and-Validation-Plan.md) |
 | 历史实施、测试、部署、用户验收与失败复盘 | `Progress-Log.md` |
 | SecondBrain 特有执行与安全规则 | `Agent-Rules.md` |
