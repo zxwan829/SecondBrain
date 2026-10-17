@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -29,11 +31,14 @@ class D078PluginTests(unittest.TestCase):
         (self.business / "capture.md").write_text("synthetic", encoding="utf-8")
         self.backend_patch = patch.object(plugin, "_terminal_backend_type", return_value="local")
         self.backend_patch.start()
+        self.approval_mode_patch = patch.object(plugin, "_approval_mode_bypass", return_value=False)
+        self.approval_mode_patch.start()
         self.hooks_patch = patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False)
         self.hooks_patch.start()
 
     def tearDown(self):
         self.backend_patch.stop()
+        self.approval_mode_patch.stop()
         self.hooks_patch.stop()
         self.temp.cleanup()
 
@@ -86,6 +91,55 @@ class D078PluginTests(unittest.TestCase):
         self.assertNotEqual(first["rule_key"], second["rule_key"])
         request = json.loads(first["message"][len(plugin.FILE_WRITE_APPROVAL_PREFIX):])
         self.assertEqual(request, {"schema": 1, "tool": "write_file", "arguments": args})
+
+    def test_file_writes_block_when_yolo_or_approvals_are_disabled(self):
+        requests = (
+            ("write_file", {"path": str(self.business / "capture.md"), "content": "synthetic"}),
+            ("patch", {"path": str(self.business / "capture.md"), "old_string": "a", "new_string": "b"}),
+        )
+        with patch.object(plugin, "_approval_mode_bypass", return_value=True):
+            results = [plugin.pre_tool_call(name, args) for name, args in requests]
+        for result in results:
+            self.assertEqual(result["action"], "block")
+            self.assertIn("approval_policy_unavailable", result["message"])
+
+    def test_hermes_yolo_and_approval_off_modes_are_detected(self):
+        tools = types.ModuleType("tools")
+        tools.__path__ = []
+        approval = types.ModuleType("tools.approval")
+        context = types.ModuleType("tools.approval_context")
+        self.approval_mode_patch.stop()
+        try:
+            for yolo, mode, expected in ((True, "prompt", True), (False, "off", True),
+                                         (False, "prompt", False)):
+                approval._yolo_active = lambda value=yolo: value
+                context._get_approval_mode = lambda value=mode: value
+                with self.subTest(yolo=yolo, mode=mode), patch.dict(sys.modules, {
+                    "tools": tools, "tools.approval": approval, "tools.approval_context": context
+                }):
+                    self.assertEqual(plugin._approval_mode_bypass(), expected)
+        finally:
+            self.approval_mode_patch.start()
+
+    def test_file_writes_block_when_approval_mode_lookup_raises(self):
+        with patch.object(plugin, "_approval_mode_bypass", side_effect=RuntimeError("synthetic")):
+            result = plugin.pre_tool_call("write_file", {
+                "path": str(self.business / "capture.md"), "content": "synthetic"})
+        self.assertEqual(result["action"], "block")
+        self.assertIn("approval_policy_unavailable", result["message"])
+
+    def test_unreviewed_file_mutations_are_directly_rejected(self):
+        requests = (
+            ("append_file", {"path": str(self.business / "capture.md"), "content": "x"}),
+            ("delete_file", {"path": str(self.business / "capture.md")}),
+            ("move_file", {"source": str(self.business / "capture.md"),
+                            "target": str(self.business / "moved.md")}),
+        )
+        with patch.object(plugin, "_approval_mode_bypass", return_value=False):
+            results = [plugin.pre_tool_call(name, args) for name, args in requests]
+        for result in results:
+            self.assertEqual(result["action"], "block")
+            self.assertIn("file_write_tool_unsupported", result["message"])
 
     def test_sensitive_skill_and_unverifiable_writes_block_before_approval(self):
         with patch.object(plugin, "_conflicting_pre_tool_call_hooks", return_value=False), \
