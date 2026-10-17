@@ -10,6 +10,7 @@ import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 import { JournalPage } from './JournalPage';
 import { parseTerminalApproval, type TerminalApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
+import { isExplicitJournalIntent } from './journal-intent';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -701,6 +702,8 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
   const [pendingPreview, setPendingPreview] = useState('');
   const attachmentInput = useRef<HTMLInputElement>(null);
   const abortRef = React.useRef<AbortController | null>(null);
+  const journalRetryRef = useRef<{ text: string; key: string } | null>(null);
+  const [journalNotice, setJournalNotice] = useState('');
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -816,6 +819,29 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
     event.preventDefault();
     const prompt = input.trim();
     if (!prompt || busy) return;
+    if (!pendingAttachment && isExplicitJournalIntent(input)) {
+      setError(''); setJournalNotice(''); setBusy(true); setProgress(en ? 'Saving to Journal…' : '正在保存到 Journal…');
+      const retry = journalRetryRef.current?.text === input ? journalRetryRef.current : { text: input, key: crypto.randomUUID() };
+      journalRetryRef.current = retry;
+      try {
+        const response = await fetch('/api/journal/entries', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': retry.key }, body: JSON.stringify({ text: input }) });
+        const result = await response.json().catch(() => ({})) as { detail?: string; date?: string; status?: string };
+        if (!response.ok) {
+          if (response.status === 401) window.location.reload();
+          if (response.status === 503 && result.detail === 'Journal is not enabled') throw new Error(en ? 'Journal is not enabled in this environment. Your text is still here.' : '当前环境未启用 Journal，原文仍保留在输入框中。');
+          if (response.status === 409) throw new Error(en ? 'This retry key was already used for different text. Your text is still here.' : '该重试标识已用于其他内容，原文仍保留；请编辑后重新提交。');
+          throw new Error(String(result.detail ?? (en ? `Journal save failed (HTTP ${response.status}). Your text is still here.` : `Journal 保存失败（HTTP ${response.status}），原文仍保留在输入框中。`)));
+        }
+        const date = String(result.date ?? '');
+        setInput(''); journalRetryRef.current = null;
+        setProgress(''); setJournalNotice(en ? `Saved to Journal for ${date}; the original text was preserved${result.status === 'duplicate' ? ' (safe retry, no duplicate).' : '.'}` : `已保存到 ${date} 的 Journal，原话已保留${result.status === 'duplicate' ? '（安全重试，未重复追加）。' : '。'}`);
+      } catch (cause) {
+        setProgress(''); setError(cause instanceof Error ? cause.message : (en ? 'Journal save failed. Your text is still here.' : 'Journal 保存失败，原文仍保留在输入框中。'));
+      } finally { setBusy(false); }
+      return;
+    }
+    setJournalNotice('');
     setError(''); setBusy(true); setProgress(en ? 'Starting…' : '正在启动…');
     setMessages((current) => [...current, { id: `local-${Date.now()}`, role: 'user', text: prompt }, { id: `assistant-${Date.now()}`, role: 'assistant', text: '' }]);
     try {
@@ -981,7 +1007,7 @@ export function ChatPage({ locale, onGoInbox }: { locale: Locale; onGoInbox: () 
     <aside className="chat-sessions"><div className="chat-session-heading"><h1>{en ? 'Chat' : '对话'}</h1><button type="button" onClick={() => void newSession()}>{en ? 'New chat' : '新对话'}</button></div><div className="chat-session-list">{sessions.map((session) => <button type="button" key={session.id} className={session.id === selected ? 'is-selected' : ''} onClick={() => void selectSession(session.id)}><strong>{session.title}</strong><small>{session.updated ? formatDate(session.updated, locale) : session.id.slice(0, 16)}</small></button>)}</div></aside>
     <div className="chat-conversation"><header><div><p className="eyebrow">SECONDBRAIN <span>/</span> {en ? 'CHAT' : '对话'}</p><h2>{sessions.find((session) => session.id === selected)?.title ?? (en ? 'New conversation' : '新对话')}</h2></div><button type="button" onClick={() => void forkSession()} disabled={!selected || busy}>{en ? 'Fork' : '分支会话'}</button></header>
       <div className="chat-message-list">{messages.map((message) => <article key={message.id} className={`chat-message ${message.role}`}><span>{message.role === 'user' ? (en ? 'You' : '你') : 'Hermes'}</span><p>{message.text || (busy && message.role === 'assistant' ? progress : '')}</p></article>)}{!messages.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
-      {progress && <div className="chat-progress" role="status">{progress}</div>}{error && <p className="chat-error" role="alert">{error}</p>}
+      {progress && <div className="chat-progress" role="status">{progress}</div>}{journalNotice && <p className="chat-progress" role="status">{journalNotice}</p>}{error && <p className="chat-error" role="alert">{error}</p>}
       {pendingApproval && <section className="terminal-approval-card" aria-labelledby="terminal-approval-title">
         <h3 id="terminal-approval-title">{en ? 'Terminal action approval' : '终端操作审批'}</h3>
         <p>{pendingApproval.scope}</p>

@@ -2,6 +2,13 @@
 
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 
+## 2026-10-17 — D082 Issue #33 Chat 显式 Journal 记录（开发分支）
+
+- 从 `dev/parallel-v1-next-20261017` 最新已合并基线 `75c83bbcd3ff05b188fabc8f03bdc4eacea2833c` 创建独立工作分支。Chat 输入仅在开头显式出现 `记一下`、`记下来`、`写日记`、`记录一下` 时调用 Journal API；传入完整输入原文，普通消息继续走原 Hermes Run 路径，不创建额外 Chat Session。成功反馈日期和原文保留状态；失败保留输入并在同内容重试时复用 Idempotency-Key。
+- Core 在 Journal 未配置时认证后返回明确 503，不创建数据根；按日追加返回日期。同一幂等键同内容安全回放、不同内容返回 409。未改 Hermes Session/Run/SSE 实现，未触及 Task/Memory/Promote/Terminal/Scheduler。
+- 针对性合成验证：前端 Chat 交互 **36 passed**，覆盖显式成功不触发 Run、普通消息仍走 Hermes、失败输入保留且复用幂等键、未启用明确拒绝；`npm run typecheck` 与 `npm run build` 通过。Core `tests/test_journal.py tests/test_web_app_bff.py` **20 passed**（含幂等键冲突和未配置 503）；出现 1 条 Starlette/httpx `TestClient` 弃用提示。`git diff --check` 通过；未执行真实模型测试。
+- 无 NAS/生产访问或变更、生产 Journal 数据、Issue #28 测试状态/数据、真实模型或秘密访问。当前代码仅为开发分支，不部署；Chat 浏览器用户验收仍待完成。
+
 ## 2026-10-17 — D081 Issue #29 Journal explicit-intent slice (local only)
 
 - Started from `dev/parallel-v1-next-20261017` at `d7a48fe3e1f70a40a8b94d4e1e2dacb1d052abaa`, in a separate clone. Added an optional `SB_JOURNAL_ROOT` Core module/router; it mounts only an existing Core-owned `0700` directory. The dedicated API uses the authenticated App owner session, accepts only explicit `记一下` / `记下来` / `写日记` / `记录一下` prefixes, stores the complete original phrase/text with Asia/Shanghai timestamp and source, and appends to a date-scoped JSONL file. `flock`, `O_APPEND`, `O_NOFOLLOW`, private file modes, persistent hashed idempotency keys and partial-write truncation guard append integrity. There is no update/delete route.
