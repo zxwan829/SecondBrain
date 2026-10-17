@@ -21,6 +21,7 @@ type: agent-rules
 - **默认不通读两个长 Log 文档：** `Decision-Log.md` 与 `Progress-Log.md`。日常任务优先读取 `00-CURRENT.md`（当前状态、验收、NEXT）、`Agent-Rules.md`（执行边界）、相关业务规格；需了解设计时按需读取 `Architecture.md`，需核对现网时读取 `Environment-Baseline.md` 最新快照。
 - **追溯才读取：** 当涉及某个正式决定的批准/替代关系、历史事故、测试证据、争议裁定或阶段复盘时，按 D 编号、Issue/PR、日期、关键词定位对应 Log 的必要章节或行范围；不为“熟悉项目”加载全量日志，不让历史状态覆盖 CURRENT。
 - **写入不受此阅读优化限制：** 正式决策变化仍更新 Decision-Log，关键阶段成果/问题/验收证据仍更新 Progress-Log；用户要求全面历史审计时可按需完整阅读。
+- **Progress Log 写入规则（本项目唯一权威定义）：** `Progress-Log.md` 按时间倒序，最新记录在前。每次新增记录须以 `##` 章节插入文件开头说明文字之后、原最新记录之前；不得把新章节追加到文件末尾、重复记同一阶段或重排已有历史记录。提交前检查新章节位置及时间顺序。`Progress-Log.md` 首页仅提供格式提示；项目 `AGENTS.md` 已引用本规则文件，不重复复制。`Decision-Log.md` 保留既有 D 编号顺序，`Environment-Baseline.md` 保持现有快照组织。跨项目的一处定义、多处引用原则以 `Codex-Governance/AGENTS.md` 为准。
 
 ## GitHub Issue 驱动的唯一协作流程（SecondBrain 中大型任务）
 
