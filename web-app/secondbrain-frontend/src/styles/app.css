@@ -271,6 +271,19 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .notes-safety, .notes-hint { color: #b7c7dc; font-size: 13px; }
 .notes-error { color: #ff9a9a; font-size: 13px; }
 .notes-empty { margin: auto; color: #aebed3; }
+.visual-dialog-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(2 7 16 / 78%); }
+.visual-dialog { display: flex; width: min(1200px, 96vw); height: min(820px, 92vh); min-height: 420px; flex-direction: column; gap: 12px; padding: 16px; color: #dce7f7; background: #101a2b; border: 1px solid rgb(151 177 215 / 24%); border-radius: 14px; box-shadow: 0 20px 80px rgb(0 0 0 / 55%); }
+.visual-dialog-header, .visual-dialog-footer { display: flex; align-items: center; gap: 12px; }
+.visual-dialog-header h2 { margin: 0 auto 0 0; font-size: 17px; }
+.visual-dialog-header span { max-width: 40%; overflow: hidden; color: #92a6c4; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.visual-dialog-footer { justify-content: flex-end; }
+.visual-dialog-footer span { margin-right: auto; color: #92a6c4; font-size: 12px; }
+.visual-map-editor, .excalidraw-canvas { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: hidden; }
+.visual-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 8px; }
+.visual-toolbar button { padding: 6px 9px; font-size: 12px; }
+.visual-toolbar span { color: #92a6c4; font-size: 12px; }
+.mind-map-canvas { flex: 1; min-height: 260px; overflow: hidden; background: #fff; border-radius: 8px; }
+.excalidraw-canvas > .excalidraw { flex: 1; min-height: 0; }
 @media (max-width: 760px) { .notes-layout { grid-template-columns: 1fr; } .notes-sidebar ul { max-height: 180px; overflow: auto; } .notes-document-heading { flex-wrap: wrap; } }
 .journal-notice { color: #92e5be; }
 .journal-error { color: #ff9b9b; }

@@ -93,4 +93,19 @@ describe('MarkdownEditor', () => {
     expect(container.querySelector('.tiptap')).toBeNull();
   });
 
+  it('keeps a visual asset as a relative Markdown reference and opens its note-bound source', async () => {
+    const filename = '11111111111111111111111111111111.mindmap.json';
+    const onChange = vi.fn();
+    const onOpen = vi.fn();
+    const { container } = render(<MarkdownEditor value={`[思维导图](attachments/${filename})\n`} disabled={false} onChange={onChange}
+      onOpenVisualAsset={onOpen} assetBase="/api/notes/drafts/synthetic-note" />);
+    const link = await screen.findByRole('link', { name: '思维导图' });
+    expect(link.getAttribute('href')).toBe(`/api/notes/drafts/synthetic-note/attachments/${filename}`);
+    link.getBoundingClientRect = () => ({ x: 1, y: 1, top: 1, left: 1, right: 90, bottom: 20, width: 89, height: 19, toJSON: () => ({}) });
+    fireEvent.click(link, { clientX: 5, clientY: 5 });
+    expect(onOpen).toHaveBeenCalledWith(filename);
+    await waitFor(() => expect(onChange).not.toHaveBeenCalled());
+    expect(container.querySelector('.notes-raw-source')).toBeNull();
+  });
+
 });

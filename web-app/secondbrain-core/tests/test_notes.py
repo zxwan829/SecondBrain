@@ -2,6 +2,7 @@ import tempfile
 import os
 import unittest
 import concurrent.futures
+import json
 from io import BytesIO
 from unittest.mock import patch
 from pathlib import Path
@@ -99,6 +100,46 @@ class NotesStoreTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             self.store.upload_image("drafts", note["path"], "bad.png", b"not png")
 
+    def test_visual_assets_are_note_bound_validated_and_independently_versioned(self):
+        note = self.store.create("# Visuals\n")
+        mindmap = json.dumps({"data": {"text": "Root"}, "children": [], "layout": "mindMap"})
+        created = self.store.create_visual_asset("drafts", note["path"], "mindmap", mindmap, note["etag"])
+        self.assertRegex(created["filename"], r"^[0-9a-f]{32}\.mindmap\.json$")
+        data, suffix = self.store.read_attachment("drafts", note["path"], created["filename"])
+        self.assertEqual(suffix, ".json")
+        self.assertEqual(json.loads(data), json.loads(mindmap))
+
+        canvas = json.dumps({"type": "excalidraw", "elements": [
+            {"type": "arrow", "id": "a1"}, {"type": "text", "id": "t1", "text": "Label"}
+        ], "appState": {"viewBackgroundColor": "#ffffff"}})
+        drawing = self.store.create_visual_asset("drafts", note["path"], "excalidraw", canvas, note["etag"])
+        canvas_data, canvas_suffix = self.store.read_attachment("drafts", note["path"], drawing["filename"])
+        self.assertEqual(canvas_suffix, ".json")
+        self.assertEqual(json.loads(canvas_data), json.loads(canvas))
+
+        updated_content = json.dumps({"data": {"text": "Edited"}, "children": [], "layout": "mindMap"})
+        updated = self.store.update_visual_asset("drafts", note["path"], created["filename"], updated_content,
+                                                 note["etag"], created["etag"])
+        self.assertNotEqual(updated["etag"], created["etag"])
+        with self.assertRaises(HTTPException) as stale:
+            self.store.update_visual_asset("drafts", note["path"], created["filename"], mindmap,
+                                           note["etag"], created["etag"])
+        self.assertEqual(stale.exception.status_code, 412)
+        with self.assertRaises(HTTPException) as unsafe:
+            self.store.create_visual_asset("drafts", note["path"], "excalidraw",
+                                           json.dumps({"type": "excalidraw", "elements": [{"type": "image"}]}),
+                                           note["etag"])
+        self.assertEqual(unsafe.exception.status_code, 422)
+        too_many_nodes = {"data": {"text": "Root"}, "children": [
+            {"data": {"text": "Child"}, "children": []} for _ in range(5000)
+        ]}
+        with self.assertRaises(HTTPException) as oversized:
+            self.store.create_visual_asset("drafts", note["path"], "mindmap", json.dumps(too_many_nodes), note["etag"])
+        self.assertEqual(oversized.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as missing_etag:
+            self.store.create_visual_asset("drafts", note["path"], "mindmap", mindmap, "wrong")
+        self.assertEqual(missing_etag.exception.status_code, 412)
+
     def test_notes_router_uses_etag_and_routes_attachment_endpoints(self):
         class SessionAuth:
             def require_action(self, request: Request, action: str):
@@ -125,6 +166,20 @@ class NotesStoreTests(unittest.TestCase):
         uploaded = client.post(f"{target}/attachments", files={"file": ("input.png", buffer.getvalue(), "image/png")})
         self.assertEqual(uploaded.status_code, 200)
         self.assertEqual(client.get(uploaded.json()["url"]).status_code, 200)
+        mindmap = json.dumps({"data": {"text": "Root"}, "children": []})
+        visual = client.post(f"{target}/visual-assets/mindmap", json={"content": mindmap},
+                             headers={"If-Match": f'"{saved.json()["etag"]}"'})
+        self.assertEqual(visual.status_code, 200)
+        source_url = f"{target}/attachments/{visual.json()['filename']}"
+        fetched = client.get(source_url)
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.headers["content-type"], "application/json")
+        self.assertEqual(json.loads(fetched.text), json.loads(mindmap))
+        replaced = client.put(source_url,
+                              json={"content": json.dumps({"data": {"text": "Changed"}, "children": []})},
+                              headers={"If-Match": f'"{saved.json()["etag"]}"',
+                                       "If-Asset-Match": fetched.headers["etag"]})
+        self.assertEqual(replaced.status_code, 200)
 
     def test_notes_router_requires_the_core_session_and_fails_closed_when_unconfigured(self):
         class SessionAuth:
@@ -136,6 +191,10 @@ class NotesStoreTests(unittest.TestCase):
         app.include_router(create_notes_router(SessionAuth(), self.store))
         client = TestClient(app)
         self.assertEqual(client.get("/api/notes").status_code, 401)
+        note = self.store.create("# Session-bound visual\n")
+        visual_path = f"/api/notes/drafts/{note['path']}/visual-assets/mindmap"
+        self.assertEqual(client.post(visual_path, json={"content": json.dumps({"data": {"text": "Root"}, "children": []})},
+                                     headers={"If-Match": f'"{note["etag"]}"'}).status_code, 401)
         self.assertEqual(client.get("/api/notes", cookies={"session": "owner"}).status_code, 200)
         disabled = FastAPI()
         disabled.include_router(create_notes_router(SessionAuth(), None))
