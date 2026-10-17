@@ -30,11 +30,11 @@ source: GitHub SecondBrain Monorepo
 
 本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
 
-**唯一 NEXT：** D085-C1 按 Issue #46 最新规划接入 Notes 主应用导航、路由与移动端菜单，保留默认关闭的功能开关及 Core 权限门禁。当前功能分支基于 main `b6342e77c717d3074f39745b4f210740367a7f2f`；C1 自动化验证和待审 PR 状态见本文件的 D085-C1 记录及 `Progress-Log.md`。仅使用临时合成数据；C1 不改生产配置、不部署 NAS、不访问真实笔记。PR 待审期间不得启动 C2。PR 审查完成后由用户决定是否合并及后续阶段；代码审查、测试、部署和用户验收分别记录。
+**唯一 NEXT：** D085-C1 已提交为 PR #50（基于 main `b6342e77c717d3074f39745b4f210740367a7f2f`），等待独立代码审查。实现将 Notes 接入主应用导航、路由与移动端菜单，并保留默认关闭的功能开关及 Core 权限门禁；定向合成测试、typecheck 和 build 通过，详见 `Progress-Log.md`。仅使用临时合成数据；C1 不改生产配置、不部署 NAS、不访问真实笔记。PR 待审期间不得启动 C2。PR 审查完成后由用户决定是否合并及后续阶段；代码审查、测试、部署和用户验收分别记录。
 
 ## D085-C1：Notes 主应用导航接入（待审）
 
-NotesPage 通过 `/notes` 路由接入现有桌面/移动端侧栏，并支持刷新和深链。`VITE_ENABLE_NOTES` 默认关闭；显式启用后仍需 Core `GET /api/notes` 的 `notes.read` 授权成功才显示入口。笔记读写继续由 Core `notes.read` / `notes.write` 强制鉴权。NotesPage 使用懒加载；Markdown 正文仍为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，Obsidian 原生兼容性不作扩张承诺。当前状态：分支开发与合成验证进行中，PR 待审；未合并、未部署、未做用户验收。D085-C2 未启动。
+NotesPage 通过 `/notes` 路由接入现有桌面/移动端侧栏，并支持刷新和深链。`VITE_ENABLE_NOTES` 默认关闭；显式启用后仍需 Core `GET /api/notes` 的 `notes.read` 授权成功才显示入口。笔记读写继续由 Core `notes.read` / `notes.write` 强制鉴权。NotesPage 使用懒加载；Markdown 正文仍为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，Obsidian 原生兼容性不作扩张承诺。PR #50 等待独立代码审查；未合并、未部署、未做用户验收。D085-C2 未启动。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 

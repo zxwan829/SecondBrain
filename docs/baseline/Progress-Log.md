@@ -7,7 +7,7 @@
 ## 2026-10-17 — D085-C1 Notes 主应用导航接入（开发分支）
 
 - 基于最新 GitHub `main` `b6342e77c717d3074f39745b4f210740367a7f2f` 建立独立 Worktree `codex/d085-c1-notes-navigation-20261017`。新增 Notes 懒加载页面路由和侧栏入口；仅在 `VITE_ENABLE_NOTES=true` 且 Core `GET /api/notes` 经 `notes.read` 授权成功后展示，拒绝/不可用时隐藏入口并将 Notes 深链退回首页。移动端复用现有菜单。未改 API/Core 鉴权。
-- 定向测试 `App.navigation.test.tsx`、`NotesPage.test.tsx`、`MindMapEditor.test.tsx` **17 passed**；`npm run typecheck` 与 `npm run build` 通过。构建确认 NotesPage 独立异步 chunk（530.91 kB），CanvasEditor chunk 为 2,325.54 kB 并触发 Vite 大 chunk 提示；导航入口并未把 NotesPage 静态并入主入口。`git diff --check` 通过。配套 D085-C1 文档说明本地开关、授权边界、Markdown/图形资产语义与回滚方式。
+- 定向测试 `App.navigation.test.tsx`、`NotesPage.test.tsx`、`MindMapEditor.test.tsx` **17 passed**；`npm run typecheck` 与 `npm run build` 通过。构建确认 NotesPage 独立异步 chunk（530.91 kB），CanvasEditor chunk 为 2,325.54 kB 并触发 Vite 大 chunk 提示；导航入口并未把 NotesPage 静态并入主入口。`git diff --check` 通过。配套 D085-C1 文档说明本地开关、授权边界、Markdown/图形资产语义与回滚方式。Commit `fbc81d2ae0464f08ee89a5ceed6cf667be1a866a` 已推送；PR #50 指向 `main` 并等待独立审查。
 - 仅使用临时 Mock 响应；未读取或写入真实笔记、未改生产配置、未部署 NAS、未启动 C2。此分支/PR待审不代表合并、生产运行或用户验收。
 
 ## 2026-10-17 — D084 Journal / Task / Memory / 文件审批统一集成（本地验证）
