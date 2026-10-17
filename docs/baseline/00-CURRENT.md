@@ -33,6 +33,10 @@ source: GitHub SecondBrain Monorepo
 
 **最新部署结果 / 下一步：** PR #49 已于 2026-10-17 合入 main（merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79`）。按 Issue #44 评论 #6233322671 的一次授权，仅部署 App：使用 `web-app/Dockerfile.app` 与对应 `web-app` 构建上下文，镜像 `secondbrain-app:pr49-fa2ad412-full` / Image ID `sha256:1c7ed4cb953951eb2ab8691516651d170171305af6172326174e64f4115dd6ca`；120 秒健康门槛通过。隔离无网络 ASGI 检查和生产只读 HTTP smoke 均验证 `/chat 200 text/html`、2 个静态资源 200、匿名 Chat API 401 JSON。Hermes/Guard 容器与镜像未变化。具体运行快照、Compose 哈希、回滚点和未通过的业务验收项见 `Environment-Baseline.md`。**唯一 NEXT：** 恢复浏览器自动化/登录交互后，用新建空白 Hermes Session 和唯一合成内容完成 Journal/Task 系统操作卡、刷新恢复、会话隔离与幂等重试验收；不要读取或改动现有私人会话、Journal/Task 内容。业务合成验收仍未通过，不调用真实/付费模型，不修改或清理历史/真实 Journal、Task、Session、Memory、Atlas 数据。
 
+### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批
+
+从最新 main `ed6dc7fd14cc3c0860ddc5609f67cd02098452e9` 建立独立 Worktree/分支 `codex/d085-c2a-unified-inbox-20261017`。前端把既有 Capture inbox 条目与 Core Notes Drafts 收集到同一页面，允许通过现有 Notes Drafts API 新建；分类、标签、日记摘录、Knowledge Review 和项目关联由确定性本地 Mock 提议，支持逐项编辑、批准待执行或拒绝。批准状态只存在当前页面内：由于现有接口不能安全保存建议与来源的关联，本切片不会写 Journal/Knowledge、创建 Review/副本、移动原件或伪称持久化；跨会话审批留待有来源安全存储接口后实现。合成 Capture 示例仅为开发 UI 内存数据。定向前端 63 项、typecheck、build 通过；无 Core 代码改动。未访问真实笔记、真实模型、生产配置或 NAS，未部署、未做用户验收。此并行状态不改变 D084 唯一 NEXT。
+
 ### 并行开发状态：D085-C1 Notes 主应用导航接入
 
 PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0b875c133a314b429` 合入并处理共享 `App.tsx` 冲突。Notes 通过 `/notes` 路由接入桌面/移动侧栏；`VITE_ENABLE_NOTES` 默认关闭，显式开启仍要求 Core `notes.read` 预检成功，Notes 读写继续由 Core 权限门禁控制。NotesPage 懒加载；跨页面导航保留未保存保护。Markdown 正文为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，不扩张 Obsidian 原生兼容承诺。本轮前端定向回归 63 项、typecheck 与 build 通过；PR 仍未合并、未部署、未做用户验收；未访问真实笔记或启动 D085-C2。此并行状态不改变上方 D084 唯一 NEXT。

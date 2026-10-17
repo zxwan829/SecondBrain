@@ -535,6 +535,24 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .chat-activity-card.status-failed { border-color: #ef444466; }
 .chat-activity-card.status-unknown { border-color: #f59e0b88; }
 .chat-activity-card small { display: block; margin-top: 8px; color: var(--sb-text-soft); }
+.unified-inbox-boundary { margin: 8px 0 0; color: var(--sb-muted); font-size: 12px; }
+.unified-note-create { display: grid; gap: 10px; margin: 18px 0 22px; padding: 16px; border: 1px solid var(--sb-border); border-radius: 14px; background: var(--sb-surface); }
+.unified-note-create h2 { margin: 0; font-size: 16px; }
+.unified-note-create label, .unified-proposal label { display: grid; gap: 6px; color: var(--sb-text-soft); font-size: 12px; }
+.unified-note-create input, .unified-note-create textarea, .unified-proposal textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--sb-border); border-radius: 9px; background: var(--sb-bg); color: var(--sb-text); font: inherit; }
+.unified-note-create > button, .unified-suggest-button, .unified-proposal footer button { justify-self: start; padding: 8px 12px; border: 1px solid var(--sb-border); border-radius: 8px; background: var(--sb-surface-raised, var(--sb-surface)); color: var(--sb-text); cursor: pointer; }
+.unified-note-create > button:disabled { cursor: not-allowed; opacity: .55; }
+.unified-inbox-item { display: grid; gap: 12px; }
+.unified-suggestion-list { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--sb-border); }
+.unified-proposal { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--sb-border); border-radius: 10px; background: color-mix(in srgb, var(--sb-surface) 92%, #38bdf8 8%); }
+.unified-proposal header, .unified-proposal footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.unified-proposal header { justify-content: space-between; }
+.unified-proposal h4, .unified-proposal p { margin: 0; }
+.unified-proposal header span, .unified-proposal small { color: var(--sb-muted); font-size: 11px; }
+.unified-proposal-impact { color: var(--sb-text-soft); font-size: 12px; }
+.unified-proposal footer button:first-child { border-color: rgb(56 189 248 / 38%); }
+.unified-decision { padding: 8px 10px; border-radius: 8px; background: rgb(56 189 248 / 9%); color: var(--sb-text-soft); font-size: 12px; line-height: 1.5; }
+.unified-decision.rejected { background: rgb(148 163 184 / 10%); }
 .chat-empty { display: grid; flex: 1; place-items: center; color: var(--sb-muted); text-align: center; }
 .chat-progress { padding: 7px 0; color: #8ddcf8; font-size: 12px; }
 .terminal-approval-card { display: grid; gap: 10px; padding: 16px; border: 1px solid rgb(251 191 36 / 55%); border-radius: 12px; background: rgb(69 39 10 / 35%); color: var(--sb-text); }

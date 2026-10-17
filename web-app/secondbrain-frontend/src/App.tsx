@@ -12,6 +12,7 @@ import { TaskPage } from './TaskPage';
 import { notesApi } from './api/notes';
 
 const NotesPage = lazy(() => import('./NotesPage').then((module) => ({ default: module.NotesPage })));
+const UnifiedInboxPage = lazy(() => import('./UnifiedInboxPage').then((module) => ({ default: module.UnifiedInboxPage })));
 const notesFeatureEnabled = () => import.meta.env.VITE_ENABLE_NOTES === 'true';
 import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
@@ -436,7 +437,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
-          : page === 'inbox' ? <InboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
+          : page === 'inbox' ? <InboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }}><Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes drafts…' : '正在加载笔记草稿…'}</div>}><UnifiedInboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} notesOnly /></Suspense></InboxPage>
           : page === 'chat' ? <ChatPage locale={locale} onGoInbox={() => navigate('inbox')}
             onGoJournal={() => navigate('journal')} onGoToday={() => navigate('today')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
@@ -446,7 +447,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-export function InboxPage({ locale, onReview }: { locale: Locale; onReview: (reviewPath: string) => void }) {
+export function InboxPage({ locale, onReview, children }: { locale: Locale; onReview: (reviewPath: string) => void; children?: React.ReactNode }) {
   const [items, setItems] = useState<CaptureItem[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -527,6 +528,7 @@ export function InboxPage({ locale, onReview }: { locale: Locale; onReview: (rev
         : item.error && <p className="capture-alert">{captureFailureLabel(item.error, locale)}</p>}
       <div className="inbox-links"><button type="button" onClick={() => void openPreview(item)}>{text ? 'Preview details' : '预览与详情'}</button><a href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{text ? 'Download Raw' : '下载原件'}</a>{item.review_path && <button type="button" onClick={() => onReview(item.review_path!)}>{text ? 'View Review' : '查看 Review'}</button>}{item.status === 'partial_success' && !isVisionDescriptionOnly(item) && <button type="button" onClick={() => void retryCapture(item)}>{text ? 'Retry' : '重试处理'}</button>}</div>
     </article>) : <p className="capture-empty">{text ? 'No captures yet.' : '还没有采集内容。'}</p>}</div>
+    {children}
     {preview && <CapturePreview item={preview} locale={locale} content={previewText} error={previewError} onClose={() => { setPreview(null); setPreviewText(null); setPreviewError(''); }} onReview={onReview} />}
   </section>;
 }

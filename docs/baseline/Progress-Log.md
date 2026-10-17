@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-17 — D085-C2a 统一 Inbox 与人工逐项审批（待审 PR）
+
+- 按 Issue #46 最新要求，从 GitHub 最新 main `ed6dc7fd14cc3c0860ddc5609f67cd02098452e9` 创建独立 Worktree/分支 `codex/d085-c2a-unified-inbox-20261017`。新增统一 Inbox 页面，读取现有 Core Capture Inbox 与 Notes `drafts` 集合，提供经 Core 既有权限门禁的新 Drafts 笔记入口；不扫描 authorized/Knowledge/Review/Private 集合。新建合成 Capture 示例仅存在页面内存。
+- 本地确定性 Mock 按正文提出类型/标签、日记摘录、Knowledge Review 草案和项目关联；所有建议逐条可编辑、批准待执行或拒绝。批准不执行写入，原始来源保持不变；该限制来自现有 Journal/Review/Knowledge API 缺少可验证的来源绑定能力。决策暂存页面内存，不承诺跨 Session 持久化。未调用真实/付费模型。
+- 定向前端回归 5 文件 **63 passed**（统一 Inbox、导航、Notes、Capture、Chat 活动）；`npm run typecheck` 通过；`npm run build` 通过，仍有大型 CanvasEditor chunk 警告；`git diff --check` 通过。
+- 未访问真实笔记、NAS、生产配置或生产数据；未部署、未合并 main、未用户验收。D084 的 `/chat Not Found` 离线根因分析仍为 CURRENT 唯一 NEXT，未覆盖。
+
 ## 2026-10-17 — D085-C1 PR #50 同步最新 main 与导航回归
 
 - 按 Review #5557295754，在原分支 `codex/d085-c1-notes-navigation-20261017` 合并 GitHub 最新 main `468971b49b1bf63b98930ee0b875c133a314b429`。合并保留 main 的 D084 PR #49 合并状态、唯一 NEXT（仅生产部署预检待单独授权）及 D084 Chat Journal/Task 最新证据；同时保留本 PR Notes 路由、功能开关、Core `notes.read` 门禁和未保存离开保护。`App.tsx` 手动合并 Journal「日记」命名、D084 Chat 活动导航回调与 D085 Review/Inbox 历史路由管理；CURRENT 和 Progress-Log 以 main 为底稿，补记 D085-C1 并行状态及此同步证据。
