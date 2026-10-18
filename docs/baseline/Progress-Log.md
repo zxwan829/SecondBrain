@@ -5,6 +5,16 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-18 — PR #72 合并后 M1 App-only 更新部署
+
+- 按用户授权，从固定源码 `473948dd2e9b3d448b71eeba56a1474454883353` 的 `web-app/` 上下文和 `Dockerfile.app` 构建完整 App，显式 `VITE_ENABLE_NOTES=true`。本机无 Docker daemon，使用 NAS Docker legacy builder（buildx 不可用），限制到 CPU 0-1 / 8 GiB；构建完成，Image ID `sha256:70f8277f4d29c2bf8e50d3f7d135f034f04a90b421928d9836515d79a7143b3d`，tag `secondbrain-app:m1-473948dd-notes`。前端定向 `App.navigation.test.tsx` 与 `UnifiedInboxPage.test.tsx` 25 项、typecheck、Vite Notes=true build 通过。npm audit 提示 2 low/2 moderate，另有弃用包、Vite 大 chunk 和 legacy builder 警告；未升级依赖。
+- 无网络隔离预检使用 synthetic environment/credentials、read-only rootfs、临时 tmpfs、无生产 Secret 或业务挂载。`/health`、`/chat/blank`、`/inbox/source`、入口 JS/CSS、Notes chunk 通过；匿名 Chat API 为 401 JSON。首个夹具因合成 password 文件权限不是 0600 被 Core 按设计拒绝；修正夹具后预检通过，临时容器已移除。
+- 部署前验证旧 App Image ID `sha256:4adcf9cfe3f6257c733efa911455ca02653783ba763f9e2f512f4d3582694ce1`、Hermes 身份、Compose SHA `5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80`、UID/GID、Notes 配置及挂载权限边界；`docker compose config --quiet` 通过。只更改 Compose 中 App image 一行。即时回滚快照 `/volume1/docker/secondbrain/rollback/m1-473948dd-predeploy-20261018T094236Z/compose.yaml`，目录 0700、文件 0600、哈希与 live Compose 完全一致。
+- 仅执行 App-only `compose up -d --no-deps --no-build --force-recreate --wait --wait-timeout 120 secondbrain-app`。新容器 `0ab478227d89d81981142493a51e917bac98926b5d4f1089268893f41c5a6a30`，Image ID 与候选一致，39 秒 healthy，RestartCount 0；Compose SHA 更新为 `5d15c9ac51d4bd9f3cd682ef60e4e97d77b5d7e212ae73d0bf5e3126aad0da8d`。生产 `/health`、`/chat/blank`、`/inbox/source`、JS/CSS/Notes chunk 200，匿名 Chat API 401 JSON。未回滚。
+- Hermes 容器/镜像/StartedAt/RestartCount 不变，Guard 没有独立容器；仅 App 镜像改变，Notes 配置、Promote=false、Secrets 引用和挂载边界保留。未改写个人记忆设置；Organizer model/scheduler 关闭。没有 Chat Run、模型调用或业务写入，也没有读取私人/真实业务正文。部署前后 Core-state 目录元数据未做差分，精确新增内部状态目录数量 UNKNOWN。
+- **交付边界：** 新镜像构建、隔离预检和生产 health/路由/静态资源/匿名鉴权 PASS；本轮 D084/D085/D086 生产业务验收 NOT RUN，历史 D084 根因 UNKNOWN。没有回滚。实际部署证据已提交 Issue #66；CURRENT、Environment-Baseline 与本日志的状态同步通过独立文档 PR 提交，等待 A 主线复审。
+
+
 ## 2026-10-18 — M1 固定源码正式 App-only 部署
 
 - 按用户明确授权，部署固定源码 `74d698dc97dd9df423664141b80fd8003fbca534` 对应已验证候选 `secondbrain-app:m1-74d698dc-notes`，Image ID `sha256:4adcf9cfe3f6257c733efa911455ca02653783ba763f9e2f512f4d3582694ce1`。未重新构建；仅重建 App，Compose 命令使用 `--no-deps --no-build --force-recreate --wait --wait-timeout 120`。App 在约 31 秒内 Healthy，RestartCount 0。
