@@ -5,6 +5,14 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-19 — M2 P1 App-only 生产部署（Issue #90）
+
+- 按 Issue #90 授权，固定源码 `443991061ea446686b54bfb9e8b2d980183f1338`；用 `web-app/Dockerfile.app`、`web-app/` 构建上下文和 `VITE_ENABLE_NOTES=true` 构建完整 App，候选 `secondbrain-app:m2-44399106-app-only`，Image ID `sha256:e55b0e9c65433a208df0f66a68ec2f91e2341b163108e5d09030ac4a7b343f47`。构建前已核验 NAS 资源、旧 App 镜像、Compose 和回滚条件；使用 NAS legacy builder 并限制 CPU 0-1、内存 8 GiB。构建日志警告包括 4 项 npm audit（2 low/2 moderate）、弃用依赖、Vite 大 chunk、pip root 安装提示及 legacy builder 弃用；未升级依赖。
+- 隔离预检使用无网络、只读 rootfs、合成凭据/目录且无生产卷/Secret/端口的临时容器。健康、`/chat/blank`、Inbox/Review/Knowledge/Notes 路由、14 个静态资源及匿名 Chat/Promote API 鉴权通过；临时容器与合成目录已按精确路径移除。候选镜像与构建证据保留。
+- 切换前正式 Compose SHA `5d15c9ac51d4bd9f3cd682ef60e4e97d77b5d7e212ae73d0bf5e3126aad0da8d`，即时回滚快照 `/volume1/docker/secondbrain/rollback/m2-44399106-predeploy-20261018T175818Z/compose.yaml`（目录 0700、文件 0600），快照与 live 文件一致。只更改 App image，部署后 SHA `a0d6775e8a785845ee32369a68141410e99988df316714f507b0d98743734686`。执行 App-only `--no-deps --no-build --force-recreate --wait --wait-timeout 120`，37 秒 healthy；容器 `a574dd88d9bd87c3d94f584791312473e91eeeeb2ffdac64c6684f972be506cb`，RestartCount 0。无回滚。
+- 生产只读 Smoke：`/health` 200；`/chat/blank`、`/inbox/source`、`/review`、`/knowledge`、`/notes` HTML 200；14 个静态资源 200；匿名 Chat/Promote API 401 JSON。Hermes/Guard 未重建或重启，Hermes 容器、镜像、StartedAt、RestartCount 与切换前一致。Promote OFF、Knowledge RO、Private 未挂载；Core-state 新建 `b1b-operations` 空目录 `1026:100 / 0700`，audit 文件不存在。
+- **状态：DEPLOYED / HEALTH PASS / ROLLBACK NONE / BUSINESS ACCEPTANCE NOT RUN / USER ACCEPTANCE PENDING。** 未访问真实 Vault/私人正文、未创建生产业务记录、未调用模型或启用 Promote/B3。宿主与容器对 Review、Knowledge、Capture Raw 的 bind 根目录 mode 分别观察到 0700 与 0777；原因 UNKNOWN，本轮未改 ACL/权限，仍属运行风险。完整部署证据已在 Issue #90 报告；`00-CURRENT.md` 唯一 NEXT 为等待 ChatGPT 独立复审。
+
 ## 2026-10-18 — 用户批准 M2 P0-A 本地实施及 P0-B 只读设计
 
 - 用户确认「按你的规划进 m2」，A 主线在 [M2 总控 #76](https://github.com/zxwan829/SecondBrain/issues/76) 记录新阶段授权边界。此前 M1 #66 已有限验收并 CLOSED；GitHub main 仍为 `b446913525284762acdc249101c1da7c3e0babf7`（PR #73 仅文档），生产 App 最后已验证源码仍是 `473948dd2e9b3d448b71eeba56a1474454883353`，本轮未重新连接 NAS。

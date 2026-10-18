@@ -1,12 +1,22 @@
 ---
 created: 2026-09-28
-updated: 2026-10-18
+updated: 2026-10-19
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
 
-## 最新生产快照（2026-10-18T09:44:06Z 起；PR #72 合并后 M1 App-only 部署）
+## 最新生产快照（2026-10-19；M2 P1 App-only 部署，Issue #90）
+
+- 固定源码为 GitHub main `443991061ea446686b54bfb9e8b2d980183f1338`。使用 `web-app/Dockerfile.app`、`web-app/` 上下文及 `VITE_ENABLE_NOTES=true` 在 NAS 构建，候选 `secondbrain-app:m2-44399106-app-only` 的 Image ID 为 `sha256:e55b0e9c65433a208df0f66a68ec2f91e2341b163108e5d09030ac4a7b343f47`；镜像标签记录源码 SHA。App 以 `1026:100` 运行。构建警告包括 legacy builder 弃用、npm audit 4 项（2 low、2 moderate）、若干弃用依赖、Vite 大 chunk 与 pip root 安装提示；未升级依赖。
+- 隔离预检使用 `network=none`、只读 rootfs、无生产 Secret/卷/端口的临时容器和合成凭据/目录。`/health`、`/chat/blank`、`/inbox/source`、`/review`、`/knowledge`、`/notes` 均 200；14 个 JS/CSS 资源（含 Notes chunk）均 200；匿名 Chat 与 Promote API 均 401 JSON。临时容器及精确合成目录已移除；候选镜像和构建证据保留。
+- 切换前 App 容器 `0ab478227d89d81981142493a51e917bac98926b5d4f1089268893f41c5a6a30`，镜像 `sha256:70f8277f4d29c2bf8e50d3f7d135f034f04a90b421928d9836515d79a7143b3d`，healthy、RestartCount 0。正式 Compose `/volume1/docker/secondbrain/compose.yaml` 切换前 SHA-256 `5d15c9ac51d4bd9f3cd682ef60e4e97d77b5d7e212ae73d0bf5e3126aad0da8d`；部署前即时快照 `/volume1/docker/secondbrain/rollback/m2-44399106-predeploy-20261018T175818Z/compose.yaml`，目录 `0700 root:root`、文件 `0600 root:root`，快照哈希与切换前正式文件一致。只修改 App image 引用；Compose config 校验通过。
+- 部署使用 `compose up -d --no-deps --no-build --force-recreate --wait --wait-timeout 120 secondbrain-app`。App 在 37 秒内 healthy；新容器 `a574dd88d9bd87c3d94f584791312473e91eeeeb2ffdac64c6684f972be506cb`，候选 Image ID 一致，RestartCount 0，StartedAt `2026-10-18T18:07:44.121586385Z`。部署后 Compose SHA-256 `a0d6775e8a785845ee32369a68141410e99988df316714f507b0d98743734686`；仅 App image 改变，所有其他 Compose 配置/挂载保持原样。未回滚。
+- 部署后经本机容器与既有 DSM HTTPS 反向代理执行只读 smoke：`/health` 200；`/chat/blank`、`/inbox/source`、`/review`、`/knowledge`、`/notes` 200 HTML；14 个静态资源 200；匿名 Chat、Promote API 401 JSON。无登录生产页面、无 Session 或业务请求、无模型调用。
+- Hermes 容器 `057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79`、镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`、StartedAt `2026-10-17T08:33:24.151798238Z`、RestartCount 0 与部署前一致；状态为 running（未配置 healthcheck）。Guard 无独立容器。Promote=false、Knowledge RO、Private 无挂载均保持；核心状态中新建 `b1b-operations` 子目录，`1026:100 / 0700`，空目录，`audit.jsonl` 不存在。业务验收 NOT RUN，用户验收待独立复审。
+- 宿主路径元数据对 Review、Knowledge、Capture Raw 显示 `0700 / 1026:100`，而容器视角 bind 根目录显示 `0777`；本轮仅确认 Compose RO/RW 标志，未调查 ACL/挂载层差异。该权限视角差异根因 **UNKNOWN**，不得视为已解释或 ACL 安全结论。未执行权限修改或写探针。
+
+## 前一生产快照（2026-10-18T09:44:06Z 起；PR #72 合并后 M1 App-only 部署，已由 M2 P1 替换）
 
 - 按用户明确授权，以固定源码 `473948dd2e9b3d448b71eeba56a1474454883353`、`web-app/Dockerfile.app`、正确 `web-app/` 构建上下文及 `VITE_ENABLE_NOTES=true` 构建完整 App。候选与运行镜像 `secondbrain-app:m1-473948dd-notes`，Image ID `sha256:70f8277f4d29c2bf8e50d3f7d135f034f04a90b421928d9836515d79a7143b3d`；运行身份 `1026:100`、`SB_STATIC_ROOT=/app/static`。本机无 Docker daemon，故经批准在 NAS Docker daemon 构建；使用 legacy builder（NAS 无 buildx），构建限制为 CPU 0-1 与 8 GiB 内存。构建期间 App/Hermes 资源占用保持低位，未发现其他服务异常。构建日志报告 npm 4 项依赖审计发现（2 low、2 moderate）、弃用依赖、Vite 大 chunk 警告及 pip root 安装警告；未升级依赖。前端定向 25 项、typecheck、`VITE_ENABLE_NOTES=true` build 通过。
 - 隔离容器预检 PASS：`network=none`、read-only rootfs、无生产端口/Secret/业务卷，只有临时 tmpfs 与随机合成 App password。修正一次合成 password 文件 mode 后，`/health` 200、`/chat/blank` 与 `/inbox/source` 200 HTML、入口 JS/CSS 与 Notes JS chunk 200、匿名 Chat API 401 JSON。临时容器已移除；候选镜像保留。无模型调用或生产业务请求。
@@ -65,14 +75,14 @@ type: environment-baseline
 - 回滚点 `/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/`：目录 0700，`compose.yaml`（SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`）、旧 `plugin.yaml`、恢复元数据均 0600。旧官方 Hermes image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` 保留在 rollback tag `secondbrain-hermes:rollback-v0222-official-20261016T173140Z`。回滚前应重核快照并只恢复 Hermes/manifest；不可回滚 Core state、D077 JSONL 或 App。
 - 上述是运行态与合成权限验证，不代表真实模型、真实个人数据或浏览器学习体验已验收。此前 D078 Stage 1 信息保留在下方历史快照段，凡与本节冲突以本节为当前状态。
 
-本文件记录最近一次经验证的运行快照，并非实时监控。顶部是 2026-10-18 M1 App-only 部署后的最新 App/Compose/Hermes 运行事实；其下 PR #61 与 PR #49 段落均为历史快照。Hermes overlay 段是此前核验的 Guard 配置与 Hook 证据，本轮仅确认 Hermes 容器/镜像/启动时间未变化，没有重新读取插件文件。下一次生产操作前仍须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 Progress-Log.md 与 Issue #14，不作为现行运行或恢复指令。
+本文件记录最近一次经验证的运行快照，并非实时监控。顶部是 2026-10-19 M2 P1 App-only 部署后的最新 App/Compose/Hermes 运行事实；其下 PR #61 与 PR #49 段落均为历史快照。Hermes overlay 段是此前核验的 Guard 配置与 Hook 证据，本轮仅确认 Hermes 容器/镜像/启动时间未变化，没有重新读取插件文件。下一次生产操作前仍须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 Progress-Log.md 与 Issue #14，不作为现行运行或恢复指令。
 
 ## 常态运行路径与尚待验证的边界
 
 ## NAS 与 Compose
 
 - NAS：Synology DS920+，DSM 7.4.1 Build 90080；LAN 地址 `192.168.3.27`。本机与路由器网络设置不由 SecondBrain 文档治理修改。
-- 正式 Compose：/volume1/docker/secondbrain/compose.yaml；Compose Project secondbrain；Docker 网络 secondbrain_default。最近一次 2026-10-18 App-only 生产切换后**有证据的 Compose SHA-256** `5d15c9ac51d4bd9f3cd682ef60e4e97d77b5d7e212ae73d0bf5e3126aad0da8d`，属主/权限 `1026:100 / 0640`（依 Codex 当次报告，未于本轮重新连接 NAS）。上次切换**仅改 App image**；前一 Compose SHA `5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80` 是回滚快照的部署前值，**不是现行值**。更早首次 M1 部署才修改 App image 与两项 Notes 配置；既有 build context、Hermes、网络、挂载和其他服务未改。
+- 正式 Compose：`/volume1/docker/secondbrain/compose.yaml`；Compose Project `secondbrain`；Docker 网络 `secondbrain_default`。截至 2026-10-19 M2 部署后有证据的 Compose SHA-256 为 `a0d6775e8a785845ee32369a68141410e99988df316714f507b0d98743734686`，属主/权限 `1026:100 / 0640`。2026-10-19 切换仅改 App image。上一哈希 `5d15c9ac...` 是部署前值，不是现行值；更早 Notes 配置变更见 M1 历史快照。
 - 项目目标为两个服务：`secondbrain-hermes` 与 `secondbrain-app`。Container Manager GUI 曾出现旧容器行/旧定义缓存；最后已记录状态为管理界面定义未完成对齐。当前 GUI 状态未在本次核实，标记 `UNKNOWN`；这是部署管理风险，不改变 Docker 运行态记录。
 
 ## 历史 Stage 1 容器快照（已被 2026-10-17 patched overlay 取代）
@@ -92,6 +102,7 @@ type: environment-baseline
 | App | SecondBrain `10-Review` | `/review` | RW |
 | App | `20-Knowledge` | `/knowledge` | RO |
 | App | Core 私有 state | `/var/lib/secondbrain-core` | RW；目录独立、最小权限 |
+| App | B1b operation state | `/var/lib/secondbrain-core/b1b-operations` | Core-state 内新建空子目录；`1026:100 / 0700` |
 | App | 合成 Notes Drafts（已有 Core state 子目录） | `/var/lib/secondbrain-core/notes-drafts` | 既有 Core-state RW 内，`1026:100 / 0700`；`SB_NOTES_AUTHORIZED_ROOTS={}`，不授权真实 Vault 或新挂载 |
 | App | Personal Memory JSONL（Core 唯一权威） | `/var/lib/secondbrain-core/personal-memory` | `1026:100 / 0700` 专用子目录；仅 App 可写；测试结束后为空 |
 | App | 应用 Secrets | `/run/secrets/...` | RO；UID/GID `1026:100` 持有受限文件 |
