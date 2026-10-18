@@ -5,6 +5,14 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-18 — M1 B1 单来源生产闭环有限验收
+
+- 在已部署的 M1 App `473948dd` 上，仅使用已授权的 B1 合成 Draft 和其 Proposal IDs。5 条来源绑定 Proposal（journal/review/project/type/tags）创建并刷新恢复；Journal 与 Review 经审批、精确预览、明确确认后各成功执行一次；Project 提案明确拒绝且未执行；刷新后执行与拒绝状态恢复。
+- **有限 PASS：** B1 来源与提案创建、Journal/Review 单次执行、Project fail-closed 拒绝、刷新恢复。该结论不是 M1 整体用户验收，也不代表 D084 新镜像复验通过。
+- **遗留状态：** 生产同键幂等重放 **NOT RUN**（无安全可确认的原始下游键）；完整浏览器 Network 审计及数字 HTTP 状态 **UNKNOWN**；旧全量 `/inbox` UI **BLOCKED**；D086 共享词库后续生产写入 **BLOCKED**（既有合成标签/revision 保留，不再写入）；C2c-2 **OUT OF M1**。D084 历史根因继续 **UNKNOWN**。
+- 未访问其他来源、私人 Session 或真实 Vault 内容，未调用模型、未部署/重启或修改 NAS。生产业务证据和 A 裁定见 [Issue #66](https://github.com/zxwan829/SecondBrain/issues/66#issuecomment-6248598848)；等待 A 收尾风险评估后由用户决定是否接受 M1 有限验收。
+
+
 ## 2026-10-18 — PR #72 合并后 M1 App-only 更新部署
 
 - 按用户授权，从固定源码 `473948dd2e9b3d448b71eeba56a1474454883353` 的 `web-app/` 上下文和 `Dockerfile.app` 构建完整 App，显式 `VITE_ENABLE_NOTES=true`。本机无 Docker daemon，使用 NAS Docker legacy builder（buildx 不可用），限制到 CPU 0-1 / 8 GiB；构建完成，Image ID `sha256:70f8277f4d29c2bf8e50d3f7d135f034f04a90b421928d9836515d79a7143b3d`，tag `secondbrain-app:m1-473948dd-notes`。前端定向 `App.navigation.test.tsx` 与 `UnifiedInboxPage.test.tsx` 25 项、typecheck、Vite Notes=true build 通过。npm audit 提示 2 low/2 moderate，另有弃用包、Vite 大 chunk 和 legacy builder 警告；未升级依赖。
