@@ -4,6 +4,12 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-18 — D085-C2c-1 PR #63 崩溃恢复与并发补测
+
+- 按 PR #63 Review #5561132224 与评论 #6244818115，在原 Worktree/分支补充 Journal、Review 两类故障恢复和同 proposal 并发执行合成测试。故障注入覆盖目标已持久化、Core `finish_execution` 尚未调用后以新 Core/Capture store 重启；同一预览恢复到原 target ID、单一产物、一条 attempt 和一致成功审计。并发测试在两请求都越过 Core reservation 后同步进入目标接口，验证两响应为 200、仅一个新建/另一个 duplicate、目标唯一，后续重试为 duplicate。
+- 测试发现 Review 首次成功响应误报 `duplicate=true`（原逻辑把 completed 状态直接当作重复）。CaptureService 现在返回仅供内部路由判定的幂等重放标志，路由清除该内部字段后准确报告首次执行与恢复/重试状态；未改变持久化状态格式和目标内容。
+- Core `tests.test_inbox_proposals tests.test_capture` **38 项通过**；Inbox `UnifiedInboxPage.test.tsx` **7 项通过**；前端 `tsc --noEmit` 与 `vite build` 通过，build 有大型 CanvasEditor chunk 提示；`git diff --check` 通过。PR #63 已转为 Ready for review。本轮仅使用合成数据；未触碰真实 Vault、付费模型或 NAS；未合并、未部署，用户验收待定。
+
 ## 2026-10-18 — D085-C2c-1 Journal / Review 受控执行（Draft PR #63）
 
 - 按 Issue #46 最新评论 #6244537788，从 main `3080506b053d3876d292d9199049fd12e3247b88` 建立独立 Worktree/分支。保留 CURRENT 中 D084 唯一 NEXT，以及 main 的 D084、D086 和运行环境记录。

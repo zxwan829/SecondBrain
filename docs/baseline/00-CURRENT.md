@@ -60,7 +60,7 @@ PR #59 已合入 main `3080506b053d3876d292d9199049fd12e3247b88`，实现来源�
 
 ### 并行开发状态：D085-C2c-1 审批后 Journal / Review 受控执行（实施中）
 
-基于上述 main 开始独立切片：审批留痕与目标执行分开，必须重新预览目标正文、核验来源/词库版本并明确确认；Journal 复用专用 JournalStore 幂等追加，Review 复用 CaptureService 的 Raw→Review 流程及可恢复执行键，均不调用 Promote 或新增 Knowledge 写入路径。项目关联仅为元数据候选，标记 NOT IMPLEMENTED 且不可执行。Draft PR #63 已建立，使用临时合成数据完成本地定向测试、typecheck 与 build；状态 **DRAFT / OPEN / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。D084 唯一 NEXT 保持不变；无真实 Vault、NAS 或付费模型授权。
+基于上述 main 开始独立切片：审批留痕与目标执行分开，必须重新预览目标正文、核验来源/词库版本并明确确认；Journal 复用专用 JournalStore 幂等追加，Review 复用 CaptureService 的 Raw→Review 流程及可恢复执行键，均不调用 Promote 或新增 Knowledge 写入路径。项目关联仅为元数据候选，标记 NOT IMPLEMENTED 且不可执行。PR #63 已完成目标落盘后进程退出恢复、同 proposal 并发执行两组 Journal/Review 定向合成回归；Core/Capture 38 项、Inbox 前端 7 项、typecheck/build/diff-check 通过，Review 首次响应与 duplicate 响应已明确区分。PR 已转为 Ready for review，状态 **OPEN / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。D084 唯一 NEXT 保持不变；无真实 Vault、NAS 或付费模型授权。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 

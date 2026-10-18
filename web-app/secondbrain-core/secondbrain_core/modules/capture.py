@@ -440,6 +440,7 @@ class CaptureService:
                 raise HTTPException(500, "Approved Review creation lock is unsafe")
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             existing = self._read_state(state_path) if state_path.exists() else None
+            replayed = existing is not None
             if existing:
                 if (existing.get("approved_proposal_execution_key") != execution_key
                         or existing.get("approved_proposal_id") != proposal_id
@@ -508,6 +509,7 @@ class CaptureService:
                 raise HTTPException(409, "Approved Review state is unavailable")
             if state.get("status") == "completed" and state.get("review_path"):
                 self._verify_artifacts(state)
+                state["_idempotent_replay"] = replayed
                 return state
             try:
                 raw_fd = os.open(raw_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -528,6 +530,7 @@ class CaptureService:
                 self._verify_artifacts(state)
             if not state or not state.get("review_path"):
                 raise HTTPException(503, "Capture did not produce a verified Review item")
+            state["_idempotent_replay"] = replayed
             return state
         finally:
             fcntl.flock(process_fd, fcntl.LOCK_UN)

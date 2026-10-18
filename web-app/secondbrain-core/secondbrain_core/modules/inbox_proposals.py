@@ -866,6 +866,7 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None,
             if latest["preview_sha256"] != preview["preview_sha256"]:
                 store.mark_stale(proposal_id, "source_changed_before_target_write", user)
                 raise HTTPException(status_code=409, detail="Source changed; target write was not started")
+            target_replayed = False
             if record["kind"] == "journal":
                 result = journal_store.append_approved_proposal(
                     preview["target"]["date"], preview["target"]["text"], execution_key,
@@ -883,11 +884,14 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None,
                     source_ref=str(preview["source_summary"]["source_ref"]),
                     source_version_sha256=preview["source_summary"]["source_content_sha256"],
                     captured_at=started["execution"]["started_at"])
+                target_replayed = bool(state.pop("_idempotent_replay", False))
                 target = {"target_id": state["capture_id"], "target_uri": state["review_path"],
                           "target_status": state["status"], "target_sha256": state["raw_sha256"],
                           "output_sha256": state["review_sha256"]}
             completed = store.finish_execution(proposal_id, user, status="executed", result=target)
-            return {"proposal": completed, "duplicate": result.get("status") == "duplicate" if record["kind"] == "journal" else completed.get("execution", {}).get("target_status") == "completed"}
+            duplicate = (result.get("status") == "duplicate" if record["kind"] == "journal"
+                         else target_replayed)
+            return {"proposal": completed, "duplicate": duplicate}
         except HTTPException as exc:
             if exc.status_code == 409:
                 try:

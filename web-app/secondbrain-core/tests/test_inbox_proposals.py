@@ -489,6 +489,7 @@ class InboxProposalStoreTests(unittest.TestCase):
         review_body["confirmed"] = True
         executed_review = client.post(f"/api/inbox/proposals/{review_record['proposal_id']}/execute", json=review_body)
         self.assertEqual(executed_review.status_code, 200, executed_review.text)
+        self.assertFalse(executed_review.json()["duplicate"])
         state_after = capture.get(executed_review.json()["proposal"]["execution"]["target_id"])
         self.assertEqual(state_after["status"], "completed")
         self.assertEqual((review / state_after["review_path"]).read_text(encoding="utf-8").endswith(review_body["target_text"]), True)
@@ -497,6 +498,169 @@ class InboxProposalStoreTests(unittest.TestCase):
         self.assertEqual(repeated.status_code, 200, repeated.text)
         self.assertTrue(repeated.json()["duplicate"])
         self.assertEqual(len(list(review.glob("*.md"))), 1)
+
+    def test_execution_recovers_after_target_commit_and_concurrent_retries_are_idempotent(self):
+        """Recover a persisted target after a lost response and serialize duplicate requests."""
+        import hashlib
+        import threading
+
+        from secondbrain_core.modules.capture import CaptureService
+        from secondbrain_core.modules.journal import JournalStore
+        from secondbrain_core.modules.notes import NotesStore
+        from secondbrain_core.modules.vocabulary import VocabularyStore
+        from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
+
+        root = Path(self.temp.name)
+        drafts = root / "recovery-drafts"; drafts.mkdir(mode=0o700)
+        raw = root / "recovery-raw"; raw.mkdir(mode=0o700)
+        review = root / "recovery-review"; review.mkdir(mode=0o700)
+        state = root / "recovery-capture-state"; state.mkdir(mode=0o700)
+        journal_root = root / "recovery-journal"; journal_root.mkdir(mode=0o700)
+        approval = root / "recovery-approval"; approval.mkdir(mode=0o700)
+        notes = NotesStore(drafts.resolve(), {})
+        journal = JournalStore(journal_root.resolve())
+        capture = CaptureService(raw.resolve(), review.resolve(), state.resolve())
+        proposals = InboxProposalStore(approval.resolve())
+        vocabulary = VocabularyStore(approval.resolve())
+
+        class Auth:
+            def require_action(self, request, action):
+                return "synthetic-owner"
+
+        def make_client(store, capture_service):
+            app = FastAPI()
+            app.include_router(create_inbox_proposal_router(
+                Auth(), store, InboxProposalSources(capture_service, notes), vocabulary,
+                journal_store=journal, capture_service=capture_service))
+            return TestClient(app)
+
+        client = make_client(proposals, capture)
+
+        def approved(kind, suffix, content):
+            note = notes.create(content)
+            source = {"source_kind": "notes", "source_id": f"drafts:{note['path']}",
+                      "collection": "drafts", "path": note["path"]}
+            response = client.post("/api/inbox/proposals", json=source,
+                                   headers={"Idempotency-Key": f"recover-create-{suffix}"})
+            self.assertEqual(response.status_code, 200, response.text)
+            record = next(row for row in response.json()["proposals"] if row["kind"] == kind)
+            decision = client.post(f"/api/inbox/proposals/{record['proposal_id']}/decision",
+                                   json={"decision": "approved_recorded", "expected_version": 1},
+                                   headers={"Idempotency-Key": f"recover-approve-{suffix}"})
+            self.assertEqual(decision.status_code, 200, decision.text)
+            preview = client.post(f"/api/inbox/proposals/{record['proposal_id']}/execution-preview", json={})
+            self.assertEqual(preview.status_code, 200, preview.text)
+            data = preview.json()
+            body = {"target_text": data["target"]["text"], "preview_sha256": data["preview_sha256"],
+                    "confirmed": True}
+            if kind == "journal":
+                body["target_date"] = data["target"]["date"]
+            else:
+                body["target_title"] = data["target"]["title"]
+            return record, source, data, body
+
+        # Simulate process exit after the dedicated target commits but before Core
+        # records finish_execution. A fresh store and CaptureService must resume it.
+        for kind, suffix, content in (
+                ("journal", "crash-journal", "记一下：crash recovery Journal synthetic"),
+                ("review", "crash-review", "# Crash recovery Review\n\nSynthetic body.")):
+            record, _, preview, body = approved(kind, suffix, content)
+            source_summary = preview["source_summary"]
+            started = proposals.begin_execution(
+                record["proposal_id"], preview["proposal_version"], "synthetic-owner",
+                preview["preview_sha256"], source_summary["source_version"],
+                preview["vocabulary_version"], preview["target_action"], preview["target"], source_summary)
+            attempt_id = started["execution"]["attempt_id"]
+            execution_key = "c2c-" + record["proposal_id"]
+            if kind == "journal":
+                persisted = journal.append_approved_proposal(
+                    preview["target"]["date"], preview["target"]["text"], execution_key,
+                    record["proposal_id"], source_summary["source_ref"],
+                    source_summary["source_content_sha256"])
+                persisted_id = persisted["entry"]["id"]
+                self.assertEqual(len(journal.read(preview["target"]["date"])["entries"]), 1)
+            else:
+                persisted = capture.create_approved_review(
+                    text=preview["target"]["text"], title=preview["target"]["title"],
+                    execution_key=execution_key, proposal_id=record["proposal_id"],
+                    source_ref=source_summary["source_ref"],
+                    source_version_sha256=source_summary["source_content_sha256"],
+                    captured_at=started["execution"]["started_at"])
+                persisted_id = persisted["capture_id"]
+                self.assertEqual(persisted["status"], "completed")
+
+            restarted_store = InboxProposalStore(approval.resolve())
+            restarted_capture = CaptureService(raw.resolve(), review.resolve(), state.resolve())
+            restarted_client = make_client(restarted_store, restarted_capture)
+            recovered = restarted_client.post(
+                f"/api/inbox/proposals/{record['proposal_id']}/execute", json=body)
+            self.assertEqual(recovered.status_code, 200, recovered.text)
+            execution = recovered.json()["proposal"]["execution"]
+            self.assertTrue(recovered.json()["duplicate"])
+            self.assertEqual(execution["status"], "executed")
+            self.assertEqual(execution["attempt_id"], attempt_id)
+            self.assertEqual(execution["target_id"], persisted_id)
+            self.assertEqual(execution["output_sha256"], hashlib.sha256(preview["target"]["text"].encode()).hexdigest()
+                             if kind == "journal" else persisted["review_sha256"])
+            self.assertEqual(len(execution["attempts"]), 1)
+            events = [item["event"] for item in restarted_store.get(record["proposal_id"])["history"]]
+            self.assertIn("execution_started", events)
+            self.assertIn("execution_succeeded", events)
+            if kind == "journal":
+                entries = journal.read(preview["target"]["date"])["entries"]
+                self.assertEqual(len(entries), 1)
+                self.assertEqual(entries[0]["original_text"], preview["target"]["text"])
+            else:
+                self.assertEqual(len(list(raw.glob("*.md"))), 1)
+                self.assertEqual(len(list(review.glob("*.md"))), 1)
+                self.assertEqual(restarted_capture.get(persisted_id)["status"], "completed")
+
+        # Align both same-proposal requests after their Core reservations. The
+        # target store's operation lock/idempotency must yield one durable result.
+        for kind, suffix, content in (
+                ("journal", "race-journal", "记一下：concurrent Journal synthetic"),
+                ("review", "race-review", "# Concurrent Review\n\nSynthetic body.")):
+            record, _, preview, body = approved(kind, suffix, content)
+            barrier = threading.Barrier(2)
+            if kind == "journal":
+                original = journal.append_approved_proposal
+                def gated(*args, **kwargs):
+                    barrier.wait(timeout=10)
+                    return original(*args, **kwargs)
+                journal.append_approved_proposal = gated
+            else:
+                original = capture.create_approved_review
+                def gated(*args, **kwargs):
+                    barrier.wait(timeout=10)
+                    return original(*args, **kwargs)
+                capture.create_approved_review = gated
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    futures = [pool.submit(client.post,
+                        f"/api/inbox/proposals/{record['proposal_id']}/execute", json=body)
+                        for _ in range(2)]
+                    responses = [future.result(timeout=20) for future in futures]
+            finally:
+                if kind == "journal":
+                    journal.append_approved_proposal = original
+                else:
+                    capture.create_approved_review = original
+            self.assertEqual([response.status_code for response in responses], [200, 200],
+                             [response.text for response in responses])
+            self.assertCountEqual([response.json()["duplicate"] for response in responses], [False, True])
+            self.assertEqual(len({response.json()["proposal"]["execution"]["target_id"]
+                                  for response in responses}), 1)
+            self.assertEqual(proposals.get(record["proposal_id"])["execution"]["status"], "executed")
+            if kind == "journal":
+                rows = [row for row in journal.read(preview["target"]["date"])["entries"]
+                        if row.get("proposal_id") == record["proposal_id"]]
+                self.assertEqual(len(rows), 1)
+            else:
+                self.assertEqual(len(list(raw.glob("*.md"))), 2)
+                self.assertEqual(len(list(review.glob("*.md"))), 2)
+            retry = client.post(f"/api/inbox/proposals/{record['proposal_id']}/execute", json=body)
+            self.assertEqual(retry.status_code, 200, retry.text)
+            self.assertTrue(retry.json()["duplicate"])
 
     def test_execution_blocks_stale_source_vocabulary_and_project_target(self):
         from secondbrain_core.modules.capture import CaptureService
