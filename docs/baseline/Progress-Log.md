@@ -4,6 +4,15 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-18 — D084 PR #61 App-only 受控部署与浏览器验收阻断
+
+- 依据既有用户授权部署指定候选 `secondbrain-app:d084-pr61-4a58393-full`，Image ID `sha256:e63ab1611b2a30ffd9dd2a9cb901066fa6b2da2e7e85c9c1c9d72dbabac0e4ab`；未重建。候选基于 `4a58393`，执行时 GitHub main 已推进到 `3080506b053d3876d292d9199049fd12e3247b88`（其后的 PR #59 D085-C2b 变更不在候选内）。
+- 切换前 App PR #49 镜像 `sha256:1c7ed4cb…11dd6ca` healthy；Hermes Guard 镜像 `sha256:b99b1762…5357e9a` running。Compose 原 SHA-256 `28636dec…1d6e06`；只替换 App image 引用，更新后 SHA-256 `9c0932c04d6984cd2e491738d51eb6235d7182ccfca8146678fc18cdabe6097d`，权限仍 `1026:100 / 0640`，Compose config 校验通过。执行 `up -d --no-deps --no-build --force-recreate --wait --wait-timeout 120 secondbrain-app`；候选容器在约 30 秒内 healthy，容器 ID `665bb381…c1bc2710`，RestartCount 0。
+- 只读 HTTP smoke：在 App 容器内使用现有 Host allowlist（不输出 Host 值）验证 `/health`、`/chat` 为 200，两个 JS 和一个 CSS 资源为 200，匿名 `/api/chat/sessions` 为 401 JSON。Hermes 容器 ID、镜像 ID、StartedAt 与 RestartCount 未变。已核验 PR #49 镜像、旧 D084 App 镜像、现有回滚目录 checksum，并保存切换前 Compose 精确副本；无需回滚。
+- 浏览器验收使用新建 IAB 标签，但登录后页面自动恢复既有 Session，未满足空白合成 Session 条件。自动化可访问性快照意外包含会话列表标签与选中会话的操作卡摘要；未打开其他会话或展开消息正文，未保存这些文本或 Session ID，立即停止并关闭标签页。未创建 Session、写 Journal/Task、重试或调用模型。Journal/Task 操作卡、刷新恢复、会话隔离、幂等均 BLOCKED；历史生产根因 UNKNOWN。没有 App 健康/路由异常，不触发自动回滚。
+- 复用 PR #49 与 PR #61 已通过的测试/构建审查证据；本次不重复完整测试。生产部署与运行 smoke 通过，业务用户验收未完成。Issue #44 评论未提交（此前审批限制保持），状态更新仅进入治理文档待审 PR。
+
+
 ## 2026-10-18 — D084 PR #61 合并后生产元数据只读核验
 
 - 按最新 main `d33fe062e9065d3b7047e386f491ff8b55592908` 的 `AGENTS.md`、`00-CURRENT.md`、`Agent-Rules.md` 与 PR #61 复审结论执行一次限定只读核验。PR #61 已合入 main（merge `b3c8fe08ea04e1f20ccadcf70e393bf80a30672c`），复审确认 stale localStorage ID 回退和创建/分叉选择意图保护的本地修复 PASS、生产根因 UNKNOWN；另提醒 activeRun 恢复可能按 sessionStorage 的 activeSession 重新选择，此路径未在 PR #61 验证。
