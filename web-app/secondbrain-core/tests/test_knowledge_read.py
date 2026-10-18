@@ -1,0 +1,225 @@
+import hashlib
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from fastapi import FastAPI, Request, Response
+from fastapi.testclient import TestClient
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from secondbrain_core.modules.app_auth import AppSessionAuth
+from secondbrain_core.modules.knowledge_read import (
+    MAX_FILE_BYTES,
+    KnowledgeReadStore,
+    _token,
+    create_knowledge_read_router,
+)
+
+
+ORIGIN = "https://app.test"
+ID_SECRET = b"synthetic-app-secret-for-knowledge"
+
+
+class KnowledgeReadTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name).resolve()
+        self.root = self.base / "knowledge"
+        self.root.mkdir(mode=0o700)
+        self.review = self.base / "review"
+        self.raw = self.base / "raw"
+        self.review.mkdir(mode=0o700)
+        self.raw.mkdir(mode=0o700)
+        (self.review / "must-not-be-read.md").write_text("private review decoy")
+        (self.raw / "must-not-be-read.md").write_text("private raw decoy")
+        self.store = KnowledgeReadStore(str(self.root), ID_SECRET)
+        self.password_file = self.base / "password"
+        self.password_file.write_text("synthetic-test-password-2026\n")
+        self.password_file.chmod(0o600)
+        self.auth = AppSessionAuth(str(self.password_file), [ORIGIN])
+        self.app = FastAPI()
+        self.app.add_middleware(TrustedHostMiddleware, allowed_hosts=["app.test"])
+        self.app.include_router(create_knowledge_read_router(self.auth, self.store))
+
+        @self.app.post("/test-login")
+        def test_login(request: Request, response: Response, body: dict):
+            token = self.auth.login(request, body.get("password"))
+            self.auth.set_cookie(response, request, token, self.auth.session_ttl)
+            return {"status": "ok"}
+
+        self.client = TestClient(self.app, base_url=ORIGIN)
+        self.headers = {"Origin": ORIGIN}
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def login(self):
+        response = self.client.post("/test-login", json={"password": "synthetic-test-password-2026"},
+                                    headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+
+    def write(self, relative, content):
+        path = self.root / relative
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
+        path.chmod(0o600)
+        return path
+
+    def test_session_host_and_origin_guards_run_before_knowledge_reads(self):
+        with patch.object(self.store, "search", wraps=self.store.search) as search:
+            unauthenticated = self.client.get("/api/knowledge/search?q=synthetic", headers=self.headers)
+            self.assertEqual(unauthenticated.status_code, 401)
+            self.assertEqual(search.call_count, 0)
+
+        self.login()
+        bad_origin = self.client.get("/api/knowledge/search?q=synthetic", headers={"Origin": "https://evil.test"})
+        self.assertEqual(bad_origin.status_code, 403)
+        bad_host = self.client.get("/api/knowledge/search?q=synthetic",
+                                   headers={"Origin": ORIGIN, "Host": "evil.test"})
+        self.assertEqual(bad_host.status_code, 400)
+
+    def test_search_requires_nonempty_bounded_query_and_limit(self):
+        self.write("note.md", "# Synthetic\nknowledge token")
+        self.login()
+        with patch("secondbrain_core.modules.knowledge_read.os.listdir", side_effect=AssertionError("invalid query scanned root")):
+            for params in ({}, {"q": "   "}, {"q": "x" * 201}, {"q": "synthetic", "limit": 0},
+                           {"q": "synthetic", "limit": 51}):
+                response = self.client.get("/api/knowledge/search", params=params, headers=self.headers)
+                self.assertEqual(response.status_code, 400, params)
+        self.assertEqual(self.client.get("/api/knowledge/search?q=synthetic&limit=1", headers=self.headers).status_code, 200)
+        self.assertEqual(self.client.get("/api/knowledge/search?q=synthetic&limit=50", headers=self.headers).status_code, 200)
+
+    def test_search_is_sorted_bounded_allowlisted_and_does_not_write(self):
+        a = self.write("nested/a.md", "---\ntitle: Alpha\n---\n\nSynthetic query body.\n")
+        b = self.write("z.md", "# Zulu\n\nSynthetic query body.\n")
+        before = {p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
+                  for p in (a, b)}
+        directory_before = sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
+        self.login()
+        response = self.client.get("/api/knowledge/search?q=synthetic&limit=1", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(len(payload["items"]), 1)
+        row = payload["items"][0]
+        self.assertEqual(set(row), {"id", "title", "snippet", "match", "updated", "sha256", "provenance_status"})
+        self.assertEqual(row["title"], "Alpha")
+        self.assertLessEqual(len(row["snippet"]), 240)
+        self.assertNotIn(str(self.root), json.dumps(payload))
+        all_rows = self.client.get("/api/knowledge/search?q=synthetic&limit=50", headers=self.headers).json()["items"]
+        self.assertEqual([r["title"] for r in all_rows], ["Alpha", "Zulu"])
+        self.assertTrue(all("content" not in r for r in all_rows))
+        after = {p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
+                 for p in (a, b)}
+        self.assertEqual(after, before)
+        self.assertEqual(sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*")), directory_before)
+
+    def test_no_implicit_search_and_detail_reads_only_the_selected_file(self):
+        selected = self.write("nested/selected.md", "# Selected\n\nSynthetic body.\n")
+        other = self.write("other.md", "# Other\n\nSynthetic body.\n")
+        self.login()
+        self.assertEqual(self.client.get("/api/knowledge/items/invalid", headers=self.headers).status_code, 404)
+        with patch.object(self.auth, "require_action", wraps=self.auth.require_action) as require_action:
+            found = self.client.get("/api/knowledge/search?q=Selected", headers=self.headers).json()["items"][0]
+            require_action.assert_any_call(unittest.mock.ANY, "knowledge.read")
+        with patch("secondbrain_core.modules.knowledge_read.os.listdir", side_effect=AssertionError("detail enumerated root")):
+            detail = self.store.detail(found["id"])
+            source = self.store.source(found["id"])
+        response = self.client.get(f"/api/knowledge/items/{found['id']}", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.json()), {"id", "content", "sha256", "updated", "provenance_status"})
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.assertEqual(detail["content"], "# Selected\n\nSynthetic body.\n")
+        self.assertEqual(detail["sha256"], hashlib.sha256(selected.read_bytes()).hexdigest())
+        self.assertNotIn(str(self.root), response.text)
+        self.assertEqual(source, {"status": "missing", "provenance_status": "missing", "source": None})
+        self.assertEqual(other.read_text(), "# Other\n\nSynthetic body.\n")
+
+    def test_untrusted_or_inconsistent_source_claims_never_become_verified_links(self):
+        samples = {
+            "claim.md": "---\nsource_kind: review\nsource_ref: forged.md\nsource_sha256: " + "0" * 64 + "\n---\n# Claim\n",
+            "fake.md": "---\nsource_ref: ../raw/secret.md\nsource_sha256: not-a-hash\n---\n# Fake\n",
+            "mismatch.md": "---\nsource_kind: capture\nsource_id: known-id\nsource_sha256: " + "f" * 64 + "\n---\n# Mismatch\n",
+            "capture.md": "---\nsource_type: inbox_proposal_review\noriginal_asset: /raw/original.md\ncapture_context: source=note.md\n---\n# Captured\n",
+            "promoted.md": "<!-- secondbrain-promote request_id=trusted-looking review_sha256=" + "a" * 64 + " -->\n---\ntype: knowledge\n---\n# Promoted\n",
+            "plain.md": "# No source\n\nNo source metadata.\n",
+        }
+        ids = {}
+        for name, content in samples.items():
+            path = self.write(name, content)
+            ids[name] = _token(name, hashlib.sha256(path.read_bytes()).hexdigest(), ID_SECRET)
+        self.login()
+        for name in ("claim.md", "fake.md", "mismatch.md", "capture.md", "promoted.md"):
+            result = self.client.get(f"/api/knowledge/items/{ids[name]}/source", headers=self.headers)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json(), {"status": "unavailable", "provenance_status": "unverified", "source": None})
+        missing = self.client.get(f"/api/knowledge/items/{ids['plain.md']}/source", headers=self.headers)
+        self.assertEqual(missing.json(), {"status": "missing", "provenance_status": "missing", "source": None})
+        self.assertFalse(any(p.name == "must-not-be-read.md" for p in self.root.iterdir()))
+        self.assertEqual((self.review / "must-not-be-read.md").read_text(), "private review decoy")
+        self.assertEqual((self.raw / "must-not-be-read.md").read_text(), "private raw decoy")
+
+    def test_invalid_utf8_blank_oversize_symlinks_and_nested_symlink_paths_fail_closed(self):
+        self.write("invalid.md", b"\xff\xfe")
+        self.write("blank.md", b" \n\t")
+        large = self.write("large.md", b"x" * (MAX_FILE_BYTES + 1))
+        self.write("nested/ok.md", "# Synthetic\n")
+        outside = self.base / "outside.md"
+        outside.write_text("# Outside secret")
+        outside.chmod(0o600)
+        (self.root / "linked.md").symlink_to(outside)
+        (self.root / "linked-dir").symlink_to(outside.parent, target_is_directory=True)
+        (self.root / "linked-hard.md").hardlink_to(outside)
+        self.login()
+        found = self.client.get("/api/knowledge/search?q=Synthetic", headers=self.headers)
+        self.assertEqual(found.status_code, 200)
+        self.assertEqual([row["title"] for row in found.json()["items"]], ["Synthetic"])
+        for relative in ("../outside.md", "/etc/passwd", "nested/../../outside.md", "%2e%2e/outside.md",
+                         "%252e%252e/outside.md", "linked.md", "linked-dir/outside.md", "linked-hard.md",
+                         "large.md", "invalid.md"):
+            response = self.client.get(f"/api/knowledge/items/{_token(relative, '0' * 64, ID_SECRET)}", headers=self.headers)
+            self.assertIn(response.status_code, {404, 413, 422}, relative)
+        self.assertEqual(outside.read_text(), "# Outside secret")
+        self.assertTrue(large.exists())
+
+    def test_missing_root_and_stale_or_renamed_item_are_deterministic(self):
+        absent = KnowledgeReadStore(str(self.base / "not-created"), ID_SECRET)
+        with self.assertRaises(Exception) as unavailable:
+            absent.search("query", 10)
+        self.assertEqual(getattr(unavailable.exception, "status_code", None), 503)
+        self.assertFalse((self.base / "not-created").exists())
+        original = self.write("stable.md", "# Original\n")
+        item_id = _token("stable.md", hashlib.sha256(original.read_bytes()).hexdigest(), ID_SECRET)
+        original.write_text("# Changed\n")
+        with self.assertRaises(Exception) as conflict:
+            self.store.detail(item_id)
+        self.assertEqual(getattr(conflict.exception, "status_code", None), 409)
+        self.assertEqual(getattr(conflict.exception, "detail", None), "Knowledge item changed; search again")
+        current_id = _token("stable.md", hashlib.sha256(original.read_bytes()).hexdigest(), ID_SECRET)
+        self.assertEqual(self.store.detail(current_id)["sha256"], hashlib.sha256(b"# Changed\n").hexdigest())
+        original.rename(self.root / "renamed.md")
+        with self.assertRaises(Exception) as missing:
+            self.store.detail(current_id)
+        self.assertEqual(getattr(missing.exception, "status_code", None), 404)
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["renamed.md"])
+
+    def test_tampered_item_identifier_and_symlinked_root_are_rejected(self):
+        note = self.write("safe.md", "# Safe\n")
+        original_id = _token("safe.md", hashlib.sha256(note.read_bytes()).hexdigest(), ID_SECRET)
+        version, payload, signature = original_id.split(".")
+        altered = f"{version}.{payload}.{('0' if signature[0] != '0' else '1') + signature[1:]}"
+        with self.assertRaises(Exception) as invalid:
+            self.store.detail(altered)
+        self.assertEqual(getattr(invalid.exception, "status_code", None), 404)
+        root_link = self.base / "knowledge-link"
+        root_link.symlink_to(self.root, target_is_directory=True)
+        linked_store = KnowledgeReadStore(str(root_link), ID_SECRET)
+        with self.assertRaises(Exception) as unavailable:
+            linked_store.search("Safe", 10)
+        self.assertEqual(getattr(unavailable.exception, "status_code", None), 503)
+
+
+if __name__ == "__main__":
+    unittest.main()

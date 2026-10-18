@@ -18,6 +18,7 @@ from .modules.chat_activity import ChatActivityStore, create_chat_activity_route
 from .modules.journal import JournalStore, create_journal_router
 from .modules.tasks import TaskStore, create_task_router
 from .modules.notes import configured_notes_store, create_notes_router
+from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
 from .modules.vocabulary import VocabularyStore, create_vocabulary_router
 from .modules.inbox_proposals import InboxProposalStore, InboxProposalSources, create_inbox_proposal_router
 from .modules.organizer_engine import OrganizerRunner
@@ -108,6 +109,7 @@ def create_app():
         os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
     )
     app.include_router(create_notes_router(auth, notes_store))
+    app.include_router(create_knowledge_read_router(auth, KnowledgeReadStore(knowledge_root, auth._password)))
     vocabulary_store = VocabularyStore(approval_root)
     app.include_router(create_vocabulary_router(auth, vocabulary_store))
     inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")
