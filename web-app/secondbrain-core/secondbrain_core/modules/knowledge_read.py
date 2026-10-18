@@ -221,9 +221,10 @@ class KnowledgeReadStore:
         entries_seen = 0
         bytes_read = 0
         budget_exceeded = False
+        invalid_paths_seen = False
 
         def visit(directory_fd, prefix, depth=0):
-            nonlocal entries_seen, bytes_read, budget_exceeded
+            nonlocal entries_seen, bytes_read, budget_exceeded, invalid_paths_seen
             if entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= MAX_TOTAL_BYTES or budget_exceeded:
                 return
             try:
@@ -271,6 +272,13 @@ class KnowledgeReadStore:
                             continue
                         try:
                             fd, opened_info = _open_exact(root_fd, relative)
+                        except (ValueError, UnicodeError):
+                            # Unsafe names are omitted from Knowledge results;
+                            # signal incomplete coverage without relaxing the
+                            # exact-item path validation contract.
+                            invalid_paths_seen = True
+                            continue
+                        try:
                             try:
                                 allowed_bytes = min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - bytes_read)
                                 if opened_info.st_size > allowed_bytes:
@@ -308,7 +316,7 @@ class KnowledgeReadStore:
         finally:
             os.close(root_fd)
         rows.sort(key=lambda row: (row["title"].casefold(), row["id"]))
-        return {"items": rows[:limit], "status": "truncated" if entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= MAX_TOTAL_BYTES or budget_exceeded else "ok"}
+        return {"items": rows[:limit], "status": "truncated" if invalid_paths_seen or entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= MAX_TOTAL_BYTES or budget_exceeded else "ok"}
 
     def detail(self, item_id):
         relative, expected_sha256 = _decode_token(item_id, self._id_secret)

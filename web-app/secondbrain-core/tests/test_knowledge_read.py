@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -166,6 +168,62 @@ class KnowledgeReadTests(unittest.TestCase):
                 source = self.client.get(f"/api/knowledge/items/{item_id}/source", headers=self.headers)
                 self.assertEqual(detail.status_code, 404, detail.text)
                 self.assertEqual(source.status_code, 404, source.text)
+
+    def assert_search_skips_unsafe_path_and_reports_partial_coverage(self):
+        self.write("sibling.md", "# Needle sibling\n")
+        self.login()
+        response = self.client.get("/api/knowledge/search?q=Needle", headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "truncated")
+        self.assertEqual([row["title"] for row in response.json()["items"]], ["Needle sibling"])
+        self.assertNotIn("hidden malformed", response.text)
+        self.assertNotIn("private review decoy", response.text)
+        self.assertNotIn("private raw decoy", response.text)
+
+    def test_search_skips_percent_encoded_path_component_without_http_500(self):
+        self.write("note%2e.md", "# Needle hidden malformed path\n")
+        self.assert_search_skips_unsafe_path_and_reports_partial_coverage()
+
+    def test_search_skips_path_exceeding_validated_component_limit(self):
+        relative = "/".join([*(f"d{index}" for index in range(32)), "note.md"])
+        self.write(relative, "# Needle hidden malformed path\n")
+        self.assert_search_skips_unsafe_path_and_reports_partial_coverage()
+
+    def test_search_skips_surrogateescaped_filename_without_http_500(self):
+        self.write("sibling.md", "# Needle sibling\n")
+        self.login()
+        bad_name = "bad-\udcff.md"
+        real_scandir = os.scandir
+        real_stat = os.stat
+
+        class EntriesWithSurrogate:
+            def __init__(self, directory_fd):
+                self.directory_fd = directory_fd
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                with real_scandir(self.directory_fd) as entries:
+                    yield from entries
+                yield SimpleNamespace(name=bad_name)
+
+        def stat_with_surrogate(path, *args, **kwargs):
+            if path == bad_name:
+                return SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_nlink=1, st_size=30)
+            return real_stat(path, *args, **kwargs)
+
+        with patch("secondbrain_core.modules.knowledge_read.os.scandir", side_effect=EntriesWithSurrogate):
+            with patch("secondbrain_core.modules.knowledge_read.os.stat", side_effect=stat_with_surrogate):
+                response = self.client.get("/api/knowledge/search?q=Needle", headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "truncated")
+        self.assertEqual([row["title"] for row in response.json()["items"]], ["Needle sibling"])
+        self.assertNotIn("private review decoy", response.text)
+        self.assertNotIn("private raw decoy", response.text)
 
     def test_no_implicit_search_and_detail_reads_only_the_selected_file(self):
         selected = self.write("nested/selected.md", "# Selected\n\nSynthetic body.\n")
