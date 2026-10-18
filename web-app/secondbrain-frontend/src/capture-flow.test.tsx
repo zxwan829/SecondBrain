@@ -227,6 +227,128 @@ describe('D075.1 capture interactions', () => {
     expect(screen.queryByText('记一下：仅属于 A')).toBeNull();
   });
 
+  it('recovers to a listed Hermes session when the persisted selected ID is stale', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'hermes-stale-id');
+    const request = vi.fn(async (url: string) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
+        { session_id: 'hermes-live-B', title: 'A misleading display title' },
+      ] });
+      if (url.endsWith('/activities')) return ok({ activities: [{
+        event_id: 'journal:live-B', operation_id: 'op-live-B', session_id: 'hermes-live-B',
+        kind: 'journal', status: 'succeeded', original_text: '记一下：恢复到实际 Hermes ID',
+        occurred_at: '2026-10-18T00:00:00Z', journal_date: '2026-10-18',
+      }] });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      return ok({ sessions: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+
+    expect(await screen.findByText('记一下：恢复到实际 Hermes ID')).toBeTruthy();
+    expect(request).toHaveBeenCalledWith('/api/chat/sessions/hermes-live-B/activities', expect.anything());
+    expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('hermes-live-B');
+  });
+
+  it('ignores an activity payload whose Hermes ID differs from the requested session', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'hermes-requested-B');
+    const request = vi.fn(async (url: string) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
+        { session_id: 'hermes-requested-B', title: 'Session C' },
+      ] });
+      if (url.endsWith('/activities')) return ok({ activities: [{
+        event_id: 'task:wrong-A', operation_id: 'op-wrong-A', session_id: 'hermes-response-A',
+        kind: 'task', status: 'succeeded', original_text: '添加待办：不可串会话',
+        occurred_at: '2026-10-18T00:01:00Z', task_title: '不可串会话', task_status: 'open',
+      }] });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      return ok({ sessions: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/api/chat/sessions/hermes-requested-B/activities', expect.anything()));
+    expect(screen.queryByText('添加待办：不可串会话')).toBeNull();
+  });
+
+  it('keeps the latest selected session when an earlier activity response arrives late', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'hermes-fast-A');
+    let resolveA!: (response: ReturnType<typeof ok>) => void;
+    const delayedA = new Promise<ReturnType<typeof ok>>((resolve) => { resolveA = resolve; });
+    const request = vi.fn(async (url: string) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
+        { session_id: 'hermes-fast-A', title: 'Session A' }, { session_id: 'hermes-fast-B', title: 'Session B' },
+      ] });
+      if (url === '/api/chat/sessions/hermes-fast-A/activities') return delayedA;
+      if (url === '/api/chat/sessions/hermes-fast-B/activities') return ok({ activities: [{
+        event_id: 'task:fast-B', operation_id: 'op-fast-B', session_id: 'hermes-fast-B', kind: 'task',
+        status: 'succeeded', original_text: '添加待办：快速切换后属于 B', occurred_at: '2026-10-18T00:02:00Z',
+        task_title: '快速切换后属于 B', task_status: 'open',
+      }] });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      return ok({ sessions: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/api/chat/sessions/hermes-fast-A/activities', expect.anything()));
+
+    fireEvent.click(screen.getByRole('button', { name: /^Session B/ }));
+    expect(await screen.findByText('添加待办：快速切换后属于 B')).toBeTruthy();
+    await act(async () => {
+      resolveA(ok({ activities: [{
+        event_id: 'journal:late-A', operation_id: 'op-late-A', session_id: 'hermes-fast-A', kind: 'journal',
+        status: 'succeeded', original_text: '记一下：延迟返回的 A', occurred_at: '2026-10-18T00:01:00Z', journal_date: '2026-10-18',
+      }] }));
+      await delayedA;
+    });
+    expect(screen.getByText('添加待办：快速切换后属于 B')).toBeTruthy();
+    expect(screen.queryByText('记一下：延迟返回的 A')).toBeNull();
+    expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('hermes-fast-B');
+  });
+
+  it('does not let a delayed session creation override a later user selection', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'hermes-create-A');
+    let resolveCreate!: (response: ReturnType<typeof ok>) => void;
+    let listCalls = 0;
+    const delayedCreate = new Promise<ReturnType<typeof ok>>((resolve) => { resolveCreate = resolve; });
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') {
+        listCalls += 1;
+        return ok({ sessions: [
+        { session_id: 'hermes-create-A', title: 'Session A' }, { session_id: 'hermes-create-B', title: 'Session B' },
+        ...(listCalls > 1 ? [{ session_id: 'hermes-created-C', title: 'Session C' }] : []),
+        ] });
+      }
+      if (url === '/api/chat/sessions' && init?.method === 'POST') return delayedCreate;
+      if (url === '/api/chat/sessions/hermes-create-B/activities') return ok({ activities: [{
+        event_id: 'task:selected-B', operation_id: 'op-selected-B', session_id: 'hermes-create-B', kind: 'task',
+        status: 'succeeded', original_text: '添加待办：用户最后选择 B', occurred_at: '2026-10-18T00:03:00Z',
+        task_title: '用户最后选择 B', task_status: 'open',
+      }] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      return ok({ sessions: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/api/chat/sessions/hermes-create-A/activities', expect.anything()));
+
+    fireEvent.click(screen.getByRole('button', { name: '新对话' }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/api/chat/sessions', expect.objectContaining({ method: 'POST' })));
+    fireEvent.click(screen.getByRole('button', { name: /^Session B/ }));
+    expect(await screen.findByText('添加待办：用户最后选择 B')).toBeTruthy();
+    await act(async () => {
+      resolveCreate(ok({ session_id: 'hermes-created-C' }));
+      await delayedCreate;
+    });
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/api/chat/sessions?limit=50&offset=0', expect.anything()));
+    expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('hermes-create-B');
+    expect(screen.getByText('添加待办：用户最后选择 B')).toBeTruthy();
+  });
+
   it('keeps ordinary chat input on the Hermes run route', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
     const request = vi.fn(async (url: string) => {
