@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-18 — D084 PR #61 合并后生产元数据只读核验
+
+- 按最新 main `d33fe062e9065d3b7047e386f491ff8b55592908` 的 `AGENTS.md`、`00-CURRENT.md`、`Agent-Rules.md` 与 PR #61 复审结论执行一次限定只读核验。PR #61 已合入 main（merge `b3c8fe08ea04e1f20ccadcf70e393bf80a30672c`），复审确认 stale localStorage ID 回退和创建/分叉选择意图保护的本地修复 PASS、生产根因 UNKNOWN；另提醒 activeRun 恢复可能按 sessionStorage 的 activeSession 重新选择，此路径未在 PR #61 验证。
+- 2026-10-18T01:50:41Z 通过现有 SSH 与 `sudo -n` 只读 Docker 查询确认：App 容器 `272b9fee7e62cf4b6b9c39f82d8c1e2eeceffaee82215a9cf34dc35098570601`，镜像 `secondbrain-app:pr49-fa2ad412-full` / `sha256:1c7ed4cb…11dd6ca`，healthy、RestartCount 0、UID/GID 1026:100；Hermes 容器 `057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79`，镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / `sha256:b99b1762…5357e9a`，running、RestartCount 0、身份 root。本次只核验容器元数据，未检查或修改 Compose、挂载、配置、权限、容器日志，也未重启/部署；Environment-Baseline 保存完整镜像 ID、启动时间和状态。
+- Edge 标签清单没有 SecondBrain App 页面。为避免 `/chat` 自动恢复已有私人会话，本次未导航 App、未读取会话正文；也因缺少目标 opaque ID，未查询全量 Hermes Session 列表或宽泛日志。浏览器 selected/localStorage ID、相关 activities 请求/响应 ID、状态与时间均 UNKNOWN。PR #61 的两个旧版 UI 边界在当前 PR #49 生产镜像中仍可能存在，但没有 ID/时序证据将其与既有 FAIL 关联；生产根因保持 UNKNOWN。历史验收仍为首卡/首次刷新 PASS、会话切换恢复 FAIL/INCONSISTENT、幂等与审计 BLOCKED。
+- 未创建/修改/删除 Session、Journal、Task；未调用模型；无 NAS 文件/config/权限更改或资产清理。Issue #44 评论未写入；此前 Issue 写入被审批拒绝，本轮未尝试从其他渠道绕写。诊断状态与最新有限运行证据同步到 CURRENT、Environment-Baseline；后续如需定向关联，只使用精确的既有合成 Session ID 或不打开私人会话的 metadata-only 读取方式，等待 ChatGPT 独立复审。
+
 ## 2026-10-17 — D086 PR #58 同步最新 main 与合并门禁核验
 
 - 按 Issue #55 评论 #6234901749 在原隔离分支核对并获取最新 `origin/main` `1c73b0f3449725815443c22ba503104df0cb8eff`。合并预检发现唯一真实文本冲突为 `docs/baseline/Progress-Log.md`；采用双侧保留，保留 main 的 D085-C2a 最新记录和 D086 复审/实施记录。代码文件无冲突。CURRENT 自动合并保留 main 的 D084 唯一 NEXT，确认未改写。
