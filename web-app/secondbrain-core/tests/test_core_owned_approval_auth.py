@@ -1,4 +1,5 @@
 import hashlib
+import errno
 import json
 import multiprocessing
 import os
@@ -309,6 +310,53 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(recovered.status_code, 200, recovered.text)
         self.assertEqual(recovered.json()["status"], "promoted")
         self.assertTrue((self.knowledge / "approved.md").is_file())
+
+    def test_claim_file_fsync_failure_leaves_no_claim_and_same_key_can_retry(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        with patch("secondbrain_core.modules.review_promote.approval.os.fsync",
+                   side_effect=OSError(errno.EIO, "synthetic claim file fsync failure")):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
+        self.assertEqual(list((self.state / "approvals").glob(".claim-*")), [])
+        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["status"], "promoted")
+
+    def test_claim_directory_fsync_failure_keeps_claim_and_recovers_only_same_key(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        original = os.fsync
+        calls = {"count": 0}
+
+        def fail_directory_fsync_once(fd):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise OSError(errno.EIO, "synthetic claim directory fsync failure")
+            return original(fd)
+
+        with patch("secondbrain_core.modules.review_promote.approval.os.fsync",
+                   side_effect=fail_directory_fsync_once):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
+        competing = dict(self.body, request_id="directory-fsync-takeover", target_filename="takeover.md")
+        refused = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
+        self.assertEqual(refused.status_code, 409)
+        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["status"], "promoted")
+
+    def test_enospc_during_claim_write_leaves_no_claim_and_allows_retry(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        with patch("secondbrain_core.modules.review_promote.approval.os.write",
+                   side_effect=OSError(errno.ENOSPC, "synthetic no-space claim write")):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
+        self.assertEqual(list((self.state / "approvals").glob(".claim-*")), [])
+        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["status"], "promoted")
 
     def test_retry_recovers_when_output_and_audit_exist_but_decision_write_failed(self):
         self.assertEqual(self.unlock().status_code, 200)
