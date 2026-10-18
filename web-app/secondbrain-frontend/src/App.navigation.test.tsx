@@ -24,6 +24,7 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, sum
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
     if (url === '/api/home') return new Response('{}', { status: 200 });
+    if (url.startsWith('/api/knowledge/search?')) return new Response(JSON.stringify({ items: [], status: 'ok' }), { status: 200 });
     if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify(summaryStatus === 200 ? { status: 'real', items: [{ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', display_filename: 'synthetic.txt', status: 'completed', error_code: null, has_review: false }] } : { detail: 'synthetic failure' }), { status: summaryStatus });
     if (url === `/api/capture/${captureId}`) return new Response(JSON.stringify({ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', raw_path: 'synthetic.txt', display_filename: 'synthetic.txt', title: 'Synthetic capture', status: 'completed', content_preview: 'SYNTHETIC EXACT CAPTURE BODY', review_path: null }), { status: 200 });
     if (url === `/api/inbox/${captureId}/preview`) return new Response('SYNTHETIC EXACT CAPTURE BODY', { status: 200 });
@@ -102,6 +103,95 @@ describe('Notes application navigation gate', () => {
     startAt('/');
     await screen.findByRole('heading', { name: '你的工作台' });
     await waitFor(() => expect(calls).toContain('/api/home'));
+  });
+
+  it('opens Knowledge from navigation and does not issue Knowledge reads from other page initialization', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }));
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+    expect(location.pathname).toBe('/knowledge');
+    expect(calls.some((url) => url.startsWith('/api/knowledge/'))).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '首页' }));
+    await screen.findByRole('heading', { name: '你的工作台' });
+    fireEvent.click(screen.getByRole('button', { name: '对话' }));
+    await waitFor(() => expect(location.pathname).toBe('/chat'));
+    fireEvent.click(screen.getByRole('button', { name: '收件箱' }));
+    await waitFor(() => expect(location.pathname).toBe('/inbox'));
+    fireEvent.click(screen.getByRole('button', { name: '笔记' }));
+    await screen.findByRole('heading', { name: '笔记' });
+    expect(calls.some((url) => url.startsWith('/api/knowledge/'))).toBe(false);
+  });
+
+  it('restores the Knowledge route directly and keeps it available in the mobile navigation', async () => {
+    const calls = mockAppFetch();
+    startAt('/knowledge');
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+    expect(location.pathname).toBe('/knowledge');
+    expect(calls.filter((url) => url === '/api/home' || url.startsWith('/api/knowledge/') || url.startsWith('/api/promote/'))).toEqual([]);
+    expect(calls.some((url) => url.startsWith('/api/knowledge/'))).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('搜索关键词'), { target: { value: 'synthetic' } });
+    fireEvent.click(screen.getByRole('button', { name: '搜索' }));
+    await waitFor(() => expect(calls.filter((url) => url.startsWith('/api/knowledge/search?'))).toHaveLength(1));
+    expect(calls.filter((url) => url === '/api/home' || url.startsWith('/api/promote/'))).toEqual([]);
+
+    fireEvent.click(screen.getByRole('button', { name: '对话' }));
+    await waitFor(() => expect(location.pathname).toBe('/chat'));
+    expect(calls.filter((url) => url === '/api/home')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '首页' }));
+    expect(await screen.findByRole('heading', { name: '你的工作台' })).toBeTruthy();
+    await waitFor(() => expect(calls.filter((url) => url === '/api/home')).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
+    const sidebar = document.querySelector('aside.sidebar') as HTMLElement;
+    fireEvent.click(within(sidebar).getByRole('button', { name: '知识库' }));
+    expect(location.pathname).toBe('/knowledge');
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+  });
+
+  it('isolates an in-flight Home response when navigating to Knowledge and restores Home loading on return', async () => {
+    const calls: string[] = [];
+    let finishFirstHome!: (response: Response) => void;
+    const firstHome = new Promise<Response>((resolve) => { finishFirstHome = resolve; });
+    let homeRequests = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/home') {
+        homeRequests += 1;
+        return homeRequests === 1 ? firstHome : new Response('{}', { status: 200 });
+      }
+      if (url.startsWith('/api/knowledge/search?')) return new Response(JSON.stringify({ items: [], status: 'ok' }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/');
+    await waitFor(() => expect(calls.filter((url) => url === '/api/home')).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }));
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+    expect(calls.filter((url) => url.startsWith('/api/knowledge/') || url.startsWith('/api/promote/'))).toEqual([]);
+
+    await act(async () => {
+      finishFirstHome(new Response('{}', { status: 503 }));
+      await firstHome;
+    });
+    fireEvent.click(screen.getByRole('button', { name: '首页' }));
+    expect(await screen.findByRole('heading', { name: '你的工作台' })).toBeTruthy();
+    await waitFor(() => expect(calls.filter((url) => url === '/api/home')).toHaveLength(2));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(calls.filter((url) => url.startsWith('/api/knowledge/') || url.startsWith('/api/promote/'))).toEqual([]);
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }));
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '对话' }));
+    await waitFor(() => expect(location.pathname).toBe('/chat'));
+    expect(calls.filter((url) => url === '/api/home')).toHaveLength(2);
   });
 
   it('isolates rapid source changes when an older exact Notes read returns last', async () => {

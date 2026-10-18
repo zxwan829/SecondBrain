@@ -14,6 +14,7 @@ import { notesApi } from './api/notes';
 const NotesPage = lazy(() => import('./NotesPage').then((module) => ({ default: module.NotesPage })));
 const VocabularyPage = lazy(() => import('./VocabularyPage').then((module) => ({ default: module.VocabularyPage })));
 const UnifiedInboxPage = lazy(() => import('./UnifiedInboxPage').then((module) => ({ default: module.UnifiedInboxPage })));
+const KnowledgePage = lazy(() => import('./KnowledgePage').then((module) => ({ default: module.KnowledgePage })));
 const notesFeatureEnabled = () => import.meta.env.VITE_ENABLE_NOTES === 'true';
 import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
@@ -207,7 +208,7 @@ const navItems = [
   { id: 'inbox', key: 'inbox', icon: 'inbox', section: 'work', route: '/inbox' },
   { id: 'review', key: 'review', icon: 'check', section: 'work', route: '/review' },
   { id: 'projects', key: 'projects', icon: 'folder', section: 'library' },
-  { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library' },
+  { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library', route: '/knowledge' },
   { id: 'brief', key: 'brief', icon: 'file', section: 'library' },
   { id: 'activity', key: 'activity', icon: 'activity', section: 'library' },
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
@@ -294,12 +295,16 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname, enableNotes));
   const pageRef = useRef(page);
   pageRef.current = page;
+  const previousHomeEffectPage = useRef(page);
+  const homeRequestStarted = useRef(false);
   const [routeRevision, setRouteRevision] = useState(0);
   const [inboxScope, setInboxScope] = useState<InboxScope>(null);
   const [notesAvailable, setNotesAvailable] = useState(false);
   const [notesGateChecked, setNotesGateChecked] = useState(!enableNotes);
   const isSingleSourceInboxPath = location.pathname === '/inbox/source';
   const isInboxRoute = location.pathname === '/inbox' || location.pathname.startsWith('/inbox/');
+  const isKnowledgePage = page === 'knowledge';
+  const isHomePage = page === 'home';
   const singleSource = isSingleSourceInboxPath ? singleDraftSourceFromSearch(location.search) : null;
   const notesNavigationGuard = useRef<(() => boolean) | null>(null);
   const navigationIndex = useRef(typeof history.state?.sbNavigationIndex === 'number' ? history.state.sbNavigationIndex as number : 0);
@@ -310,13 +315,21 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     document.documentElement.lang = locale;
   }, [locale]);
   useEffect(() => {
-    // A direct single-source Inbox visit must not load Home, whose Core response
-    // aggregates unrelated Review and Knowledge content.
-    if (location.pathname === '/inbox/source' || isInboxRoute) return;
+    // Scoped pages must not trigger the broad Home aggregate, which also reads
+    // unrelated Review and Knowledge content.
+    const previousPage = previousHomeEffectPage.current;
+    previousHomeEffectPage.current = page;
+    if (isKnowledgePage || location.pathname === '/inbox/source' || isInboxRoute) return;
+    const leftKnowledgeForAnotherPage = previousPage === 'knowledge' && !isHomePage;
+    if (leftKnowledgeForAnotherPage) return;
+    const returnedFromInbox = (previousPage === 'inbox' || previousPage === 'inbox-source') && !isInboxRoute;
+    if (homeRequestStarted.current && previousPage !== 'knowledge' && !returnedFromInbox) return;
     let mounted = true;
-    fetchHome().then((data) => { if (mounted) setHome(data); }).catch(() => { if (mounted) setError(true); });
-    return () => { mounted = false; };
-  }, [isSingleSourceInboxPath, isInboxRoute]);
+    let completed = false;
+    homeRequestStarted.current = true;
+    fetchHome().then((data) => { completed = true; if (mounted) setHome(data); }).catch(() => { completed = true; if (mounted) setError(true); });
+    return () => { mounted = false; if (!completed) homeRequestStarted.current = false; };
+  }, [isKnowledgePage, isHomePage, isSingleSourceInboxPath, isInboxRoute]);
   const registerNotesNavigationGuard = useCallback((guard: (() => boolean) | null) => {
     notesNavigationGuard.current = guard;
   }, []);
@@ -441,7 +454,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <button type="button" className="locale-button" onClick={changeLocale}>{t.localeLabel}</button>
         </div>
 
-        {page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
+        {page === 'knowledge' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Knowledge…' : '正在加载知识库…'}</div>}><KnowledgePage locale={locale} /></Suspense>
+          : page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
           : page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
           ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage onRegisterNavigationGuard={registerNotesNavigationGuard} onOpenInboxSource={(collection, path) => {
             const query = new URLSearchParams({ collection, path });
