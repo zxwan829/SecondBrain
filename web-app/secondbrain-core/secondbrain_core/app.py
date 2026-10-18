@@ -109,7 +109,7 @@ def create_app():
         os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
     )
     app.include_router(create_notes_router(auth, notes_store))
-    app.include_router(create_knowledge_read_router(auth, KnowledgeReadStore(knowledge_root, auth._password)))
+    app.include_router(create_knowledge_read_router(auth, KnowledgeReadStore(knowledge_root)))
     vocabulary_store = VocabularyStore(approval_root)
     app.include_router(create_vocabulary_router(auth, vocabulary_store))
     inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")

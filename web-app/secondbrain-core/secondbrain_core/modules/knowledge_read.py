@@ -3,13 +3,20 @@
 This module deliberately does not inspect Review, Raw, or any other root. No
 existing trusted provenance record format is present in the current contract,
 so source claims found in Markdown metadata remain unverified.
+
+Item IDs use a random process-local key and expire after restart. Scans consume
+filesystem iterator order up to the strict entry budget; rows are sorted only
+within the visited subset. Exhausting the budget reports `truncated`, because
+complete coverage cannot be claimed once the bounded prefix ends.
 """
 import base64
+import binascii
 import hashlib
 import hmac
 import json
 import os
 import re
+import secrets
 import stat
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -99,9 +106,9 @@ def _read_bounded(fd, max_bytes):
 
 
 def _id_key(secret):
-    if not isinstance(secret, bytes) or len(secret) < 12:
-        raise ValueError("Knowledge ID key must derive from the existing App secret")
-    return hashlib.sha256(b"secondbrain-knowledge-id-v1\0" + secret).digest()
+    if not isinstance(secret, bytes) or len(secret) < 32:
+        raise ValueError("Knowledge ID key must contain at least 256 bits")
+    return secret
 
 
 def _token(relative_path, content_sha256, secret):
@@ -117,9 +124,12 @@ def _decode_token(item_id, secret):
         if not isinstance(item_id, str) or len(item_id) > 8192:
             raise ValueError
         version, encoded, supplied = item_id.split(".", 2)
-        if version != "v1" or len(supplied) != 32:
+        if (version != "v1" or len(supplied) != 32
+                or not re.fullmatch(r"[A-Za-z0-9_-]+", encoded)
+                or len(encoded) % 4 == 1
+                or not re.fullmatch(r"[0-9a-f]{32}", supplied)):
             raise ValueError
-        raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        raw = base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict) or set(payload) != {"path", "sha256"}:
             raise ValueError
@@ -132,7 +142,7 @@ def _decode_token(item_id, secret):
             raise ValueError
         _validate_relative_path(relative)
         return relative, expected_sha256
-    except (ValueError, UnicodeDecodeError, TypeError):
+    except (ValueError, UnicodeError, TypeError, binascii.Error, RecursionError):
         raise HTTPException(status_code=404, detail="Knowledge item not found")
 
 
@@ -185,10 +195,10 @@ def _snippet(text, query):
 
 
 class KnowledgeReadStore:
-    def __init__(self, knowledge_root, id_secret):
+    def __init__(self, knowledge_root):
         self.root = knowledge_root if isinstance(knowledge_root, str) and os.path.isabs(knowledge_root) else ""
-        self._id_secret = id_secret
-        _id_key(id_secret)
+        # Never derive this key from the App login credential or persist it.
+        self._id_secret = secrets.token_bytes(32)
 
     def _root_fd(self):
         if not self.root:
@@ -214,70 +224,84 @@ class KnowledgeReadStore:
 
         def visit(directory_fd, prefix, depth=0):
             nonlocal entries_seen, bytes_read, budget_exceeded
+            if entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= MAX_TOTAL_BYTES or budget_exceeded:
+                return
             try:
-                names = sorted(os.listdir(directory_fd))
+                entries = os.scandir(directory_fd)
             except OSError:
                 return
-            for name in names:
-                if entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= MAX_TOTAL_BYTES or budget_exceeded:
-                    return
-                entries_seen += 1
-                if name in {".", ".."} or "/" in name or "\\" in name or "\x00" in name:
-                    continue
-                try:
-                    info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-                except OSError:
-                    continue
-                relative = f"{prefix}/{name}" if prefix else name
-                if stat.S_ISDIR(info.st_mode):
-                    if depth >= 32:
-                        continue
-                    try:
-                        child = os.open(name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
-                                        getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
-                    except OSError:
-                        continue
-                    try:
-                        visit(child, relative, depth + 1)
-                    finally:
-                        os.close(child)
-                    continue
-                if (not stat.S_ISREG(info.st_mode) or info.st_nlink > 1
-                        or not name.lower().endswith(".md")):
-                    continue
-                if info.st_size < 0 or info.st_size > MAX_FILE_BYTES or bytes_read + info.st_size > MAX_TOTAL_BYTES:
-                    continue
-                try:
-                    fd, opened_info = _open_exact(root_fd, relative)
-                    try:
-                        allowed_bytes = min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - bytes_read)
-                        if opened_info.st_size > allowed_bytes:
-                            continue
-                        payload = _read_bounded(fd, allowed_bytes)
-                        bytes_read += len(payload)
-                        if len(payload) > allowed_bytes:
+            try:
+                with entries:
+                    iterator = iter(entries)
+                    while True:
+                        if bytes_read >= MAX_TOTAL_BYTES or budget_exceeded:
+                            return
+                        try:
+                            entry = next(iterator)
+                        except StopIteration:
+                            break
+                        entries_seen += 1
+                        if entries_seen >= MAX_SCAN_ENTRIES:
                             budget_exceeded = True
+                        name = entry.name
+                        if name in {".", ".."} or "/" in name or "\\" in name or "\x00" in name:
                             continue
-                    finally:
-                        os.close(fd)
-                    text = payload.decode("utf-8")
-                except (OSError, UnicodeDecodeError):
-                    continue
-                if not text.strip():
-                    continue
-                title = _frontmatter_title(text, PurePosixPath(name).stem)
-                searchable = (title + "\n" + text).casefold()
-                if query.casefold() not in searchable:
-                    continue
-                rows.append({
-                    "id": _token(relative, hashlib.sha256(payload).hexdigest(), self._id_secret),
-                    "title": title,
-                    "snippet": _snippet(text, query),
-                    "match": "title" if query.casefold() in title.casefold() else "content",
-                    "updated": datetime.fromtimestamp(opened_info.st_mtime, timezone.utc).isoformat(),
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                    "provenance_status": _provenance_status(payload),
-                })
+                        try:
+                            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                        except OSError:
+                            continue
+                        relative = f"{prefix}/{name}" if prefix else name
+                        if stat.S_ISDIR(info.st_mode):
+                            if depth >= 32:
+                                continue
+                            try:
+                                child = os.open(name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                                                getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                            except OSError:
+                                continue
+                            try:
+                                visit(child, relative, depth + 1)
+                            finally:
+                                os.close(child)
+                            continue
+                        if (not stat.S_ISREG(info.st_mode) or info.st_nlink > 1
+                                or not name.lower().endswith(".md")):
+                            continue
+                        if info.st_size < 0 or info.st_size > MAX_FILE_BYTES or bytes_read + info.st_size > MAX_TOTAL_BYTES:
+                            continue
+                        try:
+                            fd, opened_info = _open_exact(root_fd, relative)
+                            try:
+                                allowed_bytes = min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - bytes_read)
+                                if opened_info.st_size > allowed_bytes:
+                                    continue
+                                payload = _read_bounded(fd, allowed_bytes)
+                                bytes_read += len(payload)
+                                if len(payload) > allowed_bytes:
+                                    budget_exceeded = True
+                                    continue
+                            finally:
+                                os.close(fd)
+                            text = payload.decode("utf-8")
+                        except (OSError, UnicodeDecodeError):
+                            continue
+                        if not text.strip():
+                            continue
+                        title = _frontmatter_title(text, PurePosixPath(name).stem)
+                        searchable = (title + "\n" + text).casefold()
+                        if query.casefold() not in searchable:
+                            continue
+                        rows.append({
+                            "id": _token(relative, hashlib.sha256(payload).hexdigest(), self._id_secret),
+                            "title": title,
+                            "snippet": _snippet(text, query),
+                            "match": "title" if query.casefold() in title.casefold() else "content",
+                            "updated": datetime.fromtimestamp(opened_info.st_mtime, timezone.utc).isoformat(),
+                            "sha256": hashlib.sha256(payload).hexdigest(),
+                            "provenance_status": _provenance_status(payload),
+                        })
+            except OSError:
+                return
 
         try:
             visit(root_fd, "")

@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import FastAPI, Request, Response
@@ -19,7 +20,6 @@ from secondbrain_core.modules.knowledge_read import (
 
 
 ORIGIN = "https://app.test"
-ID_SECRET = b"synthetic-app-secret-for-knowledge"
 
 
 class KnowledgeReadTests(unittest.TestCase):
@@ -34,7 +34,7 @@ class KnowledgeReadTests(unittest.TestCase):
         self.raw.mkdir(mode=0o700)
         (self.review / "must-not-be-read.md").write_text("private review decoy")
         (self.raw / "must-not-be-read.md").write_text("private raw decoy")
-        self.store = KnowledgeReadStore(str(self.root), ID_SECRET)
+        self.store = KnowledgeReadStore(str(self.root))
         self.password_file = self.base / "password"
         self.password_file.write_text("synthetic-test-password-2026\n")
         self.password_file.chmod(0o600)
@@ -83,7 +83,7 @@ class KnowledgeReadTests(unittest.TestCase):
     def test_search_requires_nonempty_bounded_query_and_limit(self):
         self.write("note.md", "# Synthetic\nknowledge token")
         self.login()
-        with patch("secondbrain_core.modules.knowledge_read.os.listdir", side_effect=AssertionError("invalid query scanned root")):
+        with patch("secondbrain_core.modules.knowledge_read.os.scandir", side_effect=AssertionError("invalid query scanned root")):
             for params in ({}, {"q": "   "}, {"q": "x" * 201}, {"q": "synthetic", "limit": 0},
                            {"q": "synthetic", "limit": 51}):
                 response = self.client.get("/api/knowledge/search", params=params, headers=self.headers)
@@ -116,6 +116,57 @@ class KnowledgeReadTests(unittest.TestCase):
         self.assertEqual(after, before)
         self.assertEqual(sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*")), directory_before)
 
+    def test_store_ids_use_independent_process_key_and_expire_across_instances(self):
+        note = self.write("keyed.md", "# Synthetic key\n")
+        self.assertEqual(len(self.store._id_secret), 32)
+        self.login()
+        item_id = self.client.get("/api/knowledge/search?q=Synthetic", headers=self.headers).json()["items"][0]["id"]
+        other_store = KnowledgeReadStore(str(self.root))
+        self.assertNotEqual(other_store._id_secret, self.store._id_secret)
+        self.assertNotEqual(item_id, _token("keyed.md", hashlib.sha256(note.read_bytes()).hexdigest(), other_store._id_secret))
+        with self.assertRaises(Exception) as unavailable:
+            other_store.detail(item_id)
+        self.assertEqual(getattr(unavailable.exception, "status_code", None), 404)
+
+    def test_search_stops_at_entry_budget_without_materializing_directory(self):
+        yielded = []
+
+        class LazyEntries:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                for index in range(2500):
+                    yielded.append(index)
+                    yield SimpleNamespace(name=f"missing-{index}.txt")
+
+        self.login()
+        with patch("secondbrain_core.modules.knowledge_read.os.listdir",
+                   side_effect=AssertionError("unbounded listdir must not be used")):
+            with patch("secondbrain_core.modules.knowledge_read.os.scandir", return_value=LazyEntries()):
+                response = self.client.get("/api/knowledge/search?q=not-present", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "truncated")
+        self.assertEqual(response.json()["items"], [])
+        self.assertEqual(len(yielded), 2000)
+
+    def test_malformed_ids_are_404_on_detail_and_source_http_routes(self):
+        self.login()
+        malformed = (
+            "v1.A." + "0" * 32,
+            "v1.%%%." + "0" * 32,
+            "v1.__8." + "0" * 32,  # valid base64url, invalid UTF-8 payload
+        )
+        for item_id in malformed:
+            with self.subTest(item_id=item_id):
+                detail = self.client.get(f"/api/knowledge/items/{item_id}", headers=self.headers)
+                source = self.client.get(f"/api/knowledge/items/{item_id}/source", headers=self.headers)
+                self.assertEqual(detail.status_code, 404, detail.text)
+                self.assertEqual(source.status_code, 404, source.text)
+
     def test_no_implicit_search_and_detail_reads_only_the_selected_file(self):
         selected = self.write("nested/selected.md", "# Selected\n\nSynthetic body.\n")
         other = self.write("other.md", "# Other\n\nSynthetic body.\n")
@@ -124,7 +175,7 @@ class KnowledgeReadTests(unittest.TestCase):
         with patch.object(self.auth, "require_action", wraps=self.auth.require_action) as require_action:
             found = self.client.get("/api/knowledge/search?q=Selected", headers=self.headers).json()["items"][0]
             require_action.assert_any_call(unittest.mock.ANY, "knowledge.read")
-        with patch("secondbrain_core.modules.knowledge_read.os.listdir", side_effect=AssertionError("detail enumerated root")):
+        with patch("secondbrain_core.modules.knowledge_read.os.scandir", side_effect=AssertionError("detail enumerated root")):
             detail = self.store.detail(found["id"])
             source = self.store.source(found["id"])
         response = self.client.get(f"/api/knowledge/items/{found['id']}", headers=self.headers)
@@ -149,7 +200,7 @@ class KnowledgeReadTests(unittest.TestCase):
         ids = {}
         for name, content in samples.items():
             path = self.write(name, content)
-            ids[name] = _token(name, hashlib.sha256(path.read_bytes()).hexdigest(), ID_SECRET)
+            ids[name] = _token(name, hashlib.sha256(path.read_bytes()).hexdigest(), self.store._id_secret)
         self.login()
         for name in ("claim.md", "fake.md", "mismatch.md", "capture.md", "promoted.md"):
             result = self.client.get(f"/api/knowledge/items/{ids[name]}/source", headers=self.headers)
@@ -179,25 +230,25 @@ class KnowledgeReadTests(unittest.TestCase):
         for relative in ("../outside.md", "/etc/passwd", "nested/../../outside.md", "%2e%2e/outside.md",
                          "%252e%252e/outside.md", "linked.md", "linked-dir/outside.md", "linked-hard.md",
                          "large.md", "invalid.md"):
-            response = self.client.get(f"/api/knowledge/items/{_token(relative, '0' * 64, ID_SECRET)}", headers=self.headers)
+            response = self.client.get(f"/api/knowledge/items/{_token(relative, '0' * 64, self.store._id_secret)}", headers=self.headers)
             self.assertIn(response.status_code, {404, 413, 422}, relative)
         self.assertEqual(outside.read_text(), "# Outside secret")
         self.assertTrue(large.exists())
 
     def test_missing_root_and_stale_or_renamed_item_are_deterministic(self):
-        absent = KnowledgeReadStore(str(self.base / "not-created"), ID_SECRET)
+        absent = KnowledgeReadStore(str(self.base / "not-created"))
         with self.assertRaises(Exception) as unavailable:
             absent.search("query", 10)
         self.assertEqual(getattr(unavailable.exception, "status_code", None), 503)
         self.assertFalse((self.base / "not-created").exists())
         original = self.write("stable.md", "# Original\n")
-        item_id = _token("stable.md", hashlib.sha256(original.read_bytes()).hexdigest(), ID_SECRET)
+        item_id = _token("stable.md", hashlib.sha256(original.read_bytes()).hexdigest(), self.store._id_secret)
         original.write_text("# Changed\n")
         with self.assertRaises(Exception) as conflict:
             self.store.detail(item_id)
         self.assertEqual(getattr(conflict.exception, "status_code", None), 409)
         self.assertEqual(getattr(conflict.exception, "detail", None), "Knowledge item changed; search again")
-        current_id = _token("stable.md", hashlib.sha256(original.read_bytes()).hexdigest(), ID_SECRET)
+        current_id = _token("stable.md", hashlib.sha256(original.read_bytes()).hexdigest(), self.store._id_secret)
         self.assertEqual(self.store.detail(current_id)["sha256"], hashlib.sha256(b"# Changed\n").hexdigest())
         original.rename(self.root / "renamed.md")
         with self.assertRaises(Exception) as missing:
@@ -207,7 +258,7 @@ class KnowledgeReadTests(unittest.TestCase):
 
     def test_tampered_item_identifier_and_symlinked_root_are_rejected(self):
         note = self.write("safe.md", "# Safe\n")
-        original_id = _token("safe.md", hashlib.sha256(note.read_bytes()).hexdigest(), ID_SECRET)
+        original_id = _token("safe.md", hashlib.sha256(note.read_bytes()).hexdigest(), self.store._id_secret)
         version, payload, signature = original_id.split(".")
         altered = f"{version}.{payload}.{('0' if signature[0] != '0' else '1') + signature[1:]}"
         with self.assertRaises(Exception) as invalid:
@@ -215,7 +266,7 @@ class KnowledgeReadTests(unittest.TestCase):
         self.assertEqual(getattr(invalid.exception, "status_code", None), 404)
         root_link = self.base / "knowledge-link"
         root_link.symlink_to(self.root, target_is_directory=True)
-        linked_store = KnowledgeReadStore(str(root_link), ID_SECRET)
+        linked_store = KnowledgeReadStore(str(root_link))
         with self.assertRaises(Exception) as unavailable:
             linked_store.search("Safe", 10)
         self.assertEqual(getattr(unavailable.exception, "status_code", None), 503)
