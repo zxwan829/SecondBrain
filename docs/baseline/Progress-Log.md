@@ -4,6 +4,15 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+
+## 2026-10-18 — M1 固定源码正式 App-only 部署
+
+- 按用户明确授权，部署固定源码 `74d698dc97dd9df423664141b80fd8003fbca534` 对应已验证候选 `secondbrain-app:m1-74d698dc-notes`，Image ID `sha256:4adcf9cfe3f6257c733efa911455ca02653783ba763f9e2f512f4d3582694ce1`。未重新构建；仅重建 App，Compose 命令使用 `--no-deps --no-build --force-recreate --wait --wait-timeout 120`。App 在约 31 秒内 Healthy，RestartCount 0。
+- 切换前/后 Compose SHA-256 分别为 `9c0932c04d6984cd2e491738d51eb6235d7182ccfca8146678fc18cdabe6097d` / `5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80`。结构差异仅为 App image 和两项 Notes 配置。精确切换前快照位于 `/volume1/docker/secondbrain/rollback/m1-app-only-20261018T072428Z/compose-before.yaml`，目录 0700、文件 0600，哈希与切换前正式 Compose 一致。
+- Notes Drafts 仅在现有 Core-state RW 挂载中建立空目录，容器路径 `/var/lib/secondbrain-core/notes-drafts`，owner/mode `1026:100 / 0700`；授权根 `{}`，未扩大真实 Vault、Knowledge、Private 或 Projects 授权。Promote 保持关闭，原挂载权限边界未变。
+- GET smoke：`/health`、`/chat/blank`、入口 JS/CSS、Notes JS chunk 均 HTTP 200；匿名 Chat API 为 401 JSON。Hermes/Guard 容器 ID、镜像 ID、StartedAt 与 RestartCount 均未变。没有回滚。
+- 未执行业务验收：无生产 Session/Journal/Task/Inbox/Notes 记录、无模型调用、无私人正文读取。D084 根因 UNKNOWN，业务验收仍未完成。部署事实与脱敏证据已提交 Issue #66；Issue #44 评论审批限制未绕过。当前状态文档校准通过独立文档 PR 提交，等待 A 主线复审。
+
 ## 2026-10-18 — D085-C2c-1 PR #63 崩溃恢复与并发补测
 
 - 按 PR #63 Review #5561132224 与评论 #6244818115，在原 Worktree/分支补充 Journal、Review 两类故障恢复和同 proposal 并发执行合成测试。故障注入覆盖目标已持久化、Core `finish_execution` 尚未调用后以新 Core/Capture store 重启；同一预览恢复到原 target ID、单一产物、一条 attempt 和一致成功审计。并发测试在两请求都越过 Core reservation 后同步进入目标接口，验证两响应为 200、仅一个新建/另一个 duplicate、目标唯一，后续重试为 duplicate。
