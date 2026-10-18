@@ -2,7 +2,6 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./api/home', () => ({ fetchHome: vi.fn(async () => ({})) }));
 vi.mock('./MarkdownEditor', () => ({
   MarkdownEditor: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <textarea aria-label="合成 Markdown 编辑器" value={value} onChange={(event) => onChange(event.target.value)} />,
 }));
@@ -14,6 +13,7 @@ import { App } from './App';
 
 const syntheticCollections = { collections: [{ id: 'drafts', kind: 'drafts' }] };
 const singleDraftId = 'ec5467a3-3087-45a2-befd-74038d08830c';
+const secondDraftId = 'acf4e33a-349f-4d8f-84a5-cec5304ae100';
 
 function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>) {
   const calls: string[] = [];
@@ -21,6 +21,7 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>) {
     const url = String(input);
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+    if (url === '/api/home') return new Response('{}', { status: 200 });
     if (url === '/api/notes') return new Response(JSON.stringify(notesStatus === 200 ? syntheticCollections : { detail: 'synthetic gate denial' }), { status: notesStatus });
     if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: 'synthetic.md', title: '合成笔记' }] }), { status: 200 });
     if (url === `/api/notes/drafts/${singleDraftId}`) return new Response(JSON.stringify({ collection: 'drafts', path: singleDraftId, content: '# 指定合成 Draft\n\nB1 synthetic only.\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] }), { status: 200 });
@@ -85,8 +86,54 @@ describe('Notes application navigation gate', () => {
     expect(await screen.findByRole('heading', { name: '指定合成 Draft' })).toBeTruthy();
     await waitFor(() => expect(calls.some((url) => url.startsWith('/api/inbox/proposals?source_kind=notes&'))).toBe(true));
     expect(calls).toContain(`/api/notes/drafts/${singleDraftId}`);
+    expect(calls).not.toContain('/api/home');
     expect(calls.some((url) => url === '/api/notes' || url === '/api/notes/drafts' || url === '/api/inbox?limit=100')).toBe(false);
     expect(calls.filter((url) => url === `/api/notes/drafts/${singleDraftId}`)).toHaveLength(1);
+  });
+
+  it('keeps ordinary Home loading unchanged', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+    await waitFor(() => expect(calls).toContain('/api/home'));
+  });
+
+  it('isolates rapid source changes when an older exact Notes read returns last', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls: string[] = [];
+    let finishFirstRead!: (response: Response) => void;
+    const firstRead = new Promise<Response>((resolve) => { finishFirstRead = resolve; });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session' || url === '/api/home') return new Response('{}', { status: 200 });
+      if (url === `/api/notes/drafts/${singleDraftId}`) return firstRead;
+      if (url === `/api/notes/drafts/${secondDraftId}`) return new Response(JSON.stringify({ collection: 'drafts', path: secondDraftId, content: '# New source B\n', etag: 'b'.repeat(64), read_only: false, safety_reasons: [] }), { status: 200 });
+      if (url.startsWith('/api/inbox/proposals?')) return new Response(JSON.stringify({ proposals: [] }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt(`/inbox/source?collection=drafts&path=${singleDraftId}`);
+    await waitFor(() => expect(calls).toContain(`/api/notes/drafts/${singleDraftId}`));
+
+    history.pushState({}, '', `/inbox/source?collection=drafts&path=${secondDraftId}`);
+    await act(async () => { window.dispatchEvent(new PopStateEvent('popstate', { state: {} })); });
+    expect(await screen.findByRole('heading', { name: 'New source B' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '指定合成 Draft' })).toBeNull();
+
+    await act(async () => {
+      finishFirstRead(new Response(JSON.stringify({ collection: 'drafts', path: singleDraftId, content: '# Old source A\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] }), { status: 200 }));
+      await firstRead;
+    });
+    expect(await screen.findByRole('heading', { name: 'New source B' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Old source A' })).toBeNull();
+    expect(calls.filter((url) => url.startsWith('/api/notes/drafts/'))).toEqual([
+      `/api/notes/drafts/${singleDraftId}`, `/api/notes/drafts/${secondDraftId}`,
+    ]);
+    const proposalReads = calls.filter((url) => url.startsWith('/api/inbox/proposals?'));
+    expect(proposalReads).toHaveLength(1);
+    expect(new URLSearchParams(proposalReads[0].split('?')[1]).get('source_id')).toBe(`drafts:${secondDraftId}`);
+    expect(calls.some((url) => url === '/api/home')).toBe(false);
   });
 
   it('fails closed for an invalid single-source URL without reading a Draft or Inbox source', async () => {

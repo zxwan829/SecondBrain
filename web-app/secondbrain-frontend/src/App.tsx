@@ -287,6 +287,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [notesAvailable, setNotesAvailable] = useState(false);
   const [notesGateChecked, setNotesGateChecked] = useState(!enableNotes);
   const isSingleSourceInboxPath = location.pathname === '/inbox/source';
+  const singleSource = isSingleSourceInboxPath ? singleDraftSourceFromSearch(location.search) : null;
   const notesNavigationGuard = useRef<(() => boolean) | null>(null);
   const navigationIndex = useRef(typeof history.state?.sbNavigationIndex === 'number' ? history.state.sbNavigationIndex as number : 0);
   const t = messages[locale];
@@ -296,10 +297,13 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     document.documentElement.lang = locale;
   }, [locale]);
   useEffect(() => {
+    // A direct single-source Inbox visit must not load Home, whose Core response
+    // aggregates unrelated Review and Knowledge content.
+    if (location.pathname === '/inbox/source') return;
     let mounted = true;
     fetchHome().then((data) => { if (mounted) setHome(data); }).catch(() => { if (mounted) setError(true); });
     return () => { mounted = false; };
-  }, []);
+  }, [isSingleSourceInboxPath]);
   const registerNotesNavigationGuard = useCallback((guard: (() => boolean) | null) => {
     notesNavigationGuard.current = guard;
   }, []);
@@ -429,7 +433,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           }} /></Suspense>
           : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
           : page === 'inbox-source' ? (enableNotes && (notesAvailable || isSingleSourceInboxPath)
-            ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading selected Draft…' : '正在加载所选 Draft…'}</div>}><UnifiedInboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} showSyntheticCaptureDemo={false} singleSourceMode singleSource={singleDraftSourceFromSearch(location.search)} /></Suspense>
+            ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading selected Draft…' : '正在加载所选 Draft…'}</div>}><UnifiedInboxPage key={singleSource ? `${singleSource.collection}:${singleSource.path}` : 'invalid-source'} locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} showSyntheticCaptureDemo={false} singleSourceMode singleSource={singleSource} /></Suspense>
             : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
           : page === 'today' ? <TaskPage locale={locale} /> : page === 'home' ? <>
         <header className="workspace-header">
