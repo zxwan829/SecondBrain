@@ -7,7 +7,7 @@ export type PromotePreviewRequest = {
 export type PromotePreview = {
   preview_id: string;
   request_id: string;
-  expires_at?: string;
+  expires_at: string;
   source_sha256: string;
   target_filename: string;
   target_precondition: Record<string, unknown>;
@@ -56,12 +56,29 @@ function isSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
 }
 
+function isAbsoluteIsoDateTime(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (!match) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, , offsetHourText, offsetMinuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const daysInMonth = [31, (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28,
+    31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]
+    || Number(hourText) > 23 || Number(minuteText) > 59 || Number(secondText) > 59
+    || (offsetHourText !== undefined && (Number(offsetHourText) > 23 || Number(offsetMinuteText) > 59))) return false;
+  return Number.isFinite(Date.parse(value));
+}
+
 function parsePreview(value: unknown): PromotePreview {
   if (!isRecord(value) || typeof value.preview_id !== 'string' || !value.preview_id
     || typeof value.request_id !== 'string' || !value.request_id
-    || (value.expires_at !== undefined && (typeof value.expires_at !== 'string' || !Number.isFinite(Date.parse(value.expires_at))))
+    || !isAbsoluteIsoDateTime(value.expires_at)
     || !isSha256(value.source_sha256) || typeof value.target_filename !== 'string' || !value.target_filename
-    || !isRecord(value.target_precondition) || typeof value.source_markdown !== 'string'
+    || !isRecord(value.target_precondition) || typeof value.target_precondition.exists !== 'boolean'
+    || value.target_precondition.exists !== false || typeof value.source_markdown !== 'string'
     || typeof value.projected_markdown !== 'string' || !isSha256(value.output_sha256)
     || !(typeof value.change_summary === 'string'
       || (Array.isArray(value.change_summary) && value.change_summary.every((entry) => typeof entry === 'string')))) {
@@ -70,13 +87,17 @@ function parsePreview(value: unknown): PromotePreview {
   return value as unknown as PromotePreview;
 }
 
-function parseOperation(value: unknown): PromoteOperation {
+function parseOperation(value: unknown, expectedRequestId: string, expectedOutputSha256: string): PromoteOperation {
   const statuses = ['confirmed', 'claimed', 'promoting', 'promoted', 'already_promoted', 'recovery_required', 'failed'];
-  if (!isRecord(value) || typeof value.request_id !== 'string' || !value.request_id
+  if (!isRecord(value) || typeof value.request_id !== 'string' || value.request_id !== expectedRequestId
     || typeof value.status !== 'string' || !statuses.includes(value.status)
     || (value.output_sha256 !== undefined && !isSha256(value.output_sha256))
     || (value.error_code !== undefined && (typeof value.error_code !== 'string' || !/^[a-z0-9_]{1,64}$/i.test(value.error_code)))) {
     throw new PromoteApiError(502, 'invalid_operation_response');
+  }
+  if ((value.status === 'promoted' || value.status === 'already_promoted')
+    && (!isSha256(value.output_sha256) || value.output_sha256.toLowerCase() !== expectedOutputSha256.toLowerCase())) {
+    throw new PromoteApiError(502, 'operation_output_mismatch');
   }
   return value as unknown as PromoteOperation;
 }
@@ -94,9 +115,9 @@ export const promoteApi = {
     return preview;
   },
 
-  async unlock(password: string, signal: AbortSignal): Promise<void> {
+  async unlock(passphrase: string, signal: AbortSignal): Promise<void> {
     const value = await requestJson('/api/promote/auth/unlock', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passphrase }),
     }, signal);
     if (!isRecord(value) || !['ok', 'unlocked'].includes(String(value.status))) {
       throw new PromoteApiError(502, 'invalid_unlock_response');
@@ -122,7 +143,7 @@ export const promoteApi = {
     }
   },
 
-  async operation(requestId: string, signal: AbortSignal): Promise<PromoteOperation> {
-    return parseOperation(await requestJson(`/api/promote/operations/${encodeURIComponent(requestId)}`, {}, signal));
+  async operation(requestId: string, expectedOutputSha256: string, signal: AbortSignal): Promise<PromoteOperation> {
+    return parseOperation(await requestJson(`/api/promote/operations/${encodeURIComponent(requestId)}`, {}, signal), requestId, expectedOutputSha256);
   },
 };

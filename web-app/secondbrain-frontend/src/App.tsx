@@ -976,6 +976,7 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
       setDetail({ ...result, captured_at: result.captured_at ?? item.captured_at ?? null });
     } catch (error) {
       if (controller.signal.aborted || sequence !== detailRequestSequence.current) return;
+      setDetail(null);
       const statusCode = (error as Error & { status?: number }).status;
       setStatus(statusCode === 401 ? t.coreSessionExpired : error instanceof Error ? apiFailureLabel(error.message, statusCode ?? 0, locale, 'review') : t.coreConnectionFailed);
       if (statusCode === 401) window.location.reload();
@@ -1011,7 +1012,9 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
   }, [detail?.review_path, mobileListOpen]);
 
   const selectReview = (item: ReviewItem) => {
+    setDetail(null);
     setPromotionSelectedPath(item.review_path);
+    setStatus(locale === 'en' ? 'Loading selected Review…' : '正在读取所选 Review…');
     const query = new URLSearchParams({ review_path: item.review_path });
     pushHistory(`/review?${query}`);
     setMobileListOpen(false);

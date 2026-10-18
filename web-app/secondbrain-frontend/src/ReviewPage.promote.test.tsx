@@ -53,7 +53,7 @@ describe('Review page controlled Promote wiring', () => {
     expect(await screen.findByRole('button', { name: '准备正式入库预览' })).toBeTruthy();
     expect(calls.some((call) => call.url.startsWith('/api/promote/review/preview'))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: '准备正式入库预览' }));
-    expect(await screen.findByText('Exact projected Markdown')).toBeTruthy();
+    expect(await screen.findByLabelText('拟入库 Markdown 原文')).toBeTruthy();
     const previewCall = calls.find((call) => call.url === '/api/promote/review/preview');
     expect(previewCall).toBeTruthy();
     expect(JSON.parse(String(previewCall?.init?.body))).toEqual({
@@ -96,5 +96,39 @@ describe('Review page controlled Promote wiring', () => {
     expect(screen.getByText('Synthetic Beta body')).toBeTruthy();
     expect(screen.queryByText('Synthetic Alpha stale body')).toBeNull();
     expect(calls.some((url) => url.startsWith('/api/promote/review/preview'))).toBe(false);
+  });
+
+  it('clears the previous detail immediately and keeps it unavailable when the newly selected Review fails', async () => {
+    const first = { ...review, review_path: '10-Review/synthetic-a.md', title: 'Synthetic Alpha', content: '# Synthetic Alpha body' };
+    const second = { ...review, review_path: '10-Review/synthetic-b.md', title: 'Synthetic Beta' };
+    let failSecond!: (response: Response) => void;
+    const pendingSecond = new Promise<Response>((resolve) => { failSecond = resolve; });
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/promote/review/items') return Promise.resolve(json({ items: [first, second] }));
+      if (url === '/api/inbox?limit=200') return Promise.resolve(json({ items: [] }));
+      if (url === '/api/promote/review/items/10-Review/synthetic-a.md') return Promise.resolve(json(first));
+      if (url === '/api/promote/review/items/10-Review/synthetic-b.md') return pendingSecond;
+      if (url === '/api/promote/status') return Promise.resolve(json({ promote_enabled: true }));
+      return Promise.resolve(json({}, 404));
+    });
+    render(<ReviewPage locale="en" onBack={() => undefined} />);
+    expect(await screen.findByText('Synthetic Alpha body')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Defer' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic Beta/ }));
+
+    expect(screen.queryByText('Synthetic Alpha body')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Defer' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Prepare exact Promote preview' })).toBeNull();
+    expect(screen.getByText('Loading selected Review…')).toBeTruthy();
+
+    await act(async () => { failSecond(json({ detail: 'synthetic failure' }, 500)); await pendingSecond; });
+    expect(screen.queryByText('Synthetic Alpha body')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Defer' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Prepare exact Promote preview' })).toBeNull();
+    expect(calls.some((url) => url === '/api/promote/review/defer')).toBe(false);
+    expect(calls.some((url) => url === '/api/promote/review/preview')).toBe(false);
+    expect(calls.some((url) => url === '/api/promote/review/confirm')).toBe(false);
   });
 });
