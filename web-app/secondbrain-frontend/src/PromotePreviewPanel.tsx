@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { promoteApi, PromoteApiError, type PromoteOperation, type PromotePreview } from './api/promote';
-import { ReviewMarkdown } from './ReviewMarkdown';
 
 type Locale = 'zh-CN' | 'en';
 type Props = {
@@ -49,7 +48,7 @@ export function PromotePreviewPanel({ locale, reviewPath, reviewSha256, targetFi
   const en = locale === 'en';
   const [phase, setPhase] = useState<Phase>('idle');
   const [preview, setPreview] = useState<PromotePreview | null>(null);
-  const [password, setPassword] = useState('');
+  const [passphrase, setPassphrase] = useState('');
   const [unlocked, setUnlocked] = useState(false);
   const [operation, setOperation] = useState<PromoteOperation | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
@@ -111,14 +110,14 @@ export function PromotePreviewPanel({ locale, reviewPath, reviewSha256, targetFi
   }
 
   async function unlock() {
-    if (!preview || !promoteEnabled || busy || !password) return;
-    const submittedPassword = password;
-    setPassword('');
+    if (!preview || !promoteEnabled || busy || !passphrase) return;
+    const submittedPassphrase = passphrase;
+    setPassphrase('');
     const { controller, sequence } = beginRequest();
     setPhase('unlocking');
     setErrorStatus(null);
     try {
-      await promoteApi.unlock(submittedPassword, controller.signal);
+      await promoteApi.unlock(submittedPassphrase, controller.signal);
       if (!isCurrent(sequence, controller)) return;
       unlockedRef.current = true;
       setUnlocked(true);
@@ -157,7 +156,7 @@ export function PromotePreviewPanel({ locale, reviewPath, reviewSha256, targetFi
     setPhase(nextPhase);
     setErrorStatus(null);
     try {
-      const result = await promoteApi.operation(preview.request_id, controller.signal);
+      const result = await promoteApi.operation(preview.request_id, preview.output_sha256, controller.signal);
       if (!isCurrent(sequence, controller)) return;
       setOperation(result);
       setOutcomeUnknown(false);
@@ -206,7 +205,7 @@ export function PromotePreviewPanel({ locale, reviewPath, reviewSha256, targetFi
 
   async function readOperationAfterConfirm(sequence: number, controller: AbortController) {
     try {
-      const result = await promoteApi.operation(preview!.request_id, controller.signal);
+      const result = await promoteApi.operation(preview!.request_id, preview!.output_sha256, controller.signal);
       if (!isCurrent(sequence, controller)) return;
       setOperation(result);
       setOutcomeUnknown(false);
@@ -256,16 +255,16 @@ export function PromotePreviewPanel({ locale, reviewPath, reviewSha256, targetFi
       </dl>
       <div className="promote-change-summary"><h4>{en ? 'Server-reported changes' : '服务端变更说明'}</h4><ul>{markdownChangeSummary(preview.change_summary).map((line, index) => <li key={index}>{line}</li>)}</ul></div>
       <div className="promote-markdown-grid">
-        <section><h4>{en ? 'Exact source Markdown' : '精确来源 Markdown'}</h4><ReviewMarkdown source={preview.source_markdown} /></section>
-        <section><h4>{en ? 'Exact projected Markdown' : '精确拟入库 Markdown'}</h4><ReviewMarkdown source={preview.projected_markdown} /></section>
+        <section><h4>{en ? 'Exact source Markdown' : '精确来源 Markdown'}</h4><pre className="promote-markdown-raw" aria-label={en ? 'Exact source Markdown' : '来源 Markdown 原文'}>{preview.source_markdown}</pre></section>
+        <section><h4>{en ? 'Exact projected Markdown' : '精确拟入库 Markdown'}</h4><pre className="promote-markdown-raw" aria-label={en ? 'Exact projected Markdown' : '拟入库 Markdown 原文'}>{preview.projected_markdown}</pre></section>
       </div>
 
       {preview && !unlocked && promoteEnabled && <form className="promote-unlock-form" onSubmit={(event) => { event.preventDefault(); void unlock(); }}>
-        <label htmlFor="promote-independent-password">{en ? 'Independent Promote password' : '独立正式入库口令'}</label>
-        <input id="promote-independent-password" type="password" autoComplete="off" value={password}
-          onChange={(event) => setPassword(event.target.value)} disabled={busy} />
+        <label htmlFor="promote-independent-passphrase">{en ? 'Independent Promote passphrase' : '独立正式入库口令'}</label>
+        <input id="promote-independent-passphrase" type="password" autoComplete="off" value={passphrase}
+          onChange={(event) => setPassphrase(event.target.value)} disabled={busy} />
         <small>{en ? 'This is separate from App sign-in. It is not saved in browser storage.' : '此口令独立于 App 登录，不会保存到浏览器存储。'}</small>
-        <button type="submit" className="promote-primary" disabled={busy || !password || expired}>{phase === 'unlocking' ? (en ? 'Unlocking…' : '正在解锁…') : (en ? 'Unlock Promote' : '独立解锁')}</button>
+        <button type="submit" className="promote-primary" disabled={busy || !passphrase || expired}>{phase === 'unlocking' ? (en ? 'Unlocking…' : '正在解锁…') : (en ? 'Unlock Promote' : '独立解锁')}</button>
       </form>}
 
       {unlocked && <div className="promote-confirm-box">
