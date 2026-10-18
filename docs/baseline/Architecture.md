@@ -76,7 +76,7 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 
 对话中的“记一下/写日记”按 D086 先由 Core 保存原文至统一 Inbox；用户确认形成日记后再调用 Core 专用 Journal API 新增/按日期追加，无需正式 Knowledge Promote。现有显式命令直写行为是待调整实现，不能视作符合新入口顺序。“添加待办”仍走独立 Core Task 语义 API；普通 Agent 无权覆盖历史 Journal 内容。待办从同一时间轴演进，增改状态和提醒通知必须以持久状态/实际送达证据为准。各数据根与实现状态见 `00-CURRENT.md` 和 `Environment-Baseline.md`，不可根据 API 存在推断已部署。
 
-**D081-D083 Core 合约（已在并行开发分支实现，尚未集成到 main 或部署）：** Journal 使用可选配置 `SB_JOURNAL_ROOT`，存储按日期追加的 JSONL；Core 提供 `GET /api/journal/{day}` 与 `POST /api/journal/entries`，分别校验 `journal.read` / `journal.append`。Task 使用独立可选配置 `SB_TASK_ROOT`，以 `tasks.json` 保存待办和变更历史；Core 提供 `GET/POST /api/tasks` 及 `PATCH /api/tasks/{task_id}`，校验 `task.read` / `task.write`，创建支持幂等键，修改使用乐观版本检查。未配置对应数据根时 API fail-closed，不创建数据目录。生产部署前必须为 Core 单独配置各自受限 RW 根；Hermes 不取得这两个路径的写权限。
+**D081-D083 Core 合约（已通过 PR #45 合入 main，随 M1 App 部署；业务验收分模块、分镜像记录在 CURRENT）：** Journal 使用可选配置 `SB_JOURNAL_ROOT`，存储按日期追加的 JSONL；Core 提供 `GET /api/journal/{day}` 与 `POST /api/journal/entries`，分别校验 `journal.read` / `journal.append`。Task 使用独立可选配置 `SB_TASK_ROOT`，以 `tasks.json` 保存待办和变更历史；Core 提供 `GET/POST /api/tasks` 及 `PATCH /api/tasks/{task_id}`，校验 `task.read` / `task.write`，创建支持幂等键，修改使用乐观版本检查。未配置对应数据根时 API fail-closed，不创建数据目录。实际运行需由 Core 配置各自受限 RW 根并只读核验；Hermes 不取得这两个路径的写权限。M1 已有 Journal/Task 的有限合成业务证据，但不能依代码存在推断所有生产场景及新镜像重测通过；当前配置和验收归 `Environment-Baseline.md` 与 `00-CURRENT.md`。
 
 **Chat 显式意图（历史实现说明，现行状态见 CURRENT）：** 只有输入开头匹配 Journal 或 Task 的明确命令才调用上述 API；Journal/Task 成功时不创建额外 Hermes Session/Run，普通 Chat 继续走 Hermes Run。Journal 保留完整原文并追加；Task 的通知/提醒送达尚未实现。路由器匹配是入口分流，不替代 Core 的会话鉴权、输入校验、幂等和专用存储边界。D086 要求后续调整 Journal 对话入口，使原文先经 Core Inbox，且转为 Journal 须用户确认。
 
@@ -96,7 +96,7 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 
 - App Session 是浏览器用户操作的服务端认证依据；Core 校验具体操作权限、Origin/Host、版本与幂等，不信任前端传来的身份字段。
 - Hermes Runtime 与 App/Core 的凭据和文件权限必须隔离。Hermes Session 或 Agent 可访问的凭据不能单独证明用户亲自批准。
-- **D078 普通 Chat 文件写入审批实现状态：** 目标是 Guard 在 Hermes 实际工具执行前为每次受支持的通用文件写入发起逐 Run 一次审批，Core 绑定当前用户、Session、Run 和精确参数/目标，拒绝、超时、断线或未授权均不得执行。PR #37 的实现仅覆盖 `write_file` 和单目标 replace `patch`，将未支持写工具与无法绑定目标的多文件 V4A patch fail-closed；该 PR 仍 open、未合入 main，生产不可用，Hermes 真实 API Run 审批恢复链未验证。审批 UI/代码不能作为部署或运行证据。
+- **D078 普通 Chat 文件写入审批实现状态：** 目标是 Guard 在 Hermes 实际工具执行前为每次受支持的通用文件写入发起逐 Run 一次审批，Core 绑定当前用户、Session、Run 和精确参数/目标，拒绝、超时、断线或未授权均不得执行。PR #37 的实现仅覆盖 `write_file` 和单目标 replace `patch`，将未支持写工具与无法绑定目标的多文件 V4A patch fail-closed；原 PR #37 仍 open，**但其已审文件写审批实现已通过集成 PR #45 进入 main 并随 App 部署**；不允许重复合并原 PR。现行权限/工具门禁有有限合成验证，**Hermes 真实 API Run 的完整写审批恢复链仍未验收**。代码合并、审批 UI 可访问和实际真实模型执行是不同证据层。
 - Knowledge 权限边界由只读挂载与 Core 受控写入共同强制；工具级安全根不是操作系统隔离的替代品。
 - 外部模型出站需有明确的数据范围授权、服务端凭据管理和可接受的成本控制；本地估算、`max_tokens`、请求超时或账户级速率限制不能冒充供应商硬费用上限。
 - 自动学习不意味着无限期储存、无条件回忆或向第三方发送数据：限定可用输入、单次 token/延迟/费用预算，允许纠错与撤销；Private 依然绝对排除。
