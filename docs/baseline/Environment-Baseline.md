@@ -15,7 +15,7 @@ type: environment-baseline
 - 部署后 GET smoke（容器内使用现有 Host allowlist，不输出 Host 或响应正文）：`/health` 200；`/chat/blank` 与 `/inbox/source` 200 HTML；入口 JS、CSS、Notes JS chunk 均 200；匿名 Chat API 401 JSON。没有登录生产 Chat 页面或请求业务数据。
 - Hermes/Guard 未重建、重启或修改：Hermes 容器 `057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79`，镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`，running、RestartCount 0、StartedAt `2026-10-17T08:33:24.151798238Z`；切换前后身份一致。Guard 未作为独立容器运行。
 - 即时 App-only 回滚快照：`/volume1/docker/secondbrain/rollback/m1-473948dd-predeploy-20261018T094236Z/compose.yaml`，目录 `0700 root:root`，Compose 与 metadata 文件 `0600 root:root`；快照 Compose SHA-256 与部署前 live 文件完全一致：`5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80`。旧 M1 App 镜像仍存在。未执行回滚，没有恢复或更改 Core-state。
-- **业务验收未在此版本运行。** 没有创建生产 Session、Journal、Task、Inbox、Notes 记录或重试；没有调用模型、读取私人 Session/Vault/Journal/Task 正文。既有 M1 业务验收证据仍按原版本/Issue #66 标注，不由本次 health PASS 替代；D084 历史故障根因 UNKNOWN。部署证据已提交 Issue #66；Issue #44 的评论审批限制未绕过。
+- **部署时尚未开展该镜像的业务验收（时点事实）。** 切换和 smoke 期间没有创建生产 Session、Journal、Task、Inbox、Notes 记录或重试，没有调用模型、读取私人正文。**部署之后** B 线已在同一镜像的精确 B1 合成 Draft 上验证 5 条 Proposal、Journal/Review 各一次受控执行、Project 拒绝及刷新恢复有限 PASS；2026-10-18 用户接受 M1 有限结项，详见 [Issue #66](https://github.com/zxwan829/SecondBrain/issues/66)。该业务验收不表示生产同键重放或完整浏览器 Network 通过；D084 前一镜像合成结果与历史根因 UNKNOWN 继续分开记录。部署 smoke 原始报告不应被改写为部署时已验证业务。
 
 ## 上一生产快照（2026-10-18T07:26:49Z 起；源码 74d698dc，已由 473948dd 替换）
 
@@ -72,7 +72,7 @@ type: environment-baseline
 ## NAS 与 Compose
 
 - NAS：Synology DS920+，DSM 7.4.1 Build 90080；LAN 地址 `192.168.3.27`。本机与路由器网络设置不由 SecondBrain 文档治理修改。
-- 正式 Compose：/volume1/docker/secondbrain/compose.yaml；Compose Project secondbrain；Docker 网络 secondbrain_default。最新 SHA-256 `5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80`，属主/权限 `1026:100 / 0640`。M1 部署只改 App image 与两项 Notes 配置；既有 build context、Hermes、网络、挂载和其他服务未改。
+- 正式 Compose：/volume1/docker/secondbrain/compose.yaml；Compose Project secondbrain；Docker 网络 secondbrain_default。最近一次 2026-10-18 App-only 生产切换后**有证据的 Compose SHA-256** `5d15c9ac51d4bd9f3cd682ef60e4e97d77b5d7e212ae73d0bf5e3126aad0da8d`，属主/权限 `1026:100 / 0640`（依 Codex 当次报告，未于本轮重新连接 NAS）。上次切换**仅改 App image**；前一 Compose SHA `5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80` 是回滚快照的部署前值，**不是现行值**。更早首次 M1 部署才修改 App image 与两项 Notes 配置；既有 build context、Hermes、网络、挂载和其他服务未改。
 - 项目目标为两个服务：`secondbrain-hermes` 与 `secondbrain-app`。Container Manager GUI 曾出现旧容器行/旧定义缓存；最后已记录状态为管理界面定义未完成对齐。当前 GUI 状态未在本次核实，标记 `UNKNOWN`；这是部署管理风险，不改变 Docker 运行态记录。
 
 ## 历史 Stage 1 容器快照（已被 2026-10-17 patched overlay 取代）
@@ -92,6 +92,7 @@ type: environment-baseline
 | App | SecondBrain `10-Review` | `/review` | RW |
 | App | `20-Knowledge` | `/knowledge` | RO |
 | App | Core 私有 state | `/var/lib/secondbrain-core` | RW；目录独立、最小权限 |
+| App | 合成 Notes Drafts（已有 Core state 子目录） | `/var/lib/secondbrain-core/notes-drafts` | 既有 Core-state RW 内，`1026:100 / 0700`；`SB_NOTES_AUTHORIZED_ROOTS={}`，不授权真实 Vault 或新挂载 |
 | App | Personal Memory JSONL（Core 唯一权威） | `/var/lib/secondbrain-core/personal-memory` | `1026:100 / 0700` 专用子目录；仅 App 可写；测试结束后为空 |
 | App | 应用 Secrets | `/run/secrets/...` | RO；UID/GID `1026:100` 持有受限文件 |
 | Hermes | SecondBrain 根 | `/secondbrain` | RO |
@@ -117,6 +118,7 @@ Organizer Core 私有状态位于现有 Core state 挂载内的 `ai-organize` �
 
 ## 现行恢复入口
 
+- **App-only 最近切换前快照：** `/volume1/docker/secondbrain/rollback/m1-473948dd-predeploy-20261018T094236Z/compose.yaml`；目录 0700、文件 0600、原 Compose SHA `5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80`，旧 App 镜像 ID `sha256:4adcf9cfe3f6257c733efa911455ca02653783ba763f9e2f512f4d3582694ce1` 已在部署时核验。**这是受限回滚资产的位置和历史证据，不是可以直接执行的实时恢复命令**；回滚须用户另行授权并先只读核验当前 live Compose、镜像和持久化状态，绝不可覆盖 Core-state、B1 记录或 Hermes。
 - 当前 Hermes 回滚点：`/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/`。包含原 Hermes Compose、插件 manifest、恢复元数据及固定官方旧镜像 tag；镜像标识与校验和见文件顶部“最新核验”。**仅对 Hermes 定向恢复**，须先重新核验实际配置并取得操作授权；不得回滚 App/Core state、D077 JSONL 或其他 NAS 服务。
 - D078 Stage 1、D077 和更早的恢复步骤属于**历史施工证据**，不在本文件提供可直接复制的旧版回滚命令；其原始路径、哈希及复盘见 `Progress-Log.md` 和对应 Issue，不能用作当前自动回滚方案。
 

@@ -1,5 +1,7 @@
 # D085-C1 — Local Notes navigation integration
 
+> **Historical slice contract (2026-10-17):** The feature gate, test commands and release-state statements below describe the original C1 slice, not a current deployment or implementation authorization. C1/Notes navigation was later merged and the Notes-enabled M1 App deployed; M1 was user-accepted **with limited scope** in [Issue #66](https://github.com/zxwan829/SecondBrain/issues/66). Current C1/Notes functionality and business acceptance must be read from [`00-CURRENT.md`](00-CURRENT.md) and the dated [`Environment-Baseline.md`](Environment-Baseline.md); C1's synthetic navigation tests are not equivalent to full Notes/real-Vault validation. M2 planning is [Issue #76](https://github.com/zxwan829/SecondBrain/issues/76).
+
 ## Scope and gates
 
 D085-C1 connects the existing Notes page to the Web App sidebar, `/notes` route, refresh/deep-link handling, and the existing responsive mobile navigation. It does not change the Notes API or Core authorization policy.
