@@ -38,6 +38,19 @@ beforeEach(() => {
       });
       return ok({ proposals: savedProposals, status: 'created' });
     }
+    if (url.startsWith('/api/inbox/proposals/proposal-') && url.endsWith('/execution-preview')) {
+      const body = JSON.parse(String(init?.body || '{}'));
+      return ok({ status: 'ready', proposal_id: 'proposal-journal', kind: 'journal', proposal_version: 2,
+        vocabulary_version: 4, source_summary: { source_kind: 'capture', source_ref: 'capture-synthetic-1', source_version: 'synthetic-etag', source_content_sha256: 'a'.repeat(64) },
+        target_action: 'journal.append', target: { date: body.target_date || '2026-10-18', text: body.target_text || '合成来源正文' }, preview_sha256: 'b'.repeat(64) });
+    }
+    if (url.startsWith('/api/inbox/proposals/proposal-') && url.endsWith('/execute')) {
+      const proposal = savedProposals.find((item) => url.includes(item.proposal_id));
+      if (!proposal) return ok({ detail: 'proposal not found' }, 404);
+      proposal.execution = { status: 'executed', target_uri: 'journal:2026-10-18' };
+      proposal.target_execution_status = 'executed';
+      return ok({ proposal, duplicate: false });
+    }
     if (url.startsWith('/api/inbox/proposals/proposal-') && url.endsWith('/decision')) {
       const proposal = savedProposals.find((item) => url.includes(item.proposal_id));
       if (proposal) { proposal.status = JSON.parse(String(init?.body)).decision; proposal.version += 1; }
@@ -147,6 +160,26 @@ describe('UnifiedInboxPage', () => {
     expect(corrected.type).toBe('头脑风暴');
     expect(corrected.tags).toEqual(['CRM']);
     expect(corrected.unknownTagCandidates).toEqual(['roadmap']);
+  });
+
+  it('requires a separate exact target preview and explicit confirmation after recording approval', async () => {
+    const request = vi.mocked(fetch);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} />);
+    const card = (await screen.findByRole('heading', { name: 'Sprint meeting.md' })).closest('article') as HTMLElement;
+    fireEvent.click(within(card).getByRole('button', { name: '生成确定性 Mock 建议' }));
+    const approve = await within(card).findAllByRole('button', { name: '记录审批（不执行）' });
+    fireEvent.click(approve[0]);
+    expect(await within(card).findByText(/审批记录本身不会执行/)).toBeTruthy();
+    expect(request.mock.calls.some(([url]) => String(url).endsWith('/execute'))).toBe(false);
+    fireEvent.click(within(card).getByRole('button', { name: '准备目标预览' }));
+    const target = await within(card).findByLabelText('目标正文（将按此内容写入）') as HTMLTextAreaElement;
+    expect(target.value).toBe('合成来源正文');
+    expect(within(card).getByRole('button', { name: '确认并执行' })).toBeTruthy();
+    expect(request.mock.calls.some(([url]) => String(url).endsWith('/execute'))).toBe(false);
+    fireEvent.click(within(card).getByRole('button', { name: '确认并执行' }));
+    expect(await within(card).findByText(/已执行 · journal:2026-10-18/)).toBeTruthy();
+    expect(request.mock.calls.filter(([url]) => String(url).endsWith('/execute'))).toHaveLength(1);
+    expect(request.mock.calls.some(([url]) => String(url).includes('/promote/'))).toBe(false);
   });
 
   it('embedded Notes section skips real Capture fetch but allows a synthetic Capture example in the same view', async () => {

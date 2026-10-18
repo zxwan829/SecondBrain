@@ -4,6 +4,19 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-18 — D085-C2c-1 PR #63 崩溃恢复与并发补测
+
+- 按 PR #63 Review #5561132224 与评论 #6244818115，在原 Worktree/分支补充 Journal、Review 两类故障恢复和同 proposal 并发执行合成测试。故障注入覆盖目标已持久化、Core `finish_execution` 尚未调用后以新 Core/Capture store 重启；同一预览恢复到原 target ID、单一产物、一条 attempt 和一致成功审计。并发测试在两请求都越过 Core reservation 后同步进入目标接口，验证两响应为 200、仅一个新建/另一个 duplicate、目标唯一，后续重试为 duplicate。
+- 测试发现 Review 首次成功响应误报 `duplicate=true`（原逻辑把 completed 状态直接当作重复）。CaptureService 现在返回仅供内部路由判定的幂等重放标志，路由清除该内部字段后准确报告首次执行与恢复/重试状态；未改变持久化状态格式和目标内容。
+- Core `tests.test_inbox_proposals tests.test_capture` **38 项通过**；Inbox `UnifiedInboxPage.test.tsx` **7 项通过**；前端 `tsc --noEmit` 与 `vite build` 通过，build 有大型 CanvasEditor chunk 提示；`git diff --check` 通过。PR #63 已转为 Ready for review。本轮仅使用合成数据；未触碰真实 Vault、付费模型或 NAS；未合并、未部署，用户验收待定。
+
+## 2026-10-18 — D085-C2c-1 Journal / Review 受控执行（Draft PR #63）
+
+- 按 Issue #46 最新评论 #6244537788，从 main `3080506b053d3876d292d9199049fd12e3247b88` 建立独立 Worktree/分支。保留 CURRENT 中 D084 唯一 NEXT，以及 main 的 D084、D086 和运行环境记录。
+- 在 C2b 来源绑定审批上增加独立预览和执行确认：旧 `approved_recorded` 不自动执行；执行时检查来源读取权限、Notes ETag/Capture 原件摘要、词库 revision、提议状态与版本、目标动作权限和预览哈希。执行状态/尝试 ID、执行者、目标引用、源/输出摘要、失败码及历史事件由 Core 持久化。
+- Journal 通过专用 JournalStore 追加用户预览的原文及稳定幂等键；Review 通过 CaptureService 的专用可恢复方法写入合成 Raw 并生成 Review，不走 Promote。项目关联显示 NOT IMPLEMENTED 且无执行入口。前端审批后另行展示目标预览与明确确认/重试，不因审批点击而调用目标 API。
+- Core Inbox Proposal/Capture 定向合成测试 **37 项通过**；统一 Inbox 前端定向测试 **7 项通过**；前端 typecheck、build 通过，build 有大型 CanvasEditor chunk 提示；`git diff --check` 通过。代码已 Commit/Push 并建立 Draft PR #63；后续仅提交本次交付状态文档。本记录只证明本地合成开发验证；PR 尚未合并、未部署、未做用户验收；未触碰真实 Vault、付费模型或 NAS。
+
 ## 2026-10-18 — D084 PR #61 App-only 受控部署与浏览器验收阻断
 
 - 依据既有用户授权部署指定候选 `secondbrain-app:d084-pr61-4a58393-full`，Image ID `sha256:e63ab1611b2a30ffd9dd2a9cb901066fa6b2da2e7e85c9c1c9d72dbabac0e4ab`；未重建。候选基于 `4a58393`，执行时 GitHub main 已推进到 `3080506b053d3876d292d9199049fd12e3247b88`（其后的 PR #59 D085-C2b 变更不在候选内）。
@@ -11,7 +24,6 @@
 - 只读 HTTP smoke：在 App 容器内使用现有 Host allowlist（不输出 Host 值）验证 `/health`、`/chat` 为 200，两个 JS 和一个 CSS 资源为 200，匿名 `/api/chat/sessions` 为 401 JSON。Hermes 容器 ID、镜像 ID、StartedAt 与 RestartCount 未变。已核验 PR #49 镜像、旧 D084 App 镜像、现有回滚目录 checksum，并保存切换前 Compose 精确副本；无需回滚。
 - 浏览器验收使用新建 IAB 标签，但登录后页面自动恢复既有 Session，未满足空白合成 Session 条件。自动化可访问性快照意外包含会话列表标签与选中会话的操作卡摘要；未打开其他会话或展开消息正文，未保存这些文本或 Session ID，立即停止并关闭标签页。未创建 Session、写 Journal/Task、重试或调用模型。Journal/Task 操作卡、刷新恢复、会话隔离、幂等均 BLOCKED；历史生产根因 UNKNOWN。没有 App 健康/路由异常，不触发自动回滚。
 - 复用 PR #49 与 PR #61 已通过的测试/构建审查证据；本次不重复完整测试。生产部署与运行 smoke 通过，业务用户验收未完成。Issue #44 评论未提交（此前审批限制保持），状态更新仅进入治理文档待审 PR。
-
 
 ## 2026-10-18 — D084 PR #61 合并后生产元数据只读核验
 

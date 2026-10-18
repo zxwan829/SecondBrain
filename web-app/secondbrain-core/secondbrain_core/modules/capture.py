@@ -4,6 +4,7 @@ Raw evidence is immutable. The capture status journal lives in Core's private
 state directory; Review files reuse the canonical Markdown frontmatter fields.
 """
 import hashlib
+import fcntl
 import http.client
 import ipaddress
 import json
@@ -250,6 +251,14 @@ class CaptureService:
             raise HTTPException(404, "Capture not found")
         return self.state_root / (capture_id + ".json")
 
+    @staticmethod
+    def _fsync_directory(path):
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
     def _write_state(self, value):
         target = self._state_path(value["capture_id"])
         temp = self.state_root / ("." + value["capture_id"] + "." + uuid.uuid4().hex + ".tmp")
@@ -393,6 +402,140 @@ class CaptureService:
         filename = "capture.md" if source_type == "text" else "capture.txt"
         return self.accept_file(filename, text.encode("utf-8"), source_type, context)
 
+    def create_approved_review(self, *, text, title, execution_key, proposal_id,
+                               source_ref, source_version_sha256, captured_at):
+        """Submit an explicitly confirmed Inbox candidate through Capture→Review.
+
+        The deterministic operation ID, Raw name and Review name let a retry
+        after a lost response recover the same immutable target. Existing
+        artifacts are reused only when their bytes match; nothing is overwritten.
+        """
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
+            raise HTTPException(400, "Review text must contain 1-200000 characters")
+        if not isinstance(title, str) or not title.strip() or len(title) > 160:
+            raise HTTPException(400, "Review title must contain 1-160 characters")
+        if (not isinstance(execution_key, str) or not re.fullmatch(r"c2c-[0-9a-f]{32}", execution_key)
+                or not isinstance(proposal_id, str) or not re.fullmatch(r"[0-9a-f]{32}", proposal_id)
+                or not isinstance(source_version_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", source_version_sha256)
+                or not isinstance(source_ref, str) or len(source_ref) > 512):
+            raise HTTPException(400, "Approved Review provenance is invalid")
+        try:
+            datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+        except (AttributeError, ValueError) as exc:
+            raise HTTPException(400, "Approved Review timestamp is invalid") from exc
+
+        operation_digest = hashlib.sha256(execution_key.encode("ascii")).hexdigest()
+        capture_id = operation_digest[:32]
+        raw_name = f"Inbox-Proposal-{capture_id}.md"
+        review_name = f"Inbox-Proposal-{capture_id}.md"
+        raw_data = text.encode("utf-8")
+        raw_digest = hashlib.sha256(raw_data).hexdigest()
+        context = f"approved_proposal={proposal_id}; source={source_ref}; source_sha256={source_version_sha256}"
+        state_path = self._state_path(capture_id)
+        lock_path = self.state_root / ".approved-review-create.lock"
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            lock_info = os.fstat(lock_fd)
+            if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.geteuid() or lock_info.st_mode & 0o077:
+                raise HTTPException(500, "Approved Review creation lock is unsafe")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            existing = self._read_state(state_path) if state_path.exists() else None
+            replayed = existing is not None
+            if existing:
+                if (existing.get("approved_proposal_execution_key") != execution_key
+                        or existing.get("approved_proposal_id") != proposal_id
+                        or existing.get("approved_source_sha256") != source_version_sha256
+                        or existing.get("approved_content_sha256") != raw_digest
+                        or existing.get("title") != title.strip()
+                        or existing.get("raw_path") != raw_name
+                        or existing.get("review_path_hint") != review_name):
+                    raise HTTPException(409, "Approved Review idempotency key belongs to different content")
+                captured_at = existing["captured_at"]
+                state = existing
+            else:
+                state = {"capture_id": capture_id, "source_type": "inbox_proposal_review",
+                         "input_type": "markdown", "captured_at": captured_at,
+                         "updated_at": captured_at, "original_asset": "/knowledge-assets/00-Inbox/" + raw_name,
+                         "raw_path": raw_name, "display_filename": title.strip() + ".md",
+                         "raw_sha256": raw_digest, "review_path": None, "review_sha256": None,
+                         "review_path_hint": review_name, "status": "prepared", "error": None,
+                         "title": title.strip(), "approved_title": title.strip(),
+                         "content_preview": raw_data[:4096].decode("utf-8", errors="replace"),
+                         "capture_context": context,
+                         "approved_proposal_execution_key": execution_key,
+                         "approved_proposal_id": proposal_id,
+                         "approved_source_sha256": source_version_sha256,
+                         "approved_content_sha256": raw_digest}
+                # Persist the operation identity before creating either artifact.
+                self._write_state(state)
+
+            raw_path = self.raw_root / raw_name
+            try:
+                raw_fd = os.open(raw_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            except FileExistsError:
+                try:
+                    info = raw_path.lstat()
+                    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or hashlib.sha256(raw_path.read_bytes()).hexdigest() != raw_digest:
+                        raise HTTPException(409, "Existing approved Raw artifact does not match this operation")
+                except OSError as exc:
+                    raise HTTPException(409, "Existing approved Raw artifact is unsafe") from exc
+            else:
+                try:
+                    with os.fdopen(raw_fd, "wb") as output:
+                        output.write(raw_data)
+                        output.flush()
+                        os.fsync(output.fileno())
+                except OSError as exc:
+                    raise HTTPException(500, "Approved Raw artifact could not be saved safely") from exc
+            try:
+                self._fsync_directory(self.raw_root)
+            except OSError as exc:
+                raise HTTPException(500, "Approved Raw directory could not be synchronized safely") from exc
+            state.update(status="processing", error=None, updated_at=_now())
+            self._write_state(state)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+        process_lock_path = self.state_root / f".{capture_id}.approved-review.lock"
+        process_fd = os.open(process_lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            info = os.fstat(process_fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise HTTPException(500, "Approved Review process lock is unsafe")
+            fcntl.flock(process_fd, fcntl.LOCK_EX)
+            state = self._read_state(state_path)
+            if not state or state.get("approved_proposal_execution_key") != execution_key:
+                raise HTTPException(409, "Approved Review state is unavailable")
+            if state.get("status") == "completed" and state.get("review_path"):
+                self._verify_artifacts(state)
+                state["_idempotent_replay"] = replayed
+                return state
+            try:
+                raw_fd = os.open(raw_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(raw_fd, "rb") as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_UPLOAD_BYTES:
+                        raise HTTPException(409, "Approved Raw artifact is unsafe")
+                    current_raw = stream.read(MAX_UPLOAD_BYTES + 1)
+            except OSError as exc:
+                raise HTTPException(409, "Approved Raw artifact is unavailable") from exc
+            if hashlib.sha256(current_raw).hexdigest() != raw_digest:
+                raise HTTPException(409, "Approved Raw artifact changed")
+            state.update(status="processing", error=None, updated_at=_now())
+            self._write_state(state)
+            self.process(state, current_raw)
+            state = self._read_state(state_path)
+            if state and state.get("review_path") and state.get("review_sha256"):
+                self._verify_artifacts(state)
+            if not state or not state.get("review_path"):
+                raise HTTPException(503, "Capture did not produce a verified Review item")
+            state["_idempotent_replay"] = replayed
+            return state
+        finally:
+            fcntl.flock(process_fd, fcntl.LOCK_UN)
+            os.close(process_fd)
+
     def accept_url(self, url, context=""):
         if not isinstance(url, str) or len(url) > 2048:
             raise HTTPException(400, "A valid URL up to 2048 characters is required")
@@ -465,13 +608,15 @@ class CaptureService:
                 state["processor"] = {"name": "hermes_stt", "provider": provider}
                 content = "## 转写文本\n\n" + transcript
             else:
-                content = raw.decode("utf-8-sig", errors="strict").strip()
-                if not content:
+                decoded = raw.decode("utf-8-sig", errors="strict")
+                if not decoded.strip():
                     raise ValueError("Text file is empty")
-                heading = next((line.lstrip("# ").strip() for line in content.splitlines() if line.startswith("# ") and line.lstrip("# ").strip()), "")
-                if heading:
-                    state["title"] = heading[:300]
-                elif input_type in {"txt", "text"}:
+                if source_type == "inbox_proposal_review":
+                    state["title"] = state.get("approved_title", state["title"])
+                    content = decoded
+                else:
+                    content = decoded.strip()
+                if source_type != "inbox_proposal_review" and input_type in {"txt", "text"}:
                     first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
                     if first_line:
                         state["title"] = first_line[:120]
@@ -524,7 +669,37 @@ class CaptureService:
                 body += f"OCR: {processor.get('name', 'OCR')}; languages: {processor.get('languages', 'unknown')}\n\n"
             elif processor.get("name") == "hermes_stt":
                 body += f"Transcription provider: {processor.get('provider', 'Hermes STT')}\n\n"
-        body += content.strip() + "\n"
+        if state.get("source_type") == "inbox_proposal_review":
+            # C2c stores precisely the text shown in the execution preview.
+            body += content
+        else:
+            body += content.strip() + "\n"
+        hinted_name = state.get("review_path_hint")
+        if isinstance(hinted_name, str):
+            if Path(hinted_name).name != hinted_name or hinted_name in {".", ".."}:
+                raise ValueError("Review target path is invalid")
+            path = self.review_root / hinted_name
+            encoded = body.encode("utf-8")
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            except FileExistsError:
+                try:
+                    existing_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                    with os.fdopen(existing_fd, "rb") as existing:
+                        info = os.fstat(existing.fileno())
+                        if not stat.S_ISREG(info.st_mode) or existing.read() != encoded:
+                            raise ValueError("Existing idempotent Review item does not match")
+                except OSError as exc:
+                    raise ValueError("Existing idempotent Review item is unsafe") from exc
+            else:
+                with os.fdopen(fd, "wb") as output:
+                    output.write(encoded)
+                    output.flush()
+                    os.fsync(output.fileno())
+            self._fsync_directory(self.review_root)
+            state["review_path"] = hinted_name
+            state["review_sha256"] = hashlib.sha256(encoded).hexdigest()
+            return
         # A retry may reproduce the same partial image Review (OCR succeeded
         # while vision remains unavailable). Reuse only the exact already
         # verified, service-linked artifact; never overwrite it. Changed output
