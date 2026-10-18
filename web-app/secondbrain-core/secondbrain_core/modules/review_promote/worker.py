@@ -111,14 +111,10 @@ def _read_audit(fd):
     os.lseek(fd, 0, os.SEEK_SET)
     entries = []
     payload = _read_all(fd)
-    # A process or filesystem error may leave only the last append incomplete.
-    # Repair that torn tail while holding the caller's exclusive flock; any
-    # malformed complete line remains a hard stop for manual investigation.
+    # Preserve incomplete bytes and stop. Automatic truncation could erase the
+    # only evidence of a partially durable promotion event.
     if payload and not payload.endswith(b"\n"):
-        last_complete = payload.rfind(b"\n") + 1
-        os.ftruncate(fd, last_complete)
-        os.fsync(fd)
-        payload = payload[:last_complete]
+        raise PromotionError("Audit log has an incomplete tail; manual recovery required")
     for line in payload.splitlines():
         try:
             entries.append(json.loads(line.decode("utf-8")))
@@ -133,6 +129,8 @@ def _append_audit(fd, record):
     view = memoryview(payload)
     while view:
         written = os.write(fd, view)
+        if written <= 0:
+            raise OSError("short audit write")
         view = view[written:]
     os.fsync(fd)
 
@@ -177,6 +175,10 @@ class PromoteWorker:
             except OSError as exc:
                 raise PromotionError("Unable to securely open audit log") from exc
             try:
+                audit_info = os.fstat(audit_fd)
+                if not stat.S_ISREG(audit_info.st_mode) or audit_info.st_uid != os.geteuid() or \
+                        stat.S_IMODE(audit_info.st_mode) != 0o600:
+                    raise PromotionError("Audit log permissions are unsafe")
                 fcntl.flock(audit_fd, fcntl.LOCK_EX)
                 entries = _read_audit(audit_fd)
                 previous = [e for e in entries if e.get("request_id") == request_id and e.get("event") == "promoted"]
