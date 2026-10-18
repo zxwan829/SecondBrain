@@ -295,6 +295,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname, enableNotes));
   const pageRef = useRef(page);
   pageRef.current = page;
+  const previousHomeEffectPage = useRef(page);
+  const homeRequestStarted = useRef(false);
   const [routeRevision, setRouteRevision] = useState(0);
   const [inboxScope, setInboxScope] = useState<InboxScope>(null);
   const [notesAvailable, setNotesAvailable] = useState(false);
@@ -302,6 +304,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const isSingleSourceInboxPath = location.pathname === '/inbox/source';
   const isInboxRoute = location.pathname === '/inbox' || location.pathname.startsWith('/inbox/');
   const isKnowledgePage = page === 'knowledge';
+  const isHomePage = page === 'home';
   const singleSource = isSingleSourceInboxPath ? singleDraftSourceFromSearch(location.search) : null;
   const notesNavigationGuard = useRef<(() => boolean) | null>(null);
   const navigationIndex = useRef(typeof history.state?.sbNavigationIndex === 'number' ? history.state.sbNavigationIndex as number : 0);
@@ -314,11 +317,19 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   useEffect(() => {
     // Scoped pages must not trigger the broad Home aggregate, which also reads
     // unrelated Review and Knowledge content.
+    const previousPage = previousHomeEffectPage.current;
+    previousHomeEffectPage.current = page;
     if (isKnowledgePage || location.pathname === '/inbox/source' || isInboxRoute) return;
+    const leftKnowledgeForAnotherPage = previousPage === 'knowledge' && !isHomePage;
+    if (leftKnowledgeForAnotherPage) return;
+    const returnedFromInbox = (previousPage === 'inbox' || previousPage === 'inbox-source') && !isInboxRoute;
+    if (homeRequestStarted.current && previousPage !== 'knowledge' && !returnedFromInbox) return;
     let mounted = true;
-    fetchHome().then((data) => { if (mounted) setHome(data); }).catch(() => { if (mounted) setError(true); });
-    return () => { mounted = false; };
-  }, [isKnowledgePage, isSingleSourceInboxPath, isInboxRoute]);
+    let completed = false;
+    homeRequestStarted.current = true;
+    fetchHome().then((data) => { completed = true; if (mounted) setHome(data); }).catch(() => { completed = true; if (mounted) setError(true); });
+    return () => { mounted = false; if (!completed) homeRequestStarted.current = false; };
+  }, [isKnowledgePage, isHomePage, isSingleSourceInboxPath, isInboxRoute]);
   const registerNotesNavigationGuard = useCallback((guard: (() => boolean) | null) => {
     notesNavigationGuard.current = guard;
   }, []);
