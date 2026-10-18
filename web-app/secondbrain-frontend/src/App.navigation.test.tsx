@@ -140,6 +140,13 @@ describe('Notes application navigation gate', () => {
     await waitFor(() => expect(calls.filter((url) => url.startsWith('/api/knowledge/search?'))).toHaveLength(1));
     expect(calls.filter((url) => url === '/api/home' || url.startsWith('/api/promote/'))).toEqual([]);
 
+    fireEvent.click(screen.getByRole('button', { name: '对话' }));
+    await waitFor(() => expect(location.pathname).toBe('/chat'));
+    expect(calls.filter((url) => url === '/api/home')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '首页' }));
+    expect(await screen.findByRole('heading', { name: '你的工作台' })).toBeTruthy();
+    await waitFor(() => expect(calls.filter((url) => url === '/api/home')).toHaveLength(1));
+
     fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
     const sidebar = document.querySelector('aside.sidebar') as HTMLElement;
     fireEvent.click(within(sidebar).getByRole('button', { name: '知识库' }));
@@ -179,6 +186,12 @@ describe('Notes application navigation gate', () => {
     await waitFor(() => expect(calls.filter((url) => url === '/api/home')).toHaveLength(2));
     expect(screen.queryByRole('alert')).toBeNull();
     expect(calls.filter((url) => url.startsWith('/api/knowledge/') || url.startsWith('/api/promote/'))).toEqual([]);
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }));
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '对话' }));
+    await waitFor(() => expect(location.pathname).toBe('/chat'));
+    expect(calls.filter((url) => url === '/api/home')).toHaveLength(2);
   });
 
   it('isolates rapid source changes when an older exact Notes read returns last', async () => {
