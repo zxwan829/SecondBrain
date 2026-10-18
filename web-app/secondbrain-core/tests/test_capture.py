@@ -115,6 +115,18 @@ class CaptureServiceTests(unittest.TestCase):
         (self.state / "captures" / ("f" * 32 + ".json")).write_text("not json", encoding="utf-8")
         self.assertEqual(self.service.list_summary(), [])
 
+    def test_summary_preserves_supported_pdf_and_capture_context_source_types(self):
+        pdf = self.service.accept_file("synthetic.pdf", b"%PDF-1.4\nsynthetic", source_type=None)
+        context = self.service.accept_text("synthetic context", source_type="capture_context")
+
+        summaries = {item["capture_id"]: item for item in self.service.list_summary()}
+
+        self.assertEqual(summaries[pdf["capture_id"]]["source_type"], "pdf")
+        self.assertEqual(summaries[pdf["capture_id"]]["input_type"], "pdf")
+        self.assertEqual(summaries[context["capture_id"]]["source_type"], "capture_context")
+        self.assertEqual(set(summaries[pdf["capture_id"]]), {"capture_id", "source_type", "input_type", "captured_at",
+                                                               "display_filename", "status", "error_code", "has_review"})
+
     def test_image_audio_preserve_raw_and_report_missing_real_processor(self):
         for name, data in (("photo.png", b"\x89PNG\r\n\x1a\nimage"), ("voice.wav", b"RIFFxxxxWAVEdata")):
             item = self.service.accept_file(name, data)

@@ -542,9 +542,17 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [retrying, setRetrying] = useState(false);
+  const [organizerStatusRequested, setOrganizerStatusRequested] = useState(false);
+  const [organizeReason, setOrganizeReason] = useState('');
+  const [organizeAvailable, setOrganizeAvailable] = useState(false);
+  const [organizeBusy, setOrganizeBusy] = useState(false);
+  const [organizeMessage, setOrganizeMessage] = useState('');
   const scopeController = useRef<AbortController | null>(null);
   const detailController = useRef<AbortController | null>(null);
   const detailRevision = useRef(0);
+  const selectedCaptureId = useRef<string | null>(null);
+  const summaryRevision = useRef(0);
+  const organizerController = useRef<AbortController | null>(null);
 
   const loadSummary = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch('/api/inbox/summary?limit=100', { credentials: 'same-origin', signal });
@@ -553,21 +561,102 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
     return Array.isArray(payload.items) ? payload.items.filter((item): item is CaptureSummary => Boolean(item)
       && typeof item.capture_id === 'string' && /^[0-9a-f]{32}$/.test(item.capture_id)) : [];
   }, []);
+  const refreshSummary = useCallback(async () => {
+    const signal = scopeController.current?.signal;
+    if (!signal || signal.aborted) return;
+    const revision = ++summaryRevision.current;
+    try {
+      const nextItems = await loadSummary(signal);
+      if (!signal.aborted && revision === summaryRevision.current) { setItems(nextItems); setError(''); }
+    } catch (cause) {
+      if (!signal.aborted && revision === summaryRevision.current) setError(cause instanceof Error ? cause.message : (en ? 'Inbox summary is unavailable.' : '收件箱摘要暂不可用。'));
+    } finally {
+      if (!signal.aborted && revision === summaryRevision.current) setLoading(false);
+    }
+  }, [en, loadSummary]);
+
   useEffect(() => {
     const controller = new AbortController();
     scopeController.current = controller;
-    void loadSummary(controller.signal).then((nextItems) => { if (!controller.signal.aborted) setItems(nextItems); }).catch((cause) => {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : (en ? 'Inbox summary is unavailable.' : '收件箱摘要暂不可用。'));
-    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => { controller.abort(); detailController.current?.abort(); };
-  }, [en, loadSummary]);
+    void refreshSummary();
+    const refresh = () => { void refreshSummary(); };
+    const timer = window.setInterval(refresh, 5000);
+    window.addEventListener('sb-inbox-refresh', refresh);
+    return () => {
+      controller.abort();
+      summaryRevision.current += 1;
+      detailRevision.current += 1;
+      selectedCaptureId.current = null;
+      detailController.current?.abort();
+      organizerController.current?.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('sb-inbox-refresh', refresh);
+    };
+  }, [refreshSummary]);
+
+  const refreshOrganizerStatus = useCallback(async () => {
+    const signal = organizerController.current?.signal;
+    if (!signal || signal.aborted) return;
+    try {
+      const response = await fetch('/api/automation/organize/status', { credentials: 'same-origin', signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const value = await response.json() as { blocked_reason?: unknown; execution_available?: unknown };
+      if (signal.aborted) return;
+      setOrganizeReason(typeof value.blocked_reason === 'string' ? value.blocked_reason : '');
+      setOrganizeAvailable(value.execution_available === true);
+    } catch (cause) {
+      if (!signal.aborted) {
+        setOrganizeAvailable(false);
+        setOrganizeReason(cause instanceof Error ? cause.message : (en ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+      }
+    }
+  }, [en]);
+
+  useEffect(() => {
+    if (!organizerStatusRequested) return;
+    const controller = new AbortController();
+    organizerController.current = controller;
+    void refreshOrganizerStatus();
+    const refresh = () => { void refreshOrganizerStatus(); };
+    const timer = window.setInterval(refresh, 5000);
+    window.addEventListener('sb-inbox-refresh', refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('sb-inbox-refresh', refresh);
+    };
+  }, [organizerStatusRequested, refreshOrganizerStatus]);
+
+  const requestOrganizerStatus = () => {
+    setOrganizeMessage('');
+    setOrganizerStatusRequested(true);
+  };
+
+  const organizeNow = async () => {
+    if (!organizeAvailable || organizeBusy) return;
+    setOrganizeBusy(true); setOrganizeMessage('');
+    try {
+      const response = await fetch('/api/automation/organize/run', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error('organizer_run_failed');
+      const label = value.status === 'no_new_messages' ? (en ? 'No new messages to organize.' : '没有新增对话，无需整理。')
+        : value.status === 'already_running' ? (en ? 'An organization job is already running.' : '已有整理任务正在运行。')
+          : (en ? `Organization finished; ${Number(value.draft_count ?? 0)} drafts added.` : `整理完成，新增 ${Number(value.draft_count ?? 0)} 条 Review 草稿。`);
+      setOrganizeMessage(label);
+      window.dispatchEvent(new Event('sb-inbox-refresh'));
+    } catch {
+      setOrganizeMessage(en ? 'Organization could not be completed; check its status and try again.' : '整理未能完成，请查看运行状态后再试。');
+    } finally { setOrganizeBusy(false); }
+  };
 
   const openCapture = async (captureId: string) => {
     detailController.current?.abort();
     const controller = new AbortController();
     detailController.current = controller;
     const revision = ++detailRevision.current;
+    selectedCaptureId.current = captureId;
     setDetail(null); setDetailError(''); setDetailLoading(true);
+    setRetrying(false);
     try {
       const response = await fetch(`/api/capture/${encodeURIComponent(captureId)}`, { credentials: 'same-origin', signal: controller.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -588,23 +677,35 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
 
   const retryCapture = async () => {
     if (!detail || detail.status !== 'partial_success' || retrying) return;
+    const captureId = detail.capture_id;
+    const revision = detailRevision.current;
+    const isCurrentSelection = () => !scopeController.current?.signal.aborted
+      && detailRevision.current === revision && selectedCaptureId.current === captureId;
     const signal = scopeController.current?.signal;
     if (!signal || signal.aborted) return;
     setRetrying(true); setDetailError('');
     try {
-      const response = await fetch(`/api/capture/${encodeURIComponent(detail.capture_id)}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const response = await fetch(`/api/capture/${encodeURIComponent(captureId)}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      if (signal.aborted) return;
+      if (!isCurrentSelection()) return;
       const retryResult = await response.json() as CaptureItem;
-      if (!signal.aborted && retryResult.capture_id === detail.capture_id) setDetail(retryResult);
-      const refreshed = await loadSummary(signal);
-      if (!signal.aborted) setItems(refreshed);
-    } catch (cause) { if (!signal.aborted) setDetailError(cause instanceof Error ? cause.message : (en ? 'Retry failed.' : '重试失败。')); }
-    finally { if (!signal.aborted) setRetrying(false); }
+      if (!isCurrentSelection()) return;
+      if (retryResult.capture_id !== captureId) throw new Error('Capture identity mismatch');
+      setDetail(retryResult);
+      await refreshSummary();
+    } catch (cause) { if (isCurrentSelection()) setDetailError(cause instanceof Error ? cause.message : (en ? 'Retry failed.' : '重试失败。')); }
+    finally { if (isCurrentSelection()) setRetrying(false); }
   };
 
   return <>
     {error && <p className="capture-alert" role="alert">{error}</p>}
+    <section className="inbox-header-actions" aria-label={en ? 'Organizer controls' : '自动整理操作'}>
+      {!organizerStatusRequested ? <button type="button" onClick={requestOrganizerStatus}>{en ? 'Check organizer status' : '查看自动整理状态'}</button> : <>
+        <button type="button" disabled={!organizeAvailable || organizeBusy} title={organizeReason} onClick={() => void organizeNow()}>{organizeBusy ? (en ? 'Organizing…' : '整理中…') : (en ? 'Organize now' : '立即整理')}</button>
+        <small>{organizeReason || (en ? 'Settings are saved, but the organizer is not active.' : '设置仅保存，自动整理尚未运行。')}</small>
+        {organizeMessage && <small role="status">{organizeMessage}</small>}
+      </>}
+    </section>
     <div className="inbox-list" aria-live="polite">{loading ? <p>{en ? 'Loading summary…' : '正在加载摘要…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
       <div className="inbox-item-main"><span className="inbox-type">{(item.input_type || 'item').toUpperCase()}</span><div><h2>{item.display_filename || item.capture_id}</h2><p>{item.source_type || (en ? 'Source' : '来源')} · {capturedAtLabel(item.captured_at, locale)}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, en)}</span></div>
       {item.error_code && <p className="capture-processing-note">{en ? 'Error code' : '错误代码'}: {item.error_code}</p>}
@@ -612,9 +713,8 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
     </article>) : <p className="capture-empty">{en ? 'No Capture entries.' : '没有 Capture 条目。'}</p>}</div>
     {detailLoading && <p role="status">{en ? 'Loading selected Capture…' : '正在加载所选 Capture…'}</p>}
     {detailError && <p role="alert" className="capture-alert">{detailError}</p>}
-    {detail && <><CapturePreview item={detail} locale={locale} content={detail.content_preview ?? null} error="" onClose={() => { detailController.current?.abort(); setDetail(null); setDetailError(''); }} onReview={onReview} />
-      {detail.status === 'partial_success' && <button type="button" onClick={() => void retryCapture()} disabled={retrying}>{retrying ? (en ? 'Retrying…' : '重试中…') : (en ? 'Retry selected Capture' : '重试此 Capture')}</button>}
-    </>}
+    {detail && <CapturePreview item={detail} locale={locale} content={detail.content_preview ?? null} error="" onClose={() => { detailController.current?.abort(); detailRevision.current += 1; selectedCaptureId.current = null; setRetrying(false); setDetail(null); setDetailError(''); }} onReview={onReview}
+      onRetry={detail.status === 'partial_success' ? () => void retryCapture() : undefined} retrying={retrying} />}
   </>;
 }
 
@@ -743,7 +843,7 @@ function isSafeHttpUrl(value: string): boolean {
   catch { return false; }
 }
 
-function CapturePreview({ item, locale, content, error, onClose, onReview }: { item: CaptureItem; locale: Locale; content: string | null; error: string; onClose: () => void; onReview: (path: string) => void }) {
+function CapturePreview({ item, locale, content, error, onClose, onReview, onRetry, retrying = false }: { item: CaptureItem; locale: Locale; content: string | null; error: string; onClose: () => void; onReview: (path: string) => void; onRetry?: () => void; retrying?: boolean }) {
   const en = locale === 'en';
   const displayFilename = captureDisplayFilename(item, locale);
   const kind = previewKind(item.raw_path);
@@ -761,7 +861,7 @@ function CapturePreview({ item, locale, content, error, onClose, onReview }: { i
         {kind === 'audio' && <audio controls preload="metadata" src={url}>{en ? 'Audio playback is not supported by this browser.' : '当前浏览器不支持此音频播放。'}</audio>}
         {kind === 'unsupported' && <p>{en ? 'This file type cannot be previewed here. Download the original file instead.' : '此类型暂不支持站内预览，可下载原件查看。'}</p>}
       </div>
-      <footer><a className="capture-secondary" href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>{item.review_path && <button type="button" className="capture-primary" onClick={() => onReview(item.review_path!)}>{en ? 'View related Review' : '查看对应 Review'}</button>}<button type="button" className="capture-secondary" onClick={onClose}>{en ? 'Close' : '关闭'}</button></footer>
+      <footer><a className="capture-secondary" href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>{item.review_path && <button type="button" className="capture-primary" onClick={() => onReview(item.review_path!)}>{en ? 'View related Review' : '查看对应 Review'}</button>}{onRetry && <button type="button" className="capture-primary" onClick={onRetry} disabled={retrying}>{retrying ? (en ? 'Retrying…' : '重试中…') : (en ? 'Retry selected Capture' : '重试此 Capture')}</button>}<button type="button" className="capture-secondary" onClick={onClose}>{en ? 'Close' : '关闭'}</button></footer>
     </section>
   </div>;
 }

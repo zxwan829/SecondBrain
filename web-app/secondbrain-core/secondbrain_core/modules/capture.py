@@ -35,7 +35,8 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 SUMMARY_STATUSES = {"pending", "prepared", "processing", "completed", "partial_success", "failed"}
 SUMMARY_ERROR_CODES = {"processing_interrupted", "processor_unavailable", "processing_failed"}
-SUMMARY_SOURCE_TYPES = {"text", "url", "file", "markdown", "image", "audio", "inbox_proposal_review"}
+SUMMARY_SOURCE_TYPES = {"text", "url", "file", "markdown", "pdf", "image", "audio", "capture_context",
+                        "inbox_proposal_review"}
 SUMMARY_INPUT_TYPES = {"text", "markdown", "url", "txt", "md", "pdf", "png", "jpg", "jpeg", "webp", "gif",
                        "wav", "mp3", "m4a", "aac", "ogg", "flac"}
 PREVIEW_MEDIA_TYPES = {
