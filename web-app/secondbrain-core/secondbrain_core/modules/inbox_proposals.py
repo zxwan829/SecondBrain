@@ -497,6 +497,11 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
             raise HTTPException(status_code=409, detail="Proposal source identity mismatch")
         return version
 
+    def require_current_source_version(proposal_id, record, version, user):
+        if version != record["source_version"]:
+            store.mark_stale(proposal_id, "source_version_changed", user)
+            raise HTTPException(status_code=409, detail="Source changed; proposal is stale and must be regenerated")
+
     @router.get("")
     def list_source(request: Request, source_kind: str, source_id: str,
                     collection: Optional[str] = None, path: Optional[str] = None):
@@ -537,6 +542,9 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
         except HTTPException as exc:
             if exc.status_code not in {404, 409, 415, 422}:
                 raise
+            if isinstance(exc.detail, str) and exc.detail.startswith("Vocabulary changed"):
+                record = store.mark_stale(proposal_id, "vocabulary_version_changed", user)
+                return {"proposal": record, "history": record["history"]}
             store.mark_stale(proposal_id, "source_unavailable", user)
             raise HTTPException(status_code=409, detail="Source is unavailable; proposal history is unavailable") from exc
         return {"proposal": record, "history": record["history"]}
@@ -551,9 +559,12 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
             version = current(record, user)
         except HTTPException as exc:
             if exc.status_code in {404, 409, 415, 422}:
-                store.mark_stale(proposal_id, "source_unavailable", user)
-                raise HTTPException(status_code=409, detail="Source is unavailable; suggestion is stale") from exc
+                vocabulary_changed = isinstance(exc.detail, str) and exc.detail.startswith("Vocabulary changed")
+                reason = "vocabulary_version_changed" if vocabulary_changed else "source_unavailable"
+                store.mark_stale(proposal_id, reason, user)
+                raise HTTPException(status_code=409, detail=f"{exc.detail}; proposal is stale") from exc
             raise
+        require_current_source_version(proposal_id, record, version, user)
         replay = store.idempotent_result(proposal_id, "value", body.get("suggestion"), body.get("expected_version"), user, key)
         if replay is not None:
             return {"proposal": replay, "duplicate": True}
@@ -570,9 +581,12 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
             version = current(record, user)
         except HTTPException as exc:
             if exc.status_code in {404, 409, 415, 422}:
-                store.mark_stale(proposal_id, "source_unavailable", user)
-                raise HTTPException(status_code=409, detail="Source is unavailable; suggestion is stale") from exc
+                vocabulary_changed = isinstance(exc.detail, str) and exc.detail.startswith("Vocabulary changed")
+                reason = "vocabulary_version_changed" if vocabulary_changed else "source_unavailable"
+                store.mark_stale(proposal_id, reason, user)
+                raise HTTPException(status_code=409, detail=f"{exc.detail}; proposal is stale") from exc
             raise
+        require_current_source_version(proposal_id, record, version, user)
         replay = store.idempotent_result(proposal_id, "decision", body.get("decision"), body.get("expected_version"), user, key)
         if replay is not None:
             return {"proposal": replay, "duplicate": True}

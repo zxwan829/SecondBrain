@@ -168,8 +168,12 @@ class InboxProposalStoreTests(unittest.TestCase):
         replay = client.post(f"/api/inbox/proposals/{journal['proposal_id']}/decision", json=body,
                              headers={"Origin": "https://testserver", "Idempotency-Key": "http-decision"})
         self.assertEqual(first.status_code, 200)
-        self.assertTrue(replay.json()["duplicate"])
-        self.assertEqual(replay.json()["proposal"]["status"], "approved_recorded")
+        self.assertEqual(replay.status_code, 409)
+        self.assertNotIn("proposal", replay.json())
+        self.assertEqual(self.store.get(journal["proposal_id"])["status"], "stale")
+        stale_history = client.get(f"/api/inbox/proposals/{journal['proposal_id']}/history")
+        self.assertEqual(stale_history.status_code, 200)
+        self.assertEqual(stale_history.json()["proposal"]["status"], "stale")
         Auth.denied.add("notes.read")
         denied_history = client.get(f"/api/inbox/proposals/{journal['proposal_id']}/history")
         denied_replay = client.post(f"/api/inbox/proposals/{journal['proposal_id']}/decision", json=body,
@@ -180,6 +184,56 @@ class InboxProposalStoreTests(unittest.TestCase):
         self.assertEqual(client.get(f"/api/inbox/proposals/{journal['proposal_id']}/history").status_code, 200)
         changed = client.get("/api/inbox/proposals", params={**source, "path": "other.md"})
         self.assertEqual(changed.status_code, 404)
+
+    def test_approved_decision_replay_after_vocabulary_revision_change_fails_closed(self):
+        from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
+
+        class Auth:
+            def require_action(self, request, action):
+                return "owner"
+
+        class Sources:
+            version = "etag-vocabulary"
+            notes_store = type("NotesStore", (), {"roots": {"drafts": "/synthetic/drafts"}})()
+
+            def resolve(self, source):
+                canonical = {"source_kind": "notes", "source_id": "drafts:synthetic.md",
+                             "collection": "drafts", "path": "synthetic.md"}
+                return canonical, self.version, "合成会议 #CRM", "合成会议"
+
+        class Vocabulary:
+            revision = 4
+
+            def read(self):
+                return {"revision": self.revision,
+                        "types": [{"name": name, "enabled": True}
+                                  for name in ("日记", "笔记", "头脑风暴", "摘要", "会议纪要")],
+                        "tags": [{"id": "crm", "name": "CRM", "enabled": True}], "synonyms": []}
+
+        vocabulary = Vocabulary()
+        app = FastAPI()
+        app.include_router(create_inbox_proposal_router(Auth(), self.store, Sources(), vocabulary))
+        client = TestClient(app)
+        source = {"source_kind": "notes", "source_id": "drafts:synthetic.md",
+                  "collection": "drafts", "path": "synthetic.md"}
+        generated = client.post("/api/inbox/proposals", json=source, headers={"Idempotency-Key": "vocabulary-create"})
+        proposal = next(item for item in generated.json()["proposals"] if item["kind"] == "journal")
+        body = {"decision": "approved_recorded", "expected_version": 1}
+        decision = client.post(f"/api/inbox/proposals/{proposal['proposal_id']}/decision", json=body,
+                               headers={"Idempotency-Key": "vocabulary-decision"})
+        self.assertEqual(decision.status_code, 200)
+        vocabulary.revision = 5
+        replay = client.post(f"/api/inbox/proposals/{proposal['proposal_id']}/decision", json=body,
+                             headers={"Idempotency-Key": "vocabulary-decision"})
+        self.assertEqual(replay.status_code, 409)
+        self.assertNotIn("proposal", replay.json())
+        record = self.store.get(proposal["proposal_id"])
+        self.assertEqual(record["status"], "stale")
+        self.assertEqual(record["stale_reason"], "vocabulary_version_changed")
+        history = client.get(f"/api/inbox/proposals/{proposal['proposal_id']}/history")
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(history.json()["proposal"]["status"], "stale")
+        self.assertTrue(any(event["event"] == "approved_recorded" for event in history.json()["history"]))
 
     def test_history_does_not_disclose_records_when_source_collection_is_revoked(self):
         from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
