@@ -1,8 +1,13 @@
 import hashlib
+import errno
+import json
+import multiprocessing
 import os
 import tempfile
 import unittest
 import base64
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from unittest.mock import patch
 from pathlib import Path
 
@@ -11,8 +16,50 @@ from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.review_promote.core_auth import CorePromoteAuth
 from secondbrain_core.app import create_app
+from secondbrain_core.modules.review_promote.approval import ApprovalRequestError, ReviewDecisionStore
 from secondbrain_core.modules.review_promote.http import create_core_router
 from secondbrain_core.modules.review_promote.service import PromoteService
+
+
+def _promote_in_process(review_root, knowledge_root, approval_dir, audit_path, digest,
+                        request_id, target_filename, barrier, result_queue):
+    service = PromoteService(review_root, knowledge_root, approval_dir, audit_path)
+    barrier.wait(timeout=15)
+    try:
+        result = service.approve_and_promote_as("owner", {
+            "request_id": request_id,
+            "review_path": "candidate.md",
+            "review_sha256": digest,
+            "target_filename": target_filename,
+        })
+        result_queue.put(("ok", request_id, result["status"]))
+    except Exception as exc:
+        result_queue.put(("error", request_id, type(exc).__name__, str(exc)))
+
+
+def _promote_distinct_version_in_process(review_root, knowledge_root, approval_dir, audit_path,
+                                         review_path, digest, request_id, target_filename,
+                                         barrier, result_queue):
+    service = PromoteService(review_root, knowledge_root, approval_dir, audit_path)
+    acquire_request_lock = service.decisions.lock_request_id
+
+    @contextmanager
+    def synchronized_request_lock(candidate_request_id):
+        # Both distinct version locks are already held. Synchronize immediately
+        # before the global request-ID lock so the race reaches the pre-claim gate.
+        barrier.wait(timeout=15)
+        with acquire_request_lock(candidate_request_id) as key:
+            yield key
+
+    service.decisions.lock_request_id = synchronized_request_lock
+    body = {"request_id": request_id, "review_path": review_path,
+            "review_sha256": digest, "target_filename": target_filename}
+    try:
+        result = service.approve_and_promote_as("owner", body)
+        result_queue.put(("ok", request_id, review_path, target_filename, result["status"]))
+    except Exception as exc:
+        result_queue.put(("error", request_id, review_path, target_filename,
+                          type(exc).__name__, str(exc)))
 
 
 class CoreOwnedApprovalAuthTests(unittest.TestCase):
@@ -184,14 +231,439 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         changed_detail = self.client.get("/api/promote/review/items/candidate.md", headers=self.headers)
         self.assertEqual(changed_detail.json()["decision"]["status"], "pending")
 
-    def test_torn_audit_tail_is_repaired_on_retry(self):
+    def test_legacy_64_hex_orphan_approval_blocks_approve_and_defer_without_rewriting(self):
+        version_key = ReviewDecisionStore.version_key(self.body["review_path"], self.body["review_sha256"])
+        legacy_request_id = "a" * 64
+        if legacy_request_id == version_key:
+            legacy_request_id = "b" * 64
+        legacy_record = {
+            "request_id": legacy_request_id,
+            "status": "approved",
+            "approver_subject": "legacy-owner",
+            "approved_at": "2026-10-18T12:00:00+00:00",
+            "review_path": self.body["review_path"],
+            "review_sha256": self.body["review_sha256"],
+            "target_filename": "legacy-approved.md",
+        }
+        legacy_bytes = (json.dumps(legacy_record, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        legacy_path = self.state / "approvals" / (legacy_request_id + ".json")
+        legacy_path.write_bytes(legacy_bytes)
+        legacy_path.chmod(0o600)
+
         self.assertEqual(self.unlock().status_code, 200)
-        (self.state / "audit.jsonl").write_bytes(b'{"event":"interrupted"')
+        competing = {**self.body, "request_id": "history-replay", "target_filename": "replay.md"}
+        approve = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
+        defer = self.client.post("/api/promote/review/defer", json={
+            "review_path": self.body["review_path"], "review_sha256": self.body["review_sha256"],
+        }, headers=self.headers)
+
+        self.assertEqual(approve.status_code, 409, approve.text)
+        self.assertEqual(defer.status_code, 409, defer.text)
+        self.assertEqual(legacy_path.read_bytes(), legacy_bytes)
+        self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
+        self.assertEqual(list(self.knowledge.iterdir()), [])
+        self.assertEqual(self.service.get_decision(self.body["review_path"], self.body["review_sha256"])["status"],
+                         "pending")
+
+    def test_torn_audit_tail_fails_closed_without_losing_original_bytes(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        damaged = b'{"event":"interrupted"'
+        (self.state / "audit.jsonl").write_bytes(damaged)
         response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(response.status_code, 200, response.text)
-        audit_lines = (self.state / "audit.jsonl").read_text().splitlines()
-        self.assertEqual(len(audit_lines), 1)
-        self.assertIn('"event":"promoted"', audit_lines[0])
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
+        self.assertFalse((self.knowledge / "approved.md").exists())
+
+    def test_partial_audit_write_preserves_output_and_blocks_retry_for_manual_recovery(self):
+        self.assertEqual(self.unlock().status_code, 200)
+
+        def partial_write(fd, record):
+            os.write(fd, b'{"event":"partial-promotion"')
+            raise OSError("synthetic interrupted audit append")
+
+        with patch("secondbrain_core.modules.review_promote.worker._append_audit", side_effect=partial_write):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertTrue((self.knowledge / "approved.md").is_file())
+        damaged = b'{"event":"partial-promotion"'
+        self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
+        retry = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(retry.status_code, 409)
+        self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
+
+    def test_malformed_complete_audit_line_fails_closed_without_mutation(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        damaged = b'{"event":broken}\n'
+        (self.state / "audit.jsonl").write_bytes(damaged)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
+        self.assertFalse((self.knowledge / "approved.md").exists())
+
+    def test_existing_knowledge_target_is_never_overwritten(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        target = self.knowledge / "approved.md"
+        original = b"keep existing synthetic target\n"
+        target.write_bytes(original)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_knowledge_target_symlink_is_rejected_without_touching_target(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        external = self.root / "outside-synthetic-target.md"
+        external.write_bytes(b"outside target remains unchanged\n")
+        (self.knowledge / "approved.md").symlink_to(external)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue((self.knowledge / "approved.md").is_symlink())
+        self.assertEqual(external.read_bytes(), b"outside target remains unchanged\n")
+
+    def test_review_path_traversal_is_rejected_before_claim_creation(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        outside = self.root / "outside-review.md"
+        outside.write_bytes(b"synthetic path traversal sentinel\n")
+        traversal = dict(self.body, review_path="../outside-review.md")
+        response = self.client.post("/api/promote/review/approve", json=traversal, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(outside.read_bytes(), b"synthetic path traversal sentinel\n")
+        self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
+        self.assertFalse((self.knowledge / "approved.md").exists())
+
+    def test_different_request_and_target_cannot_claim_same_review_version(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        first = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        competing = dict(self.body, request_id="core-owner-2", target_filename="other.md")
+        second = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 409)
+        claims = list((self.state / "approvals").glob("*.claim"))
+        self.assertEqual(len(claims), 1)
+        claim = json.loads(claims[0].read_text())
+        self.assertEqual(claim["request_id"], self.body["request_id"])
+        self.assertEqual(claim["target_filename"], self.body["target_filename"])
+        self.assertFalse((self.knowledge / "other.md").exists())
+
+    def test_retry_recovers_after_claim_is_durable_but_approval_write_fails(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        original = self.service.approvals.approve_as
+        calls = {"count": 0}
+
+        def fail_once(*args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise OSError("synthetic interruption after claim")
+            return original(*args, **kwargs)
+
+        with patch.object(self.service.approvals, "approve_as", side_effect=fail_once):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
+        version_record = hashlib.sha256(("candidate.md\0" + self.body["review_sha256"])
+                                        .encode()).hexdigest() + ".json"
+        self.assertEqual([path.name for path in (self.state / "approvals").glob("*.json")
+                          if path.name != version_record], [])
+        competing = dict(self.body, request_id="claim-takeover", target_filename="takeover.md")
+        refused = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
+        self.assertEqual(refused.status_code, 409)
+        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["status"], "promoted")
+        self.assertTrue((self.knowledge / "approved.md").is_file())
+
+    def test_claim_file_fsync_failure_leaves_no_claim_and_same_key_can_retry(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        with patch("secondbrain_core.modules.review_promote.approval.os.fsync",
+                   side_effect=OSError(errno.EIO, "synthetic claim file fsync failure")):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
+        self.assertEqual(list((self.state / "approvals").glob(".claim-*")), [])
+        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["status"], "promoted")
+
+    def test_claim_directory_fsync_failure_keeps_claim_and_recovers_only_same_key(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        original = os.fsync
+        calls = {"count": 0}
+
+        def fail_directory_fsync_once(fd):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise OSError(errno.EIO, "synthetic claim directory fsync failure")
+            return original(fd)
+
+        with patch("secondbrain_core.modules.review_promote.approval.os.fsync",
+                   side_effect=fail_directory_fsync_once):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
+        competing = dict(self.body, request_id="directory-fsync-takeover", target_filename="takeover.md")
+        refused = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
+        self.assertEqual(refused.status_code, 409)
+        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["status"], "promoted")
+
+    def test_enospc_during_claim_write_leaves_no_claim_and_allows_retry(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        with patch("secondbrain_core.modules.review_promote.approval.os.write",
+                   side_effect=OSError(errno.ENOSPC, "synthetic no-space claim write")):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
+        self.assertEqual(list((self.state / "approvals").glob(".claim-*")), [])
+        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["status"], "promoted")
+
+    def test_retry_recovers_when_output_and_audit_exist_but_decision_write_failed(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        original = self.service.decisions.set
+        calls = {"count": 0}
+
+        def fail_promoted_once(review_path, digest, status, **fields):
+            if status == "promoted" and calls["count"] == 0:
+                calls["count"] += 1
+                raise OSError("synthetic decision persistence interruption")
+            return original(review_path, digest, status, **fields)
+
+        with patch.object(self.service.decisions, "set", side_effect=fail_promoted_once):
+            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(failed.status_code, 409)
+        self.assertTrue((self.knowledge / "approved.md").is_file())
+        self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 1)
+        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(recovered.status_code, 200, recovered.text)
+        self.assertEqual(recovered.json()["status"], "already_promoted")
+        self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 1)
+
+    def test_same_version_process_race_allows_only_one_request_target_claim(self):
+        ctx = multiprocessing.get_context("fork")
+        barrier = ctx.Barrier(2)
+        result_queue = ctx.Queue()
+        args = (str(self.review), str(self.knowledge), str(self.state / "approvals"),
+                str(self.state / "audit.jsonl"), self.body["review_sha256"])
+        processes = [
+            ctx.Process(target=_promote_in_process,
+                        args=(*args, request_id, target, barrier, result_queue))
+            for request_id, target in (("race-a", "race-a.md"), ("race-b", "race-b.md"))
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=30)
+        self.assertTrue(all(not process.is_alive() for process in processes))
+        self.assertEqual([process.exitcode for process in processes], [0, 0])
+        lock_key = ReviewDecisionStore.version_key(self.body["review_path"], self.body["review_sha256"])
+        self.assertTrue((self.state / "approvals" / (lock_key + ".lock")).exists())
+        outcomes = [result_queue.get(timeout=3) for _ in processes]
+        self.assertEqual(sum(outcome[0] == "ok" for outcome in outcomes), 1, outcomes)
+        self.assertEqual(sum(outcome[0] == "error" for outcome in outcomes), 1, outcomes)
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
+        approval_records = [path for path in (self.state / "approvals").glob("*.json")
+                            if path.name != (hashlib.sha256(("candidate.md\0" + self.body["review_sha256"])
+                                                           .encode()).hexdigest() + ".json")]
+        self.assertEqual(len(approval_records), 1)
+        self.assertEqual(len(list(self.knowledge.glob("*.md"))), 1)
+
+    def test_same_version_thread_race_allows_only_one_request_target_claim(self):
+        barrier = __import__("threading").Barrier(2)
+
+        def promote(request_id, target_filename):
+            barrier.wait(timeout=5)
+            body = {**self.body, "request_id": request_id, "target_filename": target_filename}
+            try:
+                result = self.service.approve_and_promote_as("owner", body)
+                return ("ok", request_id, result["status"])
+            except Exception as exc:
+                return ("error", request_id, type(exc).__name__)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(promote, request_id, target)
+                       for request_id, target in (("thread-race-a", "thread-race-a.md"),
+                                                  ("thread-race-b", "thread-race-b.md"))]
+            results = [future.result(timeout=10) for future in futures]
+        self.assertEqual(sum(result[0] == "ok" for result in results), 1, results)
+        self.assertEqual(sum(result[0] == "error" for result in results), 1, results)
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
+        self.assertEqual(len(list(self.knowledge.glob("*.md"))), 1)
+
+    def test_same_key_concurrent_process_retries_are_idempotent(self):
+        ctx = multiprocessing.get_context("fork")
+        barrier = ctx.Barrier(2)
+        result_queue = ctx.Queue()
+        args = (str(self.review), str(self.knowledge), str(self.state / "approvals"),
+                str(self.state / "audit.jsonl"), self.body["review_sha256"])
+        processes = [ctx.Process(target=_promote_in_process,
+                                  args=(*args, "same-process-key", "same-process.md", barrier, result_queue))
+                     for _ in range(2)]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=30)
+        self.assertTrue(all(not process.is_alive() for process in processes))
+        self.assertEqual([process.exitcode for process in processes], [0, 0])
+        outcomes = [result_queue.get(timeout=3) for _ in processes]
+        self.assertTrue(all(outcome[0] == "ok" for outcome in outcomes), outcomes)
+        self.assertCountEqual([outcome[2] for outcome in outcomes], ["promoted", "already_promoted"])
+        self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 1)
+        self.assertEqual(len(list(self.knowledge.glob("*.md"))), 1)
+
+    def test_distinct_review_versions_receive_independent_claims(self):
+        first = self.service.approve_and_promote_as("owner", self.body)
+        updated_content = self.content + b"A second synthetic Review version.\n"
+        (self.review / "candidate.md").write_bytes(updated_content)
+        second_body = {
+            "request_id": "core-owner-version-2",
+            "review_path": "candidate.md",
+            "review_sha256": hashlib.sha256(updated_content).hexdigest(),
+            "target_filename": "approved-v2.md",
+        }
+        second = self.service.approve_and_promote_as("owner", second_body)
+        self.assertEqual(first["status"], "promoted")
+        self.assertEqual(second["status"], "promoted")
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 2)
+        self.assertTrue((self.knowledge / "approved.md").is_file())
+        self.assertTrue((self.knowledge / "approved-v2.md").is_file())
+        self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 2)
+
+    def test_cross_version_process_race_reserves_request_id_before_claim_and_loser_retries(self):
+        second_content = self.content + b"A second concurrent synthetic Review item.\n"
+        second_path = "candidate-b.md"
+        (self.review / second_path).write_bytes(second_content)
+        second_digest = hashlib.sha256(second_content).hexdigest()
+        shared_request_id = "shared-cross-version-id"
+        cases = ((self.body["review_path"], self.body["review_sha256"], "cross-a.md"),
+                 (second_path, second_digest, "cross-b.md"))
+
+        ctx = multiprocessing.get_context("fork")
+        barrier = ctx.Barrier(2)
+        result_queue = ctx.Queue()
+        args = (str(self.review), str(self.knowledge), str(self.state / "approvals"),
+                str(self.state / "audit.jsonl"))
+        processes = [ctx.Process(target=_promote_distinct_version_in_process,
+                                  args=(*args, review_path, digest, shared_request_id, target,
+                                        barrier, result_queue))
+                     for review_path, digest, target in cases]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=30)
+
+        self.assertTrue(all(not process.is_alive() for process in processes))
+        self.assertEqual([process.exitcode for process in processes], [0, 0])
+        outcomes = [result_queue.get(timeout=3) for _ in processes]
+        successes = [outcome for outcome in outcomes if outcome[0] == "ok"]
+        failures = [outcome for outcome in outcomes if outcome[0] == "error"]
+        self.assertEqual(len(successes), 1, outcomes)
+        self.assertEqual(len(failures), 1, outcomes)
+        winner = successes[0]
+        loser = failures[0]
+        loser_digest = self.body["review_sha256"] if loser[2] == self.body["review_path"] else second_digest
+        loser_key = ReviewDecisionStore.version_key(loser[2], loser_digest)
+        self.assertFalse((self.state / "approvals" / (loser_key + ".claim")).exists())
+        self.assertEqual(self.service.decisions.claims_for_request_id(shared_request_id)[0]["review_path"], winner[2])
+        self.assertEqual(self.service.get_decision(loser[2], loser_digest)["status"], "pending")
+        self.assertEqual([path.name for path in self.knowledge.glob("*.md")], [winner[3]])
+
+        retry = self.service.approve_and_promote_as("owner", {
+            "request_id": "cross-version-retry",
+            "review_path": loser[2],
+            "review_sha256": loser_digest,
+            "target_filename": "cross-version-retry.md",
+        })
+        self.assertEqual(retry["status"], "promoted")
+        self.assertTrue((self.knowledge / "cross-version-retry.md").is_file())
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 2)
+        self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 2)
+
+    def test_request_id_lock_failure_before_claim_leaves_no_half_binding_and_same_id_retries(self):
+        failed_body = {**self.body, "request_id": "request-lock-fault", "target_filename": "fault.md"}
+        with patch.object(self.service.decisions, "create_claim",
+                          side_effect=OSError("synthetic interruption after request-ID reservation")):
+            with self.assertRaises(ApprovalRequestError):
+                self.service.approve_and_promote_as("owner", failed_body)
+
+        key = ReviewDecisionStore.version_key(failed_body["review_path"], failed_body["review_sha256"])
+        self.assertFalse((self.state / "approvals" / (key + ".claim")).exists())
+        self.assertEqual(self.service.get_decision(failed_body["review_path"], failed_body["review_sha256"])["status"],
+                         "pending")
+        self.assertEqual(list(self.knowledge.iterdir()), [])
+        self.assertEqual(list((self.state / "approvals").glob("*.json")), [])
+        request_lock_key = ReviewDecisionStore.request_id_lock_key(failed_body["request_id"])
+        self.assertTrue((self.state / "approvals" / ("request-id-" + request_lock_key + ".lock")).is_file())
+
+        retry = self.service.approve_and_promote_as("owner", failed_body)
+        self.assertEqual(retry["status"], "promoted")
+        self.assertTrue((self.knowledge / "fault.md").is_file())
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
+
+    def test_malformed_claim_fails_closed_and_preserves_claim_bytes(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        key = ReviewDecisionStore.version_key(self.body["review_path"], self.body["review_sha256"])
+        claim_path = self.state / "approvals" / (key + ".claim")
+        damaged = b'{"request_id":"partial"'
+        claim_path.write_bytes(damaged)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(claim_path.read_bytes(), damaged)
+        self.assertFalse((self.knowledge / "approved.md").exists())
+
+    def test_lock_symlink_fails_closed_without_touching_symlink_target(self):
+        key = ReviewDecisionStore.version_key(self.body["review_path"], self.body["review_sha256"])
+        external = self.root / "external-lock-target"
+        external.write_bytes(b"do-not-change")
+        (self.state / "approvals" / (key + ".lock")).symlink_to(external)
+        self.assertEqual(self.unlock().status_code, 200)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(external.read_bytes(), b"do-not-change")
+        self.assertFalse((self.state / "approvals" / (key + ".claim")).exists())
+        self.assertFalse((self.knowledge / "approved.md").exists())
+
+    def test_lock_with_group_permissions_fails_closed_without_chmod(self):
+        key = ReviewDecisionStore.version_key(self.body["review_path"], self.body["review_sha256"])
+        lock_path = self.state / "approvals" / (key + ".lock")
+        lock_path.write_bytes(b"")
+        lock_path.chmod(0o640)
+        self.assertEqual(self.unlock().status_code, 200)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(lock_path.stat().st_mode & 0o777, 0o640)
+        self.assertFalse((self.state / "approvals" / (key + ".claim")).exists())
+        self.assertFalse((self.knowledge / "approved.md").exists())
+
+    def test_defer_and_approval_threads_serialize_on_the_same_review_version(self):
+        barrier = __import__("threading").Barrier(2)
+
+        def approve():
+            barrier.wait(timeout=5)
+            try:
+                return ("approve", self.service.approve_and_promote_as("owner", self.body)["status"])
+            except Exception as exc:
+                return ("approve-error", type(exc).__name__)
+
+        def defer():
+            barrier.wait(timeout=5)
+            try:
+                result = self.service.defer(self.body["review_path"], self.body["review_sha256"], "owner")
+                return ("defer", result["status"])
+            except Exception as exc:
+                return ("defer-error", type(exc).__name__)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = [pool.submit(approve), pool.submit(defer)]
+            results = [future.result(timeout=10) for future in outcomes]
+        self.assertTrue(any(result[0] == "approve" for result in results), results)
+        self.assertTrue(any(result[0] in {"defer-error", "defer"} for result in results), results)
+        decision = self.service.get_decision(self.body["review_path"], self.body["review_sha256"])
+        self.assertIn(decision["status"], {"promoted", "deferred"})
+        if decision["status"] == "promoted":
+            self.assertTrue((self.knowledge / "approved.md").is_file())
+        else:
+            self.assertFalse((self.knowledge / "approved.md").exists())
 
     def test_review_list_and_detail_are_owner_only_and_return_real_content_and_state(self):
         self.assertEqual(self.unlock().status_code, 200)
