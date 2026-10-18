@@ -5,6 +5,14 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-18 — M1 用户有限验收结项与 M2 规划交接
+
+- 用户明确批准 **M1 LIMITED ACCEPTED / WITH EXPLICIT EXCLUSIONS**，并授权在 GitHub 完成最终记录后关闭 [Issue #66](https://github.com/zxwan829/SecondBrain/issues/66)；A 主线写入完整交付/风险归属并以 `completed` 关闭，复查为 CLOSED。**这是阶段有限结项，不是 M1 全部能力通过，更不代表 SecondBrain V1 DONE。**
+- 最新生产 App **仅按最近一次有证据的部署记录**为源码 `473948dd2e9b3d448b71eeba56a1474454883353`，镜像 `sha256:70f8277f4d29c2bf8e50d3f7d135f034f04a90b421928d9836515d79a7143b3d`，App-only 健康检查 PASS；GitHub PR #73 已合并，仅更新文档，main `b446913525284762acdc249101c1da7c3e0babf7` 不代表重新部署。
+- M1 接受的分层证据：D084 前一 M1 镜像的 Journal/Task、跨 Session、Core Store 重放有限合成 PASS；D085 新 M1 镜像 B1 精确来源 5 条 Proposal、Journal/Review 各 1 个受控执行、Project 拒绝与刷新恢复有限 PASS；D086 词库代码/隔离合成 PASS，但共享 catalog 后续生产写入继续 BLOCKED，既有合成 revision=1/审计保留。新镜像 D084 未重测，历史异常根因 UNKNOWN。
+- **明确排除项及跟踪：** 旧全量 Inbox 来源安全隔离 [#74](https://github.com/zxwan829/SecondBrain/issues/74) BLOCKED；生产 HTTP 同键重放 NOT RUN / 完整 Network 和数字 HTTP 状态 UNKNOWN [#75](https://github.com/zxwan829/SecondBrain/issues/75)；D086 全局词库/真实内容 [#55](https://github.com/zxwan829/SecondBrain/issues/55)；D084 历史异常 [#44](https://github.com/zxwan829/SecondBrain/issues/44)；C2c-2 项目关联延期 M2，原 Project execute 501 不变；正式 Knowledge Promote 仍 OFF、Knowledge RO，真实 Vault/私人内容、付费模型、微信及完整 Web App V1 MUST 未据此验收。
+- 已建立 [M2 规划总控 #76](https://github.com/zxwan829/SecondBrain/issues/76)，首要建议为安全 Inbox 来源选择与 Review→明确批准→受控 Promote→Knowledge→可回源检索，**仅规划**；任何新开发、合并、NAS 改动、模型/数据使用须另行授权。用户要求全面审计文档，已在 #76 记载基线遗漏和修正范围，使用独立 docs PR 审核；本轮未修改 NAS/Secret/真实业务数据或调用模型。
+
 ## 2026-10-18 — M1 B1 单来源生产闭环有限验收
 
 - 在已部署的 M1 App `473948dd` 上，仅使用已授权的 B1 合成 Draft 和其 Proposal IDs。5 条来源绑定 Proposal（journal/review/project/type/tags）创建并刷新恢复；Journal 与 Review 经审批、精确预览、明确确认后各成功执行一次；Project 提案明确拒绝且未执行；刷新后执行与拒绝状态恢复。
