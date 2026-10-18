@@ -33,6 +33,12 @@ ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg",
                     ".webp", ".gif", ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 AUDIO_SUFFIXES = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
+SUMMARY_STATUSES = {"pending", "prepared", "processing", "completed", "partial_success", "failed"}
+SUMMARY_ERROR_CODES = {"processing_interrupted", "processor_unavailable", "processing_failed"}
+SUMMARY_SOURCE_TYPES = {"text", "url", "file", "markdown", "pdf", "image", "audio", "capture_context",
+                        "inbox_proposal_review"}
+SUMMARY_INPUT_TYPES = {"text", "markdown", "url", "txt", "md", "pdf", "png", "jpg", "jpeg", "webp", "gif",
+                       "wav", "mp3", "m4a", "aac", "ogg", "flac"}
 PREVIEW_MEDIA_TYPES = {
     ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
     ".markdown": "text/plain; charset=utf-8", ".pdf": "application/pdf",
@@ -296,6 +302,34 @@ class CaptureService:
             if item:
                 result.append(item)
         return sorted((item for item in result if item), key=lambda item: item.get("captured_at", ""), reverse=True)[:limit]
+
+    def list_summary(self, limit=100):
+        """Read a bounded metadata projection without recovery or state writes."""
+        result = []
+        for path in self.state_root.glob("*.json"):
+            item = self._read_state(path)
+            if not item:
+                continue
+            source_type = item.get("source_type")
+            input_type = item.get("input_type")
+            status = item.get("status")
+            error = item.get("error")
+            error_code = error.get("code") if isinstance(error, dict) else None
+            display_filename = item.get("display_filename")
+            captured_at = item.get("captured_at")
+            capture_id = item.get("capture_id")
+            result.append({
+                "capture_id": capture_id if isinstance(capture_id, str) and re.fullmatch(r"[0-9a-f]{32}", capture_id) else None,
+                "source_type": source_type if isinstance(source_type, str) and source_type in SUMMARY_SOURCE_TYPES else None,
+                "input_type": input_type if isinstance(input_type, str) and input_type in SUMMARY_INPUT_TYPES else None,
+                "captured_at": captured_at if isinstance(captured_at, str) and len(captured_at) <= 64 else None,
+                "display_filename": display_filename if isinstance(display_filename, str) and len(display_filename) <= MAX_DISPLAY_FILENAME_CHARS else None,
+                "status": status if isinstance(status, str) and status in SUMMARY_STATUSES else "unknown",
+                "error_code": error_code if isinstance(error_code, str) and error_code in SUMMARY_ERROR_CODES else None,
+                "has_review": isinstance(item.get("review_path"), str) and bool(item.get("review_path")),
+            })
+        result.sort(key=lambda item: (item["captured_at"] or "", item["capture_id"] or ""), reverse=True)
+        return result[:limit]
 
     def get(self, capture_id):
         path = self._state_path(capture_id)
@@ -784,6 +818,13 @@ def create_capture_router(auth, service):
         if limit < 1 or limit > 200:
             raise HTTPException(400, "Limit must be 1-200")
         return {"items": service.list(limit), "status": "real"}
+
+    @router.get("/inbox/summary")
+    def inbox_summary(request: Request, limit: int = 100):
+        auth.require_action(request, "inbox.read")
+        if limit < 1 or limit > 200:
+            raise HTTPException(400, "Limit must be 1-200")
+        return {"items": service.list_summary(limit), "status": "real"}
 
     @router.get("/capture/{capture_id}")
     def capture_status(request: Request, capture_id: str):

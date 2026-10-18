@@ -1,5 +1,6 @@
 import io
 import hashlib
+import json
 import os
 import tempfile
 import threading
@@ -9,11 +10,12 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
 from secondbrain_core.app import create_app
-from secondbrain_core.modules.capture import CaptureService, _public_http_url, _resolve_public_url, _fetch_url
+from secondbrain_core.modules.capture import CaptureService, create_capture_router, _public_http_url, _resolve_public_url, _fetch_url
 
 
 class CaptureServiceTests(unittest.TestCase):
@@ -82,6 +84,48 @@ class CaptureServiceTests(unittest.TestCase):
         retried = recovered_service.retry(item["capture_id"])
         self.assertEqual(retried["status"], "completed")
         self.assertEqual((self.raw / item["raw_path"]).read_bytes(), b"recover me")
+
+    def test_summary_is_a_pure_allowlisted_projection_and_does_not_recover_processing(self):
+        item = self.service.accept_text("SYNTHETIC PRIVATE BODY MUST NOT APPEAR")
+        state_path = self.state / "captures" / f"{item['capture_id']}.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update({"capture_context": "SYNTHETIC CONTEXT MUST NOT APPEAR",
+                      "source_url": "https://private.invalid/synthetic",
+                      "error": {"code": "untrusted-sensitive-code", "message": "SECRET BODY"},
+                      "review_path": "review/synthetic.md"})
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        before_hash = hashlib.sha256(state_path.read_bytes()).hexdigest()
+        before_mtime = state_path.stat().st_mtime_ns
+
+        summary = self.service.list_summary()
+
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(set(summary[0]), {"capture_id", "source_type", "input_type", "captured_at",
+                                           "display_filename", "status", "error_code", "has_review"})
+        self.assertEqual(summary[0]["capture_id"], item["capture_id"])
+        self.assertEqual(summary[0]["status"], "processing")
+        self.assertIsNone(summary[0]["error_code"])
+        self.assertTrue(summary[0]["has_review"])
+        self.assertNotIn("SYNTHETIC", json.dumps(summary))
+        self.assertNotIn("SECRET", json.dumps(summary))
+        self.assertEqual(hashlib.sha256(state_path.read_bytes()).hexdigest(), before_hash)
+        self.assertEqual(state_path.stat().st_mtime_ns, before_mtime)
+
+    def test_summary_skips_corrupt_state_without_exposing_parse_error(self):
+        (self.state / "captures" / ("f" * 32 + ".json")).write_text("not json", encoding="utf-8")
+        self.assertEqual(self.service.list_summary(), [])
+
+    def test_summary_preserves_supported_pdf_and_capture_context_source_types(self):
+        pdf = self.service.accept_file("synthetic.pdf", b"%PDF-1.4\nsynthetic", source_type=None)
+        context = self.service.accept_text("synthetic context", source_type="capture_context")
+
+        summaries = {item["capture_id"]: item for item in self.service.list_summary()}
+
+        self.assertEqual(summaries[pdf["capture_id"]]["source_type"], "pdf")
+        self.assertEqual(summaries[pdf["capture_id"]]["input_type"], "pdf")
+        self.assertEqual(summaries[context["capture_id"]]["source_type"], "capture_context")
+        self.assertEqual(set(summaries[pdf["capture_id"]]), {"capture_id", "source_type", "input_type", "captured_at",
+                                                               "display_filename", "status", "error_code", "has_review"})
 
     def test_image_audio_preserve_raw_and_report_missing_real_processor(self):
         for name, data in (("photo.png", b"\x89PNG\r\n\x1a\nimage"), ("voice.wav", b"RIFFxxxxWAVEdata")):
@@ -315,6 +359,69 @@ class CaptureApiTests(unittest.TestCase):
         self.assertTrue(any(row["review_path"] == item["review_path"] for row in review_items))
         raw = self.client.get("/api/inbox/" + item["capture_id"] + "/raw")
         self.assertEqual(raw.content, b"web intake")
+
+    def test_summary_requires_existing_inbox_permission_and_valid_limit(self):
+        self.assertEqual(self.client.get("/api/inbox/summary").status_code, 401)
+        self.login()
+        self.assertEqual(self.client.get("/api/inbox/summary?limit=0").status_code, 400)
+        self.assertEqual(self.client.get("/api/inbox/summary?limit=201").status_code, 400)
+        self.assertEqual(self.client.get("/api/inbox/summary?limit=invalid").status_code, 422)
+        self.assertEqual(self.client.get("/api/inbox/summary?limit=1").status_code, 200)
+        self.assertEqual(self.client.get("/api/inbox/summary?limit=200").status_code, 200)
+
+    def test_summary_requires_the_existing_inbox_read_action(self):
+        class DenyAuth:
+            def __init__(self):
+                self.actions = []
+
+            def require_action(self, request, action):
+                self.actions.append(action)
+                raise HTTPException(403, "forbidden")
+
+        deny_auth = DenyAuth()
+        app = FastAPI()
+        app.include_router(create_capture_router(deny_auth, CaptureService(self.raw, self.review, self.state)))
+        client = TestClient(app, base_url="https://testserver")
+        try:
+            response = client.get("/api/inbox/summary")
+        finally:
+            client.close()
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(deny_auth.actions, ["inbox.read"])
+
+    def test_summary_api_returns_fixed_projection_without_recovering_state(self):
+        self.login()
+        capture_id = "a" * 32
+        state_path = self.state / "captures" / f"{capture_id}.json"
+        state_path.parent.mkdir(mode=0o700, exist_ok=True)
+        state_path.write_text(json.dumps({
+            "capture_id": capture_id, "source_type": "text", "input_type": "text",
+            "captured_at": "2026-10-18T00:00:00Z", "display_filename": "synthetic.txt",
+            "status": "processing", "content_preview": "SYNTHETIC BODY",
+            "capture_context": "SYNTHETIC CONTEXT", "source_url": "https://private.invalid",
+            "raw_path": "private.txt", "review_path": "review.md",
+            "error": {"code": "attacker-controlled", "message": "SECRET MESSAGE"},
+        }), encoding="utf-8")
+        before_hash = hashlib.sha256(state_path.read_bytes()).hexdigest()
+        before_mtime = state_path.stat().st_mtime_ns
+
+        response = self.client.get("/api/inbox/summary?limit=100")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "real")
+        self.assertEqual(len(payload["items"]), 1)
+        summary = payload["items"][0]
+        self.assertEqual(set(summary), {"capture_id", "source_type", "input_type", "captured_at",
+                                        "display_filename", "status", "error_code", "has_review"})
+        self.assertEqual(summary["capture_id"], capture_id)
+        self.assertEqual(summary["status"], "processing")
+        self.assertIsNone(summary["error_code"])
+        self.assertTrue(summary["has_review"])
+        self.assertNotIn("SYNTHETIC", response.text)
+        self.assertNotIn("SECRET", response.text)
+        self.assertEqual(hashlib.sha256(state_path.read_bytes()).hexdigest(), before_hash)
+        self.assertEqual(state_path.stat().st_mtime_ns, before_mtime)
 
     def test_preview_requires_session_uses_safe_mime_and_keeps_download_separate(self):
         unauth = self.client.get("/api/inbox/" + ("0" * 32) + "/preview")

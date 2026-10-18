@@ -14,16 +14,21 @@ import { App } from './App';
 const syntheticCollections = { collections: [{ id: 'drafts', kind: 'drafts' }] };
 const singleDraftId = 'ec5467a3-3087-45a2-befd-74038d08830c';
 const secondDraftId = 'acf4e33a-349f-4d8f-84a5-cec5304ae100';
+const captureId = '1234567890abcdef1234567890abcdef';
+const secondCaptureId = 'abcdef1234567890abcdef1234567890';
 
-function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>) {
+function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, summaryStatus = 200) {
   const calls: string[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input);
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
     if (url === '/api/home') return new Response('{}', { status: 200 });
+    if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify(summaryStatus === 200 ? { status: 'real', items: [{ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', display_filename: 'synthetic.txt', status: 'completed', error_code: null, has_review: false }] } : { detail: 'synthetic failure' }), { status: summaryStatus });
+    if (url === `/api/capture/${captureId}`) return new Response(JSON.stringify({ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', raw_path: 'synthetic.txt', display_filename: 'synthetic.txt', title: 'Synthetic capture', status: 'completed', content_preview: 'SYNTHETIC EXACT CAPTURE BODY', review_path: null }), { status: 200 });
+    if (url === `/api/inbox/${captureId}/preview`) return new Response('SYNTHETIC EXACT CAPTURE BODY', { status: 200 });
     if (url === '/api/notes') return new Response(JSON.stringify(notesStatus === 200 ? syntheticCollections : { detail: 'synthetic gate denial' }), { status: notesStatus });
-    if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: 'synthetic.md', title: '合成笔记' }] }), { status: 200 });
+    if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: 'synthetic.md', title: '合成笔记' }, { path: singleDraftId, title: 'Inbox 合成草稿' }] }), { status: 200 });
     if (url === `/api/notes/drafts/${singleDraftId}`) return new Response(JSON.stringify({ collection: 'drafts', path: singleDraftId, content: '# 指定合成 Draft\n\nB1 synthetic only.\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] }), { status: 200 });
     if (url.startsWith('/api/inbox/proposals?')) return new Response(JSON.stringify({ proposals: [] }), { status: 200 });
     if (url.endsWith('/visual-assets/mindmap') && init?.method === 'POST') return new Response(JSON.stringify({ filename: `${'1'.repeat(32)}.mindmap.json`, etag: 'b'.repeat(64) }), { status: 200 });
@@ -268,5 +273,272 @@ describe('Notes application navigation gate', () => {
     expect(location.pathname).toBe('/notes');
     expect(screen.getByRole('dialog', { name: '思维导图' })).toBeTruthy();
     expect(screen.getByText('有未保存修改')).toBeTruthy();
+  });
+});
+
+describe('Inbox explicit source scopes', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    history.replaceState({}, '', '/');
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it('opens /inbox with no business-source requests even when stale scope values exist', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    localStorage.clear();
+    localStorage.setItem('secondbrain.inbox.scope', 'capture');
+    localStorage.setItem('secondbrain.notes.collection', 'authorized');
+    sessionStorage.setItem('secondbrain.inbox.scope', 'drafts');
+    history.replaceState({ sbInboxScope: 'capture' }, '', '/inbox');
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: '选择收件箱范围' })).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session']);
+    expect(screen.getByRole('button', { name: /Capture 待处理/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Notes Draft 草稿/ })).toBeTruthy();
+  });
+
+  it.each([401, 403, 503])('keeps Capture scope fail-closed after HTTP %i', async (status) => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch(200, undefined, status);
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', '/api/inbox/summary?limit=100']);
+    expect(calls.some((url) => url === '/api/home' || url === '/api/inbox' || url === '/api/notes' || url === '/api/notes/drafts')).toBe(false);
+  });
+
+  it('loads only Capture metadata after selection and exact detail only after clicking one item', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    expect(await screen.findByRole('heading', { name: 'synthetic.txt' })).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', '/api/inbox/summary?limit=100']);
+    expect(screen.queryByText('SYNTHETIC EXACT CAPTURE BODY')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '打开此 Capture' }));
+    expect(await screen.findByRole('dialog', { name: 'synthetic.txt' })).toBeTruthy();
+    await screen.findByText('SYNTHETIC EXACT CAPTURE BODY');
+    expect(calls).toEqual([
+      '/api/auth/session', '/api/inbox/summary?limit=100', `/api/capture/${captureId}`, `/api/inbox/${captureId}/preview`,
+    ]);
+    expect(calls.some((url) => url === '/api/notes' || url === '/api/notes/drafts' || url === '/api/home')).toBe(false);
+  });
+
+  it('keeps retry scoped to the explicitly selected Capture', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls: string[] = [];
+    let summaryRequests = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input); calls.push(`${init?.method || 'GET'} ${url}`);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') {
+        summaryRequests += 1;
+        const status = summaryRequests === 1 ? 'partial_success' : 'completed';
+        return new Response(JSON.stringify({ items: [{ capture_id: captureId, source_type: 'image', input_type: 'png', captured_at: '2026-10-18T00:00:00Z', display_filename: 'synthetic.png', status, error_code: status === 'partial_success' ? 'processor_unavailable' : null, has_review: false }] }), { status: 200 });
+      }
+      if (url === `/api/capture/${captureId}`) return new Response(JSON.stringify({ capture_id: captureId, source_type: 'image', input_type: 'png', captured_at: '2026-10-18T00:00:00Z', raw_path: 'synthetic.png', display_filename: 'synthetic.png', status: 'partial_success', error: { code: 'processor_unavailable' }, review_path: null }), { status: 200 });
+      if (url === `/api/capture/${captureId}/retry`) return new Response(JSON.stringify({ capture_id: captureId, source_type: 'image', input_type: 'png', captured_at: '2026-10-18T00:00:00Z', raw_path: 'synthetic.png', display_filename: 'synthetic.png', status: 'completed', review_path: 'synthetic-review.md' }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    fireEvent.click(await screen.findByRole('button', { name: '打开此 Capture' }));
+    expect(await screen.findByRole('button', { name: '重试此 Capture' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '重试此 Capture' }));
+    await waitFor(() => expect(summaryRequests).toBe(2));
+    expect(screen.queryByRole('button', { name: '重试此 Capture' })).toBeNull();
+    expect(calls).toEqual([
+      'GET /api/auth/session', 'GET /api/inbox/summary?limit=100', `GET /api/capture/${captureId}`,
+      `POST /api/capture/${captureId}/retry`, 'GET /api/inbox/summary?limit=100',
+    ]);
+  });
+
+  it.each(['success', 'failure'] as const)('ignores a late Capture A retry %s after Capture B is selected', async (outcome) => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls: string[] = [];
+    let resolveRetry!: (response: Response) => void;
+    const delayedRetry = new Promise<Response>((resolve) => { resolveRetry = resolve; });
+    const state = (id: string, displayFilename: string, status: string) => ({ capture_id: id, source_type: 'image', input_type: 'png', captured_at: '2026-10-18T00:00:00Z', raw_path: `${displayFilename}`, display_filename: displayFilename, status, error: status === 'partial_success' ? { code: 'processor_unavailable' } : null, review_path: null });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input); calls.push(`${init?.method || 'GET'} ${url}`);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify({ items: [
+        { capture_id: captureId, source_type: 'image', input_type: 'png', captured_at: '2026-10-18T00:00:00Z', display_filename: 'capture-a.png', status: 'partial_success', error_code: 'processor_unavailable', has_review: false },
+        { capture_id: secondCaptureId, source_type: 'image', input_type: 'png', captured_at: '2026-10-18T00:01:00Z', display_filename: 'capture-b.png', status: 'completed', error_code: null, has_review: false },
+      ] }), { status: 200 });
+      if (url === `/api/capture/${captureId}`) return new Response(JSON.stringify(state(captureId, 'capture-a.png', 'partial_success')), { status: 200 });
+      if (url === `/api/capture/${secondCaptureId}`) return new Response(JSON.stringify(state(secondCaptureId, 'capture-b.png', 'completed')), { status: 200 });
+      if (url === `/api/capture/${captureId}/retry`) return delayedRetry;
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    await screen.findByRole('heading', { name: 'capture-a.png' });
+    fireEvent.click(screen.getAllByRole('button', { name: '打开此 Capture' })[0]);
+    const dialogA = await screen.findByRole('dialog');
+    expect(within(dialogA).getByRole('heading', { name: 'capture-a.png' })).toBeTruthy();
+    fireEvent.click(await within(dialogA).findByRole('button', { name: '重试此 Capture' }));
+    await waitFor(() => expect(calls).toContain(`POST /api/capture/${captureId}/retry`));
+
+    fireEvent.click(within(dialogA).getAllByRole('button', { name: '关闭' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: '打开此 Capture' })[1]);
+    const dialogB = await screen.findByRole('dialog');
+    expect(within(dialogB).getByRole('heading', { name: 'capture-b.png' })).toBeTruthy();
+
+    await act(async () => {
+      resolveRetry(outcome === 'success'
+        ? new Response(JSON.stringify(state(captureId, 'capture-a.png', 'completed')), { status: 200 })
+        : new Response(JSON.stringify({ detail: 'synthetic retry failure' }), { status: 503 }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(screen.getByRole('dialog')).toBe(dialogB);
+    expect(within(dialogB).getByRole('heading', { name: 'capture-b.png' })).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(calls).toEqual([
+      'GET /api/auth/session', 'GET /api/inbox/summary?limit=100', `GET /api/capture/${captureId}`,
+      `POST /api/capture/${captureId}/retry`, `GET /api/capture/${secondCaptureId}`,
+    ]);
+  });
+
+  it('refreshes only the selected Capture scope and stops scoped refresh on exit', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls: string[] = [];
+    const intervalSpy = vi.spyOn(window, 'setInterval');
+    let summaryRequests = 0;
+    let organizerRequests = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') { summaryRequests += 1; return new Response(JSON.stringify({ items: [] }), { status: 200 }); }
+      if (url === '/api/automation/organize/status') { organizerRequests += 1; return new Response(JSON.stringify({ execution_available: false, blocked_reason: 'Synthetic disabled' }), { status: 200 }); }
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    expect(await screen.findByRole('heading', { name: '选择收件箱范围' })).toBeTruthy();
+    expect(intervalSpy.mock.calls.some(([, delay]) => delay === 5000)).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /Capture 待处理/ }));
+    await waitFor(() => expect(summaryRequests).toBe(1));
+    expect(intervalSpy.mock.calls.some(([, delay]) => delay === 5000)).toBe(true);
+    expect(organizerRequests).toBe(0);
+
+    await act(async () => { window.dispatchEvent(new Event('sb-inbox-refresh')); });
+    await waitFor(() => expect(summaryRequests).toBe(2));
+    expect(organizerRequests).toBe(0);
+
+    fireEvent.click(screen.getByRole('button', { name: '查看自动整理状态' }));
+    await waitFor(() => expect(organizerRequests).toBe(1));
+    expect(calls.filter((url) => url === '/api/automation/organize/run')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '更换范围' }));
+    await act(async () => { window.dispatchEvent(new Event('sb-inbox-refresh')); });
+    expect(summaryRequests).toBe(2);
+    expect(organizerRequests).toBe(1);
+  });
+
+  it('runs Organizer only after its explicit action is enabled and clicked', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input); calls.push(`${init?.method || 'GET'} ${url}`);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/automation/organize/status') return new Response(JSON.stringify({ execution_available: true, blocked_reason: '' }), { status: 200 });
+      if (url === '/api/automation/organize/run' && init?.method === 'POST') return new Response(JSON.stringify({ status: 'no_new_messages' }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    await screen.findByText('没有 Capture 条目。');
+    expect(calls.some((entry) => entry.endsWith('/api/automation/organize/status'))).toBe(false);
+    expect(calls.some((entry) => entry.endsWith('/api/automation/organize/run'))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '查看自动整理状态' }));
+    await waitFor(() => expect(calls).toContain('GET /api/automation/organize/status'));
+    expect(calls.some((entry) => entry.endsWith('/api/automation/organize/run'))).toBe(false);
+    fireEvent.click(await screen.findByRole('button', { name: '立即整理' }));
+    await screen.findByText('没有新增对话，无需整理。');
+    expect(calls).toContain('POST /api/automation/organize/run');
+  });
+
+  it('loads only Draft metadata after explicit selection and reads one exact Draft after click', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Notes Draft 草稿/ }));
+    expect(await screen.findByRole('heading', { name: 'Inbox 合成草稿' })).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', '/api/notes/drafts']);
+    expect(calls.some((url) => url.startsWith('/api/notes/drafts/'))).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '打开此 Draft' }));
+    expect(await screen.findByRole('heading', { name: '指定合成 Draft' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((url) => url.startsWith('/api/inbox/proposals?'))).toBe(true));
+    expect(calls).toContain(`/api/notes/drafts/${singleDraftId}`);
+    expect(calls.filter((url) => url.startsWith('/api/notes/drafts/'))).toEqual([`/api/notes/drafts/${singleDraftId}`]);
+    expect(calls.some((url) => url === '/api/notes' || url === '/api/inbox' || url === '/api/home')).toBe(false);
+  });
+
+  it.each([401, 403, 503])('keeps Notes Drafts scope fail-closed after HTTP %i', async (status) => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ detail: 'synthetic denial' }), { status });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Notes Draft 草稿/ }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', '/api/notes/drafts']);
+  });
+
+  it('resets an explicitly selected Inbox scope to neutral after refresh', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    expect(await screen.findByRole('heading', { name: 'synthetic.txt' })).toBeTruthy();
+    await waitFor(() => expect(calls).toContain('/api/inbox/summary?limit=100'));
+    cleanup();
+    history.replaceState({}, '', '/inbox');
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '选择收件箱范围' })).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', '/api/inbox/summary?limit=100', '/api/auth/session']);
+  });
+
+  it('stays neutral for an invalid Inbox deep path', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const invalidPathCalls = mockAppFetch();
+    history.replaceState({}, '', '/inbox/invalid-scope');
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '选择收件箱范围' })).toBeTruthy();
+    expect(invalidPathCalls).toEqual(['/api/auth/session']);
+  });
+
+  it('does not let a late Capture summary response cross into a newly chosen Draft scope', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls: string[] = [];
+    let resolveSummary!: (response: Response) => void;
+    const delayedSummary = new Promise<Response>((resolve) => { resolveSummary = resolve; });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') return delayedSummary;
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: singleDraftId, title: 'Draft after switch' }] }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    await waitFor(() => expect(calls).toContain('/api/inbox/summary?limit=100'));
+    fireEvent.click(screen.getByRole('button', { name: '更换范围' }));
+    fireEvent.click(screen.getByRole('button', { name: /Notes Draft 草稿/ }));
+    expect(await screen.findByRole('heading', { name: 'Draft after switch' })).toBeTruthy();
+    await act(async () => { resolveSummary(new Response(JSON.stringify({ items: [{ capture_id: captureId, display_filename: 'stale capture body' }] }), { status: 200 })); });
+    expect(screen.queryByText('stale capture body')).toBeNull();
+    expect(calls).toEqual(['/api/auth/session', '/api/inbox/summary?limit=100', '/api/notes/drafts']);
   });
 });

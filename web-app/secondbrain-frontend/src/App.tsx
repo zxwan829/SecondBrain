@@ -43,6 +43,17 @@ type CaptureItem = {
   source_url?: string | null; derived_source_url?: string | null;
   processor?: { kind?: string; name?: string } | null;
 };
+type CaptureSummary = {
+  capture_id: string;
+  source_type: string | null;
+  input_type: string | null;
+  captured_at: string | null;
+  display_filename: string | null;
+  status: string;
+  error_code: string | null;
+  has_review: boolean;
+};
+type InboxScope = 'capture' | 'drafts' | null;
 
 function capturedAtMillis(value?: string | null): number | null {
   if (!value) return null;
@@ -284,9 +295,11 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const pageRef = useRef(page);
   pageRef.current = page;
   const [routeRevision, setRouteRevision] = useState(0);
+  const [inboxScope, setInboxScope] = useState<InboxScope>(null);
   const [notesAvailable, setNotesAvailable] = useState(false);
   const [notesGateChecked, setNotesGateChecked] = useState(!enableNotes);
   const isSingleSourceInboxPath = location.pathname === '/inbox/source';
+  const isInboxRoute = location.pathname === '/inbox' || location.pathname.startsWith('/inbox/');
   const singleSource = isSingleSourceInboxPath ? singleDraftSourceFromSearch(location.search) : null;
   const notesNavigationGuard = useRef<(() => boolean) | null>(null);
   const navigationIndex = useRef(typeof history.state?.sbNavigationIndex === 'number' ? history.state.sbNavigationIndex as number : 0);
@@ -299,11 +312,11 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   useEffect(() => {
     // A direct single-source Inbox visit must not load Home, whose Core response
     // aggregates unrelated Review and Knowledge content.
-    if (location.pathname === '/inbox/source') return;
+    if (location.pathname === '/inbox/source' || isInboxRoute) return;
     let mounted = true;
     fetchHome().then((data) => { if (mounted) setHome(data); }).catch(() => { if (mounted) setError(true); });
     return () => { mounted = false; };
-  }, [isSingleSourceInboxPath]);
+  }, [isSingleSourceInboxPath, isInboxRoute]);
   const registerNotesNavigationGuard = useCallback((guard: (() => boolean) | null) => {
     notesNavigationGuard.current = guard;
   }, []);
@@ -328,6 +341,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         return;
       }
       if (typeof event.state?.sbNavigationIndex === 'number') navigationIndex.current = event.state.sbNavigationIndex as number;
+      setInboxScope(null);
       setPage(pageFromPath(location.pathname, enableNotes)); setRouteRevision((value) => value + 1);
     };
     window.addEventListener('popstate', onPop);
@@ -336,6 +350,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     if (!enableNotes) return;
+    if (isInboxRoute && !isSingleSourceInboxPath) return;
     if (isSingleSourceInboxPath) {
       // The exact-source Notes read is the Core permission check for this isolated route.
       // Do not fetch the Notes collections endpoint as a route-level preflight.
@@ -349,7 +364,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
       if (active) { setNotesAvailable(false); setNotesGateChecked(true); }
     });
     return () => { active = false; };
-  }, [enableNotes, isSingleSourceInboxPath]);
+  }, [enableNotes, isSingleSourceInboxPath, isInboxRoute]);
 
   useEffect(() => {
     const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/') || location.pathname === '/inbox/source';
@@ -367,6 +382,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     const destination = navItems.find((entry) => entry.id === item);
     if (destination && 'route' in destination && destination.route) {
       if (location.pathname !== destination.route || location.search) pushAppPath(destination.route);
+      if (destination.id === 'inbox') setInboxScope(null);
       setPage(destination.id); setRouteRevision((value) => value + 1); setMenuOpen(false); return;
     }
     if (page !== 'home') {
@@ -486,7 +502,9 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
-          : page === 'inbox' ? <InboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }}><Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes drafts…' : '正在加载笔记草稿…'}</div>}><UnifiedInboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} notesOnly /></Suspense></InboxPage>
+          : page === 'inbox' ? <InboxScopePage locale={locale} scope={inboxScope} onScopeChange={setInboxScope}
+            onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }}
+            onOpenDraft={(path) => { const query = new URLSearchParams({ collection: 'drafts', path }); pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1); }} />
           : page === 'chat' ? <ChatPage locale={locale} blankMode={location.pathname === '/chat/blank'} onGoInbox={() => navigate('inbox')}
             onGoJournal={() => navigate('journal')} onGoToday={() => navigate('today')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
@@ -494,6 +512,235 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
       </section>
     </main>
   );
+}
+
+function InboxScopePage({ locale, scope, onScopeChange, onReview, onOpenDraft }: { locale: Locale; scope: InboxScope; onScopeChange: (scope: InboxScope) => void; onReview: (reviewPath: string) => void; onOpenDraft: (path: string) => void }) {
+  const en = locale === 'en';
+  if (scope === 'capture') return <section className="capture-page" aria-labelledby="inbox-title">
+    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{en ? 'Capture pending' : 'Capture 待处理'}</h1></div><button type="button" className="capture-secondary" onClick={() => onScopeChange(null)}>{en ? 'Change scope' : '更换范围'}</button></header>
+    <ScopedCaptureInbox locale={locale} onReview={onReview} />
+  </section>;
+  if (scope === 'drafts') return <section className="capture-page" aria-labelledby="inbox-title">
+    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{en ? 'Notes Drafts' : 'Notes Draft 草稿'}</h1></div><button type="button" className="capture-secondary" onClick={() => onScopeChange(null)}>{en ? 'Change scope' : '更换范围'}</button></header>
+    <InboxDraftList locale={locale} onOpenDraft={onOpenDraft} />
+  </section>;
+  return <section className="capture-page" aria-labelledby="inbox-title">
+    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{en ? 'Choose an Inbox scope' : '选择收件箱范围'}</h1><p className="workspace-subtitle">{en ? 'Nothing is loaded until you choose a source.' : '选择来源前不会加载任何收件箱内容。'}</p></div></header>
+    <div className="action-row" role="group" aria-label={en ? 'Inbox source scope' : '收件箱来源范围'}>
+      <button type="button" className="action-card action-blue is-interactive" onClick={() => onScopeChange('capture')}><strong>{en ? 'Capture pending' : 'Capture 待处理'}</strong><span>{en ? 'Review captured source metadata' : '查看已收录来源的状态摘要'}</span></button>
+      <button type="button" className="action-card action-violet is-interactive" onClick={() => onScopeChange('drafts')}><strong>{en ? 'Notes Drafts' : 'Notes Draft 草稿'}</strong><span>{en ? 'Choose a Draft to review' : '选择一篇草稿进行审核'}</span></button>
+    </div>
+  </section>;
+}
+
+function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (reviewPath: string) => void }) {
+  const en = locale === 'en';
+  const [items, setItems] = useState<CaptureSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [detail, setDetail] = useState<CaptureItem | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [retrying, setRetrying] = useState(false);
+  const [organizerStatusRequested, setOrganizerStatusRequested] = useState(false);
+  const [organizeReason, setOrganizeReason] = useState('');
+  const [organizeAvailable, setOrganizeAvailable] = useState(false);
+  const [organizeBusy, setOrganizeBusy] = useState(false);
+  const [organizeMessage, setOrganizeMessage] = useState('');
+  const scopeController = useRef<AbortController | null>(null);
+  const detailController = useRef<AbortController | null>(null);
+  const detailRevision = useRef(0);
+  const selectedCaptureId = useRef<string | null>(null);
+  const summaryRevision = useRef(0);
+  const organizerController = useRef<AbortController | null>(null);
+
+  const loadSummary = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch('/api/inbox/summary?limit=100', { credentials: 'same-origin', signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json() as { items?: CaptureSummary[] };
+    return Array.isArray(payload.items) ? payload.items.filter((item): item is CaptureSummary => Boolean(item)
+      && typeof item.capture_id === 'string' && /^[0-9a-f]{32}$/.test(item.capture_id)) : [];
+  }, []);
+  const refreshSummary = useCallback(async () => {
+    const signal = scopeController.current?.signal;
+    if (!signal || signal.aborted) return;
+    const revision = ++summaryRevision.current;
+    try {
+      const nextItems = await loadSummary(signal);
+      if (!signal.aborted && revision === summaryRevision.current) { setItems(nextItems); setError(''); }
+    } catch (cause) {
+      if (!signal.aborted && revision === summaryRevision.current) setError(cause instanceof Error ? cause.message : (en ? 'Inbox summary is unavailable.' : '收件箱摘要暂不可用。'));
+    } finally {
+      if (!signal.aborted && revision === summaryRevision.current) setLoading(false);
+    }
+  }, [en, loadSummary]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    scopeController.current = controller;
+    void refreshSummary();
+    const refresh = () => { void refreshSummary(); };
+    const timer = window.setInterval(refresh, 5000);
+    window.addEventListener('sb-inbox-refresh', refresh);
+    return () => {
+      controller.abort();
+      summaryRevision.current += 1;
+      detailRevision.current += 1;
+      selectedCaptureId.current = null;
+      detailController.current?.abort();
+      organizerController.current?.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('sb-inbox-refresh', refresh);
+    };
+  }, [refreshSummary]);
+
+  const refreshOrganizerStatus = useCallback(async () => {
+    const signal = organizerController.current?.signal;
+    if (!signal || signal.aborted) return;
+    try {
+      const response = await fetch('/api/automation/organize/status', { credentials: 'same-origin', signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const value = await response.json() as { blocked_reason?: unknown; execution_available?: unknown };
+      if (signal.aborted) return;
+      setOrganizeReason(typeof value.blocked_reason === 'string' ? value.blocked_reason : '');
+      setOrganizeAvailable(value.execution_available === true);
+    } catch (cause) {
+      if (!signal.aborted) {
+        setOrganizeAvailable(false);
+        setOrganizeReason(cause instanceof Error ? cause.message : (en ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+      }
+    }
+  }, [en]);
+
+  useEffect(() => {
+    if (!organizerStatusRequested) return;
+    const controller = new AbortController();
+    organizerController.current = controller;
+    void refreshOrganizerStatus();
+    const refresh = () => { void refreshOrganizerStatus(); };
+    const timer = window.setInterval(refresh, 5000);
+    window.addEventListener('sb-inbox-refresh', refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      window.removeEventListener('sb-inbox-refresh', refresh);
+    };
+  }, [organizerStatusRequested, refreshOrganizerStatus]);
+
+  const requestOrganizerStatus = () => {
+    setOrganizeMessage('');
+    setOrganizerStatusRequested(true);
+  };
+
+  const organizeNow = async () => {
+    if (!organizeAvailable || organizeBusy) return;
+    setOrganizeBusy(true); setOrganizeMessage('');
+    try {
+      const response = await fetch('/api/automation/organize/run', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error('organizer_run_failed');
+      const label = value.status === 'no_new_messages' ? (en ? 'No new messages to organize.' : '没有新增对话，无需整理。')
+        : value.status === 'already_running' ? (en ? 'An organization job is already running.' : '已有整理任务正在运行。')
+          : (en ? `Organization finished; ${Number(value.draft_count ?? 0)} drafts added.` : `整理完成，新增 ${Number(value.draft_count ?? 0)} 条 Review 草稿。`);
+      setOrganizeMessage(label);
+      window.dispatchEvent(new Event('sb-inbox-refresh'));
+    } catch {
+      setOrganizeMessage(en ? 'Organization could not be completed; check its status and try again.' : '整理未能完成，请查看运行状态后再试。');
+    } finally { setOrganizeBusy(false); }
+  };
+
+  const openCapture = async (captureId: string) => {
+    detailController.current?.abort();
+    const controller = new AbortController();
+    detailController.current = controller;
+    const revision = ++detailRevision.current;
+    selectedCaptureId.current = captureId;
+    setDetail(null); setDetailError(''); setDetailLoading(true);
+    setRetrying(false);
+    try {
+      const response = await fetch(`/api/capture/${encodeURIComponent(captureId)}`, { credentials: 'same-origin', signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const value = await response.json() as CaptureItem;
+      if (controller.signal.aborted || revision !== detailRevision.current) return;
+      if (value.capture_id !== captureId) throw new Error('Capture identity mismatch');
+      setDetail(value);
+      if (previewKind(value.raw_path) === 'text') {
+        const preview = await fetch(`/api/inbox/${encodeURIComponent(captureId)}/preview`, { credentials: 'same-origin', signal: controller.signal });
+        if (!preview.ok) throw new Error(`HTTP ${preview.status}`);
+        const content = await preview.text();
+        if (!controller.signal.aborted && revision === detailRevision.current) setDetail((current) => current?.capture_id === captureId ? { ...current, content_preview: content } : current);
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted && revision === detailRevision.current) setDetailError(cause instanceof Error ? cause.message : (en ? 'Selected Capture could not be loaded.' : '无法加载所选 Capture。'));
+    } finally { if (!controller.signal.aborted && revision === detailRevision.current) setDetailLoading(false); }
+  };
+
+  const retryCapture = async () => {
+    if (!detail || detail.status !== 'partial_success' || retrying) return;
+    const captureId = detail.capture_id;
+    const revision = detailRevision.current;
+    const isCurrentSelection = () => !scopeController.current?.signal.aborted
+      && detailRevision.current === revision && selectedCaptureId.current === captureId;
+    const signal = scopeController.current?.signal;
+    if (!signal || signal.aborted) return;
+    setRetrying(true); setDetailError('');
+    try {
+      const response = await fetch(`/api/capture/${encodeURIComponent(captureId)}/retry`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!isCurrentSelection()) return;
+      const retryResult = await response.json() as CaptureItem;
+      if (!isCurrentSelection()) return;
+      if (retryResult.capture_id !== captureId) throw new Error('Capture identity mismatch');
+      setDetail(retryResult);
+      await refreshSummary();
+    } catch (cause) { if (isCurrentSelection()) setDetailError(cause instanceof Error ? cause.message : (en ? 'Retry failed.' : '重试失败。')); }
+    finally { if (isCurrentSelection()) setRetrying(false); }
+  };
+
+  return <>
+    {error && <p className="capture-alert" role="alert">{error}</p>}
+    <section className="inbox-header-actions" aria-label={en ? 'Organizer controls' : '自动整理操作'}>
+      {!organizerStatusRequested ? <button type="button" onClick={requestOrganizerStatus}>{en ? 'Check organizer status' : '查看自动整理状态'}</button> : <>
+        <button type="button" disabled={!organizeAvailable || organizeBusy} title={organizeReason} onClick={() => void organizeNow()}>{organizeBusy ? (en ? 'Organizing…' : '整理中…') : (en ? 'Organize now' : '立即整理')}</button>
+        <small>{organizeReason || (en ? 'Settings are saved, but the organizer is not active.' : '设置仅保存，自动整理尚未运行。')}</small>
+        {organizeMessage && <small role="status">{organizeMessage}</small>}
+      </>}
+    </section>
+    <div className="inbox-list" aria-live="polite">{loading ? <p>{en ? 'Loading summary…' : '正在加载摘要…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
+      <div className="inbox-item-main"><span className="inbox-type">{(item.input_type || 'item').toUpperCase()}</span><div><h2>{item.display_filename || item.capture_id}</h2><p>{item.source_type || (en ? 'Source' : '来源')} · {capturedAtLabel(item.captured_at, locale)}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, en)}</span></div>
+      {item.error_code && <p className="capture-processing-note">{en ? 'Error code' : '错误代码'}: {item.error_code}</p>}
+      <div className="inbox-links"><button type="button" onClick={() => void openCapture(item.capture_id)}>{en ? 'Open selected Capture' : '打开此 Capture'}</button></div>
+    </article>) : <p className="capture-empty">{en ? 'No Capture entries.' : '没有 Capture 条目。'}</p>}</div>
+    {detailLoading && <p role="status">{en ? 'Loading selected Capture…' : '正在加载所选 Capture…'}</p>}
+    {detailError && <p role="alert" className="capture-alert">{detailError}</p>}
+    {detail && <CapturePreview item={detail} locale={locale} content={detail.content_preview ?? null} error="" onClose={() => { detailController.current?.abort(); detailRevision.current += 1; selectedCaptureId.current = null; setRetrying(false); setDetail(null); setDetailError(''); }} onReview={onReview}
+      onRetry={detail.status === 'partial_success' ? () => void retryCapture() : undefined} retrying={retrying} />}
+  </>;
+}
+
+function InboxDraftList({ locale, onOpenDraft }: { locale: Locale; onOpenDraft: (path: string) => void }) {
+  const en = locale === 'en';
+  const [items, setItems] = useState<{ path: string; title: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    void fetch('/api/notes/drafts', { credentials: 'same-origin', signal: controller.signal }).then(async (response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json() as { items?: { path: string; title: string }[] };
+    }).then((payload) => {
+      if (active) setItems(Array.isArray(payload.items) ? payload.items.filter((item): item is { path: string; title: string } => Boolean(item) && typeof item.path === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.path) && typeof item.title === 'string') : []);
+    }).catch((cause) => { if (active && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : (en ? 'Draft list is unavailable.' : '草稿列表暂不可用。')); })
+      .finally(() => { if (active && !controller.signal.aborted) setLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [en]);
+  if (error) return <p role="alert" className="capture-alert">{error}</p>;
+  if (loading) return <p role="status">{en ? 'Loading Draft list…' : '正在加载草稿列表…'}</p>;
+  return <div className="inbox-list" aria-live="polite">{items.length ? items.map((item) => <article className="inbox-item" key={item.path}>
+    <div className="inbox-item-main"><div><h2>{item.title || item.path}</h2><p>{en ? 'Notes Draft' : 'Notes 草稿'}</p></div></div>
+    <div className="inbox-links"><button type="button" onClick={() => onOpenDraft(item.path)}>{en ? 'Open selected Draft' : '打开此 Draft'}</button></div>
+  </article>) : <p className="capture-empty">{en ? 'No Drafts.' : '没有草稿。'}</p>}</div>;
 }
 
 export function InboxPage({ locale, onReview, children }: { locale: Locale; onReview: (reviewPath: string) => void; children?: React.ReactNode }) {
@@ -596,7 +843,7 @@ function isSafeHttpUrl(value: string): boolean {
   catch { return false; }
 }
 
-function CapturePreview({ item, locale, content, error, onClose, onReview }: { item: CaptureItem; locale: Locale; content: string | null; error: string; onClose: () => void; onReview: (path: string) => void }) {
+function CapturePreview({ item, locale, content, error, onClose, onReview, onRetry, retrying = false }: { item: CaptureItem; locale: Locale; content: string | null; error: string; onClose: () => void; onReview: (path: string) => void; onRetry?: () => void; retrying?: boolean }) {
   const en = locale === 'en';
   const displayFilename = captureDisplayFilename(item, locale);
   const kind = previewKind(item.raw_path);
@@ -614,7 +861,7 @@ function CapturePreview({ item, locale, content, error, onClose, onReview }: { i
         {kind === 'audio' && <audio controls preload="metadata" src={url}>{en ? 'Audio playback is not supported by this browser.' : '当前浏览器不支持此音频播放。'}</audio>}
         {kind === 'unsupported' && <p>{en ? 'This file type cannot be previewed here. Download the original file instead.' : '此类型暂不支持站内预览，可下载原件查看。'}</p>}
       </div>
-      <footer><a className="capture-secondary" href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>{item.review_path && <button type="button" className="capture-primary" onClick={() => onReview(item.review_path!)}>{en ? 'View related Review' : '查看对应 Review'}</button>}<button type="button" className="capture-secondary" onClick={onClose}>{en ? 'Close' : '关闭'}</button></footer>
+      <footer><a className="capture-secondary" href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>{item.review_path && <button type="button" className="capture-primary" onClick={() => onReview(item.review_path!)}>{en ? 'View related Review' : '查看对应 Review'}</button>}{onRetry && <button type="button" className="capture-primary" onClick={onRetry} disabled={retrying}>{retrying ? (en ? 'Retrying…' : '重试中…') : (en ? 'Retry selected Capture' : '重试此 Capture')}</button>}<button type="button" className="capture-secondary" onClick={onClose}>{en ? 'Close' : '关闭'}</button></footer>
     </section>
   </div>;
 }
