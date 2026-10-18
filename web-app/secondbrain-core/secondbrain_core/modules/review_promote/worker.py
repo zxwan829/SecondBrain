@@ -43,6 +43,16 @@ class NoApprovalSource:
         return None
 
 
+def render_promoted_markdown(request_id, review_sha256, approved_at, content):
+    """Render the one canonical byte sequence shared by Preview and Worker."""
+    try:
+        adapted = adapt_review_markdown(content, approved_at)
+    except ReviewFormatError as exc:
+        raise PromotionError("Review Markdown cannot be promoted safely") from exc
+    return ("<!-- secondbrain-promote request_id=" + request_id +
+            " review_sha256=" + review_sha256 + " -->\n").encode("utf-8") + adapted
+
+
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_NAME = re.compile(r"^[^./\\\x00-\x1f\x7f:][^/\\\x00-\x1f\x7f:]{0,179}\.md$")
@@ -207,12 +217,7 @@ class PromoteWorker:
                 digest = hashlib.sha256(content).hexdigest()
                 if digest != approval.review_sha256:
                     raise PromotionError("Review content changed; approval is stale")
-                try:
-                    content = adapt_review_markdown(content, approval.approved_at)
-                except ReviewFormatError as exc:
-                    raise PromotionError(str(exc)) from exc
-                output = ("<!-- secondbrain-promote request_id=" + request_id +
-                          " review_sha256=" + digest + " -->\n").encode("utf-8") + content
+                output = render_promoted_markdown(request_id, digest, approval.approved_at, content)
                 output_hash = hashlib.sha256(output).hexdigest()
                 try:
                     existing_fd = os.open(approval.target_filename,

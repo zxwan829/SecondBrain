@@ -29,7 +29,8 @@ class PromoteService:
             claim.get("review_sha256") == digest,
         ))
 
-    def approve_and_promote_as(self, approver_subject, body, review_root=None):
+    def approve_and_promote_as(self, approver_subject, body, review_root=None,
+                               approved_at=None, operation_callback=None):
         """Bind one request and target to a Review version, then recover idempotently."""
         if review_root is None:
             review_root = self.worker.review_root
@@ -44,7 +45,7 @@ class PromoteService:
                 with self.decisions.lock_request_id(request_id):
                     return self._approve_under_locks(
                         approver_subject, body, str(review_root), review_path,
-                        digest, request_id, target_filename,
+                        digest, request_id, target_filename, approved_at, operation_callback,
                     )
         except ApprovalRequestError:
             raise
@@ -55,7 +56,8 @@ class PromoteService:
             ) from exc
 
     def _approve_under_locks(self, approver_subject, body, review_root, review_path,
-                             digest, request_id, target_filename):
+                             digest, request_id, target_filename, approved_at=None,
+                             operation_callback=None):
         actual = hashlib.sha256(_read_review(review_root, review_path)).hexdigest()
         if actual != digest:
             raise ApprovalRequestError("Review content changed; refresh before approving")
@@ -73,11 +75,16 @@ class PromoteService:
                 raise ApprovalRequestError("Request ID is already bound; recovery required")
             claim = self.decisions.create_claim(
                 review_path, digest, request_id, target_filename, approver_subject,
+                approved_at=approved_at,
             )
         elif not self._claim_matches(
             claim, request_id, target_filename, approver_subject, review_path, digest,
         ):
             raise ApprovalRequestError("Review version is already claimed; recovery required")
+        if approved_at is not None and claim.get("approved_at") != approved_at:
+            raise ApprovalRequestError("Review claim does not match the confirmed preview timestamp")
+        if operation_callback:
+            operation_callback("claimed")
 
         records = self.approvals.records_for_version(review_path, digest)
         if any(record.get("request_id") != claim.get("request_id") for record in records):
@@ -94,7 +101,10 @@ class PromoteService:
             if current.get("request_id") != claim["request_id"] or \
                     current.get("target_filename") != claim["target_filename"]:
                 raise ApprovalRequestError("Promoted decision conflicts with its durable claim; recovery required")
-            return {**accepted, **self.worker.promote(claim["request_id"], review_path, digest)}
+            result = {**accepted, **self.worker.promote(claim["request_id"], review_path, digest)}
+            if operation_callback:
+                operation_callback("already_promoted")
+            return result
         if current.get("status") in {"approved", "promoting", "failed"} and \
                 current.get("request_id") not in (None, claim["request_id"]):
             raise ApprovalRequestError("Review version decision conflicts with its durable claim; recovery required")
@@ -103,6 +113,8 @@ class PromoteService:
                            approver_subject=approver_subject, target_filename=claim["target_filename"])
         self.decisions.set(review_path, digest, "promoting", request_id=claim["request_id"],
                            approver_subject=approver_subject, target_filename=claim["target_filename"])
+        if operation_callback:
+            operation_callback("promoting")
         try:
             result = self.worker.promote(claim["request_id"], review_path, digest)
         except Exception as exc:
@@ -121,6 +133,8 @@ class PromoteService:
         self.decisions.set(review_path, digest, "promoted", request_id=claim["request_id"],
                            approver_subject=approver_subject,
                            target_filename=result.get("target_filename"))
+        if operation_callback:
+            operation_callback("promoted" if result.get("status") == "promoted" else "already_promoted")
         return {**accepted, **result}
 
     def defer(self, review_path, review_sha256, operator_subject):
