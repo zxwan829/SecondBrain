@@ -39,71 +39,13 @@ class PromoteService:
         target_filename = body.get("target_filename")
 
         try:
+            # Global lock order is version -> request ID -> worker audit.
             with self.decisions.lock_version(review_path, digest):
-                actual = hashlib.sha256(_read_review(str(review_root), review_path)).hexdigest()
-                if actual != digest:
-                    raise ApprovalRequestError("Review content changed; refresh before approving")
-
-                current = self.decisions.get(review_path, digest)
-                claim = self.decisions.read_claim(review_path, digest)
-                if claim is None:
-                    if current.get("status") in {"approved", "promoting", "promoted", "failed"}:
-                        raise ApprovalRequestError("Review version state has no durable claim; recovery required")
-                    if self.approvals.records_for_version(review_path, digest):
-                        raise ApprovalRequestError("Review version has an orphan approval; recovery required")
-                    if self.approvals.read(request_id) is not None:
-                        raise ApprovalRequestError("Request ID is already bound; recovery required")
-                    claim = self.decisions.create_claim(
-                        review_path, digest, request_id, target_filename, approver_subject,
+                with self.decisions.lock_request_id(request_id):
+                    return self._approve_under_locks(
+                        approver_subject, body, str(review_root), review_path,
+                        digest, request_id, target_filename,
                     )
-                elif not self._claim_matches(
-                    claim, request_id, target_filename, approver_subject, review_path, digest,
-                ):
-                    raise ApprovalRequestError("Review version is already claimed; recovery required")
-
-                records = self.approvals.records_for_version(review_path, digest)
-                if any(record.get("request_id") != claim.get("request_id") for record in records):
-                    raise ApprovalRequestError("Review version claim conflicts with approval state; recovery required")
-
-                accepted = self.approvals.approve_as(
-                    approver_subject,
-                    {**body, "review_path": review_path},
-                    str(review_root),
-                    approved_at=claim["approved_at"],
-                )
-                current = self.decisions.get(review_path, digest)
-                if current.get("status") == "promoted":
-                    if current.get("request_id") != claim["request_id"] or \
-                            current.get("target_filename") != claim["target_filename"]:
-                        raise ApprovalRequestError("Promoted decision conflicts with its durable claim; recovery required")
-                    return {**accepted, **self.worker.promote(claim["request_id"], review_path, digest)}
-                if current.get("status") in {"approved", "promoting", "failed"} and \
-                        current.get("request_id") not in (None, claim["request_id"]):
-                    raise ApprovalRequestError("Review version decision conflicts with its durable claim; recovery required")
-
-                self.decisions.set(review_path, digest, "approved", request_id=claim["request_id"],
-                                   approver_subject=approver_subject, target_filename=claim["target_filename"])
-                self.decisions.set(review_path, digest, "promoting", request_id=claim["request_id"],
-                                   approver_subject=approver_subject, target_filename=claim["target_filename"])
-                try:
-                    result = self.worker.promote(claim["request_id"], review_path, digest)
-                except Exception as exc:
-                    try:
-                        self.decisions.set(review_path, digest, "failed", request_id=claim["request_id"],
-                                           approver_subject=approver_subject,
-                                           target_filename=claim["target_filename"], error_code=type(exc).__name__)
-                    except Exception as state_exc:
-                        raise ApprovalRequestError(
-                            "Promotion outcome requires recovery; retry only with the same request ID",
-                        ) from state_exc
-                    raise ApprovalRequestError(
-                        "Promotion failed; retry only with the same request ID or seek recovery",
-                    ) from exc
-
-                self.decisions.set(review_path, digest, "promoted", request_id=claim["request_id"],
-                                   approver_subject=approver_subject,
-                                   target_filename=result.get("target_filename"))
-                return {**accepted, **result}
         except ApprovalRequestError:
             raise
         except Exception as exc:
@@ -111,6 +53,75 @@ class PromoteService:
             raise ApprovalRequestError(
                 "Promotion operation requires recovery; retry only with the same request ID",
             ) from exc
+
+    def _approve_under_locks(self, approver_subject, body, review_root, review_path,
+                             digest, request_id, target_filename):
+        actual = hashlib.sha256(_read_review(review_root, review_path)).hexdigest()
+        if actual != digest:
+            raise ApprovalRequestError("Review content changed; refresh before approving")
+
+        current = self.decisions.get(review_path, digest)
+        claim = self.decisions.read_claim(review_path, digest)
+        if claim is None:
+            if current.get("status") in {"approved", "promoting", "promoted", "failed"}:
+                raise ApprovalRequestError("Review version state has no durable claim; recovery required")
+            if self.approvals.records_for_version(review_path, digest):
+                raise ApprovalRequestError("Review version has an orphan approval; recovery required")
+            if self.decisions.claims_for_request_id(request_id):
+                raise ApprovalRequestError("Request ID is already bound to another Review version; recovery required")
+            if self.approvals.read(request_id) is not None:
+                raise ApprovalRequestError("Request ID is already bound; recovery required")
+            claim = self.decisions.create_claim(
+                review_path, digest, request_id, target_filename, approver_subject,
+            )
+        elif not self._claim_matches(
+            claim, request_id, target_filename, approver_subject, review_path, digest,
+        ):
+            raise ApprovalRequestError("Review version is already claimed; recovery required")
+
+        records = self.approvals.records_for_version(review_path, digest)
+        if any(record.get("request_id") != claim.get("request_id") for record in records):
+            raise ApprovalRequestError("Review version claim conflicts with approval state; recovery required")
+
+        accepted = self.approvals.approve_as(
+            approver_subject,
+            {**body, "review_path": review_path},
+            review_root,
+            approved_at=claim["approved_at"],
+        )
+        current = self.decisions.get(review_path, digest)
+        if current.get("status") == "promoted":
+            if current.get("request_id") != claim["request_id"] or \
+                    current.get("target_filename") != claim["target_filename"]:
+                raise ApprovalRequestError("Promoted decision conflicts with its durable claim; recovery required")
+            return {**accepted, **self.worker.promote(claim["request_id"], review_path, digest)}
+        if current.get("status") in {"approved", "promoting", "failed"} and \
+                current.get("request_id") not in (None, claim["request_id"]):
+            raise ApprovalRequestError("Review version decision conflicts with its durable claim; recovery required")
+
+        self.decisions.set(review_path, digest, "approved", request_id=claim["request_id"],
+                           approver_subject=approver_subject, target_filename=claim["target_filename"])
+        self.decisions.set(review_path, digest, "promoting", request_id=claim["request_id"],
+                           approver_subject=approver_subject, target_filename=claim["target_filename"])
+        try:
+            result = self.worker.promote(claim["request_id"], review_path, digest)
+        except Exception as exc:
+            try:
+                self.decisions.set(review_path, digest, "failed", request_id=claim["request_id"],
+                                   approver_subject=approver_subject,
+                                   target_filename=claim["target_filename"], error_code=type(exc).__name__)
+            except Exception as state_exc:
+                raise ApprovalRequestError(
+                    "Promotion outcome requires recovery; retry only with the same request ID",
+                ) from state_exc
+            raise ApprovalRequestError(
+                "Promotion failed; retry only with the same request ID or seek recovery",
+            ) from exc
+
+        self.decisions.set(review_path, digest, "promoted", request_id=claim["request_id"],
+                           approver_subject=approver_subject,
+                           target_filename=result.get("target_filename"))
+        return {**accepted, **result}
 
     def defer(self, review_path, review_sha256, operator_subject):
         if not isinstance(operator_subject, str) or not operator_subject:

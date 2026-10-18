@@ -107,6 +107,44 @@ class ApprovalFileStore:
             raise ApprovalRequestError("Invalid request ID")
         return request_id + ".json"
 
+    @staticmethod
+    def _read_record_at(directory_fd, name):
+        fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or \
+                    stat.S_IMODE(info.st_mode) != 0o600:
+                raise ApprovalRequestError("Approval record must be a regular private file")
+            record = json.loads(_read_fd(fd).decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            raise ApprovalRequestError("Approval record is unreadable or malformed") from exc
+        finally:
+            os.close(fd)
+        if not isinstance(record, dict):
+            raise ApprovalRequestError("Approval record is unreadable or malformed")
+        return record
+
+    @staticmethod
+    def _is_legacy_approval(record, request_id):
+        fields = {"request_id", "status", "approver_subject", "approved_at",
+                  "review_path", "review_sha256", "target_filename"}
+        if set(record) != fields or record.get("request_id") != request_id or \
+                record.get("status") != "approved" or \
+                not isinstance(record.get("approver_subject"), str) or not record["approver_subject"] or \
+                not isinstance(record.get("approved_at"), str) or \
+                not isinstance(record.get("review_path"), str) or \
+                not isinstance(record.get("review_sha256"), str) or \
+                not _SHA256.fullmatch(record["review_sha256"]) or \
+                not isinstance(record.get("target_filename"), str) or \
+                not _TARGET.fullmatch(record["target_filename"]):
+            return False
+        try:
+            datetime.fromisoformat(record["approved_at"].replace("Z", "+00:00"))
+            ReviewDecisionStore.canonical_review_path(record["review_path"])
+        except (ValueError, ApprovalRequestError):
+            return False
+        return True
+
     def create(self, record):
         name = self._record_name(record["request_id"])
         directory_fd = self._open_private_dir()
@@ -146,19 +184,9 @@ class ApprovalFileStore:
         name = self._record_name(request_id)
         directory_fd = self._open_private_dir()
         try:
-            fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
-            try:
-                info = os.fstat(fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or \
-                        stat.S_IMODE(info.st_mode) != 0o600:
-                    raise ApprovalRequestError("Approval record must be a regular file")
-                record = json.loads(_read_fd(fd).decode("utf-8"))
-            finally:
-                os.close(fd)
+            record = self._read_record_at(directory_fd, name)
         except FileNotFoundError:
             return None
-        except (OSError, ValueError, UnicodeDecodeError) as exc:
-            raise ApprovalRequestError("Approval record is unreadable or malformed") from exc
         finally:
             os.close(directory_fd)
         if record.get("request_id") != request_id or record.get("status") != "approved":
@@ -175,11 +203,42 @@ class ApprovalFileStore:
             for name in os.listdir(directory_fd):
                 if not name.endswith(".json"):
                     continue
-                # ReviewDecisionStore keeps one 64-hex version-key JSON beside
-                # request-ID approval files. It is a distinct record namespace.
-                if re.fullmatch(r"[0-9a-f]{64}\.json", name):
-                    continue
-                record = self.read(name[:-5])
+                request_id = name[:-5]
+                if re.fullmatch(r"[0-9a-f]{64}", request_id):
+                    record = self._read_record_at(directory_fd, name)
+                    decision_fields = {"status", "review_path", "review_sha256", "updated_at", "history"}
+                    allowed_decision_fields = decision_fields | {
+                        "request_id", "approver_subject", "target_filename", "decided_by", "error_code",
+                    }
+                    is_decision = decision_fields <= set(record) <= allowed_decision_fields and \
+                        record.get("status") in ReviewDecisionStore.STATES and \
+                        isinstance(record.get("review_path"), str) and \
+                        isinstance(record.get("review_sha256"), str) and \
+                        _SHA256.fullmatch(record["review_sha256"]) and \
+                        isinstance(record.get("updated_at"), str) and \
+                        isinstance(record.get("history"), list)
+                    if is_decision:
+                        try:
+                            is_decision = ReviewDecisionStore.version_key(
+                                record["review_path"], record["review_sha256"],
+                            ) == request_id
+                            datetime.fromisoformat(record["updated_at"].replace("Z", "+00:00"))
+                        except (ValueError, ApprovalRequestError):
+                            is_decision = False
+                    is_approval = self._is_legacy_approval(record, request_id)
+                    if is_decision and not is_approval:
+                        continue
+                    if is_approval and not is_decision:
+                        if record.get("review_path") == review_path and \
+                                record.get("review_sha256") == review_sha256:
+                            records.append(record)
+                        continue
+                    raise ApprovalRequestError(
+                        "Ambiguous 64-hex approval state; manual recovery required",
+                    )
+                record = self._read_record_at(directory_fd, name)
+                if record.get("request_id") != request_id or record.get("status") != "approved":
+                    raise ApprovalRequestError("Approval record identity or state mismatch")
                 if record and record.get("review_path") == review_path and record.get("review_sha256") == review_sha256:
                     records.append(record)
             return records
@@ -296,28 +355,52 @@ class ReviewDecisionStore:
                     os.close(lock_fd)
             os.close(directory_fd)
 
-    def read_claim(self, review_path, review_sha256):
-        key = self.version_key(review_path, review_sha256)
+    @staticmethod
+    def request_id_lock_key(request_id):
+        if not isinstance(request_id, str) or not _REQUEST_ID.fullmatch(request_id) or \
+                re.fullmatch(r"[0-9a-f]{64}", request_id):
+            raise ApprovalRequestError("Invalid request ID")
+        return hashlib.sha256(("secondbrain-promote-request-id\0" + request_id).encode("utf-8")).hexdigest()
+
+    @contextmanager
+    def lock_request_id(self, request_id):
+        """Serialize claim publication for one request ID across Review versions."""
+        key = self.request_id_lock_key(request_id)
         directory_fd = self._read_dir_fd()
+        lock_fd = None
+        name = "request-id-" + key + ".lock"
         try:
             try:
-                fd = os.open(key + ".claim", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
-            except FileNotFoundError:
-                return None
-            try:
-                info = os.fstat(fd)
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
-                    raise ApprovalRequestError("Review version claim permissions are unsafe")
-                record = json.loads(_read_fd(fd).decode("utf-8"))
-            finally:
-                os.close(fd)
-        except (OSError, ValueError, UnicodeDecodeError) as exc:
-            raise ApprovalRequestError("Review version claim is unreadable or malformed; recovery required") from exc
+                try:
+                    lock_fd = os.open(name, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                except FileNotFoundError:
+                    try:
+                        lock_fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL |
+                                          getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory_fd)
+                    except FileExistsError:
+                        lock_fd = os.open(name, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            except OSError as exc:
+                raise ApprovalRequestError("Request ID lock is unavailable or unsafe") from exc
+            info = os.fstat(lock_fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or \
+                    stat.S_IMODE(info.st_mode) != 0o600:
+                raise ApprovalRequestError("Request ID lock permissions are unsafe")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            yield key
         finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
             os.close(directory_fd)
+
+    @staticmethod
+    def _validate_claim_record(record, key):
         if not isinstance(record, dict) or record.get("version") != 1 or \
                 not isinstance(record.get("request_id"), str) or \
                 not _REQUEST_ID.fullmatch(record["request_id"]) or \
+                re.fullmatch(r"[0-9a-f]{64}", record["request_id"]) or \
                 not isinstance(record.get("target_filename"), str) or \
                 not _TARGET.fullmatch(record["target_filename"]) or \
                 not isinstance(record.get("approver_subject"), str) or not record["approver_subject"] or \
@@ -325,12 +408,60 @@ class ReviewDecisionStore:
             raise ApprovalRequestError("Review version claim is inconsistent; recovery required")
         try:
             datetime.fromisoformat(record["approved_at"].replace("Z", "+00:00"))
-        except ValueError as exc:
+            expected = ReviewDecisionStore.version_key(record.get("review_path"), record.get("review_sha256"))
+        except (ValueError, ApprovalRequestError) as exc:
             raise ApprovalRequestError("Review version claim is inconsistent; recovery required") from exc
-        expected = self.version_key(record.get("review_path"), record.get("review_sha256"))
         if expected != key or record.get("version_key") != key:
             raise ApprovalRequestError("Review version claim identity mismatch; recovery required")
         return record
+
+    def _read_claim_at(self, directory_fd, key):
+        try:
+            fd = os.open(key + ".claim", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            return None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or \
+                    stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 65536:
+                raise ApprovalRequestError("Review version claim permissions or size are unsafe")
+            record = json.loads(_read_fd(fd).decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            raise ApprovalRequestError(
+                "Review version claim is unreadable or malformed; recovery required",
+            ) from exc
+        finally:
+            os.close(fd)
+        return self._validate_claim_record(record, key)
+
+    def read_claim(self, review_path, review_sha256):
+        key = self.version_key(review_path, review_sha256)
+        directory_fd = self._read_dir_fd()
+        try:
+            return self._read_claim_at(directory_fd, key)
+        finally:
+            os.close(directory_fd)
+
+    def claims_for_request_id(self, request_id):
+        """Return every validated durable Claim using this ID; malformed state blocks reuse."""
+        self.request_id_lock_key(request_id)
+        directory_fd = self._read_dir_fd()
+        claims = []
+        try:
+            for name in os.listdir(directory_fd):
+                if not name.endswith(".claim"):
+                    continue
+                key = name[:-6]
+                if not _SHA256.fullmatch(key):
+                    raise ApprovalRequestError("Unrecognized Review claim state; recovery required")
+                record = self._read_claim_at(directory_fd, key)
+                if record is None:
+                    raise ApprovalRequestError("Review claim disappeared; recovery required")
+                if record["request_id"] == request_id:
+                    claims.append(record)
+            return claims
+        finally:
+            os.close(directory_fd)
 
     def create_claim(self, review_path, review_sha256, request_id, target_filename, approver_subject):
         """Create one immutable, durable request/target binding without clobbering."""
