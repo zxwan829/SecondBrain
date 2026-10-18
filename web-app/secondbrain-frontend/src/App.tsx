@@ -103,11 +103,22 @@ export function scrollReviewItemIntoView(container: HTMLElement, target: HTMLEle
 }
 
 function pageFromPath(path: string, enableNotes: boolean): Page {
+  if (path === '/inbox/source') return enableNotes ? 'inbox-source' : 'home';
   const route = navItems.find((item) => 'route' in item && item.route !== '/' &&
     (path === item.route || path.startsWith(`${item.route}/`)));
   if (route?.id === 'notes' && !enableNotes) return 'home';
   if (route) return route.id;
   return 'home';
+}
+
+export function singleDraftSourceFromSearch(search: string): { collection: 'drafts'; path: string } | null {
+  const params = new URLSearchParams(search);
+  if ([...params.keys()].some((key) => key !== 'collection' && key !== 'path')
+    || params.getAll('collection').length !== 1 || params.getAll('path').length !== 1
+    || params.get('collection') !== 'drafts') return null;
+  const path = params.get('path') || '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(path)
+    ? { collection: 'drafts', path } : null;
 }
 
 const messages = {
@@ -275,6 +286,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [routeRevision, setRouteRevision] = useState(0);
   const [notesAvailable, setNotesAvailable] = useState(false);
   const [notesGateChecked, setNotesGateChecked] = useState(!enableNotes);
+  const isSingleSourceInboxPath = location.pathname === '/inbox/source';
   const notesNavigationGuard = useRef<(() => boolean) | null>(null);
   const navigationIndex = useRef(typeof history.state?.sbNavigationIndex === 'number' ? history.state.sbNavigationIndex as number : 0);
   const t = messages[locale];
@@ -304,7 +316,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   }, []);
   useEffect(() => {
     const onPop = (event: PopStateEvent) => {
-      const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/');
+      const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/') || location.pathname === '/inbox/source';
       if (pageRef.current === 'notes' && !isNotesPath && notesNavigationGuard.current && !notesNavigationGuard.current()) {
         const targetIndex = typeof event.state?.sbNavigationIndex === 'number' ? event.state.sbNavigationIndex as number : null;
         const direction = targetIndex === null ? -1 : Math.sign(targetIndex - navigationIndex.current);
@@ -320,6 +332,12 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     if (!enableNotes) return;
+    if (isSingleSourceInboxPath) {
+      // The exact-source Notes read is the Core permission check for this isolated route.
+      // Do not fetch the Notes collections endpoint as a route-level preflight.
+      setNotesAvailable(true); setNotesGateChecked(true);
+      return;
+    }
     let active = true;
     void notesApi.collections().then(() => {
       if (active) { setNotesAvailable(true); setNotesGateChecked(true); }
@@ -327,10 +345,10 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
       if (active) { setNotesAvailable(false); setNotesGateChecked(true); }
     });
     return () => { active = false; };
-  }, [enableNotes]);
+  }, [enableNotes, isSingleSourceInboxPath]);
 
   useEffect(() => {
-    const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/');
+    const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/') || location.pathname === '/inbox/source';
     if (isNotesPath && (!enableNotes || (notesGateChecked && !notesAvailable))) {
       history.replaceState(history.state, '', '/');
       setPage('home');
@@ -405,8 +423,14 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
 
         {page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
           : page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
-          ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage onRegisterNavigationGuard={registerNotesNavigationGuard} /></Suspense>
+          ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage onRegisterNavigationGuard={registerNotesNavigationGuard} onOpenInboxSource={(collection, path) => {
+            const query = new URLSearchParams({ collection, path });
+            pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1);
+          }} /></Suspense>
           : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
+          : page === 'inbox-source' ? (enableNotes && (notesAvailable || isSingleSourceInboxPath)
+            ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading selected Draft…' : '正在加载所选 Draft…'}</div>}><UnifiedInboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} showSyntheticCaptureDemo={false} singleSourceMode singleSource={singleDraftSourceFromSearch(location.search)} /></Suspense>
+            : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
           : page === 'today' ? <TaskPage locale={locale} /> : page === 'home' ? <>
         <header className="workspace-header">
           <div className="workspace-heading">

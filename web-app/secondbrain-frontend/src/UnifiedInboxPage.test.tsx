@@ -5,6 +5,7 @@ import { UnifiedInboxPage } from './UnifiedInboxPage';
 import { suggestInboxClassification } from './unified-inbox';
 
 const noteId = 'synthetic-note-1';
+const singleDraftId = 'ec5467a3-3087-45a2-befd-74038d08830c';
 let created = false;
 let savedProposals: Array<Record<string, any>> = [];
 let savedManualType = '';
@@ -28,20 +29,26 @@ beforeEach(() => {
     const url = String(input);
     if (url.startsWith('/api/inbox/proposals?')) return ok({ proposals: savedProposals });
     if (url === '/api/inbox/proposals' && init?.method === 'POST') {
+      const source = JSON.parse(String(init.body));
       const kinds = ['type', 'tags', 'journal', 'review', 'project'];
       savedProposals = kinds.map((kind) => {
         const original = kind === 'type' ? { value: '会议纪要', vocabulary_values: ['日记', '笔记', '头脑风暴', '摘要', '会议纪要'] } : kind === 'tags' ? { values: ['SecondBrain'], unknown_candidates: ['roadmap'], vocabulary_values: ['SecondBrain', 'CRM'] } : { value: '合成建议' };
         const current = kind === 'type' && savedManualType ? { ...original, value: savedManualType }
           : kind === 'tags' ? { ...original, values: (Array.isArray(original.values) ? original.values : []).filter((tag: string) => !savedRemovedTags.includes(tag)), removed_by_user: savedRemovedTags }
             : original;
-        return { proposal_id: `proposal-${kind}`, kind, status: 'suggested', version: 1, source_version: 'synthetic-etag', target_execution_status: 'not_executed', suggestion: { original, current } };
+        return { proposal_id: `proposal-${kind}`, ...source, kind, status: 'suggested', version: 1, source_version: 'synthetic-etag', target_execution_status: 'not_executed', suggestion: { original, current }, history: [{ event: 'suggested', actor: 'synthetic-user', at: '2026-10-18T00:00:00Z', version: 1 }] };
       });
       return ok({ proposals: savedProposals, status: 'created' });
     }
+    if (/^\/api\/inbox\/proposals\/proposal-[^/]+\/history$/.test(url)) {
+      const proposal = savedProposals.find((item) => url.includes(item.proposal_id));
+      return proposal ? ok({ proposal, history: proposal.history }) : ok({ detail: 'proposal not found' }, 404);
+    }
     if (url.startsWith('/api/inbox/proposals/proposal-') && url.endsWith('/execution-preview')) {
       const body = JSON.parse(String(init?.body || '{}'));
+      const proposal = savedProposals.find((item) => url.includes(item.proposal_id));
       return ok({ status: 'ready', proposal_id: 'proposal-journal', kind: 'journal', proposal_version: 2,
-        vocabulary_version: 4, source_summary: { source_kind: 'capture', source_ref: 'capture-synthetic-1', source_version: 'synthetic-etag', source_content_sha256: 'a'.repeat(64) },
+        vocabulary_version: 4, source_summary: { source_kind: proposal?.source_kind || 'capture', source_ref: proposal?.path || 'capture-synthetic-1', source_version: 'synthetic-etag', source_content_sha256: 'a'.repeat(64) },
         target_action: 'journal.append', target: { date: body.target_date || '2026-10-18', text: body.target_text || '合成来源正文' }, preview_sha256: 'b'.repeat(64) });
     }
     if (url.startsWith('/api/inbox/proposals/proposal-') && url.endsWith('/execute')) {
@@ -81,13 +88,111 @@ beforeEach(() => {
       return ok({ collections: [{ id: 'drafts', kind: 'drafts' }, { id: 'personal', kind: 'authorized' }] });
     }
     if (url === '/api/notes/drafts') return ok({ items: created ? [{ path: noteId, title: '新建合成会议' }] : [] });
-    if (url === `/api/notes/drafts/${noteId}`) return ok({ collection: 'drafts', path: noteId,
+    if (url === `/api/notes/drafts/${noteId}` || url === `/api/notes/drafts/${singleDraftId}`) return ok({ collection: 'drafts', path: url.split('/').pop(),
       content: '# 新建合成会议\n\n讨论 Inbox 审批。 #roadmap #SecondBrain\n', etag: 'synthetic-etag', read_only: false, safety_reasons: [] });
     return ok({ detail: `Unexpected request ${url}` }, 404);
   }));
 });
 
 describe('UnifiedInboxPage', () => {
+  it('keeps every request bound to one Draft through creation, approval, preview, execution, history, and refresh', async () => {
+    const request = vi.mocked(fetch);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+
+    const sourceHeading = await screen.findByRole('heading', { name: '新建合成会议' });
+    expect(sourceHeading.closest('article')?.textContent).toContain(`drafts/${singleDraftId}`);
+    const card = sourceHeading.closest('article') as HTMLElement;
+    expect(request.mock.calls.some(([url]) => String(url) === '/api/notes')).toBe(false);
+    expect(request.mock.calls.some(([url]) => String(url) === '/api/notes/drafts')).toBe(false);
+    expect(request.mock.calls.some(([url]) => String(url) === '/api/inbox?limit=100')).toBe(false);
+
+    fireEvent.click(within(card).getByRole('button', { name: '生成确定性 Mock 建议' }));
+    await within(card).findAllByRole('button', { name: '记录审批（不执行）' });
+    const createRequest = request.mock.calls.find(([url, init]) => String(url) === '/api/inbox/proposals' && init?.method === 'POST');
+    expect(JSON.parse(String(createRequest?.[1]?.body))).toEqual({ source_kind: 'notes', source_id: `drafts:${singleDraftId}`, collection: 'drafts', path: singleDraftId });
+    expect(new Headers(createRequest?.[1]?.headers).get('Idempotency-Key')).toBeTruthy();
+
+    const journal = card.querySelector('[data-proposal="journal"]') as HTMLElement;
+    fireEvent.click(within(journal).getByRole('button', { name: '记录审批（不执行）' }));
+    fireEvent.click(await within(journal).findByRole('button', { name: '准备目标预览' }));
+    await within(journal).findByLabelText('目标正文（将按此内容写入）');
+    fireEvent.click(within(journal).getByRole('button', { name: '确认并执行' }));
+    expect(await within(journal).findByText(/已执行 · journal:2026-10-18/)).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: '查看 journal 审计历史' }));
+    expect(await within(card).findByText(/suggested · 2026-10-18T00:00:00Z · v1/)).toBeTruthy();
+
+    cleanup();
+    request.mockClear();
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    expect(await screen.findByRole('heading', { name: '新建合成会议' })).toBeTruthy();
+    expect(await screen.findByText(/已执行 · journal:2026-10-18/)).toBeTruthy();
+    expect(request.mock.calls.some(([url]) => String(url) === '/api/inbox?limit=100' || String(url) === '/api/notes' || String(url) === '/api/notes/drafts')).toBe(false);
+    expect(request.mock.calls.every(([url]) => {
+      const value = String(url);
+      return value === `/api/notes/drafts/${singleDraftId}` || value.startsWith('/api/inbox/proposals?source_kind=notes&')
+        || value === '/api/inbox/proposals' || /^\/api\/inbox\/proposals\/proposal-(type|tags|journal|review|project)(?:\/(decision|execution-preview|execute|history))?$/.test(value);
+    })).toBe(true);
+  });
+
+  it('fails closed on a missing or malformed single Draft without requesting any source endpoint', async () => {
+    const request = vi.mocked(fetch);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={null} />);
+    expect(await screen.findByText('必须提供有效的 Draft 来源；未加载任何收件箱来源。')).toBeTruthy();
+    expect(request.mock.calls).toHaveLength(0);
+  });
+
+  it('does not query proposals when the exact Notes read returns a different Draft identity', async () => {
+    const request = vi.mocked(fetch);
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === `/api/notes/drafts/${singleDraftId}`) return ok({ collection: 'drafts', path: '00000000-0000-4000-8000-000000000999', content: 'wrong source', etag: 'synthetic-etag', read_only: false, safety_reasons: [] });
+      return original(input, init);
+    });
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    expect(await screen.findByText('Core 返回了其他 Draft；未展示任何收件箱来源。')).toBeTruthy();
+    expect(request.mock.calls.some(([url]) => String(url).startsWith('/api/inbox/proposals'))).toBe(false);
+    expect(screen.queryByRole('heading', { name: '新建合成会议' })).toBeNull();
+  });
+
+  it('reuses the same idempotency key and source payload after a transient proposal-create failure', async () => {
+    const request = vi.mocked(fetch);
+    const original = request.getMockImplementation()!;
+    let failOnce = true;
+    request.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/inbox/proposals' && init?.method === 'POST' && failOnce) {
+        failOnce = false;
+        return ok({ detail: 'synthetic transient failure' }, 503);
+      }
+      return original(input, init);
+    });
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    const card = (await screen.findByRole('heading', { name: '新建合成会议' })).closest('article') as HTMLElement;
+    const suggest = within(card).getByRole('button', { name: '生成确定性 Mock 建议' });
+    fireEvent.click(suggest);
+    expect(await within(card).findByText('建议保存失败（HTTP 503）。')).toBeTruthy();
+    fireEvent.click(suggest);
+    await within(card).findAllByRole('button', { name: '记录审批（不执行）' });
+    const posts = request.mock.calls.filter(([url, init]) => String(url) === '/api/inbox/proposals' && init?.method === 'POST');
+    expect(posts).toHaveLength(2);
+    expect(new Headers(posts[0][1]?.headers).get('Idempotency-Key')).toBe(new Headers(posts[1][1]?.headers).get('Idempotency-Key'));
+    expect(posts.map(([, init]) => init?.body)).toEqual([JSON.stringify({ source_kind: 'notes', source_id: `drafts:${singleDraftId}`, collection: 'drafts', path: singleDraftId }), JSON.stringify({ source_kind: 'notes', source_id: `drafts:${singleDraftId}`, collection: 'drafts', path: singleDraftId })]);
+  });
+
+  it('hides all proposals if the exact-source GET returns a different source binding', async () => {
+    const request = vi.mocked(fetch);
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('/api/inbox/proposals?')) return ok({ proposals: [{ proposal_id: 'proposal-other', source_kind: 'notes', source_id: 'drafts:other', collection: 'drafts', path: 'other', kind: 'journal', status: 'suggested', version: 1, source_version: 'synthetic-etag', target_execution_status: 'not_executed', suggestion: { original: { value: 'wrong' }, current: { value: 'wrong' } } }] });
+      return original(input, init);
+    });
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    const card = (await screen.findByRole('heading', { name: '新建合成会议' })).closest('article') as HTMLElement;
+    expect(await within(card).findByText(/Core 返回了绑定到其他来源的提案/)).toBeTruthy();
+    expect(within(card).queryByLabelText('待人工逐项审批的建议')).toBeNull();
+    expect((within(card).getByRole('button', { name: '生成确定性 Mock 建议' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(card).queryByRole('button', { name: '记录审批（不执行）' })).toBeNull();
+  });
+
   it('collects Notes drafts and Capture sources in one view and approves mock suggestions item by item without changing originals', async () => {
     const request = vi.mocked(fetch);
     render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo />);

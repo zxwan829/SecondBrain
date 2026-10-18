@@ -13,6 +13,7 @@ vi.mock('./MindMapEditor', () => ({
 import { App } from './App';
 
 const syntheticCollections = { collections: [{ id: 'drafts', kind: 'drafts' }] };
+const singleDraftId = 'ec5467a3-3087-45a2-befd-74038d08830c';
 
 function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>) {
   const calls: string[] = [];
@@ -22,6 +23,8 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>) {
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
     if (url === '/api/notes') return new Response(JSON.stringify(notesStatus === 200 ? syntheticCollections : { detail: 'synthetic gate denial' }), { status: notesStatus });
     if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: 'synthetic.md', title: '合成笔记' }] }), { status: 200 });
+    if (url === `/api/notes/drafts/${singleDraftId}`) return new Response(JSON.stringify({ collection: 'drafts', path: singleDraftId, content: '# 指定合成 Draft\n\nB1 synthetic only.\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] }), { status: 200 });
+    if (url.startsWith('/api/inbox/proposals?')) return new Response(JSON.stringify({ proposals: [] }), { status: 200 });
     if (url.endsWith('/visual-assets/mindmap') && init?.method === 'POST') return new Response(JSON.stringify({ filename: `${'1'.repeat(32)}.mindmap.json`, etag: 'b'.repeat(64) }), { status: 200 });
     if (init?.method === 'PUT' && deferPut) return deferPut();
     if (init?.method === 'PUT') {
@@ -72,6 +75,28 @@ describe('Notes application navigation gate', () => {
     expect(calls.filter((url) => url === '/api/notes')).toHaveLength(1);
     expect(screen.queryByRole('button', { name: '笔记' })).toBeNull();
     expect(screen.queryByRole('heading', { name: '笔记' })).toBeNull();
+  });
+
+  it('opens the dedicated single-source route without loading the full Inbox or Notes lists', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt(`/inbox/source?collection=drafts&path=${singleDraftId}`);
+
+    expect(await screen.findByRole('heading', { name: '指定合成 Draft' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((url) => url.startsWith('/api/inbox/proposals?source_kind=notes&'))).toBe(true));
+    expect(calls).toContain(`/api/notes/drafts/${singleDraftId}`);
+    expect(calls.some((url) => url === '/api/notes' || url === '/api/notes/drafts' || url === '/api/inbox?limit=100')).toBe(false);
+    expect(calls.filter((url) => url === `/api/notes/drafts/${singleDraftId}`)).toHaveLength(1);
+  });
+
+  it('fails closed for an invalid single-source URL without reading a Draft or Inbox source', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt('/inbox/source?collection=capture&path=../../private');
+
+    expect(await screen.findByText('必须提供有效的 Draft 来源；未加载任何收件箱来源。')).toBeTruthy();
+    expect(calls.some((url) => url.startsWith('/api/notes/drafts/') || url.startsWith('/api/inbox'))).toBe(false);
+    expect(calls).not.toContain('/api/notes');
   });
 
   it('opens and leaves Notes through desktop navigation after the Core read gate succeeds', async () => {

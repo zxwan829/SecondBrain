@@ -26,6 +26,29 @@ import { NotesPage } from './NotesPage';
 describe('NotesPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
+  it('opens single-source Inbox for the selected Draft only after the unsaved-navigation guard passes', async () => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Selected Draft\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/notes') return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: note.path, title: 'Selected Draft' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${note.path}`) return new Response(JSON.stringify(note), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const onOpenInboxSource = vi.fn();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<NotesPage onOpenInboxSource={onOpenInboxSource} onRegisterNavigationGuard={(value) => { if (value) expect(value).toBeDefined(); }} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Selected Draft' }));
+    fireEvent.change(await screen.findByLabelText('合成 Markdown 编辑器'), { target: { value: '# Unsaved Draft\n' } });
+    const openInbox = await screen.findByRole('button', { name: '单来源 Inbox 审批' });
+    fireEvent.click(openInbox);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(onOpenInboxSource).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    fireEvent.click(openInbox);
+    expect(onOpenInboxSource).toHaveBeenCalledWith('drafts', note.path);
+  });
+
   it('keeps unsaved Markdown in the editor when the autosave request fails', async () => {
     const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {

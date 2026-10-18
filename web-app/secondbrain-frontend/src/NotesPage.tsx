@@ -8,7 +8,7 @@ const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module)
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
 
-export function NotesPage({ onRegisterNavigationGuard }: { onRegisterNavigationGuard?: (guard: (() => boolean) | null) => void }) {
+export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { onRegisterNavigationGuard?: (guard: (() => boolean) | null) => void; onOpenInboxSource?: (collection: string, path: string) => void }) {
   const [collections, setCollections] = useState<NoteCollection[]>([]);
   const [collection, setCollection] = useState('drafts');
   const [items, setItems] = useState<{ path: string; title: string }[]>([]);
@@ -297,6 +297,7 @@ export function NotesPage({ onRegisterNavigationGuard }: { onRegisterNavigationG
             <button type="button" disabled={state !== '已保存' || creatingVisual || savingVisual} onClick={() => void createVisual('mindmap')}>插入思维导图</button>
             <button type="button" disabled={state !== '已保存' || creatingVisual || savingVisual} onClick={() => void createVisual('excalidraw')}>插入自由画板</button>
           </>}
+          {note && note.collection === 'drafts' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(note.path) && onOpenInboxSource && <button type="button" onClick={() => { if (protectUnsaved()) onOpenInboxSource(note.collection, note.path); }}>单来源 Inbox 审批</button>}
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
         </div>
         {restorePreview && <section className="notes-restore-preview" aria-label="历史版本预览">
