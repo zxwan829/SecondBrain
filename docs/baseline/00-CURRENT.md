@@ -42,6 +42,8 @@ source: GitHub SecondBrain Monorepo
 
 **唯一 NEXT：** 等待 ChatGPT 独立复审 PR #65 的空白入口实现和前端隔离边界。该 PR 不提供服务端账户/Session 隔离；合并或 Mock 测试通过均不授权生产部署、生产 Session 创建或 Journal/Task 写入。生产合成验收须经复审并另行取得匹配授权；此前保持 BLOCKED / UNKNOWN，不读取私人内容、不调用模型、不部署或重启 NAS。
 
+**M1 双线总控状态（[Issue #66](https://github.com/zxwan829/SecondBrain/issues/66)）：** M1 尚未冻结版本，亦未获统一生产部署授权。启动 M1 准入的条件为 D085-C2c-2 完成独立复审并经授权合入 `main`，或明确记录延期决定后按其余已合并切片推进。A 线负责准入、冻结唯一 main commit、跨模块兼容审查、部署/回滚统筹及组织验收；B 线在隔离工作树推进 C2c-2、经独立复审和授权合并后提交汇合报告，**不得自行部署 NAS**。本项是 M1 总控状态，不替代或新增 `00-CURRENT.md` 的唯一 NEXT；仍以本节上方 D084 NEXT 为准。
+
 ### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批演示（已合并、未部署）
 
 PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`），状态为 **MERGED / NOT DEPLOYED / NOT PERSISTENT APPROVAL / NOT USER ACCEPTED**。合入版本保留 Capture Inbox 预览、下载、`partial_success` 重试、错误/状态、刷新和 Organizer 入口，并在同页加入 Notes Drafts 与确定性 Mock 建议；演示候选与已知词条分开，状态词不作为标签，页面模拟同意不持久化或执行。PR #57 已合入 `main`（merge `1c73b0f3449725815443c22ba503104df0cb8eff`），加入人工类型/移除标签修正保护和明确模拟审批边界；尚未部署。来源安全审批持久化由下方 C2b 单独实现。本段不改变上方 D084 唯一 NEXT，也不授权真实 Vault、付费模型或 NAS 操作。
