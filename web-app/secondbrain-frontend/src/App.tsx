@@ -777,6 +777,7 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
   const attachmentInput = useRef<HTMLInputElement>(null);
   const abortRef = React.useRef<AbortController | null>(null);
   const selectedSessionRef = useRef('');
+  const selectionIntentRef = useRef(0);
   const contentLoadRef = useRef(0);
   const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
 
@@ -878,6 +879,7 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
   };
 
   const selectSession = async (sessionId: string) => {
+    selectionIntentRef.current += 1;
     selectedSessionRef.current = sessionId;
     setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
     setError(''); setMessages([]); setActivities([]); setInput('');
@@ -909,6 +911,10 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
       const preferred = localStorage.getItem('secondbrain.chat.session') ?? '';
       const next = await reloadSessions(preferred);
       if (preferred && next.some((session) => session.id === preferred)) await selectSession(preferred);
+      else if (preferred) {
+        localStorage.removeItem('secondbrain.chat.session');
+        if (next.length) await selectSession(next[0].id);
+      }
       const activeRun = sessionStorage.getItem('secondbrain.chat.activeRun') ?? '';
       const activeSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? preferred;
       if (activeRun && activeSession) {
@@ -922,24 +928,33 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
   })(); }, []);
 
   const newSession = async () => {
+    const selectionIntent = ++selectionIntentRef.current;
     setError('');
     try {
       const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
       const id = String(payload.session_id ?? '');
       if (!id) throw new Error('Hermes did not return a session identifier');
-      await reloadSessions(id); selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
+      await reloadSessions(id);
+      if (selectionIntent !== selectionIntentRef.current) return;
+      selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
       localStorage.setItem('secondbrain.chat.session', id);
-    } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not create session', locale)); }
+    } catch (cause) {
+      if (selectionIntent === selectionIntentRef.current) setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not create session', locale));
+    }
   };
 
   const forkSession = async () => {
     if (!selected) return;
+    const selectionIntent = ++selectionIntentRef.current;
     try {
       const result = await api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(selected)}/fork`, { method: 'POST', body: '{}' });
       const id = String(result.session_id ?? '');
       if (!id) throw new Error('Hermes did not return a forked session identifier');
-      await reloadSessions(id); await selectSession(id);
-    } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not fork session', locale)); }
+      await reloadSessions(id);
+      if (selectionIntent === selectionIntentRef.current) await selectSession(id);
+    } catch (cause) {
+      if (selectionIntent === selectionIntentRef.current) setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not fork session', locale));
+    }
   };
 
   const ensureSelectedSession = async () => {
