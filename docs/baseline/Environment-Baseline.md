@@ -1,10 +1,21 @@
 ---
 created: 2026-09-28
-updated: 2026-10-17
+updated: 2026-10-18
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
+
+## 最新生产快照（2026-10-18T02:28:59Z 起；D084 PR #61 App-only 部署）
+
+- 按用户既有授权切换指定候选镜像 `secondbrain-app:d084-pr61-4a58393-full`，未重新构建。切换前候选 ID 与已通过的隔离预检完全一致：`sha256:e63ab1611b2a30ffd9dd2a9cb901066fa6b2da2e7e85c9c1c9d72dbabac0e4ab`。该镜像基于 `4a58393`；当前 GitHub main 已推进到 `3080506b053d3876d292d9199049fd12e3247b88`，后续 PR #59 的 D085-C2b 变更不在此指定镜像内。
+- 部署前 App 为 PR #49 镜像 `secondbrain-app:pr49-fa2ad412-full` / ID `sha256:1c7ed4cb953951eb2ab8691516651d170171305af6172326174e64f4115dd6ca`，healthy，容器 ID `272b9fee7e62cf4b6b9c39f82d8c1e2eeceffaee82215a9cf34dc35098570601`。Compose 原 SHA-256 `28636decfc08e47f57d2a671c68ecc6861cdf7653b860f12f73c020dcc1d6e06`，属主/模式 `1026:100 / 0640`。仅将 App image 引用替换为指定候选；更新后 Compose SHA-256 `9c0932c04d6984cd2e491738d51eb6235d7182ccfca8146678fc18cdabe6097d`，属主/模式不变；Compose `config --quiet` 通过。
+- 唯一部署命令为 App 服务 `compose up -d --no-deps --no-build --force-recreate --wait --wait-timeout 120 secondbrain-app`。新容器 `665bb3818fa63caefb9fb5fdca38db3ff1babe10caea2c9a8ea389cba1bc2710`，App UID/GID `1026:100`，RestartCount 0；镜像 ID 与候选一致。Compose 的既有 PR #49 build context 保持不变；`--no-build` 确保此次复用已审候选。StartedAt `2026-10-18T02:28:59.061387547Z`；约 30 秒内 healthy（低于 120 秒门槛）。
+- 仅做 GET smoke：使用应用现有 Host allowlist 在容器内请求，未输出 Host 值或响应正文。两项 Host 配置对应的 `/health`、`/chat` 均为 200；`/chat` 返回 HTML，HTML 引用的 2 个 JS 和 1 个 CSS 均为 200；匿名 `GET /api/chat/sessions` 均为 401 `application/json`。一次错误地以 `127.0.0.1` Host 直连发布端口的尝试返回 400（TrustedHost 拒绝），随后改用配置允许的 Host 完成上述检查；不作为 App 故障证据。
+- Hermes/Guard 未重建、未重启、未修改：容器仍为 `057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79`，镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`，running，RestartCount 0，StartedAt `2026-10-17T08:33:24.151798238Z`。本次只依据 `docker ps/inspect` 报告 running；不声称 Hermes health。
+- 回滚准备：切换前核验旧 PR #49 镜像仍在；另核验旧镜像 `secondbrain-app:d084-c8a2b348` / `sha256:ef60d7de4ff3f3b3edc49cb0d565c45df3b996fe7014fc49ff3446ead7592feb`。已再次验证旧回滚目录 `d084-pr49-app-20261017T100900Z` 中 `SHA256SUMS` 全部通过。另保存本次切换前 Compose 精确副本于 `/volume1/docker/secondbrain/rollback/d084-pr61-cutover-20261018T102845/compose-before.yaml`，目录 `0700 root:root`，文件 `0600 root:root`，SHA-256 与原 Compose 一致。未执行回滚，因为 App health、路由、静态资源与 API 鉴权通过且无 App 异常。
+- **业务验收：BLOCKED。** 新建的隔离浏览器标签登录后自动恢复了现有 Session，而非空白会话。自动化可访问性快照意外包含现有会话列表标签与选中会话的操作卡摘要；未打开其他会话或展开消息正文，未保存这些文本或 Session ID，随即停止并关闭标签页。没有创建 Session、写入/重试 Journal/Task 或调用模型。Journal/Task 操作卡、刷新恢复、Session 隔离和幂等均未验证；历史生产根因仍 UNKNOWN。此前已获授权的范围不扩张。
+- D084 状态文档已更新，Issue #44 评论未提交（此前曾被审批拒绝，本轮未通过其他渠道绕行）。
 
 ## 限定容器元数据核验（2026-10-18T01:50:41Z；D084；只读）
 
@@ -14,7 +25,7 @@ type: environment-baseline
 - 本次确认 App 仍运行 PR #49 镜像；PR #61 已合入 main，但未部署。因此 stale localStorage ID 回退和延迟 create/fork 选择保护尚未进入当前 App 镜像。此次为有限容器元数据快照，没有重查 Compose、挂载、配置或容器日志，不覆盖上节 2026-10-17 的完整快照。
 - Edge 浏览器标签清单中没有 SecondBrain App 页面；未导航 `/chat`，以避免自动恢复已有私人 Session。因无安全可用的目标 Session ID，也未读取全量 Session 列表或宽泛容器日志。浏览器 selected/localStorage ID、目标活动请求/响应 ID 与状态时间戳均为 **UNKNOWN**；未读取任何会话正文、Journal/Task 数据，也未创建或修改 Session/业务记录。
 
-## 最新运行核验（2026-10-17，PR #49 App-only 部署后）
+## 历史运行核验（2026-10-17，PR #49 App-only 部署后）
 
 - 按 Issue #44 评论 #6233322671 的单次授权，使用 PR #49 merge fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79 输入和 web-app/Dockerfile.app 构建完整 App 镜像。Mac 源码归档 SHA-256 8dbb4d78f523ee69e59d214a6430528b299e922141a8af36ae778af06423c4d7；NAS 保留构建源于 /volume1/docker/secondbrain/app-build-source-pr49-fa2ad412/web-app。前端 npm run typecheck / npm run build 通过；npm 安装提示 4 项依赖漏洞（2 low、2 moderate），本次未升级依赖。
 - 镜像 secondbrain-app:pr49-fa2ad412-full / Image ID sha256:1c7ed4cb953951eb2ab8691516651d170171305af6172326174e64f4115dd6ca，容器 ID 272b9fee7e62cf4b6b9c39f82d8c1e2eeceffaee82215a9cf34dc35098570601，运行身份 1026:100，RestartCount 0，2026-10-17T11:43:55Z 启动并在 120 秒门槛内 healthy。镜像配置 SB_STATIC_ROOT=/app/static；隔离无网络、无数据挂载 ASGI 检查验证 /chat 为 200 text/html、两个链接资源均 200、匿名 Chat API 401 application/json。生产只读 HTTP smoke 得到相同状态；未认证响应正文不入文档。
@@ -33,14 +44,14 @@ type: environment-baseline
 - 回滚点 `/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/`：目录 0700，`compose.yaml`（SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`）、旧 `plugin.yaml`、恢复元数据均 0600。旧官方 Hermes image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` 保留在 rollback tag `secondbrain-hermes:rollback-v0222-official-20261016T173140Z`。回滚前应重核快照并只恢复 Hermes/manifest；不可回滚 Core state、D077 JSONL 或 App。
 - 上述是运行态与合成权限验证，不代表真实模型、真实个人数据或浏览器学习体验已验收。此前 D078 Stage 1 信息保留在下方历史快照段，凡与本节冲突以本节为当前状态。
 
-本文件记录最近一次经验证的运行快照，并非实时监控。顶部是 PR #49 App-only 部署后的现行 App/Compose/Hermes 运行事实；Hermes overlay 段是此前核验的 Guard 配置与 Hook 证据，本轮仅确认 Hermes 容器/镜像/启动时间未变化，没有重新读取插件文件。下一次生产操作前仍须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 Progress-Log.md 与 Issue #14，不作为现行运行或恢复指令。
+本文件记录最近一次经验证的运行快照，并非实时监控。顶部是 2026-10-18 PR #61 App-only 部署后的现行 App/Compose/Hermes 运行事实；2026-10-17 PR #49 段落是历史快照。Hermes overlay 段是此前核验的 Guard 配置与 Hook 证据，本轮仅确认 Hermes 容器/镜像/启动时间未变化，没有重新读取插件文件。下一次生产操作前仍须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 Progress-Log.md 与 Issue #14，不作为现行运行或恢复指令。
 
 ## 常态运行路径与尚待验证的边界
 
 ## NAS 与 Compose
 
 - NAS：Synology DS920+，DSM 7.4.1 Build 90080；LAN 地址 `192.168.3.27`。本机与路由器网络设置不由 SecondBrain 文档治理修改。
-- 正式 Compose：/volume1/docker/secondbrain/compose.yaml；Compose Project secondbrain；Docker 网络 secondbrain_default。当前 SHA-256 28636decfc08e47f57d2a671c68ecc6861cdf7653b860f12f73c020dcc1d6e06，属主/权限 1026:100 / 0640。PR #49 App-only 部署只调整 App build context 与 image tag；Hermes、网络、挂载和其他服务未改。
+- 正式 Compose：/volume1/docker/secondbrain/compose.yaml；Compose Project secondbrain；Docker 网络 secondbrain_default。最新 SHA-256 `9c0932c04d6984cd2e491738d51eb6235d7182ccfca8146678fc18cdabe6097d`，属主/权限 `1026:100 / 0640`。PR #61 部署只替换 App image 引用；既有 build context、Hermes、网络、挂载和其他服务未改。
 - 项目目标为两个服务：`secondbrain-hermes` 与 `secondbrain-app`。Container Manager GUI 曾出现旧容器行/旧定义缓存；最后已记录状态为管理界面定义未完成对齐。当前 GUI 状态未在本次核实，标记 `UNKNOWN`；这是部署管理风险，不改变 Docker 运行态记录。
 
 ## 历史 Stage 1 容器快照（已被 2026-10-17 patched overlay 取代）
