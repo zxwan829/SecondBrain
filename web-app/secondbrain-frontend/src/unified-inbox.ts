@@ -23,6 +23,8 @@ export type MockClassification = {
   journalExcerpt: string;
   knowledgeReview: string;
   projectAssociation: string;
+  allowedTypes?: string[];
+  allowedTags?: string[];
 };
 
 export const DEMO_NOTE_TYPES = ['日记', '笔记', '头脑风暴', '摘要', '会议纪要'] as const;

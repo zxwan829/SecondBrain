@@ -11,6 +11,12 @@
 - Edge 标签清单没有 SecondBrain App 页面。为避免 `/chat` 自动恢复已有私人会话，本次未导航 App、未读取会话正文；也因缺少目标 opaque ID，未查询全量 Hermes Session 列表或宽泛日志。浏览器 selected/localStorage ID、相关 activities 请求/响应 ID、状态与时间均 UNKNOWN。PR #61 的两个旧版 UI 边界在当前 PR #49 生产镜像中仍可能存在，但没有 ID/时序证据将其与既有 FAIL 关联；生产根因保持 UNKNOWN。历史验收仍为首卡/首次刷新 PASS、会话切换恢复 FAIL/INCONSISTENT、幂等与审计 BLOCKED。
 - 未创建/修改/删除 Session、Journal、Task；未调用模型；无 NAS 文件/config/权限更改或资产清理。Issue #44 评论未写入；此前 Issue 写入被审批拒绝，本轮未尝试从其他渠道绕写。诊断状态与最新有限运行证据同步到 CURRENT、Environment-Baseline；后续如需定向关联，只使用精确的既有合成 Session ID 或不打开私人会话的 metadata-only 读取方式，等待 ChatGPT 独立复审。
 
+## 2026-10-18 — D085-C2b PR #59 同步最新主线
+
+- 按 PR #59 Review #5561020708 在原分支同步 main `4a5839346b938ef28f852fe249058c84eddb31cd`。仅 `Progress-Log.md` 有内容冲突；保留本分支 C2b 历史和 main 的 D084 生产元数据核验记录。CURRENT 与 Environment-Baseline 自动合并，无其他冲突。
+- 确认 CURRENT 采用 main 最新 D084 唯一 NEXT，D084 生产根因仍 UNKNOWN；Environment-Baseline 保留 2026-10-18 限定只读容器元数据证据。D086 词库与 C2b 状态均保留。
+- PR #59 相关 Core/前端定向测试、typecheck/build 已在前一次 main 同步后通过；本次只改文档冲突，不重跑无关测试。待完成本次 `git diff --check`、推送并核验 PR 状态。
+
 ## 2026-10-17 — D086 PR #58 同步最新 main 与合并门禁核验
 
 - 按 Issue #55 评论 #6234901749 在原隔离分支核对并获取最新 `origin/main` `1c73b0f3449725815443c22ba503104df0cb8eff`。合并预检发现唯一真实文本冲突为 `docs/baseline/Progress-Log.md`；采用双侧保留，保留 main 的 D085-C2a 最新记录和 D086 复审/实施记录。代码文件无冲突。CURRENT 自动合并保留 main 的 D084 唯一 NEXT，确认未改写。
