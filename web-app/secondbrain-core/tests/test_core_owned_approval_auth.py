@@ -408,6 +408,28 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(len(approval_records), 1)
         self.assertEqual(len(list(self.knowledge.glob("*.md"))), 1)
 
+    def test_same_version_thread_race_allows_only_one_request_target_claim(self):
+        barrier = __import__("threading").Barrier(2)
+
+        def promote(request_id, target_filename):
+            barrier.wait(timeout=5)
+            body = {**self.body, "request_id": request_id, "target_filename": target_filename}
+            try:
+                result = self.service.approve_and_promote_as("owner", body)
+                return ("ok", request_id, result["status"])
+            except Exception as exc:
+                return ("error", request_id, type(exc).__name__)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(promote, request_id, target)
+                       for request_id, target in (("thread-race-a", "thread-race-a.md"),
+                                                  ("thread-race-b", "thread-race-b.md"))]
+            results = [future.result(timeout=10) for future in futures]
+        self.assertEqual(sum(result[0] == "ok" for result in results), 1, results)
+        self.assertEqual(sum(result[0] == "error" for result in results), 1, results)
+        self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
+        self.assertEqual(len(list(self.knowledge.glob("*.md"))), 1)
+
     def test_same_key_concurrent_process_retries_are_idempotent(self):
         ctx = multiprocessing.get_context("fork")
         barrier = ctx.Barrier(2)
