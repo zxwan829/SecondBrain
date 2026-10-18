@@ -5,6 +5,13 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-18 — 用户批准 M2 P0-A 本地实施及 P0-B 只读设计
+
+- 用户确认「按你的规划进 m2」，A 主线在 [M2 总控 #76](https://github.com/zxwan829/SecondBrain/issues/76) 记录新阶段授权边界。此前 M1 #66 已有限验收并 CLOSED；GitHub main 仍为 `b446913525284762acdc249101c1da7c3e0babf7`（PR #73 仅文档），生产 App 最后已验证源码仍是 `473948dd2e9b3d448b71eeba56a1474454883353`，本轮未重新连接 NAS。
+- **P0-A 第一执行任务：** [#74](https://github.com/zxwan829/SecondBrain/issues/74) 旧 `/inbox` 默认安全入口、本地请求级隔离、明确选择 Capture/Notes 作用域及精确来源才加载正文；A 负责架构/测试契约，B/Codex 可在独立 worktree 开发、合成验证和提交 PR，但不可自行合并或部署。
+- **P0-B 并行设计：** [#78](https://github.com/zxwan829/SecondBrain/issues/78) 现行 Review→人工批准→受控 Core Promote→Knowledge→回源检索的只读接口、权限、幂等与恢复方案；尚不授权正式写入实现。P1 D086 保持普通聊天不自动收录，只有明确收录/同意建议才将指定内容先存 Inbox；Personal Memory 的低风险学习是另一受控机制。
+- **安全限制**：#75 生产 HTTP 重放和 Network 缺口、#55 共享词库生产写入 BLOCKED、#44 D084 历史根因、C2c-2 延后 M2 仍独立追踪；Knowledge RO、Promote OFF、Private 不访问、Hermes/Guard 不动。PR #77 文档状态同步继续 OPEN、等待独立 review/用户合并许可。本轮未部署、未使用真实数据、未调用模型。
+
 ## 2026-10-18 — M1 用户有限验收结项与 M2 规划交接
 
 - 用户明确批准 **M1 LIMITED ACCEPTED / WITH EXPLICIT EXCLUSIONS**，并授权在 GitHub 完成最终记录后关闭 [Issue #66](https://github.com/zxwan829/SecondBrain/issues/66)；A 主线写入完整交付/风险归属并以 `completed` 关闭，复查为 CLOSED。**这是阶段有限结项，不是 M1 全部能力通过，更不代表 SecondBrain V1 DONE。**
