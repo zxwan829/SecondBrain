@@ -11,7 +11,7 @@ Universal Capture accepts processable external or user-provided content, preserv
 
 ## 2. V1 Supported Inputs
 
-V1 MUST inputs: plain text, Markdown, TXT/readable text, Capture Context, URL/Web, PDF, Image/Screenshot, and Audio/Voice. Raw text may be saved as Markdown. URL/Web, PDF, Image/Screenshot, and Audio/Voice are MUST but remain not implemented in production.
+V1 MUST inputs: plain text, Markdown, TXT/readable text, Capture Context, URL/Web, PDF, Image/Screenshot, and Audio/Voice. Raw text may be saved as Markdown. **This specification defines the required scope, not live implementation status**; each input's production, partial-processing, OCR/STT and user acceptance evidence is tracked in [`00-CURRENT.md`](../00-CURRENT.md) and the dated Environment/Progress records. Partial implementation does not remove any V1 MUST requirement.
 
 DEFERRED / POST-V1: DOC/DOCX, PPT/PPTX, XLS/XLSX, video, generic binary attachments, semantic deduplication, embeddings, RAG, Vector DB, QMD semantic capture, automatic knowledge graph, and transactional multi-file rollback.
 
