@@ -7,7 +7,7 @@ import secrets
 import stat
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
@@ -226,6 +226,7 @@ class B1bPromoteFlow:
             request_id = "b1b-" + secrets.token_hex(16)
             preview_id = secrets.token_urlsafe(32)
             approved_at = datetime.now(timezone.utc).isoformat()
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.ticket_ttl)
             output = render_promoted_markdown(request_id, digest, approved_at, source)
             projected_markdown = output.decode("utf-8")
             ticket = {"preview_id": preview_id, "request_id": request_id,
@@ -235,15 +236,21 @@ class B1bPromoteFlow:
                       "projected_markdown": projected_markdown,
                       "approved_at": approved_at,
                       "output_sha256": hashlib.sha256(output).hexdigest(),
-                      "expires_at": time.time() + self.ticket_ttl}
+                      "expires_at": expires_at.timestamp(),
+                      "expires_at_iso": expires_at.isoformat()}
             with self._lock:
                 self._purge_expired()
                 self._tickets[preview_id] = ticket
             return {key: ticket[key] for key in (
-                "preview_id", "request_id", "review_path", "review_sha256",
+                "preview_id", "request_id", "review_path",
                 "target_filename", "source_markdown", "projected_markdown", "output_sha256",
-            )} | {"expires_in": self.ticket_ttl, "target_available": True,
-                 "change_summary": {"source_bytes": len(source), "output_bytes": len(output)}}
+            )} | {"source_sha256": digest, "expires_at": ticket["expires_at_iso"],
+                 "target_precondition": {"exists": False},
+                 "change_summary": [
+                     "The server converts Review type/status fields to the Knowledge schema and preserves other fields and body.",
+                     "The server adds the approval timestamp and Promote request marker.",
+                     "The target must remain absent; existing files are never overwritten.",
+                 ]}
         except HTTPException:
             raise
         except (ApprovalRequestError, UnicodeDecodeError, OSError, ValueError) as exc:
@@ -259,7 +266,7 @@ class B1bPromoteFlow:
         binding = self.auth.require_app(request)
         if not self.promote_enabled:
             raise HTTPException(status_code=423, detail={"code": "promote_disabled"})
-        if (not isinstance(body, dict) or body.get("confirm_intent") != "promote_review_to_knowledge" or
+        if (not isinstance(body, dict) or body.get("confirm_intent") != "promote_exact_preview" or
                 not isinstance(body.get("preview_id"), str) or
                 not _PREVIEW_ID.fullmatch(body["preview_id"])):
             raise HTTPException(status_code=409, detail={"code": "confirmation_invalid"})
@@ -402,10 +409,13 @@ class B1bPromoteFlow:
                 record = self.operations.update(request_id, state)
             except Exception as exc:
                 raise HTTPException(status_code=503, detail={"code": "operation_recovery_required"}) from exc
-        return {"status": record["status"], "request_id": request_id,
+        result = {"status": record["status"], "request_id": request_id,
                 "review_path": record["review_path"], "review_sha256": record["review_sha256"],
                 "target_filename": record["target_filename"], "output_sha256": record["output_sha256"],
                 "confirmed_at": record["confirmed_at"]}
+        if record.get("error_code"):
+            result["error_code"] = record["error_code"]
+        return result
 
     def _read_target(self, target_filename):
         root_fd = _open_dir_chain(self.knowledge_root)

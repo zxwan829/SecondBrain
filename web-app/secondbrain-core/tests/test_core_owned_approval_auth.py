@@ -713,7 +713,7 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(locked.status_code, 200)
         response = self.client.post("/api/promote/review/confirm", json={
             "preview_id": preview.json()["preview_id"],
-            "confirm_intent": "promote_review_to_knowledge",
+            "confirm_intent": "promote_exact_preview",
         }, headers=self.headers)
         self.assertEqual(response.status_code, 401)
         self.assertFalse((self.knowledge / "approved.md").exists())
@@ -740,7 +740,7 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(preview.status_code, 200, preview.text)
         response = client.post("/api/promote/review/confirm", json={
             "preview_id": preview.json()["preview_id"],
-            "confirm_intent": "promote_review_to_knowledge",
+            "confirm_intent": "promote_exact_preview",
         }, headers=self.headers)
         self.assertEqual(response.status_code, 423)
         self.assertFalse((self.knowledge / "approved.md").exists())

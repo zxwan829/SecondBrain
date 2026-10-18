@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -86,13 +87,29 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
     def confirm(self, preview_id, client=None):
         return (client or self.client).post("/api/promote/review/confirm", headers=self.headers,
                                             json={"preview_id": preview_id,
-                                                  "confirm_intent": "promote_review_to_knowledge"})
+                                                  "confirm_intent": "promote_exact_preview"})
 
     def test_preview_is_exact_read_only_and_old_approve_fails_closed(self):
+        wrong_unlock_field = self.client.post("/api/promote/auth/unlock", headers=self.headers,
+                                              json={"password": self.unlock_secret.read_text()})
+        self.assertEqual(wrong_unlock_field.status_code, 401)
+        self.assertEqual(wrong_unlock_field.json()["detail"]["code"], "promote_unlock_rejected")
+        self.assertEqual(self.unlock().status_code, 200)
         response = self.preview()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers["cache-control"], "private, no-store")
         body = response.json()
+        self.assertEqual(body["source_sha256"], hashlib.sha256(self.source).hexdigest())
+        self.assertEqual(body["target_precondition"], {"exists": False})
+        self.assertIsInstance(body["expires_at"], str)
+        expiry = datetime.fromisoformat(body["expires_at"]).timestamp()
+        self.assertGreater(expiry, time.time())
+        self.assertLessEqual(expiry - time.time(), 600)
+        self.assertIsInstance(body["change_summary"], list)
+        self.assertTrue(all(isinstance(item, str) for item in body["change_summary"]))
+        self.assertNotIn("review_sha256", body)
+        self.assertNotIn("expires_in", body)
+        self.assertNotIn("target_available", body)
         output = body["projected_markdown"].encode()
         self.assertEqual(hashlib.sha256(output).hexdigest(), body["output_sha256"])
         self.assertIn("custom_field: preserve-me", body["projected_markdown"])
@@ -101,6 +118,15 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.assertEqual(list((self.state / "approvals").iterdir()), [])
         self.assertEqual(list((self.state / "b1b-operations").iterdir()), [])
         self.assertFalse((self.state / "audit.jsonl").exists())
+        self.assertEqual(list(self.knowledge.iterdir()), [])
+
+        wrong_intent = self.client.post("/api/promote/review/confirm", headers=self.headers,
+                                        json={"preview_id": body["preview_id"],
+                                              "confirm_intent": "promote_review_to_knowledge"})
+        self.assertEqual(wrong_intent.status_code, 409)
+        self.assertEqual(wrong_intent.json()["detail"]["code"], "confirmation_invalid")
+        self.assertEqual(list((self.state / "approvals").iterdir()), [])
+        self.assertEqual(list((self.state / "b1b-operations").iterdir()), [])
         self.assertEqual(list(self.knowledge.iterdir()), [])
 
         legacy = self.client.post("/api/promote/review/approve", headers=self.headers,
@@ -167,6 +193,8 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
                                     headers=self.headers)
         self.assertEqual(operation.status_code, 200, operation.text)
         self.assertEqual(operation.json()["status"], "promoted")
+        self.assertEqual(operation.json()["request_id"], preview["request_id"])
+        self.assertEqual(operation.json()["output_sha256"], preview["output_sha256"])
         second = self.confirm(preview["preview_id"])
         self.assertEqual(second.status_code, 200, second.text)
         self.assertEqual(second.json()["status"], "already_promoted")
@@ -327,13 +355,18 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.client = TestClient(self.app, base_url="https://testserver")
         self.login()
         self.assertEqual(self.unlock().status_code, 200)
+        stale_confirm = self.confirm(preview["preview_id"])
+        self.assertEqual(stale_confirm.status_code, 410)
         operation = self.client.get("/api/promote/operations/" + preview["request_id"],
                                     headers=self.headers)
         self.assertEqual(operation.status_code, 200, operation.text)
         self.assertEqual(operation.json()["status"], "recovery_required")
+        self.assertEqual(operation.json()["request_id"], preview["request_id"])
+        self.assertEqual(operation.json()["error_code"], "operation_recovery_required")
         another_preview = self.preview()
         self.assertEqual(another_preview.status_code, 409)
         self.assertEqual(another_preview.json()["detail"]["code"], "operation_recovery_required")
+        self.assertEqual((self.review / "candidate.md").read_bytes(), self.source)
         self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
         self.assertEqual(list(self.knowledge.iterdir()), [])
         self.assertFalse((self.state / "audit.jsonl").exists())
