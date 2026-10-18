@@ -17,7 +17,7 @@ type CaptureItem = {
 };
 type Decision = { status: 'approved_recorded' | 'rejected' | 'stale'; value: string };
 type ExecutionPreview = { status: string; proposal_id: string; kind: string; proposal_version: number; vocabulary_version: number | string; source_summary: { source_kind: string; source_ref: string; source_version: string; source_content_sha256: string }; target_action: string; target: { text: string; title?: string; date?: string }; preview_sha256: string };
-type PersistedProposal = { proposal_id: string; kind: string; status: string; version: number; source_version: string; suggestion: { original: any; current: any }; target_execution_status: string; execution?: { status: string; target?: ExecutionPreview['target']; source_summary?: ExecutionPreview['source_summary']; target_uri?: string; target_status?: string; error_code?: string } };
+type PersistedProposal = { proposal_id: string; source_kind?: string; source_id?: string; collection?: string; path?: string; kind: string; status: string; version: number; source_version: string; suggestion: { original: any; current: any }; target_execution_status: string; history?: { event: string; actor: string; at: string; version: number }[]; execution?: { status: string; target?: ExecutionPreview['target']; source_summary?: ExecutionPreview['source_summary']; target_uri?: string; target_status?: string; error_code?: string } };
 type ProposalProps = {
   id: string;
   title: string;
@@ -111,7 +111,9 @@ function Proposal({ id, title, reason, impact, preview, value, decision, decisio
   </article>;
 }
 
-export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = import.meta.env.DEV, notesOnly = false }: { locale: Locale; onReview: (reviewPath: string) => void; showSyntheticCaptureDemo?: boolean; notesOnly?: boolean }) {
+export type SingleInboxSource = { collection: 'drafts'; path: string };
+
+export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = import.meta.env.DEV, notesOnly = false, singleSourceMode = false, singleSource = null }: { locale: Locale; onReview: (reviewPath: string) => void; showSyntheticCaptureDemo?: boolean; notesOnly?: boolean; singleSourceMode?: boolean; singleSource?: SingleInboxSource | null }) {
   const en = locale === 'en';
   const [captures, setCaptures] = useState<CaptureItem[]>([]);
   const [notes, setNotes] = useState<UnifiedInboxItem[]>([]);
@@ -133,11 +135,51 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   const [proposalErrors, setProposalErrors] = useState<Record<string, string>>({});
   const [savingEdits, setSavingEdits] = useState<Record<string, boolean>>({});
   const [executionPreviews, setExecutionPreviews] = useState<Record<string, ExecutionPreview>>({});
+  const [proposalHistory, setProposalHistory] = useState<Record<string, { event: string; actor: string; at: string; version: number }[]>>({});
+  const [sourceBindingBlocked, setSourceBindingBlocked] = useState<Record<string, boolean>>({});
   const editInFlight = useRef(new Set<string>());
+
+  const matchesSingleSource = useCallback((record: PersistedProposal, item: UnifiedInboxItem) =>
+    record.source_kind === 'notes' && record.source_id === `${item.collection}:${item.sourcePath}`
+    && record.collection === item.collection && record.path === item.sourcePath,
+  []);
+  const blockSourceBinding = (item: UnifiedInboxItem, message: string) => {
+    setSourceBindingBlocked((current) => ({ ...current, [item.id]: true }));
+    setProposalRecords((current) => ({ ...current, [item.id]: [] }));
+    setClassifications((current) => { const next = { ...current }; delete next[item.id]; return next; });
+    setProposalErrors((current) => ({ ...current, [item.id]: message }));
+  };
 
   const load = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
     setCaptureError(''); setNotesError('');
+    if (singleSourceMode) {
+      if (!singleSource || singleSource.collection !== 'drafts' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(singleSource.path)) {
+        setNotes([]);
+        setNotesError(en ? 'A valid Draft source is required. No Inbox sources were loaded.' : '必须提供有效的 Draft 来源；未加载任何收件箱来源。');
+        setLoading(false);
+        return;
+      }
+      try {
+        const note = await notesApi.read(singleSource.collection, singleSource.path);
+        if (note.collection !== singleSource.collection || note.path !== singleSource.path) {
+          setCaptures([]); setNotes([]);
+          setNotesError(en ? 'Core returned a different Draft; no Inbox source was shown.' : 'Core 返回了其他 Draft；未展示任何收件箱来源。');
+          return;
+        }
+        setCaptures([]);
+        setNotes([{
+          id: makeUnifiedInboxId('notes', singleSource.collection, singleSource.path),
+          source: 'notes', sourceRef: `${singleSource.collection}/${singleSource.path}`,
+          sourcePath: singleSource.path, title: note.content.split(/\r?\n/).find((line) => line.startsWith('# '))?.slice(2).trim() || singleSource.path,
+          content: note.content, collection: singleSource.collection, readOnly: note.read_only,
+        }]);
+      } catch {
+        setCaptures([]); setNotes([]);
+        setNotesError(en ? 'The selected Draft could not be read under the current Core session.' : '当前 Core 会话无法读取所选 Draft。');
+      } finally { setLoading(false); }
+      return;
+    }
     const captureTask = notesOnly ? Promise.resolve([] as CaptureItem[]) : fetch('/api/inbox?limit=100', { credentials: 'same-origin' }).then(async (response) => {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -174,7 +216,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       setNotesError(en ? 'Notes are unavailable under the current Core session or configuration.' : '当前 Core 会话或配置未开放 Notes；Capture 收件箱仍可单独使用。');
     }
     setLoading(false);
-  }, [en, notesOnly]);
+  }, [en, notesOnly, singleSourceMode, singleSource?.collection, singleSource?.path]);
 
   useEffect(() => {
     void load(true);
@@ -208,6 +250,11 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     const records = Array.isArray(payload.proposals) ? payload.proposals as PersistedProposal[] : [];
+    if (singleSourceMode && records.some((record) => !matchesSingleSource(record, item))) {
+      blockSourceBinding(item, en ? 'Core returned a proposal bound to another source; all results were hidden.' : 'Core 返回了绑定到其他来源的提案；已隐藏全部结果。');
+      return;
+    }
+    if (singleSourceMode) setSourceBindingBlocked((current) => ({ ...current, [item.id]: false }));
     setProposalRecords((current) => ({ ...current, [item.id]: records }));
     setProposalErrors((current) => ({ ...current, [item.id]: '' }));
     const byKind = new Map(records.map((record) => [record.kind, record]));
@@ -237,7 +284,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
         setDecisions((value) => { const key = `${item.id}:classification`; if (value[key]?.status !== 'stale') return value; const next = { ...value }; delete next[key]; return next; });
       }
     }
-  }, []);
+  }, [singleSourceMode, matchesSingleSource, en]);
 
   useEffect(() => {
     for (const item of items) void refreshProposals(item).catch((cause) => setProposalErrors((current) => ({
@@ -273,12 +320,21 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
 
   const suggest = async (item: UnifiedInboxItem) => {
     if (item.captureId === 'synthetic-capture-demo') return;
+    if (sourceBindingBlocked[item.id]) return;
     const source = item.source === 'capture' ? { source_kind: 'capture', source_id: item.captureId } : { source_kind: 'notes', source_id: `${item.collection}:${item.sourcePath}`, collection: item.collection, path: item.sourcePath };
     const idempotencyKey = suggestionKeys.current[item.id] || (suggestionKeys.current[item.id] = crypto.randomUUID());
     const response = await fetch('/api/inbox/proposals', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(source) });
     if (!response.ok) {
       if (response.status === 409) delete suggestionKeys.current[item.id];
       throw new Error(response.status === 409 ? (en ? 'The source changed or this request key was already used. Reload before generating suggestions.' : '来源已变化或请求键已使用，请刷新后重新生成建议。') : (en ? `Suggestions could not be saved (HTTP ${response.status}).` : `建议保存失败（HTTP ${response.status}）。`));
+    }
+    if (singleSourceMode) {
+      const payload = await response.json();
+      const records = Array.isArray(payload.proposals) ? payload.proposals as PersistedProposal[] : [];
+      if (!records.length || records.some((record) => !matchesSingleSource(record, item))) {
+        blockSourceBinding(item, en ? 'The proposal-create response did not match the selected source; controls are locked.' : '创建提案响应未绑定到所选来源；已锁定本来源操作。');
+        throw new Error(en ? 'The response did not match the selected source.' : '响应未绑定到所选来源。');
+      }
     }
     delete suggestionKeys.current[item.id];
     await refreshProposals(item);
@@ -318,6 +374,13 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
           : (en ? `Edit was not saved (HTTP ${response.status}).` : `修改未保存（HTTP ${response.status}）。`) }));
         return;
       }
+      if (singleSourceMode) {
+        const payload = await response.json();
+        if (!payload.proposal || payload.proposal.proposal_id !== record.proposal_id || !matchesSingleSource(payload.proposal, item)) {
+          blockSourceBinding(item, en ? 'Core returned an edit for a different source; controls are locked.' : 'Core 返回的修改结果不属于所选来源；已锁定本来源操作。');
+          throw new Error(en ? 'Core returned an edit for a different source.' : 'Core 返回的修改结果不属于所选来源。');
+        }
+      }
       await refreshProposals(item);
       setProposalErrors((current) => ({ ...current, [itemId]: '' }));
     } catch (cause) {
@@ -342,6 +405,13 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       setProposalErrors((current) => ({ ...current, [item.id]: response.status === 409 || response.status === 412 ? (en ? 'The source or proposal changed. Reload and review it again.' : '来源或建议已变化，请刷新并重新复核。') : (en ? `Decision could not be saved (HTTP ${response.status}).` : `审批记录保存失败（HTTP ${response.status}）。`) }));
       return;
     }
+    if (singleSourceMode) {
+      const payload = await response.json();
+      if (!payload.proposal || payload.proposal.proposal_id !== record.proposal_id || !matchesSingleSource(payload.proposal, item)) {
+        blockSourceBinding(item, en ? 'Core returned a decision for a different source; controls are locked.' : 'Core 返回的审批结果不属于所选来源；已锁定本来源操作。');
+        throw new Error(en ? 'Core returned a decision for a different source.' : 'Core 返回的审批结果不属于所选来源。');
+      }
+    }
     delete decisionKeys.current[record.proposal_id];
     await refreshProposals(item);
     setProposalErrors((current) => ({ ...current, [item.id]: '' }));
@@ -358,12 +428,22 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       await refreshProposals(item).catch(() => undefined);
       throw new Error(en ? `Preview unavailable (HTTP ${previewResponse.status}); reload and review again.` : `预览不可用（HTTP ${previewResponse.status}），请刷新并重新核对。`);
     }
+    if (singleSourceMode && (preview.proposal_id !== record.proposal_id || preview.source_summary?.source_kind !== 'notes'
+      || preview.source_summary?.source_ref !== item.sourcePath || preview.source_summary?.source_version !== record.source_version
+      || (record.kind === 'journal' ? preview.target_action !== 'journal.append' : record.kind === 'review' ? preview.target_action !== 'capture.write' : true))) {
+      blockSourceBinding(item, en ? 'The target preview is not bound to the selected source; controls are locked.' : '目标预览未绑定到所选来源；已锁定本来源操作。');
+      throw new Error(en ? 'The target preview is not bound to the selected source.' : '目标预览未绑定到所选来源。');
+    }
     setExecutionPreviews((current) => ({ ...current, [record.proposal_id]: preview as ExecutionPreview }));
     const response = await fetch(`/api/inbox/proposals/${record.proposal_id}/execute`, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ target_text: target.text, ...(target.title !== undefined ? { target_title: target.title } : {}), ...(target.date !== undefined ? { target_date: target.date } : {}), confirmed: true, preview_sha256: preview.preview_sha256 }) });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       await refreshProposals(item).catch(() => undefined);
       throw new Error(response.status === 409 ? (en ? 'Conflict: source, vocabulary, or preview changed. Reload and review again.' : '执行冲突：来源、词库或预览已变化，请刷新后重新核对。') : (en ? `Execution failed (HTTP ${response.status}); retry the same preview if allowed.` : `执行失败（HTTP ${response.status}）；如允许，请对同一预览重试。`));
+    }
+    if (singleSourceMode && (!payload.proposal || payload.proposal.proposal_id !== record.proposal_id || !matchesSingleSource(payload.proposal, item))) {
+      blockSourceBinding(item, en ? 'Core returned an execution for a different source; controls are locked.' : 'Core 返回的执行结果不属于所选来源；已锁定本来源操作。');
+      throw new Error(en ? 'Core returned an execution for a different source.' : 'Core 返回的执行结果不属于所选来源。');
     }
     setProposalRecords((current) => ({ ...current, [item.id]: (current[item.id] || []).map((row) => row.proposal_id === record.proposal_id ? payload.proposal : row) }));
     setExecutionPreviews((current) => { const next = { ...current }; delete next[record.proposal_id]; return next; });
@@ -377,8 +457,26 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       if (item) await refreshProposals(item).catch(() => undefined);
       throw new Error(en ? `Preview unavailable (HTTP ${response.status}); reload and review again.` : `预览不可用（HTTP ${response.status}），请刷新并重新核对。`);
     }
+    const item = items.find((candidate) => proposalRecords[candidate.id]?.some((row) => row.proposal_id === record.proposal_id));
+    if (singleSourceMode && (!item || preview.proposal_id !== record.proposal_id || preview.source_summary?.source_kind !== 'notes'
+      || preview.source_summary?.source_ref !== item.sourcePath || preview.source_summary?.source_version !== record.source_version
+      || (record.kind === 'journal' ? preview.target_action !== 'journal.append' : record.kind === 'review' ? preview.target_action !== 'capture.write' : true))) {
+      if (item) blockSourceBinding(item, en ? 'The target preview is not bound to the selected source; controls are locked.' : '目标预览未绑定到所选来源；已锁定本来源操作。');
+      throw new Error(en ? 'The target preview is not bound to the selected source.' : '目标预览未绑定到所选来源。');
+    }
     setExecutionPreviews((current) => ({ ...current, [record.proposal_id]: preview as ExecutionPreview }));
     return (preview as ExecutionPreview).target;
+  };
+
+  const loadHistory = async (item: UnifiedInboxItem, record: PersistedProposal) => {
+    const response = await fetch(`/api/inbox/proposals/${encodeURIComponent(record.proposal_id)}/history`, { credentials: 'same-origin' });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.proposal || !Array.isArray(payload.history)) throw new Error(en ? `History unavailable (HTTP ${response.status}).` : `审批历史不可用（HTTP ${response.status}）。`);
+    if (singleSourceMode && (payload.proposal.proposal_id !== record.proposal_id || !matchesSingleSource(payload.proposal, item))) {
+      blockSourceBinding(item, en ? 'Core returned history for a different source; controls are locked.' : 'Core 返回的历史记录不属于所选来源；已锁定本来源操作。');
+      throw new Error(en ? 'Core returned history for a different source.' : 'Core 返回的历史记录不属于所选来源。');
+    }
+    setProposalHistory((current) => ({ ...current, [record.proposal_id]: payload.history }));
   };
 
   const text = (key: string, fallback: string) => {
@@ -391,18 +489,21 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     return map[key] || fallback;
   };
 
-  return <section className={notesOnly ? 'unified-notes-inbox' : 'capture-page unified-inbox-page'} aria-labelledby="unified-inbox-title">
-    {!notesOnly && <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="unified-inbox-title">{text('inbox', '统一收件箱')}</h1><p className="workspace-subtitle">{text('subtitle', '')}</p><p className="unified-inbox-boundary">{text('local', '')}</p></div>
-      {showSyntheticCaptureDemo && <button type="button" className="capture-secondary" onClick={addSyntheticCapture}>{en ? 'Add synthetic Capture' : '添加合成 Capture 示例'}</button>}
+  return <section className={notesOnly || singleSourceMode ? 'unified-notes-inbox' : 'capture-page unified-inbox-page'} aria-labelledby="unified-inbox-title">
+    {!notesOnly && <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> {singleSourceMode ? 'INBOX / SOURCE' : 'INBOX'}</p><h1 id="unified-inbox-title">{singleSourceMode ? (en ? 'Single-source Inbox review' : '单来源 Inbox 审批') : text('inbox', '统一收件箱')}</h1><p className="workspace-subtitle">{singleSourceMode
+        ? singleSource ? `${en ? 'Only this Draft is in scope' : '当前范围仅限此 Draft'}：${singleSource.collection}/${singleSource.path}` : (en ? 'Missing or invalid Draft source; no source was loaded.' : 'Draft 来源缺失或无效；未加载任何来源。')
+        : text('subtitle', '')}</p>{!singleSourceMode && <p className="unified-inbox-boundary">{text('local', '')}</p>}</div>
+      {!singleSourceMode && showSyntheticCaptureDemo && <button type="button" className="capture-secondary" onClick={addSyntheticCapture}>{en ? 'Add synthetic Capture' : '添加合成 Capture 示例'}</button>}
     </header>}
     {notesOnly && <div className="unified-inbox-subheader"><h2 id="unified-inbox-title">{en ? 'Notes drafts' : '笔记草稿'}</h2>{showSyntheticCaptureDemo && <button type="button" className="capture-secondary" onClick={addSyntheticCapture}>{en ? 'Add synthetic Capture' : '添加合成 Capture 示例'}</button>}</div>}
-    <form className="unified-note-create" onSubmit={(event) => void createNote(event)}>
+    {singleSourceMode && <p className="unified-mock-boundary">{en ? 'This isolated route never loads the full Inbox or lists Notes/Capture sources.' : '此隔离页面不会加载全量 Inbox，也不会枚举 Notes 或 Capture 来源。'}</p>}
+    {!singleSourceMode && <form className="unified-note-create" onSubmit={(event) => void createNote(event)}>
       <h2>{text('createTitle', '')}</h2>
       <label>{en ? 'Title' : '标题'}<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={160} required /></label>
       <label>{en ? 'Content' : '正文'}<textarea value={body} onChange={(event) => setBody(event.target.value)} rows={3} maxLength={200000} required /></label>
       {createError && <p role="alert" className="capture-alert">{createError}</p>}
       <button type="submit" disabled={creating || !title.trim() || !body.trim()}>{creating ? (en ? 'Saving…' : '保存中…') : text('create', '')}</button>
-    </form>
+    </form>}
     {!notesOnly && captureError && <p role="alert" className="capture-alert">{captureError}</p>}
     {notesError && <p className="capture-processing-note" role="status">{notesError}</p>}
     <div className="inbox-list unified-inbox-list" aria-live="polite">
@@ -422,13 +523,19 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
           {item.readOnly && <p className="capture-processing-note">{en ? 'This source contains Markdown syntax that the rich-text editor cannot safely rewrite.' : '此来源包含富文本编辑器无法安全回写的 Markdown 特殊语法。'}</p>}
           {proposalErrors[item.id] && <p role="alert" className="capture-alert">{proposalErrors[item.id]} <button type="button" onClick={() => void refreshProposals(item, true).catch(() => setProposalErrors((current) => ({ ...current, [item.id]: en ? 'Reload failed; check the Core session and retry.' : '重新加载失败，请检查 Core 会话后重试。' })))}>{en ? 'Reload proposals' : '重新加载建议'}</button></p>}
           <div className="inbox-links">{item.source === 'capture' && item.captureId && !item.sourcePath.startsWith('synthetic://') && <a href={`/api/inbox/${encodeURIComponent(item.captureId)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>}{item.reviewPath && <button type="button" onClick={() => onReview(item.reviewPath!)}>{en ? 'Open Review' : '打开 Review'}</button>}</div>
-          {!classification ? <button type="button" className="unified-suggest-button" onClick={() => suggestSafely(item)}>{text('ai', '')}</button> : <div className="unified-suggestion-list" aria-label={en ? 'Suggestions for human approval' : '待人工逐项审批的建议'}>
+          {!classification ? <button type="button" className="unified-suggest-button" disabled={Boolean(sourceBindingBlocked[item.id])} onClick={() => suggestSafely(item)}>{text('ai', '')}</button> : <div className="unified-suggestion-list" aria-label={en ? 'Suggestions for human approval' : '待人工逐项审批的建议'}>
             <p className="unified-mock-boundary">{en ? 'Deterministic local Mock only. Suggestions and human decisions are persisted by Core; approval never executes a target action.' : '仅确定性本地 Mock。建议和人工决定由 Core 持久化；审批不会执行目标动作。'}</p>
-            <button type="button" className="unified-suggest-button" onClick={() => suggestSafely(item)}>{en ? 'Regenerate Mock suggestions (preserve manual corrections)' : '重新生成 Mock 建议（保留手动修正）'}</button>
+            <button type="button" className="unified-suggest-button" disabled={Boolean(sourceBindingBlocked[item.id])} onClick={() => suggestSafely(item)}>{en ? 'Regenerate Mock suggestions (preserve manual corrections)' : '重新生成 Mock 建议（保留手动修正）'}</button>
             {suggestions.map((suggestion) => <Proposal key={suggestion.kind} id={suggestion.kind} title={suggestion.title} reason={suggestion.reason} impact={suggestion.impact} preview={suggestion.preview} value={suggestion.value} en={en} saving={savingEdits[item.id]} editError={proposalErrors[item.id]} decision={decisionsFor(suggestion.kind)} decisionRequired={suggestion.kind !== 'classification'}
               classificationOptions={suggestion.kind === 'classification' ? { type: values.type ?? classification.type, types: classification.allowedTypes || [], tags: (values.tags ?? classification.tags.join(', ')).split(/,\s*/).filter((tag) => (classification.allowedTags || []).includes(tag)), tagOptions: classification.allowedTags || [], unknownTags: classification.unknownTagCandidates, onTypeChange: (value) => editSafely(item, 'type', value), onTagsChange: (tags) => editSafely(item, 'tags', tags.join(', ')) } : undefined}
               execution={['journal', 'knowledge', 'project'].includes(suggestion.kind) ? (() => { const kind = suggestion.kind === 'knowledge' ? 'review' : suggestion.kind; const record = proposalRecords[item.id]?.find((candidate) => candidate.kind === kind); if (!record || record.status !== 'approved_recorded') return undefined; const execution = record.execution || { status: record.target_execution_status }; const preview = executionPreviews[record.proposal_id]; const previewTarget = preview?.target || execution.target; const sourceSummary = preview?.source_summary || execution.source_summary; return { status: execution.status, kind, target: previewTarget, sourceSummary, targetUri: execution.target_uri, error: execution.error_code, onPrepare: () => prepareProposal(record), onExecute: (target: ExecutionPreview['target']) => executeProposal(item, record, target) }; })() : undefined}
               onChange={(value) => editSafely(item, suggestion.kind, value)} onApprove={() => decideSafely(item, suggestion.kind, 'approved_recorded')} onReject={() => decideSafely(item, suggestion.kind, 'rejected')} />)}
+            {singleSourceMode && proposalRecords[item.id]?.map((record) => <section className="single-source-history" key={`${record.proposal_id}-history`} aria-label={`${record.kind} audit history`}>
+              <button type="button" onClick={() => { void loadHistory(item, record).catch((cause) => setProposalErrors((current) => ({
+                ...current, [item.id]: cause instanceof Error ? cause.message : (en ? 'History unavailable.' : '审批历史不可用。'),
+              }))); }}>{en ? `View ${record.kind} audit history` : `查看 ${record.kind} 审计历史`}</button>
+              {(proposalHistory[record.proposal_id] || []).map((event, index) => <p role="status" key={`${event.event}-${event.version}-${index}`}>{event.event} · {event.at} · v{event.version}</p>)}
+            </section>)}
           </div>}
         </article>;
       }) : <p className="capture-empty">{en ? 'Nothing is waiting in Inbox.' : '收件箱中暂无待处理内容。'}</p>}
