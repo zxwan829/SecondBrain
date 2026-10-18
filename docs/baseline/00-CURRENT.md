@@ -38,7 +38,9 @@ source: GitHub SecondBrain Monorepo
 **PR #61 合并及部署前只读快照（2026-10-18T01:50:41Z）：** PR #61 已复审并合入 main（merge `b3c8fe08ea04e1f20ccadcf70e393bf80a30672c`），实现本地确认的 stale Session ID 回退和创建/分叉选择竞态保护；此快照时尚未部署。该时点只读核验确认 NAS 仍运行 PR #49 App 镜像 `secondbrain-app:pr49-fa2ad412-full` / `sha256:1c7ed4cb…11dd6ca`（healthy，RestartCount 0）和 Hermes v0.22.2 Guard 镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / `sha256:b99b1762…5357e9a`（running，RestartCount 0）；PR #61 修复在当时尚未进入生产 App。Edge 当前标签清单没有 SecondBrain App 页面；当时没有打开 `/chat`、恢复或查看私人 Session，也没有按所有会话读取 Hermes 列表或宽泛日志。因此 Hermes create/list、selected/localStorage、activities 请求/响应 ID 与状态时间均无法关联到先前异常，生产根因仍 **UNKNOWN**；历史验收保持首次卡片/首次刷新 PASS、会话切换恢复 FAIL / INCONSISTENT、幂等重试与审计 BLOCKED。完整只读快照与证据缺口见 `Environment-Baseline.md`。
 **2026-10-18 PR #61 部署结果：** 部署指定候选 `secondbrain-app:d084-pr61-4a58393-full`（Image ID `sha256:e63ab1611b2a30ffd9dd2a9cb901066fa6b2da2e7e85c9c1c9d72dbabac0e4ab`），未重建。候选基于 `4a58393`；当前 main 已前进至 `3080506` 并包含之后合入的 D085-C2b 变更，该候选不包含这些后续变更。App 在 120 秒内 healthy；Hermes/Guard 身份不变。浏览器登录后自动恢复了既有 Session，不能安全地用于空白合成验收，因此没有创建 Session、写 Journal/Task、重试或读取会话内容；相关验收保持 BLOCKED，生产根因 UNKNOWN。没有回滚，因为健康、路由及鉴权检查均通过且未观察到 App 异常。详细快照见 `Environment-Baseline.md`。
 
-**唯一 NEXT：** 等待 ChatGPT 对本次部署和验收阻断进行独立复审。后续若继续浏览器验收，须先提供能保证新建空白 Session 且不恢复已有 Session 的隔离上下文；仅在满足该条件后，按单独授权进行合成测试。不得打开私人 Session、读取正文、创建/修改生产数据、重试、调用模型、重启/部署 NAS 或清理数据。
+**2026-10-18 安全空白入口实现（PR #65，待审、未部署）：** 基于最新 main `d781541785bbc20c64c3f4f676a1b9d1bd431e06` 新增 `/chat/blank`。空白模式不读取/覆盖普通 `secondbrain.chat.session`，不读取 `secondbrain.chat.activeRun` / `activeSession`，初始不请求 Hermes Session 列表、消息、活动或 Run；仅在用户点击创建后使用创建响应 ID，并在独立的 tab `sessionStorage` allowlist 内刷新/切换。普通 Chat 原有恢复行为保留。Mock 定向测试 51 项、typecheck、build、diff-check 通过。该实现仅限制前端请求，不提供服务端账户或 Session 隔离；没有访问生产数据、创建生产 Session、部署或调用模型。D084 生产合成验收和根因结论仍为 BLOCKED / UNKNOWN。
+
+**唯一 NEXT：** 等待 ChatGPT 独立复审 PR #65 的空白入口实现和前端隔离边界。该 PR 不提供服务端账户/Session 隔离；合并或 Mock 测试通过均不授权生产部署、生产 Session 创建或 Journal/Task 写入。生产合成验收须经复审并另行取得匹配授权；此前保持 BLOCKED / UNKNOWN，不读取私人内容、不调用模型、不部署或重启 NAS。
 
 ### 并行开发状态：D085-C2a 统一 Inbox 与人工逐项审批演示（已合并、未部署）
 

@@ -237,6 +237,24 @@ export function App() {
   return <WorkspaceApp onLogout={async () => { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setAuthenticated(false); }} />;
 }
 
+type BlankChatState = { sessionIds: string[]; selectedSessionId: string };
+const blankChatStateKey = 'secondbrain.chat.blank.sessions';
+
+function readBlankChatState(): BlankChatState {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(blankChatStateKey) ?? 'null') as Partial<BlankChatState> | null;
+    const sessionIds = Array.isArray(value?.sessionIds)
+      ? [...new Set(value.sessionIds.filter((id): id is string => typeof id === 'string' && Boolean(id.trim())))] : [];
+    const selectedSessionId = typeof value?.selectedSessionId === 'string' && sessionIds.includes(value.selectedSessionId)
+      ? value.selectedSessionId : '';
+    return { sessionIds, selectedSessionId };
+  } catch { return { sessionIds: [], selectedSessionId: '' }; }
+}
+
+function blankChatSessionList(sessionIds: string[], locale: Locale): ChatSession[] {
+  return sessionIds.map((id, index) => ({ id, title: locale === 'en' ? `Test session ${index + 1}` : `合成会话 ${index + 1}` }));
+}
+
 function loginFailureMessage(status: number): string {
   if (status === 401) return '登录未通过 App 凭据校验（HTTP 401）。';
   if (status === 403) return '请求来源校验失败（HTTP 403）。请使用配置的 SecondBrain HTTPS 地址。';
@@ -441,7 +459,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
 
         </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
           : page === 'inbox' ? <InboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }}><Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes drafts…' : '正在加载笔记草稿…'}</div>}><UnifiedInboxPage locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} notesOnly /></Suspense></InboxPage>
-          : page === 'chat' ? <ChatPage locale={locale} onGoInbox={() => navigate('inbox')}
+          : page === 'chat' ? <ChatPage locale={locale} blankMode={location.pathname === '/chat/blank'} onGoInbox={() => navigate('inbox')}
             onGoJournal={() => navigate('journal')} onGoToday={() => navigate('today')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
@@ -753,12 +771,14 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
 type ChatSession = { id: string; title: string; updated?: string | number };
 type ChatMessage = ChatHistoryMessage;
 
-export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onGoToday = () => undefined }: {
-  locale: Locale; onGoInbox: () => void; onGoJournal?: () => void; onGoToday?: () => void;
+export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = () => undefined, onGoToday = () => undefined }: {
+  locale: Locale; blankMode?: boolean; onGoInbox: () => void; onGoJournal?: () => void; onGoToday?: () => void;
 }) {
   const en = locale === 'en';
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [selected, setSelected] = useState('');
+  const [blankState, setBlankState] = useState<BlankChatState>(() => blankMode ? readBlankChatState() : { sessionIds: [], selectedSessionId: '' });
+  const blankSessionIdsRef = useRef(new Set(blankState.sessionIds));
+  const [sessions, setSessions] = useState<ChatSession[]>(() => blankMode ? blankChatSessionList(blankState.sessionIds, locale) : []);
+  const [selected, setSelected] = useState(() => blankMode ? blankState.selectedSessionId : '');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activities, setActivities] = useState<ChatActivity[]>([]);
   const timeline = mergeChatTimeline(messages, activities);
@@ -776,7 +796,7 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
   const [pendingPreview, setPendingPreview] = useState('');
   const attachmentInput = useRef<HTMLInputElement>(null);
   const abortRef = React.useRef<AbortController | null>(null);
-  const selectedSessionRef = useRef('');
+  const selectedSessionRef = useRef(blankMode ? blankState.selectedSessionId : '');
   const selectionIntentRef = useRef(0);
   const contentLoadRef = useRef(0);
   const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
@@ -800,7 +820,21 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
     return body as T;
   };
 
+  const persistBlankChatState = (sessionIds: string[], selectedSessionId: string) => {
+    const uniqueIds = [...new Set(sessionIds)];
+    const next: BlankChatState = {
+      sessionIds: uniqueIds,
+      selectedSessionId: uniqueIds.includes(selectedSessionId) ? selectedSessionId : '',
+    };
+    blankSessionIdsRef.current = new Set(uniqueIds);
+    setBlankState(next);
+    setSessions(blankChatSessionList(uniqueIds, locale));
+    try { sessionStorage.setItem(blankChatStateKey, JSON.stringify(next)); } catch { /* the current page still retains its in-memory allowlist */ }
+    return next;
+  };
+
   const reloadSessions = async (preferred = selected) => {
+    if (blankMode) return sessions;
     const payload = await api<Record<string, unknown>>('/api/chat/sessions?limit=50&offset=0');
     const raw = Array.isArray(payload.sessions) ? payload.sessions : Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : [];
     const next = raw.flatMap((value, index) => {
@@ -824,6 +858,7 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
   };
 
   const loadSessionContent = async (sessionId: string) => {
+    if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     const requestId = ++contentLoadRef.current;
     const [historyResult, activityResult] = await Promise.allSettled([
       api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`),
@@ -879,14 +914,18 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
   };
 
   const selectSession = async (sessionId: string) => {
+    if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     selectionIntentRef.current += 1;
     selectedSessionRef.current = sessionId;
-    setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
+    setSelected(sessionId);
+    if (blankMode) persistBlankChatState([...blankSessionIdsRef.current], sessionId);
+    else localStorage.setItem('secondbrain.chat.session', sessionId);
     setError(''); setMessages([]); setActivities([]); setInput('');
     try { await loadSessionContent(sessionId); } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not load session history', locale)); }
   };
 
   const pollRun = async (activeRun: string, sessionId: string) => {
+    if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return false;
     const terminal = new Set(['completed', 'failed', 'error', 'cancelled', 'canceled', 'interrupted', 'expired']);
     for (let attempt = 0; attempt < 60; attempt += 1) {
       const result = await api<Record<string, unknown>>(`/api/chat/runs/${encodeURIComponent(activeRun)}`);
@@ -896,8 +935,10 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
         setProgress(chatStatusLabel(status, locale));
         if (selectedSessionRef.current === sessionId) await loadSessionContent(sessionId);
         await reloadSessions(sessionId);
-        sessionStorage.removeItem('secondbrain.chat.activeRun');
-        sessionStorage.removeItem('secondbrain.chat.activeSession');
+        if (!blankMode) {
+          sessionStorage.removeItem('secondbrain.chat.activeRun');
+          sessionStorage.removeItem('secondbrain.chat.activeSession');
+        }
         return true;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
@@ -908,6 +949,12 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
 
   useEffect(() => { void (async () => {
     try {
+      if (blankMode) {
+        if (blankState.selectedSessionId && blankSessionIdsRef.current.has(blankState.selectedSessionId)) {
+          await selectSession(blankState.selectedSessionId);
+        }
+        return;
+      }
       const preferred = localStorage.getItem('secondbrain.chat.session') ?? '';
       const next = await reloadSessions(preferred);
       if (preferred && next.some((session) => session.id === preferred)) await selectSession(preferred);
@@ -934,6 +981,16 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
       const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
       const id = String(payload.session_id ?? '');
       if (!id) throw new Error('Hermes did not return a session identifier');
+      if (blankMode) {
+        const ids = [...blankSessionIdsRef.current, id];
+        const stillCurrent = selectionIntent === selectionIntentRef.current;
+        const nextSelected = stillCurrent ? id : selectedSessionRef.current;
+        persistBlankChatState(ids, nextSelected);
+        if (stillCurrent) {
+          selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
+        }
+        return;
+      }
       await reloadSessions(id);
       if (selectionIntent !== selectionIntentRef.current) return;
       selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
@@ -944,6 +1001,7 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
   };
 
   const forkSession = async () => {
+    if (blankMode) return;
     if (!selected) return;
     const selectionIntent = ++selectionIntentRef.current;
     try {
@@ -959,7 +1017,8 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
 
   const ensureSelectedSession = async () => {
     const existing = selectedSessionRef.current;
-    if (existing) return existing;
+    if (existing && (!blankMode || blankSessionIdsRef.current.has(existing))) return existing;
+    if (blankMode) throw new Error(en ? 'Create a blank test session first.' : '请先明确创建一个空白合成会话。');
     const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
     const sessionId = String(payload.session_id ?? '');
     if (!sessionId) throw new Error('Hermes did not return a session identifier');
@@ -1050,6 +1109,10 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
     event.preventDefault();
     const prompt = input.trim();
     if (!prompt || busy) return;
+    if (blankMode && (!selectedSessionRef.current || !blankSessionIdsRef.current.has(selectedSessionRef.current))) {
+      setError(en ? 'Create a blank test session before sending.' : '发送前请先明确创建空白合成会话。');
+      return;
+    }
     if (!pendingAttachment && isExplicitJournalIntent(input)) {
       await submitExplicitActivity('journal', input);
       return;
@@ -1062,9 +1125,11 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
     setError(''); setBusy(true); setProgress(en ? 'Starting…' : '正在启动…');
     const messageTime = new Date().toISOString();
     setMessages((current) => [...current, { id: `local-${Date.now()}`, role: 'user', text: prompt, timestamp: messageTime }, { id: `assistant-${Date.now()}`, role: 'assistant', text: '', timestamp: messageTime }]);
+    let sessionId = selected;
+    let startedRunId = '';
     try {
-      let sessionId = selected;
       if (!sessionId) {
+        if (blankMode) throw new Error(en ? 'Create a blank test session first.' : '请先明确创建空白合成会话。');
         const created = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
         sessionId = String(created.session_id ?? '');
         if (!sessionId) throw new Error('Hermes did not return a session identifier');
@@ -1077,10 +1142,13 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
       });
       const activeRun = String(started.run_id ?? '');
       if (!activeRun) throw new Error('Hermes did not return a run identifier');
+      startedRunId = activeRun;
       setInput('');
       setRunId(activeRun); setProgress(en ? 'Connected to Hermes' : '已连接 Hermes');
-      sessionStorage.setItem('secondbrain.chat.activeRun', activeRun);
-      sessionStorage.setItem('secondbrain.chat.activeSession', sessionId);
+      if (!blankMode) {
+        sessionStorage.setItem('secondbrain.chat.activeRun', activeRun);
+        sessionStorage.setItem('secondbrain.chat.activeSession', sessionId);
+      }
       const controller = new AbortController(); abortRef.current = controller;
       const response = await fetch(`/api/chat/runs/${encodeURIComponent(activeRun)}/events`, { credentials: 'same-origin', signal: controller.signal, headers: { Accept: 'text/event-stream' } });
       if (!response.ok || !response.body) throw new Error(`Hermes stream failed (HTTP ${response.status})`);
@@ -1140,7 +1208,9 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
       }
       if (sawTerminal) {
         await loadSessionContent(sessionId); await reloadSessions(sessionId);
-        sessionStorage.removeItem('secondbrain.chat.activeRun'); sessionStorage.removeItem('secondbrain.chat.activeSession');
+        if (!blankMode) {
+          sessionStorage.removeItem('secondbrain.chat.activeRun'); sessionStorage.removeItem('secondbrain.chat.activeSession');
+        }
       } else {
         setProgress(en ? 'Stream ended; checking run status…' : '连接结束，正在核对任务状态…');
         await pollRun(activeRun, sessionId);
@@ -1150,8 +1220,8 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
       if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
         setProgress(en ? 'Connection interrupted; checking run status…' : '连接中断，正在核对任务状态…');
         try {
-          const pendingRun = sessionStorage.getItem('secondbrain.chat.activeRun') ?? '';
-          const pendingSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? selected;
+          const pendingRun = blankMode ? startedRunId : sessionStorage.getItem('secondbrain.chat.activeRun') ?? '';
+          const pendingSession = blankMode ? sessionId : sessionStorage.getItem('secondbrain.chat.activeSession') ?? selected;
           if (pendingRun && pendingSession) await pollRun(pendingRun, pendingSession);
           else setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Chat failed', locale));
         } catch (recoveryError) { setError(recoveryError instanceof Error ? chatFailureLabel(recoveryError.message, locale) : chatFailureLabel('Could not recover run status', locale)); }
@@ -1182,7 +1252,7 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
     if (!runId) return;
     try { await api(`/api/chat/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST', body: '{}' }); }
     catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not stop run', locale)); }
-    const activeSession = sessionStorage.getItem('secondbrain.chat.activeSession') ?? selected;
+    const activeSession = blankMode ? selectedSessionRef.current : sessionStorage.getItem('secondbrain.chat.activeSession') ?? selected;
     setProgress(en ? 'Stopping…' : '正在停止…');
     try { await pollRun(runId, activeSession); }
     catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not confirm stop status', locale)); }
@@ -1222,8 +1292,10 @@ export function ChatPage({ locale, onGoInbox, onGoJournal = () => undefined, onG
   };
 
   return <section className="chat-page">
-    <aside className="chat-sessions"><div className="chat-session-heading"><h1>{en ? 'Chat' : '对话'}</h1><button type="button" onClick={() => void newSession()}>{en ? 'New chat' : '新对话'}</button></div><div className="chat-session-list">{sessions.map((session) => <button type="button" key={session.id} className={session.id === selected ? 'is-selected' : ''} onClick={() => void selectSession(session.id)}><strong>{session.title}</strong><small>{session.updated ? formatDate(session.updated, locale) : session.id.slice(0, 16)}</small></button>)}</div></aside>
-    <div className="chat-conversation"><header><div><p className="eyebrow">SECONDBRAIN <span>/</span> {en ? 'CHAT' : '对话'}</p><h2>{sessions.find((session) => session.id === selected)?.title ?? (en ? 'New conversation' : '新对话')}</h2></div><button type="button" onClick={() => void forkSession()} disabled={!selected || busy}>{en ? 'Fork' : '分支会话'}</button></header>
+    <aside className="chat-sessions"><div className="chat-session-heading"><h1>{blankMode ? (en ? 'Blank acceptance' : '空白验收') : (en ? 'Chat' : '对话')}</h1><button type="button" onClick={() => void newSession()}>{blankMode ? (en ? 'Create test session' : '创建合成会话') : (en ? 'New chat' : '新对话')}</button></div>
+      {blankMode && <p className="chat-attachment-warning" role="status">{en ? 'This frontend entry avoids loading the regular session list. It does not isolate the authenticated backend account.' : '此入口仅避免前端加载普通会话列表，不提供已认证后端账户的服务端隔离。'}</p>}
+      <div className="chat-session-list">{sessions.map((session) => <button type="button" key={session.id} className={session.id === selected ? 'is-selected' : ''} onClick={() => void selectSession(session.id)}><strong>{session.title}</strong><small>{session.updated ? formatDate(session.updated, locale) : session.id.slice(0, 16)}</small></button>)}</div></aside>
+    <div className="chat-conversation"><header><div><p className="eyebrow">SECONDBRAIN <span>/</span> {blankMode ? (en ? 'BLANK ACCEPTANCE' : '空白验收') : (en ? 'CHAT' : '对话')}</p><h2>{sessions.find((session) => session.id === selected)?.title ?? (en ? 'New conversation' : '新对话')}</h2></div>{!blankMode && <button type="button" onClick={() => void forkSession()} disabled={!selected || busy}>{en ? 'Fork' : '分支会话'}</button>}</header>
       <div className="chat-message-list">{timeline.map((item) => item.type === 'message'
         ? <article key={item.id} className={`chat-message ${item.message.role}`}><span>{item.message.role === 'user' ? (en ? 'You' : '你') : 'Hermes'}</span><p>{item.message.text || (busy && item.message.role === 'assistant' ? progress : '')}</p></article>
         : <article key={item.id} className={`chat-activity-card status-${item.activity.status}`}>
