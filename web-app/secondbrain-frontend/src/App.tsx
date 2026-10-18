@@ -14,6 +14,7 @@ import { notesApi } from './api/notes';
 const NotesPage = lazy(() => import('./NotesPage').then((module) => ({ default: module.NotesPage })));
 const VocabularyPage = lazy(() => import('./VocabularyPage').then((module) => ({ default: module.VocabularyPage })));
 const UnifiedInboxPage = lazy(() => import('./UnifiedInboxPage').then((module) => ({ default: module.UnifiedInboxPage })));
+const KnowledgePage = lazy(() => import('./KnowledgePage').then((module) => ({ default: module.KnowledgePage })));
 const notesFeatureEnabled = () => import.meta.env.VITE_ENABLE_NOTES === 'true';
 import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
@@ -207,7 +208,7 @@ const navItems = [
   { id: 'inbox', key: 'inbox', icon: 'inbox', section: 'work', route: '/inbox' },
   { id: 'review', key: 'review', icon: 'check', section: 'work', route: '/review' },
   { id: 'projects', key: 'projects', icon: 'folder', section: 'library' },
-  { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library' },
+  { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library', route: '/knowledge' },
   { id: 'brief', key: 'brief', icon: 'file', section: 'library' },
   { id: 'activity', key: 'activity', icon: 'activity', section: 'library' },
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
@@ -441,7 +442,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <button type="button" className="locale-button" onClick={changeLocale}>{t.localeLabel}</button>
         </div>
 
-        {page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
+        {page === 'knowledge' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Knowledge…' : '正在加载知识库…'}</div>}><KnowledgePage locale={locale} /></Suspense>
+          : page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
           : page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
           ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage onRegisterNavigationGuard={registerNotesNavigationGuard} onOpenInboxSource={(collection, path) => {
             const query = new URLSearchParams({ collection, path });

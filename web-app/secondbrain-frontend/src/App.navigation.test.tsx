@@ -104,6 +104,42 @@ describe('Notes application navigation gate', () => {
     await waitFor(() => expect(calls).toContain('/api/home'));
   });
 
+  it('opens Knowledge from navigation and does not issue Knowledge reads from other page initialization', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getByRole('button', { name: '知识库' }));
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+    expect(location.pathname).toBe('/knowledge');
+    expect(calls.some((url) => url.startsWith('/api/knowledge/'))).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '首页' }));
+    await screen.findByRole('heading', { name: '你的工作台' });
+    fireEvent.click(screen.getByRole('button', { name: '对话' }));
+    await waitFor(() => expect(location.pathname).toBe('/chat'));
+    fireEvent.click(screen.getByRole('button', { name: '收件箱' }));
+    await waitFor(() => expect(location.pathname).toBe('/inbox'));
+    fireEvent.click(screen.getByRole('button', { name: '笔记' }));
+    await screen.findByRole('heading', { name: '笔记' });
+    expect(calls.some((url) => url.startsWith('/api/knowledge/'))).toBe(false);
+  });
+
+  it('restores the Knowledge route directly and keeps it available in the mobile navigation', async () => {
+    const calls = mockAppFetch();
+    startAt('/knowledge');
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+    expect(location.pathname).toBe('/knowledge');
+    expect(calls.some((url) => url.startsWith('/api/knowledge/'))).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
+    const sidebar = document.querySelector('aside.sidebar') as HTMLElement;
+    fireEvent.click(within(sidebar).getByRole('button', { name: '知识库' }));
+    expect(location.pathname).toBe('/knowledge');
+    expect(await screen.findByRole('heading', { name: '知识库' })).toBeTruthy();
+  });
+
   it('isolates rapid source changes when an older exact Notes read returns last', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'true');
     const calls: string[] = [];
