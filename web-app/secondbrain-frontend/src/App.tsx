@@ -301,6 +301,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [notesGateChecked, setNotesGateChecked] = useState(!enableNotes);
   const isSingleSourceInboxPath = location.pathname === '/inbox/source';
   const isInboxRoute = location.pathname === '/inbox' || location.pathname.startsWith('/inbox/');
+  const isKnowledgePage = page === 'knowledge';
   const singleSource = isSingleSourceInboxPath ? singleDraftSourceFromSearch(location.search) : null;
   const notesNavigationGuard = useRef<(() => boolean) | null>(null);
   const navigationIndex = useRef(typeof history.state?.sbNavigationIndex === 'number' ? history.state.sbNavigationIndex as number : 0);
@@ -311,13 +312,13 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     document.documentElement.lang = locale;
   }, [locale]);
   useEffect(() => {
-    // A direct single-source Inbox visit must not load Home, whose Core response
-    // aggregates unrelated Review and Knowledge content.
-    if (location.pathname === '/inbox/source' || isInboxRoute) return;
+    // Scoped pages must not trigger the broad Home aggregate, which also reads
+    // unrelated Review and Knowledge content.
+    if (isKnowledgePage || location.pathname === '/inbox/source' || isInboxRoute) return;
     let mounted = true;
     fetchHome().then((data) => { if (mounted) setHome(data); }).catch(() => { if (mounted) setError(true); });
     return () => { mounted = false; };
-  }, [isSingleSourceInboxPath, isInboxRoute]);
+  }, [isKnowledgePage, isSingleSourceInboxPath, isInboxRoute]);
   const registerNotesNavigationGuard = useCallback((guard: (() => boolean) | null) => {
     notesNavigationGuard.current = guard;
   }, []);
