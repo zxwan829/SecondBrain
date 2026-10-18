@@ -463,7 +463,8 @@ class ReviewDecisionStore:
         finally:
             os.close(directory_fd)
 
-    def create_claim(self, review_path, review_sha256, request_id, target_filename, approver_subject):
+    def create_claim(self, review_path, review_sha256, request_id, target_filename, approver_subject,
+                     approved_at=None):
         """Create one immutable, durable request/target binding without clobbering."""
         key = self.version_key(review_path, review_sha256)
         if not isinstance(request_id, str) or not _REQUEST_ID.fullmatch(request_id) or \
@@ -480,7 +481,13 @@ class ReviewDecisionStore:
             claim = {"version": 1, "version_key": key, "review_path": self.canonical_review_path(review_path),
                      "review_sha256": review_sha256, "request_id": request_id,
                      "target_filename": target_filename, "approver_subject": approver_subject,
-                     "approved_at": datetime.now(timezone.utc).isoformat()}
+                     "approved_at": approved_at or datetime.now(timezone.utc).isoformat()}
+            try:
+                parsed_approved_at = datetime.fromisoformat(claim["approved_at"].replace("Z", "+00:00"))
+            except (AttributeError, ValueError) as exc:
+                raise ApprovalRequestError("Invalid pinned approval timestamp") from exc
+            if parsed_approved_at.tzinfo is None:
+                raise ApprovalRequestError("Pinned approval timestamp must include a timezone")
             payload = (json.dumps(claim, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
             temp_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
                               getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory_fd)

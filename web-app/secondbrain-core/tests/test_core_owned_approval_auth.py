@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.review_promote.core_auth import CorePromoteAuth
@@ -19,6 +19,7 @@ from secondbrain_core.app import create_app
 from secondbrain_core.modules.review_promote.approval import ApprovalRequestError, ReviewDecisionStore
 from secondbrain_core.modules.review_promote.http import create_core_router
 from secondbrain_core.modules.review_promote.service import PromoteService
+from secondbrain_core.modules.app_auth import AppSessionAuth
 
 
 def _promote_in_process(review_root, knowledge_root, approval_dir, audit_path, digest,
@@ -83,9 +84,18 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
                      "target_filename": "approved.md"}
         self.service = PromoteService(str(self.review), str(self.knowledge),
                                       str(self.state / "approvals"), str(self.state / "audit.jsonl"))
-        self.auth = CorePromoteAuth(str(self.secret_file), ["https://testserver"])
+        app_password_file = self.root / "app.password"
+        app_password_file.write_text("synthetic-app-password", encoding="utf-8")
+        app_password_file.chmod(0o600)
+        self.app_auth = AppSessionAuth(str(app_password_file), ["https://testserver"])
+        self.auth = CorePromoteAuth(str(self.secret_file), ["https://testserver"], self.app_auth,
+                                    allowed_hosts=["testserver"])
         app = FastAPI()
-        app.include_router(create_core_router(self.service, self.review, self.auth), prefix="/api/promote")
+        self._add_app_login(app)
+        app.include_router(create_core_router(
+            self.service, self.review, self.app_auth, promote_enabled=True, include_auth_routes=False,
+            promote_auth=self.auth, operations_root=str(self.state / "operations"),
+            knowledge_root=str(self.knowledge)), prefix="/api/promote")
         self.client = TestClient(app, base_url="https://testserver")
         self.headers = {"Origin": "https://testserver"}
 
@@ -94,9 +104,20 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.temp.cleanup()
 
     def unlock(self):
+        login = self.client.post("/api/auth/login", json={"password": "synthetic-app-password"},
+                                 headers=self.headers)
+        if login.status_code != 200:
+            return login
         return self.client.post("/api/promote/auth/unlock",
                                 json={"passphrase": self.unlock_secret.decode("ascii")},
                                 headers=self.headers)
+
+    def _add_app_login(self, app):
+        @app.post("/api/auth/login")
+        def app_login(request: Request, response: Response, body: dict):
+            token = self.app_auth.login(request, body.get("password"))
+            self.app_auth.set_cookie(response, request, token, self.app_auth.session_ttl)
+            return {"status": "ok"}
 
     def test_no_credentials_or_forged_identity_fields_cannot_approve(self):
         body = dict(self.body, user_id="owner", session={"provider": "basic", "verified": True}, approved=True)
@@ -162,7 +183,7 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(bad_host.status_code, 400)
         client.close()
 
-    def test_unlocked_browser_can_approve_directly_and_retry_idempotently(self):
+    def test_legacy_approve_is_closed_even_after_both_sessions_are_unlocked(self):
         login = self.unlock()
         self.assertEqual(login.status_code, 200, login.text)
         cookie = login.headers["set-cookie"].lower()
@@ -172,23 +193,10 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertIn("path=/api/promote", cookie)
         self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers).status_code, 200)
         first = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        second = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(first.status_code, 200, first.text)
-        self.assertEqual(first.json()["status"], "promoted")
-        self.assertEqual(second.status_code, 200, second.text)
-        self.assertEqual(second.json()["status"], "already_promoted")
-        self.assertTrue((self.knowledge / "approved.md").is_file())
-        audit = (self.state / "audit.jsonl").read_text()
-        self.assertIn('"approver_subject":"owner"', audit)
-        self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers)
-                         .json()["items"][0]["decision"]["status"], "promoted")
-        history = self.client.get("/api/promote/review/items/candidate.md", headers=self.headers)
-        self.assertEqual([event["status"] for event in history.json()["decision"]["history"]],
-                         ["approved", "promoting", "promoted"])
-        cannot_defer = self.client.post("/api/promote/review/defer", json={
-            "review_path": self.body["review_path"], "review_sha256": self.body["review_sha256"]
-        }, headers=self.headers)
-        self.assertEqual(cannot_defer.status_code, 409)
+        self.assertEqual(first.status_code, 423)
+        self.assertEqual(first.json()["detail"]["code"], "legacy_approve_disabled")
+        self.assertFalse((self.knowledge / "approved.md").exists())
+        self.assertFalse((self.state / "audit.jsonl").exists())
 
     def test_audit_failure_after_file_creation_is_visible_and_retry_reconciles(self):
         self.assertEqual(self.unlock().status_code, 200)
@@ -203,14 +211,13 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
             return original(fd, record)
 
         with patch("secondbrain_core.modules.review_promote.worker._append_audit", side_effect=fail_once):
-            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-            self.assertEqual(failed.status_code, 409)
+            with self.assertRaises(ApprovalRequestError):
+                self.service.approve_and_promote_as("owner", self.body)
             self.assertTrue((self.knowledge / "approved.md").is_file())
             state = self.client.get("/api/promote/review/items", headers=self.headers).json()["items"][0]["decision"]
             self.assertEqual(state["status"], "failed")
-            retry = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(retry.status_code, 200, retry.text)
-        self.assertEqual(retry.json()["status"], "already_promoted")
+            retry = self.service.approve_and_promote_as("owner", self.body)
+        self.assertEqual(retry["status"], "already_promoted")
         self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 1)
         self.assertEqual(self.client.get("/api/promote/review/items", headers=self.headers)
                          .json()["items"][0]["decision"]["status"], "promoted")
@@ -252,12 +259,12 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
 
         self.assertEqual(self.unlock().status_code, 200)
         competing = {**self.body, "request_id": "history-replay", "target_filename": "replay.md"}
-        approve = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", competing)
         defer = self.client.post("/api/promote/review/defer", json={
             "review_path": self.body["review_path"], "review_sha256": self.body["review_sha256"],
         }, headers=self.headers)
 
-        self.assertEqual(approve.status_code, 409, approve.text)
         self.assertEqual(defer.status_code, 409, defer.text)
         self.assertEqual(legacy_path.read_bytes(), legacy_bytes)
         self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
@@ -269,8 +276,8 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(self.unlock().status_code, 200)
         damaged = b'{"event":"interrupted"'
         (self.state / "audit.jsonl").write_bytes(damaged)
-        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
         self.assertFalse((self.knowledge / "approved.md").exists())
 
@@ -282,21 +289,21 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
             raise OSError("synthetic interrupted audit append")
 
         with patch("secondbrain_core.modules.review_promote.worker._append_audit", side_effect=partial_write):
-            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(failed.status_code, 409)
+            with self.assertRaises(ApprovalRequestError):
+                self.service.approve_and_promote_as("owner", self.body)
         self.assertTrue((self.knowledge / "approved.md").is_file())
         damaged = b'{"event":"partial-promotion"'
         self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
-        retry = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(retry.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
 
     def test_malformed_complete_audit_line_fails_closed_without_mutation(self):
         self.assertEqual(self.unlock().status_code, 200)
         damaged = b'{"event":broken}\n'
         (self.state / "audit.jsonl").write_bytes(damaged)
-        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
         self.assertFalse((self.knowledge / "approved.md").exists())
 
@@ -305,8 +312,8 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         target = self.knowledge / "approved.md"
         original = b"keep existing synthetic target\n"
         target.write_bytes(original)
-        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual(target.read_bytes(), original)
 
     def test_knowledge_target_symlink_is_rejected_without_touching_target(self):
@@ -314,8 +321,8 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         external = self.root / "outside-synthetic-target.md"
         external.write_bytes(b"outside target remains unchanged\n")
         (self.knowledge / "approved.md").symlink_to(external)
-        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", self.body)
         self.assertTrue((self.knowledge / "approved.md").is_symlink())
         self.assertEqual(external.read_bytes(), b"outside target remains unchanged\n")
 
@@ -324,19 +331,18 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         outside = self.root / "outside-review.md"
         outside.write_bytes(b"synthetic path traversal sentinel\n")
         traversal = dict(self.body, review_path="../outside-review.md")
-        response = self.client.post("/api/promote/review/approve", json=traversal, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", traversal)
         self.assertEqual(outside.read_bytes(), b"synthetic path traversal sentinel\n")
         self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
         self.assertFalse((self.knowledge / "approved.md").exists())
 
     def test_different_request_and_target_cannot_claim_same_review_version(self):
         self.assertEqual(self.unlock().status_code, 200)
-        first = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        first = self.service.approve_and_promote_as("owner", self.body)
         competing = dict(self.body, request_id="core-owner-2", target_filename="other.md")
-        second = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
-        self.assertEqual(first.status_code, 200, first.text)
-        self.assertEqual(second.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", competing)
         claims = list((self.state / "approvals").glob("*.claim"))
         self.assertEqual(len(claims), 1)
         claim = json.loads(claims[0].read_text())
@@ -356,32 +362,30 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
             return original(*args, **kwargs)
 
         with patch.object(self.service.approvals, "approve_as", side_effect=fail_once):
-            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(failed.status_code, 409)
+            with self.assertRaises(ApprovalRequestError):
+                self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
         version_record = hashlib.sha256(("candidate.md\0" + self.body["review_sha256"])
                                         .encode()).hexdigest() + ".json"
         self.assertEqual([path.name for path in (self.state / "approvals").glob("*.json")
                           if path.name != version_record], [])
         competing = dict(self.body, request_id="claim-takeover", target_filename="takeover.md")
-        refused = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
-        self.assertEqual(refused.status_code, 409)
-        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(recovered.status_code, 200, recovered.text)
-        self.assertEqual(recovered.json()["status"], "promoted")
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", competing)
+        recovered = self.service.approve_and_promote_as("owner", self.body)
+        self.assertEqual(recovered["status"], "promoted")
         self.assertTrue((self.knowledge / "approved.md").is_file())
 
     def test_claim_file_fsync_failure_leaves_no_claim_and_same_key_can_retry(self):
         self.assertEqual(self.unlock().status_code, 200)
         with patch("secondbrain_core.modules.review_promote.approval.os.fsync",
                    side_effect=OSError(errno.EIO, "synthetic claim file fsync failure")):
-            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(failed.status_code, 409)
+            with self.assertRaises(ApprovalRequestError):
+                self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
         self.assertEqual(list((self.state / "approvals").glob(".claim-*")), [])
-        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(recovered.status_code, 200, recovered.text)
-        self.assertEqual(recovered.json()["status"], "promoted")
+        recovered = self.service.approve_and_promote_as("owner", self.body)
+        self.assertEqual(recovered["status"], "promoted")
 
     def test_claim_directory_fsync_failure_keeps_claim_and_recovers_only_same_key(self):
         self.assertEqual(self.unlock().status_code, 200)
@@ -396,27 +400,25 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
 
         with patch("secondbrain_core.modules.review_promote.approval.os.fsync",
                    side_effect=fail_directory_fsync_once):
-            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(failed.status_code, 409)
+            with self.assertRaises(ApprovalRequestError):
+                self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual(len(list((self.state / "approvals").glob("*.claim"))), 1)
         competing = dict(self.body, request_id="directory-fsync-takeover", target_filename="takeover.md")
-        refused = self.client.post("/api/promote/review/approve", json=competing, headers=self.headers)
-        self.assertEqual(refused.status_code, 409)
-        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(recovered.status_code, 200, recovered.text)
-        self.assertEqual(recovered.json()["status"], "promoted")
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", competing)
+        recovered = self.service.approve_and_promote_as("owner", self.body)
+        self.assertEqual(recovered["status"], "promoted")
 
     def test_enospc_during_claim_write_leaves_no_claim_and_allows_retry(self):
         self.assertEqual(self.unlock().status_code, 200)
         with patch("secondbrain_core.modules.review_promote.approval.os.write",
                    side_effect=OSError(errno.ENOSPC, "synthetic no-space claim write")):
-            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(failed.status_code, 409)
+            with self.assertRaises(ApprovalRequestError):
+                self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
         self.assertEqual(list((self.state / "approvals").glob(".claim-*")), [])
-        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(recovered.status_code, 200, recovered.text)
-        self.assertEqual(recovered.json()["status"], "promoted")
+        recovered = self.service.approve_and_promote_as("owner", self.body)
+        self.assertEqual(recovered["status"], "promoted")
 
     def test_retry_recovers_when_output_and_audit_exist_but_decision_write_failed(self):
         self.assertEqual(self.unlock().status_code, 200)
@@ -430,13 +432,12 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
             return original(review_path, digest, status, **fields)
 
         with patch.object(self.service.decisions, "set", side_effect=fail_promoted_once):
-            failed = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(failed.status_code, 409)
+            with self.assertRaises(ApprovalRequestError):
+                self.service.approve_and_promote_as("owner", self.body)
         self.assertTrue((self.knowledge / "approved.md").is_file())
         self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 1)
-        recovered = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(recovered.status_code, 200, recovered.text)
-        self.assertEqual(recovered.json()["status"], "already_promoted")
+        recovered = self.service.approve_and_promote_as("owner", self.body)
+        self.assertEqual(recovered["status"], "already_promoted")
         self.assertEqual(len((self.state / "audit.jsonl").read_text().splitlines()), 1)
 
     def test_same_version_process_race_allows_only_one_request_target_claim(self):
@@ -606,8 +607,8 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         claim_path = self.state / "approvals" / (key + ".claim")
         damaged = b'{"request_id":"partial"'
         claim_path.write_bytes(damaged)
-        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual(claim_path.read_bytes(), damaged)
         self.assertFalse((self.knowledge / "approved.md").exists())
 
@@ -617,8 +618,8 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         external.write_bytes(b"do-not-change")
         (self.state / "approvals" / (key + ".lock")).symlink_to(external)
         self.assertEqual(self.unlock().status_code, 200)
-        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual(external.read_bytes(), b"do-not-change")
         self.assertFalse((self.state / "approvals" / (key + ".claim")).exists())
         self.assertFalse((self.knowledge / "approved.md").exists())
@@ -629,8 +630,8 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         lock_path.write_bytes(b"")
         lock_path.chmod(0o640)
         self.assertEqual(self.unlock().status_code, 200)
-        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", self.body)
         self.assertEqual(lock_path.stat().st_mode & 0o777, 0o640)
         self.assertFalse((self.state / "approvals" / (key + ".claim")).exists())
         self.assertFalse((self.knowledge / "approved.md").exists())
@@ -696,31 +697,55 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
     def test_review_change_invalidates_approved_digest(self):
         self.assertEqual(self.unlock().status_code, 200)
         changed = dict(self.body, review_sha256="0" * 64)
-        response = self.client.post("/api/promote/review/approve", json=changed, headers=self.headers)
-        self.assertEqual(response.status_code, 409)
+        with self.assertRaises(ApprovalRequestError):
+            self.service.approve_and_promote_as("owner", changed)
         self.assertFalse((self.knowledge / "approved.md").exists())
 
     def test_lock_revokes_core_session(self):
         self.assertEqual(self.unlock().status_code, 200)
+        preview = self.client.post("/api/promote/review/preview", json={
+            "review_path": self.body["review_path"],
+            "review_sha256": self.body["review_sha256"],
+            "target_filename": self.body["target_filename"],
+        }, headers=self.headers)
+        self.assertEqual(preview.status_code, 200, preview.text)
         locked = self.client.post("/api/promote/auth/lock", headers=self.headers)
         self.assertEqual(locked.status_code, 200)
-        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        response = self.client.post("/api/promote/review/confirm", json={
+            "preview_id": preview.json()["preview_id"],
+            "confirm_intent": "promote_review_to_knowledge",
+        }, headers=self.headers)
         self.assertEqual(response.status_code, 401)
+        self.assertFalse((self.knowledge / "approved.md").exists())
 
     def test_promote_disabled_blocks_approval_without_creating_records(self):
         app = FastAPI()
-        app.include_router(create_core_router(self.service, self.review, self.auth,
-                                              promote_enabled=False), prefix="/api/promote")
+        self._add_app_login(app)
+        app.include_router(create_core_router(
+            self.service, self.review, self.app_auth, promote_enabled=False, include_auth_routes=False,
+            promote_auth=self.auth, operations_root=str(self.state / "disabled-operations"),
+            knowledge_root=str(self.knowledge)), prefix="/api/promote")
         client = TestClient(app, base_url="https://testserver")
+        self.assertEqual(client.post("/api/auth/login", json={"password": "synthetic-app-password"},
+                                     headers=self.headers).status_code, 200)
         self.assertEqual(client.post("/api/promote/auth/unlock",
                                      json={"passphrase": self.unlock_secret.decode("ascii")},
                                      headers=self.headers).status_code, 200)
         self.assertEqual(client.get("/api/promote/status", headers=self.headers).json(),
                          {"status": "ok", "promote_enabled": False})
-        response = client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        preview = client.post("/api/promote/review/preview", json={
+            "review_path": self.body["review_path"], "review_sha256": self.body["review_sha256"],
+            "target_filename": self.body["target_filename"],
+        }, headers=self.headers)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        response = client.post("/api/promote/review/confirm", json={
+            "preview_id": preview.json()["preview_id"],
+            "confirm_intent": "promote_review_to_knowledge",
+        }, headers=self.headers)
         self.assertEqual(response.status_code, 423)
         self.assertFalse((self.knowledge / "approved.md").exists())
         self.assertEqual(list((self.state / "approvals").iterdir()), [])
+        self.assertEqual(list((self.state / "disabled-operations").iterdir()), [])
         self.assertFalse((self.state / "audit.jsonl").exists())
         client.close()
 
