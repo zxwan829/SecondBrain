@@ -66,9 +66,9 @@ PR #50 已合入 main（merge `12af0aa3417a76f0b787cb82c40e00d577b9e20f`），�
 
 PR #59 已合入 main `3080506b053d3876d292d9199049fd12e3247b88`，实现来源绑定 Mock 建议、审批/拒绝审计、幂等重试和版本冲突保护。该阶段仅记录审批、不执行目标动作；相关实现随 M1 镜像部署，状态 **MERGED / DEPLOYED WITH M1 / NOT REAL-VAULT-VALIDATED / BUSINESS ACCEPTANCE NOT RUN**。当前下一步以本文件上方唯一 NEXT 为准。
 
-### 并行开发状态：D085-C2c-1 审批后 Journal / Review 受控执行（实施中）
+### D085-C2c-1 审批后 Journal / Review 受控执行（PR #63 已合并并随 M1 App 部署；生产业务验收 NOT RUN）
 
-基于上述 main 开始独立切片：审批留痕与目标执行分开，必须重新预览目标正文、核验来源/词库版本并明确确认；Journal 复用专用 JournalStore 幂等追加，Review 复用 CaptureService 的 Raw→Review 流程及可恢复执行键，均不调用 Promote 或新增 Knowledge 写入路径。项目关联仅为元数据候选，标记 NOT IMPLEMENTED 且不可执行。PR #63 已完成目标落盘后进程退出恢复、同 proposal 并发执行两组 Journal/Review 定向合成回归；Core/Capture 38 项、Inbox 前端 7 项、typecheck/build/diff-check 通过，Review 首次响应与 duplicate 响应已明确区分。PR 已转为 Ready for review，状态 **OPEN / NOT MERGED / NOT DEPLOYED / NOT USER ACCEPTED**。该 PR 尚未合并或部署；真实 Vault、NAS 生产操作及付费模型调用仍需各自授权。当前下一步以本文件上方唯一 NEXT 为准。
+PR #63 已合并至 main，Merge Commit `d781541785bbc20c64c3f4f676a1b9d1bd431e06`；其代码随 M1 App 镜像部署，生产 Journal/Review 业务验收 **NOT RUN**。实现将审批留痕与目标执行分开，执行前重新预览目标正文、核验来源/词库版本并明确确认；Journal 复用专用 JournalStore 幂等追加，Review 复用 CaptureService 的 Raw→Review 流程及可恢复执行键，均不调用 Promote 或新增 Knowledge 写入路径。PR #63 的本地合成故障恢复覆盖目标落盘后进程退出重启；并发覆盖同 proposal 两个请求；Core/Capture 定向测试 38 项、Inbox 前端 7 项、typecheck/build/diff-check 通过，Review 首次响应与 duplicate 响应明确区分。项目关联仅为元数据候选，仍标记 **NOT IMPLEMENTED** 且不可执行；C2c-2 已延期至 M2。真实 Vault、NAS 生产操作及付费模型调用仍须各自授权。当前下一步以本文件上方唯一 NEXT 为准。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 
