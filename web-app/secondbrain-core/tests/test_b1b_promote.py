@@ -212,6 +212,84 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, restored.text)
         self.assertEqual(restored.json()["status"], "promoted")
 
+    def test_operation_status_originless_same_origin_get_and_security_denials(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        preview = self.preview().json()
+        confirmed = self.confirm(preview["preview_id"])
+        self.assertEqual(confirmed.status_code, 200, confirmed.text)
+        request_id = preview["request_id"]
+        path = "/api/promote/operations/" + request_id
+
+        same_origin = self.client.get(path, headers={"Sec-Fetch-Site": "same-origin"})
+        self.assertEqual(same_origin.status_code, 200, same_origin.text)
+        self.assertEqual(same_origin.json()["request_id"], request_id)
+        self.assertEqual(self.client.get(path, headers=self.headers).status_code, 200)
+
+        denied = (
+            ({"Origin": "https://attacker.example"}, 403),
+            ({"Sec-Fetch-Site": "cross-site"}, 403),
+            ({"Origin": "https://testserver", "Sec-Fetch-Site": "cross-site"}, 403),
+            ({}, 403),
+            ({"Sec-Fetch-Site": "same-site"}, 403),
+            ({"Host": "attacker.example", "Sec-Fetch-Site": "same-origin"}, 400),
+        )
+        for headers, expected in denied:
+            with self.subTest(headers=headers):
+                self.assertEqual(self.client.get(path, headers=headers).status_code, expected)
+
+        no_app = TestClient(self.app, base_url="https://testserver")
+        try:
+            response = no_app.get(path, headers={"Sec-Fetch-Site": "same-origin"})
+            self.assertEqual(response.status_code, 401)
+        finally:
+            no_app.close()
+
+        app_only = TestClient(self.app, base_url="https://testserver")
+        try:
+            self.assertEqual(app_only.post("/api/auth/login", json={"password": "synthetic-app-password"},
+                                           headers=self.headers).status_code, 200)
+            response = app_only.get(path, headers={"Sec-Fetch-Site": "same-origin"})
+            self.assertEqual(response.status_code, 401)
+        finally:
+            app_only.close()
+
+        http_client = TestClient(self.app, base_url="http://testserver")
+        try:
+            response = http_client.get(path, headers={"Sec-Fetch-Site": "same-origin"})
+            self.assertEqual(response.status_code, 403)
+        finally:
+            http_client.close()
+
+    def test_all_promote_post_routes_still_require_exact_origin(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        preview = self.preview().json()
+        originless = {"Sec-Fetch-Site": "same-origin"}
+        requests = (
+            ("/api/promote/auth/unlock", {"passphrase": self.unlock_secret.read_text()}),
+            ("/api/promote/auth/lock", {}),
+            ("/api/promote/review/preview", {
+                "review_path": "candidate.md",
+                "review_sha256": hashlib.sha256(self.source).hexdigest(),
+                "target_filename": "second.md",
+            }),
+            ("/api/promote/review/confirm", {
+                "preview_id": preview["preview_id"], "confirm_intent": "promote_exact_preview",
+            }),
+            ("/api/promote/review/approve", {"request_id": "forged"}),
+            ("/api/promote/review/defer", {
+                "review_path": "candidate.md", "review_sha256": hashlib.sha256(self.source).hexdigest(),
+            }),
+        )
+        for path, body in requests:
+            with self.subTest(path=path):
+                self.assertEqual(self.client.post(path, headers=originless, json=body).status_code, 403)
+                self.assertEqual(self.client.post(path, headers={"Origin": "https://attacker.example"},
+                                                  json=body).status_code, 403)
+        self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
+        self.assertEqual(list((self.state / "b1b-operations").glob("*.json")), [])
+        self.assertEqual(list(self.knowledge.iterdir()), [])
+        self.assertFalse((self.state / "audit.jsonl").exists())
+
     def test_source_drift_target_collision_session_rotation_and_expiry_fail_closed(self):
         self.assertEqual(self.unlock().status_code, 200)
         first = self.preview().json()

@@ -356,7 +356,7 @@ class B1bPromoteFlow:
                                             else "operation_failed"}) from exc
 
     def status(self, request, request_id):
-        self.auth.require_owner(request)
+        self.auth.require_owner(request, allow_originless_same_origin=True)
         try:
             record = self.operations.get(request_id)
         except ApprovalRequestError as exc:
