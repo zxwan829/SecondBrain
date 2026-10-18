@@ -10,6 +10,7 @@ import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 import { JournalPage } from './JournalPage';
 import { TaskPage } from './TaskPage';
 import { notesApi } from './api/notes';
+import { PromotePreviewPanel } from './PromotePreviewPanel';
 
 const NotesPage = lazy(() => import('./NotesPage').then((module) => ({ default: module.NotesPage })));
 const VocabularyPage = lazy(() => import('./VocabularyPage').then((module) => ({ default: module.VocabularyPage })));
@@ -891,10 +892,13 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>(t.coreLoading);
   const [promoteEnabled, setPromoteEnabled] = useState(false);
+  const [promotionSelectedPath, setPromotionSelectedPath] = useState<string | null>(null);
   const [mobileListOpen, setMobileListOpen] = useState(false);
   const reviewListRef = useRef<HTMLDivElement | null>(null);
   const reviewDetailRef = useRef<HTMLElement | null>(null);
   const selectedReviewRef = useRef<HTMLButtonElement | null>(null);
+  const detailRequestRef = useRef<AbortController | null>(null);
+  const detailRequestSequence = useRef(0);
 
   const request = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
     const response = await fetch(`/api/promote${path}`, {
@@ -960,17 +964,23 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
   };
 
   const loadDetail = async (item: ReviewItem) => {
+    detailRequestRef.current?.abort();
+    const controller = new AbortController();
+    detailRequestRef.current = controller;
+    const sequence = ++detailRequestSequence.current;
     setBusy(true);
     try {
       const safePath = item.review_path.split('/').map(encodeURIComponent).join('/');
-      const result = await request<ReviewDetail>(`/review/items/${safePath}`);
+      const result = await request<ReviewDetail>(`/review/items/${safePath}`, { signal: controller.signal });
+      if (controller.signal.aborted || sequence !== detailRequestSequence.current) return;
       setDetail({ ...result, captured_at: result.captured_at ?? item.captured_at ?? null });
     } catch (error) {
+      if (controller.signal.aborted || sequence !== detailRequestSequence.current) return;
       const statusCode = (error as Error & { status?: number }).status;
       setStatus(statusCode === 401 ? t.coreSessionExpired : error instanceof Error ? apiFailureLabel(error.message, statusCode ?? 0, locale, 'review') : t.coreConnectionFailed);
       if (statusCode === 401) window.location.reload();
     } finally {
-      setBusy(false);
+      if (sequence === detailRequestSequence.current) setBusy(false);
     }
   };
 
@@ -979,6 +989,11 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
     // Initial status check only; subsequent reads are user initiated.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialReviewPath]);
+
+  useEffect(() => () => {
+    detailRequestSequence.current += 1;
+    detailRequestRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     if (!detail?.review_path) return;
@@ -996,26 +1011,22 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
   }, [detail?.review_path, mobileListOpen]);
 
   const selectReview = (item: ReviewItem) => {
+    setPromotionSelectedPath(item.review_path);
     const query = new URLSearchParams({ review_path: item.review_path });
     pushHistory(`/review?${query}`);
     setMobileListOpen(false);
     void loadDetail(item);
   };
 
-  const decide = async (decision: 'approve' | 'defer') => {
+  const decide = async () => {
     if (!detail) return;
-    if (decision === 'approve' && !window.confirm(locale === 'en' ? `Approve and promote “${detail.title}” to Knowledge?` : `确认将「${detail.title}」批准并正式写入 Knowledge？`)) return;
     setBusy(true);
     try {
-      const path = decision === 'approve' ? '/review/approve' : '/review/defer';
-      const retryable = ['approved', 'promoting', 'failed'].includes(detail.decision?.status || '');
-      const requestId = decision === 'approve' && retryable && detail.decision?.request_id
-        ? detail.decision.request_id : crypto.randomUUID();
-      const result = await request<{ status?: string }>(path, { method: 'POST', body: JSON.stringify({
+      const result = await request<{ status?: string }>('/review/defer', { method: 'POST', body: JSON.stringify({
         review_path: detail.review_path, review_sha256: detail.review_sha256,
-        request_id: requestId, target_filename: detail.target_filename,
+        request_id: crypto.randomUUID(), target_filename: detail.target_filename,
       }) });
-      setStatus(reviewStatusLabel(result.status || (decision === 'approve' ? 'approved' : 'deferred'), locale));
+      setStatus(reviewStatusLabel(result.status || 'deferred', locale));
       await loadList();
     } catch (error) {
       const message = error instanceof Error ? apiFailureLabel(error.message, (error as Error & { status?: number }).status ?? 0, locale, 'review') : t.coreConnectionFailed;
@@ -1051,7 +1062,10 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
             <details className="review-metadata"><summary>{locale === 'en' ? 'Full metadata' : '完整元数据'}</summary><dl>{Object.entries(document.metadata).map(([key, value]) => <React.Fragment key={key}><dt>{key}</dt><dd>{value}</dd></React.Fragment>)}</dl></details>
             {isOcrDocument && <details className="review-source-original"><summary>{locale === 'en' ? 'Full original Review text' : '查看完整原始识别内容'}</summary><pre>{document.body}</pre></details>}
             <ReviewMarkdown source={visibleReviewBody} preserveLines={isOcrDocument} />
-            <div className="review-decisions"><button type="button" onClick={() => void decide('defer')} disabled={busy || ['approved', 'promoting', 'promoted', 'failed'].includes(detail.decision?.status || '')}>{locale === 'en' ? 'Defer' : '暂缓'}</button><button type="button" onClick={() => void decide('approve')} disabled={busy || !promoteEnabled || detail.decision?.status === 'promoted'} title={!promoteEnabled ? (locale === 'en' ? 'Promote disabled on this App build' : '当前版本已关闭正式入库') : undefined}>{['approved', 'promoting', 'failed'].includes(detail.decision?.status || '') ? (locale === 'en' ? 'Retry approved write' : '重试正式入库') : (locale === 'en' ? 'Approve to Knowledge' : '批准入库')}</button>{!promoteEnabled && <small>{locale === 'en' ? 'Knowledge writes are disabled.' : '正式入库当前关闭。'}</small>}</div></> : <p>{t.coreSelectItem}</p>}
+            <div className="review-decisions"><button type="button" onClick={() => void decide()} disabled={busy || ['approved', 'promoting', 'promoted', 'failed'].includes(detail.decision?.status || '')}>{locale === 'en' ? 'Defer' : '暂缓'}</button></div>
+            {promotionSelectedPath === detail.review_path && <PromotePreviewPanel key={`${detail.review_path}:${detail.review_sha256}:${detail.target_filename}`} locale={locale}
+              reviewPath={detail.review_path} reviewSha256={detail.review_sha256} targetFilename={detail.target_filename}
+              title={detail.title || detail.target_filename} promoteEnabled={promoteEnabled} />}</> : <p>{t.coreSelectItem}</p>}
         </article>
       </div>
   </section>;
