@@ -47,10 +47,37 @@ class JournalStore:
         return self.root / f"{day}.jsonl"
 
     def append(self, day, text, idempotency_key, session_id=None):
+        return self._append(day, text, idempotency_key, session_id=session_id,
+                            source="web_app_explicit_intent")
+
+    def append_approved_proposal(self, day, text, idempotency_key, proposal_id,
+                                 source_ref, source_version_sha256):
+        """Append exact user-confirmed Inbox text under the same Journal SoT and lock.
+
+        This is an internal C2c entry point. The caller must enforce the
+        authenticated Journal action and an explicit execution confirmation.
+        It deliberately does not accept generic file paths or bypass the
+        append-only Journal store.
+        """
+        if not isinstance(proposal_id, str) or not re.fullmatch(r"[0-9a-f]{32}", proposal_id):
+            raise HTTPException(status_code=400, detail="A valid approved Inbox proposal is required")
+        if not isinstance(source_ref, str) or len(source_ref) > 512:
+            raise HTTPException(status_code=400, detail="A valid source reference is required")
+        if not isinstance(source_version_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", source_version_sha256):
+            raise HTTPException(status_code=400, detail="A valid source version is required")
+        return self._append(day, text, idempotency_key, session_id=None,
+                            source="inbox_approved_proposal",
+                            proposal_id=proposal_id, source_ref=source_ref,
+                            source_version_sha256=source_version_sha256,
+                            require_explicit_intent=False)
+
+    def _append(self, day, text, idempotency_key, session_id=None, *, source,
+                proposal_id=None, source_ref=None, source_version_sha256=None,
+                require_explicit_intent=True):
         path = self._path(day)
         if not isinstance(text, str) or not text.strip():
             raise HTTPException(status_code=400, detail="An explicit Journal phrase and text are required")
-        if not _INTENT.match(text):
+        if require_explicit_intent and not _INTENT.match(text):
             raise HTTPException(status_code=422, detail="Use an explicit phrase such as 记一下 or 写日记")
         if len(text.encode("utf-8")) > _MAX_ENTRY_BYTES:
             raise HTTPException(status_code=413, detail="Journal entry is too long")
@@ -61,7 +88,10 @@ class JournalStore:
         key_hash = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
         record = {"id": key_hash, "operation_id": idempotency_key, "session_id": session_id,
                   "date": day, "created_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
-                  "source": "web_app_explicit_intent", "original_text": text}
+                  "source": source, "original_text": text}
+        if proposal_id is not None:
+            record.update(proposal_id=proposal_id, source_ref=source_ref,
+                          source_version_sha256=source_version_sha256)
         encoded = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
         # Serialize every Journal append across dates. The JSONL files remain
         # authoritative, so retries can recover after a lost response without
@@ -86,6 +116,9 @@ class JournalStore:
                     raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different Journal text")
                 if prior.get("session_id") != session_id:
                     raise HTTPException(status_code=409, detail="Idempotency-Key belongs to a different Chat Session")
+                if (prior.get("proposal_id") != proposal_id or prior.get("source_ref") != source_ref
+                        or prior.get("source_version_sha256") != source_version_sha256):
+                    raise HTTPException(status_code=409, detail="Idempotency-Key belongs to a different Journal operation")
                 record_day = prior.get("date")
                 if record_day is None:
                     # Older JSONL rows may omit date; the containing filename

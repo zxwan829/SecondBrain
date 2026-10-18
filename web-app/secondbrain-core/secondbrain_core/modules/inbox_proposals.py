@@ -21,6 +21,8 @@ from .vocabulary import INITIAL_TYPES
 
 _KINDS = {"type", "tags", "journal", "review", "project"}
 _DECISIONS = {"approved_recorded", "rejected"}
+_EXECUTION_STATES = {"not_executed", "executing", "executed", "failed_retryable",
+                     "blocked", "stale", "not_implemented"}
 _SYSTEM_TAGS = {"待整理", "整理中", "已整理"}
 _IDEMPOTENCY_KEY = re.compile(r"^[\x21-\x7e]{1,255}$")
 _CAPTURE_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -153,6 +155,17 @@ class InboxProposalStore:
                         or not isinstance(record.get("suggestion"), dict)
                         or not isinstance(record.get("history"), list)):
                     raise ValueError("invalid proposal record")
+                legacy_execution_status = record.get("target_execution_status", "not_executed")
+                if legacy_execution_status == "not_supported":
+                    # PR #59's approved_recorded rows predate C2c execution.
+                    # Normalize them as history only; never infer execution.
+                    legacy_execution_status = "not_implemented" if record.get("kind") == "project" else "not_executed"
+                    record["target_execution_status"] = legacy_execution_status
+                execution = record.setdefault("execution", {"status": legacy_execution_status})
+                if (not isinstance(execution, dict) or execution.get("status") not in _EXECUTION_STATES
+                        or (execution.get("attempt_id") is not None and not isinstance(execution.get("attempt_id"), str))
+                        or ("attempts" in execution and not isinstance(execution.get("attempts"), list))):
+                    raise ValueError("invalid proposal execution record")
             if any(not isinstance(value, dict) for value in data["idempotency"].values()):
                 raise ValueError("invalid proposal idempotency state")
             if any(not isinstance(value, dict) for value in data["source_preferences"].values()):
@@ -240,7 +253,8 @@ class InboxProposalStore:
                           "vocabulary_version": vocabulary_version, "status": "suggested",
                           "actor": actor, "created_at": now, "updated_at": now, "decision_at": None,
                           "version": 1, "request_id": idempotency_key,
-                          "target_execution_status": "not_executed", "history": []}
+                          "target_execution_status": "not_executed",
+                          "execution": {"status": "not_executed"}, "history": []}
                 self._event(record, "suggested", actor, now, idempotency_key)
                 data["records"][proposal_id] = record
                 records.append(record)
@@ -303,6 +317,10 @@ class InboxProposalStore:
             if record["status"] != "stale":
                 record["status"] = "stale"
                 record["stale_reason"] = reason
+                execution = record.setdefault("execution", {"status": record.get("target_execution_status", "not_executed")})
+                if execution.get("status") not in {"executed", "not_implemented"}:
+                    execution.update({"status": "stale", "error_code": reason})
+                    record["target_execution_status"] = "stale"
                 record["updated_at"] = _now()
                 record["version"] += 1
                 self._event(record, "stale", actor, record["updated_at"])
@@ -400,12 +418,119 @@ class InboxProposalStore:
                 item["decision_at"] = _now()
                 item["updated_at"] = item["decision_at"]
                 item["version"] += 1
-                item["target_execution_status"] = "not_supported" if item["kind"] in {"journal", "review", "project"} else "not_executed"
+                item["target_execution_status"] = "not_implemented" if item["kind"] == "project" else "not_executed"
+                item["execution"] = {"status": item["target_execution_status"]}
                 self._event(item, decision, actor, item["decision_at"], key)
                 return item
             return self._idempotent_mutation(record, data, key, actor, fingerprint, apply)
 
         return self._transaction(transaction)
+
+    def begin_execution(self, proposal_id, expected_version, actor, preview_sha256,
+                        source_version, vocabulary_version, target_action, target, source_summary):
+        """Durably reserve the one confirmed target execution for a proposal."""
+        if not isinstance(preview_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", preview_sha256):
+            raise HTTPException(status_code=400, detail="A verified execution preview is required")
+        operation_key = "execution:" + proposal_id
+        key_hash = self._idem_key(operation_key)
+        fingerprint = _canonical_hash({"proposal_id": proposal_id, "preview_sha256": preview_sha256,
+                                       "expected_version": expected_version, "target_action": target_action})
+
+        def operation(data):
+            record = data["records"].get(proposal_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Proposal not found")
+            prior = data["idempotency"].get(key_hash)
+            if prior:
+                if prior.get("fingerprint") != fingerprint or prior.get("actor") != actor:
+                    raise HTTPException(status_code=409, detail="This proposal already has a different execution preview")
+                execution = record.get("execution", {})
+                if execution.get("status") == "failed_retryable":
+                    now = _now()
+                    attempt_id = uuid.uuid4().hex
+                    execution.update({"status": "executing", "attempt_id": attempt_id,
+                                      "started_at": now, "updated_at": now})
+                    execution.pop("error_code", None)
+                    execution.setdefault("attempts", []).append({"attempt_id": attempt_id,
+                        "actor": actor, "started_at": now, "status": "executing"})
+                    record["target_execution_status"] = "executing"
+                    record["updated_at"] = now
+                    self._event(record, "execution_retry_started", actor, now, operation_key)
+                    return dict(record), True
+                return dict(record), False
+            if record.get("kind") not in {"journal", "review"}:
+                raise HTTPException(status_code=501, detail="This proposal target is not implemented")
+            if record.get("status") != "approved_recorded":
+                raise HTTPException(status_code=409, detail="Only an explicitly approved proposal can be executed")
+            if record.get("version") != expected_version:
+                raise HTTPException(status_code=412, detail="Proposal changed; reload and confirm the current preview")
+            if record.get("source_version") != source_version or record.get("vocabulary_version") != vocabulary_version:
+                raise HTTPException(status_code=409, detail="Source or vocabulary changed; proposal is stale")
+            if any(candidate_id != proposal_id and candidate.get("source_key") == record.get("source_key")
+                   and candidate.get("kind") == record.get("kind")
+                   and candidate.get("source_version") == source_version
+                   and candidate.get("vocabulary_version") == vocabulary_version
+                   and candidate.get("status") == "approved_recorded"
+                   and candidate.get("execution", {}).get("status") in {
+                       "executing", "executed", "failed_retryable", "blocked"}
+                   for candidate_id, candidate in data["records"].items()):
+                raise HTTPException(status_code=409, detail="A proposal for this source and target already has an execution attempt")
+            execution = record.setdefault("execution", {"status": "not_executed"})
+            if execution.get("status") != "not_executed":
+                raise HTTPException(status_code=409, detail="This proposal already has an execution attempt")
+            now = _now()
+            execution.update({"status": "executing", "attempt_id": uuid.uuid4().hex,
+                              "actor": actor, "target_action": target_action,
+                              "preview_sha256": preview_sha256, "source_version": source_version,
+                              "vocabulary_version": vocabulary_version, "started_at": now,
+                              "updated_at": now, "target": target, "source_summary": source_summary})
+            execution.setdefault("attempts", []).append({"attempt_id": execution["attempt_id"],
+                "actor": actor, "started_at": now, "status": "executing"})
+            record["target_execution_status"] = "executing"
+            record["updated_at"] = now
+            self._event(record, "execution_started", actor, now, operation_key)
+            data["idempotency"][key_hash] = {"fingerprint": fingerprint, "actor": actor,
+                                             "proposal_id": proposal_id}
+            return dict(record), True
+
+        return self._transaction(operation)
+
+    def finish_execution(self, proposal_id, actor, *, status, result=None, error_code=None):
+        if status not in {"executed", "failed_retryable", "blocked"}:
+            raise HTTPException(status_code=400, detail="Invalid execution outcome")
+
+        def operation(data):
+            record = data["records"].get(proposal_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Proposal not found")
+            execution = record.setdefault("execution", {"status": "not_executed"})
+            if execution.get("status") == "executed":
+                return dict(record), False
+            if execution.get("status") not in {"executing", "failed_retryable"}:
+                raise HTTPException(status_code=409, detail="Proposal has no resumable execution attempt")
+            now = _now()
+            execution.update({"status": status, "updated_at": now})
+            record["target_execution_status"] = status
+            if error_code:
+                execution["error_code"] = str(error_code)[:80]
+            else:
+                execution.pop("error_code", None)
+            attempts = execution.get("attempts", [])
+            if attempts and isinstance(attempts[-1], dict):
+                attempts[-1].update({"status": status, "completed_at": now,
+                                     **({"error_code": str(error_code)[:80]} if error_code else {})})
+            if isinstance(result, dict):
+                for field in ("target_id", "target_uri", "target_status", "target_sha256", "output_sha256"):
+                    value = result.get(field)
+                    if isinstance(value, str):
+                        execution[field] = value[:1024]
+                execution["completed_at"] = now if status == "executed" else None
+            record["updated_at"] = now
+            event = "execution_succeeded" if status == "executed" else "execution_failed" if status == "failed_retryable" else "execution_blocked"
+            self._event(record, event, actor, now, execution.get("attempt_id"))
+            return dict(record), True
+
+        return self._transaction(operation)
 
 
 class InboxProposalSources:
@@ -460,12 +585,57 @@ class InboxProposalSources:
             return canonical, result["etag"], result["content"], title
         raise HTTPException(status_code=400, detail="Unsupported Inbox source kind")
 
+    def execution_content(self, source):
+        """Read bounded textual source bytes again for an explicit target preview."""
+        canonical, version, _, _ = self.resolve(source)
+        if canonical["source_kind"] == "notes":
+            result = self.notes_store.read(canonical["collection"], canonical["path"])
+            content = result.get("content")
+            version = result.get("etag")
+            title = next((line[2:].strip() for line in content.splitlines() if line.startswith("# ")), Path(canonical["path"]).stem)
+        else:
+            state = self.capture.get(canonical["source_id"])
+            if state.get("input_type") not in {"txt", "text", "markdown", "md", "capture_context"}:
+                raise HTTPException(status_code=415, detail="Only textual Capture sources can be executed in C2c-1")
+            raw_name = state.get("raw_path")
+            if not isinstance(raw_name, str) or Path(raw_name).name != raw_name or raw_name in {".", ".."}:
+                raise HTTPException(status_code=404, detail="Capture source is invalid")
+            try:
+                root_fd = os.open(self.capture.raw_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                                  getattr(os, "O_NOFOLLOW", 0))
+                try:
+                    raw_fd = os.open(raw_name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd)
+                finally:
+                    os.close(root_fd)
+                with os.fdopen(raw_fd, "rb") as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 200_000:
+                        raise HTTPException(status_code=413, detail="Capture text exceeds the C2c execution limit")
+                    raw = stream.read(200_001)
+            except HTTPException:
+                raise
+            except OSError as exc:
+                raise HTTPException(status_code=409, detail="Capture source is unavailable") from exc
+            raw_hash = hashlib.sha256(raw).hexdigest()
+            if state.get("raw_sha256") != raw_hash:
+                raise HTTPException(status_code=409, detail="Capture source changed or failed integrity verification")
+            try:
+                content = raw.decode("utf-8-sig", errors="strict")
+            except UnicodeError as exc:
+                raise HTTPException(status_code=415, detail="Capture source is not valid UTF-8 text") from exc
+            title = state.get("title") or Path(raw_name).stem
+        if not isinstance(content, str) or len(content.encode("utf-8")) > 200_000:
+            raise HTTPException(status_code=413, detail="Source text exceeds the C2c execution limit")
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        return canonical, version, content, title, content_hash
+
 
 def _source_from_record(record):
     return {key: record[key] for key in ("source_kind", "source_id", "collection", "path") if key in record}
 
 
-def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
+def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None,
+                                 journal_store=None, capture_service=None):
     router = APIRouter(prefix="/api/inbox/proposals")
 
     def actor(request, action):
@@ -496,6 +666,63 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
         if _source_key(canonical) != record["source_key"]:
             raise HTTPException(status_code=409, detail="Proposal source identity mismatch")
         return version
+
+    def execution_preview(record, user, body):
+        if record.get("status") != "approved_recorded":
+            raise HTTPException(status_code=409, detail="Record a human approval before preparing execution")
+        if record.get("kind") == "project":
+            return {"status": "not_implemented", "proposal_id": record["proposal_id"],
+                    "message": "Project association execution is not implemented in C2c-1"}
+        if record.get("kind") not in {"journal", "review"}:
+            raise HTTPException(status_code=409, detail="This proposal has no executable target")
+        try:
+            version = current(record, user)
+            require_current_source_version(record["proposal_id"], record, version, user)
+            canonical, source_version, source_text, source_title, source_content_sha = sources.execution_content(
+                _source_from_record(record))
+        except HTTPException as exc:
+            if exc.status_code in {404, 409, 415, 422}:
+                store.mark_stale(record["proposal_id"], "source_or_vocabulary_changed", user)
+            raise
+        if source_version != record["source_version"]:
+            store.mark_stale(record["proposal_id"], "source_version_changed", user)
+            raise HTTPException(status_code=409, detail="Source changed; proposal is stale")
+        vocabulary_version = vocabulary_store.read().get("revision") if vocabulary_store is not None else record["vocabulary_version"]
+        if vocabulary_version != record["vocabulary_version"]:
+            store.mark_stale(record["proposal_id"], "vocabulary_version_changed", user)
+            raise HTTPException(status_code=409, detail="Vocabulary changed; proposal is stale")
+        saved_target = record.get("execution", {}).get("target") if record.get("execution", {}).get("status") in {"failed_retryable", "executing"} else None
+        target_text = body.get("target_text", (saved_target or {}).get("text", source_text))
+        target_title = body.get("target_title", (saved_target or {}).get("title", source_title))
+        target_date = body.get("target_date", (saved_target or {}).get("date", journal_store.today() if journal_store is not None else JournalStore.today()))
+        if not isinstance(target_text, str) or not target_text.strip():
+            raise HTTPException(status_code=400, detail="Execution preview text is required")
+        if record["kind"] == "journal":
+            if journal_store is None:
+                raise HTTPException(status_code=503, detail="Journal execution is not enabled")
+            if len(target_text.encode("utf-8")) > 16_384:
+                raise HTTPException(status_code=413, detail="Journal entry is too long")
+            if not isinstance(target_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", target_date):
+                raise HTTPException(status_code=400, detail="Journal date must use YYYY-MM-DD")
+            target_action = "journal.append"
+            target = {"date": target_date, "text": target_text}
+        else:
+            if capture_service is None:
+                raise HTTPException(status_code=503, detail="Review submission is not enabled")
+            if not isinstance(target_title, str) or not target_title.strip() or len(target_title) > 160:
+                raise HTTPException(status_code=400, detail="Review title must contain 1-160 characters")
+            target_action = "capture.write"
+            target = {"title": target_title, "text": target_text}
+        source_ref = canonical.get("path") or canonical.get("source_id")
+        source_summary = {"source_kind": canonical["source_kind"], "source_ref": source_ref,
+                          "source_version": source_version, "source_content_sha256": source_content_sha}
+        digest = _canonical_hash({"proposal_id": record["proposal_id"], "kind": record["kind"],
+                                  "source_summary": source_summary, "vocabulary_version": vocabulary_version,
+                                  "target_action": target_action, "target": target})
+        return {"status": "ready", "proposal_id": record["proposal_id"], "kind": record["kind"],
+                "proposal_version": record["version"], "vocabulary_version": vocabulary_version,
+                "source_summary": source_summary, "target_action": target_action,
+                "target": target, "preview_sha256": digest}
 
     def require_current_source_version(proposal_id, record, version, user):
         if version != record["source_version"]:
@@ -592,5 +819,89 @@ def create_inbox_proposal_router(auth, store, sources, vocabulary_store=None):
             return {"proposal": replay, "duplicate": True}
         return {"proposal": store.decide(proposal_id, body.get("decision"), body.get("expected_version"), user,
                                          key, version), "duplicate": False}
+
+    @router.post("/{proposal_id}/execution-preview")
+    def preview_execution(request: Request, proposal_id: str, body: dict):
+        user = actor(request, "read")
+        record = store.get(proposal_id)
+        authorize_source(request, _source_from_record(record))
+        return execution_preview(record, user, body)
+
+    @router.post("/{proposal_id}/execute")
+    def execute(request: Request, proposal_id: str, body: dict):
+        # Preserve the existing human approval write gate and require the
+        # target domain gate below; no new ambient execution capability.
+        user = actor(request, "write")
+        record = store.get(proposal_id)
+        authorize_source(request, _source_from_record(record))
+        if record.get("kind") == "project":
+            raise HTTPException(status_code=501, detail="Project association execution is not implemented in C2c-1")
+        preview = execution_preview(record, user, body)
+        if preview.get("status") != "ready" or body.get("confirmed") is not True:
+            raise HTTPException(status_code=400, detail="Explicit confirmation of a ready execution preview is required")
+        if body.get("preview_sha256") != preview["preview_sha256"]:
+            raise HTTPException(status_code=409, detail="Execution preview changed; review the current preview again")
+        target_action = preview["target_action"]
+        auth.require_action(request, target_action)
+        # Re-read the source immediately before reserving and invoking its dedicated target store.
+        latest = execution_preview(record, user, body)
+        if latest["preview_sha256"] != preview["preview_sha256"]:
+            store.mark_stale(proposal_id, "source_changed_before_execution", user)
+            raise HTTPException(status_code=409, detail="Source or preview changed; execution was not started")
+        started = store.begin_execution(
+            proposal_id, preview["proposal_version"], user, preview["preview_sha256"],
+            preview["source_summary"]["source_version"], preview["vocabulary_version"], target_action,
+            preview["target"], preview["source_summary"])
+        if started.get("execution", {}).get("status") == "executed":
+            return {"proposal": started, "duplicate": True}
+        if started.get("execution", {}).get("status") in {"blocked", "stale", "not_implemented"}:
+            raise HTTPException(status_code=409, detail="This execution is blocked and cannot be retried")
+        if started.get("execution", {}).get("status") not in {"executing", "failed_retryable"}:
+            raise HTTPException(status_code=409, detail="No resumable execution attempt is available")
+        execution_key = "c2c-" + proposal_id
+        try:
+            # Last source check before side effect. The stable downstream operation key
+            # recovers the same Journal/Review target after a lost response or restart.
+            latest = execution_preview(record, user, body)
+            if latest["preview_sha256"] != preview["preview_sha256"]:
+                store.mark_stale(proposal_id, "source_changed_before_target_write", user)
+                raise HTTPException(status_code=409, detail="Source changed; target write was not started")
+            if record["kind"] == "journal":
+                result = journal_store.append_approved_proposal(
+                    preview["target"]["date"], preview["target"]["text"], execution_key,
+                    proposal_id, str(preview["source_summary"]["source_ref"]),
+                    preview["source_summary"]["source_content_sha256"])
+                entry = result["entry"]
+                target = {"target_id": entry["id"], "target_uri": "journal:" + result["date"],
+                          "target_status": result["status"],
+                          "target_sha256": preview["source_summary"]["source_content_sha256"],
+                          "output_sha256": hashlib.sha256(entry["original_text"].encode("utf-8")).hexdigest()}
+            else:
+                state = capture_service.create_approved_review(
+                    text=preview["target"]["text"], title=preview["target"]["title"],
+                    execution_key=execution_key, proposal_id=proposal_id,
+                    source_ref=str(preview["source_summary"]["source_ref"]),
+                    source_version_sha256=preview["source_summary"]["source_content_sha256"],
+                    captured_at=started["execution"]["started_at"])
+                target = {"target_id": state["capture_id"], "target_uri": state["review_path"],
+                          "target_status": state["status"], "target_sha256": state["raw_sha256"],
+                          "output_sha256": state["review_sha256"]}
+            completed = store.finish_execution(proposal_id, user, status="executed", result=target)
+            return {"proposal": completed, "duplicate": result.get("status") == "duplicate" if record["kind"] == "journal" else completed.get("execution", {}).get("target_status") == "completed"}
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                try:
+                    current_record = store.get(proposal_id)
+                    if current_record.get("execution", {}).get("status") == "executing":
+                        store.finish_execution(proposal_id, user, status="blocked", error_code="target_conflict")
+                except HTTPException:
+                    pass
+                raise
+            outcome = "failed_retryable" if exc.status_code >= 500 else "blocked"
+            store.finish_execution(proposal_id, user, status=outcome, error_code=f"http_{exc.status_code}")
+            raise
+        except Exception as exc:
+            store.finish_execution(proposal_id, user, status="failed_retryable", error_code="target_execution_error")
+            raise HTTPException(status_code=503, detail="Target execution failed safely; retry the same confirmed preview") from exc
 
     return router

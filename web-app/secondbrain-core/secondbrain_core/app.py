@@ -112,7 +112,8 @@ def create_app():
     app.include_router(create_vocabulary_router(auth, vocabulary_store))
     inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")
     app.include_router(create_inbox_proposal_router(
-        auth, inbox_proposals, InboxProposalSources(capture, notes_store), vocabulary_store))
+        auth, inbox_proposals, InboxProposalSources(capture, notes_store), vocabulary_store,
+        journal_store=journal_store, capture_service=capture))
     # Default-off, separately injected data root. When disabled, Core neither creates
     # the directory nor scans chat history or starts a background memory task.
     if memory_enabled_value == "true":

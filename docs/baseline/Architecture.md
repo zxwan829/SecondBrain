@@ -60,6 +60,8 @@ type: architecture
 
 用户明确选择收录或同意 Hermes 的收录建议 → App/Core Capture API → 独占保存 Raw 原件与来源元数据至统一业务 Inbox → 处理/提取 → 以可核验关系创建 Review。Raw 是不可覆盖的原始证据；失败时保留 Raw 和可恢复状态。Capture 不直接写 Knowledge。
 
+Inbox 中持久化的 `approved_recorded` 只代表人工审批历史，不触发目标动作。D085-C2c-1 的 Journal 与 Review 执行由 Core 在再次核验当前来源/词库版本、目标动作权限和用户看到的精确目标预览后，等待独立执行确认；Journal 仍由专用 JournalStore 追加，Review 仍经 CaptureService 保留 Raw 并创建 Review。两者均绑定稳定操作键与执行审计，重放只恢复同一目标。项目关联只保存为元数据候选，当前不可执行；Knowledge 仍只通过既有 Review/Promote 审批流写入。
+
 ### 3.3 Review 与 Promote
 
 Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后，Core 验证会话、精确来源、Review 版本哈希、幂等状态并记录审计，再由受控 Promote Worker 写入 Knowledge。暂缓决定保留服务端状态。Hermes Agent、前端自报身份和普通文件工具都不是正式 Knowledge 写入授权来源。

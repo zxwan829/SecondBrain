@@ -4,6 +4,13 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+## 2026-10-18 — D085-C2c-1 Journal / Review 受控执行（待审 PR 准备中）
+
+- 按 Issue #46 最新评论 #6244537788，从 main `3080506b053d3876d292d9199049fd12e3247b88` 建立独立 Worktree/分支。保留 CURRENT 中 D084 唯一 NEXT，以及 main 的 D084、D086 和运行环境记录。
+- 在 C2b 来源绑定审批上增加独立预览和执行确认：旧 `approved_recorded` 不自动执行；执行时检查来源读取权限、Notes ETag/Capture 原件摘要、词库 revision、提议状态与版本、目标动作权限和预览哈希。执行状态/尝试 ID、执行者、目标引用、源/输出摘要、失败码及历史事件由 Core 持久化。
+- Journal 通过专用 JournalStore 追加用户预览的原文及稳定幂等键；Review 通过 CaptureService 的专用可恢复方法写入合成 Raw 并生成 Review，不走 Promote。项目关联显示 NOT IMPLEMENTED 且无执行入口。前端审批后另行展示目标预览与明确确认/重试，不因审批点击而调用目标 API。
+- Core Inbox Proposal/Capture 定向合成测试 **37 项通过**；统一 Inbox 前端定向测试 **7 项通过**；前端 typecheck、build 通过，build 有既有大型 CanvasEditor chunk 提示；`git diff --check` 通过。所有数据均为临时合成数据。本记录只证明本地开发验证；尚未提交/推送或创建 PR，未合并、未部署、未触碰真实 Vault、付费模型或 NAS。
+
 ## 2026-10-18 — D084 PR #61 合并后生产元数据只读核验
 
 - 按最新 main `d33fe062e9065d3b7047e386f491ff8b55592908` 的 `AGENTS.md`、`00-CURRENT.md`、`Agent-Rules.md` 与 PR #61 复审结论执行一次限定只读核验。PR #61 已合入 main（merge `b3c8fe08ea04e1f20ccadcf70e393bf80a30672c`），复审确认 stale localStorage ID 回退和创建/分叉选择意图保护的本地修复 PASS、生产根因 UNKNOWN；另提醒 activeRun 恢复可能按 sessionStorage 的 activeSession 重新选择，此路径未在 PR #61 验证。

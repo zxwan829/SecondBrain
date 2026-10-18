@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-17
+updated: 2026-10-18
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -54,9 +54,13 @@ PR #50 在原功能分支开发，现已将最新 main `468971b49b1bf63b98930ee0
 
 `Decision-Log.md` D086 与 [`业务规范.md`](业务规范.md) 已确认：普通 Chat 保持自然对话，Hermes 可有节制地询问是否收录；用户明确收录或同意后，Core 先将原文存入统一 Inbox，日记意图也须经 Inbox 和用户确认后再写 Journal。Hermes 可在授权范围回顾并主动建议，主动/被动调用分开设每日及每月估算金额额度；类型/标签集中管理代码已由 PR #58 合入 main，但未部署、未对真实 Vault 盘点或应用元数据。类型最多 10 种，既有有效标签可自动应用。**D086 对话收录及真实内容处理尚未实现、部署或验收**；当前 Chat 显式 Journal 直写路径仍是既有实现，需后续任务按新规范调整。Issue #55 不授权读取真实 Vault、改写历史文件、启动付费模型或生产变更。本节不改变 D084 唯一 NEXT。
 
-### 并行开发状态：D085-C2b 来源绑定建议与审批留痕（待审）
+### 并行开发状态：D085-C2b 来源绑定建议与审批留痕
 
-本阶段在独立分支复用 Core 私有状态目录、App Session action policy、Notes ETag、Capture 原件 SHA-256 和已合入的 D086 类型/标签中心，提供确定性本地 Mock 建议、来源版本绑定、审批/拒绝审计记录、幂等重试及冲突检查。Core 只保存来源引用与摘要、建议/人工修正及决定历史；不复制或改写来源、不执行目标动作。前端从 Core 恢复建议和已记录决定；批准仅表示已记录，不进入队列、不写 Journal/Review/Project/知识。完成代码和本地合成验证后提交独立待审 PR；未合并、未部署、未做用户验收。本段不改变 D084 唯一 NEXT，也不授权真实 Vault、付费模型或 NAS 操作。
+PR #59 已合入 main `3080506b053d3876d292d9199049fd12e3247b88`，实现来源绑定 Mock 建议、审批/拒绝审计、幂等重试和版本冲突保护。该阶段仅记录审批，不执行目标动作；状态 **MERGED / NOT DEPLOYED / NOT REAL-VAULT-VALIDATED / NOT USER ACCEPTED**。D084 唯一 NEXT 不变。
+
+### 并行开发状态：D085-C2c-1 审批后 Journal / Review 受控执行（实施中）
+
+基于上述 main 开始独立切片：审批留痕与目标执行分开，必须重新预览目标正文、核验来源/词库版本并明确确认；Journal 复用专用 JournalStore 幂等追加，Review 复用 CaptureService 的 Raw→Review 流程及可恢复执行键，均不调用 Promote 或新增 Knowledge 写入路径。项目关联仅为元数据候选，标记 NOT IMPLEMENTED 且不可执行。当前仅本地合成验证；分支尚未提交 PR，**未合并、未部署、未做用户验收**。D084 唯一 NEXT 保持不变；无真实 Vault、NAS 或付费模型授权。
 
 ### 未结 Issue 与接续边界（2026-10-17 审计）
 

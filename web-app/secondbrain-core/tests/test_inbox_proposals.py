@@ -34,7 +34,7 @@ class InboxProposalStoreTests(unittest.TestCase):
         journal = next(item for item in created["proposals"] if item["kind"] == "journal")
         self.assertEqual(journal["target_execution_status"], "not_executed")
         approved = self.store.decide(journal["proposal_id"], "approved_recorded", 1, "owner", "decision-1", "etag-1")
-        self.assertEqual(approved["target_execution_status"], "not_supported")
+        self.assertEqual(approved["target_execution_status"], "not_executed")
         reloaded = InboxProposalStore(self.root).get(journal["proposal_id"])
         self.assertEqual(reloaded["status"], "approved_recorded")
         replay = self.store.idempotent_result(journal["proposal_id"], "decision", "approved_recorded", 1, "owner", "decision-1")
@@ -107,6 +107,39 @@ class InboxProposalStoreTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as corrupt:
             self.store.get("missing")
         self.assertEqual(corrupt.exception.status_code, 500)
+
+    def test_legacy_approved_recorded_rows_remain_history_only(self):
+        import json
+        created = self.create()
+        journal = next(item for item in created["proposals"] if item["kind"] == "journal")
+        data = json.loads(self.store.path.read_text(encoding="utf-8"))
+        record = data["records"][journal["proposal_id"]]
+        record.update(status="approved_recorded", target_execution_status="not_supported", version=2)
+        record.pop("execution", None)
+        self.store.path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        self.store.path.chmod(0o600)
+        reloaded = InboxProposalStore(self.root).get(journal["proposal_id"])
+        self.assertEqual(reloaded["status"], "approved_recorded")
+        self.assertEqual(reloaded["execution"]["status"], "not_executed")
+        self.assertEqual(reloaded["target_execution_status"], "not_executed")
+
+    def test_only_one_approved_execution_can_claim_a_source_target(self):
+        first = self.create(key="first-suggestion")
+        first_journal = next(row for row in first["proposals"] if row["kind"] == "journal")
+        self.store.decide(first_journal["proposal_id"], "approved_recorded", 1, "owner", "approve-first", "etag-1")
+        second = self.create(key="second-suggestion")
+        second_journal = next(row for row in second["proposals"] if row["kind"] == "journal")
+        self.store.decide(second_journal["proposal_id"], "approved_recorded", 1, "owner", "approve-second", "etag-1")
+        target = {"date": "2026-10-18", "text": "合成目标"}
+        summary = {"source_kind": "notes", "source_ref": "synthetic/note.md", "source_version": "etag-1",
+                   "source_content_sha256": "b" * 64}
+        first_started = self.store.begin_execution(first_journal["proposal_id"], 2, "owner", "a" * 64,
+                                                    "etag-1", 4, "journal.append", target, summary)
+        self.assertEqual(first_started["execution"]["status"], "executing")
+        with self.assertRaises(HTTPException) as duplicate_target:
+            self.store.begin_execution(second_journal["proposal_id"], 2, "owner", "c" * 64,
+                                       "etag-1", 4, "journal.append", target, summary)
+        self.assertEqual(duplicate_target.exception.status_code, 409)
 
     def test_router_auth_source_binding_and_refresh_recovery(self):
         from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
@@ -336,3 +369,193 @@ class InboxProposalStoreTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as tampered:
             sources.resolve(capture_source)
         self.assertEqual(tampered.exception.status_code, 409)
+
+    def test_explicit_journal_and_review_execution_is_versioned_and_idempotent(self):
+        from secondbrain_core.modules.capture import CaptureService
+        from secondbrain_core.modules.journal import JournalStore
+        from secondbrain_core.modules.notes import NotesStore
+        from secondbrain_core.modules.vocabulary import VocabularyStore
+        from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
+
+        root = Path(self.temp.name)
+        drafts = root / "drafts"; drafts.mkdir(mode=0o700)
+        raw = root / "raw"; raw.mkdir(mode=0o700)
+        review = root / "review"; review.mkdir(mode=0o700)
+        state = root / "capture-state"; state.mkdir(mode=0o700)
+        journal_root = root / "journal"; journal_root.mkdir(mode=0o700)
+        approval = root / "approval"; approval.mkdir(mode=0o700)
+        notes = NotesStore(drafts.resolve(), {})
+        journal = JournalStore(journal_root.resolve())
+        capture = CaptureService(raw.resolve(), review.resolve(), state.resolve())
+        proposals = InboxProposalStore(approval.resolve())
+        vocabulary = VocabularyStore(approval.resolve())
+        class Auth:
+            denied = set()
+            def require_action(self, request, action):
+                if action in self.denied:
+                    raise HTTPException(status_code=403, detail=f"{action} denied")
+                return "synthetic-owner"
+        auth = Auth()
+        app = FastAPI()
+        app.include_router(create_inbox_proposal_router(auth, proposals, InboxProposalSources(capture, notes),
+                                                       vocabulary, journal_store=journal, capture_service=capture))
+        client = TestClient(app)
+
+        def suggest_and_approve(content, kind, suffix):
+            note = notes.create(content)
+            source = {"source_kind": "notes", "source_id": f"drafts:{note['path']}",
+                      "collection": "drafts", "path": note["path"]}
+            generated = client.post("/api/inbox/proposals", json=source,
+                                    headers={"Idempotency-Key": f"create-{suffix}"})
+            self.assertEqual(generated.status_code, 200, generated.text)
+            record = next(row for row in generated.json()["proposals"] if row["kind"] == kind)
+            decision = client.post(f"/api/inbox/proposals/{record['proposal_id']}/decision",
+                                   json={"decision": "approved_recorded", "expected_version": 1},
+                                   headers={"Idempotency-Key": f"approve-{suffix}"})
+            self.assertEqual(decision.status_code, 200, decision.text)
+            return record, source, note
+
+        journal_record, journal_source, journal_note = suggest_and_approve("记一下：合成 Journal 原文\n\n保留空格尾部 \n", "journal", "journal")
+        preview_response = client.post(f"/api/inbox/proposals/{journal_record['proposal_id']}/execution-preview", json={})
+        self.assertEqual(preview_response.status_code, 200, preview_response.text)
+        preview = preview_response.json()
+        self.assertEqual(preview["target"]["text"], notes.read("drafts", journal_note["path"])["content"])
+        self.assertFalse(list(journal_root.glob("????-??-??.jsonl")), "preview or historical approval must not write Journal")
+        body = {"target_text": preview["target"]["text"], "target_date": preview["target"]["date"],
+                "preview_sha256": preview["preview_sha256"], "confirmed": True}
+        unconfirmed = client.post(f"/api/inbox/proposals/{journal_record['proposal_id']}/execute", json={**body, "confirmed": False})
+        self.assertEqual(unconfirmed.status_code, 400)
+        auth.denied.add("journal.append")
+        denied = client.post(f"/api/inbox/proposals/{journal_record['proposal_id']}/execute", json=body)
+        self.assertEqual(denied.status_code, 403)
+        self.assertFalse(list(journal_root.glob("????-??-??.jsonl")))
+        auth.denied.clear()
+        executed = client.post(f"/api/inbox/proposals/{journal_record['proposal_id']}/execute", json=body)
+        self.assertEqual(executed.status_code, 200, executed.text)
+        self.assertEqual(executed.json()["proposal"]["execution"]["status"], "executed")
+        self.assertEqual(executed.json()["proposal"]["execution"]["actor"], "synthetic-owner")
+        self.assertEqual(len(journal.read(preview["target"]["date"])["entries"]), 1)
+        replay = client.post(f"/api/inbox/proposals/{journal_record['proposal_id']}/execute", json=body)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertTrue(replay.json()["duplicate"])
+        self.assertEqual(len(journal.read(preview["target"]["date"])["entries"]), 1)
+        self.assertEqual(replay.json()["proposal"]["execution"]["output_sha256"],
+                         __import__("hashlib").sha256(body["target_text"].encode()).hexdigest())
+
+        blocked_record, _, _ = suggest_and_approve("记一下：blocked collision source", "journal", "blocked")
+        blocked_key = "c2c-" + blocked_record["proposal_id"]
+        journal.append(JournalStore.today(), "记一下：preexisting different operation", blocked_key)
+        blocked_preview = client.post(f"/api/inbox/proposals/{blocked_record['proposal_id']}/execution-preview", json={}).json()
+        blocked_body = {"target_text": blocked_preview["target"]["text"], "target_date": blocked_preview["target"]["date"],
+                        "preview_sha256": blocked_preview["preview_sha256"], "confirmed": True}
+        first_conflict = client.post(f"/api/inbox/proposals/{blocked_record['proposal_id']}/execute", json=blocked_body)
+        self.assertEqual(first_conflict.status_code, 409)
+        self.assertEqual(proposals.get(blocked_record["proposal_id"])["execution"]["status"], "blocked")
+        second_conflict = client.post(f"/api/inbox/proposals/{blocked_record['proposal_id']}/execute", json=blocked_body)
+        self.assertEqual(second_conflict.status_code, 409)
+        self.assertEqual(len(journal.read(preview["target"]["date"])["entries"]), 2)
+
+        retry_record, _, _ = suggest_and_approve("记一下：retryable synthetic operation", "journal", "retry")
+        retry_preview = client.post(f"/api/inbox/proposals/{retry_record['proposal_id']}/execution-preview", json={}).json()
+        retry_body = {"target_text": retry_preview["target"]["text"], "target_date": retry_preview["target"]["date"],
+                      "preview_sha256": retry_preview["preview_sha256"], "confirmed": True}
+        append = journal.append_approved_proposal
+        journal.append_approved_proposal = lambda *args, **kwargs: (_ for _ in ()).throw(HTTPException(503, "synthetic transient failure"))
+        failed = client.post(f"/api/inbox/proposals/{retry_record['proposal_id']}/execute", json=retry_body)
+        self.assertEqual(failed.status_code, 503)
+        first_attempt_id = proposals.get(retry_record["proposal_id"])["execution"]["attempt_id"]
+        self.assertEqual(proposals.get(retry_record["proposal_id"])["execution"]["status"], "failed_retryable")
+        journal.append_approved_proposal = append
+        retried = client.post(f"/api/inbox/proposals/{retry_record['proposal_id']}/execute", json=retry_body)
+        self.assertEqual(retried.status_code, 200, retried.text)
+        self.assertNotEqual(retried.json()["proposal"]["execution"]["attempt_id"], first_attempt_id)
+        self.assertEqual(len(retried.json()["proposal"]["execution"]["attempts"]), 2)
+        self.assertEqual(retried.json()["proposal"]["execution"]["status"], "executed")
+
+        review_record, _, review_note = suggest_and_approve("# Synthetic Review\n\nBody stays exact.\n", "review", "review")
+        review_preview_response = client.post(f"/api/inbox/proposals/{review_record['proposal_id']}/execution-preview", json={})
+        self.assertEqual(review_preview_response.status_code, 200, review_preview_response.text)
+        review_preview = review_preview_response.json()
+        review_body = {"target_text": review_preview["target"]["text"], "target_title": "Confirmed Review title",
+                       "preview_sha256": review_preview["preview_sha256"], "confirmed": True}
+        title_preview = client.post(f"/api/inbox/proposals/{review_record['proposal_id']}/execution-preview", json=review_body)
+        self.assertEqual(title_preview.status_code, 200, title_preview.text)
+        mismatch = client.post(f"/api/inbox/proposals/{review_record['proposal_id']}/execute", json=review_body)
+        self.assertEqual(mismatch.status_code, 409, "an old preview hash cannot authorize edited target text")
+        review_body["preview_sha256"] = title_preview.json()["preview_sha256"]
+        review_body["confirmed"] = False
+        unconfirmed_review = client.post(f"/api/inbox/proposals/{review_record['proposal_id']}/execute", json=review_body)
+        self.assertEqual(unconfirmed_review.status_code, 400)
+        review_body["confirmed"] = True
+        executed_review = client.post(f"/api/inbox/proposals/{review_record['proposal_id']}/execute", json=review_body)
+        self.assertEqual(executed_review.status_code, 200, executed_review.text)
+        state_after = capture.get(executed_review.json()["proposal"]["execution"]["target_id"])
+        self.assertEqual(state_after["status"], "completed")
+        self.assertEqual((review / state_after["review_path"]).read_text(encoding="utf-8").endswith(review_body["target_text"]), True)
+        self.assertEqual(len(list(review.glob("*.md"))), 1)
+        repeated = client.post(f"/api/inbox/proposals/{review_record['proposal_id']}/execute", json=review_body)
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertTrue(repeated.json()["duplicate"])
+        self.assertEqual(len(list(review.glob("*.md"))), 1)
+
+    def test_execution_blocks_stale_source_vocabulary_and_project_target(self):
+        from secondbrain_core.modules.capture import CaptureService
+        from secondbrain_core.modules.journal import JournalStore
+        from secondbrain_core.modules.notes import NotesStore
+        from secondbrain_core.modules.inbox_proposals import create_inbox_proposal_router
+
+        root = Path(self.temp.name)
+        drafts = root / "drafts"; drafts.mkdir(mode=0o700)
+        raw = root / "raw"; raw.mkdir(mode=0o700)
+        review = root / "review"; review.mkdir(mode=0o700)
+        state = root / "capture-state"; state.mkdir(mode=0o700)
+        journal_root = root / "journal"; journal_root.mkdir(mode=0o700)
+        notes = NotesStore(drafts.resolve(), {})
+        capture = CaptureService(raw.resolve(), review.resolve(), state.resolve())
+        journal = JournalStore(journal_root.resolve())
+        class Auth:
+            def require_action(self, request, action): return "synthetic-owner"
+        class Vocabulary:
+            revision = 4
+            def read(self):
+                return {"revision": self.revision, "types": [{"name": "笔记", "enabled": True}], "tags": [], "synonyms": []}
+        vocabulary = Vocabulary()
+        proposals = InboxProposalStore((root / "approval").resolve())
+        app = FastAPI()
+        app.include_router(create_inbox_proposal_router(Auth(), proposals, InboxProposalSources(capture, notes),
+                                                       vocabulary, journal_store=journal, capture_service=capture))
+        client = TestClient(app)
+        note = notes.create("记一下：synthetic stale test")
+        source = {"source_kind": "notes", "source_id": f"drafts:{note['path']}", "collection": "drafts", "path": note["path"]}
+        generated = client.post("/api/inbox/proposals", json=source, headers={"Idempotency-Key": "stale-create"})
+        records = generated.json()["proposals"]
+        journal_proposal = next(row for row in records if row["kind"] == "journal")
+        project_proposal = next(row for row in records if row["kind"] == "project")
+        for row, key in ((journal_proposal, "stale-approve"), (project_proposal, "project-approve")):
+            self.assertEqual(client.post(f"/api/inbox/proposals/{row['proposal_id']}/decision",
+                                         json={"decision": "approved_recorded", "expected_version": 1},
+                                         headers={"Idempotency-Key": key}).status_code, 200)
+        notes.update("drafts", note["path"], "记一下：changed synthetic source", note["etag"])
+        stale = client.post(f"/api/inbox/proposals/{journal_proposal['proposal_id']}/execution-preview", json={})
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(proposals.get(journal_proposal["proposal_id"])["status"], "stale")
+        project = client.post(f"/api/inbox/proposals/{project_proposal['proposal_id']}/execution-preview", json={})
+        self.assertEqual(project.status_code, 200)
+        self.assertEqual(project.json()["status"], "not_implemented")
+        attempt = client.post(f"/api/inbox/proposals/{project_proposal['proposal_id']}/execute",
+                              json={"confirmed": True, "preview_sha256": "0" * 64})
+        self.assertEqual(attempt.status_code, 501)
+        vocabulary.revision = 5
+        fresh_note = notes.create("记一下：synthetic vocabulary test")
+        fresh_source = {"source_kind": "notes", "source_id": f"drafts:{fresh_note['path']}",
+                        "collection": "drafts", "path": fresh_note["path"]}
+        fresh = client.post("/api/inbox/proposals", json=fresh_source, headers={"Idempotency-Key": "vocab-create"})
+        fresh_journal = next(row for row in fresh.json()["proposals"] if row["kind"] == "journal")
+        self.assertEqual(client.post(f"/api/inbox/proposals/{fresh_journal['proposal_id']}/decision",
+                                     json={"decision": "approved_recorded", "expected_version": 1},
+                                     headers={"Idempotency-Key": "vocab-approve"}).status_code, 200)
+        vocabulary.revision = 6
+        stale_vocabulary = client.post(f"/api/inbox/proposals/{fresh_journal['proposal_id']}/execution-preview", json={})
+        self.assertEqual(stale_vocabulary.status_code, 409)
+        self.assertEqual(proposals.get(fresh_journal["proposal_id"])["status"], "stale")
+        self.assertFalse(list(journal_root.glob("????-??-??.jsonl")))

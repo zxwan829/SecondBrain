@@ -16,7 +16,8 @@ type CaptureItem = {
   error?: { message?: string } | null;
 };
 type Decision = { status: 'approved_recorded' | 'rejected' | 'stale'; value: string };
-type PersistedProposal = { proposal_id: string; kind: string; status: string; version: number; source_version: string; suggestion: { original: any; current: any }; target_execution_status: string };
+type ExecutionPreview = { status: string; proposal_id: string; kind: string; proposal_version: number; vocabulary_version: number | string; source_summary: { source_kind: string; source_ref: string; source_version: string; source_content_sha256: string }; target_action: string; target: { text: string; title?: string; date?: string }; preview_sha256: string };
+type PersistedProposal = { proposal_id: string; kind: string; status: string; version: number; source_version: string; suggestion: { original: any; current: any }; target_execution_status: string; execution?: { status: string; target?: ExecutionPreview['target']; source_summary?: ExecutionPreview['source_summary']; target_uri?: string; target_status?: string; error_code?: string } };
 type ProposalProps = {
   id: string;
   title: string;
@@ -33,11 +34,30 @@ type ProposalProps = {
   saving?: boolean;
   editError?: string;
   classificationOptions?: { type: string; types: string[]; tags: string[]; tagOptions: string[]; unknownTags: string[]; onTypeChange: (value: string) => void; onTagsChange: (value: string[]) => void };
+  execution?: { status: string; kind: string; target?: ExecutionPreview['target']; sourceSummary?: ExecutionPreview['source_summary']; targetUri?: string; error?: string; onPrepare: () => Promise<ExecutionPreview['target']>; onExecute: (target: ExecutionPreview['target']) => Promise<void> };
 };
 
-function Proposal({ id, title, reason, impact, preview, value, decision, decisionRequired, onChange, onApprove, onReject, en, saving = false, editError = '', classificationOptions }: ProposalProps) {
+function Proposal({ id, title, reason, impact, preview, value, decision, decisionRequired, onChange, onApprove, onReject, en, saving = false, editError = '', classificationOptions, execution }: ProposalProps) {
   const [draft, setDraft] = useState(value);
+  const [executionTarget, setExecutionTarget] = useState<ExecutionPreview['target'] | undefined>(execution?.target);
+  const [executing, setExecuting] = useState(false);
+  const [executionError, setExecutionError] = useState('');
   useEffect(() => { setDraft(value); }, [value, decision, editError]);
+  useEffect(() => { setExecutionTarget(execution?.target); }, [execution?.status, execution?.target]);
+  const runExecution = async () => {
+    if (!execution || !executionTarget || executing) return;
+    setExecuting(true); setExecutionError('');
+    try { await execution.onExecute(executionTarget); }
+    catch (cause) { setExecutionError(cause instanceof Error ? cause.message : (en ? 'Execution failed. Reload and retry.' : '执行失败，请刷新后重试。')); }
+    finally { setExecuting(false); }
+  };
+  const prepareExecution = async () => {
+    if (!execution || executing) return;
+    setExecuting(true); setExecutionError('');
+    try { setExecutionTarget(await execution.onPrepare()); }
+    catch (cause) { setExecutionError(cause instanceof Error ? cause.message : (en ? 'Preview failed. Reload and retry.' : '预览失败，请刷新重试。')); }
+    finally { setExecuting(false); }
+  };
   return <article className="unified-proposal" data-proposal={id}>
     <header><h4>{title}</h4><span>{en ? 'Mock AI suggestion' : '模拟 AI 建议'}</span></header>
     <p>{reason}</p>
@@ -72,6 +92,22 @@ function Proposal({ id, title, reason, impact, preview, value, decision, decisio
       <button type="button" onClick={onApprove}>{en ? 'Record approval (not executed)' : '记录审批（不执行）'}</button>
       <button type="button" onClick={onReject}>{en ? 'Reject' : '拒绝'}</button>
     </footer>}
+    {execution && decision?.status === 'approved_recorded' && <section className="unified-execution" aria-label={en ? 'Explicit target execution' : '明确执行目标'}>
+      {execution.kind === 'project' ? <p role="status">{en ? 'NOT IMPLEMENTED: project association is metadata only and cannot execute.' : '尚未实现：项目关联仅作为元数据，不可执行。'}</p> : <>
+        <p>{en ? 'Approval is recorded only. Review this exact target preview, then explicitly confirm execution.' : '审批记录本身不会执行。请核对以下目标预览，再明确确认执行。'}</p>
+        {execution.status !== 'executed' && execution.status !== 'blocked' && !executionTarget && <button type="button" onClick={() => void prepareExecution()} disabled={executing}>{en ? 'Prepare target preview' : '准备目标预览'}</button>}
+        {executionTarget && execution.status !== 'executed' && execution.status !== 'blocked' && <>
+          {execution.sourceSummary && <p className="unified-execution-source">{en ? 'Source/version' : '来源 / 版本'}：{execution.sourceSummary.source_kind} · {execution.sourceSummary.source_ref} · {execution.sourceSummary.source_version} · SHA-256 {execution.sourceSummary.source_content_sha256}</p>}
+          {executionTarget.title !== undefined && <label>{en ? 'Review title' : 'Review 标题'}<input value={executionTarget.title} onChange={(event) => setExecutionTarget({ ...executionTarget, title: event.target.value })} /></label>}
+          {executionTarget.date !== undefined && <label>{en ? 'Journal date' : 'Journal 日期'}<input type="date" value={executionTarget.date} onChange={(event) => setExecutionTarget({ ...executionTarget, date: event.target.value })} /></label>}
+          <label>{en ? 'Exact target text' : '目标正文（将按此内容写入）'}<textarea rows={5} value={executionTarget.text} onChange={(event) => setExecutionTarget({ ...executionTarget, text: event.target.value })} /></label>
+          <button type="button" onClick={() => void runExecution()} disabled={executing || !executionTarget.text.trim()}>{executing ? (en ? 'Executing…' : '执行中…') : execution.status === 'failed_retryable' ? (en ? 'Confirm retry' : '确认重试') : (en ? 'Confirm and execute' : '确认并执行')}</button>
+        </>}
+        {execution.status === 'executed' && <p role="status">{en ? 'Executed' : '已执行'} · {execution.targetUri || execution.status}</p>}
+        {execution.status === 'blocked' && <p role="alert" className="capture-alert">{en ? 'Blocked by a target conflict. This operation cannot be replayed; review the source and create a new proposal.' : '目标冲突导致执行已阻断；该操作不能重放，请重新核对来源并生成新建议。'}</p>}
+        {executionError && <p role="alert" className="capture-alert">{executionError}</p>}
+      </>}
+    </section>}
   </article>;
 }
 
@@ -96,6 +132,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   const [proposalRecords, setProposalRecords] = useState<Record<string, PersistedProposal[]>>({});
   const [proposalErrors, setProposalErrors] = useState<Record<string, string>>({});
   const [savingEdits, setSavingEdits] = useState<Record<string, boolean>>({});
+  const [executionPreviews, setExecutionPreviews] = useState<Record<string, ExecutionPreview>>({});
   const editInFlight = useRef(new Set<string>());
 
   const load = useCallback(async (showLoading = false) => {
@@ -313,6 +350,37 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     void decide(item, kind, status).catch((cause) => setProposalErrors((current) => ({ ...current, [item.id]: cause instanceof Error ? cause.message : (en ? 'Decision failed.' : '审批记录失败。') })));
   };
 
+  const executeProposal = async (item: UnifiedInboxItem, record: PersistedProposal, target: ExecutionPreview['target']) => {
+    const headers = { 'Content-Type': 'application/json' };
+    const previewResponse = await fetch(`/api/inbox/proposals/${record.proposal_id}/execution-preview`, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ target_text: target.text, ...(target.title !== undefined ? { target_title: target.title } : {}), ...(target.date !== undefined ? { target_date: target.date } : {}) }) });
+    const preview = await previewResponse.json().catch(() => ({}));
+    if (!previewResponse.ok || preview.status !== 'ready') {
+      await refreshProposals(item).catch(() => undefined);
+      throw new Error(en ? `Preview unavailable (HTTP ${previewResponse.status}); reload and review again.` : `预览不可用（HTTP ${previewResponse.status}），请刷新并重新核对。`);
+    }
+    setExecutionPreviews((current) => ({ ...current, [record.proposal_id]: preview as ExecutionPreview }));
+    const response = await fetch(`/api/inbox/proposals/${record.proposal_id}/execute`, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ target_text: target.text, ...(target.title !== undefined ? { target_title: target.title } : {}), ...(target.date !== undefined ? { target_date: target.date } : {}), confirmed: true, preview_sha256: preview.preview_sha256 }) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      await refreshProposals(item).catch(() => undefined);
+      throw new Error(response.status === 409 ? (en ? 'Conflict: source, vocabulary, or preview changed. Reload and review again.' : '执行冲突：来源、词库或预览已变化，请刷新后重新核对。') : (en ? `Execution failed (HTTP ${response.status}); retry the same preview if allowed.` : `执行失败（HTTP ${response.status}）；如允许，请对同一预览重试。`));
+    }
+    setProposalRecords((current) => ({ ...current, [item.id]: (current[item.id] || []).map((row) => row.proposal_id === record.proposal_id ? payload.proposal : row) }));
+    setExecutionPreviews((current) => { const next = { ...current }; delete next[record.proposal_id]; return next; });
+    await refreshProposals(item);
+  };
+  const prepareProposal = async (record: PersistedProposal) => {
+    const response = await fetch(`/api/inbox/proposals/${record.proposal_id}/execution-preview`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const preview = await response.json().catch(() => ({}));
+    if (!response.ok || preview.status !== 'ready') {
+      const item = items.find((candidate) => proposalRecords[candidate.id]?.some((row) => row.proposal_id === record.proposal_id));
+      if (item) await refreshProposals(item).catch(() => undefined);
+      throw new Error(en ? `Preview unavailable (HTTP ${response.status}); reload and review again.` : `预览不可用（HTTP ${response.status}），请刷新并重新核对。`);
+    }
+    setExecutionPreviews((current) => ({ ...current, [record.proposal_id]: preview as ExecutionPreview }));
+    return (preview as ExecutionPreview).target;
+  };
+
   const text = (key: string, fallback: string) => {
     const map: Record<string, string> = {
       createTitle: en ? 'New note' : '新建笔记', create: en ? 'Create note' : '新建并收录',
@@ -359,6 +427,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
             <button type="button" className="unified-suggest-button" onClick={() => suggestSafely(item)}>{en ? 'Regenerate Mock suggestions (preserve manual corrections)' : '重新生成 Mock 建议（保留手动修正）'}</button>
             {suggestions.map((suggestion) => <Proposal key={suggestion.kind} id={suggestion.kind} title={suggestion.title} reason={suggestion.reason} impact={suggestion.impact} preview={suggestion.preview} value={suggestion.value} en={en} saving={savingEdits[item.id]} editError={proposalErrors[item.id]} decision={decisionsFor(suggestion.kind)} decisionRequired={suggestion.kind !== 'classification'}
               classificationOptions={suggestion.kind === 'classification' ? { type: values.type ?? classification.type, types: classification.allowedTypes || [], tags: (values.tags ?? classification.tags.join(', ')).split(/,\s*/).filter((tag) => (classification.allowedTags || []).includes(tag)), tagOptions: classification.allowedTags || [], unknownTags: classification.unknownTagCandidates, onTypeChange: (value) => editSafely(item, 'type', value), onTagsChange: (tags) => editSafely(item, 'tags', tags.join(', ')) } : undefined}
+              execution={['journal', 'knowledge', 'project'].includes(suggestion.kind) ? (() => { const kind = suggestion.kind === 'knowledge' ? 'review' : suggestion.kind; const record = proposalRecords[item.id]?.find((candidate) => candidate.kind === kind); if (!record || record.status !== 'approved_recorded') return undefined; const execution = record.execution || { status: record.target_execution_status }; const preview = executionPreviews[record.proposal_id]; const previewTarget = preview?.target || execution.target; const sourceSummary = preview?.source_summary || execution.source_summary; return { status: execution.status, kind, target: previewTarget, sourceSummary, targetUri: execution.target_uri, error: execution.error_code, onPrepare: () => prepareProposal(record), onExecute: (target: ExecutionPreview['target']) => executeProposal(item, record, target) }; })() : undefined}
               onChange={(value) => editSafely(item, suggestion.kind, value)} onApprove={() => decideSafely(item, suggestion.kind, 'approved_recorded')} onReject={() => decideSafely(item, suggestion.kind, 'rejected')} />)}
           </div>}
         </article>;

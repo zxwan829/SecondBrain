@@ -45,6 +45,22 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertTrue(complete["original_asset"].startswith("/knowledge-assets/00-Inbox/"))
         self.assertEqual(complete["display_filename"], "capture.md")
 
+    def test_approved_review_execution_replays_after_service_restart_without_duplicate_files(self):
+        text = "# Exact preview\n\nBody with preserved trailing whitespace. \n"
+        kwargs = {"text": text, "title": "Approved synthetic Review", "execution_key": "c2c-" + "a" * 32,
+                  "proposal_id": "a" * 32, "source_ref": "drafts/synthetic.md",
+                  "source_version_sha256": hashlib.sha256(b"synthetic source").hexdigest(),
+                  "captured_at": "2026-10-18T00:00:00+00:00"}
+        first = self.service.create_approved_review(**kwargs)
+        restarted = CaptureService(self.raw, self.review, self.state)
+        replay = restarted.create_approved_review(**kwargs)
+        self.assertEqual(first["capture_id"], replay["capture_id"])
+        self.assertEqual(first["review_path"], replay["review_path"])
+        self.assertEqual(first["review_sha256"], replay["review_sha256"])
+        self.assertEqual((self.review / replay["review_path"]).read_text(encoding="utf-8").endswith(text), True)
+        self.assertEqual(len(list(self.raw.glob("Inbox-Proposal-*.md"))), 1)
+        self.assertEqual(len(list(self.review.glob("Inbox-Proposal-*.md"))), 1)
+
     def test_collision_does_not_overwrite_raw_or_review_and_retry_uses_suffix(self):
         first = self.service.accept_file("same.txt", b"first")
         self.service.process(first, b"first")
