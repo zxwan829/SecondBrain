@@ -230,6 +230,45 @@ class CoreOwnedApprovalAuthTests(unittest.TestCase):
         self.assertEqual(retry.status_code, 409)
         self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
 
+    def test_malformed_complete_audit_line_fails_closed_without_mutation(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        damaged = b'{"event":broken}\n'
+        (self.state / "audit.jsonl").write_bytes(damaged)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual((self.state / "audit.jsonl").read_bytes(), damaged)
+        self.assertFalse((self.knowledge / "approved.md").exists())
+
+    def test_existing_knowledge_target_is_never_overwritten(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        target = self.knowledge / "approved.md"
+        original = b"keep existing synthetic target\n"
+        target.write_bytes(original)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_knowledge_target_symlink_is_rejected_without_touching_target(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        external = self.root / "outside-synthetic-target.md"
+        external.write_bytes(b"outside target remains unchanged\n")
+        (self.knowledge / "approved.md").symlink_to(external)
+        response = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue((self.knowledge / "approved.md").is_symlink())
+        self.assertEqual(external.read_bytes(), b"outside target remains unchanged\n")
+
+    def test_review_path_traversal_is_rejected_before_claim_creation(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        outside = self.root / "outside-review.md"
+        outside.write_bytes(b"synthetic path traversal sentinel\n")
+        traversal = dict(self.body, review_path="../outside-review.md")
+        response = self.client.post("/api/promote/review/approve", json=traversal, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(outside.read_bytes(), b"synthetic path traversal sentinel\n")
+        self.assertEqual(list((self.state / "approvals").glob("*.claim")), [])
+        self.assertFalse((self.knowledge / "approved.md").exists())
+
     def test_different_request_and_target_cannot_claim_same_review_version(self):
         self.assertEqual(self.unlock().status_code, 200)
         first = self.client.post("/api/promote/review/approve", json=self.body, headers=self.headers)
