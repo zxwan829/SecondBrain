@@ -1,10 +1,12 @@
 ---
 created: 2026-10-17
 updated: 2026-10-17
-status: reviewed-plan
+status: historical-reviewed-plan
 type: integration-plan
 ---
 # D084 — Integration and unified validation plan
+
+**Historical plan (as of 2026-10-17):** The NEXT steps and branch/PR statuses below describe the D084 pre-integration audit, **not the current project's next action or main state**. The D081–D083 slices and the reviewed PR #37 changes were later integrated through PR #45, and M1 has since completed a user-approved limited acceptance (Issue #66). Current sole NEXT is in [`00-CURRENT.md`](00-CURRENT.md), with M2 planning in [Issue #76](https://github.com/zxwan829/SecondBrain/issues/76). Do not rerun the old instructions or use them as production authorization.
 
 This reviewed plan is a sequencing and acceptance document, not implementation or deployment authorization. PR #39 completed the document-review gate; this file is not permission to start engineering integration. Current state is maintained in [`00-CURRENT.md`](00-CURRENT.md); production evidence remains in [`Environment-Baseline.md`](Environment-Baseline.md). Source audit was performed against main `628bec895e8d95646b5cc583e8ffea8f7e877e10`, parallel development branch `dev/parallel-v1-next-20261017` at `e5f5c72b72511e14a4a1ee403b31cafbdd50fa69`, and PR #37 at `e5332f6fa175d0742cacbaec2fbab40ded4781a4`.
 
