@@ -4,13 +4,18 @@
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
-## 2026-10-17 — D085-C2b 来源绑定建议与审批持久化（本地开发验证）
+## 2026-10-18 — D084 PR #61 合并后生产元数据只读核验
 
-- 基于独立分支 `codex/d085-c2b-approval-persistence-20261017` 从 main `1c73b0f3449725815443c22ba503104df0cb8eff` 开始。开发期间 main 合入 D086 词库 PR #58，实时推进至 `18c91f78ec692ad0a522f3b7b3ba12d80bdb115c`。获取并快进到该 main 后重放本地改动；CURRENT 与 Core `app.py` 因并行 D086 增量产生文本冲突，保留 main 的 D086 词库路由/状态记录和 D084 唯一 NEXT，并重新接入 C2b router/state。当前分支以 `18c91f78` 为祖先。
-- 新增 Core `inbox-proposals` 私有状态目录和来源绑定 API，复用 App Session/action-policy、Core 文件锁/原子替换、Notes Core 路径与 ETag、Capture Core capture ID 与 Raw SHA-256；持久保存建议/修正/决定历史、actor、幂等键和来源/词库版本，不保存初始笔记正文副本。来源或词库版本变化将标记 stale；重复决策先按幂等键回放；并发改动使用 expected version 冲突保护。建议只用本地规则 Mock；审批只记录、不排队或执行。
-- 已按更新 main 集成 D086 `VocabularyStore`：类型、有效标签、同义词映射及 revision 全从集中词库读取；初始无规范标签时，正文标签仅列未知候选；前端按 Core 返回的词库快照编辑。服务端以保存的词库快照验证，不信任浏览器传回的允许值。手动类型与移除标签偏好跨刷新及重新生成保留。
-- Core `tests.test_inbox_proposals tests.test_vocabulary tests.test_capture tests.test_notes` **52 passed**；前端 `src/UnifiedInboxPage.test.tsx src/VocabularyPage.test.tsx` **7 passed**；`npm run typecheck`、`npm run build` 通过，build 有既有大型 CanvasEditor chunk 警告。`npm ci` 报告锁定依赖包含 4 个低/中危审计告警，本轮未改依赖或自动修复。Core 测试出现 TestClient/httpx 弃用提示。测试仅访问临时合成 Notes/Capture 根。
-- 已更新 CURRENT 并保留 D084 唯一 NEXT。**开发验证通过，Commit/Push/PR 待最终 diff 审查；NOT MERGED / NOT DEPLOYED / NOT REAL-VAULT-VALIDATED / NOT USER ACCEPTED。** 未读写真实笔记、NAS、生产配置或调用模型。
+- 按最新 main `d33fe062e9065d3b7047e386f491ff8b55592908` 的 `AGENTS.md`、`00-CURRENT.md`、`Agent-Rules.md` 与 PR #61 复审结论执行一次限定只读核验。PR #61 已合入 main（merge `b3c8fe08ea04e1f20ccadcf70e393bf80a30672c`），复审确认 stale localStorage ID 回退和创建/分叉选择意图保护的本地修复 PASS、生产根因 UNKNOWN；另提醒 activeRun 恢复可能按 sessionStorage 的 activeSession 重新选择，此路径未在 PR #61 验证。
+- 2026-10-18T01:50:41Z 通过现有 SSH 与 `sudo -n` 只读 Docker 查询确认：App 容器 `272b9fee7e62cf4b6b9c39f82d8c1e2eeceffaee82215a9cf34dc35098570601`，镜像 `secondbrain-app:pr49-fa2ad412-full` / `sha256:1c7ed4cb…11dd6ca`，healthy、RestartCount 0、UID/GID 1026:100；Hermes 容器 `057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79`，镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / `sha256:b99b1762…5357e9a`，running、RestartCount 0、身份 root。本次只核验容器元数据，未检查或修改 Compose、挂载、配置、权限、容器日志，也未重启/部署；Environment-Baseline 保存完整镜像 ID、启动时间和状态。
+- Edge 标签清单没有 SecondBrain App 页面。为避免 `/chat` 自动恢复已有私人会话，本次未导航 App、未读取会话正文；也因缺少目标 opaque ID，未查询全量 Hermes Session 列表或宽泛日志。浏览器 selected/localStorage ID、相关 activities 请求/响应 ID、状态与时间均 UNKNOWN。PR #61 的两个旧版 UI 边界在当前 PR #49 生产镜像中仍可能存在，但没有 ID/时序证据将其与既有 FAIL 关联；生产根因保持 UNKNOWN。历史验收仍为首卡/首次刷新 PASS、会话切换恢复 FAIL/INCONSISTENT、幂等与审计 BLOCKED。
+- 未创建/修改/删除 Session、Journal、Task；未调用模型；无 NAS 文件/config/权限更改或资产清理。Issue #44 评论未写入；此前 Issue 写入被审批拒绝，本轮未尝试从其他渠道绕写。诊断状态与最新有限运行证据同步到 CURRENT、Environment-Baseline；后续如需定向关联，只使用精确的既有合成 Session ID 或不打开私人会话的 metadata-only 读取方式，等待 ChatGPT 独立复审。
+
+## 2026-10-18 — D085-C2b PR #59 同步最新主线
+
+- 按 PR #59 Review #5561020708 在原分支同步 main `4a5839346b938ef28f852fe249058c84eddb31cd`。仅 `Progress-Log.md` 有内容冲突；保留本分支 C2b 历史和 main 的 D084 生产元数据核验记录。CURRENT 与 Environment-Baseline 自动合并，无其他冲突。
+- 确认 CURRENT 采用 main 最新 D084 唯一 NEXT，D084 生产根因仍 UNKNOWN；Environment-Baseline 保留 2026-10-18 限定只读容器元数据证据。D086 词库与 C2b 状态均保留。
+- PR #59 相关 Core/前端定向测试、typecheck/build 已在前一次 main 同步后通过；本次只改文档冲突，不重跑无关测试。待完成本次 `git diff --check`、推送并核验 PR 状态。
 
 ## 2026-10-17 — D086 PR #58 同步最新 main 与合并门禁核验
 

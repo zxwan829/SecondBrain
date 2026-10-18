@@ -6,6 +6,14 @@ type: environment-baseline
 ---
 # Environment Baseline
 
+## 限定容器元数据核验（2026-10-18T01:50:41Z；D084；只读）
+
+- 通过现有 NAS SSH 管理员路径运行 `/usr/local/bin/docker ps/inspect` 只读查询。SSH 用户 `1026:100` 对 Docker socket 的直接访问被拒；既有 `sudo -n` 授权成功，未改 socket 权限或 sudoers。
+- **App**：容器 `272b9fee7e62cf4b6b9c39f82d8c1e2eeceffaee82215a9cf34dc35098570601`；镜像 `secondbrain-app:pr49-fa2ad412-full`，Image ID `sha256:1c7ed4cb953951eb2ab8691516651d170171305af6172326174e64f4115dd6ca`；running / healthy，RestartCount 0；StartedAt `2026-10-17T11:43:55.113573688Z`；容器身份 `1026:100`。
+- **Hermes**：容器 `057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79`；镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`，Image ID `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`；running，RestartCount 0；StartedAt `2026-10-17T08:33:24.151798238Z`；容器身份 `root`。`docker ps` 未报告 health 状态，inspect 输出中也没有 `.State.Health` 字段；本次只确认 running，不报告 Hermes healthy。
+- 本次确认 App 仍运行 PR #49 镜像；PR #61 已合入 main，但未部署。因此 stale localStorage ID 回退和延迟 create/fork 选择保护尚未进入当前 App 镜像。此次为有限容器元数据快照，没有重查 Compose、挂载、配置或容器日志，不覆盖上节 2026-10-17 的完整快照。
+- Edge 浏览器标签清单中没有 SecondBrain App 页面；未导航 `/chat`，以避免自动恢复已有私人 Session。因无安全可用的目标 Session ID，也未读取全量 Session 列表或宽泛容器日志。浏览器 selected/localStorage ID、目标活动请求/响应 ID 与状态时间戳均为 **UNKNOWN**；未读取任何会话正文、Journal/Task 数据，也未创建或修改 Session/业务记录。
+
 ## 最新运行核验（2026-10-17，PR #49 App-only 部署后）
 
 - 按 Issue #44 评论 #6233322671 的单次授权，使用 PR #49 merge fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79 输入和 web-app/Dockerfile.app 构建完整 App 镜像。Mac 源码归档 SHA-256 8dbb4d78f523ee69e59d214a6430528b299e922141a8af36ae778af06423c4d7；NAS 保留构建源于 /volume1/docker/secondbrain/app-build-source-pr49-fa2ad412/web-app。前端 npm run typecheck / npm run build 通过；npm 安装提示 4 项依赖漏洞（2 low、2 moderate），本次未升级依赖。
