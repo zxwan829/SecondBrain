@@ -1,9 +1,10 @@
 FROM node:22-alpine AS frontend-build
 WORKDIR /build
+ARG VITE_ENABLE_NOTES=false
 COPY secondbrain-frontend/package.json secondbrain-frontend/package-lock.json ./
 RUN npm ci
 COPY secondbrain-frontend/ ./
-RUN npm run typecheck && npm run build
+RUN npm run typecheck && VITE_ENABLE_NOTES=${VITE_ENABLE_NOTES} npm run build
 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SB_STATIC_ROOT=/app/static TMPDIR=/tmp
