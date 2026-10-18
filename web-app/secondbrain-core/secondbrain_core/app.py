@@ -24,6 +24,7 @@ from .modules.inbox_proposals import InboxProposalStore, InboxProposalSources, c
 from .modules.organizer_engine import OrganizerRunner
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
+from .modules.review_promote.core_auth import CorePromoteAuth
 from .modules.web_app import create_web_app_router
 
 
@@ -55,10 +56,23 @@ def create_app():
             or approvals_info.st_uid != os.geteuid() or approvals_info.st_mode & 0o077
             or not os.access(approvals_path, os.W_OK)):
         raise RuntimeError("Core approval directory must be private and owned by the Core UID")
+    promote_operations_path = os.path.join(approval_root, "b1b-operations")
+    os.makedirs(promote_operations_path, mode=0o700, exist_ok=True)
+    promote_operations_info = os.stat(promote_operations_path, follow_symlinks=False)
+    if (not os.path.isdir(promote_operations_path) or os.path.islink(promote_operations_path)
+            or promote_operations_info.st_uid != os.geteuid()
+            or promote_operations_info.st_mode & 0o077
+            or not os.access(promote_operations_path, os.W_OK)):
+        raise RuntimeError("B1b operation directory must be private and owned by the Core UID")
     service = PromoteService(review_root, knowledge_root,
                              approvals_path, audit_path)
     app_password_file = os.environ["SB_APP_PASSWORD_FILE"]
     auth = AppSessionAuth(app_password_file, origins, ttl)
+    promote_unlock_ttl = int(os.environ.get("SB_PROMOTE_UNLOCK_TTL", "900"))
+    promote_auth = CorePromoteAuth(
+        os.environ.get("SB_PROMOTE_UNLOCK_SECRET_FILE", ""), origins, auth,
+        allowed_hosts=allowed_hosts, session_ttl=promote_unlock_ttl,
+    )
     hermes = HermesAPI()
     organizer_controls = OrganizerControlStore(Path(approval_root) / "ai-organize")
     organizer_options = organizer_controls.read()
@@ -122,12 +136,20 @@ def create_app():
         app.include_router(create_personal_memory_router(auth, memory_store))
     app.include_router(create_core_router(service, review_root, auth,
                                           promote_enabled=promote_enabled,
-                                          include_auth_routes=False), prefix="/api/promote")
+                                          include_auth_routes=False,
+                                          promote_auth=promote_auth,
+                                          operations_root=promote_operations_path,
+                                          knowledge_root=knowledge_root), prefix="/api/promote")
     app.router.add_event_handler("startup", organizer.start_scheduler)
 
     @app.middleware("http")
     async def security_headers(request, call_next):
         response = await call_next(request)
+        if (request.url.path in {
+                "/api/promote/auth/unlock", "/api/promote/auth/lock",
+                "/api/promote/review/preview", "/api/promote/review/confirm",
+        } or request.url.path.startswith("/api/promote/operations/")):
+            response.headers["Cache-Control"] = "private, no-store"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")

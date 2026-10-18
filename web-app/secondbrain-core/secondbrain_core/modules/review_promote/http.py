@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from .approval import ApprovalRequestError, _read_review
 from .core_auth import CorePromoteAuth
+from .b1b import B1bPromoteFlow
 
 
 def _review_status(content):
@@ -63,10 +64,16 @@ def _review_captured_at(content):
     return None
 
 
-def create_core_router(service, review_root, auth, *, promote_enabled=True, include_auth_routes=True):
+def create_core_router(service, review_root, auth, *, promote_enabled=True, include_auth_routes=True,
+                       promote_auth=None, operations_root=None, knowledge_root=None):
     """Router for direct browser→Core approval; never trusts Hermes state/headers."""
     router = APIRouter()
     review_root = Path(review_root)
+    flow = None
+    if promote_auth is not None and operations_root and knowledge_root:
+        flow = B1bPromoteFlow(service, str(review_root), knowledge_root,
+                              operations_root, promote_auth,
+                              promote_enabled=promote_enabled)
 
     @router.get("/review/items")
     def list_review_items(request: Request):
@@ -123,6 +130,39 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
             auth.clear_session_cookie(response)
             return {"status": "locked"}
 
+    if flow is not None:
+        @router.post("/auth/unlock")
+        def b1b_unlock(request: Request, response: Response, body: dict):
+            token = promote_auth.unlock(request, body.get("passphrase"))
+            promote_auth.set_session_cookie(response, request, token, promote_auth.session_ttl)
+            response.headers["Cache-Control"] = "private, no-store"
+            return {"status": "unlocked", "expires_in": promote_auth.session_ttl}
+
+        @router.post("/auth/lock")
+        def b1b_lock(request: Request, response: Response):
+            promote_auth.lock(request)
+            promote_auth.clear_session_cookie(response)
+            response.headers["Cache-Control"] = "private, no-store"
+            return {"status": "locked"}
+
+        @router.post("/review/preview")
+        def b1b_preview(request: Request, response: Response, body: dict):
+            result = flow.preview(request, body)
+            response.headers["Cache-Control"] = "private, no-store"
+            return result
+
+        @router.post("/review/confirm")
+        def b1b_confirm(request: Request, response: Response, body: dict):
+            result = flow.confirm(request, body)
+            response.headers["Cache-Control"] = "private, no-store"
+            return result
+
+        @router.get("/operations/{request_id}")
+        def b1b_operation(request: Request, response: Response, request_id: str):
+            result = flow.status(request, request_id)
+            response.headers["Cache-Control"] = "private, no-store"
+            return result
+
     @router.get("/status")
     def promote_status(request: Request):
         auth.require_action(request, "promote.read")
@@ -130,15 +170,8 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
 
     @router.post("/review/approve")
     def approve_review(request: Request, body: dict):
-        approver = auth.require_action(request, "knowledge.promote")
-        if not promote_enabled:
-            raise HTTPException(status_code=423, detail="Promote is disabled pending production write approval")
-        try:
-            return service.approve_and_promote_as(approver, body, str(review_root))
-        except ApprovalRequestError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-        except Exception as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+        auth.require_owner(request)
+        raise HTTPException(status_code=423, detail={"code": "legacy_approve_disabled"})
 
     @router.post("/review/defer")
     def defer_review(request: Request, body: dict):
@@ -146,6 +179,6 @@ def create_core_router(service, review_root, auth, *, promote_enabled=True, incl
         try:
             return service.defer(body.get("review_path"), body.get("review_sha256"), approver)
         except ApprovalRequestError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise HTTPException(status_code=409, detail={"code": "review_decision_conflict"}) from exc
 
     return router
