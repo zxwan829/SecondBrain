@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { ChatPage, InboxPage, ReviewPage, scrollReviewItemIntoView, sortByCapturedAt } from './App';
+import { App, ChatPage, InboxPage, ReviewPage, scrollReviewItemIntoView, sortByCapturedAt } from './App';
 import { UnifiedCaptureComposer } from './UnifiedCaptureComposer';
 
 afterEach(() => { cleanup(); window.history.replaceState({}, '', '/'); vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -248,6 +248,142 @@ describe('D075.1 capture interactions', () => {
     expect(await screen.findByText('记一下：恢复到实际 Hermes ID')).toBeTruthy();
     expect(request).toHaveBeenCalledWith('/api/chat/sessions/hermes-live-B/activities', expect.anything());
     expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('hermes-live-B');
+  });
+
+  it.each(['private-valid-id', 'private-expired-id'])('blank acceptance entry ignores stored Session ID %s and active Run state', async (storedSessionId) => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', storedSessionId);
+    window.sessionStorage.setItem('secondbrain.chat.activeRun', 'private-run-id');
+    window.sessionStorage.setItem('secondbrain.chat.activeSession', storedSessionId);
+    const localGet = vi.spyOn(window.localStorage, 'getItem');
+    const localSet = vi.spyOn(window.localStorage, 'setItem');
+    const request = vi.fn();
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" blankMode onGoInbox={vi.fn()} />);
+
+    await act(async () => {});
+    expect(request).not.toHaveBeenCalled();
+    expect(localGet).not.toHaveBeenCalledWith('secondbrain.chat.session');
+    expect(localSet.mock.calls.some(([key]) => key === 'secondbrain.chat.session')).toBe(false);
+    expect(window.localStorage.getItem('secondbrain.chat.session')).toBe(storedSessionId);
+    expect(window.sessionStorage.getItem('secondbrain.chat.activeRun')).toBe('private-run-id');
+    expect(screen.getByRole('status').textContent).toContain('不提供已认证后端账户的服务端隔离');
+    fireEvent.change(screen.getByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'must wait for explicit create' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('请先明确创建空白合成会话');
+    expect(request).not.toHaveBeenCalled();
+    localGet.mockRestore(); localSet.mockRestore();
+  });
+
+  it('creates only on explicit action and restores only a previously created blank Session', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'private-existing-id');
+    window.sessionStorage.setItem('secondbrain.chat.activeRun', 'private-existing-run');
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions' && init?.method === 'POST') return ok({ session_id: 'synthetic-session-A' });
+      if (url.endsWith('/synthetic-session-A/messages')) return ok({ messages: [{ id: 'm1', role: 'assistant', text: 'synthetic-only' }] });
+      if (url.endsWith('/synthetic-session-A/activities')) return ok({ activities: [] });
+      throw new Error(`Unexpected blank-mode request: ${url}`);
+    });
+    vi.stubGlobal('fetch', request);
+    const first = render(<ChatPage locale="zh-CN" blankMode onGoInbox={vi.fn()} />);
+    await act(async () => {});
+    expect(request).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('private-existing-id');
+
+    fireEvent.click(screen.getByRole('button', { name: '创建合成会话' }));
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(request.mock.calls[0]?.[0]).toBe('/api/chat/sessions');
+    expect(request.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(request.mock.calls.some(([url]) => String(url).includes('?limit=') || String(url).includes('/messages') || String(url).includes('/activities') || String(url).includes('/runs'))).toBe(false);
+    expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('private-existing-id');
+
+    fireEvent.click(await screen.findByRole('button', { name: /合成会话 1/ }));
+    expect(await screen.findByText('synthetic-only')).toBeTruthy();
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      '/api/chat/sessions',
+      '/api/chat/sessions/synthetic-session-A/messages',
+      '/api/chat/sessions/synthetic-session-A/activities',
+    ]);
+    first.unmount();
+
+    request.mockClear();
+    render(<ChatPage locale="zh-CN" blankMode onGoInbox={vi.fn()} />);
+    expect(await screen.findByText('synthetic-only')).toBeTruthy();
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      '/api/chat/sessions/synthetic-session-A/messages',
+      '/api/chat/sessions/synthetic-session-A/activities',
+    ]);
+  });
+
+  it('keeps only explicitly created blank IDs during delayed creation and out-of-order session loads', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    let resolveA: ((value: ReturnType<typeof ok>) => void) | undefined;
+    const request = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions' && init?.method === 'POST') {
+        const callIndex = request.mock.calls.filter(([calledUrl, calledInit]) => calledUrl === url && calledInit?.method === 'POST').length;
+        if (callIndex === 1) return new Promise<ReturnType<typeof ok>>((resolve) => { resolveA = resolve; });
+        return Promise.resolve(ok({ session_id: 'synthetic-session-B' }));
+      }
+      const id = url.includes('synthetic-session-A') ? 'A' : 'B';
+      if (url.endsWith('/messages')) return id === 'A'
+        ? new Promise<ReturnType<typeof ok>>((resolve) => { window.setTimeout(() => resolve(ok({ messages: [{ id: 'a', role: 'assistant', text: 'A only' }] })), 20); })
+        : Promise.resolve(ok({ messages: [{ id: 'b', role: 'assistant', text: 'B only' }] }));
+      if (url.endsWith('/activities')) return Promise.resolve(ok({ activities: [] }));
+      return Promise.reject(new Error(`Unexpected blank-mode request: ${url}`));
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" blankMode onGoInbox={vi.fn()} />);
+
+    const create = screen.getByRole('button', { name: '创建合成会话' });
+    fireEvent.click(create);
+    fireEvent.click(create);
+    await waitFor(() => expect(resolveA).toBeTruthy());
+    await act(async () => { resolveA?.(ok({ session_id: 'synthetic-session-A' })); });
+    expect(await screen.findByText('合成会话 2')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /合成会话 1/ }).className).toContain('is-selected');
+
+    fireEvent.click(screen.getByRole('button', { name: /合成会话 2/ }));
+    fireEvent.click(screen.getByRole('button', { name: /合成会话 1/ }));
+    expect(await screen.findByText('B only')).toBeTruthy();
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 35)); });
+    expect(screen.getByText('B only')).toBeTruthy();
+    expect(screen.queryByText('A only')).toBeNull();
+    const paths = request.mock.calls.map(([url]) => String(url));
+    expect(paths.every((path) => !path.includes('?limit=') && !path.includes('private') && !path.includes('/runs'))).toBe(true);
+    expect(paths.filter((path) => path.endsWith('/messages') || path.endsWith('/activities'))
+      .every((path) => path.includes('synthetic-session-A') || path.includes('synthetic-session-B'))).toBe(true);
+  });
+
+  it('preserves ordinary Chat first-session recovery outside blank mode', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const request = vi.fn(async (url: string) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [{ session_id: 'ordinary-first-session', title: 'First' }] });
+      if (url.endsWith('/messages')) return ok({ messages: [{ id: 'm1', role: 'assistant', text: 'ordinary restore' }] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      return ok({});
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    expect(await screen.findByText('ordinary restore')).toBeTruthy();
+    expect(request).toHaveBeenCalledWith('/api/chat/sessions?limit=50&offset=0', expect.anything());
+    expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('ordinary-first-session');
+  });
+
+  it('routes /chat/blank into the no-session-list entry after App authentication', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'private-trap-id');
+    window.history.replaceState({}, '', '/chat/blank');
+    const request = vi.fn(async (url: string) => {
+      if (url === '/api/auth/session') return ok({});
+      if (url === '/api/home') return ok({});
+      throw new Error(`Unexpected blank entry request: ${url}`);
+    });
+    vi.stubGlobal('fetch', request);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '空白验收' })).toBeTruthy();
+    expect(request.mock.calls.map(([url]) => url)).toEqual(['/api/auth/session', '/api/home']);
+    expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('private-trap-id');
   });
 
   it('ignores an activity payload whose Hermes ID differs from the requested session', async () => {
