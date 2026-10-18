@@ -51,18 +51,29 @@ class CorePromoteAuth:
             raise ValueError("Promote unlock secret must contain 32-4096 bytes")
         return secret
 
-    def _check_origin(self, request):
-        origin = request.headers.get("origin", "").rstrip("/")
+    def _check_origin(self, request, *, allow_originless_same_origin=False):
+        origin_header = request.headers.get("origin")
+        origin = (origin_header or "").rstrip("/")
+        fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
         host = request.headers.get("host", "").lower()
-        parsed = urlsplit(origin)
-        if (request.url.scheme != "https" or origin not in self.allowed_origins or
-                not host or host != request.url.netloc.lower() or
-                parsed.netloc.lower() != host or
-                (self.allowed_hosts and (parsed.hostname or "").lower() not in self.allowed_hosts)):
+        parsed = urlsplit(origin) if origin else None
+        host_url = urlsplit("//" + host) if host else None
+        allowed_origin_hosts = {urlsplit(allowed).netloc.lower() for allowed in self.allowed_origins}
+        trusted_host = bool(host and host == request.url.netloc.lower() and
+                            host in allowed_origin_hosts and host_url and host_url.hostname and
+                            (not self.allowed_hosts or host_url.hostname.lower() in self.allowed_hosts))
+        if request.url.scheme != "https" or not trusted_host or fetch_site == "cross-site":
+            raise HTTPException(status_code=403, detail={"code": "trusted_origin_required"})
+        if origin_header is None:
+            if not allow_originless_same_origin or fetch_site != "same-origin":
+                raise HTTPException(status_code=403, detail={"code": "trusted_origin_required"})
+            return
+        if (origin not in self.allowed_origins or parsed is None or
+                parsed.netloc.lower() != host):
             raise HTTPException(status_code=403, detail={"code": "trusted_origin_required"})
 
-    def require_app(self, request):
-        self._check_origin(request)
+    def require_app(self, request, *, allow_originless_same_origin=False):
+        self._check_origin(request, allow_originless_same_origin=allow_originless_same_origin)
         if self.app_auth is None:
             raise HTTPException(status_code=503, detail={"code": "app_session_binding_unavailable"})
         try:
@@ -99,8 +110,8 @@ class CorePromoteAuth:
         }
         return token
 
-    def require_owner(self, request):
-        app_binding = self.require_app(request)
+    def require_owner(self, request, *, allow_originless_same_origin=False):
+        app_binding = self.require_app(request, allow_originless_same_origin=allow_originless_same_origin)
         token = request.cookies.get(self.COOKIE_NAME, "")
         if not token:
             raise HTTPException(status_code=401, detail={"code": "promote_session_required"})
