@@ -83,6 +83,67 @@ describe('D075.1 capture interactions', () => {
     expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
   });
 
+  it('does not report success for a malformed 2xx Core response', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const proposal = { event: 'capture.suggestion', proposal_id: 'synthetic-malformed-success', source_event_id: 'synthetic-event-malformed', occurred_at: '2026-10-20T01:02:03Z', original_text: 'Synthetic malformed response.' };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [{ session_id: 'synthetic-chat-session', title: 'Synthetic' }] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([proposal, { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify({ inbox_id: 'id-only', status: 'accepted' }), { status: 200 });
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并收录到 Inbox' }));
+    expect(await within(card).findByRole('alert')).toBeTruthy();
+    expect(within(card).getByText(proposal.original_text)).toBeTruthy();
+    expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+  });
+
+  it('ignores a capture suggestion delivered by an old Run after switching sessions', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const proposal = { event: 'capture.suggestion', proposal_id: 'synthetic-late-proposal', source_event_id: 'synthetic-late-event', occurred_at: '2026-10-20T01:02:03Z', original_text: 'Late old-session suggestion.' };
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const delayedStream = new Response(new ReadableStream<Uint8Array>({ start(controller) { streamController = controller; } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
+        { session_id: 'synthetic-session-a', title: 'Synthetic A' }, { session_id: 'synthetic-session-b', title: 'Synthetic B' },
+      ] });
+      if (url.endsWith('/runs') && url.includes('synthetic-session-a')) return ok({ run_id: 'synthetic-run-a' });
+      if (url.endsWith('/events')) return delayedStream;
+      if (url === '/api/chat/runs/synthetic-run-a') return ok({ status: 'completed' });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(calls).toContain('/api/chat/sessions/synthetic-session-a/runs'));
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic B/ }));
+    await waitFor(() => expect(calls).toContain('/api/chat/sessions/synthetic-session-b/messages'));
+    const encoder = new TextEncoder();
+    await act(async () => {
+      streamController.enqueue(encoder.encode(`data: ${JSON.stringify(proposal)}\n\n`));
+      streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ event: 'run.completed' })}\n\n`));
+      streamController.close();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByRole('region', { name: 'Hermes 收录建议' })).toBeNull();
+    expect(screen.queryByText(proposal.original_text)).toBeNull();
+    expect(calls.some((url) => url === '/api/inbox/entries')).toBe(false);
+  });
+
   it('sorts capture timestamps newest first, keeps ties deterministic, and places unknown dates last', () => {
     const items = [
       { capture_id: 'z', captured_at: '2026-10-14T00:00:00Z' },
@@ -227,6 +288,39 @@ describe('D075.1 capture interactions', () => {
     expect(await screen.findByRole('heading', { name: '收件箱' })).toBeTruthy();
     expect(screen.queryByLabelText('收录内容')).toBeNull();
     expect(screen.getByRole('button', { name: '立即整理' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('waits for Inbox items to load before focusing and scrolling to an exact capture hash', async () => {
+    const captureId = 'e'.repeat(32);
+    const item = { capture_id: captureId, source_type: 'text', input_type: 'md', captured_at: '2026-10-20T00:00:00Z', raw_path: 'synthetic.md', status: 'completed', display_filename: 'synthetic.md' };
+    let finishInbox!: (response: ReturnType<typeof ok>) => void;
+    const pendingInbox = new Promise<ReturnType<typeof ok>>((resolve) => { finishInbox = resolve; });
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => String(input) === '/api/inbox' ? pendingInbox : Promise.resolve(ok({}))));
+    window.history.replaceState({}, '', `/inbox#capture-${captureId}`);
+    const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => { callback(0); return 1; });
+    try {
+      const { container } = render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+      await screen.findByText('加载中…');
+      await act(async () => { finishInbox(ok({ items: [item] })); await pendingInbox; });
+      await screen.findByRole('heading', { name: 'synthetic.md' });
+      const target = container.querySelector(`#capture-${captureId}`) as HTMLElement;
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' }));
+      expect(document.activeElement).toBe(target);
+    } finally {
+      if (previous) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', previous);
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+    }
+  });
+
+  it('reports an exact Inbox source hash that is absent after loading', async () => {
+    const captureId = 'f'.repeat(32);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [] })));
+    window.history.replaceState({}, '', `/inbox#capture-${captureId}`);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+    expect((await screen.findByRole('status')).textContent).toContain('未在当前收件箱列表中找到指定来源。');
   });
 
   it('defaults to Hermes chat and explicitly switches unsupported attachments into capture', async () => {

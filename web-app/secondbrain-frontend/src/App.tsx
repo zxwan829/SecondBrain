@@ -769,6 +769,7 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   const [organizeAvailable, setOrganizeAvailable] = useState(false);
   const [organizeBusy, setOrganizeBusy] = useState(false);
   const [organizeMessage, setOrganizeMessage] = useState('');
+  const [anchorFeedback, setAnchorFeedback] = useState('');
   const load = async (showLoading = false) => {
     if (showLoading) setLoading(true);
     setError('');
@@ -791,6 +792,23 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
     const timer = window.setInterval(refresh, 5000);
     return () => { window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
   }, []);
+  useEffect(() => {
+    const match = window.location.hash.match(/^#capture-([a-f\d]{32})$/i);
+    if (!match || loading || error) return;
+    const target = document.getElementById(`capture-${match[1]}`);
+    if (!target) {
+      setAnchorFeedback(locale === 'en'
+        ? 'The requested Inbox source was not found in the loaded list.'
+        : '未在当前收件箱列表中找到指定来源。');
+      return;
+    }
+    setAnchorFeedback('');
+    const frame = window.requestAnimationFrame(() => {
+      target.scrollIntoView?.({ block: 'center' });
+      target.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [items, loading, error, locale]);
   const text = locale === 'en';
   const openPreview = async (item: CaptureItem) => {
     setPreview(item); setPreviewText(null); setPreviewError('');
@@ -831,7 +849,8 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   return <section className="capture-page" aria-labelledby="inbox-title">
     <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div><div className="inbox-header-actions"><button type="button" disabled={!organizeAvailable || organizeBusy} title={organizeReason} onClick={() => void organizeNow()}>{organizeBusy ? (text ? 'Organizing…' : '整理中…') : (text ? 'Organize now' : '立即整理')}</button><small>{organizeReason || (text ? 'Settings are saved, but the organizer is not active.' : '设置仅保存，自动整理尚未运行。')}</small>{organizeMessage && <small role="status">{organizeMessage}</small>}</div></header>
     {error && <p role="alert" className="capture-alert">{error}</p>}
-    <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" id={`capture-${item.capture_id}`} key={item.capture_id}>
+    {anchorFeedback && <p role="status" className="capture-processing-note">{anchorFeedback}</p>}
+    <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" id={`capture-${item.capture_id}`} tabIndex={-1} key={item.capture_id}>
       <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{captureDisplayFilename(item, locale)}</h2><p>{item.source_type} · {capturedAtLabel(item.captured_at, locale)}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
       {item.content_preview && <pre className="inbox-preview">{item.content_preview.slice(0, 500)}</pre>}
       {isVisionDescriptionOnly(item)
@@ -920,6 +939,7 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
 
   const loadList = async () => {
     listRequestRef.current?.abort();
+    detailRequestSequence.current += 1;
     detailRequestRef.current?.abort();
     const controller = new AbortController();
     listRequestRef.current = controller;

@@ -47,3 +47,13 @@ Non-2xx responses remain failures; the UI retains the suggestion text and displa
 ## Contract gap
 
 Issue #97 proposes `POST /api/inbox/entries` and channel-neutral capture fields, but leaves exact schema/status to a future Core PR. Before real integration, B must either adopt this synthetic v0 contract or publish a compatible frozen contract. The current frontend tests mock it; no real Core endpoint, server-side consent binding, persistence, or production workflow was exercised.
+
+## Local Mock demonstration and coverage
+
+1. Send an ordinary synthetic chat prompt and return a structured `capture.suggestion` SSE event. Confirm that the preview alone makes no Inbox request.
+2. Enter anything other than the exact phrase and confirm submit stays disabled. Enter `确认收录`; return a valid 201 and verify the Inbox link appears only after validating the response and opaque source ID.
+3. Repeat with HTTP 409 and malformed HTTP 2xx bodies; the suggestion remains visible, an error is shown, and no success link appears.
+4. Start a Run in synthetic Session A, switch to Session B before its delayed SSE arrives, then return the suggestion and terminal frame. The stale proposal must not appear and no Inbox write may occur.
+5. Open Inbox with `#capture-<32-hex-id>` while its list request is pending. Once the synthetic list resolves, verify the exact row receives focus and scrolls into view. When the loaded list omits the ID, verify the explicit not-found status.
+
+These steps describe local synthetic tests only. Real Core HTTP behavior, browser login/session behavior, production persistence, and user acceptance remain NOT RUN.

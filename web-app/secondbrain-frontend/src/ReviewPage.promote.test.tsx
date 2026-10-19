@@ -156,4 +156,27 @@ describe('Review page controlled Promote wiring', () => {
     expect(calls).not.toContain('/api/promote/status');
     expect(calls.some((url) => url.startsWith('/api/promote/review/items/') && url !== '/api/promote/review/items')).toBe(false);
   });
+
+  it('ignores a late detail response after a deep-link change reloads the list', async () => {
+    const first = { ...review, review_path: '10-Review/deep-a.md', title: 'Deep A' };
+    const second = { ...review, review_path: '10-Review/deep-b.md', title: 'Deep B' };
+    let finishFirst!: (response: Response) => void;
+    const pendingFirst = new Promise<Response>((resolve) => { finishFirst = resolve; });
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/promote/review/items') return Promise.resolve(json({ items: [first, second] }));
+      if (url === '/api/promote/review/items/10-Review/deep-a.md') return pendingFirst;
+      if (url === '/api/promote/review/items/10-Review/deep-b.md') return Promise.resolve(json({ ...second, content: '# Current Deep B' }));
+      if (url === '/api/promote/status') return Promise.resolve(json({ promote_enabled: false }));
+      return Promise.resolve(json({}, 404));
+    });
+    const page = render(<ReviewPage locale="en" initialReviewPath={first.review_path} onBack={() => undefined} />);
+    await waitFor(() => expect(calls).toContain('/api/promote/review/items/10-Review/deep-a.md'));
+    page.rerender(<ReviewPage locale="en" initialReviewPath={second.review_path} onBack={() => undefined} />);
+    expect(await screen.findByText('Current Deep B')).toBeTruthy();
+    await act(async () => { finishFirst(json({ ...first, content: '# Stale Deep A' })); await pendingFirst; });
+    expect(screen.getByText('Current Deep B')).toBeTruthy();
+    expect(screen.queryByText('Stale Deep A')).toBeNull();
+  });
 });
