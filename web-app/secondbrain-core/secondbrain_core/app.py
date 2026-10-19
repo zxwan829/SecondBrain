@@ -9,7 +9,7 @@ from starlette.staticfiles import StaticFiles
 
 from .modules.app_auth import AppSessionAuth
 from .modules.auto_organize import OrganizerControlStore, create_auto_organize_router
-from .modules.capture import CaptureService, create_capture_router
+from .modules.capture import CaptureService, create_capture_router, create_inbox_entry_router
 from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.personal_memory import PersonalMemoryStore, create_personal_memory_router
@@ -25,6 +25,7 @@ from .modules.organizer_engine import OrganizerRunner
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
 from .modules.review_promote.core_auth import CorePromoteAuth
+from .modules.review_promote.provenance import PromoteProvenanceVerifier
 from .modules.web_app import create_web_app_router
 
 
@@ -112,6 +113,7 @@ def create_app():
                                              organizer, personal_learning=learning))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
+    app.include_router(create_inbox_entry_router(auth, capture))
     # Journal/Task business records are authoritative and the activity index is
     # repairable under the private Core state root; Hermes has no state mount.
     app.include_router(create_chat_activity_router(auth, hermes, chat_activity_store,
@@ -123,7 +125,9 @@ def create_app():
         os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
     )
     app.include_router(create_notes_router(auth, notes_store))
-    app.include_router(create_knowledge_read_router(auth, KnowledgeReadStore(knowledge_root)))
+    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path)
+    app.include_router(create_knowledge_read_router(
+        auth, KnowledgeReadStore(knowledge_root, provenance_verifier=provenance)))
     vocabulary_store = VocabularyStore(approval_root)
     app.include_router(create_vocabulary_router(auth, vocabulary_store))
     inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")

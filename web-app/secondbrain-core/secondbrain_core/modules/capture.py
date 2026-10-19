@@ -20,7 +20,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, UploadFile
 from pypdf import PdfReader
 
 
@@ -348,7 +348,10 @@ class CaptureService:
 
     def mark_scheduled(self, state):
         with self._active_lock:
+            if state["capture_id"] in self._active:
+                return False
             self._active.add(state["capture_id"])
+            return True
 
     def retry(self, capture_id):
         state = self.get(capture_id)
@@ -370,11 +373,33 @@ class CaptureService:
         self.process(state, raw)
         return state
 
-    def _create_raw(self, filename, data):
+    def _create_raw(self, filename, data, exact_name=False):
         suffix = Path(filename).suffix.lower()
         if suffix not in ALLOWED_SUFFIXES:
             raise ValueError("Unsupported file type")
         safe = _safe_name(filename, suffix)
+        if exact_name:
+            path = self.raw_root / safe
+            try:
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                             getattr(os, "O_NOFOLLOW", 0), 0o600)
+            except FileExistsError:
+                try:
+                    existing_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                    with os.fdopen(existing_fd, "rb") as existing:
+                        info = os.fstat(existing.fileno())
+                        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                                or info.st_mode & 0o077 or existing.read() != data):
+                            raise ValueError("Existing idempotent Raw asset does not match")
+                except OSError as exc:
+                    raise ValueError("Existing idempotent Raw asset is unsafe") from exc
+                return safe
+            with os.fdopen(fd, "wb") as output:
+                output.write(data)
+                output.flush()
+                os.fsync(output.fileno())
+            self._fsync_directory(self.raw_root)
+            return safe
         for attempt in range(1000):
             candidate = safe if attempt == 0 else f"{Path(safe).stem}-{attempt}{suffix}"
             path = self.raw_root / candidate
@@ -393,7 +418,8 @@ class CaptureService:
             return candidate
         raise ValueError("Unable to allocate a collision-safe Raw filename")
 
-    def accept_file(self, filename, data, source_type=None, context=""):
+    def accept_file(self, filename, data, source_type=None, context="", *,
+                    capture_id=None, extra_state=None, exact_raw_name=False):
         if len(data) > MAX_UPLOAD_BYTES:
             raise ValueError("Files must be 20 MiB or smaller")
         suffix = Path((filename or "")).suffix.lower()
@@ -406,14 +432,16 @@ class CaptureService:
                                        ".pdf": "pdf", ".png": "image", ".jpg": "image",
                                        ".jpeg": "image", ".webp": "image", ".gif": "image"}.get(
                                            suffix, "audio" if suffix in AUDIO_SUFFIXES else "file"))
-        capture_id = uuid.uuid4().hex
+        capture_id = capture_id or uuid.uuid4().hex
+        if not re.fullmatch(r"[0-9a-f]{32}", capture_id):
+            raise ValueError("Invalid Capture ID")
         raw_data = data
         source_url = None
         if source_type == "url":
             source_url = data.decode("utf-8").strip()
             raw_data = f"Original URL: {source_url}\nCaptured at: {captured_at}\n".encode("utf-8")
         try:
-            raw_path = self._create_raw(filename, raw_data)
+            raw_path = self._create_raw(filename, raw_data, exact_name=exact_raw_name)
         except (OSError, ValueError) as exc:
             raise HTTPException(500, "Could not preserve Raw evidence") from exc
         state = {"capture_id": capture_id, "source_type": source_type,
@@ -424,11 +452,96 @@ class CaptureService:
                  "raw_sha256": hashlib.sha256(raw_data).hexdigest(),
                  "review_path": None, "status": "processing", "error": None,
                  "title": Path(raw_path).stem, "content_preview": raw_data[:4096].decode("utf-8", errors="replace") if suffix in {".txt", ".md", ".markdown"} else "",
-                 "capture_context": context[:2000]}
+                 "capture_context": context[:2000], **(extra_state or {})}
         if source_url is not None:
             state["source_url"] = source_url
         self._write_state(state)
         return state
+
+    def accept_channel_text(self, *, text, source_channel, source_event_id, intent,
+                            occurred_at, consent_subject):
+        """Persist one explicit, channel-scoped Inbox event with durable idempotency.
+
+        This first adapter accepts authenticated Web actions only. Caller-supplied
+        event IDs are idempotency keys, never caller identity or consent evidence.
+        """
+        if source_channel != "web":
+            raise HTTPException(501, "This Inbox channel has no trusted Core adapter")
+        if (not isinstance(source_event_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", source_event_id)
+                or not isinstance(intent, str)
+                or intent not in {"explicit_capture", "journal_intent", "task_intent"}):
+            raise HTTPException(400, "Inbox event identity or intent is invalid")
+        if not isinstance(consent_subject, str) or not consent_subject:
+            raise HTTPException(401, "Authenticated App identity is required")
+        if not isinstance(occurred_at, str) or len(occurred_at) > 64:
+            raise HTTPException(400, "Inbox event time is invalid")
+        try:
+            occurred = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+            if occurred.tzinfo is None:
+                raise ValueError
+        except ValueError as exc:
+            raise HTTPException(400, "Inbox event time must include a timezone") from exc
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
+            raise HTTPException(400, "Text must contain 1-200000 characters")
+        capture_id = hashlib.sha256(
+            ("secondbrain-inbox-event\0" + source_channel + "\0" + source_event_id).encode("utf-8")
+        ).hexdigest()[:32]
+        event_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        request_digest = hashlib.sha256(json.dumps(
+            {"source_channel": source_channel, "source_event_id": source_event_id,
+             "occurred_at": occurred.isoformat(), "intent": intent,
+             "original_text_sha256": event_digest},
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        lock_path = self.state_root / (".inbox-event-" + capture_id + ".lock")
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            info = os.fstat(lock_fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600):
+                raise HTTPException(503, "Inbox idempotency state is unsafe")
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            state_path = self._state_path(capture_id)
+            existing = self._read_state(state_path) if state_path.exists() else None
+            if existing:
+                if (existing.get("source_channel") != source_channel
+                        or existing.get("source_event_id") != source_event_id
+                        or existing.get("intent") != intent
+                        or existing.get("original_text_sha256") != event_digest
+                        or existing.get("source_event_request_sha256") != request_digest):
+                    raise HTTPException(409, "Inbox event key is already bound to different content")
+                raw_path = existing.get("raw_path")
+                if not isinstance(raw_path, str) or Path(raw_path).name != raw_path:
+                    raise HTTPException(503, "Inbox event recovery requires review")
+                try:
+                    raw_fd = os.open(self.raw_root / raw_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                    with os.fdopen(raw_fd, "rb") as raw:
+                        raw_info = os.fstat(raw.fileno())
+                        raw_bytes = raw.read()
+                    if (not stat.S_ISREG(raw_info.st_mode) or raw_info.st_uid != os.geteuid()
+                            or hashlib.sha256(raw_bytes).hexdigest() != existing.get("raw_sha256")
+                            or raw_bytes != text.encode("utf-8")):
+                        raise HTTPException(409, "Inbox event source no longer matches its stored version")
+                except OSError as exc:
+                    raise HTTPException(503, "Inbox event recovery requires review") from exc
+                return existing, True
+            server_time = _now()
+            evidence = {"kind": "authenticated_app_explicit_action", "subject": consent_subject,
+                        "recorded_at": server_time}
+            state = self.accept_file(
+                "Inbox-" + capture_id + ".md", text.encode("utf-8"), "markdown",
+                context="explicit channel event; consent recorded by Core",
+                capture_id=capture_id, exact_raw_name=True,
+                extra_state={"source_channel": source_channel, "source_event_id": source_event_id,
+                             "occurred_at": occurred.isoformat(), "intent": intent,
+                             "original_text_sha256": event_digest,
+                             "source_event_request_sha256": request_digest,
+                             "consent_evidence": evidence},
+            )
+            return state, False
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
     def accept_text(self, text, source_type="text", context=""):
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
@@ -873,5 +986,69 @@ def create_capture_router(auth, service):
         return FileResponse(path, media_type=media_type, content_disposition_type="inline",
                             headers={"Content-Disposition": "inline",
                                      "X-Content-Type-Options": "nosniff"})
+
+    return router
+
+
+def create_inbox_entry_router(auth, service):
+    """Channel-neutral Core intake surface; this revision trusts App/Web only."""
+    router = APIRouter(prefix="/api/inbox/entries")
+
+    @router.post("", status_code=202)
+    async def create_entry(request: Request, response: Response,
+                           background_tasks: BackgroundTasks, body: dict):
+        subject = auth.require_action(request, "capture.write")
+        allowed = {"original_text", "source_channel", "source_event_id", "occurred_at",
+                   "intent", "attachment_refs"}
+        if not isinstance(body, dict) or set(body) - allowed:
+            raise HTTPException(400, "Client-supplied identity or consent evidence is not accepted")
+        if body.get("intent") == "approved_suggestion":
+            raise HTTPException(409, "Approved suggestions must use an existing Core approval")
+        attachments = body.get("attachment_refs", [])
+        if not isinstance(attachments, list) or attachments:
+            raise HTTPException(501, "This Core intake revision does not accept attachment references")
+        state, replayed = service.accept_channel_text(
+            text=body.get("original_text"), source_channel=body.get("source_channel"),
+            source_event_id=body.get("source_event_id"), intent=body.get("intent"),
+            occurred_at=body.get("occurred_at"), consent_subject=subject,
+        )
+        if state.get("status") == "processing" and service.mark_scheduled(state):
+            raw_path = service.raw_root / state["raw_path"]
+            try:
+                raw = raw_path.read_bytes()
+            except OSError as exc:
+                raise HTTPException(503, "Inbox capture recovery requires review") from exc
+            background_tasks.add_task(service.process, state, raw)
+        response.headers["Cache-Control"] = "private, no-store"
+        result = {"inbox_id": state["capture_id"], "status": state["status"],
+                  "captured_at": state["captured_at"],
+                  "source": {"channel": state["source_channel"], "event_id": state["source_event_id"]},
+                  "intent": state["intent"], "consent_evidence": state["consent_evidence"],
+                  "replayed": replayed}
+        error = state.get("error")
+        if isinstance(error, dict) and error.get("code") in SUMMARY_ERROR_CODES:
+            result["error_code"] = error["code"]
+        return result
+
+    @router.get("/{inbox_id}")
+    def get_entry(request: Request, inbox_id: str, response: Response):
+        auth.require_action(request, "inbox.read")
+        if not re.fullmatch(r"[0-9a-f]{32}", inbox_id):
+            raise HTTPException(404, "Inbox entry not found")
+        state = service.get(inbox_id)
+        if state.get("source_channel") is None:
+            raise HTTPException(404, "Inbox entry not found")
+        response.headers["Cache-Control"] = "private, no-store"
+        result = {"inbox_id": inbox_id, "status": state.get("status", "unknown"),
+                  "captured_at": state.get("captured_at"), "occurred_at": state.get("occurred_at"),
+                  "source": {"channel": state.get("source_channel"), "event_id": state.get("source_event_id")},
+                  "intent": state.get("intent"), "consent_evidence": state.get("consent_evidence"),
+                  "source_ref": {"capture_id": inbox_id,
+                                 "review_path": state.get("review_path"),
+                                 "review_sha256": state.get("review_sha256")}}
+        error = state.get("error")
+        if isinstance(error, dict) and error.get("code") in SUMMARY_ERROR_CODES:
+            result["error_code"] = error["code"]
+        return result
 
     return router

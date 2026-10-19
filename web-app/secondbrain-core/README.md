@@ -51,6 +51,26 @@ unchanged.
   `记一下` / `写日记` phrase, append the original text to a per-date JSONL file,
   and use a persistent idempotency key. Chat's anchored explicit intent calls this
   API directly; ordinary Chat and Hermes tools cannot call this path implicitly.
+- The channel-neutral Core intake contract is `POST /api/inbox/entries` with
+  `original_text`, `source_channel`, `source_event_id`, `occurred_at`, `intent`,
+  and optional `attachment_refs`. This local revision accepts only authenticated
+  `web` events; event IDs are idempotency keys, not caller identity. Browser
+  `occurred_at` is preserved as source metadata; Core `captured_at` is the
+  authoritative receipt time. Core creates consent evidence from the successful
+  App action and persists the original text through the existing Capture Raw →
+  Review path. Replays with the same event key and request are idempotent;
+  changed payloads conflict. `explicit_capture`, `journal_intent`, and
+  `task_intent` are stored in Inbox; Journal and Task are not executed here.
+  `approved_suggestion` returns 409 until it is bound to an existing Core
+  approval. Hermes callers and attachment references require trusted adapters
+  and are rejected here. `GET /api/inbox/entries/{inbox_id}` restores the exact
+  stored event after refresh under the App session.
+- Knowledge source status can become `verified` only when a single exact
+  promotion is supported by matching Knowledge bytes, approved record, version
+  Claim, promoted decision, bounded Audit record, and current Review bytes. The
+  verifier reads only the configured Review root and exact recorded item; it
+  never searches Raw/Private. Any missing, corrupt, oversized, duplicate, or
+  drifted evidence returns `missing/unverified` with no source link.
 - Task API is always routed but returns an explicit unavailable response unless
   `SB_TASK_ROOT` names an existing Core-owned `0700` directory. It uses one
   locked, atomically replaced JSON store for idempotent create, status/date query,
@@ -75,6 +95,11 @@ unchanged.
   forwarded scheme is HTTPS.
 - Production Promote. Hermes Knowledge remains read-only; Core Knowledge remains
   read-only and `SB_PROMOTE_ENABLED=false` in production.
+- OS-level Promote process/UID and filesystem mount separation is not established
+  by this local code. The existing worker is called in-process, so the new
+  provenance verifier does not make Promote safe to enable. A dedicated worker
+  identity, read-only approval evidence, narrowly writable Knowledge target, and
+  deployment topology require separate design, review, and authorization.
 - Journal has only local synthetic tests. It has not been deployed or mounted
   against the production `50-Journal` directory; no real Journal data was read
   or written.
