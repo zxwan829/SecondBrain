@@ -6,7 +6,16 @@ type: environment-baseline
 ---
 # Environment Baseline
 
-## 最新生产快照（2026-10-19；M2 P1 App-only 部署，Issue #90）
+## 最新生产快照（2026-10-19；Hermes 静态 IP 冲突修复，Issue #76）
+
+- 按 Issue #76 评论 #6268120112 完成一次 Hermes-only 修复。已确认根因是 Hermes Compose 固定请求 `172.18.0.2`，与健康 App 在 `secondbrain_default` 上实际占用的 `172.18.0.2/16` 冲突；失败 Hermes 的 Docker 状态为 Created / `Address already in use`。本次仅移除 Hermes 网络项中的 `ipv4_address`，由 Docker 动态分配；服务名、网络、`192.168.3.27:9119` 发布、镜像、挂载、身份、环境/Secret 引用及其他服务配置保持不变。
+- 部署前正式 Compose SHA-256 `d34cb7492d3740ea13d6518ec17532ac855bded9bd921d318827c25aaea949d3`。即时回滚快照位于 `/volume1/docker/secondbrain/rollback/hermes-ip-conflict-20261019T132138Z/compose.yaml`；目录 `0700 root:root`，文件 `0600 root:root`，快照 SHA 与部署前正式文件相同且逐字节比较通过。旁置 `metadata.txt` 同为 `0600 root:root`，记录旧容器及镜像 ID；原 Hermes 镜像 `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a` 与 writable snapshot image `sha256:401cbdbd5254164c0fd7d6276f12b9e4b14ec8f4dea272ce4a99a333aaa075bb` 均保留。候选配置 `docker compose config --quiet` 通过，语义 diff 仅删除该一行。部署后 Compose SHA-256 为 `5703458d5db4703d3a1e9377c3aafbfacc470863b92c15f4305e802f64b1c17b`。
+- 唯一容器操作为 Hermes 服务 `docker compose ... up -d --no-deps --no-build --force-recreate --pull never hermes`，未重启 Docker/DSM/Container Manager，未操作其他服务。新 Hermes 容器 `908a4b37c41344e97441013a18995e727971a10242d49dee65e39f3bf00c43d6`，镜像仍为 `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`，running、RestartCount 0、StartedAt `2026-10-19T13:22:45.184181626Z`；无 Docker healthcheck。新 endpoint `172.18.0.3/16`，与 App `.2` 不同，网络 ID 未变；容器 endpoint ID `4855c34882eba07c95396bbaff3d016df083e0f5ccdc9497dbe2283a1c19efda`。Dashboard `192.168.3.27:9119/` 返回 302 登录重定向；App 容器经 Compose DNS 请求 `http://hermes:8642/health` 返回 200；App 自身 `/health` 也为 200。启动最初观察到短暂连接拒绝/重置，未重建或重试；约 35 秒内 API 与 Dashboard 检查通过。
+- App 保持容器 `9562e402f72b67b0eacba3a99a0fc23c7c23098c5b8ecebf8517f552dbb29c39`、镜像 `sha256:728fc7d180f7687c90c58be2e9beb970a4010bfb10bd04777371861f3139aeeb`、healthy、RestartCount 0；Vaultwarden 保持容器 `964dd1d5a4b506da62f55e26461be56c08a6d9e253b83b617a6b1a0d9dc01270`、healthy、RestartCount 0。13 个容器总数不变；事件核对只有 Hermes 生命周期变化，未见其他容器生命周期或健康状态变化。Hermes 原镜像、旧容器记录及用户备份未清理。
+- Hermes 原有挂载、RW 捕获根、只读 SecondBrain 根、端口和网络保持不变；App 的 `SB_PROMOTE_ENABLED=false`、Knowledge RO、Private 未挂载保持。没有业务写入、真实 Vault 读取、模型调用或用户业务验收；没有回滚。根因 **CONFIRMED**，Hermes 服务恢复 **PASS**。容器启动观察及只读健康检查不等于完整 Chat/Run 或业务功能验收。
+- 仓库部署环境变量示例采用 `http://hermes:8642` 的 Compose 服务 DNS，没有生产 Compose 模板硬编码 Hermes `.2`；唯一额外的 `.2:9119` 源码命中是 dashboard auth 测试 URL，不是运行部署配置。本次不改业务源码。完整执行证据见 [Issue #76](https://github.com/zxwan829/SecondBrain/issues/76)；本节为最近一次经现场核验的运行快照。
+
+## 前一生产快照（2026-10-19；M2 P1 App-only 部署，Issue #90）
 
 - 固定源码为 GitHub main `443991061ea446686b54bfb9e8b2d980183f1338`。使用 `web-app/Dockerfile.app`、`web-app/` 上下文及 `VITE_ENABLE_NOTES=true` 在 NAS 构建，候选 `secondbrain-app:m2-44399106-app-only` 的 Image ID 为 `sha256:e55b0e9c65433a208df0f66a68ec2f91e2341b163108e5d09030ac4a7b343f47`；镜像标签记录源码 SHA。App 以 `1026:100` 运行。构建警告包括 legacy builder 弃用、npm audit 4 项（2 low、2 moderate）、若干弃用依赖、Vite 大 chunk 与 pip root 安装提示；未升级依赖。
 - 隔离预检使用 `network=none`、只读 rootfs、无生产 Secret/卷/端口的临时容器和合成凭据/目录。`/health`、`/chat/blank`、`/inbox/source`、`/review`、`/knowledge`、`/notes` 均 200；14 个 JS/CSS 资源（含 Notes chunk）均 200；匿名 Chat 与 Promote API 均 401 JSON。临时容器及精确合成目录已移除；候选镜像和构建证据保留。

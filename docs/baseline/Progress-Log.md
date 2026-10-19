@@ -5,6 +5,14 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-19 — Hermes 静态 IP 冲突修复与单服务恢复（Issue #76）
+
+- 按 Issue #76 评论 #6268120112 执行一次 Hermes-only 修复。实时 Compose 前 SHA-256 `d34cb7492d3740ea13d6518ec17532ac855bded9bd921d318827c25aaea949d3`，Hermes 固定请求 `172.18.0.2`，而 App endpoint 已占用同一地址；这与失败容器 `.State.Error=Address already in use` 相符。仓库运行示例使用 `hermes:8642` 服务 DNS；没有发现部署模板对该静态地址的依赖。
+- 建立精确回滚快照 `/volume1/docker/secondbrain/rollback/hermes-ip-conflict-20261019T132138Z/compose.yaml`：目录 `0700 root:root`、文件 `0600 root:root`，SHA `d34cb7492d3740ea13d6518ec17532ac855bded9bd921d318827c25aaea949d3`，与切换前正式 Compose 逐字节一致；元数据记录旧容器/镜像。候选 `docker compose config --quiet` 通过，唯一差异为删除 Hermes `ipv4_address: 172.18.0.2`。正式 Compose 更新后 SHA `5703458d5db4703d3a1e9377c3aafbfacc470863b92c15f4305e802f64b1c17b`。
+- 只执行一次 Hermes-only `up -d --no-deps --no-build --force-recreate --pull never hermes`。新容器 `908a4b37c41344e97441013a18995e727971a10242d49dee65e39f3bf00c43d6` 使用原镜像 `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`，running、RestartCount 0，动态 endpoint `172.18.0.3` 与 App `.2` 不同。`http://hermes:8642/health` 从 App 网络返回 200，宿主 Dashboard `192.168.3.27:9119/` 返回 302 登录重定向；App health 200。新启动后短暂未就绪，约 35 秒检查通过，未重复重建。
+- App 与 Vaultwarden 容器身份、镜像和健康状态未改变；13 个容器总数不变，Docker daemon/DSM/Container Manager 未重启，其他服务未操作。Promote OFF、Knowledge RO、Private 无挂载及 Hermes 既有挂载/安全边界保持。没有业务写入、真实 Vault 内容读取或模型调用；用户业务验收未运行，无回滚。
+- 结论：静态地址冲突根因 **CONFIRMED**，Hermes-only 恢复 **PASS**。恢复状态及 Compose 动态分配策略同步到 `Environment-Baseline.md`；历史环境快照保留。源码无部署模板使用静态 `.2`，因此本次无代码改动。完整脱敏执行证据已提交 Issue #76；具体回滚快照及现场状态见该 Issue。
+
 ## 2026-10-19 — M2 P1 App-only 生产部署（Issue #90）
 
 - 按 Issue #90 授权，固定源码 `443991061ea446686b54bfb9e8b2d980183f1338`；用 `web-app/Dockerfile.app`、`web-app/` 构建上下文和 `VITE_ENABLE_NOTES=true` 构建完整 App，候选 `secondbrain-app:m2-44399106-app-only`，Image ID `sha256:e55b0e9c65433a208df0f66a68ec2f91e2341b163108e5d09030ac4a7b343f47`。构建前已核验 NAS 资源、旧 App 镜像、Compose 和回滚条件；使用 NAS legacy builder 并限制 CPU 0-1、内存 8 GiB。构建日志警告包括 4 项 npm audit（2 low/2 moderate）、弃用依赖、Vite 大 chunk、pip root 安装提示及 legacy builder 弃用；未升级依赖。
