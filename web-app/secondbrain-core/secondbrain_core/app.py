@@ -26,6 +26,7 @@ from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
 from .modules.review_promote.core_auth import CorePromoteAuth
 from .modules.review_promote.provenance import PromoteProvenanceVerifier
+from .modules.review_promote.subprocess_worker_client import SubprocessPromoteWorker
 from .modules.web_app import create_web_app_router
 
 
@@ -67,6 +68,13 @@ def create_app():
         raise RuntimeError("B1b operation directory must be private and owned by the Core UID")
     service = PromoteService(review_root, knowledge_root,
                              approvals_path, audit_path)
+    worker_mode = os.environ.get("SB_PROMOTE_WORKER_MODE", "inline").strip().lower()
+    if worker_mode == "subprocess":
+        service.worker = SubprocessPromoteWorker(
+            review_root, knowledge_root, audit_path, approvals_path,
+        )
+    elif worker_mode != "inline":
+        raise RuntimeError("SB_PROMOTE_WORKER_MODE must be inline or subprocess")
     app_password_file = os.environ["SB_APP_PASSWORD_FILE"]
     auth = AppSessionAuth(app_password_file, origins, ttl)
     promote_unlock_ttl = int(os.environ.get("SB_PROMOTE_UNLOCK_TTL", "900"))
@@ -82,6 +90,13 @@ def create_app():
                                 scheduler_enabled=organizer_options["scheduler_enabled"])
     capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root,
                              processors=MultimodalCaptureProcessors(hermes))
+    notes_store = configured_notes_store(
+        os.environ.get("SB_NOTES_DRAFTS_ROOT", "").strip(),
+        os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
+    )
+    inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")
+    inbox_proposal_sources = InboxProposalSources(capture, notes_store)
+    vocabulary_store = VocabularyStore(approval_root)
     memory_enabled_value = os.environ.get("SB_PERSONAL_MEMORY_ENABLED", "false").strip().lower()
     if memory_enabled_value not in {"true", "false"}:
         raise RuntimeError("SB_PERSONAL_MEMORY_ENABLED must be true or false")
@@ -113,26 +128,23 @@ def create_app():
                                              organizer, personal_learning=learning))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
-    app.include_router(create_inbox_entry_router(auth, capture))
+    app.include_router(create_inbox_entry_router(
+        auth, capture, inbox_proposals, inbox_proposal_sources, vocabulary_store,
+    ))
     # Journal/Task business records are authoritative and the activity index is
     # repairable under the private Core state root; Hermes has no state mount.
     app.include_router(create_chat_activity_router(auth, hermes, chat_activity_store,
                                                    journal_store, task_store))
     app.include_router(create_journal_router(auth, journal_store, hermes, chat_activity_store))
     app.include_router(create_task_router(auth, task_store, hermes, chat_activity_store))
-    notes_store = configured_notes_store(
-        os.environ.get("SB_NOTES_DRAFTS_ROOT", "").strip(),
-        os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
-    )
     app.include_router(create_notes_router(auth, notes_store))
-    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path)
+    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,
+                                           operations_root=promote_operations_path)
     app.include_router(create_knowledge_read_router(
         auth, KnowledgeReadStore(knowledge_root, provenance_verifier=provenance)))
-    vocabulary_store = VocabularyStore(approval_root)
     app.include_router(create_vocabulary_router(auth, vocabulary_store))
-    inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")
     app.include_router(create_inbox_proposal_router(
-        auth, inbox_proposals, InboxProposalSources(capture, notes_store), vocabulary_store,
+        auth, inbox_proposals, inbox_proposal_sources, vocabulary_store,
         journal_store=journal_store, capture_service=capture))
     # Default-off, separately injected data root. When disabled, Core neither creates
     # the directory nor scans chat history or starts a background memory task.

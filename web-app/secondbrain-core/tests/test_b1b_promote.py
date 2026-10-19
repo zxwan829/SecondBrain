@@ -227,6 +227,52 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, restored.text)
         self.assertEqual(restored.json()["status"], "promoted")
 
+    def test_synthetic_confirm_uses_bounded_subprocess_worker_candidate(self):
+        self.env["SB_PROMOTE_ENABLED"] = "true"
+        self.env["SB_PROMOTE_WORKER_MODE"] = "subprocess"
+        self.client.close()
+        self.app = self._create_app()
+        self.client = TestClient(self.app, base_url="https://testserver")
+        self.login()
+        self.assertEqual(self.unlock().status_code, 200)
+        preview = self.preview().json()
+        result = self.confirm(preview["preview_id"])
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()["status"], "promoted")
+        target = self.knowledge / "synthetic-approved.md"
+        self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(), preview["output_sha256"])
+        operation = self.client.get(f"/api/promote/operations/{preview['request_id']}", headers=self.headers)
+        self.assertEqual(operation.status_code, 200, operation.text)
+        self.assertEqual(operation.json()["status"], "promoted")
+        source = self.client.get("/api/knowledge/search?q=Synthetic approved", headers=self.headers).json()["items"][0]
+        result = self.client.get(f"/api/knowledge/items/{source['id']}/source", headers=self.headers)
+        self.assertEqual(result.json()["provenance_status"], "verified")
+
+    def test_legacy_b1a_approval_is_verified_only_for_reconstructed_canonical_bytes(self):
+        from secondbrain_core.modules.review_promote.service import PromoteService
+
+        request_id = "legacy-b1a-synthetic-1"
+        digest = hashlib.sha256(self.source).hexdigest()
+        approved_at = "2026-10-20T00:00:00+00:00"
+        service = PromoteService(str(self.review), str(self.knowledge),
+                                 str(self.state / "approvals"), str(self.state / "audit.jsonl"))
+        result = service.approve_and_promote_as(
+            "owner", {"request_id": request_id, "review_path": "candidate.md",
+                      "review_sha256": digest, "target_filename": "synthetic-approved.md"},
+            str(self.review), approved_at=approved_at,
+        )
+        self.assertEqual(result["status"], "promoted")
+        self.assertFalse((self.state / "b1b-operations" / (request_id + ".json")).exists())
+        self.login()
+        row = self.client.get("/api/knowledge/search?q=Synthetic approved", headers=self.headers).json()["items"][0]
+        source = self.client.get(f"/api/knowledge/items/{row['id']}/source", headers=self.headers)
+        self.assertEqual(source.status_code, 200, source.text)
+        self.assertEqual(source.json(), {
+            "status": "available", "provenance_status": "verified",
+            "source": {"kind": "review", "ref": "candidate.md", "sha256": digest,
+                       "request_id": request_id},
+        })
+
     def test_promoted_source_fails_closed_when_any_pinned_review_evidence_drifts(self):
         self.assertEqual(self.unlock().status_code, 200)
         preview = self.preview().json()
@@ -252,6 +298,56 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         audit_path.write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
         response = self.client.get(f"/api/knowledge/items/{row['id']}/source", headers=self.headers)
         self.assertEqual(response.json(), {
+            "status": "unavailable", "provenance_status": "unverified", "source": None,
+        })
+
+    def test_promoted_source_rejects_knowledge_and_audit_hashes_that_drift_together(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        preview = self.preview().json()
+        self.assertEqual(self.confirm(preview["preview_id"]).status_code, 200)
+        target = self.knowledge / "synthetic-approved.md"
+        original = target.read_bytes()
+        original_digest = hashlib.sha256(original).hexdigest()
+        operation_path = self.state / "b1b-operations" / (preview["request_id"] + ".json")
+        original_operation = json.loads(operation_path.read_text())
+        self.assertEqual(original_operation["confirm_intent"], "promote_exact_preview")
+        self.assertEqual(original_operation["output_sha256"], original_digest)
+
+        # Keep marker, Review, Approval, Claim and Decision intact. A coordinated
+        # Knowledge + Audit digest rewrite must still fail against rendered bytes
+        # and the durable preview output digest.
+        drifted = original + b"Unapproved body drift.\n"
+        target.write_bytes(drifted)
+        audit_path = self.state / "audit.jsonl"
+        audit = json.loads(audit_path.read_text())
+        audit["output_sha256"] = hashlib.sha256(drifted).hexdigest()
+        audit_path.write_text(json.dumps(audit, sort_keys=True, separators=(",", ":")) + "\n")
+
+        search = self.client.get("/api/knowledge/search?q=Synthetic approved", headers=self.headers)
+        self.assertEqual(search.status_code, 200, search.text)
+        item = next(value for value in search.json()["items"]
+                    if value["title"] == "Synthetic approved note")
+        source = self.client.get(f"/api/knowledge/items/{item['id']}/source", headers=self.headers)
+        self.assertEqual(source.status_code, 200, source.text)
+        self.assertEqual(source.json(), {
+            "status": "unavailable", "provenance_status": "unverified", "source": None,
+        })
+        self.assertEqual(json.loads(operation_path.read_text()), original_operation)
+
+    def test_promoted_source_requires_the_original_durable_confirmation_intent(self):
+        self.assertEqual(self.unlock().status_code, 200)
+        preview = self.preview().json()
+        self.assertEqual(self.confirm(preview["preview_id"]).status_code, 200)
+        row = self.client.get("/api/knowledge/search?q=Synthetic approved", headers=self.headers).json()["items"][0]
+        operation_path = self.state / "b1b-operations" / (preview["request_id"] + ".json")
+        operation = json.loads(operation_path.read_text())
+        self.assertEqual(operation["confirm_intent"], "promote_exact_preview")
+        operation["confirm_intent"] = "promote_other_content"
+        operation_path.write_text(json.dumps(operation, sort_keys=True, separators=(",", ":")) + "\n")
+        operation_path.chmod(0o600)
+        source = self.client.get(f"/api/knowledge/items/{row['id']}/source", headers=self.headers)
+        self.assertEqual(source.status_code, 200, source.text)
+        self.assertEqual(source.json(), {
             "status": "unavailable", "provenance_status": "unverified", "source": None,
         })
 

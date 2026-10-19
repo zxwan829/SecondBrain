@@ -22,6 +22,7 @@ from urllib.parse import urljoin, urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, UploadFile
 from pypdf import PdfReader
+from .channel_identity import authenticated_web_identity
 
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -458,21 +459,79 @@ class CaptureService:
         self._write_state(state)
         return state
 
-    def accept_channel_text(self, *, text, source_channel, source_event_id, intent,
-                            occurred_at, consent_subject):
+    def _verified_attachment_refs(self, attachment_refs):
+        if not isinstance(attachment_refs, list) or len(attachment_refs) > 5:
+            raise HTTPException(400, "At most five verified Capture attachment references are accepted")
+        verified = []
+        seen = set()
+        for item in attachment_refs:
+            if (not isinstance(item, dict) or set(item) != {"capture_id", "sha256"}
+                    or not isinstance(item.get("capture_id"), str)
+                    or not re.fullmatch(r"[0-9a-f]{32}", item["capture_id"])
+                    or not isinstance(item.get("sha256"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", item["sha256"])):
+                raise HTTPException(400, "Attachment references must use a Capture ID and SHA-256")
+            capture_id = item["capture_id"]
+            if capture_id in seen:
+                raise HTTPException(400, "Duplicate attachment reference")
+            seen.add(capture_id)
+            state = self.get(capture_id)
+            if state.get("source_channel") not in {None, "web"}:
+                raise HTTPException(409, "Attachment source has no trusted Core channel identity")
+            raw_name = state.get("raw_path")
+            if not isinstance(raw_name, str) or Path(raw_name).name != raw_name or raw_name in {".", ".."}:
+                raise HTTPException(404, "Attachment source is unavailable")
+            try:
+                root_fd = os.open(self.raw_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                                  getattr(os, "O_NOFOLLOW", 0))
+                try:
+                    fd = os.open(raw_name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd)
+                finally:
+                    os.close(root_fd)
+                try:
+                    info = os.fstat(fd)
+                    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                            or info.st_size > MAX_UPLOAD_BYTES
+                            or state.get("raw_sha256") != item["sha256"]):
+                        raise HTTPException(409, "Attachment source version does not match its Capture record")
+                    digest = hashlib.sha256()
+                    while True:
+                        chunk = os.read(fd, 65536)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                finally:
+                    os.close(fd)
+            except HTTPException:
+                raise
+            except OSError as exc:
+                raise HTTPException(404, "Attachment source is unavailable") from exc
+            if digest.hexdigest() != item["sha256"]:
+                raise HTTPException(409, "Attachment source changed")
+            verified.append({"capture_id": capture_id, "sha256": item["sha256"]})
+        return verified
+
+    def accept_channel_text(self, *, text, identity, source_event_id, intent,
+                            occurred_at, approved_proposal=None, attachment_refs=None):
         """Persist one explicit, channel-scoped Inbox event with durable idempotency.
 
         This first adapter accepts authenticated Web actions only. Caller-supplied
         event IDs are idempotency keys, never caller identity or consent evidence.
         """
-        if source_channel != "web":
+        if (getattr(identity, "channel", None) != "web" or
+                getattr(identity, "authentication", None) != "app_session_action"):
             raise HTTPException(501, "This Inbox channel has no trusted Core adapter")
+        source_channel = identity.channel
         if (not isinstance(source_event_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", source_event_id)
                 or not isinstance(intent, str)
-                or intent not in {"explicit_capture", "journal_intent", "task_intent"}):
+                or intent not in {"explicit_capture", "journal_intent", "task_intent", "approved_suggestion"}):
             raise HTTPException(400, "Inbox event identity or intent is invalid")
+        consent_subject = getattr(identity, "subject", None)
         if not isinstance(consent_subject, str) or not consent_subject:
             raise HTTPException(401, "Authenticated App identity is required")
+        if (intent == "approved_suggestion") != isinstance(approved_proposal, dict):
+            raise HTTPException(409, "Approved suggestion must be bound to a current Core approval")
+        verified_attachments = self._verified_attachment_refs(attachment_refs or [])
         if not isinstance(occurred_at, str) or len(occurred_at) > 64:
             raise HTTPException(400, "Inbox event time is invalid")
         try:
@@ -490,7 +549,9 @@ class CaptureService:
         request_digest = hashlib.sha256(json.dumps(
             {"source_channel": source_channel, "source_event_id": source_event_id,
              "occurred_at": occurred.isoformat(), "intent": intent,
-             "original_text_sha256": event_digest},
+             "original_text_sha256": event_digest,
+             "approved_proposal": approved_proposal,
+             "attachment_refs": verified_attachments},
             sort_keys=True, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
         lock_path = self.state_root / (".inbox-event-" + capture_id + ".lock")
@@ -508,6 +569,8 @@ class CaptureService:
                         or existing.get("source_event_id") != source_event_id
                         or existing.get("intent") != intent
                         or existing.get("original_text_sha256") != event_digest
+                        or existing.get("approved_proposal") != approved_proposal
+                        or existing.get("attachment_refs", []) != verified_attachments
                         or existing.get("source_event_request_sha256") != request_digest):
                     raise HTTPException(409, "Inbox event key is already bound to different content")
                 raw_path = existing.get("raw_path")
@@ -526,8 +589,13 @@ class CaptureService:
                     raise HTTPException(503, "Inbox event recovery requires review") from exc
                 return existing, True
             server_time = _now()
-            evidence = {"kind": "authenticated_app_explicit_action", "subject": consent_subject,
+            evidence = {"kind": "authenticated_app_approved_proposal" if approved_proposal else
+                        "authenticated_app_explicit_action", "subject": consent_subject,
                         "recorded_at": server_time}
+            if approved_proposal:
+                evidence.update({"proposal_id": approved_proposal["proposal_id"],
+                                 "proposal_version": approved_proposal["version"],
+                                 "source_version": approved_proposal["source_version"]})
             state = self.accept_file(
                 "Inbox-" + capture_id + ".md", text.encode("utf-8"), "markdown",
                 context="explicit channel event; consent recorded by Core",
@@ -536,7 +604,9 @@ class CaptureService:
                              "occurred_at": occurred.isoformat(), "intent": intent,
                              "original_text_sha256": event_digest,
                              "source_event_request_sha256": request_digest,
-                             "consent_evidence": evidence},
+                             "consent_evidence": evidence,
+                             "approved_proposal": approved_proposal,
+                             "attachment_refs": verified_attachments},
             )
             return state, False
         finally:
@@ -990,8 +1060,8 @@ def create_capture_router(auth, service):
     return router
 
 
-def create_inbox_entry_router(auth, service):
-    """Channel-neutral Core intake surface; this revision trusts App/Web only."""
+def create_inbox_entry_router(auth, service, proposals=None, proposal_sources=None, vocabulary_store=None):
+    """Channel-neutral Core intake; only server-authenticated adapters may create events."""
     router = APIRouter(prefix="/api/inbox/entries")
 
     @router.post("", status_code=202)
@@ -999,18 +1069,45 @@ def create_inbox_entry_router(auth, service):
                            background_tasks: BackgroundTasks, body: dict):
         subject = auth.require_action(request, "capture.write")
         allowed = {"original_text", "source_channel", "source_event_id", "occurred_at",
-                   "intent", "attachment_refs"}
+                   "intent", "attachment_refs", "approved_proposal_id", "approved_proposal_version"}
         if not isinstance(body, dict) or set(body) - allowed:
             raise HTTPException(400, "Client-supplied identity or consent evidence is not accepted")
-        if body.get("intent") == "approved_suggestion":
-            raise HTTPException(409, "Approved suggestions must use an existing Core approval")
         attachments = body.get("attachment_refs", [])
-        if not isinstance(attachments, list) or attachments:
-            raise HTTPException(501, "This Core intake revision does not accept attachment references")
+        identity = authenticated_web_identity(subject, body.get("source_channel"))
+        approved_proposal = None
+        text = body.get("original_text")
+        if body.get("intent") == "approved_suggestion":
+            proposal_id = body.get("approved_proposal_id")
+            proposal_version = body.get("approved_proposal_version")
+            if (proposals is None or proposal_sources is None or
+                    not isinstance(proposal_id, str) or not re.fullmatch(r"[0-9a-f]{32}", proposal_id) or
+                    not isinstance(proposal_version, int) or isinstance(proposal_version, bool)):
+                raise HTTPException(409, "Approved suggestion must identify an existing Core approval")
+            proposal = proposals.get(proposal_id)
+            if (proposal.get("status") != "approved_recorded" or
+                    proposal.get("version") != proposal_version or
+                    proposal.get("kind") not in {"journal", "review", "project"}):
+                raise HTTPException(409, "Approved suggestion is missing, stale, or not approved")
+            if (vocabulary_store is not None and
+                    proposal.get("vocabulary_version") != vocabulary_store.read().get("revision")):
+                raise HTTPException(409, "Approved suggestion vocabulary changed after approval")
+            try:
+                _, source_version, approved_text, _, _ = proposal_sources.execution_content(proposal)
+            except HTTPException as exc:
+                raise HTTPException(409, "Approved suggestion source is unavailable or changed") from exc
+            if source_version != proposal.get("source_version"):
+                raise HTTPException(409, "Approved suggestion source changed after approval")
+            if not isinstance(text, str) or text != approved_text:
+                raise HTTPException(409, "Approved suggestion content must match its approved source")
+            approved_proposal = {"proposal_id": proposal_id, "version": proposal_version,
+                                 "kind": proposal["kind"], "source_version": source_version}
+        elif "approved_proposal_id" in body or "approved_proposal_version" in body:
+            raise HTTPException(400, "Proposal approval binding is only valid for approved_suggestion")
         state, replayed = service.accept_channel_text(
-            text=body.get("original_text"), source_channel=body.get("source_channel"),
+            text=text, identity=identity,
             source_event_id=body.get("source_event_id"), intent=body.get("intent"),
-            occurred_at=body.get("occurred_at"), consent_subject=subject,
+            occurred_at=body.get("occurred_at"), approved_proposal=approved_proposal,
+            attachment_refs=attachments,
         )
         if state.get("status") == "processing" and service.mark_scheduled(state):
             raw_path = service.raw_root / state["raw_path"]
@@ -1024,6 +1121,8 @@ def create_inbox_entry_router(auth, service):
                   "captured_at": state["captured_at"],
                   "source": {"channel": state["source_channel"], "event_id": state["source_event_id"]},
                   "intent": state["intent"], "consent_evidence": state["consent_evidence"],
+                  "attachment_refs": state.get("attachment_refs", []),
+                  "approved_proposal": state.get("approved_proposal"),
                   "replayed": replayed}
         error = state.get("error")
         if isinstance(error, dict) and error.get("code") in SUMMARY_ERROR_CODES:
@@ -1043,6 +1142,8 @@ def create_inbox_entry_router(auth, service):
                   "captured_at": state.get("captured_at"), "occurred_at": state.get("occurred_at"),
                   "source": {"channel": state.get("source_channel"), "event_id": state.get("source_event_id")},
                   "intent": state.get("intent"), "consent_evidence": state.get("consent_evidence"),
+                  "attachment_refs": state.get("attachment_refs", []),
+                  "approved_proposal": state.get("approved_proposal"),
                   "source_ref": {"capture_id": inbox_id,
                                  "review_path": state.get("review_path"),
                                  "review_sha256": state.get("review_sha256")}}

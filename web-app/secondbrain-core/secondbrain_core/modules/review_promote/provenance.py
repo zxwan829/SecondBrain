@@ -11,7 +11,7 @@ import re
 import stat
 
 from .approval import ApprovalFileStore, ReviewDecisionStore
-from .worker import _open_dir_chain, _validate_relative_review_path
+from .worker import _open_dir_chain, _validate_relative_review_path, render_promoted_markdown
 
 
 _MARKER = re.compile(
@@ -23,11 +23,58 @@ MAX_REVIEW_BYTES = 2 * 1024 * 1024
 
 
 class PromoteProvenanceVerifier:
-    def __init__(self, review_root, approvals_root, audit_path):
+    def __init__(self, review_root, approvals_root, audit_path, operations_root=None):
         self.review_root = os.path.abspath(review_root)
         self.approvals = ApprovalFileStore(os.path.abspath(approvals_root))
         self.decisions = ReviewDecisionStore(os.path.abspath(approvals_root))
         self.audit_path = os.path.abspath(audit_path)
+        self.operations_root = os.path.abspath(operations_root) if operations_root else None
+
+    def _confirmed_output(self, request_id, approval, review, content, output_sha256):
+        """Rebuild approved bytes and bind B1b to its durable confirmation."""
+        try:
+            output = render_promoted_markdown(
+                request_id, approval["review_sha256"], approval["approved_at"], review,
+            )
+        except Exception:
+            return False
+        expected = hashlib.sha256(output).hexdigest()
+        if output != content or expected != output_sha256:
+            return False
+        if not request_id.startswith("b1b-"):
+            # Legacy B1a approvals have no B1b operation record; reconstructed
+            # canonical bytes still bind them to the durable approval and audit.
+            return True
+        if not self.operations_root:
+            return False
+        try:
+            from .b1b import OperationStore
+            operation = OperationStore(self.operations_root).get(request_id)
+        except Exception:
+            return False
+        if not operation:
+            return False
+        try:
+            from datetime import datetime
+            confirmed_at = datetime.fromisoformat(operation["confirmed_at"].replace("Z", "+00:00"))
+        except (KeyError, AttributeError, ValueError):
+            return False
+        return bool(
+            confirmed_at.tzinfo
+            and operation.get("status") in {"promoted", "already_promoted"}
+            and operation.get("confirm_intent") == "promote_exact_preview"
+            and isinstance(operation.get("preview_id"), str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{32,80}", operation["preview_id"])
+            and isinstance(operation.get("session_binding"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", operation["session_binding"])
+            and operation.get("request_id") == request_id
+            and operation.get("review_path") == approval.get("review_path")
+            and operation.get("review_sha256") == approval.get("review_sha256")
+            and operation.get("target_filename") == approval.get("target_filename")
+            and operation.get("approved_at") == approval.get("approved_at")
+            and operation.get("approver_subject") == approval.get("approver_subject")
+            and operation.get("output_sha256") == expected
+        )
 
     def _audit_for(self, request_id):
         directory_fd = _open_dir_chain(os.path.dirname(self.audit_path))
@@ -142,6 +189,8 @@ class PromoteProvenanceVerifier:
         if review is None:
             return None
         if hashlib.sha256(review).hexdigest() != review_sha256:
+            return None
+        if not self._confirmed_output(request_id, approval, review, content, output_sha256):
             return None
         return {"kind": "review", "ref": review_path, "sha256": review_sha256,
                 "request_id": request_id}
