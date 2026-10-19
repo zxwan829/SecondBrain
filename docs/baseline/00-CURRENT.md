@@ -16,6 +16,8 @@ source: GitHub SecondBrain Monorepo
 
 **V1 总体状态：NOT DONE；M1 于 2026-10-18 有限验收结项，M2 P1 App-only 部署于 2026-10-19 完成。** 用户已接受 [M1 总控 #66](https://github.com/zxwan829/SecondBrain/issues/66) 的 **LIMITED ACCEPTED / WITH EXPLICIT EXCLUSIONS**，Issue #66 已 CLOSED。PR #89 与 PR #88 已合入该固定 main；按 [M2 部署授权 #90](https://github.com/zxwan829/SecondBrain/issues/90)，固定 main `443991061ea446686b54bfb9e8b2d980183f1338` 的 App 候选已部署：Image ID `sha256:e55b0e9c65433a208df0f66a68ec2f91e2341b163108e5d09030ac4a7b343f47`，App-only HEALTH PASS；Promote 保持 OFF、Knowledge RO、Private 未挂载，Hermes/Guard 未变。生产业务验收 NOT RUN，用户体验验收尚未开展；仅 App 健康与匿名只读 Smoke 通过。M1 的生产同键重放 NOT RUN、完整 Network 审计 UNKNOWN、旧全量 Inbox BLOCKED、D086 共享词库写入 BLOCKED、C2c-2 OUT OF M1；D084 历史根因 UNKNOWN。M1 有限验收和本次运行健康检查均不代表 V1 正式 Knowledge Promote、真实模型记忆、微信输入或完整 Web App MUST 验收通过。M2 源码/部署事实不意味着 B3 或 Promote 获准。
 
+**Hermes 运行状态更新（2026-10-19，Issue #76）：** 已确认前 Hermes `172.18.0.2` 静态地址与 App 占用地址冲突，按批准范围仅移除 Hermes 的 Compose `ipv4_address` 并完成 Hermes-only 重建；Hermes 使用原镜像并恢复运行，动态 IP 与 App 不同，API health GET 200、Dashboard 返回登录重定向。App、Vaultwarden、其他容器、Promote OFF、Knowledge RO、Private 未挂载及挂载边界保持。完整运行证据见 `Environment-Baseline.md` 最新快照和 `Progress-Log.md`；此次未进行业务验收，不改变下方唯一 NEXT。
+
 ### 当前工作分层状态（不能互相替代）
 
 | 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
