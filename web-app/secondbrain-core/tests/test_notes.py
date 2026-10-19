@@ -181,6 +181,37 @@ class NotesStoreTests(unittest.TestCase):
                                        "If-Asset-Match": fetched.headers["etag"]})
         self.assertEqual(replaced.status_code, 200)
 
+    def test_history_http_distinguishes_empty_history_missing_note_and_auth_failure(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        note = client.post("/api/notes", json={"content": "# Synthetic history\n"}, cookies={"session": "owner"}).json()
+        history_url = f"/api/notes/drafts/{note['path']}/history"
+        self.assertEqual(client.get(history_url).status_code, 401)
+        empty = client.get(history_url, cookies={"session": "owner"})
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(empty.json(), {"versions": []})
+
+        path = f"/api/notes/drafts/{note['path']}"
+        first = client.put(path, json={"content": "# Revision 1\n"}, headers={"If-Match": f'"{note["etag"]}"'}, cookies={"session": "owner"})
+        second = client.put(path, json={"content": "# Revision 2\n"}, headers={"If-Match": f'"{first.json()["etag"]}"'}, cookies={"session": "owner"})
+        self.assertEqual(second.status_code, 200)
+        versions = client.get(history_url, cookies={"session": "owner"})
+        self.assertEqual(versions.status_code, 200)
+        self.assertEqual([entry["content"] for entry in versions.json()["versions"]], ["# Synthetic history\n", "# Revision 1\n"])
+
+        missing = client.get("/api/notes/drafts/00000000-0000-4000-8000-000000000099/history", cookies={"session": "owner"})
+        self.assertEqual(missing.status_code, 404)
+        history_directory = self.drafts / note["path"] / ".history"
+        history_directory.chmod(0o755)
+        unsafe = client.get(history_url, cookies={"session": "owner"})
+        self.assertEqual(unsafe.status_code, 403)
+
     def test_notes_router_requires_the_core_session_and_fails_closed_when_unconfigured(self):
         class SessionAuth:
             def require_action(self, request: Request, action: str):

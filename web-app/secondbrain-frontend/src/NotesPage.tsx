@@ -264,12 +264,25 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const restore = async () => {
     const target = noteRef.current;
     if (!target) return;
+    const targetKey = noteKey(target);
+    setRestorePreview(null);
     try {
       const result = await notesApi.history(target);
+      if (!noteRef.current || noteKey(noteRef.current) !== targetKey) return;
+      if (!Array.isArray(result.versions)) throw new Error('历史版本响应格式无效。');
       if (!result.versions.length) { setMessage('暂无可恢复版本。'); return; }
       setRestorePreview(result.versions[result.versions.length - 1]);
       setMessage('已载入最近的历史版本预览；当前正文尚未改变。');
-    } catch { setMessage('历史版本读取失败。'); }
+    } catch (reason) {
+      const status = typeof reason === 'object' && reason !== null && 'status' in reason
+        ? Number((reason as { status?: unknown }).status) : undefined;
+      const message = status === 401 ? '登录状态已失效，请重新登录后重试。'
+        : status === 403 ? '当前会话没有读取此笔记历史的权限。'
+          : status === 404 ? '笔记或历史目标已不存在，请刷新笔记后重试。'
+            : status !== undefined && status >= 500 ? '历史服务暂时不可用，请稍后重试。'
+              : '无法连接历史服务或响应格式无效，请检查连接后重试。';
+      setMessage(message);
+    }
   };
   const confirmRestore = () => {
     if (!restorePreview || !protectUnsaved()) return;

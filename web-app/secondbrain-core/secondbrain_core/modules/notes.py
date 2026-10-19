@@ -135,9 +135,13 @@ class NotesStore:
             raise HTTPException(status_code=415, detail="Note is not UTF-8 Markdown") from exc
 
     @staticmethod
-    def _open_directory(path):
+    def _open_directory(path, missing_status=403):
         try:
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError as exc:
+            if missing_status == 404:
+                raise HTTPException(status_code=404, detail="Note not found") from exc
+            raise HTTPException(status_code=403, detail="Directory could not be opened safely") from exc
         except OSError as exc:
             raise HTTPException(status_code=403, detail="Directory could not be opened safely") from exc
         info = os.fstat(fd)
@@ -317,8 +321,11 @@ class NotesStore:
 
     def history(self, collection, relative):
         _, directory = self._path(collection, relative)
-        directory_fd = self._open_directory(directory)
+        directory_fd = self._open_directory(directory, missing_status=404)
         try:
+            # A missing history directory means a valid note has no revisions;
+            # a missing note itself is a 404 and must not look like an empty list.
+            self._read_at(directory_fd, "note.md")
             try:
                 history_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                      | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)

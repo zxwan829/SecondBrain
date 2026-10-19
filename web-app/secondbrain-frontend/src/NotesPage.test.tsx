@@ -176,6 +176,49 @@ describe('NotesPage', () => {
     expect(editor.value).toBe('# Previous\n');
   });
 
+  it('treats an empty history response as a normal state', async () => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Current\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (url.endsWith('/history')) return new Response(JSON.stringify({ versions: [] }), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
+    expect(await screen.findByText('暂无可恢复版本。')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: '历史版本预览' })).toBeNull();
+    expect(editor.value).toBe('# Current\n');
+  });
+
+  it.each([
+    [401, '登录状态已失效，请重新登录后重试。'],
+    [403, '当前会话没有读取此笔记历史的权限。'],
+    [404, '笔记或历史目标已不存在，请刷新笔记后重试。'],
+    [503, '历史服务暂时不可用，请稍后重试。'],
+  ])('reports history HTTP %i distinctly without changing the current note', async (status, expected) => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Current\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (url.endsWith('/history')) return new Response(JSON.stringify({ detail: 'synthetic history failure' }), { status });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
+    expect(await screen.findByText(expected as string)).toBeTruthy();
+    expect(screen.queryByRole('region', { name: '历史版本预览' })).toBeNull();
+    expect(editor.value).toBe('# Current\n');
+  });
+
   it.each([
     { kind: 'mindmap' as const, button: '插入思维导图', filename: '11111111111111111111111111111111.mindmap.json' },
     { kind: 'excalidraw' as const, button: '插入自由画板', filename: '22222222222222222222222222222222.excalidraw.json' },
