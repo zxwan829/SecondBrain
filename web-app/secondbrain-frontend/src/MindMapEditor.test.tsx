@@ -18,8 +18,16 @@ vi.mock('simple-mind-map', () => ({
     tree: unknown = { data: { text: 'Root' }, children: [] };
     execCommand = vi.fn();
     destroy = vi.fn();
-    view = { setTransformData: (data: unknown) => { fake.viewTransform = data; } };
-    constructor(options: Record<string, unknown>) { fake.instance = this; fake.options = options; }
+    view = { setTransformData: (data: unknown) => {
+      if (!data || typeof data !== 'object' || !('state' in data) || !('transform' in data)) {
+        throw new TypeError('Cannot convert undefined or null to object');
+      }
+      fake.viewTransform = data;
+    } };
+    constructor(options: Record<string, unknown>) {
+      if (options.themeConfig === null) throw new TypeError('Cannot convert undefined or null to object');
+      fake.instance = this; fake.options = options;
+    }
     on(name: string, callback: () => void) { this.handlers[name] = callback; }
     off(name: string) { delete this.handlers[name]; }
     getData() { return this.tree; }
@@ -55,10 +63,29 @@ describe('MindMapEditor', () => {
 
   it('opens the real-library persisted config shape using its root tree and layout', async () => {
     const root = { data: { text: 'Root' }, children: [{ data: { text: 'Branch' }, children: [] }] };
-    const persisted = { layout: 'logicalStructure', root, theme: { template: 'default', config: { lineWidth: 3 } }, view: { scale: 1, x: 10, y: 20 } };
+    const persisted = { layout: 'logicalStructure', root, theme: { template: 'default', config: { lineWidth: 3 } }, view: { state: { scale: 1 }, transform: { x: 10, y: 20 } } };
     render(<MindMapEditor content={JSON.stringify(persisted)} onChange={vi.fn()} />);
     await waitFor(() => expect(fake.options).toBeDefined());
     expect(fake.options).toMatchObject({ data: root, layout: 'logicalStructure', theme: 'default', themeConfig: { lineWidth: 3 } });
     expect(fake.viewTransform).toEqual(persisted.view);
+  });
+
+  it('opens persisted maps with null theme config and skips an incomplete optional view transform', async () => {
+    const root = { data: { text: 'Root' }, children: [{ data: { text: 'Branch' }, children: [] }] };
+    const persisted = { layout: 'logicalStructure', root, theme: { template: 'default', config: null }, view: { transform: {} } };
+    render(<MindMapEditor content={JSON.stringify(persisted)} onChange={vi.fn()} />);
+    await waitFor(() => expect(fake.options).toBeDefined());
+    expect(fake.options).toMatchObject({ data: root, layout: 'logicalStructure', theme: 'default' });
+    expect(fake.options).not.toHaveProperty('themeConfig', null);
+    expect(fake.viewTransform).toBeUndefined();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it.each(['not-json', JSON.stringify({ root: { data: {}, children: [] } })])('shows invalid map data without marking it changed', async (content) => {
+    const onChange = vi.fn();
+    render(<MindMapEditor content={content} onChange={onChange} />);
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(fake.instance).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

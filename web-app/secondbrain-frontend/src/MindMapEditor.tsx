@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { MindMapInstance, MindMapTree } from 'simple-mind-map';
 import 'simple-mind-map/dist/simpleMindMap.esm.min.css';
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
 export function MindMapEditor({ content, onChange }: { content: string; onChange: (content: string) => void }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MindMapInstance | null>(null);
@@ -28,9 +31,8 @@ export function MindMapEditor({ content, onChange }: { content: string; onChange
         : parsed.theme && typeof parsed.theme === 'object' && 'template' in parsed.theme && typeof parsed.theme.template === 'string'
           ? parsed.theme.template
           : 'default';
-      const themeConfig = parsed.theme && typeof parsed.theme === 'object' && 'config' in parsed.theme
-        ? parsed.theme.config
-        : undefined;
+      const rawThemeConfig = isRecord(parsed.theme) ? parsed.theme.config : undefined;
+      const themeConfig = isRecord(rawThemeConfig) ? rawThemeConfig : undefined;
       MindMap.usePlugin(Drag);
       instance = new MindMap({
         el: container.current,
@@ -41,7 +43,12 @@ export function MindMapEditor({ content, onChange }: { content: string; onChange
         fit: true,
       });
       const view = (instance as MindMapInstance & { view?: { setTransformData: (data: unknown) => void } }).view;
-      if (parsed.view && view) view.setTransformData(parsed.view);
+      // Older or partially-written visual assets can contain a truthy but
+      // incomplete view object. The library reads view.state with Object.keys;
+      // skip optional viewport restoration unless both parts are records.
+      if (isRecord(parsed.view) && isRecord(parsed.view.state) && isRecord(parsed.view.transform) && view) {
+        view.setTransformData(parsed.view);
+      }
       mapRef.current = instance;
       capture = () => {
         if (mapRef.current === instance) onChangeRef.current(JSON.stringify(instance?.getData(true), null, 2));

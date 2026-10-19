@@ -135,9 +135,13 @@ class NotesStore:
             raise HTTPException(status_code=415, detail="Note is not UTF-8 Markdown") from exc
 
     @staticmethod
-    def _open_directory(path):
+    def _open_directory(path, missing_status=403):
         try:
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError as exc:
+            if missing_status == 404:
+                raise HTTPException(status_code=404, detail="Note not found") from exc
+            raise HTTPException(status_code=403, detail="Directory could not be opened safely") from exc
         except OSError as exc:
             raise HTTPException(status_code=403, detail="Directory could not be opened safely") from exc
         info = os.fstat(fd)
@@ -159,6 +163,93 @@ class NotesStore:
     @staticmethod
     def _digest(content):
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _history_namespace(collection, relative):
+        if collection == "drafts":
+            return None
+        canonical_path = PurePosixPath(relative).as_posix()
+        return hashlib.sha256(canonical_path.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _check_history_directory(fd):
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise HTTPException(status_code=403, detail="History directory permissions are unsafe")
+
+    @classmethod
+    def _open_history_directory_for_update(cls, directory_fd, namespace):
+        try:
+            os.mkdir(".history", mode=0o700, dir_fd=directory_fd)
+        except FileExistsError:
+            pass
+        root_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                          | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        if namespace is None:
+            try:
+                cls._check_history_directory(root_fd)
+            except Exception:
+                os.close(root_fd)
+                raise
+            return root_fd
+        try:
+            cls._check_history_directory(root_fd)
+            try:
+                os.mkdir(namespace, mode=0o700, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+            history_fd = os.open(namespace, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                 | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd)
+            try:
+                cls._check_history_directory(history_fd)
+                return history_fd
+            except Exception:
+                os.close(history_fd)
+                raise
+        finally:
+            os.close(root_fd)
+
+    @classmethod
+    def _open_history_directory_for_read(cls, directory_fd, namespace):
+        try:
+            root_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="History directory could not be opened safely") from exc
+        try:
+            cls._check_history_directory(root_fd)
+            if namespace is None:
+                return root_fd
+            # The former ordinary-note format stored every note's revisions as
+            # flat files here. Their source cannot be inferred from content hashes,
+            # so never expose them under any note's history endpoint.
+            for name in os.listdir(root_fd):
+                try:
+                    info = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+                except OSError as exc:
+                    raise HTTPException(status_code=403, detail="History entry could not be inspected safely") from exc
+                if stat.S_ISLNK(info.st_mode):
+                    raise HTTPException(status_code=403, detail="History entry cannot be a symlink")
+                if not stat.S_ISDIR(info.st_mode):
+                    raise HTTPException(status_code=409, detail="Legacy shared history has no verifiable note owner")
+            try:
+                history_fd = os.open(namespace, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                     | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise HTTPException(status_code=403, detail="History directory could not be opened safely") from exc
+            try:
+                cls._check_history_directory(history_fd)
+            except Exception:
+                os.close(history_fd)
+                raise
+            return history_fd
+        finally:
+            if namespace is not None:
+                os.close(root_fd)
 
     def read(self, collection, relative):
         path, _ = self._path(collection, relative)
@@ -283,22 +374,16 @@ class NotesStore:
                 raise HTTPException(status_code=412, detail="Note changed; reload before saving")
             if markdown_safety(current):
                 raise HTTPException(status_code=422, detail="This Markdown contains unsupported syntax and is read-only")
-            try:
-                os.mkdir(".history", mode=0o700, dir_fd=directory_fd)
-            except FileExistsError:
-                pass
-            history_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-                                 | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
-            history_info = os.fstat(history_fd)
-            if not stat.S_ISDIR(history_info.st_mode) or history_info.st_uid != os.geteuid() or history_info.st_mode & 0o077:
-                raise HTTPException(status_code=403, detail="History directory permissions are unsafe")
+            namespace = self._history_namespace(collection, relative)
+            history_fd = self._open_history_directory_for_update(directory_fd, namespace)
             previous_name = f"{current_etag}.md"
             try:
                 previous = self._read_at(history_fd, previous_name)
             except HTTPException as exc:
                 if exc.status_code != 404:
                     raise
-                self._atomic_write(directory / ".history" / previous_name, current.encode("utf-8"),
+                history_path = directory / ".history" / (namespace or "") / previous_name
+                self._atomic_write(history_path, current.encode("utf-8"),
                                    exclusive=True, directory_fd=history_fd)
             else:
                 if previous != current:
@@ -316,20 +401,17 @@ class NotesStore:
                 "read_only": False, "safety_reasons": []}
 
     def history(self, collection, relative):
-        _, directory = self._path(collection, relative)
-        directory_fd = self._open_directory(directory)
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory, missing_status=404)
         try:
-            try:
-                history_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-                                     | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
-            except FileNotFoundError:
+            # A missing history directory means a valid note has no revisions;
+            # a missing note itself is a 404 and must not look like an empty list.
+            self._read_at(directory_fd, path.name)
+            namespace = self._history_namespace(collection, relative)
+            history_fd = self._open_history_directory_for_read(directory_fd, namespace)
+            if history_fd is None:
                 return {"versions": []}
-            except OSError as exc:
-                raise HTTPException(status_code=403, detail="History directory could not be opened safely") from exc
             try:
-                info = os.fstat(history_fd)
-                if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
-                    raise HTTPException(status_code=403, detail="History directory permissions are unsafe")
                 names = [name for name in os.listdir(history_fd) if re.fullmatch(r"[0-9a-f]{64}\.md", name)]
                 candidates = sorted(names, key=lambda name: os.stat(name, dir_fd=history_fd, follow_symlinks=False).st_mtime_ns)[-20:]
                 versions = []

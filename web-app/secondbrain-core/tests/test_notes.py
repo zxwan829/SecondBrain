@@ -181,6 +181,120 @@ class NotesStoreTests(unittest.TestCase):
                                        "If-Asset-Match": fetched.headers["etag"]})
         self.assertEqual(replaced.status_code, 200)
 
+    def test_history_http_distinguishes_empty_history_missing_note_and_auth_failure(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        note = client.post("/api/notes", json={"content": "# Synthetic history\n"}, cookies={"session": "owner"}).json()
+        history_url = f"/api/notes/drafts/{note['path']}/history"
+        self.assertEqual(client.get(history_url).status_code, 401)
+        empty = client.get(history_url, cookies={"session": "owner"})
+        self.assertEqual(empty.status_code, 200)
+        self.assertEqual(empty.json(), {"versions": []})
+
+        path = f"/api/notes/drafts/{note['path']}"
+        first = client.put(path, json={"content": "# Revision 1\n"}, headers={"If-Match": f'"{note["etag"]}"'}, cookies={"session": "owner"})
+        second = client.put(path, json={"content": "# Revision 2\n"}, headers={"If-Match": f'"{first.json()["etag"]}"'}, cookies={"session": "owner"})
+        self.assertEqual(second.status_code, 200)
+        versions = client.get(history_url, cookies={"session": "owner"})
+        self.assertEqual(versions.status_code, 200)
+        self.assertEqual([entry["content"] for entry in versions.json()["versions"]], ["# Synthetic history\n", "# Revision 1\n"])
+
+        missing = client.get("/api/notes/drafts/00000000-0000-4000-8000-000000000099/history", cookies={"session": "owner"})
+        self.assertEqual(missing.status_code, 404)
+        history_directory = self.drafts / note["path"] / ".history"
+        history_directory.chmod(0o755)
+        unsafe = client.get(history_url, cookies={"session": "owner"})
+        self.assertEqual(unsafe.status_code, 403)
+
+    def test_authorized_ordinary_note_history_is_per_file_over_http(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+                if action == "notes.read" and request.headers.get("x-deny-read") == "true":
+                    raise HTTPException(status_code=403, detail="Notes read permission required")
+
+        folder = self.ordinary / "folder"
+        folder.mkdir(mode=0o700)
+        note_a_path = folder / "a.md"
+        note_a_path.write_text("# Original A\n")
+        note_a_path.chmod(0o600)
+        note_b_path = folder / "b.md"
+        note_b_path.write_text("# Original B\n")
+        note_b_path.chmod(0o600)
+
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        history_a_url = "/api/notes/personal/folder/a.md/history"
+        history_b_url = "/api/notes/personal/folder/b.md/history"
+        self.assertEqual(client.get(history_a_url).status_code, 401)
+        self.assertEqual(client.get(history_a_url, cookies={"session": "owner"}, headers={"x-deny-read": "true"}).status_code, 403)
+
+        empty_a = client.get(history_a_url, cookies={"session": "owner"})
+        empty_b = client.get(history_b_url, cookies={"session": "owner"})
+        self.assertEqual(empty_a.status_code, 200)
+        self.assertEqual(empty_a.json(), {"versions": []})
+        self.assertEqual(empty_b.status_code, 200)
+        self.assertEqual(empty_b.json(), {"versions": []})
+
+        note_a_url = "/api/notes/personal/folder/a.md"
+        note_b_url = "/api/notes/personal/folder/b.md"
+        loaded_b = client.get(note_b_url, cookies={"session": "owner"})
+        first_b = client.put(note_b_url, json={"content": "# Revision B1\n"}, headers={"If-Match": loaded_b.headers["etag"]}, cookies={"session": "owner"})
+        second_b = client.put(note_b_url, json={"content": "# Revision B2\n"}, headers={"If-Match": first_b.headers["etag"]}, cookies={"session": "owner"})
+        self.assertEqual(second_b.status_code, 200)
+        self.assertEqual(client.get(history_a_url, cookies={"session": "owner"}).json(), {"versions": []})
+        history_b = client.get(history_b_url, cookies={"session": "owner"})
+        self.assertEqual(history_b.status_code, 200)
+        self.assertEqual([entry["content"] for entry in history_b.json()["versions"]], ["# Original B\n", "# Revision B1\n"])
+
+        loaded_a = client.get(note_a_url, cookies={"session": "owner"})
+        first_a = client.put(note_a_url, json={"content": "# Revision A1\n"}, headers={"If-Match": loaded_a.headers["etag"]}, cookies={"session": "owner"})
+        second_a = client.put(note_a_url, json={"content": "# Revision A2\n"}, headers={"If-Match": first_a.headers["etag"]}, cookies={"session": "owner"})
+        self.assertEqual(second_a.status_code, 200)
+        history_a = client.get(history_a_url, cookies={"session": "owner"})
+        self.assertEqual(history_a.status_code, 200)
+        self.assertEqual([entry["content"] for entry in history_a.json()["versions"]], ["# Original A\n", "# Revision A1\n"])
+        self.assertEqual([entry["content"] for entry in client.get(history_b_url, cookies={"session": "owner"}).json()["versions"]], ["# Original B\n", "# Revision B1\n"])
+
+        missing = client.get("/api/notes/personal/folder/missing.md/history", cookies={"session": "owner"})
+        self.assertEqual(missing.status_code, 404)
+
+    def test_ambiguous_legacy_shared_history_fails_closed_without_moving_or_deleting_files(self):
+        folder = self.ordinary / "legacy"
+        folder.mkdir(mode=0o700)
+        for name in ("a.md", "b.md"):
+            path = folder / name
+            path.write_text(f"# {name}\n")
+            path.chmod(0o600)
+        history = folder / ".history"
+        history.mkdir(mode=0o700)
+        legacy_content = "# Could belong to either note\n"
+        legacy_entry = history / f"{NotesStore._digest(legacy_content)}.md"
+        legacy_entry.write_text(legacy_content)
+        legacy_entry.chmod(0o600)
+
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        for note_name in ("a.md", "b.md"):
+            response = client.get(f"/api/notes/personal/legacy/{note_name}/history", cookies={"session": "owner"})
+            self.assertEqual(response.status_code, 409)
+        self.assertEqual(legacy_entry.read_text(), legacy_content)
+        self.assertEqual(list(history.iterdir()), [legacy_entry])
+
     def test_notes_router_requires_the_core_session_and_fails_closed_when_unconfigured(self):
         class SessionAuth:
             def require_action(self, request: Request, action: str):
