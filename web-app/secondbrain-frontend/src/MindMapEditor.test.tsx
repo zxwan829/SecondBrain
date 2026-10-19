@@ -2,7 +2,7 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const fake = vi.hoisted(() => ({ instance: null as null | {
+const fake = vi.hoisted(() => ({ viewTransformFailure: false, instance: null as null | {
   handlers: Record<string, () => void>;
   tree: unknown;
   on: (name: string, callback: () => void) => void;
@@ -19,6 +19,7 @@ vi.mock('simple-mind-map', () => ({
     execCommand = vi.fn();
     destroy = vi.fn();
     view = { setTransformData: (data: unknown) => {
+      if (fake.viewTransformFailure) throw new TypeError('synthetic viewport restore failure');
       if (!data || typeof data !== 'object' || !('state' in data) || !('transform' in data)) {
         throw new TypeError('Cannot convert undefined or null to object');
       }
@@ -36,7 +37,7 @@ vi.mock('simple-mind-map', () => ({
 vi.mock('simple-mind-map/src/plugins/Drag.js', () => ({ default: { name: 'SyntheticDragPlugin' } }));
 import { MindMapEditor } from './MindMapEditor';
 
-afterEach(() => { cleanup(); fake.instance = null; fake.options = undefined; fake.viewTransform = undefined; fake.registerPlugin.mockClear(); });
+afterEach(() => { cleanup(); fake.instance = null; fake.options = undefined; fake.viewTransform = undefined; fake.viewTransformFailure = false; fake.registerPlugin.mockClear(); });
 
 describe('MindMapEditor', () => {
   it('persists the reordered tree after the native drag-end event and exposes history commands', async () => {
@@ -79,6 +80,18 @@ describe('MindMapEditor', () => {
     expect(fake.options).not.toHaveProperty('themeConfig', null);
     expect(fake.viewTransform).toBeUndefined();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('destroys a partially initialized map when optional viewport restoration fails', async () => {
+    fake.viewTransformFailure = true;
+    render(<MindMapEditor content={JSON.stringify({
+      root: { data: { text: 'Root' }, children: [] },
+      view: { state: {}, transform: {} },
+    })} onChange={vi.fn()} />);
+
+    expect((await screen.findByRole('alert')).textContent).toContain('synthetic viewport restore failure');
+    expect(fake.instance?.destroy).toHaveBeenCalledTimes(1);
+    expect(fake.instance?.handlers).toEqual({});
   });
 
   it.each(['not-json', JSON.stringify({ root: { data: {}, children: [] } })])('shows invalid map data without marking it changed', async (content) => {
