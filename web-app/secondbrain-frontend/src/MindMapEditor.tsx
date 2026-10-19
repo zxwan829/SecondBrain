@@ -39,7 +39,9 @@ export function MindMapEditor({ content, onChange }: { content: string; onChange
         data: root,
         layout: typeof parsed.layout === 'string' ? parsed.layout : 'mindMap',
         theme,
-        themeConfig,
+        // simple-mind-map 0.14.0-fix.3 deep-merges explicitly supplied
+        // undefined over its default `{}` and crashes in Object.keys.
+        ...(themeConfig ? { themeConfig } : {}),
         fit: true,
       });
       const view = (instance as MindMapInstance & { view?: { setTransformData: (data: unknown) => void } }).view;
@@ -59,6 +61,16 @@ export function MindMapEditor({ content, onChange }: { content: string; onChange
       instance.on('node_dragend', capture);
       setError('');
     }).catch((reason: unknown) => {
+      if (instance) {
+        if (capture) {
+          instance.off('data_change_detail', capture);
+          instance.off('node_dragend', capture);
+          capture = null;
+        }
+        instance.destroy();
+        if (mapRef.current === instance) mapRef.current = null;
+        instance = null;
+      }
       if (!cancelled) setError(reason instanceof Error ? reason.message : '脑图组件加载失败。');
     });
     const observer = typeof ResizeObserver === 'undefined' || !container.current ? null : new ResizeObserver(() => mapRef.current?.resize());
@@ -66,9 +78,11 @@ export function MindMapEditor({ content, onChange }: { content: string; onChange
     return () => {
       cancelled = true;
       observer?.disconnect();
-      if (instance && capture) {
-        instance.off('data_change_detail', capture);
-        instance.off('node_dragend', capture);
+      if (instance) {
+        if (capture) {
+          instance.off('data_change_detail', capture);
+          instance.off('node_dragend', capture);
+        }
         instance.destroy();
       }
       if (mapRef.current === instance) mapRef.current = null;
