@@ -265,10 +265,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     const target = noteRef.current;
     if (!target) return;
     const targetKey = noteKey(target);
+    const revision = viewRevision.current;
     setRestorePreview(null);
     try {
       const result = await notesApi.history(target);
-      if (!noteRef.current || noteKey(noteRef.current) !== targetKey) return;
+      if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== targetKey) return;
       if (!Array.isArray(result.versions)) throw new Error('历史版本响应格式无效。');
       if (!result.versions.length) { setMessage('暂无可恢复版本。'); return; }
       setRestorePreview(result.versions[result.versions.length - 1]);
@@ -281,7 +282,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           : status === 404 ? '笔记或历史目标已不存在，请刷新笔记后重试。'
             : status !== undefined && status >= 500 ? '历史服务暂时不可用，请稍后重试。'
               : '无法连接历史服务或响应格式无效，请检查连接后重试。';
-      setMessage(message);
+      if (viewRevision.current === revision && noteRef.current && noteKey(noteRef.current) === targetKey) setMessage(message);
     }
   };
   const confirmRestore = () => {

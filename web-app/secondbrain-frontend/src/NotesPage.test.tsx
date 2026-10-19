@@ -219,6 +219,45 @@ describe('NotesPage', () => {
     expect(editor.value).toBe('# Current\n');
   });
 
+  it.each([false, true])('applies a delayed history failure only while its note view is current (switch=%s)', async (switchAway) => {
+    const noteA = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Note A\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    const noteB = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000002', content: '# Note B\n', etag: 'b'.repeat(64), read_only: false, safety_reasons: [] };
+    let failHistory!: (response: Response) => void;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/notes') return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: noteA.path, title: 'Note A' }, { path: noteB.path, title: 'Note B' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${noteA.path}`) return new Response(JSON.stringify(noteA), { status: 200 });
+      if (url === `/api/notes/drafts/${noteB.path}`) return new Response(JSON.stringify(noteB), { status: 200 });
+      if (url === `/api/notes/drafts/${noteA.path}/history`) return new Promise<Response>((resolve) => { failHistory = resolve; });
+      throw new Error(`Unexpected request ${url}`);
+    });
+
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Note A' }));
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    await waitFor(() => expect(editor.value).toBe('# Note A\n'));
+    fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
+    await waitFor(() => expect(failHistory).toBeTypeOf('function'));
+
+    if (switchAway) {
+      fireEvent.click(screen.getByRole('button', { name: 'Note B' }));
+      await waitFor(() => expect(screen.getByText('drafts / ' + noteB.path)).toBeTruthy());
+      const switchedEditor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+      await waitFor(() => expect(switchedEditor.value).toBe('# Note B\n'));
+    }
+    await act(async () => { failHistory(new Response(JSON.stringify({ detail: 'synthetic unavailable' }), { status: 503 })); });
+
+    if (switchAway) {
+      await waitFor(() => expect(screen.queryByText('历史服务暂时不可用，请稍后重试。')).toBeNull());
+      expect((screen.getByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement).value).toBe('# Note B\n');
+      expect(screen.queryByRole('region', { name: '历史版本预览' })).toBeNull();
+    } else {
+      expect(await screen.findByText('历史服务暂时不可用，请稍后重试。')).toBeTruthy();
+      expect(editor.value).toBe('# Note A\n');
+    }
+  });
+
   it.each([
     { kind: 'mindmap' as const, button: '插入思维导图', filename: '11111111111111111111111111111111.mindmap.json' },
     { kind: 'excalidraw' as const, button: '插入自由画板', filename: '22222222222222222222222222222222.excalidraw.json' },

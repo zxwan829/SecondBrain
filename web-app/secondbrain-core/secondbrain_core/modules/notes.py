@@ -320,12 +320,12 @@ class NotesStore:
                 "read_only": False, "safety_reasons": []}
 
     def history(self, collection, relative):
-        _, directory = self._path(collection, relative)
+        path, directory = self._path(collection, relative)
         directory_fd = self._open_directory(directory, missing_status=404)
         try:
             # A missing history directory means a valid note has no revisions;
             # a missing note itself is a 404 and must not look like an empty list.
-            self._read_at(directory_fd, "note.md")
+            self._read_at(directory_fd, path.name)
             try:
                 history_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                      | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
