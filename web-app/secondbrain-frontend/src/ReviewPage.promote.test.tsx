@@ -27,7 +27,6 @@ function mockReviewApi() {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input); calls.push({ url, init });
     if (url === '/api/promote/review/items') return json({ items: [review] });
-    if (url === '/api/inbox?limit=200') return json({ items: [] });
     if (url === '/api/promote/review/items/10-Review/synthetic-review.md') return json(review);
     if (url === '/api/promote/status') return json({ promote_enabled: true });
     if (url === '/api/promote/review/preview') return json(preview);
@@ -38,11 +37,14 @@ function mockReviewApi() {
 }
 
 describe('Review page controlled Promote wiring', () => {
-  it('does not add Promote requests on load or implicit first selection and previews only after an explicit Review selection', async () => {
+  it('loads only the Review list by default and reads a detail only after explicit selection', async () => {
     const calls = mockReviewApi();
     render(<ReviewPage locale="zh-CN" onBack={() => undefined} />);
-    expect(await screen.findByText('Synthetic Review body')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /Synthetic Review/ })).toBeTruthy();
     await waitFor(() => expect(calls.some((call) => call.url === '/api/promote/status')).toBe(true));
+    expect(calls.some((call) => call.url.startsWith('/api/promote/review/items/'))).toBe(false);
+    expect(calls.some((call) => call.url.startsWith('/api/inbox'))).toBe(false);
+    expect(screen.queryByText('Synthetic Review body')).toBeNull();
     expect(calls.some((call) => call.url.startsWith('/api/promote/review/preview'))).toBe(false);
     expect(calls.some((call) => call.url.startsWith('/api/promote/auth/'))).toBe(false);
     expect(calls.some((call) => call.url.includes('/api/promote/operations/'))).toBe(false);
@@ -50,6 +52,7 @@ describe('Review page controlled Promote wiring', () => {
     expect(screen.queryByRole('button', { name: '批准入库' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /Synthetic Review/ }));
+    expect(await screen.findByText('Synthetic Review body')).toBeTruthy();
     expect(await screen.findByRole('button', { name: '准备正式入库预览' })).toBeTruthy();
     expect(calls.some((call) => call.url.startsWith('/api/promote/review/preview'))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: '准备正式入库预览' }));
@@ -65,7 +68,7 @@ describe('Review page controlled Promote wiring', () => {
   it('keeps the independent defer action on its existing route', async () => {
     const calls = mockReviewApi();
     render(<ReviewPage locale="en" onBack={() => undefined} />);
-    await screen.findByText('Synthetic Review body');
+    await screen.findByRole('button', { name: /Synthetic Review/ });
     fireEvent.click(screen.getByRole('button', { name: /Synthetic Review/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Defer' }));
     await waitFor(() => expect(calls.some((call) => call.url === '/api/promote/review/defer')).toBe(true));
@@ -81,13 +84,15 @@ describe('Review page controlled Promote wiring', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = String(input); calls.push(url);
       if (url === '/api/promote/review/items') return Promise.resolve(json({ items: [first, second] }));
-      if (url === '/api/inbox?limit=200') return Promise.resolve(json({ items: [] }));
       if (url === '/api/promote/review/items/10-Review/synthetic-a.md') return pendingFirst;
       if (url === '/api/promote/review/items/10-Review/synthetic-b.md') return Promise.resolve(json({ ...second, content: '# Synthetic Beta body' }));
       if (url === '/api/promote/status') return Promise.resolve(json({ promote_enabled: true }));
       return Promise.resolve(json({}, 404));
     });
     render(<ReviewPage locale="en" onBack={() => undefined} />);
+    expect(calls).not.toContain('/api/promote/review/items/10-Review/synthetic-a.md');
+    await screen.findByRole('button', { name: /Synthetic Alpha/ });
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic Alpha/ }));
     await waitFor(() => expect(calls).toContain('/api/promote/review/items/10-Review/synthetic-a.md'));
     fireEvent.click(screen.getByRole('button', { name: /Synthetic Beta/ }));
     expect(await screen.findByText('Synthetic Beta body')).toBeTruthy();
@@ -107,13 +112,14 @@ describe('Review page controlled Promote wiring', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = String(input); calls.push(url);
       if (url === '/api/promote/review/items') return Promise.resolve(json({ items: [first, second] }));
-      if (url === '/api/inbox?limit=200') return Promise.resolve(json({ items: [] }));
       if (url === '/api/promote/review/items/10-Review/synthetic-a.md') return Promise.resolve(json(first));
       if (url === '/api/promote/review/items/10-Review/synthetic-b.md') return pendingSecond;
       if (url === '/api/promote/status') return Promise.resolve(json({ promote_enabled: true }));
       return Promise.resolve(json({}, 404));
     });
     render(<ReviewPage locale="en" onBack={() => undefined} />);
+    await screen.findByRole('button', { name: /Synthetic Alpha/ });
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic Alpha/ }));
     expect(await screen.findByText('Synthetic Alpha body')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Defer' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Synthetic Beta/ }));
@@ -130,5 +136,24 @@ describe('Review page controlled Promote wiring', () => {
     expect(calls.some((url) => url === '/api/promote/review/defer')).toBe(false);
     expect(calls.some((url) => url === '/api/promote/review/preview')).toBe(false);
     expect(calls.some((url) => url === '/api/promote/review/confirm')).toBe(false);
+  });
+
+  it('aborts and ignores the Review list response when leaving the page', async () => {
+    let finishList!: (response: Response) => void;
+    const pendingList = new Promise<Response>((resolve) => { finishList = resolve; });
+    let listSignal: AbortSignal | undefined;
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/promote/review/items') { listSignal = init?.signal as AbortSignal | undefined; return pendingList; }
+      return Promise.resolve(json({ promote_enabled: false }));
+    });
+    const page = render(<ReviewPage locale="en" onBack={() => undefined} />);
+    await waitFor(() => expect(calls).toContain('/api/promote/review/items'));
+    page.unmount();
+    expect(listSignal?.aborted).toBe(true);
+    await act(async () => { finishList(json({ items: [review] })); await pendingList; });
+    expect(calls).not.toContain('/api/promote/status');
+    expect(calls.some((url) => url.startsWith('/api/promote/review/items/') && url !== '/api/promote/review/items')).toBe(false);
   });
 });

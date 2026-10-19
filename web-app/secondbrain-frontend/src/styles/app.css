@@ -583,6 +583,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .promote-error { margin: 0; color: #fecaca !important; font-size: var(--sb-type-meta); }
 .promote-operation-status { display: grid; gap: 7px; }
 .promote-operation-status p { margin: 0; }
+.promote-knowledge-link { color: #7dd3fc; text-decoration: underline; text-underline-offset: 2px; }
 @media (max-width: 760px) {
   .promote-markdown-grid { grid-template-columns: minmax(0, 1fr); }
   .promote-markdown-grid > section { max-height: 55vh; }
@@ -640,6 +641,14 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .unified-decision.rejected { background: rgb(148 163 184 / 10%); }
 .chat-empty { display: grid; flex: 1; place-items: center; color: var(--sb-muted); text-align: center; }
 .chat-progress { padding: 7px 0; color: #8ddcf8; font-size: 12px; }
+.chat-capture-suggestion { display: grid; gap: 10px; margin: 8px 0; padding: 16px; border: 1px solid rgb(56 189 248 / 42%); border-radius: 12px; background: rgb(8 47 73 / 25%); color: var(--sb-text); }
+.chat-capture-suggestion h3, .chat-capture-suggestion p { margin: 0; }
+.chat-capture-suggestion p { color: var(--sb-text-soft); line-height: 1.5; }
+.chat-capture-suggestion blockquote { margin: 0; padding: 11px; border-left: 3px solid #38bdf8; background: rgb(0 0 0 / 18%); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-capture-suggestion input { width: min(100%, 360px); padding: 8px 10px; border: 1px solid var(--sb-border); border-radius: 8px; color: var(--sb-text); background: var(--sb-surface); }
+.chat-capture-suggestion button { justify-self: start; padding: 8px 13px; border: 1px solid rgb(56 189 248 / 45%); border-radius: 8px; color: var(--sb-text); background: rgb(8 47 73 / 65%); cursor: pointer; }
+.chat-capture-suggestion button:disabled { opacity: .55; cursor: not-allowed; }
+.chat-capture-suggestion a { color: #7dd3fc; }
 .terminal-approval-card { display: grid; gap: 10px; padding: 16px; border: 1px solid rgb(251 191 36 / 55%); border-radius: 12px; background: rgb(69 39 10 / 35%); color: var(--sb-text); }
 .terminal-approval-card h3, .terminal-approval-card p { margin: 0; }
 .terminal-approval-card h3 { font-size: 15px; }
