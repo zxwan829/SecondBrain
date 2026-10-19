@@ -6,7 +6,7 @@ source: GitHub SecondBrain Monorepo
 ---
 # SecondBrain — 当前交付基线（V1 + Personal Intelligence）
 
-> 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
+> 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**D077 确定自然联想、持续个人学习与主动规划的最高目标；D087 确认微信/飞书优先经 Hermes 原生 Gateway，Core 保持统一业务与长期个人记忆权威，Hermes 自主学习保留。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
 ## 1. V1 完成定义与当前状态
 
@@ -15,6 +15,8 @@ source: GitHub SecondBrain Monorepo
 **新的 Companion MVP 门槛（D077，已批准、尚未整体实现/验收）：** 日常 Chat 无检索提示地关联长期个人记忆与可信知识；获准对话低风险学习、跨 Session 召回与纠正；精确事实回源；自然语言 Journal、简单 Task、Capture 与主动建议。原 V1 MUST 保持不变。D080 两次 GLM-4.5-Air Run 中，首轮自动学习写入通过，跨 Session 自然召回失败；D082 的情境保留修复已进入最新 main，但生产重新验证仍未完成，详见 Issue #28/#30。
 
 **V1 总体状态：NOT DONE；M1 于 2026-10-18 有限验收结项，M2 P1 App-only 部署于 2026-10-19 完成。** 用户已接受 [M1 总控 #66](https://github.com/zxwan829/SecondBrain/issues/66) 的 **LIMITED ACCEPTED / WITH EXPLICIT EXCLUSIONS**，Issue #66 已 CLOSED。PR #89 与 PR #88 已合入该固定 main；按 [M2 部署授权 #90](https://github.com/zxwan829/SecondBrain/issues/90)，固定 main `443991061ea446686b54bfb9e8b2d980183f1338` 的 App 候选已部署：Image ID `sha256:e55b0e9c65433a208df0f66a68ec2f91e2341b163108e5d09030ac4a7b343f47`，App-only HEALTH PASS；Promote 保持 OFF、Knowledge RO、Private 未挂载，Hermes/Guard 未变。生产业务验收 NOT RUN，用户体验验收尚未开展；仅 App 健康与匿名只读 Smoke 通过。M1 的生产同键重放 NOT RUN、完整 Network 审计 UNKNOWN、旧全量 Inbox BLOCKED、D086 共享词库写入 BLOCKED、C2c-2 OUT OF M1；D084 历史根因 UNKNOWN。M1 有限验收和本次运行健康检查均不代表 V1 正式 Knowledge Promote、真实模型记忆、微信输入或完整 Web App MUST 验收通过。M2 源码/部署事实不意味着 B3 或 Promote 获准。
+
+**D087 新批准的多渠道架构，交付状态：DECIDED / NOT IMPLEMENTED / NOT DEPLOYED / NOT ACCEPTED。** 微信、飞书优先复用 Hermes 原生 Gateway；Web 与原生渠道共用 Core 业务规则和个人记忆权威，保留 Hermes 从反馈自主学习。当前没有 SecondBrain 微信/飞书接入、渠道身份绑定、消息/附件交 Core、跨渠道业务审批或 API 与 Gateway 并存的生产证据。此决策不改变下方唯一 NEXT，也不授权 NAS/Hermes 配置、真实用户内容、凭据、外部模型调用或生产部署；详情见 `Decision-Log.md` D087、`Architecture.md` 与 `业务规范.md`。
 
 ### 当前工作分层状态（不能互相替代）
 

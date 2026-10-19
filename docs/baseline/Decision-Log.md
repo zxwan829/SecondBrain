@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-16
+updated: 2026-10-19
 status: current
 type: decision-log
 ---
@@ -438,3 +438,15 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 **词汇管理与写入边界：** 标签与类型作为独立集中管理功能，具体词库、最多 10 种类型、自动应用、用户纠正、同义词、停用及删除审批规则以 `业务规范.md` 第 4 节为唯一细则来源。Hermes 可选用既有词汇和在 SecondBrain 受控元数据中建立关联；新词、持久映射、正式 Knowledge 文件回写及批量改写分别遵守用户审批，不能绕过 Core/Promote。状态和日期由系统维护，项目分类由用户手动添加。初始目录/词库盘点只读并需另行授权。
 
 **状态：** 这是已批准的产品与信任边界，不代表实现、生产启用、真实 Vault 读取、付费模型、外部数据出站或用户体验验收。最新阶段状态和唯一 NEXT 仍见 `00-CURRENT.md`；具体业务细则见 `业务规范.md`，实施任务见 Issue #55 等关联 Issue。
+
+## D087 — 2026-10-19 Hermes 原生消息入口、Core 统一业务能力与自主学习（APPROVED ARCHITECTURE DECISION）
+
+**决定：** 浏览器继续经 SecondBrain App/BFF 进入 Hermes；微信、飞书优先经 Hermes 原生 Gateway 适配器进入同一个 Hermes Agent Runtime。用户在消息渠道中仍以自然语言聊天、收录笔记和文件、创建待办、处理日记与审批候选，遵循与 Web 对话一致的业务语义。统一入口指 Core 的业务能力、身份授权、记录、预算和审批契约统一，**不要求微信消息先进入 Web App，也不新建第二机器人、第二 Agent Runtime 或渠道专用业务流程**。此处只修正 D077“App/Core+BFF 统一入口”对消息网络入口的表述，原有 Core 业务权威与双服务架构不变。初次微信适配以本人私聊为范围，渠道 Session 可独立，获准的 Core 个人记忆和业务资料可跨渠道使用。
+
+**消息与动作边界：** Hermes 原生适配器负责消息和媒体的渠道收发；每条输入事件（包括普通聊天）及可核验的原文、附件来源须进入 Core 的统一接收/策略边界，供身份绑定、来源追溯、记忆学习资格及后续业务动作使用。经过 Core 不等于逐句自动保存到业务 Inbox；明确收录或同意 Hermes 建议后才按 D086 保存原文。现有 Web BFF 中独有的意图路由、记忆适配或审批能力不能被当作微信天然具备，实施时须收敛为 Web 与原生渠道共用的受控 Core 语义接口。Task、Journal、Knowledge、标签和文件操作分别沿用现有业务授权，不借渠道入口扩大 Hermes 的直接文件写权。
+
+**身份与确认：** 浏览器 App Session 和消息渠道身份分别绑定 Core 用户；Core 验证可信渠道事件、消息 ID、确认行为、精确目标、版本和幂等。Hermes Session、模型生成文本或转述的“用户已同意”均不能单独证明用户授权。普通收录、待办和正式 Knowledge 审批使用同一 Core 决策记录与强度要求；只要渠道能够提供可靠身份和精确确认，可在渠道内完成，不将正式 Knowledge 永久限定在 Web。某次渠道确认条件不足时，转到 Web 完成该次审批。附件经受控传输和 Capture 保留原件，不以 Hermes 临时媒体缓存作为业务存储。
+
+**自主学习不减损：** Hermes 继续自主判断何时询问收录、从纠正中学习、回顾获准资料并提出建议，Core 不逐句替它决定阈值，也不要求低风险学习逐条人工批准。可导出、可纠正的长期个人事实和偏好仍由 Core JSONL 及受控记忆接口作为权威；Hermes 原生 Session、MEMORY.md/USER.md 和 Skills 可支持运行经验，涉及长期个人事实和偏好的持久化须进入 Core 受控通道，不得形成竞争性个人资料 SoT。重要 Skills 修改继续遵守 D078 审核，正式 Knowledge、Journal 原文、高风险工具和外部动作继续遵守既有强制边界。原生 Gateway 如何共享现有 Core 记忆适配、如何避免原生记忆形成第二权威，属于实施前必须验证的接口问题，不以关闭 Hermes 自主学习代替解决。
+
+**证据与状态：** Hermes v0.22.2 上游的 [Gateway 架构](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/website/docs/user-guide/messaging/index.md)、[微信 iLink 适配器](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/website/docs/user-guide/messaging/weixin.md)与[飞书适配器](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/website/docs/user-guide/messaging/feishu.md)支持本接入方案，不证明 SecondBrain 当前容器已经启用 Gateway、微信账号已连接、App API 与 Gateway 已并存或跨渠道业务闭环已验收。实施前只读核对现有 Hermes 启动方式、工具/Guard、Core 接口、身份映射、媒体流转与渠道能力；部署、凭据、外部数据出站、真实内容和用户体验验收均须分别授权并记录。现阶段只批准架构，当前状态和唯一 NEXT 仍见 `00-CURRENT.md`。

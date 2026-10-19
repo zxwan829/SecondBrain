@@ -1,46 +1,43 @@
 ---
-updated: 2026-10-17
+updated: 2026-10-19
 status: current
 type: architecture
 ---
 # SecondBrain V1/V2 Architecture
 
-本文件记录已批准的架构与信任边界；智能伙伴产品目标见 `Decision-Log.md` D077，对话收录与词汇管理取舍见 D086 和 `业务规范.md`；当前业务范围与验收见 `00-CURRENT.md`。其中已批准的是产品能力和现有服务/数据边界；Memory Provider、具体目录/索引与主动规划内部实现仍属待验证技术选型，不能当成现网实现。运行版本、部署阶段、测试结果和未完成施工不在此维护，分别见 `00-CURRENT.md`、`Environment-Baseline.md` 与 `Progress-Log.md`。
+本文件记录已批准的架构与信任边界；智能伙伴产品目标见 `Decision-Log.md` D077，对话收录与词汇管理取舍见 D086 和 `业务规范.md`，原生消息渠道与自主学习边界见 D087；当前业务范围与验收见 `00-CURRENT.md`。其中已批准的是产品能力和现有服务/数据边界；Memory Provider、具体目录/索引与主动规划内部实现仍属待验证技术选型，不能当成现网实现。运行版本、部署阶段、测试结果和未完成施工不在此维护，分别见 `00-CURRENT.md`、`Environment-Baseline.md` 与 `Progress-Log.md`。
 
 ## 1. 稳定架构边界
 
 - **产品总目标：** SecondBrain 是随用户互动长期成长、无需用户下达搜索指令就能自然联想相关记忆和知识、在适当时机主动思考和规划的个人智能伙伴；不以“保存文件、手动检索成功”作为产品充分完成条件。
 - **双闭环：** Personal Learning Loop 可在授权范围自动学习低风险个人记忆；Knowledge Integrity Loop 仍要求 Raw/Review、用户明确批准才能 Promote。两者互通但绝不混淆；“普通 Chat 不自动 Capture”不禁止受控记忆学习。
 - SecondBrain 文件是业务数据的权威源；Hermes 提供 Agent Runtime、Chat、Session、Skills 与工具执行能力。SecondBrain 不复制 Agent Runtime 或建立第二份正式知识库。
-- 产品入口是独立 SecondBrain Web App。Hermes Dashboard 可以作为既有入口保留，但不是 App 的宿主依赖。
+- 浏览器入口是独立 SecondBrain Web App；微信、飞书等消息入口优先复用 Hermes 原生 Gateway 适配器。统一入口指 Core 的业务语义、授权、记录与审批契约统一，不要求所有渠道的网络消息先进入 Web App。Hermes Dashboard 可以作为既有入口保留，但不是 App 的宿主依赖。
 - 部署单元为两个核心服务：SecondBrain App（React/Vite 静态前端 + Core/BFF/API）与 Hermes Runtime。Core 保持模块化单体；不为业务模块增加独立容器、数据库、通用网关或插件平台。
-- 浏览器只调用 App 同源相对路径。App 服务端通过内部接口访问 Hermes；Hermes API 凭据不发送到浏览器。
+- 浏览器只调用 App 同源相对路径。App 服务端通过内部接口访问 Hermes；Hermes API 凭据不发送到浏览器。消息渠道从 Hermes 原生适配器进入同一 Agent Runtime，再通过受控 Core 接口完成业务动作，不另建渠道专用业务引擎。
 - FE-4 视觉与正式业务规格独立：架构演进不得缩减 Web App V1 MUST、Universal Capture v1.1、微信输入渠道或 Journal 规则。
 
 ## 2. 模块与接口关系
 
 ```text
-浏览器
-  └─ SecondBrain App（同源 UI、登录会话、Core API、BFF）
-       ├─ Capture / Inbox
-       ├─ Review / Approval / Promote
-       ├─ Organizer / 持久化调度与状态
-       ├─ Knowledge Retrieval / Personal Memory（目标：来源、版本、纠错、召回）
-       ├─ Journal / Task（专用授权写入；提醒送达需单验）
-       ├─ Proactive Suggestions（目标能力，触发与频率待验证）
-       └─ Hermes 内部 API（Session、消息、Run、SSE、Skills、可用记忆接口）
-              └─ Hermes Agent Runtime（对话、推理、自主经验和 Skills）
+浏览器 → SecondBrain App（同源 UI、登录会话、Core API、BFF）→ Hermes 内部 API ┐
+微信/飞书 → Hermes 原生 Gateway 适配器 ───────────────────────────────────────┤
+                                                                              ↓
+                         Hermes Agent Runtime（各渠道独立 Session；对话、推理、自主经验和 Skills）
+                                                                              ↕ 受控业务接口
+                         SecondBrain Core（统一事件/身份、Capture/Inbox、Review/Promote、
+                           Knowledge Retrieval/Personal Memory、Journal/Task、预算和审批）
 ```
 
 - 前端导航和页面路由可扩展；Shell、登录和通用导航不与 Chat 或 Review 页面绑定。
 - Core 业务按模块划分服务和 API，通过清晰接口共享一个进程与部署单元。单用户身份由统一 action-policy 接口校验，不提前实现复杂 RBAC。
 - Knowledge Promote 与普通业务写入分离。进入正式 Knowledge 必须人工审核；Memo、Calendar、新闻订阅等未来业务按各自授权的 Core API 执行 CRUD，不统一进入 Promote。
 - Hermes 负责对话、Agent 执行、原生 Session/Skills 与经验证的学习/回忆能力；SecondBrain Core 负责业务状态、Capture 生命周期、审批记录、Organizer 配置/游标/作业、受控 Review 草稿及目标中的长期个人记忆业务接口。不要重新实现 Hermes Agent Runtime。
-- **个人记忆与知识分权：** SecondBrain 持久、可导出和可纠错的个人记忆可以自动更新，但只能使用收窄的 Core 记忆操作边界；Hermes 自有记忆不是正式知识或长期个人资料的唯一 SoT。当前采用 Core JSONL 权威存储，BFF 提供受控记忆召回/学习适配；Hermes 外部原生 Memory Provider 关闭。未来替换机制需独立论证，不能把候选写成现行架构。
+- **个人记忆与知识分权：** Hermes 保留自行判断、从反馈学习、回顾和改进 Skills 的能力；Core 不替它设逐句固定判断或逐条人工批准低风险学习。SecondBrain 持久、可导出和可纠错的个人事实与偏好只能经收窄的 Core 记忆操作边界更新；Hermes 自有记忆、Session 和 Skills 可承载工作经验，但不成为竞争性的长期个人资料或业务 SoT。当前采用 Core JSONL 权威存储，BFF 提供受控记忆召回/学习适配；Hermes 外部原生 Memory Provider 关闭。原生 Gateway 怎样共享此适配，及 Hermes 原生记忆/Skills 如何避免产生第二权威，属于待验证接口设计，不得宣称已打通。
 
 ### D077 智能伙伴的能力分层（批准方向，不等于全部上线）
 
-用户入口为 Web App/Core，微信经验证后加入同一业务入口。普通 Chat 可由 Hermes 主动询问是否收录；用户明确收录或同意建议后，Core 先将原文保存到统一业务 Inbox，再经授权转为 Journal、正式 Knowledge 或其他目标。普通闲聊不自动形成 Inbox/Journal/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。明确 Task 意图走其独立业务授权；具体规则见 `业务规范.md`。
+浏览器经 Web App/Core 进入；微信、飞书优先经 Hermes 原生适配器进入同一业务能力。普通 Chat 可由 Hermes 主动询问是否收录；用户明确收录或同意建议后，Core 先将原文保存到统一业务 Inbox，再经授权转为 Journal、正式 Knowledge 或其他目标。普通闲聊不自动形成 Inbox/Journal/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。明确 Task 意图走其独立业务授权；具体规则见 `业务规范.md`。
 
 **双闭环**：Personal Learning Loop 在授权范围由 Core 建立带来源、时间、推断标记、版本、纠错/撤销的个人记忆；Knowledge Integrity Loop 仍为 Raw → Review → 用户明确批准 → Core Promote → 正式 Knowledge，不把外部材料摘要和模型推断当成用户事实。
 
@@ -53,6 +50,8 @@ type: architecture
 ### 3.1 Chat
 
 浏览器 Chat → App BFF（目标：预先装入少量高相关长期记忆/项目背景；具体接入点待验）→ Hermes Session/Run API → SSE/状态回读 → App 前端。会话历史以 Hermes 持久化 Session API 为来源，不以浏览器临时状态为唯一记录。
+
+微信/飞书消息 → Hermes 原生 Gateway 适配器 → Hermes Agent/渠道 Session；每条输入事件（含普通聊天）、可核验原文及附件来源交由 Core 统一接收和校验，再由 Hermes 使用与 Web 对话一致的 Core 业务能力。此处“经 Core”是统一来源、身份、授权、可追溯学习与业务处理边界，**不等于每句闲聊自动写入 Inbox**。Web 的 BFF 专有意图路由、审批或记忆适配不会自动覆盖原生 Gateway，须收敛为两种入口共用的受控能力。跨渠道 Session 可分开，获准的 Core 个人记忆与业务数据可共享；不默认合并聊天逐字稿。
 
 普通 Chat **不会自动变成 Inbox、Journal、Raw 或正式 Knowledge**；Hermes 可在高价值内容出现时征询收录，Core 负责授权和实际保存。在用户批准的范围内，低风险偏好、经验、目标变化可以在对话后被受控提炼为**可检查/纠正的个人记忆**。遇到日期、数据、决策版本或相互冲突的信息时，Hermes 应自动从有权限的正式资料核验，而非仅凭旧记忆自信作答；无需用户手动要求检索。
 
@@ -95,6 +94,8 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 | Private | 默认无挂载、无读取、无索引 | 通过检索、自动整理、日志或工具旁路读取 |
 
 - App Session 是浏览器用户操作的服务端认证依据；Core 校验具体操作权限、Origin/Host、版本与幂等，不信任前端传来的身份字段。
+- 微信/飞书的渠道身份须绑定 Core 用户；Core 验证渠道事件、消息 ID、确认行为及目标版本/幂等，不能把模型自述的“用户同意”或 Hermes Session 本身当作授权。收录、Task、Journal、Knowledge 审批遵守同一业务契约；渠道无法提供可靠身份或精确确认时，将该次审批转到 Web，不能长期把正式 Knowledge 固定为 Web 专属。
+- 消息附件先保留渠道原件、来源与可核验引用，经受控传输进入 Core Capture；Hermes 临时媒体缓存路径不是业务文件权威源。消息渠道的工具集、Guard、预算和审批不得因绕开 Web BFF 获得更大权限。
 - Hermes Runtime 与 App/Core 的凭据和文件权限必须隔离。Hermes Session 或 Agent 可访问的凭据不能单独证明用户亲自批准。
 - **D078 普通 Chat 文件写入审批实现状态：** 目标是 Guard 在 Hermes 实际工具执行前为每次受支持的通用文件写入发起逐 Run 一次审批，Core 绑定当前用户、Session、Run 和精确参数/目标，拒绝、超时、断线或未授权均不得执行。PR #37 的实现仅覆盖 `write_file` 和单目标 replace `patch`，将未支持写工具与无法绑定目标的多文件 V4A patch fail-closed；原 PR #37 仍 open，**但其已审文件写审批实现已通过集成 PR #45 进入 main 并随 App 部署**；不允许重复合并原 PR。现行权限/工具门禁有有限合成验证，**Hermes 真实 API Run 的完整写审批恢复链仍未验收**。代码合并、审批 UI 可访问和实际真实模型执行是不同证据层。
 - Knowledge 权限边界由只读挂载与 Core 受控写入共同强制；工具级安全根不是操作系统隔离的替代品。
@@ -105,6 +106,7 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 
 - 浏览器到 App：同源 HTTPS/HTTP 部署入口、相对路径业务 API、受保护 Cookie、SSE 流式响应。
 - App 到 Hermes：Compose 内部服务发现及受认证 API；不发布 Hermes API 端口到宿主或公网。
+- Hermes 原生消息渠道：优先在现有 Hermes 服务内评估 Gateway 适配器与 API Server 并存；启动方式、渠道接入、媒体传输和 Core 身份/业务接口需另行核验与授权，不因上游有适配器就宣称当前生产已连接。
 - App 到业务文件：通过显式根路径和模块服务访问 Inbox、Review、Knowledge 等数据区；Private 不在允许根路径内。
 - 新业务优先扩展 Core 模块与 API；只有确认超出模块化单体能力后才重新评估部署边界。不得为了未来设想预建空模块、复杂插件机制或数据库。
-- 用户批准的最高产品方向见 `Decision-Log.md` D077，对话收录、主动协作和词汇管理见 D086 与 `业务规范.md`，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `business-specs/SecondBrain-Web-App-V1-Business-Spec.md`、`business-specs/Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
+- 用户批准的最高产品方向见 `Decision-Log.md` D077，对话收录、主动协作和词汇管理见 D086 与 `业务规范.md`，原生消息渠道及自主学习分工见 D087，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `business-specs/SecondBrain-Web-App-V1-Business-Spec.md`、`business-specs/Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。
