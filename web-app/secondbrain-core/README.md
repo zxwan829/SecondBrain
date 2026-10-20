@@ -139,8 +139,8 @@ unchanged.
 - `GET /api/daily-brief?date=YYYY-MM-DD&timezone=...` currently returns
   `not_configured`; there is no trusted brief source yet, and the route does not
   read Hermes history or call a model. `GET /api/agent/health` reports only
-  Hermes capability reachability and the allowlisted `session_api` boolean;
-  it never returns session/message data or upstream diagnostic payloads.
+  status, source, and checked time from a Hermes capabilities request; it never
+  returns session/message data or upstream diagnostic payloads.
 - Tests cover authentication/origin rejection, no-session/forged approval,
   Promote fail-closed, real file reads, deferred status, Hermes server-side
   auth, SSE/stop, and same-origin SPA routing.

@@ -42,11 +42,7 @@ def test_daily_brief_is_authenticated_and_explicitly_not_configured(tmp_path):
     client = make_client(tmp_path, hermes)
     response = client.get("/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai")
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "not_configured", "date": "2026-10-20",
-        "timezone": "Asia/Shanghai", "source": None,
-        "checked_at": response.json()["checked_at"],
-    }
+    assert response.json() == {"status": "not_configured", "items": [], "source": None}
     assert hermes.calls == 0
 
     client.cookies.clear()
@@ -67,9 +63,9 @@ def test_agent_health_filters_hermes_payload_to_allowlisted_capability(tmp_path)
     response = make_client(tmp_path, hermes).get("/api/agent/health")
     assert response.status_code == 200
     body = response.json()
+    assert set(body) == {"status", "source", "checked_at"}
     assert body["status"] == "online"
     assert body["source"] == "hermes-runtime"
-    assert body["capabilities"] == {"session_api": True}
     assert body["checked_at"].endswith("Z")
     assert "session_count" not in response.text
     assert "provider" not in response.text
@@ -82,13 +78,13 @@ def test_agent_health_reports_not_configured_and_unavailable(tmp_path):
     response = make_client(tmp_path, unconfigured).get("/api/agent/health")
     assert response.status_code == 200
     assert response.json()["status"] == "not_configured"
+    assert response.json()["source"] is None
     assert unconfigured.calls == 0
 
     unavailable = FakeHermes(error=HTTPException(status_code=502, detail="synthetic unavailable"))
     failed = make_client(tmp_path, unavailable).get("/api/agent/health")
     assert failed.status_code == 200
     assert failed.json()["status"] == "unavailable"
-    assert failed.json()["capabilities"] == {}
 
 
 def test_agent_health_requires_app_session(tmp_path):

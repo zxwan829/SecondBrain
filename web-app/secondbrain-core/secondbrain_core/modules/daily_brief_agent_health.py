@@ -41,29 +41,19 @@ def create_daily_brief_agent_health_router(auth, hermes):
         timezone_name = _valid_timezone(timezone_name)
         # No trusted Daily Brief source exists yet. Never generate a temporary
         # summary, read Hermes history, or call a model from this endpoint.
-        return {"status": "not_configured", "date": day, "timezone": timezone_name,
-                "source": None, "checked_at": _checked_at()}
+        return {"status": "not_configured", "items": [], "source": None}
 
     @router.get("/agent/health")
     async def agent_health(request: Request):
         auth.require_action(request, "agent.health.read")
         checked_at = _checked_at()
         if not getattr(hermes, "configured", False):
-            return {"status": "not_configured", "source": "hermes-runtime",
-                    "checked_at": checked_at, "capabilities": {}}
+            return {"status": "not_configured", "source": None, "checked_at": checked_at}
         try:
-            payload = await hermes.capabilities()
+            await hermes.capabilities()
         except HTTPException:
             return {"status": "unavailable", "source": "hermes-runtime",
-                    "checked_at": checked_at, "capabilities": {}}
-        if not isinstance(payload, dict):
-            return {"status": "unavailable", "source": "hermes-runtime",
-                    "checked_at": checked_at, "capabilities": {}}
-        features = payload.get("features")
-        capabilities = {}
-        if isinstance(features, dict) and isinstance(features.get("session_api"), bool):
-            capabilities["session_api"] = features["session_api"]
-        return {"status": "online", "source": "hermes-runtime",
-                "checked_at": checked_at, "capabilities": capabilities}
+                    "checked_at": checked_at}
+        return {"status": "online", "source": "hermes-runtime", "checked_at": checked_at}
 
     return router
