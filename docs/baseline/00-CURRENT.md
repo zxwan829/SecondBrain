@@ -18,7 +18,7 @@ source: GitHub SecondBrain Monorepo
 - **其他未完成切片：** #106 Restricted Writer 仅为合成候选，OS 身份/ACL/mount/peer 隔离未验证；#101 仅为合成可信渠道适配器，未连接微信/飞书。均保持 Draft，不视为生产能力。
 - **总体交付：** 原 V1 MUST 和 D077 Companion MVP 均 **NOT DONE**。源码合并、隔离合成测试、NAS 部署、真实业务数据、生产安全准入和用户验收分层记录。最新环境事实仍仅由 `Environment-Baseline.md` 的 2026-10-19 快照代表，本轮未重新核验生产。
 - **10 月 22 日目标风险：** “形成基本 V1 业务闭环，可接受小型修补”目前 **AT RISK**。核心存储切片已进入 main，但 Web 真实点击、真实数据/用户业务验收及正式 Knowledge Promote 闭环仍缺证据；不能把源码合并等同目标达成。
-- **唯一 NEXT：** A 继续已授权的本地 Web 切片和独立复审；B 继续 #128 固定 HEAD 的正式独立复审及获准的 Core 合成工作。等两线各自给出可复审证据后，由 PMO 再决定统一集成；不要求为浏览器环境门禁停下可独立推进的工作。不得合并 PR、部署、读取/写入真实 Vault、启用 Promote、调用付费模型或接入真实渠道，除非另行明确授权。
+- **唯一 NEXT：** A 继续已授权且不依赖崩溃浏览器环境的 Web 切片；PMO/A 对 #128 当前固定 HEAD 做独立复审。B 不重复修改 #128 已冻结合同，可在 #97 授权内继续不重叠的 Core 合成任务（如 #106 Writer 候选、#101 合成渠道适配器），并按复审意见修复。两线 readiness 均提交后再由 PMO 决定集成；不因浏览器门禁停止可独立推进的工作。不得合并 PR、部署、读取/写入真实 Vault、启用 Promote、调用付费模型或接入真实渠道，除非另行明确授权。
 
 ## 2026-10-20 主线源码进展与分层门禁（历史快照；被本文件顶部后续裁定更新）
 
@@ -231,6 +231,7 @@ PR #63 已合并至 main，Merge Commit `d781541785bbc20c64c3f4f676a1b9d1bd431e0
 | V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | [Web App V1 业务规格](business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture 业务规格](business-specs/Universal-Capture-Business-Spec.md) |
 | 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
 | 正式决定、理由及替代关系 | `Decision-Log.md` |
+| 微信/飞书渠道、Daily Brief 范围与 Journal 来源选项合同 | `Decision-Log.md` D087-D089、`Architecture.md`、本文 |
 | 最近已核验的 NAS 运行快照、权限、端口与恢复入口 | `Environment-Baseline.md` |
 | D084 多切片集成顺序、统一合成验收矩阵及真实验证前置门槛 | [集成与统一测试计划](D084-Integration-and-Validation-Plan.md) |
 | 历史实施、测试、部署、用户验收与失败复盘 | `Progress-Log.md` |
