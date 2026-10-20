@@ -1,8 +1,10 @@
 """Bounded, read-only Knowledge search and exact-item access.
 
-This module deliberately does not inspect Review, Raw, or any other root. No
-existing trusted provenance record format is present in the current contract,
-so source claims found in Markdown metadata remain unverified.
+Search and detail read only the configured Knowledge root. An optional,
+separately injected verifier may inspect one exact Review path only after a
+promoted marker and durable Core evidence pin that path and version. It never
+searches Raw or Private; without complete evidence source claims remain
+missing/unverified.
 
 Item IDs use a random process-local key and expire after restart. Scans consume
 filesystem iterator order up to the strict entry budget; rows are sorted only
@@ -147,8 +149,8 @@ def _decode_token(item_id, secret):
 
 
 def _provenance_status(content):
-    # Current promoted Knowledge has no trusted immutable source ledger. User
-    # editable frontmatter can signal a claim, but cannot verify it.
+    # This fallback cannot validate a promoted source. User-editable Markdown
+    # and frontmatter can signal a claim but cannot prove it.
     if b"secondbrain-promote request_id=" in content[:512]:
         return "unverified"
     try:
@@ -195,8 +197,9 @@ def _snippet(text, query):
 
 
 class KnowledgeReadStore:
-    def __init__(self, knowledge_root):
+    def __init__(self, knowledge_root, provenance_verifier=None):
         self.root = knowledge_root if isinstance(knowledge_root, str) and os.path.isabs(knowledge_root) else ""
+        self.provenance_verifier = provenance_verifier
         # Never derive this key from the App login credential or persist it.
         self._id_secret = secrets.token_bytes(32)
 
@@ -352,11 +355,25 @@ class KnowledgeReadStore:
                 "provenance_status": _provenance_status(payload)}
 
     def source(self, item_id):
+        relative, expected_sha256 = _decode_token(item_id, self._id_secret)
         detail = self.detail(item_id)
-        status = detail["provenance_status"]
+        content = detail["content"].encode("utf-8")
+        verified = self._verified_source(relative, content, expected_sha256)
+        if verified:
+            return {"status": "available", "provenance_status": "verified", "source": verified}
+        status = _provenance_status(content)
         return {"status": "unavailable" if status == "unverified" else "missing",
                 "provenance_status": status, "source": None}
 
+    def _verified_source(self, relative, content, digest):
+        if self.provenance_verifier is None:
+            return None
+        try:
+            return self.provenance_verifier.verify(relative, content, digest)
+        except Exception:
+            # Provenance verification is a read-only enhancement. Corrupt or
+            # unavailable evidence must never turn an untrusted claim trusted.
+            return None
 
 def create_knowledge_read_router(auth, store):
     router = APIRouter(prefix="/api/knowledge")

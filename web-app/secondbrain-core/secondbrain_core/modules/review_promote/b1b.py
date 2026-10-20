@@ -109,7 +109,8 @@ class OperationStore:
             except FileExistsError:
                 existing = self.get(record["request_id"])
                 bound = ("request_id", "preview_id", "session_binding", "review_path",
-                         "review_sha256", "target_filename", "approved_at", "output_sha256")
+                         "review_sha256", "target_filename", "approved_at", "confirm_intent",
+                         "output_sha256")
                 if existing and all(existing.get(key) == record.get(key) for key in bound):
                     return existing
                 raise ApprovalRequestError("Operation ID is already bound; recovery required")
@@ -298,7 +299,8 @@ class B1bPromoteFlow:
             if existing_operation is not None:
                 bound_fields = ("preview_id", "session_binding", "review_path", "review_sha256",
                                 "target_filename", "approved_at", "output_sha256")
-                if any(existing_operation.get(key) != ticket.get(key) for key in bound_fields):
+                if (any(existing_operation.get(key) != ticket.get(key) for key in bound_fields) or
+                        existing_operation.get("confirm_intent") != "promote_exact_preview"):
                     raise HTTPException(status_code=409, detail={"code": "operation_binding_conflict"})
                 try:
                     existing_output = self._read_target(ticket["target_filename"])
@@ -318,6 +320,7 @@ class B1bPromoteFlow:
                       "review_sha256": ticket["review_sha256"],
                       "target_filename": ticket["target_filename"],
                       "approved_at": ticket["approved_at"], "confirmed_at": now,
+                      "confirm_intent": "promote_exact_preview",
                       "approver_subject": "owner", "output_sha256": output_digest,
                       "status": "confirmed"}
             try:
