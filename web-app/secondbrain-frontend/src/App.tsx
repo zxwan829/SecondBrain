@@ -323,6 +323,9 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     const skippedPage = skippedHomeEffectPage.current;
     if (skippedPage && skippedPage !== page) skippedHomeEffectPage.current = null;
     previousHomeEffectPage.current = page;
+    // The aggregate endpoint is Home data, so direct routes such as Chat and
+    // Review must not fetch it merely because the authenticated shell mounted.
+    if (!isHomePage) return;
     if (isKnowledgePage || location.pathname === '/inbox/source' || isInboxRoute) return;
     // Keep this transition guard stable across StrictMode's effect replay. The
     // previous-page ref is updated above, so relying on it alone would allow
