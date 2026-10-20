@@ -11,8 +11,8 @@ type ManualBriefRequest = {
   categories: string[]; summary: string; source_refs: SourceRef[]; approved: true;
 };
 type StoredPending = { body: ManualBriefRequest; receipt: WriteReceipt | null };
-type Phase = 'idle' | 'loading-sources' | 'editing' | 'confirming' | 'submitting' | 'unknown' | 'resolving-unknown' | 'unknown-date-blocked' | 'recovered-match' | 'done';
-type ReadbackState = 'pending' | 'verified' | 'unavailable' | 'stale' | 'empty' | 'mismatch';
+type Phase = 'idle' | 'loading-sources' | 'editing' | 'confirming' | 'submitting' | 'unknown' | 'resolving-unknown' | 'unknown-date-blocked' | 'unknown-date-match' | 'done';
+type ReadbackState = 'pending' | 'verified' | 'matched-content-unconfirmed' | 'unavailable' | 'stale' | 'empty' | 'mismatch';
 const TASK_SOURCE_VERSION_FIELDS = ['id', 'title', 'due_date', 'status', 'created_at', 'updated_at', 'source'] as const;
 const PENDING_STORAGE_KEY = 'secondbrain.dailyBrief.pending.v1';
 
@@ -27,7 +27,7 @@ const text = {
     writePending: '写入已确认，当前回读待核验。', writeUnavailable: '写入已确认，当前回读不可用；可只读重试核验，不会重发写入。',
     currentVerified: '当前简报已核验：Brief 和来源版本与本次提交一致。', currentStale: '写入已确认，但当前来源已失效或变化；Core 未提供可信当前内容。', currentEmpty: '写入已确认，但当前日期没有对应记录；尚不能核验本次结果。', currentMismatch: '写入已确认，但当前回读与提交内容不匹配；未将回读视为本次结果。',
     unknown: '写入结果未知。请求正文和幂等键已保留；只能用相同请求重试。', resolving: '业务日期已变化，正在只读核对原日期；不会重放旧写入。', unknownDate: '旧日期结果仍未知或不可核验。没有重发请求；可只读重试核对，不能自动改日期或内容。',
-    recoveryMatch: '原 POST 回执未收到，但原日期存在与原请求内容及来源完全匹配的已核验记录；没有重复提交。', finishRecovery: '完成核对',
+    unknownDateMatch: '当前可读取到内容与原请求匹配的简报，但无法确认它由原 POST 创建。原 POST 结果仍未知；原请求正文和幂等键已保留。只能继续只读核对，不会清除或重发请求。',
     saved: '写入已确认，当前回读待核验。', duplicate: '写入已确认（Core 判定为相同请求的重复回执），当前回读待核验。',
     noSources: '当前没有可核验的任务、项目或日记来源。', loadFailed: '来源读取失败；没有提交简报。',
     invalid: '请至少选择一个可核验来源，并填写正文。', dateChanged: '上海日期已变化。请核对更新后的日期与来源并重新预览确认；尚未提交。',
@@ -48,7 +48,7 @@ const text = {
     writePending: 'Write confirmed; current readback is pending.', writeUnavailable: 'Write confirmed; current readback is unavailable. Retry the read only; the write will not be repeated.',
     currentVerified: 'Current brief verified: the brief and source versions match this submission.', currentStale: 'Write confirmed, but current sources are stale or changed; Core did not provide trusted current content.', currentEmpty: 'Write confirmed, but no matching record exists for this date; this result is not verified.', currentMismatch: 'Write confirmed, but the current readback does not match this submission; it is not treated as this result.',
     unknown: 'Write result unknown. The exact request body and idempotency key are retained; retry only the same request.', resolving: 'The business date changed. Checking the original date read-only; the old write will not be replayed.', unknownDate: 'The old-date result remains unknown or unverifiable. Nothing was resubmitted; retry the read only. The request will not be changed automatically.',
-    recoveryMatch: 'The original POST receipt was not received, but the original date contains a verified record matching the exact request and sources. Nothing was resubmitted.', finishRecovery: 'Finish checking',
+    unknownDateMatch: 'A current brief matching the original request is readable, but this cannot establish that the original POST created it. The POST result remains unknown; the exact body and idempotency key are retained. You can only repeat the read check; the request will not be cleared or resubmitted.',
     saved: 'Write confirmed; current readback is pending.', duplicate: 'Write confirmed (Core returned a duplicate receipt for the same request); current readback is pending.',
     noSources: 'No verifiable Task, Project, or Journal sources are currently selected.', loadFailed: 'Could not read sources; no brief was submitted.',
     invalid: 'Select at least one verifiable source and enter the brief text.', dateChanged: 'The Shanghai date changed. Review the updated date and sources, then preview and confirm again; nothing was submitted.',
@@ -293,7 +293,8 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
       if (parsed.status === 'unavailable' || parsed.status === 'failed' || parsed.status === 'not_configured' || parsed.status === 'partial') return 'unavailable';
       if (parsed.status === 'empty') return 'empty';
       const record = parsed.items[0];
-      return record && parsed.status === 'real' && matchesRequest(record, body, expectedReceipt) ? 'verified' : 'mismatch';
+      if (!record || parsed.status !== 'real' || !matchesRequest(record, body, expectedReceipt)) return 'mismatch';
+      return expectedReceipt ? 'verified' : 'matched-content-unconfirmed';
     } catch { return 'unavailable'; }
   }
 
@@ -311,8 +312,8 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     const result = await requestCurrentRead(body, null);
     if (!mounted.current) return;
     setReadbackState(result);
-    if (result === 'verified') {
-      clearPending(); setPhase('recovered-match'); onSaved();
+    if (result === 'matched-content-unconfirmed') {
+      setPhase('unknown-date-match');
     } else {
       setPhase('unknown-date-blocked');
     }
@@ -385,9 +386,9 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
   return <section className="daily-brief-approval" aria-label={copy.title}>
     {phase === 'idle' && <button type="button" onClick={() => void begin()}>{copy.start}</button>}
     {phase === 'loading-sources' && <p role="status">{copy.loading}</p>}
-    {phase !== 'idle' && phase !== 'loading-sources' && phase !== 'done' && phase !== 'recovered-match' && <>
+    {phase !== 'idle' && phase !== 'loading-sources' && phase !== 'done' && <>
       <h2>{copy.title}</h2>
-      {phase !== 'unknown' && phase !== 'unknown-date-blocked' && <button type="button" onClick={() => { setPhase('idle'); setError(''); clearJournalChoices(); }} disabled={phase === 'submitting' || phase === 'resolving-unknown'}>{copy.cancel}</button>}
+      {phase !== 'unknown' && phase !== 'unknown-date-blocked' && phase !== 'unknown-date-match' && <button type="button" onClick={() => { setPhase('idle'); setError(''); clearJournalChoices(); }} disabled={phase === 'submitting' || phase === 'resolving-unknown'}>{copy.cancel}</button>}
       {phase === 'editing' && <>
         <p role="status">业务日期：{businessDate}</p>
         <h3>{copy.sourceHeading}</h3>
@@ -414,8 +415,8 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
       {phase === 'unknown' && <><p role="alert">{error || copy.unknown}</p><button type="button" onClick={() => void submit()}>{copy.retry}</button></>}
       {phase === 'resolving-unknown' && <p role="status">{copy.resolving}</p>}
       {phase === 'unknown-date-blocked' && <><p role="alert">{copy.unknownDate}</p><button type="button" onClick={() => void retryCurrentReadback()}>{copy.checkOriginalDate}</button></>}
+      {phase === 'unknown-date-match' && <><p role="status">{copy.unknownDateMatch}</p><button type="button" onClick={() => void retryCurrentReadback()}>{copy.checkOriginalDate}</button></>}
     </>}
-    {phase === 'recovered-match' && <><p role="status">{copy.recoveryMatch}</p><button type="button" onClick={() => { clearPending(); setSavedRequest(null); setPhase('idle'); }}>{copy.finishRecovery}</button></>}
     {phase === 'done' && receipt && <div>
       <p role="status">{readbackState === 'verified' ? copy.currentVerified
         : readbackState === 'stale' ? copy.currentStale

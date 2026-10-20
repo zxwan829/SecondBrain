@@ -183,17 +183,20 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(screen.getByText(/写入已确认，当前回读不可用/)).toBeTruthy();
   });
 
-  it('does not replay an unknown request after Shanghai midnight and can verify the original exact record by GET', async () => {
+  it('keeps an unknown POST unknown when original-date GET finds identical pre-existing content', async () => {
     const instant = { value: new Date('2026-10-20T15:59:59.000Z') };
     vi.stubGlobal('crypto', cryptoFor());
     const posts: Array<Record<string, unknown>> = [];
     const gets: string[] = [];
+    const onSaved = vi.fn();
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path.startsWith('/api/daily-brief?')) {
         gets.push(path);
         const body = posts[0];
-        return Response.json({ status: 'real', items: [{ brief_id: 'brief_unknown_rollover', date: body?.date,
+        // Represents an identical record that may have existed before the lost POST or
+        // may have been written concurrently; GET has no trusted operation binding.
+        return Response.json({ status: 'real', items: [{ brief_id: 'preexisting_identical_brief', date: body?.date,
           timezone: 'Asia/Shanghai', generated_at: checkedAt, generation_status: 'generated',
           categories: body?.categories, summary: body?.summary, source_refs: body?.source_refs }],
           source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt } });
@@ -204,7 +207,7 @@ describe('Daily Brief explicit approval UI draft', () => {
       }
       return sourceResponse(path);
     }));
-    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} dateNow={() => new Date(instant.value)} />);
+    render(<DailyBriefApproval locale="zh-CN" onSaved={onSaved} dateNow={() => new Date(instant.value)} />);
     fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
     expect(await screen.findByRole('checkbox', { name: /Synthetic task source/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('checkbox', { name: /Synthetic task source/ }));
@@ -217,10 +220,20 @@ describe('Daily Brief explicit approval UI draft', () => {
 
     instant.value = new Date('2026-10-20T16:00:01.000Z');
     fireEvent.click(screen.getByRole('button', { name: '用同一请求安全重试' }));
-    expect(await screen.findByText(/原 POST 回执未收到/)).toBeTruthy();
+    expect(await screen.findByText(/当前可读取到内容与原请求匹配的简报，但无法确认它由原 POST 创建/)).toBeTruthy();
     expect(gets).toEqual(['/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai']);
     expect(posts).toHaveLength(1);
     expect(JSON.stringify(posts[0])).toBe(exactBody);
+    expect(screen.queryByRole('button', { name: '完成核对' })).toBeNull();
+    expect(screen.queryByText(/写入已确认/)).toBeNull();
+    expect(onSaved).not.toHaveBeenCalled();
+    const stored = JSON.parse(window.sessionStorage.getItem('secondbrain.dailyBrief.pending.v1') ?? 'null');
+    expect(stored).toEqual({ body: posts[0], receipt: null });
+
+    fireEvent.click(screen.getByRole('button', { name: '只读核对原日期结果' }));
+    await waitFor(() => expect(gets).toHaveLength(2));
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(window.sessionStorage.getItem('secondbrain.dailyBrief.pending.v1') ?? 'null')).toEqual({ body: posts[0], receipt: null });
   });
 
   it('fails closed when the selected Journal version drifts before POST', async () => {
