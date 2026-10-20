@@ -173,13 +173,16 @@ function clearPending() {
   try { window.sessionStorage.removeItem(PENDING_STORAGE_KEY); } catch { /* storage cleanup is best effort */ }
 }
 
-function matchesRequest(record: DailyBriefRecord, body: ManualBriefRequest, receipt?: WriteReceipt | null): boolean {
+function matchesContent(record: DailyBriefRecord, body: ManualBriefRequest): boolean {
   return record.date === body.date && record.timezone === body.timezone
     && record.generation_status === 'generated'
     && record.summary === body.summary
     && JSON.stringify(record.categories) === JSON.stringify(body.categories)
-    && JSON.stringify(record.source_refs) === JSON.stringify(body.source_refs)
-    && (!receipt || record.brief_id === receipt.brief_id);
+    && JSON.stringify(record.source_refs) === JSON.stringify(body.source_refs);
+}
+
+function matchesRequest(record: DailyBriefRecord, body: ManualBriefRequest, receipt: WriteReceipt): boolean {
+  return matchesContent(record, body) && record.brief_id === receipt.brief_id;
 }
 
 async function loadSources(): Promise<SourceChoice[]> {
@@ -293,8 +296,9 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
       if (parsed.status === 'unavailable' || parsed.status === 'failed' || parsed.status === 'not_configured' || parsed.status === 'partial') return 'unavailable';
       if (parsed.status === 'empty') return 'empty';
       const record = parsed.items[0];
-      if (!record || parsed.status !== 'real' || !matchesRequest(record, body, expectedReceipt)) return 'mismatch';
-      return expectedReceipt ? 'verified' : 'matched-content-unconfirmed';
+      if (!record || parsed.status !== 'real') return 'mismatch';
+      if (!expectedReceipt) return matchesContent(record, body) ? 'matched-content-unconfirmed' : 'mismatch';
+      return matchesRequest(record, body, expectedReceipt) ? 'verified' : 'mismatch';
     } catch { return 'unavailable'; }
   }
 
