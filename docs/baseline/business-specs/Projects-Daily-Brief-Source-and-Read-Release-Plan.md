@@ -1,18 +1,18 @@
 ---
 created: 2026-10-20
-status: proposed-for-product-review
+status: partial-product-approved; source-access-and-release-pending
 source: PMO #76 / A #96 / CURRENT / Web App V1 Business Spec / 业务规范
 scope: product decision candidate; no authority to read, deploy or write real data
 ---
 # Projects 主档、Daily Brief 形成规则与最小真实来源验收授权（A 决定稿候选）
 
-> 本文为 **A_PRODUCT_SOURCE_PLAN_CANDIDATE**。除已批准的业务边界外，涉及新增简报形成方式的产品选择须经用户/PMO 确认。文档与合成实现本身不授权任何生产操作。
+> **产品裁定已批准（2026-10-20）：Daily Brief V1 先通过用户人工触发或用户明确批准的既有记录导入，形成经来源核验、可回源的 Core 持久简报记录；自动定时生成延后独立决策。** 具体写入 API/安全方案及真实数据读取、生产部署仍需另行授权。本文的 Projects 物理主档细则、真实来源授权包及发布方案仍是待审候选，不能整体标为业务验收通过。
 
 ## 1. 已批准的边界 / 待确认的取舍
 
 **已批准：** Vault 逻辑目录 `30-Projects` 是项目资料区域；Inbox-first、AI 只能建议分类/关联、用户审批及正式 Knowledge/Private 边界不变。Projects 数据不能从目录名、Task 标题、AI 猜测直接推断；Home 只是聚合层。Web V1 MUST 有 Projects、Daily Brief、History、跨端及真实业务数据，现仍 NOT DONE。Core 已合入的 `/api/projects`、`/api/daily-brief` 严格 GET wire 及安全降级不变。
 
-**待用户确定的一个主要产品取舍：简报形成触发方式。** 推荐 **先人工触发或明确批准的已有记录导入/保存**，形成 Core 可回源的日期快照；**定时自动生成 + 调模型**列为后续独立决策。不得因本文件默认启动生成、写入或付费。
+**用户已确认的正式产品决定（2026-10-20）：** Daily Brief V1 **先采用用户人工触发，或经用户明确批准的已有记录导入/保存**，形成 Core 权威持久日期快照；**每日自动定时生成以后另行决策**。不允许默认开启定时任务、模型调用或数据写入。此处仅批准形成方式，不代表授权实现生产写入或读取真实内容。参见 `Decision-Log.md` D087。
 
 ## 2. Projects 权威主档（建议采纳 v1）
 
@@ -29,7 +29,7 @@ scope: product decision candidate; no authority to read, deploy or write real da
 3. 来源只来自经授权的 Core 正式模块及已核验版本（例如 Task、Journal、Notes、Capture、Review、Project）；verifier 对每条 ref 必须核对 opaque ID、authority、版本/hash、访问范围及状态，且要覆盖记录形成时的实际来源快照。支持的 kind 逐一声明；unsupported/无授权不得视作 verified。
 4. 来源全部受信且生成状态成功 -> `real` 并可展示正文；有缺失/权限不足/验证器缺席 -> `partial` 并 withholding 不能证明可信的摘要；版本变化 -> `stale` 且不按当前摘要使用；形成失败 -> `failed`；已配置但该日期无记录 -> `empty`；根未配置 -> `not_configured`；根不可用/损坏 -> `unavailable`。禁止伪造 `real`。失败/陈旧历史在用户选择后可查看其**状态和来源元数据**，正文能否展示须再次验真。
 5. 历史记录按业务日期查询、日期/来源/生成时间/版本可见。首阶段读接口是**精确单日 GET**；完整历史分页/列表尚需单独 Core 合同与测试，在未实现前 Web 不得把“当前日”冒充“历史已可用”。
-6. 推荐形成方式为**用户显式触发并确认的导入或受控生成→验证→持久记录→只读展示**。实际形成 API、持久原子写、幂等、版本冲突、审计与回滚需经独立安全/写入权限设计。定时器、主动生成、外部联网、AI 付费一律不在本阶段授权。
+6. 已批准形成方式为**用户人工触发，或用户明确批准已有记录导入→核验来源与版本→受控持久记录→只读展示**。实际形成 API、持久原子写、幂等、版本冲突、审计与回滚需经独立安全/写入权限设计。定时器、主动生成、外部联网、AI 付费一律不在本阶段授权。
 
 ## 4. A↔B 最小 verifier 冻结建议（B owner 最终确认）
 
@@ -59,7 +59,7 @@ scope: product decision candidate; no authority to read, deploy or write real da
 
 ## 7. A 主线下一步与明示阻断
 
-1. 用户/PMO 审阅并确认 **Brief 先人工触发/导入保存还是定时自动生成** 的产品取舍；未确认前推荐人工触发/导入-first 方案仅是候选。
+1. **Daily Brief 形成方式已经用户批准（D087）：人工触发/明确批准导入优先；自动生成延后。** 后续只需复核实现范围、写入安全/来源规则及独立授权，不再重复征询这一产品取舍。
 2. B #97 按最小 verifier 接口在合成数据环境独立开发并给固定 HEAD；A #96 如有必要做 Web 精确状态适配，不新增 Mock 页面。
 3. A 在 `A_SOURCE_PLAN_READY + B_VERIFIER_LOCAL_READY` 后做一次真实 loopback 合成 HTTP+Edge 多视口、定向 Core/Web、安全回归与独立代码审查；只有无 P0/P1 且 HEAD/差异核验后才按依赖合并并更新 CURRENT。**不得因本文先合并真实部署或获准读取。**
 4. 最小真实来源/发布授权必须另由用户针对精确资源与部署范围显式批准；未授权前持续 NOT RUN。OS isolation Writer #106、Promote ON、真实 Hermes/付费模型不在本任务。
