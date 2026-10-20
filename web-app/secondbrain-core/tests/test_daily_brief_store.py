@@ -8,7 +8,7 @@ from secondbrain_core.modules.daily_brief_store import DailyBriefRecordReadStore
 
 DAY = "2026-10-20"
 ZONE = "Asia/Shanghai"
-REFS = [{"kind": "note", "id": "note-synthetic", "version": "a" * 64}]
+REFS = [{"kind": "task", "id": "a" * 32, "version": "a" * 64}]
 
 
 def make_root(tmp_path):
@@ -84,7 +84,7 @@ def test_mixed_source_verification_is_partial_only_when_some_refs_pass(tmp_path)
     root = make_root(tmp_path)
     write_record(root, refs=[REFS[0], {**REFS[0], "id": "missing-note"}])
     store = DailyBriefRecordReadStore(str(root))
-    result = store.read(DAY, ZONE, source_verifier=lambda ref: ref["id"] == "note-synthetic")
+    result = store.read(DAY, ZONE, source_verifier=lambda ref: ref["id"] == "a" * 32)
     assert result.source_verification == "partial"
 
 
@@ -126,7 +126,7 @@ def test_daily_brief_rejects_corrupt_or_duplicate_key_records(tmp_path, bad_payl
     ("categories", ["", 7]),
     ("summary", None),
     ("source_refs", [{}]),
-    ("source_refs", [{"kind": "note", "id": "n", "version": "bad"}]),
+    ("source_refs", [{"kind": "note", "id": "n", "version": "a" * 64}]),
 ])
 def test_daily_brief_rejects_unknown_or_malformed_record_fields(tmp_path, field, value):
     root = make_root(tmp_path)

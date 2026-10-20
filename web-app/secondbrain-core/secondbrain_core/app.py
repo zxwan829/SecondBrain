@@ -152,10 +152,11 @@ def create_app():
     app.include_router(create_journal_router(auth, journal_store, hermes, chat_activity_store))
     app.include_router(create_task_router(auth, task_store, hermes, chat_activity_store))
     app.include_router(create_projects_activity_router(
-        auth, journal_store, task_store, projects_store=projects_store,
+        auth, journal_store, task_store, projects_store=projects_store, notes_store=notes_store,
     ))
     app.include_router(create_daily_brief_agent_health_router(
         auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,
+        task_store=task_store, journal_store=journal_store, notes_store=notes_store,
     ))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
     app.include_router(create_notes_router(auth, notes_store))

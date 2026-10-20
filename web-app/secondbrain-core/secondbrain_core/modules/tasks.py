@@ -18,6 +18,41 @@ from .chat_activity import task_activity
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_TITLE_BYTES = 4096
 _MAX_PROJECTION_BYTES = 2 * 1024 * 1024
+_TASK_SOURCE_VERSION_FIELDS = ("id", "title", "due_date", "status", "created_at", "updated_at", "source")
+
+
+def task_source_version(task):
+    """Hash the stable, public Task projection used by trusted source refs.
+
+    Private command/session/history/idempotency details are deliberately not
+    included. Server-issued updated_at changes on every supported edit.
+    """
+    if not isinstance(task, dict) or any(key not in task for key in _TASK_SOURCE_VERSION_FIELDS):
+        return None
+    if (not isinstance(task["id"], str) or not re.fullmatch(r"[0-9a-f]{32}", task["id"])
+            or not isinstance(task["title"], str) or not task["title"].strip()
+            or len(task["title"].encode("utf-8")) > _MAX_TITLE_BYTES
+            or not isinstance(task["status"], str) or task["status"] not in {"open", "completed"}
+            or task["source"] != "web_app_explicit_task"):
+        return None
+    due_date = task["due_date"]
+    if due_date is not None:
+        try:
+            if not isinstance(due_date, str) or date.fromisoformat(due_date).isoformat() != due_date:
+                return None
+        except ValueError:
+            return None
+    for field in ("created_at", "updated_at"):
+        try:
+            stamp = datetime.fromisoformat(task[field].replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if stamp.tzinfo is None or stamp.utcoffset() is None:
+            return None
+    canonical = {key: task[key] for key in _TASK_SOURCE_VERSION_FIELDS}
+    encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _now():

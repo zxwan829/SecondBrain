@@ -13,11 +13,24 @@ from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import JSONResponse
 
 from .chat_activity import journal_activity
+from .knowledge_read import _open_dir_chain
 
 
 _INTENT = re.compile(r"^\s*(?:记一下|记下来|写日记|记录一下)(?:[：:,，\s]+|$)")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ENTRY_ID = re.compile(r"^[a-f0-9]{64}$")
 _MAX_ENTRY_BYTES = 16_384
+_MAX_SOURCE_DAY_BYTES = 1024 * 1024
+_MAX_SOURCE_DAY_ENTRIES = 5000
+
+
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
 
 
 class JournalStore:
@@ -198,6 +211,87 @@ class JournalStore:
         finally:
             os.close(lock_fd)
         return {"date": day, "entries": entries}
+
+    def read_source_day(self, day, *, max_bytes=_MAX_SOURCE_DAY_BYTES,
+                        max_entries=_MAX_SOURCE_DAY_ENTRIES):
+        """Read one exact Journal date file under a hard byte and row budget.
+
+        Returns server-issued row IDs and hashes of the exact persisted JSONL
+        row bytes. The containing date is a locator paired with the row ID, not
+        a substitute for that ID.
+        """
+        path = self._path(day)
+        root_fd = _open_dir_chain(str(self.root))
+        try:
+            root_info = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.geteuid()
+                    or root_info.st_mode & 0o077):
+                raise HTTPException(status_code=503, detail="Journal root is unavailable")
+            try:
+                lock_fd = os.open(f".{day}.lock", os.O_CREAT | os.O_RDWR
+                                  | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=root_fd)
+            except OSError as exc:
+                raise HTTPException(status_code=503, detail="Journal lock is unavailable") from exc
+            try:
+                lock_info = os.fstat(lock_fd)
+                if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.geteuid()
+                        or lock_info.st_mode & 0o077):
+                    raise HTTPException(status_code=503, detail="Journal lock is unsafe")
+                fcntl.flock(lock_fd, fcntl.LOCK_SH)
+                try:
+                    try:
+                        data_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                                          dir_fd=root_fd)
+                    except FileNotFoundError:
+                        return {"available": True, "entries": {}}
+                    except OSError as exc:
+                        raise HTTPException(status_code=503, detail="Journal source is unavailable") from exc
+                    try:
+                        info = os.fstat(data_fd)
+                        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                                or info.st_uid != os.geteuid() or info.st_mode & 0o077
+                                or info.st_size < 0 or info.st_size > max_bytes):
+                            raise HTTPException(status_code=503, detail="Journal source exceeds safe bounds")
+                        chunks, remaining = [], max_bytes + 1
+                        while remaining:
+                            chunk = os.read(data_fd, min(65536, remaining))
+                            if not chunk:
+                                break
+                            chunks.append(chunk)
+                            remaining -= len(chunk)
+                        payload = b"".join(chunks)
+                        if len(payload) != info.st_size or len(payload) > max_bytes:
+                            raise HTTPException(status_code=503, detail="Journal source changed during read")
+                    finally:
+                        os.close(data_fd)
+                finally:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+        finally:
+            os.close(root_fd)
+
+        entries = {}
+        rows = payload.splitlines()
+        if len(rows) > max_entries:
+            raise HTTPException(status_code=503, detail="Journal source exceeds row budget")
+        for row in rows:
+            if not row:
+                continue
+            try:
+                item = json.loads(row.decode("utf-8"), object_pairs_hook=_unique_json_object)
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                raise HTTPException(status_code=503, detail="Journal source is invalid") from exc
+            entry_id = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(entry_id, str) or not _ENTRY_ID.fullmatch(entry_id):
+                raise HTTPException(status_code=503, detail="Journal source ID is invalid")
+            if entry_id in entries:
+                raise HTTPException(status_code=503, detail="Journal source ID is ambiguous")
+            record_day = item.get("date")
+            if record_day is not None and record_day != day:
+                raise HTTPException(status_code=503, detail="Journal source date is inconsistent")
+            entries[entry_id] = {"record": item, "version": hashlib.sha256(row).hexdigest()}
+        return {"available": True, "entries": entries, "bytes_read": len(payload)}
 
     def session_activities(self, session_id):
         activities = []
