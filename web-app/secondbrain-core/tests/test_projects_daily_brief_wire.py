@@ -5,7 +5,7 @@ import re
 import time
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.app_auth import AppSessionAuth
@@ -13,12 +13,15 @@ from secondbrain_core.modules.daily_brief_agent_health import create_daily_brief
 from secondbrain_core.modules.daily_brief_store import DailyBriefRecordReadStore
 from secondbrain_core.modules.projects_activity_read import create_projects_activity_router
 from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStore
+from secondbrain_core.modules.tasks import TaskStore, task_source_version
+from secondbrain_core.modules.journal import JournalStore
+from secondbrain_core.modules.notes import NotesStore
 from secondbrain_core.app import create_app
 
 
 DAY = "2026-10-20"
 ZONE = "Asia/Shanghai"
-REF = {"kind": "note", "id": "note-synthetic", "version": "a" * 64}
+REF = {"kind": "task", "id": "a" * 32, "version": "a" * 64}
 
 
 class FakeHermes:
@@ -57,17 +60,29 @@ def write_brief(root, *, day=DAY, timezone=ZONE, **overrides):
     return path
 
 
-def make_client(tmp_path, *, projects_store=None, brief_store=None):
+def make_client(tmp_path, *, projects_store=None, brief_store=None, task_store=None,
+                journal_store=None, notes_store=None, deny_actions=()):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-app-password-value\n")
     os.chmod(password_file, 0o600)
     auth = AppSessionAuth(str(password_file), ["https://app.test"])
+    if deny_actions:
+        require_action = auth.require_action
+
+        def guarded_require_action(request, action):
+            if action in deny_actions:
+                raise HTTPException(status_code=403, detail="forbidden")
+            return require_action(request, action)
+
+        auth.require_action = guarded_require_action
     token = "synthetic-app-session"
     auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
     app = FastAPI()
-    app.include_router(create_projects_activity_router(auth, projects_store=projects_store))
+    app.include_router(create_projects_activity_router(auth, projects_store=projects_store,
+                                                       notes_store=notes_store))
     app.include_router(create_daily_brief_agent_health_router(
-        auth, FakeHermes(), brief_store=brief_store,
+        auth, FakeHermes(), brief_store=brief_store, projects_store=projects_store,
+        task_store=task_store, journal_store=journal_store, notes_store=notes_store,
     ))
     client = TestClient(app, base_url="https://app.test")
     client.cookies.set(auth.COOKIE_NAME, token)
@@ -137,6 +152,109 @@ def test_projects_wire_downgrades_unverified_associations_and_read_budget(tmp_pa
     assert page["pagination"]["has_more"] is True
 
 
+def test_projects_verifies_only_explicit_notes_store_draft_ids_and_versions(tmp_path):
+    projects_root = private_dir(tmp_path / "projects")
+    drafts_root = private_dir(tmp_path / "notes-drafts")
+    notes_store = NotesStore(str(drafts_root))
+    note = notes_store.create("# Synthetic linked note\n\nBody is synthetic.\n")
+    write_project(projects_root, "project-with-note", linked_notes=[
+        {"id": note["path"], "version": note["etag"]},
+    ])
+    client = make_client(tmp_path, projects_store=ProjectsSourceReadStore(str(projects_root)),
+                         notes_store=notes_store)
+    verified = client.get("/api/projects").json()
+    assert verified["status"] == "real"
+    assert len(verified["items"]) == 1
+    assert "linked_notes" not in verified["items"][0]
+    assert "Synthetic linked note" not in json.dumps(verified)
+
+    write_project(projects_root, "project-with-note", linked_notes=[
+        {"id": note["path"], "version": "0" * 64},
+    ])
+    stale = make_client(tmp_path, projects_store=ProjectsSourceReadStore(str(projects_root)),
+                        notes_store=notes_store).get("/api/projects").json()
+    assert stale["status"] == "partial"
+    assert "linked_notes" not in stale["items"][0]
+    assert "Synthetic linked note" not in json.dumps(stale)
+
+
+def test_projects_hides_notes_association_without_notes_permission(tmp_path):
+    projects_root = private_dir(tmp_path / "projects")
+    drafts_root = private_dir(tmp_path / "notes-drafts")
+    notes_store = NotesStore(str(drafts_root))
+    note = notes_store.create("# Restricted synthetic note\n")
+    write_project(projects_root, "project-private-note", linked_notes=[
+        {"id": note["path"], "version": note["etag"]},
+    ])
+    client = make_client(tmp_path, projects_store=ProjectsSourceReadStore(str(projects_root)),
+                         notes_store=notes_store, deny_actions={"notes.read"})
+    response = client.get("/api/projects")
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert "linked_notes" not in response.text
+    assert note["path"] not in response.text
+    assert "Restricted synthetic note" not in response.text
+
+
+def test_daily_brief_verifies_task_and_journal_exact_id_versions(tmp_path):
+    task_root = private_dir(tmp_path / "tasks")
+    task_store = TaskStore(str(task_root))
+    created_task = task_store.create("Synthetic due task", "2026-10-21",
+                                     "synthetic-task-key", original_command="private synthetic command")
+    task = created_task["task"]
+    task_ref = {"kind": "task", "id": task["id"], "version": task_source_version(task)}
+    assert task_ref["version"] == task_source_version(task)
+
+    journal_root = private_dir(tmp_path / "journal")
+    journal_store = JournalStore(str(journal_root))
+    entry = journal_store.append(DAY, "记一下 synthetic journal entry",
+                                 "synthetic-journal-key")["entry"]
+    journal_row = journal_store.read_source_day(DAY)["entries"][entry["id"]]
+    journal_ref = {"kind": "journal", "id": f"{DAY}:{entry['id']}",
+                   "version": journal_row["version"]}
+
+    briefs_root = private_dir(tmp_path / "briefs")
+    brief_store = DailyBriefRecordReadStore(str(briefs_root))
+    client = make_client(tmp_path, brief_store=brief_store, task_store=task_store,
+                         journal_store=journal_store)
+    write_brief(briefs_root, source_refs=[task_ref, journal_ref])
+    response = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "real"
+    assert body["items"][0]["source_refs"] == [task_ref, journal_ref]
+    assert "Synthetic due task" not in response.text
+    assert "synthetic journal entry" not in response.text
+    assert "private synthetic command" not in response.text
+
+    task_store.update(task["id"], {"expected_updated_at": task["updated_at"], "status": "completed"})
+    changed = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+    assert changed["status"] == "stale" and changed["items"] == []
+    assert "Synthetic summary" not in json.dumps(changed)
+
+    write_brief(briefs_root, source_refs=[{**journal_ref, "version": "f" * 64}])
+    journal_stale = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+    assert journal_stale["status"] == "stale" and journal_stale["items"] == []
+
+
+def test_daily_brief_hides_task_and_journal_when_source_permission_is_denied(tmp_path):
+    task_root = private_dir(tmp_path / "tasks")
+    task_store = TaskStore(str(task_root))
+    task = task_store.create("Synthetic task", None, "private-key")["task"]
+    task_ref = {"kind": "task", "id": task["id"], "version": task_source_version(task)}
+    briefs_root = private_dir(tmp_path / "briefs")
+    write_brief(briefs_root, source_refs=[task_ref])
+    client = make_client(tmp_path, task_store=task_store,
+                         brief_store=DailyBriefRecordReadStore(str(briefs_root)),
+                         deny_actions={"task.read"})
+    response = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}")
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["status"] == "partial"
+    assert task["id"] not in response.text
+    assert "Synthetic summary" not in response.text
+
+
 def test_projects_wire_empty_and_unavailable_are_distinct(tmp_path):
     empty_root = private_dir(tmp_path / "empty")
     empty = make_client(tmp_path, projects_store=ProjectsSourceReadStore(str(empty_root))).get("/api/projects").json()
@@ -167,7 +285,7 @@ def test_daily_brief_wire_not_configured_and_auth_contract(tmp_path):
     assert client.get(f"/api/daily-brief?date={DAY}&timezone=NoSuch/Zone").status_code == 400
 
 
-def test_daily_brief_wire_withholds_unverified_summary_and_never_claims_real(tmp_path):
+def test_daily_brief_wire_withholds_unavailable_summary_and_never_claims_real(tmp_path):
     root = private_dir(tmp_path / "briefs")
     write_brief(root)
     client = make_client(tmp_path, brief_store=DailyBriefRecordReadStore(str(root)))
@@ -175,11 +293,87 @@ def test_daily_brief_wire_withholds_unverified_summary_and_never_claims_real(tmp
     body = response.json()
     assert response.status_code == 200
     assert set(body) == {"status", "items", "source", "freshness"}
-    assert body["status"] == "partial"
+    assert body["status"] == "unavailable"
     assert body["items"] == []
     assert body["source"] == {"kind": "core-daily-brief-store"}
     assert "Synthetic summary" not in response.text
     assert_checked_at(body["freshness"]["checked_at"])
+
+
+def test_daily_brief_verifies_exact_project_source_and_withholds_stale_or_unknown_refs(tmp_path):
+    projects_root = private_dir(tmp_path / "projects")
+    project_path = write_project(projects_root, "project-source")
+    project_version = hashlib.sha256(project_path.read_bytes()).hexdigest()
+    project_store = ProjectsSourceReadStore(str(projects_root))
+    briefs_root = private_dir(tmp_path / "briefs")
+    client = make_client(tmp_path, projects_store=project_store,
+                         brief_store=DailyBriefRecordReadStore(str(briefs_root)))
+
+    write_brief(briefs_root, source_refs=[{"kind": "project", "id": "project-source",
+                                           "version": project_version}])
+    verified = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+    assert verified["status"] == "real"
+    assert len(verified["items"]) == 1
+    assert verified["items"][0]["source_refs"] == [{
+        "kind": "project", "id": "project-source", "version": project_version,
+    }]
+
+    write_brief(briefs_root, source_refs=[{"kind": "project", "id": "project-source",
+                                           "version": "0" * 64}])
+    stale = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+    assert stale["status"] == "stale" and stale["items"] == []
+    assert "Synthetic summary" not in json.dumps(stale)
+
+    for reference in (
+        {"kind": "project", "id": "missing-project", "version": "a" * 64},
+    ):
+        write_brief(briefs_root, source_refs=[reference])
+        body = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+        assert body["items"] == []
+        assert "Synthetic summary" not in json.dumps(body)
+        assert body["status"] == "partial"
+
+    for kind in ("note", "capture", "review"):
+        write_brief(briefs_root, source_refs=[{"kind": kind, "id": f"{kind}-id",
+                                               "version": "b" * 64}])
+        body = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+        assert body["status"] == "failed" and body["items"] == []
+        assert "Synthetic summary" not in json.dumps(body)
+
+
+def test_daily_brief_does_not_disclose_project_existence_without_projects_permission(tmp_path):
+    projects_root = private_dir(tmp_path / "projects")
+    project_path = write_project(projects_root, "project-private")
+    version = hashlib.sha256(project_path.read_bytes()).hexdigest()
+    briefs_root = private_dir(tmp_path / "briefs")
+    write_brief(briefs_root, source_refs=[
+        {"kind": "project", "id": "project-private", "version": version},
+        {"kind": "project", "id": "project-private", "version": "0" * 64},
+    ])
+    client = make_client(tmp_path, projects_store=ProjectsSourceReadStore(str(projects_root)),
+                         brief_store=DailyBriefRecordReadStore(str(briefs_root)),
+                         deny_actions={"projects.read"})
+    response = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["items"] == []
+    assert "project-private" not in response.text
+    assert "Synthetic summary" not in response.text
+
+
+def test_daily_brief_does_not_verify_absence_from_incomplete_project_snapshot(tmp_path):
+    projects_root = private_dir(tmp_path / "projects")
+    write_project(projects_root, "project-present")
+    store = ProjectsSourceReadStore(str(projects_root), max_entries=0)
+    briefs_root = private_dir(tmp_path / "briefs")
+    write_brief(briefs_root, source_refs=[{"kind": "project", "id": "not-enumerated",
+                                           "version": "a" * 64}])
+    response = make_client(tmp_path, projects_store=store,
+                           brief_store=DailyBriefRecordReadStore(str(briefs_root))).get(
+                               f"/api/daily-brief?date={DAY}&timezone={ZONE}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["items"] == []
 
 
 def test_daily_brief_wire_distinguishes_empty_unavailable_failed_stale_and_generation_failure(tmp_path):
@@ -213,7 +407,8 @@ def test_daily_brief_same_date_timezone_mismatch_never_falls_back(tmp_path):
 
 def test_create_app_wires_only_explicit_synthetic_roots_and_keeps_brief_unverified(tmp_path):
     roots = {name: private_dir(tmp_path / name) for name in
-             ("review", "raw", "knowledge", "state", "projects", "briefs")}
+             ("review", "raw", "knowledge", "state", "projects", "briefs", "tasks",
+              "journal", "notes-drafts")}
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-app-password-value\n")
     os.chmod(password_file, 0o600)
@@ -231,6 +426,9 @@ def test_create_app_wires_only_explicit_synthetic_roots_and_keeps_brief_unverifi
         "SB_PROMOTE_ENABLED": "false",
         "SB_PROJECTS_INDEX_ROOT": str(roots["projects"]),
         "SB_DAILY_BRIEF_STORE_ROOT": str(roots["briefs"]),
+        "SB_TASK_ROOT": str(roots["tasks"]),
+        "SB_JOURNAL_ROOT": str(roots["journal"]),
+        "SB_NOTES_DRAFTS_ROOT": str(roots["notes-drafts"]),
     }
     with patch.dict(os.environ, env, clear=True):
         app = create_app()

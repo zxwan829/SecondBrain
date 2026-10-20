@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from .daily_brief_store import DailyBriefRecordReadStore
+from .source_reference_authority import SourceReferenceAuthority
 
 
 def _valid_date(value):
@@ -31,7 +32,8 @@ def _checked_at():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def create_daily_brief_agent_health_router(auth, hermes, brief_store=None):
+def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, projects_store=None,
+                                          task_store=None, journal_store=None, notes_store=None):
     router = APIRouter(prefix="/api")
     brief_store = brief_store or DailyBriefRecordReadStore(None)
 
@@ -45,9 +47,21 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None):
         checked_at = _checked_at()
         source = {"kind": "core-daily-brief-store"} if brief_store.configured else None
         try:
-            # No authoritative verifier currently exists for the Brief's cross-module refs.
-            # The store therefore returns unverified and this route withholds summary content.
-            snapshot = brief_store.read(day, timezone_name)
+            # Each request gets one bounded, exact-ID Projects snapshot. No
+            # arbitrary caller path or cross-scope lookup enters this adapter.
+            authority = SourceReferenceAuthority(
+                projects_store=projects_store,
+                task_store=task_store,
+                journal_store=journal_store,
+                notes_store=notes_store,
+                permission_checks={
+                    "project": lambda: auth.require_action(request, "projects.read"),
+                    "task": lambda: auth.require_action(request, "task.read"),
+                    "journal": lambda: auth.require_action(request, "journal.read"),
+                    "notes": lambda: auth.require_action(request, "notes.read"),
+                },
+            )
+            snapshot = brief_store.read(day, timezone_name, source_verifier=authority.verify)
         except Exception:
             return {"status": "unavailable", "items": [], "source": source,
                     "freshness": {"checked_at": checked_at}}

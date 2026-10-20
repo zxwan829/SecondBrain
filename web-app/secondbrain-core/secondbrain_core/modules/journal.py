@@ -13,11 +13,24 @@ from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import JSONResponse
 
 from .chat_activity import journal_activity
+from .knowledge_read import _open_dir_chain
 
 
 _INTENT = re.compile(r"^\s*(?:记一下|记下来|写日记|记录一下)(?:[：:,，\s]+|$)")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ENTRY_ID = re.compile(r"^[a-f0-9]{64}$")
 _MAX_ENTRY_BYTES = 16_384
+_MAX_SOURCE_DAY_BYTES = 1024 * 1024
+_MAX_SOURCE_DAY_ENTRIES = 5000
+
+
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
 
 
 class JournalStore:
@@ -29,8 +42,8 @@ class JournalStore:
             raise ValueError("Journal root must be absolute")
         info = path.lstat()
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
-                or info.st_mode & 0o077 or not os.access(path, os.W_OK)):
-            raise ValueError("Journal root must be a private writable directory owned by the Core UID")
+                or info.st_mode & 0o077 or not os.access(path, os.R_OK | os.X_OK)):
+            raise ValueError("Journal root must be a private readable directory owned by the Core UID")
         self.root = path
 
     @staticmethod
@@ -97,8 +110,13 @@ class JournalStore:
         # authoritative, so retries can recover after a lost response without
         # relying on a separate index that could become stale.
         operation_lock_path = self.root / ".operations.lock"
-        operation_lock_fd = os.open(operation_lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        operation_lock_fd = None
         try:
+            operation_lock_fd = os.open(
+                operation_lock_path,
+                os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
             operation_lock_stat = os.fstat(operation_lock_fd)
             if (not stat.S_ISREG(operation_lock_stat.st_mode) or operation_lock_stat.st_uid != os.geteuid()
                     or operation_lock_stat.st_mode & 0o077):
@@ -160,11 +178,16 @@ class JournalStore:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 os.close(lock_fd)
             return {"status": "created", "date": day, "entry": record}
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Journal storage is temporarily unavailable") from exc
+        except (UnicodeError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=500, detail="Journal append failed safely") from exc
         finally:
-            fcntl.flock(operation_lock_fd, fcntl.LOCK_UN)
-            os.close(operation_lock_fd)
+            if operation_lock_fd is not None:
+                try:
+                    fcntl.flock(operation_lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(operation_lock_fd)
 
     def read(self, day):
         path = self._path(day)
@@ -198,6 +221,90 @@ class JournalStore:
         finally:
             os.close(lock_fd)
         return {"date": day, "entries": entries}
+
+    def read_source_day(self, day, *, max_bytes=_MAX_SOURCE_DAY_BYTES,
+                        max_entries=_MAX_SOURCE_DAY_ENTRIES):
+        """Read one exact Journal date file under a hard byte and row budget.
+
+        Returns server-issued row IDs and hashes of the exact persisted JSONL
+        row bytes. This method never opens or creates a lock file. It accepts
+        only a stable fd snapshot whose metadata is unchanged across the read
+        and whose directory entry still names that same inode afterward.
+        """
+        path = self._path(day)
+        if (not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 0
+                or not isinstance(max_entries, int) or isinstance(max_entries, bool) or max_entries < 0):
+            raise ValueError("Invalid Journal source read budget")
+        root_fd = _open_dir_chain(str(self.root))
+        try:
+            root_info = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.geteuid()
+                    or root_info.st_mode & 0o077):
+                raise HTTPException(status_code=503, detail="Journal root is unavailable")
+            try:
+                data_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                                  | getattr(os, "O_NOATIME", 0), dir_fd=root_fd)
+            except FileNotFoundError:
+                try:
+                    os.stat(path.name, dir_fd=root_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    return {"available": True, "entries": {}, "bytes_read": 0}
+                raise HTTPException(status_code=503, detail="Journal source changed during read")
+            except OSError as exc:
+                raise HTTPException(status_code=503, detail="Journal source is unavailable") from exc
+            try:
+                before = os.fstat(data_fd)
+                if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                        or before.st_uid != os.geteuid() or before.st_mode & 0o077
+                        or before.st_size < 0 or before.st_size > max_bytes):
+                    raise HTTPException(status_code=503, detail="Journal source exceeds safe bounds")
+                chunks, remaining = [], max_bytes + 1
+                while remaining:
+                    chunk = os.read(data_fd, min(65536, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                payload = b"".join(chunks)
+                after = os.fstat(data_fd)
+                try:
+                    current_path = os.stat(path.name, dir_fd=root_fd, follow_symlinks=False)
+                except OSError as exc:
+                    raise HTTPException(status_code=503, detail="Journal source changed during read") from exc
+
+                def identity(info):
+                    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid,
+                            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+                if (identity(before) != identity(after) or identity(after) != identity(current_path)
+                        or len(payload) != before.st_size or len(payload) > max_bytes):
+                    raise HTTPException(status_code=503, detail="Journal source changed during read")
+            finally:
+                os.close(data_fd)
+        finally:
+            os.close(root_fd)
+
+        entries = {}
+        rows = payload.splitlines()
+        if len(rows) > max_entries:
+            raise HTTPException(status_code=503, detail="Journal source exceeds row budget")
+        for row in rows:
+            if not row:
+                continue
+            try:
+                item = json.loads(row.decode("utf-8"), object_pairs_hook=_unique_json_object)
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                raise HTTPException(status_code=503, detail="Journal source is invalid") from exc
+            entry_id = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(entry_id, str) or not _ENTRY_ID.fullmatch(entry_id):
+                raise HTTPException(status_code=503, detail="Journal source ID is invalid")
+            if entry_id in entries:
+                raise HTTPException(status_code=503, detail="Journal source ID is ambiguous")
+            record_day = item.get("date")
+            if record_day is not None and record_day != day:
+                raise HTTPException(status_code=503, detail="Journal source date is inconsistent")
+            entries[entry_id] = {"record": item, "version": hashlib.sha256(row).hexdigest()}
+        return {"available": True, "entries": entries, "bytes_read": len(payload)}
 
     def session_activities(self, session_id):
         activities = []

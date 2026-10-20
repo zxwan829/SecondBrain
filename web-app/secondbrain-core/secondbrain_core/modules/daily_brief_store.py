@@ -19,7 +19,7 @@ _OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _MAX_RECORD_BYTES = 128 * 1024
 _MAX_SOURCE_REFS = 50
-_SOURCE_KINDS = {"project", "task", "note", "capture", "review", "journal"}
+_SOURCE_KINDS = {"project", "task", "journal"}
 _RECORD_FIELDS = {"brief_id", "date", "timezone", "generated_at", "generation_status",
                   "categories", "summary", "source_refs"}
 _GENERATION_STATUSES = {"generated", "partial", "stale", "failed"}
@@ -193,15 +193,23 @@ class DailyBriefRecordReadStore:
                     results.append("missing")
                 elif isinstance(result, str) and result in {"stale", "unavailable", "failed"}:
                     results.append(result)
+                elif isinstance(result, str) and result in {"unsupported", "forbidden"}:
+                    results.append(result)
                 else:
                     verifier_failed = True
                     results.append("failed")
             if not results:
                 source_status = "unverified"
+            elif "forbidden" in results:
+                # Keep this distinction internal; the HTTP mapper withholds
+                # content and maps it to the frozen partial envelope.
+                source_status = "forbidden"
             elif "stale" in results:
                 source_status = "stale"
             elif all(result == "verified" for result in results):
                 source_status = "verified"
+            elif "unsupported" in results:
+                source_status = "unsupported"
             elif all(result != "verified" for result in results):
                 if "unavailable" in results:
                     source_status = "unavailable"

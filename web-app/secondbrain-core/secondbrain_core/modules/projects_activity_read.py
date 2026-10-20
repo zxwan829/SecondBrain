@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from .projects_source_read import ProjectsSourceReadStore
+from .source_reference_authority import SourceReferenceAuthority
 
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -29,18 +30,22 @@ def _project_page(limit, offset):
         raise HTTPException(status_code=400, detail="offset must be between 0 and 5000")
 
 
-def _project_item(document, source_version):
+def _project_item(document, source_version, note_verifier=None, notes_permission_available=True):
     item = {key: document[key] for key in ("id", "title", "status", "next_step", "updated_at")
             if key in document}
-    unverified_association = False
+    # When Notes reads are not authorized, give every visible project the same
+    # partial status so the presence of a particular link cannot be inferred.
+    unverified_association = not notes_permission_available
     for key in ("recent_activity", "linked_notes"):
         if key not in document:
             continue
         references = document[key] if key == "linked_notes" else [document[key]]
-        # No authoritative Task/Notes/Activity ref verifier is wired yet.
-        # Suppress association data and downgrade instead of trusting JSON shape.
-        if references:
+        if key == "recent_activity":
+            # The frozen field has no event ID/version; never join by time.
             unverified_association = True
+        elif references:
+            if note_verifier is None or any(note_verifier(ref) != "verified" for ref in references):
+                unverified_association = True
     item["source_ref"] = {"id": document["id"], "version": source_version}
     return item, unverified_association
 
@@ -151,7 +156,7 @@ def _task_rows(store, start, end, zone):
 
 
 def create_projects_activity_router(auth, journal_store=None, task_store=None,
-                                    projects_store=None):
+                                    projects_store=None, notes_store=None):
     router = APIRouter(prefix="/api")
     projects_store = projects_store or ProjectsSourceReadStore(None)
 
@@ -173,7 +178,17 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
         elif not snapshot.available:
             status, items, source, has_more = "unavailable", [], None, False
         else:
-            mapped = [_project_item(row.document, row.sha256)
+            note_authority = SourceReferenceAuthority(
+                notes_store=notes_store,
+                permission_checks={"notes": lambda: auth.require_action(request, "notes.read")},
+            )
+            try:
+                auth.require_action(request, "notes.read")
+                notes_permission_available = True
+            except HTTPException:
+                notes_permission_available = False
+            mapped = [_project_item(row.document, row.sha256, note_authority.verify_project_note,
+                                    notes_permission_available)
                       for row in snapshot.documents]
             rows = [item for item, _unverified in mapped]
             associations_unverified = any(unverified for _, unverified in mapped)

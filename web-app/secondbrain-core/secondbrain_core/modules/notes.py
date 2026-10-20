@@ -113,7 +113,7 @@ class NotesStore:
         return path, path.parent
 
     @staticmethod
-    def _read_at(directory_fd, filename):
+    def _read_at(directory_fd, filename, max_bytes=MAX_MARKDOWN_BYTES):
         try:
             fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
         except FileNotFoundError:
@@ -123,10 +123,10 @@ class NotesStore:
         try:
             info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                    or info.st_mode & 0o077 or info.st_size > MAX_MARKDOWN_BYTES):
+                    or info.st_mode & 0o077 or info.st_size > max_bytes):
                 raise HTTPException(status_code=403, detail="Note file permissions or size are unsafe")
             with os.fdopen(fd, "rb", closefd=False) as stream:
-                data = stream.read(MAX_MARKDOWN_BYTES + 1)
+                data = stream.read(max_bytes + 1)
         finally:
             os.close(fd)
         try:
@@ -257,6 +257,17 @@ class NotesStore:
         return {"collection": collection, "path": relative, "content": content,
                 "etag": self._digest(content), "read_only": bool(markdown_safety(content)),
                 "safety_reasons": markdown_safety(content)}
+
+    def read_source_draft(self, draft_id, *, max_bytes=MAX_MARKDOWN_BYTES):
+        """Resolve a NotesStore-issued Draft UUID without scanning collections."""
+        path, directory = self._path("drafts", draft_id)
+        directory_fd = self._open_directory(directory, missing_status=404)
+        try:
+            content = self._read_at(directory_fd, path.name, max_bytes=max_bytes)
+        finally:
+            os.close(directory_fd)
+        encoded = content.encode("utf-8")
+        return {"etag": self._digest(content), "size_bytes": len(encoded)}
 
     def list_notes(self, collection):
         root = self._root(collection)
