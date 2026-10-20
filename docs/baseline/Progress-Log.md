@@ -5,7 +5,13 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
-## 2026-10-20 — M2 源码进度复核与治理基线纠偏（#76/#96/#97）
+## 2026-10-20 — D089 #128 合并与治理基线追平
+
+- PR #128 的固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b` 于 2026-10-20 合并至 main，merge commit `87671644356e01d58ec2780d0c45bd11f4c3edfe`。D089 的 `GET /api/daily-brief/source-options/journal` 正式 Core 路由已进入源码主线。
+- B 报告全量 Core 420 tests + 28 subtests、正式 localhost HTTP 路由与定向用例通过；A 对最终 HEAD 的独立验收记录真实 `create_app()` + Uvicorn 正式路由定向测试 1 passed，未报告 P0/P1。测试执行细节见 PR #128 与 Issue #97；本次治理文档更新未运行测试。
+- 这确认 Core 源码与本地合成验证，不代表 NAS 部署、真实 Journal/Vault 访问或用户业务验收。本次治理基线 PR #131 补齐 CURRENT、D089 状态和历史进度记录；未操作生产环境、未读取或写入真实业务数据。
+
+## 2026-10-20 — M2 源码进度复核与治理基线纠偏（#76/#96/#97；#128 合并前状态快照）
 
 - GitHub main 固定为 `bff59297b0c33430c9ab2760d74231d32b3d6f71`。Daily Brief 来源 verifier #123、Core 测试路径修复 #124、人工内容持久化 #125 均已合并；这确认源码能力，不等于用户触发的 AI Brief 撰写已实现、后台定时调度已获批、生产数据已接入或用户验收已通过。
 - Daily Brief #126 保持 Draft：固定候选已报告隔离 HTTP 来源读取、POST→GET、幂等和冲突验证；Edge 子进程 SIGABRT、Chromium SIGTRAP，真实点击/三视口验收 BLOCKED_ENV / NOT RUN。不重复诊断同一崩溃环境。
