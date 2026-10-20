@@ -183,6 +183,76 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(screen.getByText(/写入已确认，当前回读不可用/)).toBeTruthy();
   });
 
+  it('does not replay an unknown request after Shanghai midnight and can verify the original exact record by GET', async () => {
+    const instant = { value: new Date('2026-10-20T15:59:59.000Z') };
+    vi.stubGlobal('crypto', cryptoFor());
+    const posts: Array<Record<string, unknown>> = [];
+    const gets: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith('/api/daily-brief?')) {
+        gets.push(path);
+        const body = posts[0];
+        return Response.json({ status: 'real', items: [{ brief_id: 'brief_unknown_rollover', date: body?.date,
+          timezone: 'Asia/Shanghai', generated_at: checkedAt, generation_status: 'generated',
+          categories: body?.categories, summary: body?.summary, source_refs: body?.source_refs }],
+          source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt } });
+      }
+      if (path === '/api/daily-brief' && init?.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        throw new Error('synthetic response lost');
+      }
+      return sourceResponse(path);
+    }));
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} dateNow={() => new Date(instant.value)} />);
+    fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
+    expect(await screen.findByRole('checkbox', { name: /Synthetic task source/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Synthetic task source/ }));
+    fireEvent.change(screen.getByLabelText(/简报正文/), { target: { value: 'Synthetic midnight recovery' } });
+    fireEvent.click(screen.getByRole('button', { name: '预览并确认' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认并创建简报' }));
+    expect(await screen.findByText(/写入结果未知/)).toBeTruthy();
+    expect(posts).toHaveLength(1);
+    const exactBody = JSON.stringify(posts[0]);
+
+    instant.value = new Date('2026-10-20T16:00:01.000Z');
+    fireEvent.click(screen.getByRole('button', { name: '用同一请求安全重试' }));
+    expect(await screen.findByText(/原 POST 回执未收到/)).toBeTruthy();
+    expect(gets).toEqual(['/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai']);
+    expect(posts).toHaveLength(1);
+    expect(JSON.stringify(posts[0])).toBe(exactBody);
+  });
+
+  it('fails closed when the selected Journal version drifts before POST', async () => {
+    vi.stubGlobal('crypto', cryptoFor());
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith('/api/daily-brief/source-options/journal?')) return Response.json({
+        status: 'real', items: [{ kind: 'journal', id: `2026-10-20:${'e'.repeat(64)}`, date: '2026-10-20', version: 'e'.repeat(64) }],
+        freshness: { checked_at: checkedAt },
+      });
+      if (path === '/api/daily-brief' && init?.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return Response.json({ detail: 'SENSITIVE_SYNTHETIC_SOURCE_VERSION' }, { status: 422 });
+      }
+      return sourceResponse(path);
+    }));
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
+    await screen.findByRole('checkbox', { name: /Synthetic task source/ });
+    fireEvent.click(screen.getByRole('button', { name: '加载 Journal 来源' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Journal 来源 1/ }));
+    fireEvent.change(screen.getByLabelText(/简报正文/), { target: { value: 'Synthetic source drift' } });
+    fireEvent.click(screen.getByRole('button', { name: '预览并确认' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认并创建简报' }));
+    expect(await screen.findByText(/未通过 Core 校验/)).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: /Journal 来源 1/ })).toBeNull();
+    expect(screen.queryByText(/SENSITIVE_SYNTHETIC_SOURCE_VERSION/)).toBeNull();
+    expect(posts).toHaveLength(1);
+    expect(posts[0].source_refs).toEqual([{ kind: 'journal', id: `2026-10-20:${'e'.repeat(64)}`, version: 'e'.repeat(64) }]);
+  });
+
   it('retries an unknown transport result with identical key and body', async () => {
     vi.stubGlobal('crypto', cryptoFor());
     const posts: Array<{ path: string; body: Record<string, unknown> }> = [];
