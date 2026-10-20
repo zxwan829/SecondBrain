@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { parseProjectsResponse, type ProjectRecord } from './projects-brief-wire';
 
 type Locale = 'zh-CN' | 'en';
@@ -6,6 +6,7 @@ type SourceRef = { kind: 'task' | 'project'; id: string; version: string };
 type SourceChoice = { key: string; label: string; ref: SourceRef };
 type WriteReceipt = { status: 'created' | 'duplicate'; brief_id: string; date: string; timezone: 'Asia/Shanghai'; record_version: string; operation_id: string };
 type Phase = 'idle' | 'loading-sources' | 'editing' | 'confirming' | 'submitting' | 'unknown' | 'done';
+const TASK_SOURCE_VERSION_FIELDS = ['id', 'title', 'due_date', 'status', 'created_at', 'updated_at', 'source'] as const;
 
 const text = {
   'zh-CN': {
@@ -18,7 +19,7 @@ const text = {
     confirm: '确认并创建简报', submitting: '正在保存…', retry: '用同一请求安全重试',
     saved: '简报已保存。正在重新读取 Core 当前状态。', duplicate: '这项操作此前已保存；没有创建第二条简报。',
     noSources: '当前没有可核验的任务或项目来源。', loadFailed: '来源读取失败；没有提交简报。',
-    invalid: '请至少选择一个可核验来源，并填写正文。',
+    invalid: '请至少选择一个可核验来源，并填写正文。', dateChanged: '上海日期已变化。请核对更新后的日期并重新确认；尚未提交。',
     conflict: 'Core 检测到同日或同幂等键冲突。请刷新简报状态；没有覆盖已有记录。',
     auth: '登录或写入权限已失效。请重新登录；本次没有被确认保存。',
     invalidRequest: '请求未通过 Core 校验。请重新检查来源与内容。',
@@ -35,7 +36,7 @@ const text = {
     confirm: 'Confirm and create brief', submitting: 'Saving…', retry: 'Retry the same request safely',
     saved: 'Brief saved. Reloading the current Core state.', duplicate: 'This operation was already saved; no second brief was created.',
     noSources: 'No verifiable Task or Project sources are available.', loadFailed: 'Could not read sources; no brief was submitted.',
-    invalid: 'Select at least one verifiable source and enter the brief text.',
+    invalid: 'Select at least one verifiable source and enter the brief text.', dateChanged: 'The Shanghai business date changed. Review the updated date and confirm again; nothing was submitted.',
     conflict: 'Core reported a same-day or idempotency conflict. Refresh the brief state; no record was overwritten.',
     auth: 'Sign-in or write permission expired. Sign in again; this save was not confirmed.',
     invalidRequest: 'Core rejected the request. Review the sources and text.',
@@ -54,17 +55,47 @@ function shanghaiDate(now = new Date()): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= days[month - 1];
+}
+
+function isCoreTaskTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (!match || !isCalendarDate(match[1])) return false;
+  const hour = Number(match[2]); const minute = Number(match[3]); const second = Number(match[4]);
+  const offsetHour = match[8] ? Number(match[8]) : 0; const offsetMinute = match[9] ? Number(match[9]) : 0;
+  return hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59
+    && Number.isFinite(Date.parse(value));
+}
+
 async function taskReference(task: Record<string, unknown>): Promise<SourceRef | null> {
-  const keys = ['created_at', 'due_date', 'id', 'source', 'status', 'title', 'updated_at'];
-  if (keys.some((key) => !Object.hasOwn(task, key))) return null;
-  if (typeof task.id !== 'string' || !/^[0-9a-f]{32}$/.test(task.id)
+  if (typeof task.source !== 'string') throw new Error('task_source_unverifiable');
+  if (task.source !== 'web_app_explicit_task') return null;
+  if (TASK_SOURCE_VERSION_FIELDS.some((key) => !Object.hasOwn(task, key))
+    || typeof task.id !== 'string' || !/^[0-9a-f]{32}$/.test(task.id)
     || typeof task.title !== 'string' || !task.title.trim()
-    || (task.due_date !== null && typeof task.due_date !== 'string')
+    || (task.due_date !== null && !isCalendarDate(task.due_date))
     || (task.status !== 'open' && task.status !== 'completed')
-    || task.source !== 'web_app_explicit_task'
-    || typeof task.created_at !== 'string' || typeof task.updated_at !== 'string') return null;
-  const canonical = JSON.stringify(Object.fromEntries(keys.map((key) => [key, task[key]])));
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+    || !isCoreTaskTimestamp(task.created_at) || !isCoreTaskTimestamp(task.updated_at)) {
+    throw new Error('task_source_unverifiable');
+  }
+  const titleBytes = new TextEncoder().encode(task.title);
+  if (titleBytes.length > 4096 || new TextDecoder('utf-8', { fatal: true }).decode(titleBytes) !== task.title) {
+    throw new Error('task_source_unverifiable');
+  }
+  // Match Python json.dumps(..., ensure_ascii=False, sort_keys=True, separators=(',', ':')).
+  const canonical = JSON.stringify(Object.fromEntries([...TASK_SOURCE_VERSION_FIELDS].sort().map((key) => [key, task[key]])));
+  const canonicalBytes = new TextEncoder().encode(canonical);
+  if (new TextDecoder('utf-8', { fatal: true }).decode(canonicalBytes) !== canonical) throw new Error('task_source_unverifiable');
+  const digest = await crypto.subtle.digest('SHA-256', canonicalBytes);
   const version = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
   return { kind: 'task', id: task.id, version };
 }
@@ -92,7 +123,7 @@ async function loadSources(): Promise<SourceChoice[]> {
   if (!projects || projects.pagination.has_more || !['real', 'empty'].includes(projects.status)) throw new Error('source_read_failed');
   const tasks: SourceChoice[] = [];
   for (const item of taskPayload.tasks) {
-    if (!isRecord(item)) continue;
+    if (!isRecord(item)) throw new Error('source_read_failed');
     const ref = await taskReference(item);
     if (ref) tasks.push({ key: `${ref.kind}:${ref.id}`, label: item.title as string, ref });
   }
@@ -103,7 +134,7 @@ async function loadSources(): Promise<SourceChoice[]> {
   return [...tasks, ...projectChoices];
 }
 
-export function DailyBriefApproval({ locale, onSaved }: { locale: Locale; onSaved: () => void }) {
+export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date() }: { locale: Locale; onSaved: () => void; dateNow?: () => Date }) {
   const copy = text[locale];
   const [phase, setPhase] = useState<Phase>('idle');
   const [sources, setSources] = useState<SourceChoice[]>([]);
@@ -112,39 +143,50 @@ export function DailyBriefApproval({ locale, onSaved }: { locale: Locale; onSave
   const [categories, setCategories] = useState('');
   const [error, setError] = useState('');
   const [receipt, setReceipt] = useState<WriteReceipt | null>(null);
-  const [requestKey, setRequestKey] = useState('');
   const [savedRequest, setSavedRequest] = useState<Record<string, unknown> | null>(null);
+  const requestKey = useRef<string | null>(null);
   const submitting = useRef(false);
-  const currentDate = useMemo(() => shanghaiDate(), []);
+  const getBusinessDate = () => shanghaiDate(dateNow());
+  const [businessDate, setBusinessDate] = useState(() => getBusinessDate());
+
+  function invalidateRequest() { requestKey.current = null; setSavedRequest(null); }
 
   async function begin() {
-    setPhase('loading-sources'); setError(''); setReceipt(null); setSelected([]); setRequestKey(''); setSavedRequest(null);
+    setPhase('loading-sources'); setError(''); setReceipt(null); setSelected([]); invalidateRequest(); setBusinessDate(getBusinessDate());
     try { const values = await loadSources(); setSources(values); setPhase('editing'); }
-    catch { setError(copy.loadFailed); setPhase('idle'); }
+    catch { setSources([]); setError(copy.loadFailed); setPhase('idle'); }
   }
 
-  function updateSummary(value: string) { setSummary(value); setRequestKey(''); setSavedRequest(null); }
-  function updateCategories(value: string) { setCategories(value); setRequestKey(''); setSavedRequest(null); }
+  function updateSummary(value: string) { setSummary(value); invalidateRequest(); }
+  function updateCategories(value: string) { setCategories(value); invalidateRequest(); }
   function toggleSource(key: string) {
     setSelected((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
-    setRequestKey(''); setSavedRequest(null);
+    invalidateRequest();
   }
 
   function confirmDraft() {
     if (!summary.trim() || summary.length > 20000 || selected.length < 1 || selected.length > 50) { setError(copy.invalid); return; }
     const categoryList = categories.split(',').map((item) => item.trim()).filter(Boolean);
     if (categoryList.length > 30 || categoryList.some((item) => item.length > 80)) { setError(copy.invalid); return; }
+    const today = getBusinessDate();
+    if (today !== businessDate) {
+      setBusinessDate(today); invalidateRequest(); setError(copy.dateChanged); setPhase('editing'); return;
+    }
     setError(''); setPhase('confirming');
   }
 
   async function submit() {
     if (submitting.current) return;
+    const today = getBusinessDate();
+    if (today !== businessDate) {
+      setBusinessDate(today); invalidateRequest(); setError(copy.dateChanged); setPhase('editing'); return;
+    }
     submitting.current = true;
     const refs = sources.filter((source) => selected.includes(source.key)).map((source) => source.ref);
-    if (!requestKey) setRequestKey(`ui-${crypto.randomUUID()}`);
-    const key = requestKey || `ui-${crypto.randomUUID()}`;
+    const key = requestKey.current ?? `ui-${crypto.randomUUID()}`;
+    requestKey.current = key;
     const body = savedRequest ?? {
-      mode: 'manual_generate', date: currentDate, timezone: 'Asia/Shanghai', idempotency_key: key,
+      mode: 'manual_generate', date: businessDate, timezone: 'Asia/Shanghai', idempotency_key: key,
       categories: categories.split(',').map((item) => item.trim()).filter(Boolean),
       summary, source_refs: refs, approved: true,
     };
@@ -158,7 +200,7 @@ export function DailyBriefApproval({ locale, onSaved }: { locale: Locale; onSave
       if (response.status === 409) { submitting.current = false; setError(copy.conflict); setPhase('editing'); return; }
       if (response.status === 422) { submitting.current = false; setError(copy.invalidRequest); setPhase('editing'); return; }
       if (!response.ok) { submitting.current = false; setError(response.status === 503 ? copy.unavailable : copy.unknown); setPhase('unknown'); return; }
-      const parsed = parseReceipt(await response.json(), currentDate);
+      const parsed = parseReceipt(await response.json(), businessDate);
       if (!parsed) { submitting.current = false; setError(copy.unknown); setPhase('unknown'); return; }
       setReceipt(parsed); setPhase('done'); onSaved();
     } catch { submitting.current = false; setError(copy.unknown); setPhase('unknown'); }
@@ -171,6 +213,7 @@ export function DailyBriefApproval({ locale, onSaved }: { locale: Locale; onSave
       <h2>{copy.title}</h2>
       <button type="button" onClick={() => { setPhase('idle'); setError(''); }} disabled={phase === 'submitting'}>{copy.cancel}</button>
       {phase === 'editing' && <>
+        <p role="status">业务日期：{businessDate}</p>
         <h3>{copy.sourceHeading}</h3>
         {sources.length === 0 && <p role="status">{copy.noSources}</p>}
         {sources.map((source) => <label key={source.key}>
@@ -184,14 +227,15 @@ export function DailyBriefApproval({ locale, onSaved }: { locale: Locale; onSave
       </>}
       {phase === 'confirming' && <>
         <h3>{copy.confirmationTitle}</h3><p>{copy.confirmationBody}</p>
+        <p>业务日期：{businessDate}</p>
         <p><strong>{summary}</strong></p>
         <p>{selected.map((key) => sources.find((source) => source.key === key)?.label).filter(Boolean).join(' · ')}</p>
         <button type="button" onClick={() => void submit()}>{copy.confirm}</button>
       </>}
       {phase === 'submitting' && <p role="status">{copy.submitting}</p>}
       {phase === 'unknown' && <button type="button" onClick={() => void submit()}>{copy.retry}</button>}
-      {error && <p role="alert">{error}</p>}
     </>}
     {phase === 'done' && receipt && <p role="status">{receipt.status === 'duplicate' ? copy.duplicate : copy.saved}</p>}
+    {error && <p role="alert">{error}</p>}
   </section>;
 }
