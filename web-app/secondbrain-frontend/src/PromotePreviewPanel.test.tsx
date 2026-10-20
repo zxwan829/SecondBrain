@@ -109,6 +109,7 @@ describe('Promote preview panel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '查询操作状态' }));
     expect(await screen.findByText('已将精确预览版本写入 Knowledge。')).toBeTruthy();
+    expect(screen.getByRole('link', { name: '打开 Knowledge 搜索' }).getAttribute('href')).toBe('/knowledge');
     expect(calls.filter((call) => call.url === `/api/promote/operations/${preview.request_id}`)).toHaveLength(2);
     expect(calls.some((call) => call.url === '/api/promote/review/approve')).toBe(false);
     page.unmount();
