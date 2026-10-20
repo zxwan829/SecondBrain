@@ -48,9 +48,10 @@ def create_app():
     worker_mode = os.environ.get("SB_PROMOTE_WORKER_MODE", "inline").strip().lower()
     if worker_mode not in {"inline", "subprocess"}:
         raise RuntimeError("SB_PROMOTE_WORKER_MODE must be inline or subprocess")
-    if worker_mode == "subprocess" and promote_enabled:
+    if promote_enabled:
         raise RuntimeError(
-            "Promote cannot use the same-UID subprocess candidate; OS identity and mount isolation are required",
+            "Production Promote requires independently verifiable Worker, Writer, and approval authority; "
+            "no isolated runtime proof is configured",
         )
 
     state_info = os.stat(approval_root, follow_symlinks=False)

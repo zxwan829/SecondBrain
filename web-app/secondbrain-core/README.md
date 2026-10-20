@@ -19,13 +19,18 @@ unchanged.
 - `SB_HERMES_API_KEY_FILE` is a server-only credential file. It must never be
   exposed to the browser. Do not use the placeholder paths or values in the
   example as production configuration.
-- `SB_PROMOTE_ENABLED` defaults to `false`. Keep it false until separately
-  authorized production deployment, mount isolation, and approval validation.
+- `SB_PROMOTE_ENABLED` defaults to `false`. The production `create_app` refuses
+  startup whenever it is `true`, for both `inline` and `subprocess` modes. This
+  code has no verifiable isolated Worker, restricted Writer, or independent
+  approval authority; an inline worker and a subprocess sharing the Core UID
+  are not isolation boundaries. Environment flags, including test-mode names,
+  cannot bypass this refusal. The only successful Promote tests assemble the
+  HTTP routes directly in a test-only fixture and do not make the production
+  application factory accept Promote.
 - `SB_PROMOTE_WORKER_MODE=subprocess` selects the one-request subprocess
-  candidate only while Promote is disabled. If `SB_PROMOTE_ENABLED=true`, Core
-  refuses startup: the child retains the Core UID and has no OS ACL or mount
-  sandbox, so this candidate is not an isolation boundary. The gate does not
-  provision or imply a worker identity, ACL, or production authorization.
+  protocol candidate while Promote is disabled. It does not provision or imply
+  a worker identity, peer-authenticated IPC, ACL, mount sandbox, or production
+  authorization.
 - Organizer's SiliconFlow adapter is not loaded unless
   `SB_ORGANIZER_MODEL_ENABLED=true` is explicitly configured. Its preferred
   candidate is `deepseek-ai/DeepSeek-V4-Flash`; the key must come from a private

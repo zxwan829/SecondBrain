@@ -9,10 +9,59 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from secondbrain_core.app import create_app
+from secondbrain_core.modules.app_auth import AppSessionAuth
+from secondbrain_core.modules.hermes_api import HermesAPI
+from secondbrain_core.modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
+from secondbrain_core.modules.review_promote.core_auth import CorePromoteAuth
+from secondbrain_core.modules.review_promote.http import create_core_router
+from secondbrain_core.modules.review_promote.provenance import PromoteProvenanceVerifier
+from secondbrain_core.modules.review_promote.service import PromoteService
+from secondbrain_core.modules.web_app import create_web_app_router
 from secondbrain_core.modules.review_promote.approval import ApprovalRequestError
+
+
+def _synthetic_promote_test_app(env):
+    """Test-only route assembly; production create_app never accepts Promote=ON."""
+    review_root = env["SB_REVIEW_ROOT"]
+    knowledge_root = env["SB_KNOWLEDGE_ROOT"]
+    state_root = env["SB_PROMOTE_STATE_ROOT"]
+    approvals = Path(state_root) / "approvals"
+    operations = Path(state_root) / "b1b-operations"
+    approvals.mkdir(mode=0o700, exist_ok=True)
+    operations.mkdir(mode=0o700, exist_ok=True)
+    origins = [item.strip().rstrip("/") for item in env["SB_DASHBOARD_ORIGINS"].split(",") if item.strip()]
+    allowed_hosts = [item.strip().lower() for item in env["SB_CORE_ALLOWED_HOSTS"].split(",") if item.strip()]
+    auth = AppSessionAuth(env["SB_APP_PASSWORD_FILE"], origins)
+    service = PromoteService(review_root, knowledge_root, str(approvals), str(Path(state_root) / "audit.jsonl"))
+    promote_auth = CorePromoteAuth(env.get("SB_PROMOTE_UNLOCK_SECRET_FILE", ""), origins, auth,
+                                   allowed_hosts=allowed_hosts)
+    app = FastAPI()
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    app.include_router(create_web_app_router(auth, HermesAPI(), service, review_root, knowledge_root))
+    verifier = PromoteProvenanceVerifier(review_root, str(approvals), str(Path(state_root) / "audit.jsonl"),
+                                         operations_root=str(operations))
+    app.include_router(create_knowledge_read_router(
+        auth, KnowledgeReadStore(knowledge_root, provenance_verifier=verifier),
+    ))
+    app.include_router(create_core_router(
+        service, review_root, auth, promote_enabled=True, include_auth_routes=False,
+        promote_auth=promote_auth, operations_root=str(operations), knowledge_root=knowledge_root,
+    ), prefix="/api/promote")
+
+    @app.middleware("http")
+    async def no_store_promote_responses(request, call_next):
+        response = await call_next(request)
+        if (request.url.path.startswith("/api/promote/") or
+                request.url.path == "/api/promote"):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
+
+    return app
 
 
 class B1bPromoteAppFactoryTests(unittest.TestCase):
@@ -61,6 +110,8 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
 
     def _create_app(self):
         with patch.dict(os.environ, self.env, clear=True):
+            if self.env.get("SB_PROMOTE_ENABLED", "false").strip().lower() == "true":
+                return _synthetic_promote_test_app(self.env)
             return create_app()
 
     def login(self):
@@ -153,7 +204,7 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.assertFalse((self.state / "audit.jsonl").exists())
         self.assertEqual(list(self.knowledge.iterdir()), [])
 
-    def test_create_app_unlock_confirm_exact_hash_audit_status_and_same_ticket_retry(self):
+    def test_synthetic_test_routes_unlock_confirm_exact_hash_audit_status_and_same_ticket_retry(self):
         self.env["SB_PROMOTE_ENABLED"] = "true"
         self.client.close()
         self.app = self._create_app()
@@ -227,16 +278,20 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, restored.text)
         self.assertEqual(restored.json()["status"], "promoted")
 
-    def test_promote_enabled_refuses_same_uid_subprocess_candidate_before_startup(self):
-        self.env["SB_PROMOTE_ENABLED"] = "true"
-        self.env["SB_PROMOTE_WORKER_MODE"] = "subprocess"
+    def test_production_create_app_refuses_promote_on_for_inline_and_same_uid_subprocess(self):
         self.client.close()
-        with self.assertRaisesRegex(RuntimeError, "same-UID subprocess candidate"):
-            self._create_app()
-        self.assertEqual(list((self.state / "approvals").iterdir()), [])
-        self.assertEqual(list((self.state / "b1b-operations").iterdir()), [])
-        self.assertFalse((self.state / "audit.jsonl").exists())
-        self.assertEqual(list(self.knowledge.iterdir()), [])
+        for worker_mode in ("inline", "subprocess"):
+            with self.subTest(worker_mode=worker_mode):
+                denied_state = self.root / f"denied-state-{worker_mode}"
+                env = {**self.env, "SB_PROMOTE_ENABLED": "true",
+                       "SB_PROMOTE_WORKER_MODE": worker_mode,
+                       "SB_CORE_TEST_MODE": "true",
+                       "SB_PROMOTE_STATE_ROOT": str(denied_state)}
+                with patch.dict(os.environ, env, clear=True):
+                    with self.assertRaisesRegex(RuntimeError, "independently verifiable Worker"):
+                        create_app()
+                self.assertFalse(denied_state.exists(), "startup refusal must precede persistent state creation")
+                self.assertEqual(list(self.knowledge.iterdir()), [])
 
     def test_default_promote_off_allows_subprocess_start_but_confirm_is_read_only(self):
         from secondbrain_core.modules.review_promote.subprocess_worker_client import SubprocessPromoteWorker
