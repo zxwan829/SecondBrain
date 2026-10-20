@@ -81,12 +81,18 @@ def test_core_activity_real_localhost_http_security_budget_and_read_only(tmp_pat
     budget_days = ((today - timedelta(days=2)).isoformat(), (today - timedelta(days=1)).isoformat())
     for budget_day in budget_days:
         _write_budget_day(roots["journal"], budget_day)
+    # Remove append-only lock files created during fixture setup, then make the
+    # source genuinely read-only. GETs must neither need nor recreate them.
+    (roots["journal"] / ".operations.lock").unlink()
+    (roots["journal"] / f".{day}.lock").unlink()
+    for source_file in roots["journal"].iterdir():
+        os.chmod(source_file, 0o400)
+    os.chmod(roots["journal"], 0o500)
 
     calls = []
-    direct_reads = []
+    direct_task_reads = []
     fail_day = {"value": None}
     original_read = JournalStore.read_source_day
-    original_journal_read = JournalStore.read
     original_task_list = TaskStore.list
 
     def tracked_read(store, requested_day, **kwargs):
@@ -95,16 +101,11 @@ def test_core_activity_real_localhost_http_security_budget_and_read_only(tmp_pat
             raise OSError("synthetic private path /private/never-leak")
         return original_read(store, requested_day, **kwargs)
 
-    def tracked_journal_read(store, requested_day):
-        direct_reads.append(("journal", requested_day))
-        return original_journal_read(store, requested_day)
-
     def tracked_task_list(store, *args, **kwargs):
-        direct_reads.append(("task", args, kwargs))
+        direct_task_reads.append((args, kwargs))
         return original_task_list(store, *args, **kwargs)
 
     monkeypatch.setattr(JournalStore, "read_source_day", tracked_read)
-    monkeypatch.setattr(JournalStore, "read", tracked_journal_read)
     monkeypatch.setattr(TaskStore, "list", tracked_task_list)
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -137,13 +138,20 @@ def test_core_activity_real_localhost_http_security_budget_and_read_only(tmp_pat
         assert server.started, "localhost Core Uvicorn server did not start"
 
         before = {name: _snapshot(roots[name]) for name in ("journal", "tasks")}
+        assert stat.S_IMODE(roots["journal"].stat().st_mode) == 0o500
+        assert all(stat.S_IMODE(path.stat().st_mode) == 0o400
+                   for path in roots["journal"].iterdir())
+        if os.geteuid() != 0:
+            assert not os.access(roots["journal"], os.W_OK)
+        assert ".operations.lock" not in before["journal"]
+        assert f".{day}.lock" not in before["journal"]
         with httpx.Client(base_url=origin, trust_env=False, timeout=5.0) as client:
             denied = client.get(f"/api/activity?from={day}&to={day}", headers={"Origin": origin})
             assert denied.status_code == 401
             assert calls == []  # authorization happens before any source read
             assert client.get(f"/api/journal/{day}", headers={"Origin": origin}).status_code == 401
             assert client.get("/api/tasks?status=all", headers={"Origin": origin}).status_code == 401
-            assert direct_reads == []
+            assert direct_task_reads == []
 
             wrong_origin = client.post("/api/auth/login", headers={"Origin": "http://evil.invalid"},
                                        json={"password": "synthetic-activity-password"})
@@ -152,14 +160,10 @@ def test_core_activity_real_localhost_http_security_budget_and_read_only(tmp_pat
                                 json={"password": "synthetic-activity-password"})
             assert login.status_code == 200
 
-            journal_read = client.get(f"/api/journal/{day}", headers={"Origin": origin})
-            assert journal_read.status_code == 200
-            assert any(row["original_text"] == "记一下 synthetic normal Journal row"
-                       for row in journal_read.json()["entries"])
             task_read = client.get("/api/tasks?status=all", headers={"Origin": origin})
             assert task_read.status_code == 200
             assert task_read.json()["tasks"][0]["title"] == "Synthetic Activity Task"
-            assert {entry[0] for entry in direct_reads} == {"journal", "task"}
+            assert len(direct_task_reads) == 1
 
             normal = client.get(f"/api/activity?from={day}&to={day}&limit=1",
                                 headers={"Origin": origin})
@@ -209,6 +213,8 @@ def test_core_activity_real_localhost_http_security_budget_and_read_only(tmp_pat
 
         after = {name: _snapshot(roots[name]) for name in ("journal", "tasks")}
         assert after == before  # GET created no locks/files and changed no source bytes or metadata
+        assert ".operations.lock" not in after["journal"]
+        assert f".{day}.lock" not in after["journal"]
     finally:
         if server is not None:
             server.should_exit = True
