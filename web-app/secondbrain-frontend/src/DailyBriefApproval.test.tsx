@@ -41,11 +41,11 @@ async function openComposer(tasks: Array<Record<string, unknown>> = [task]) {
   fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
   if (tasks.length) expect(await screen.findByRole('checkbox', { name: new RegExp(String(tasks[0].title ?? '')) })).toBeTruthy();
   expect(screen.getByRole('checkbox', { name: /Synthetic project source/ })).toBeTruthy();
-  expect(screen.getByText(/Journal 来源暂不可选/)).toBeTruthy();
+  expect(screen.getByRole('button', { name: '加载 Journal 来源' })).toBeTruthy();
 }
 
 describe('Daily Brief explicit approval UI draft', () => {
-  afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+  afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
   it('does not load source lists or POST on page load; waits for explicit review and confirmation', async () => {
     const randomUUID = vi.fn(() => '11111111-1111-4111-8111-111111111111');
@@ -69,7 +69,7 @@ describe('Daily Brief explicit approval UI draft', () => {
     fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
     expect(await screen.findByRole('checkbox', { name: /Synthetic task source/ })).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: /Synthetic project source/ })).toBeTruthy();
-    expect(screen.getByText(/Journal 来源暂不可选/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '加载 Journal 来源' })).toBeTruthy();
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
     expect(calls.filter((call) => call.path === '/api/tasks?status=all')).toHaveLength(1);
     expect(calls.filter((call) => call.path === '/api/projects?limit=50&offset=0')).toHaveLength(1);
@@ -84,7 +84,7 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
 
     fireEvent.click(screen.getByRole('button', { name: '确认并创建简报' }));
-    await waitFor(() => expect(screen.getByText('简报已保存。正在重新读取 Core 当前状态。')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('写入已确认，当前回读待核验。')).toBeTruthy());
     const posts = calls.filter((call) => call.method === 'POST');
     expect(posts).toHaveLength(1);
     expect(posts[0].path).toBe('/api/daily-brief');
@@ -97,6 +97,90 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(new Set((posts[0].body?.source_refs as Array<{kind:string}>).map((ref) => ref.kind))).toEqual(new Set(['task', 'project']));
     expect(Object.keys(posts[0].body ?? {}).sort()).toEqual(['approved', 'categories', 'date', 'idempotency_key', 'mode', 'source_refs', 'summary', 'timezone'].sort());
     expect(await screen.findByText('SYNTHETIC APPROVED BRIEF')).toBeTruthy();
+  });
+
+  it('loads Journal only on click, submits the exact Core ref after confirmation, then verifies by GET', async () => {
+    vi.stubGlobal('crypto', cryptoFor());
+    const calls: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [];
+    const sourceId = `2026-10-20:${'e'.repeat(64)}`;
+    const sourceVersion = 'e'.repeat(64);
+    let posted: Record<string, unknown> | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input); const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as Record<string, unknown> : undefined;
+      calls.push({ path, method, ...(body ? { body } : {}) });
+      if (path.startsWith('/api/daily-brief/source-options/journal?')) return Response.json({
+        status: 'real', items: [{ kind: 'journal', id: sourceId, date: '2026-10-20', version: sourceVersion }],
+        freshness: { checked_at: checkedAt },
+      });
+      if (path === '/api/daily-brief' && method === 'POST') {
+        posted = body ?? null;
+        return Response.json({ status: 'created', brief_id: 'brief_journal_synthetic', date: body?.date,
+          timezone: 'Asia/Shanghai', record_version: 'f'.repeat(64), operation_id: `dbi-${'a'.repeat(64)}` }, { status: 201 });
+      }
+      if (path.startsWith('/api/daily-brief?')) {
+        if (!posted) return Response.json(brief('not_configured', '2026-10-20'));
+        return Response.json({ status: 'real', items: [{ brief_id: 'brief_journal_synthetic', date: '2026-10-20',
+          timezone: 'Asia/Shanghai', generated_at: checkedAt, generation_status: 'generated', categories: ['Journal 回顾'],
+          summary: 'Synthetic Journal brief', source_refs: (posted.source_refs as unknown[]) }],
+          source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt } });
+      }
+      return sourceResponse(path);
+    }));
+
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
+    expect(await screen.findByRole('checkbox', { name: /Synthetic task source/ })).toBeTruthy();
+    expect(calls.some((call) => call.path.startsWith('/api/daily-brief/source-options/journal'))).toBe(false);
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: '加载 Journal 来源' }));
+    const journalChoice = await screen.findByRole('checkbox', { name: /Journal 来源 1/ });
+    expect(calls.filter((call) => call.path.startsWith('/api/daily-brief/source-options/journal'))).toHaveLength(1);
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+    fireEvent.click(journalChoice);
+    fireEvent.change(screen.getByLabelText(/简报正文/), { target: { value: 'Synthetic Journal brief' } });
+    fireEvent.change(screen.getByLabelText('分类（逗号分隔）'), { target: { value: 'Journal 回顾' } });
+    fireEvent.click(screen.getByRole('button', { name: '预览并确认' }));
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '确认并创建简报' }));
+    await waitFor(() => expect(screen.getByText('当前简报已核验：Brief 和来源版本与本次提交一致。')).toBeTruthy());
+
+    const post = calls.find((call) => call.method === 'POST');
+    expect(post?.body?.source_refs).toEqual([{ kind: 'journal', id: sourceId, version: sourceVersion }]);
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
+    expect(calls.some((call) => call.path === '/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai')).toBe(true);
+    expect(screen.queryByText(/Journal 正文/)).toBeNull();
+  });
+
+  it('retries readback only after a confirmed receipt whose GET is unavailable', async () => {
+    vi.stubGlobal('crypto', cryptoFor());
+    let postCount = 0; let getCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith('/api/daily-brief?')) {
+        getCount += 1;
+        return Response.json({ detail: 'SENSITIVE_SYNTHETIC' }, { status: 503 });
+      }
+      if (path === '/api/daily-brief' && init?.method === 'POST') {
+        postCount += 1; const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return Response.json({ status: 'created', brief_id: 'brief_readback', date: body.date, timezone: 'Asia/Shanghai',
+          record_version: 'c'.repeat(64), operation_id: `dbi-${'d'.repeat(64)}` }, { status: 201 });
+      }
+      return sourceResponse(path);
+    }));
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
+    expect(await screen.findByRole('checkbox', { name: /Synthetic task source/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Synthetic task source/ }));
+    fireEvent.change(screen.getByLabelText(/简报正文/), { target: { value: 'Synthetic GET retry' } });
+    fireEvent.click(screen.getByRole('button', { name: '预览并确认' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认并创建简报' }));
+    expect(await screen.findByText(/写入已确认，当前回读不可用/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '只读重试当前状态核验' }));
+    await waitFor(() => expect(getCount).toBe(2));
+    expect(postCount).toBe(1);
+    expect(screen.getByText(/写入已确认，当前回读不可用/)).toBeTruthy();
   });
 
   it('retries an unknown transport result with identical key and body', async () => {
@@ -118,9 +202,9 @@ describe('Daily Brief explicit approval UI draft', () => {
     fireEvent.change(screen.getByLabelText(/简报正文/), { target: { value: 'Synthetic retry text' } });
     fireEvent.click(screen.getByRole('button', { name: '预览并确认' }));
     fireEvent.click(screen.getByRole('button', { name: '确认并创建简报' }));
-    expect(await screen.findByText(/无法确认保存结果/)).toBeTruthy();
+    expect(await screen.findByText(/写入结果未知/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '用同一请求安全重试' }));
-    expect(await screen.findByText('这项操作此前已保存；没有创建第二条简报。')).toBeTruthy();
+    expect(await screen.findByText('写入已确认（Core 判定为相同请求的重复回执），当前回读待核验。')).toBeTruthy();
     expect(posts).toHaveLength(2);
     expect(posts[0]).toEqual(posts[1]);
   });
@@ -156,6 +240,7 @@ describe('Daily Brief explicit approval UI draft', () => {
     ];
     for (const [index, sourceTask] of variants.entries()) {
       cleanup();
+      window.sessionStorage.clear();
       vi.stubGlobal('crypto', cryptoFor());
       const posts: Array<Record<string, unknown>> = [];
       vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -167,7 +252,9 @@ describe('Daily Brief explicit approval UI draft', () => {
         }
         return sourceResponse(path, [sourceTask]);
       }));
-      await openComposer([sourceTask]);
+      render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} />);
+      fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
+      expect(await screen.findByRole('checkbox', { name: /Café 東京/ })).toBeTruthy();
       fireEvent.click(screen.getByRole('checkbox', { name: /Café 東京/ }));
       fireEvent.change(screen.getByLabelText(/简报正文/), { target: { value: 'Synthetic hash vector' } });
       fireEvent.click(screen.getByRole('button', { name: '预览并确认' }));
@@ -280,7 +367,7 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(posts).toHaveLength(1);
     const body = posts[0];
     resolvePost?.(Response.json({ status: 'created', brief_id: 'brief_double', date: body.date, timezone: 'Asia/Shanghai', record_version: 'c'.repeat(64), operation_id: `dbi-${'d'.repeat(64)}` }, { status: 201 }));
-    await waitFor(() => expect(screen.getByText('简报已保存。正在重新读取 Core 当前状态。')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('写入已确认，当前回读待核验。')).toBeTruthy());
   });
 
   it('preserves the exact POST body and idempotency key after a sanitized 503 retry', async () => {
@@ -305,7 +392,7 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(await screen.findByText(/Core 暂不可用/)).toBeTruthy();
     expect(screen.queryByText(/SENSITIVE_SYNTHETIC_DIAGNOSTIC/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '用同一请求安全重试' }));
-    expect(await screen.findByText(/此前已保存/)).toBeTruthy();
+    expect(await screen.findByText(/相同请求的重复回执/)).toBeTruthy();
     expect(posts).toHaveLength(2);
     expect(posts[0]).toEqual(posts[1]);
   });
