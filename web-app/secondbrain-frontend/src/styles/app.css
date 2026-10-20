@@ -259,6 +259,16 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .v1-activity-marker { width: 9px; height: 9px; margin: 7px 0 0 2px; background: #65aaf4; border-radius: 50%; box-shadow: 0 0 0 4px rgb(69 134 207 / 13%); }
 .v1-activity-copy { min-width: 0; }
 .v1-activity-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 13px 0 0; }
+.v1-page-retry, .v1-local-preview-toggle { min-height: 38px; padding: 8px 12px; color: #dce7f7; background: rgb(39 60 90 / 65%); border: 1px solid rgb(151 177 215 / 22%); border-radius: 9px; cursor: pointer; }
+.v1-page-retry:disabled { opacity: .6; cursor: wait; }
+.v1-page-state { margin: 0; padding: 14px 16px; color: #c8d8ee; background: rgb(26 41 63 / 72%); border: 1px solid rgb(139 167 205 / 18%); border-radius: 10px; line-height: 1.6; }
+.v1-page-state.is-unavailable { color: #ffd2cb; background: rgb(91 42 37 / 32%); border-color: rgb(226 117 97 / 25%); }
+.v1-page-state.is-partial { color: #ffe3aa; background: rgb(97 72 28 / 25%); border-color: rgb(215 169 83 / 25%); }
+.v1-status-pill.is-healthy { color: #bce8ce; background: rgb(34 103 63 / 26%); border-color: rgb(98 190 132 / 24%); }
+.v1-status-pill.is-unavailable { color: #ffd2cb; background: rgb(113 45 38 / 28%); border-color: rgb(226 117 97 / 25%); }
+.v1-local-preview { padding: 14px; background: rgb(17 28 46 / 56%); border: 1px dashed rgb(121 158 205 / 30%); border-radius: 12px; }
+.v1-local-preview-content { display: grid; gap: 7px; margin-top: 12px; color: #c5d4e8; font-size: 13px; line-height: 1.55; }
+.v1-local-preview-content p { margin: 0; }
 .module-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 10px 2px 4px; }
 .module-header h1 { margin: 8px 0 6px; color: #f1f5fc; font-size: clamp(25px, 3vw, 34px); letter-spacing: -.035em; }
 .journal-panel { padding: clamp(16px, 2.5vw, 24px); color: #dce7f7; background: linear-gradient(145deg, rgb(19 31 51 / 93%), rgb(11 19 34 / 96%)); border: 1px solid rgb(151 177 215 / 12%); border-radius: 16px; box-shadow: 0 12px 30px rgb(0 0 0 / 13%); }
