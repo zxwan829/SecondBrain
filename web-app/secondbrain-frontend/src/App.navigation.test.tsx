@@ -122,6 +122,22 @@ describe('Notes application navigation gate', () => {
     expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=1&offset=0']);
   });
 
+  it('fails closed when Projects violates its explicitly empty response contract', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/projects?limit=1&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [{ title: 'must not render' }], pagination: { limit: 1, offset: 0, has_more: false }, source: null }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/projects');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
+    expect(screen.queryByText('must not render')).toBeNull();
+    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=1&offset=0']);
+  });
+
   it('loads Activity from its explicit read endpoint without session/message or Home reads', async () => {
     const calls = mockAppFetch();
     startAt('/activity');

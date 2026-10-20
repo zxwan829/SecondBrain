@@ -32,15 +32,19 @@ function isIsoDateTime(value: unknown): value is string {
 }
 
 function parseActivityResponse(value: unknown): ActivityResponse | null {
-  if (!isRecord(value) || !['ok', 'empty', 'partial', 'unavailable'].includes(String(value.status))
+  const allowedResponseFields = new Set(['status', 'items', 'pagination', 'source', 'freshness']);
+  if (!isRecord(value) || Object.keys(value).some((field) => !allowedResponseFields.has(field))
+    || !['ok', 'empty', 'partial', 'unavailable'].includes(String(value.status))
     || !Array.isArray(value.items) || !isRecord(value.pagination) || !Array.isArray(value.source)
     || !isRecord(value.freshness) || !isIsoDateTime(value.freshness.checked_at)) return null;
   const pagination = value.pagination;
   if (!Number.isInteger(pagination.limit) || !Number.isInteger(pagination.offset)
     || typeof pagination.has_more !== 'boolean') return null;
   const items: ActivityEvent[] = [];
+  const allowedEventFields = new Set(['activity_id', 'kind', 'status', 'occurred_at', 'journal_date', 'task_due_date', 'task_status']);
   for (const raw of value.items) {
-    if (!isRecord(raw) || forbiddenActivityFields.some((field) => Object.hasOwn(raw, field))) return null;
+    if (!isRecord(raw) || Object.keys(raw).some((field) => !allowedEventFields.has(field))
+      || forbiddenActivityFields.some((field) => Object.hasOwn(raw, field))) return null;
     if (typeof raw.activity_id !== 'string' || !raw.activity_id.trim()
       || (raw.kind !== 'journal' && raw.kind !== 'task')
       || (raw.status !== 'succeeded' && raw.status !== 'failed')
@@ -126,7 +130,10 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
       if (signal.aborted) return;
       if (page === 'projects') {
         if (!isRecord(payload) || payload.status !== 'not_configured' || !Array.isArray(payload.items)
-          || !isRecord(payload.pagination) || payload.source !== null) throw new Error('unavailable');
+          || payload.items.length !== 0 || !isRecord(payload.pagination) || payload.source !== null
+          || Object.keys(payload).some((field) => !['status', 'items', 'pagination', 'source'].includes(field))
+          || Object.keys(payload.pagination).some((field) => !['limit', 'offset', 'has_more'].includes(field))
+          || payload.pagination.limit !== 1 || payload.pagination.offset !== 0 || payload.pagination.has_more !== false) throw new Error('unavailable');
         setState('loaded');
         return;
       }
