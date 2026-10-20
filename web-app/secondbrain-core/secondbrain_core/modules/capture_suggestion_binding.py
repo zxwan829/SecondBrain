@@ -410,6 +410,14 @@ class TrustedCaptureSuggestionBindingStore:
                 if existing is not None:
                     if existing != record:
                         raise CaptureSuggestionBindingConflict("source event already bound differently")
+                    # A prior os.replace may have succeeded while its directory
+                    # fsync failed. Replay must re-establish directory-entry
+                    # durability before reporting a confirmed duplicate.
+                    try:
+                        os.fsync(root_fd)
+                    except OSError as exc:
+                        raise CaptureSuggestionBindingStoreError(
+                            "candidate replay durability remains unknown") from exc
                     return binding, True
                 state["records"][key] = record
                 self._atomic_write(state, root_fd)
