@@ -28,6 +28,10 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, sum
     if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url.startsWith('/api/daily-brief?')) return new Response(JSON.stringify({ status: 'not_configured', items: [], source: null }), { status: 200 });
     if (url === '/api/agent/health') return new Response(JSON.stringify({ status: 'not_configured', source: null, checked_at: '2026-10-20T01:30:00Z' }), { status: 200 });
+    if (url.startsWith('/api/calendar?')) {
+      const query = new URLSearchParams(url.split('?')[1]);
+      return new Response(JSON.stringify({ status: 'ok', items: [{ id: 'opaque-calendar-synth-1', kind: 'task', date: query.get('from'), status: 'open' }], source: ['tasks'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
+    }
     if (url.startsWith('/api/knowledge/search?')) return new Response(JSON.stringify({ items: [], status: 'ok' }), { status: 200 });
     if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify(summaryStatus === 200 ? { status: 'real', items: [{ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', display_filename: 'synthetic.txt', status: 'completed', error_code: null, has_review: false }] } : { detail: 'synthetic failure' }), { status: summaryStatus });
     if (url === `/api/capture/${captureId}`) return new Response(JSON.stringify({ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', raw_path: 'synthetic.txt', display_filename: 'synthetic.txt', title: 'Synthetic capture', status: 'completed', content_preview: 'SYNTHETIC EXACT CAPTURE BODY', review_path: null }), { status: 200 });
@@ -107,6 +111,52 @@ describe('Notes application navigation gate', () => {
     startAt('/');
     await screen.findByRole('heading', { name: '你的工作台' });
     await waitFor(() => expect(calls).toContain('/api/home'));
+    expect(calls).toEqual(['/api/auth/session', '/api/home']);
+    fireEvent.click(screen.getByRole('button', { name: '查看完整日历' }));
+    expect(await screen.findByRole('heading', { name: '日历' })).toBeTruthy();
+    expect(calls.filter((url) => url === '/api/home')).toHaveLength(1);
+    expect(calls.filter((url) => url.startsWith('/api/calendar?'))).toHaveLength(1);
+  });
+
+  it('loads Calendar only for a bounded Shanghai month and never requests bodies or Home', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    const calls = mockAppFetch();
+    startAt('/calendar');
+
+    expect(await screen.findByRole('heading', { name: '日历' })).toBeTruthy();
+    const calendarRequest = calls.find((url) => url.startsWith('/api/calendar?'));
+    expect(calendarRequest).toBeTruthy();
+    const query = new URLSearchParams(calendarRequest!.split('?')[1]);
+    expect(query.get('timezone')).toBe('Asia/Shanghai');
+    const from = query.get('from')!;
+    const to = query.get('to')!;
+    expect(from).toMatch(/^\d{4}-\d{2}-01$/);
+    expect(to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000 + 1).toBeLessThanOrEqual(31);
+    await screen.findByText('待办');
+    expect(document.querySelector(`[data-date="${from}"]`)).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', calendarRequest]);
+    expect(calls.some((url) => /home|tasks|journal\/|sessions|messages|promote|run/i.test(url))).toBe(false);
+  });
+
+  it('rejects Calendar events containing body or unknown private fields', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url.startsWith('/api/calendar?')) {
+        const query = new URLSearchParams(url.split('?')[1]);
+        return new Response(JSON.stringify({ status: 'ok', items: [{ id: 'opaque-calendar-synth-1', kind: 'journal', date: query.get('from'), body: 'private journal text' }], source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/calendar');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('日历数据暂不可用');
+    expect(screen.queryByText('private journal text')).toBeNull();
+    expect(calls).toHaveLength(2);
+    expect(calls.some((url) => /home|tasks|journal\/|sessions|messages/i.test(url))).toBe(false);
   });
 
   it('loads Projects only from its explicit read endpoint and keeps unconfigured state distinct', async () => {
