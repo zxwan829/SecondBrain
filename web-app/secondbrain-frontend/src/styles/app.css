@@ -883,6 +883,21 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
   .secondary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agent-card { grid-column: span 2; }
 }
+@media (min-width: 761px) and (max-width: 1120px) {
+  .workspace-header { align-items: flex-start; flex-direction: column; gap: 12px; min-height: 0; }
+  .workspace-heading { width: 100%; }
+  .workspace-header h1, .workspace-subtitle { overflow-wrap: anywhere; }
+  .workspace-subtitle { max-width: 100%; line-height: 1.5; }
+  .header-actions { display: flex; width: 100%; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-start; gap: 8px; }
+  .agent-visual { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 38%); gap: 12px; min-height: 150px; }
+  .agent-copy { min-width: 0; transform: none; }
+  .agent-copy strong, .agent-copy small { overflow-wrap: anywhere; }
+  .agent-crystal { width: 100%; max-width: 190px; height: 160px; justify-self: end; transform: none; }
+  .agent-visual-caption { margin-top: 0; }
+  .action-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .action-card { align-items: flex-start; min-height: 72px; }
+  .action-copy strong, .action-copy small { overflow: visible; line-height: 1.35; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
+}
 @media (max-width: 760px) {
   :root { --sb-type-meta: 10px; --sb-type-caption: 11px; --sb-type-body: 12px; --sb-type-title: 15px; --sb-chart-width: 60px; --sb-chart-height: 38px; --sb-kpi-number-indent: 16px; --sb-kpi-status-indent: 7px; }
   .unified-composer { padding: 9px; border-radius: 13px; }
