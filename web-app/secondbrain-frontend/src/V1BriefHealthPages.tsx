@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { parseDailyBriefResponse, type DailyBriefResponse } from './projects-brief-wire';
+import { JournalSourcePicker } from './JournalSourcePicker';
 
 type Locale = 'zh-CN' | 'en';
 type BriefPageState = 'loading' | 'not-configured' | 'empty' | 'real' | 'partial' | 'stale' | 'failed' | 'unauthorized' | 'unavailable' | 'backend-not-implemented';
@@ -118,7 +119,10 @@ export function V1BriefHealthPage({ page, locale }: { page: 'brief' | 'agent-hea
         : state === 'unauthorized' ? <p className="v1-page-state is-unavailable" role="alert">{copy.unauthorized}</p>
           : state === 'unavailable' ? <p className="v1-page-state is-unavailable" role="alert">{copy.unavailable}</p>
             : state === 'backend-not-implemented' ? <p className="v1-page-state is-unavailable" role="status">{copy.notImplemented}</p>
-              : page === 'brief' ? <DailyBriefView state={state as BriefPageState} record={briefRecord} checkedAt={checkedAt} locale={locale} />
+              : page === 'brief' ? <>
+                <DailyBriefView state={state as BriefPageState} record={briefRecord} checkedAt={checkedAt} locale={locale} />
+                <JournalSourcePicker locale={locale} />
+              </>
                 : <article className="v1-data-card v1-agent-health-card" aria-label={words.title}>
                   <div className="v1-data-card-heading"><h2>{words.title}</h2><span className={`v1-status-pill ${state === 'online' ? 'is-healthy' : 'is-unavailable'}`}>{statusLabel}</span></div>
                   {checkedAt && <dl className="v1-data-fields"><div><dt>{copy.checked}</dt><dd><time>{formatTime(checkedAt)}</time></dd></div>{state !== 'not-configured' && <div><dt>Source</dt><dd>Hermes runtime</dd></div>}</dl>}
