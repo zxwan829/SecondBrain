@@ -147,10 +147,12 @@ describe('Daily Brief explicit approval UI draft', () => {
     const variants = [
       { id: 'a'.repeat(32), title: 'Café 東京 😀 - "Daily"', due_date: '2026-10-21', status: 'open', created_at: '2026-10-20T01:00:00.123456+00:00', updated_at: '2026-10-20T01:01:02.123456+08:00', source: 'web_app_explicit_task' },
       { source: 'web_app_explicit_task', updated_at: '2026-10-20T01:01:03.123456+08:00', title: 'Café 東京 😀 - "Daily"', status: 'open', created_at: '2026-10-20T01:00:00.123456+00:00', id: 'a'.repeat(32), due_date: '2026-10-21' },
+      { updated_at: '2026-10-20T01:01:02.123456+08:00', due_date: null, status: 'open', title: 'Café 東京 😀 - "Daily"', source: 'web_app_explicit_task', id: 'a'.repeat(32), created_at: '2026-10-20T01:00:00.123456+00:00' },
     ];
     const expected = [
       '69f9cca6aec30b645f23b302ae92425945bfa53e6b190672d9a18e5b07b64c3c',
       '9ea3fef0a8083a5d2d0366882d3dc7de9f2259147ebabce6fcdc65ecf81e8e5f',
+      '57f85a20005f85a8ef2e588b4fe36a216060ed69938fd58b2ae1e5b3317358cd',
     ];
     for (const [index, sourceTask] of variants.entries()) {
       cleanup();
