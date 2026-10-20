@@ -21,6 +21,11 @@ unchanged.
   example as production configuration.
 - `SB_PROMOTE_ENABLED` defaults to `false`. Keep it false until separately
   authorized production deployment, mount isolation, and approval validation.
+- `SB_PROMOTE_WORKER_MODE=subprocess` selects the synthetic/local one-request
+  subprocess candidate. It uses a bounded JSON pipe, a minimal child environment,
+  resource limits, and the existing exact Review/Approval/Knowledge/Audit checks.
+  It still runs under the Core UID and has no OS ACL or mount sandbox; it does
+  not satisfy production Promote isolation or authorize enabling Promote.
 - Organizer's SiliconFlow adapter is not loaded unless
   `SB_ORGANIZER_MODEL_ENABLED=true` is explicitly configured. Its preferred
   candidate is `deepseek-ai/DeepSeek-V4-Flash`; the key must come from a private
@@ -51,6 +56,58 @@ unchanged.
   `记一下` / `写日记` phrase, append the original text to a per-date JSONL file,
   and use a persistent idempotency key. Chat's anchored explicit intent calls this
   API directly; ordinary Chat and Hermes tools cannot call this path implicitly.
+- The channel-neutral Core intake contract is `POST /api/inbox/entries` with
+  `original_text`, `source_channel`, `source_event_id`, `occurred_at`, `intent`,
+  and optional `attachment_refs` (`[{capture_id, sha256}]`). An approved
+  suggestion additionally carries `approved_proposal_id` and
+  `approved_proposal_version`. The server derives a trusted `web` identity from
+  the authenticated App action; body fields cannot assert a channel principal.
+  Hermes and other external adapters are not registered. Event IDs are
+  idempotency keys, not caller identity. Browser
+  `occurred_at` is preserved as source metadata; Core `captured_at` is the
+  authoritative receipt time. Core creates consent evidence from the successful
+  App action and persists the original text through the existing Capture Raw →
+  Review path. Replays with the same event key and request are idempotent;
+  changed payloads conflict. `explicit_capture`, `journal_intent`, and
+  `task_intent` are stored in Inbox; Journal and Task are not executed here.
+  `approved_suggestion` requires an exact current `approved_recorded` proposal ID,
+  version, and matching source content; it persists only through Capture Raw →
+  Review and does not execute Journal, Project, Knowledge, or other target actions.
+  Core repeats the proposal decision/version, source digest, and vocabulary
+  revision checks under the per-event persistence lock immediately before the
+  first Raw/state write. This closes changes injected after the initial HTTP
+  validation and before persistence starts; it is not a cross-store transaction,
+  so a mutation in the remaining interval after that check is still a documented
+  race pending an explicitly designed shared lock/transaction boundary.
+  Same-key concurrent identical requests reuse one durable Capture; competing
+  payloads (including time, proposal version, or attachment binding) conflict.
+  If a write leaves Raw without valid state, or state is corrupt/missing or no
+  longer matches Raw, Core preserves the bytes and returns a recovery error for
+  manual review; it never reconstructs missing state or overwrites the Raw on
+  retry.
+  Attachment references are limited to up to five existing Core Capture IDs
+  plus SHA-256 values, which Core reopens without following links and rehashes;
+  arbitrary paths, stale hashes, unsupported channel-owned sources, and repeated
+  IDs are rejected. The stored response exposes only the opaque reference and hash.
+  `GET /api/inbox/entries/{inbox_id}` restores the exact event after refresh under
+  the App session.
+- Knowledge source status can become `verified` only when a single exact
+  promotion is supported by reconstructing `render_promoted_markdown()` from the
+  exact current Review bytes and trusted `request_id`, Review digest, and
+  approval time, then matching those canonical bytes to Knowledge, Audit, and
+  (for B1b) the durable exact-confirmation operation output hash and
+  `promote_exact_preview` intent. This rejects synchronized Knowledge/Audit hash
+  drift. Legacy B1a records remain eligible only when their canonical output can
+  be reconstructed exactly. Earlier B1b operation records that do not persist
+  the exact confirmation intent remain unverified; no history is rewritten.
+  The verifier reads one Review path and never scans
+  Raw/Private; missing, corrupt, oversized, duplicate, or drifted evidence returns
+  `unverified` with no source link.
+- The subprocess Worker is a local process-boundary candidate only. It accepts
+  one bounded Promote request, receives no App secret, closes inherited file
+  descriptors, and runs under CPU/file/output bounds. A separate OS UID, read-only
+  approval/Review mounts, and write-only-or-minimal Knowledge/Audit ACLs are not
+  provisioned here; therefore B3 production isolation remains blocked.
 - Task API is always routed but returns an explicit unavailable response unless
   `SB_TASK_ROOT` names an existing Core-owned `0700` directory. It uses one
   locked, atomically replaced JSON store for idempotent create, status/date query,
@@ -75,6 +132,11 @@ unchanged.
   forwarded scheme is HTTPS.
 - Production Promote. Hermes Knowledge remains read-only; Core Knowledge remains
   read-only and `SB_PROMOTE_ENABLED=false` in production.
+- OS-level Promote process/UID and filesystem mount separation is not established
+  by this local code. The existing worker is called in-process, so the new
+  provenance verifier does not make Promote safe to enable. A dedicated worker
+  identity, read-only approval evidence, narrowly writable Knowledge target, and
+  deployment topology require separate design, review, and authorization.
 - Journal has only local synthetic tests. It has not been deployed or mounted
   against the production `50-Journal` directory; no real Journal data was read
   or written.

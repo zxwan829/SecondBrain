@@ -109,11 +109,12 @@ class ApprovalFileStore:
 
     @staticmethod
     def _read_record_at(directory_fd, name):
-        fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                     getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or \
-                    stat.S_IMODE(info.st_mode) != 0o600:
+                    stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 65536:
                 raise ApprovalRequestError("Approval record must be a regular private file")
             record = json.loads(_read_fd(fd).decode("utf-8"))
         except (OSError, ValueError, UnicodeDecodeError) as exc:
@@ -417,7 +418,8 @@ class ReviewDecisionStore:
 
     def _read_claim_at(self, directory_fd, key):
         try:
-            fd = os.open(key + ".claim", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            fd = os.open(key + ".claim", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                         getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
         except FileNotFoundError:
             return None
         try:
@@ -525,13 +527,14 @@ class ReviewDecisionStore:
         directory_fd = self._read_dir_fd()
         try:
             try:
-                fd = os.open(key + ".json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                fd = os.open(key + ".json", os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                             getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
             except FileNotFoundError:
                 return {"status": "pending", "review_path": review_path, "review_sha256": review_sha256}
             try:
                 info = os.fstat(fd)
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or \
-                        stat.S_IMODE(info.st_mode) != 0o600:
+                        stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > 1024 * 1024:
                     raise ApprovalRequestError("Decision record must be a regular file")
                 record = json.loads(_read_fd(fd).decode("utf-8"))
             finally:
