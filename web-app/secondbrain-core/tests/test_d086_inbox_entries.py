@@ -55,6 +55,22 @@ class D086InboxEntryHTTPTests(unittest.TestCase):
         self.assertFalse(any(getattr(route, "path", "") == "/api/internal/v1/channel-events"
                              for route in self.app.routes))
 
+    def test_legacy_web_event_without_identity_scope_still_replays_over_http(self):
+        self.login()
+        first = self.client.post("/api/inbox/entries", headers=self.headers, json=self.payload())
+        self.assertEqual(first.status_code, 202, first.text)
+        capture_id = first.json()["inbox_id"]
+        state_path = self.state / "captures" / (capture_id + ".json")
+        state = json.loads(state_path.read_text())
+        state.pop("identity_scope", None)  # shape of a persisted pre-scope Web record
+        state_path.write_text(json.dumps(state, ensure_ascii=False))
+
+        replay = self.client.post("/api/inbox/entries", headers=self.headers, json=self.payload())
+        self.assertEqual(replay.status_code, 202, replay.text)
+        self.assertEqual(replay.json()["inbox_id"], capture_id)
+        self.assertTrue(replay.json()["replayed"])
+        self.assertEqual(len(list(self.raw.glob("Inbox-*.md"))), 1)
+
     def payload(self, **changes):
         result = {"original_text": "# Explicit synthetic capture\nKeep this exact text.",
                   "source_channel": "web", "source_event_id": "web-event-0001",

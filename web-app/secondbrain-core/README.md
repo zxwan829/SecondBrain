@@ -198,3 +198,17 @@ service, channel consent source, or external attachment binding is implemented.
 can verify their proposal/source/vocabulary or attachment bindings. Do not
 register this router in production before those external authentication and
 consent contracts are reviewed and implemented.
+
+### Synthetic wire implemented in PR #101 versus proposed external wire
+
+| Area | Synthetic Core implementation | Proposed external wire in Issue #97 comment #6281247236 |
+|---|---|---|
+| Route | `POST /api/internal/v1/channel-events`, router factory only; not registered by production `create_app()` | Same candidate route; production registration remains blocked |
+| Event key | JSON `source_event_id` | JSON `event_id` |
+| Identity | Channel, adapter, tenant, principal and consent evidence ID come only from the injected provider after it receives exact raw body bytes | HMAC key registry should bind adapter/channel/tenant; verified channel account resolves principal and consent evidence |
+| Consent | No client `consent_evidence` field; provider supplies a server-side evidence ID that Core records | Proposed body `consent_evidence` is not accepted by this synthetic router; a future adapter must verify and server-bind it rather than trust it |
+| Intake | `explicit_capture`, `journal_intent`, `task_intent`; `approved_suggestion` returns 501 pending exact Core Proposal/source/vocabulary binding; non-empty attachments return 501; ordinary chat is rejected | Also proposes `approved_suggestion` and up to five exact Capture ID+SHA attachment references, subject to Core revalidation |
+| Replay response | Same event returns `Idempotent-Replay: true` response header; no `replayed` body field | Proposed body has `replayed` and `captured_at`; the current synthetic response does not yet include either field |
+| Authentication/errors | Fake provider only in tests; bad auth 401, body identity/consent fields 400, unsupported channel or unbound proposal/attachment 501, event-content conflict 409 | HMAC-SHA256 timestamp/nonce/key rotation/revocation and final error mapping are proposed only, not implemented |
+
+This table is a compatibility warning, not a frozen public contract. A/PMO must settle the field and response differences before external adapter integration. The existing Web `/api/inbox/entries` request and response contract is unchanged.

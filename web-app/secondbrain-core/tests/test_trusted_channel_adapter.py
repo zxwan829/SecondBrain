@@ -14,14 +14,19 @@ from secondbrain_core.modules.trusted_channel_adapter import create_trusted_chan
 
 class SyntheticIdentityProvider:
     """Test-only provider; no production route or credential is involved."""
-    def authenticate(self, request, raw_body):
-        if request.headers.get("X-Synthetic-Adapter") != "test-adapter-v1":
-            from fastapi import HTTPException
-            raise HTTPException(401, "Synthetic adapter authentication failed")
-        return TrustedChannelIdentity(
+    def __init__(self, identity=None):
+        self.identity = identity or TrustedChannelIdentity(
             "feishu", "synthetic-principal-1", "trusted_adapter_v1", "test-adapter",
             "synthetic-tenant", "synthetic-explicit-save-1",
         )
+        self.last_raw_body = None
+
+    def authenticate(self, request, raw_body):
+        self.last_raw_body = raw_body
+        if request.headers.get("X-Synthetic-Adapter") != "test-adapter-v1":
+            from fastapi import HTTPException
+            raise HTTPException(401, "Synthetic adapter authentication failed")
+        return self.identity
 
 
 class TrustedChannelAdapterHTTPTests(unittest.TestCase):
@@ -33,7 +38,8 @@ class TrustedChannelAdapterHTTPTests(unittest.TestCase):
             path.mkdir(mode=0o700)
         self.service = CaptureService(str(self.raw), str(self.review), str(self.state))
         self.app = FastAPI()
-        self.app.include_router(create_trusted_channel_router(self.service, SyntheticIdentityProvider()))
+        self.provider = SyntheticIdentityProvider()
+        self.app.include_router(create_trusted_channel_router(self.service, self.provider))
         self.client = TestClient(self.app)
         self.payload = {"original_text": "synthetic explicit save", "source_event_id": "evt-001",
                         "occurred_at": "2026-10-20T03:00:00Z", "intent": "explicit_capture",
@@ -58,6 +64,7 @@ class TrustedChannelAdapterHTTPTests(unittest.TestCase):
         evidence = first.json()["consent_evidence"]
         self.assertEqual(evidence["kind"], "trusted_adapter_explicit_action")
         self.assertEqual(evidence["consent_evidence_id"], "synthetic-explicit-save-1")
+        self.assertIn(b"synthetic explicit save", self.provider.last_raw_body)
         self.assertEqual(len(list(self.raw.glob("Inbox-*.md"))), 1)
         replay = self.post()
         self.assertEqual(replay.status_code, 202, replay.text)
@@ -86,23 +93,54 @@ class TrustedChannelAdapterHTTPTests(unittest.TestCase):
 
     def test_event_key_conflict_is_rejected_and_scope_is_separated(self):
         self.assertEqual(self.post().status_code, 202)
+        first_id = self.post().json()["inbox_id"]
         changed = {**self.payload, "original_text": "changed content"}
         self.assertEqual(self.post(payload=changed).status_code, 409)
-        other_app = FastAPI()
-        provider = SyntheticIdentityProvider()
-        provider.authenticate = lambda request, raw_body: TrustedChannelIdentity(
-            "feishu", "synthetic-principal-2", "trusted_adapter_v1", "test-adapter",
-            "synthetic-tenant", "synthetic-explicit-save-2")
-        other_app.include_router(create_trusted_channel_router(self.service, provider))
-        other_client = TestClient(other_app)
+        other_scope_id = self.post_same_native_event(
+            TrustedChannelIdentity("feishu", "synthetic-principal-2", "trusted_adapter_v1",
+                                   "test-adapter", "synthetic-tenant", "consent-2"))
+        self.assertNotEqual(other_scope_id, first_id)
+
+    def post_same_native_event(self, identity):
+        app = FastAPI()
+        app.include_router(create_trusted_channel_router(self.service, SyntheticIdentityProvider(identity)))
+        client = TestClient(app)
         try:
             with patch.object(self.service, "mark_scheduled", return_value=False):
-                response = other_client.post("/api/internal/v1/channel-events", json=self.payload,
-                                             headers=self.headers)
+                response = client.post("/api/internal/v1/channel-events", json=self.payload,
+                                       headers=self.headers)
             self.assertEqual(response.status_code, 202, response.text)
-            self.assertNotEqual(response.json()["inbox_id"], "")
+            return response.json()["inbox_id"]
         finally:
-            other_client.close()
+            client.close()
+
+    def test_authenticated_channel_tenant_and_adapter_are_all_in_idempotency_scope(self):
+        first = self.post().json()["inbox_id"]
+        for identity in (
+            TrustedChannelIdentity("feishu", "synthetic-principal-1", "trusted_adapter_v1",
+                                   "other-adapter", "synthetic-tenant", "consent-1"),
+            TrustedChannelIdentity("feishu", "synthetic-principal-1", "trusted_adapter_v1",
+                                   "test-adapter", "other-tenant", "consent-1"),
+            TrustedChannelIdentity("wechat", "synthetic-principal-1", "trusted_adapter_v1",
+                                   "test-adapter", "synthetic-tenant", "consent-1"),
+        ):
+            self.assertNotEqual(self.post_same_native_event(identity), first)
+
+    def test_same_channel_event_with_changed_consent_evidence_conflicts(self):
+        first = self.post()
+        self.assertEqual(first.status_code, 202)
+        changed_consent = TrustedChannelIdentity("feishu", "synthetic-principal-1", "trusted_adapter_v1",
+                                                 "test-adapter", "synthetic-tenant", "different-consent")
+        app = FastAPI()
+        app.include_router(create_trusted_channel_router(self.service, SyntheticIdentityProvider(changed_consent)))
+        client = TestClient(app)
+        try:
+            with patch.object(self.service, "mark_scheduled", return_value=False):
+                response = client.post("/api/internal/v1/channel-events", json=self.payload,
+                                       headers=self.headers)
+            self.assertEqual(response.status_code, 409)
+        finally:
+            client.close()
 
 
 if __name__ == "__main__":
