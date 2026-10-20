@@ -329,6 +329,7 @@ class _SwitchAuditStore:
     def __init__(self, path):
         self.store = DailyBriefAuditStore(path)
         self.fail = False
+        self.fail_open = False
         self.fail_fsync = False
         self.fail_short_write = False
         self.fail_published_fsync = False
@@ -336,6 +337,19 @@ class _SwitchAuditStore:
     def append(self, event):
         if self.fail:
             raise OSError("synthetic audit fsync failure")
+        if self.fail_open:
+            original_open = os.open
+            def fail_audit_open(path, *args, **kwargs):
+                name = os.path.basename(os.fspath(path))
+                if name in {".daily-brief-audit.lock", "daily-brief-audit.jsonl"} \
+                        or name.startswith(".daily-brief-audit-tmp-"):
+                    raise PermissionError("synthetic audit open failure")
+                return original_open(path, *args, **kwargs)
+            os.open = fail_audit_open
+            try:
+                return self.store.append(event)
+            finally:
+                os.open = original_open
         if self.fail_fsync:
             original_fsync = os.fsync
             def fail_fsync_once(_fd):
@@ -499,11 +513,19 @@ def test_http_manual_import_rejects_auth_origin_schema_and_unsupported_import(tm
                        headers={"Origin": "https://app.test", "Content-Type": "application/json"}).status_code == 422
 
 
-@pytest.mark.parametrize("failure", ["append", "fsync", "short_write", "directory_fsync"])
+@pytest.mark.parametrize("failure", ["open", "append", "fsync", "short_write", "directory_fsync"])
 def test_http_audit_failure_rolls_back_uncommitted_record_then_retry_succeeds(tmp_path, failure):
     audit = _SwitchAuditStore(str(tmp_path / "audit" / "daily-brief-audit.jsonl"))
     client, body, _ref, root, audit_root, _tasks, _task, _audit = make_http_client(
         tmp_path, audit_store=audit)
+    audit.store.append({
+        "event_type": "daily_brief_import", "request_id": "synthetic-seed-request",
+        "brief_id": "", "date": body["date"], "timezone": "Asia/Shanghai",
+        "source_kind_counts": {"task": 1}, "outcome": "rejected",
+        "recorded_at": "2026-10-20T00:00:00+08:00", "actor": "owner",
+    })
+    audit_before = (audit_root / "daily-brief-audit.jsonl").read_bytes()
+    audit.fail_open = failure == "open"
     audit.fail = failure == "append"
     audit.fail_fsync = failure == "fsync"
     audit.fail_short_write = failure == "short_write"
@@ -513,6 +535,8 @@ def test_http_audit_failure_rolls_back_uncommitted_record_then_retry_succeeds(tm
     assert failed.json() == {"detail": "Daily Brief unavailable"}
     assert body["summary"] not in failed.text and str(root) not in failed.text
     pending = failure == "directory_fsync"
+    if not pending:
+        assert (audit_root / "daily-brief-audit.jsonl").read_bytes() == audit_before
     assert (root / f"{body['date']}.json").exists() is pending
     assert bool(list(root.glob(".op-*.json"))) is pending
     first_get = client.get(f"/api/daily-brief?date={body['date']}&timezone=Asia%2FShanghai")
@@ -521,6 +545,7 @@ def test_http_audit_failure_rolls_back_uncommitted_record_then_retry_succeeds(tm
     assert first_get.json()["status"] == ("unavailable" if pending else "empty")
 
     audit.fail = False
+    audit.fail_open = False
     audit.fail_fsync = False
     audit.fail_short_write = False
     audit.fail_published_fsync = False
@@ -533,4 +558,7 @@ def test_http_audit_failure_rolls_back_uncommitted_record_then_retry_succeeds(tm
     assert (root / f"{body['date']}.json").is_file()
     audit_text = (audit_root / "daily-brief-audit.jsonl").read_text(encoding="utf-8")
     assert '"outcome":"created"' in audit_text
+    audit_rows = [json.loads(line) for line in audit_text.splitlines()]
+    assert all(set(row) == DailyBriefAuditStore._FIELDS for row in audit_rows)
+    assert sum(row["outcome"] == "created" for row in audit_rows) == 1
     assert body["summary"] not in audit_text and body["source_refs"][0]["id"] not in audit_text
