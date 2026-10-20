@@ -164,3 +164,18 @@ def test_activity_requires_owner_session(tmp_path):
     client = make_client(tmp_path, journal=make_journal(tmp_path))
     client.cookies.clear()
     assert client.get("/api/activity").status_code == 401
+
+
+def test_activity_task_projection_refuses_store_over_fixed_read_budget(tmp_path, monkeypatch):
+    tasks = make_tasks(tmp_path)
+    tasks.path.write_bytes(b" " * (2 * 1024 * 1024 + 1))
+    os.chmod(tasks.path, 0o600)
+    monkeypatch.setattr(tasks, "list", lambda **_kwargs: (_ for _ in ()).throw(
+        AssertionError("unbounded Task list must not be used by Activity")))
+
+    response = make_client(tmp_path, tasks=tasks).get("/api/activity")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "partial"
+    assert body["source"] == ["tasks"]
+    assert body["items"] == []

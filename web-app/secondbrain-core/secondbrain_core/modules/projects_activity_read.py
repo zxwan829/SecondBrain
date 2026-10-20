@@ -95,7 +95,7 @@ def _task_rows(store, start, end, zone):
     if store is None:
         return []
     rows = []
-    for task in store.list(status="all")["tasks"]:
+    for task in store.list_for_projection()["tasks"]:
         operation_id = task.get("operation_id")
         session_id = task.get("session_id")
         if not isinstance(operation_id, str) or not operation_id or not isinstance(session_id, str) or not session_id:
@@ -166,14 +166,19 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None):
                 "source": [], "freshness": {"checked_at": datetime.now(timezone.utc).isoformat()},
             }
 
-        task_start, task_end = (None, None) if default_window else (start, end)
-        rows = (_journal_rows(journal_store, start, end, zone)
-                + _task_rows(task_store, task_start, task_end, zone))
+        rows = _journal_rows(journal_store, start, end, zone)
+        task_read_failed = False
+        try:
+            rows.extend(_task_rows(task_store, start, end, zone))
+        except HTTPException:
+            # Task projection has a fixed byte budget. Keep other available
+            # sources, but never imply a complete Activity result on overflow.
+            task_read_failed = True
         rows.sort(key=lambda row: (row["occurred_at"], row["activity_id"]), reverse=True)
         page_rows = rows[offset:offset + limit]
         missing_source = len(configured) < 2
         return {
-            "status": "partial" if missing_source or default_window else ("ok" if rows else "empty"),
+            "status": "partial" if missing_source or default_window or task_read_failed else ("ok" if rows else "empty"),
             "items": page_rows,
             "pagination": {"limit": limit, "offset": offset, "has_more": offset + limit < len(rows)},
             "source": configured,
