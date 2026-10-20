@@ -16,6 +16,7 @@ from .modules.personal_memory import PersonalMemoryStore, create_personal_memory
 from .modules.personal_learning import PersonalLearningPipeline
 from .modules.chat_activity import ChatActivityStore, create_chat_activity_router
 from .modules.journal import JournalStore, create_journal_router
+from .modules.journal_source_options import JournalSourceOptionsService
 from .modules.tasks import TaskStore, create_task_router
 from .modules.projects_activity_read import create_projects_activity_router
 from .modules.daily_brief_agent_health import create_daily_brief_agent_health_router
@@ -140,6 +141,9 @@ def create_app():
 
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
+    # Internal-only candidate service; no public source-options route is
+    # registered until the D087 contract is frozen by A.
+    app.state.journal_source_options_service = JournalSourceOptionsService(journal_store, auth)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root,
                                              organizer, personal_learning=learning))
