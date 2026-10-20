@@ -297,6 +297,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const pageRef = useRef(page);
   pageRef.current = page;
   const previousHomeEffectPage = useRef(page);
+  const skippedHomeEffectPage = useRef<Page | null>(null);
   const homeRequestStarted = useRef(false);
   const [routeRevision, setRouteRevision] = useState(0);
   const [inboxScope, setInboxScope] = useState<InboxScope>(null);
@@ -319,12 +320,22 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     // Scoped pages must not trigger the broad Home aggregate, which also reads
     // unrelated Review and Knowledge content.
     const previousPage = previousHomeEffectPage.current;
+    const skippedPage = skippedHomeEffectPage.current;
+    if (skippedPage && skippedPage !== page) skippedHomeEffectPage.current = null;
     previousHomeEffectPage.current = page;
     if (isKnowledgePage || location.pathname === '/inbox/source' || isInboxRoute) return;
+    // Keep this transition guard stable across StrictMode's effect replay. The
+    // previous-page ref is updated above, so relying on it alone would allow
+    // the replay to issue Home immediately after leaving Inbox.
+    if (skippedPage === page) return;
     const leftKnowledgeForAnotherPage = previousPage === 'knowledge' && !isHomePage;
     if (leftKnowledgeForAnotherPage) return;
     const returnedFromInbox = (previousPage === 'inbox' || previousPage === 'inbox-source') && !isInboxRoute;
-    if (homeRequestStarted.current && previousPage !== 'knowledge' && !returnedFromInbox) return;
+    if (returnedFromInbox) {
+      skippedHomeEffectPage.current = page;
+      return;
+    }
+    if (homeRequestStarted.current && previousPage !== 'knowledge') return;
     let mounted = true;
     let completed = false;
     homeRequestStarted.current = true;
