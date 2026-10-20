@@ -2,11 +2,11 @@
 import hashlib
 import json
 import os
+import stat
 import socket
 import threading
 import time
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from pathlib import Path
 
 import httpx
 import uvicorn
@@ -24,6 +24,20 @@ def _private_dir(path):
     return path
 
 
+def _tree_snapshot(root):
+    result = {}
+    for path in sorted(Path(root).iterdir()):
+        info = path.lstat()
+        result[path.name] = {
+            "mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid,
+            "dev": info.st_dev, "ino": info.st_ino, "nlink": info.st_nlink,
+            "size": info.st_size, "mtime_ns": info.st_mtime_ns,
+            "ctime_ns": info.st_ctime_ns, "atime_ns": info.st_atime_ns,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None,
+        }
+    return result
+
+
 def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_path):
     roots = {name: _private_dir(tmp_path / name) for name in (
         "review", "raw", "knowledge", "state", "projects", "briefs", "tasks",
@@ -39,6 +53,23 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
     journal = journal_store.append("2026-10-20", "记一下 synthetic Journal row",
                                    "loopback-journal-key")["entry"]
     journal_version = journal_store.read_source_day("2026-10-20")["entries"][journal["id"]]["version"]
+    # The source reader must work without a pre-existing daily lock and without
+    # write permission. The regular Journal write path above created it, so
+    # remove it as fixture setup before freezing the synthetic root read-only.
+    (roots["journal"] / ".2026-10-20.lock").unlink()
+    os.chmod(roots["journal"] / "2026-10-20.jsonl", 0o400)
+    os.chmod(roots["journal"], 0o500)
+    assert os.geteuid() != 0 and not os.access(roots["journal"], os.W_OK)
+    denied_create = roots["journal"] / ".permission-probe"
+    try:
+        fd = os.open(denied_create, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except PermissionError:
+        pass
+    else:
+        os.close(fd)
+        denied_create.unlink(missing_ok=True)
+        raise AssertionError("synthetic Journal fixture unexpectedly permits file creation")
+    journal_tree_before = _tree_snapshot(roots["journal"])
     notes_store = NotesStore(str(roots["notes"]))
     note = notes_store.create("# Synthetic Project Note\n")
 
@@ -122,6 +153,19 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             assert daily.json()["items"][0]["source_refs"] == brief["source_refs"]
             assert "Synthetic Task" not in daily.text
             assert "synthetic Journal row" not in daily.text
+            journal_tree_after = _tree_snapshot(roots["journal"])
+            # A read may update atime on platforms without O_NOATIME; all other
+            # metadata, bytes, modes, identities, and directory entries must
+            # remain identical.
+            assert set(journal_tree_after) == set(journal_tree_before)
+            for name in journal_tree_before:
+                before = dict(journal_tree_before[name])
+                after = dict(journal_tree_after[name])
+                before.pop("atime_ns")
+                after.pop("atime_ns")
+                assert after == before
+            assert ".2026-10-20.lock" not in journal_tree_after
+            assert ".permission-probe" not in journal_tree_after
 
             brief["source_refs"][1]["version"] = "0" * 64
             brief_path.write_text(json.dumps(brief, separators=(",", ":")), encoding="utf-8")

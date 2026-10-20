@@ -22,6 +22,18 @@ is inferred. Daily Brief only accepts the D087 `task`, `project`, and
 `journal` kinds; one unsupported or unverifiable reference withholds the whole
 summary/items while preserving the established response envelope.
 
+Journal source reads open only the exact date file with no-follow semantics and
+never open or create a lock file. A verified snapshot requires regular-file,
+owner, mode, link-count, device/inode, size, mtime, and ctime metadata to match
+before and after the bounded read, plus a post-read no-follow stat proving the
+date path still names that same inode. Controlled truncation, same-inode rewrite,
+and atomic replacement are rejected as unavailable. This detects concurrent
+changes during the read through the post-read identity check; changes after
+that check are later filesystem state and do not alter the already captured
+snapshot. On platforms without `O_NOATIME`, the OS may update source-file atime
+on read; tests permit that metadata-only effect and require names, bytes, size,
+mtime/ctime, mode, owner, inode, and link count to remain unchanged.
+
 The app has one authenticated session boundary rather than per-record ACLs.
 This matrix records the action permissions required by these readers; it does
 not claim fine-grained record ownership. No source lookup reads Raw, Private,

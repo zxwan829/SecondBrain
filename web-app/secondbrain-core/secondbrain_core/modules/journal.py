@@ -42,8 +42,8 @@ class JournalStore:
             raise ValueError("Journal root must be absolute")
         info = path.lstat()
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
-                or info.st_mode & 0o077 or not os.access(path, os.W_OK)):
-            raise ValueError("Journal root must be a private writable directory owned by the Core UID")
+                or info.st_mode & 0o077 or not os.access(path, os.R_OK | os.X_OK)):
+            raise ValueError("Journal root must be a private readable directory owned by the Core UID")
         self.root = path
 
     @staticmethod
@@ -217,10 +217,14 @@ class JournalStore:
         """Read one exact Journal date file under a hard byte and row budget.
 
         Returns server-issued row IDs and hashes of the exact persisted JSONL
-        row bytes. The containing date is a locator paired with the row ID, not
-        a substitute for that ID.
+        row bytes. This method never opens or creates a lock file. It accepts
+        only a stable fd snapshot whose metadata is unchanged across the read
+        and whose directory entry still names that same inode afterward.
         """
         path = self._path(day)
+        if (not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 0
+                or not isinstance(max_entries, int) or isinstance(max_entries, bool) or max_entries < 0):
+            raise ValueError("Invalid Journal source read budget")
         root_fd = _open_dir_chain(str(self.root))
         try:
             root_info = os.fstat(root_fd)
@@ -228,46 +232,45 @@ class JournalStore:
                     or root_info.st_mode & 0o077):
                 raise HTTPException(status_code=503, detail="Journal root is unavailable")
             try:
-                lock_fd = os.open(f".{day}.lock", os.O_CREAT | os.O_RDWR
-                                  | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=root_fd)
-            except OSError as exc:
-                raise HTTPException(status_code=503, detail="Journal lock is unavailable") from exc
-            try:
-                lock_info = os.fstat(lock_fd)
-                if (not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != os.geteuid()
-                        or lock_info.st_mode & 0o077):
-                    raise HTTPException(status_code=503, detail="Journal lock is unsafe")
-                fcntl.flock(lock_fd, fcntl.LOCK_SH)
+                data_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                                  | getattr(os, "O_NOATIME", 0), dir_fd=root_fd)
+            except FileNotFoundError:
                 try:
-                    try:
-                        data_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                                          dir_fd=root_fd)
-                    except FileNotFoundError:
-                        return {"available": True, "entries": {}}
-                    except OSError as exc:
-                        raise HTTPException(status_code=503, detail="Journal source is unavailable") from exc
-                    try:
-                        info = os.fstat(data_fd)
-                        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                                or info.st_uid != os.geteuid() or info.st_mode & 0o077
-                                or info.st_size < 0 or info.st_size > max_bytes):
-                            raise HTTPException(status_code=503, detail="Journal source exceeds safe bounds")
-                        chunks, remaining = [], max_bytes + 1
-                        while remaining:
-                            chunk = os.read(data_fd, min(65536, remaining))
-                            if not chunk:
-                                break
-                            chunks.append(chunk)
-                            remaining -= len(chunk)
-                        payload = b"".join(chunks)
-                        if len(payload) != info.st_size or len(payload) > max_bytes:
-                            raise HTTPException(status_code=503, detail="Journal source changed during read")
-                    finally:
-                        os.close(data_fd)
-                finally:
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    os.stat(path.name, dir_fd=root_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    return {"available": True, "entries": {}, "bytes_read": 0}
+                raise HTTPException(status_code=503, detail="Journal source changed during read")
+            except OSError as exc:
+                raise HTTPException(status_code=503, detail="Journal source is unavailable") from exc
+            try:
+                before = os.fstat(data_fd)
+                if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                        or before.st_uid != os.geteuid() or before.st_mode & 0o077
+                        or before.st_size < 0 or before.st_size > max_bytes):
+                    raise HTTPException(status_code=503, detail="Journal source exceeds safe bounds")
+                chunks, remaining = [], max_bytes + 1
+                while remaining:
+                    chunk = os.read(data_fd, min(65536, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                payload = b"".join(chunks)
+                after = os.fstat(data_fd)
+                try:
+                    current_path = os.stat(path.name, dir_fd=root_fd, follow_symlinks=False)
+                except OSError as exc:
+                    raise HTTPException(status_code=503, detail="Journal source changed during read") from exc
+
+                def identity(info):
+                    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid,
+                            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+                if (identity(before) != identity(after) or identity(after) != identity(current_path)
+                        or len(payload) != before.st_size or len(payload) > max_bytes):
+                    raise HTTPException(status_code=503, detail="Journal source changed during read")
             finally:
-                os.close(lock_fd)
+                os.close(data_fd)
         finally:
             os.close(root_fd)
 
