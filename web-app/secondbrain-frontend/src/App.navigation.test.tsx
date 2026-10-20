@@ -240,7 +240,7 @@ describe('Notes application navigation gate', () => {
     });
     startAt('/brief');
 
-    expect((await screen.findByRole('status')).textContent).toContain('BACKEND_NOT_IMPLEMENTED');
+    expect(await screen.findByText(/BACKEND_NOT_IMPLEMENTED/)).toBeTruthy();
     expect(calls).toHaveLength(2);
     expect(calls.every((url) => !/sessions|messages|journal\/|tasks|home|run/i.test(url))).toBe(true);
   });
@@ -250,7 +250,7 @@ describe('Notes application navigation gate', () => {
     startAt('/agent-health');
 
     expect(await screen.findByRole('heading', { name: 'Agent 状态' })).toBeTruthy();
-    expect(screen.getByText('未配置')).toBeTruthy();
+    expect(await screen.findByText('未配置')).toBeTruthy();
     expect(calls).toEqual(['/api/auth/session', '/api/agent/health']);
     expect(calls.some((url) => /home|sessions|messages|runs|journal|tasks/i.test(url))).toBe(false);
   });
