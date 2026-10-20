@@ -22,6 +22,7 @@ import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLa
 import { isExplicitJournalIntent } from './journal-intent';
 import { parseExplicitTaskCommand } from './task-intent';
 import { activityTimeLabel, mergeChatTimeline, type ChatActivity, type ChatHistoryMessage } from './chat-activity';
+import { V1ReadOnlyPage } from './V1ReadOnlyPages';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -208,10 +209,10 @@ const navItems = [
   { id: 'today', key: 'today', icon: 'calendar', section: 'work', route: '/today' },
   { id: 'inbox', key: 'inbox', icon: 'inbox', section: 'work', route: '/inbox' },
   { id: 'review', key: 'review', icon: 'check', section: 'work', route: '/review' },
-  { id: 'projects', key: 'projects', icon: 'folder', section: 'library' },
+  { id: 'projects', key: 'projects', icon: 'folder', section: 'library', route: '/projects' },
   { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library', route: '/knowledge' },
   { id: 'brief', key: 'brief', icon: 'file', section: 'library' },
-  { id: 'activity', key: 'activity', icon: 'activity', section: 'library' },
+  { id: 'activity', key: 'activity', icon: 'activity', section: 'library', route: '/activity' },
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
   { id: 'notes', key: 'notes', icon: 'notes', section: 'library', route: '/notes' },
   { id: 'vocabulary', key: 'vocabulary', icon: 'check', section: 'library', route: '/vocabulary' },
@@ -469,7 +470,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <button type="button" className="locale-button" onClick={changeLocale}>{t.localeLabel}</button>
         </div>
 
-        {page === 'knowledge' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Knowledge…' : '正在加载知识库…'}</div>}><KnowledgePage locale={locale} /></Suspense>
+        {page === 'projects' || page === 'activity' ? <V1ReadOnlyPage page={page} locale={locale} />
+          : page === 'knowledge' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Knowledge…' : '正在加载知识库…'}</div>}><KnowledgePage locale={locale} /></Suspense>
           : page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
           : page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
           ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage onRegisterNavigationGuard={registerNotesNavigationGuard} onOpenInboxSource={(collection, path) => {
