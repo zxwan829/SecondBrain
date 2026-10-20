@@ -51,6 +51,10 @@ class D086InboxEntryHTTPTests(unittest.TestCase):
                                   json={"password": "synthetic-d086-app-password"})
         self.assertEqual(result.status_code, 200, result.text)
 
+    def test_synthetic_trusted_adapter_route_is_not_registered_in_production_app(self):
+        self.assertFalse(any(getattr(route, "path", "") == "/api/internal/v1/channel-events"
+                             for route in self.app.routes))
+
     def payload(self, **changes):
         result = {"original_text": "# Explicit synthetic capture\nKeep this exact text.",
                   "source_channel": "web", "source_event_id": "web-event-0001",

@@ -186,3 +186,15 @@ unchanged.
 Build the single-service candidate image from `web-app/` using `Dockerfile.app`.
 Image building is not deployment. Do not change the production port, Compose,
 containers, mounts, or Promote setting without separate authorization.
+
+# Trusted channel adapter status
+
+`create_trusted_channel_router()` is an opt-in router factory and is not
+registered by the production `create_app()`. Synthetic HTTP tests inject a
+test-only identity provider to validate explicit Inbox saves, event replay and
+identity scoping. No real adapter authenticator, key rotation/revocation
+service, channel consent source, or external attachment binding is implemented.
+`approved_suggestion` and external attachment intake fail closed until Core
+can verify their proposal/source/vocabulary or attachment bindings. Do not
+register this router in production before those external authentication and
+consent contracts are reviewed and implemented.

@@ -22,7 +22,7 @@ from urllib.parse import urljoin, urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, UploadFile
 from pypdf import PdfReader
-from .channel_identity import authenticated_web_identity
+from .channel_identity import authenticated_web_identity, validate_trusted_identity
 
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -632,12 +632,10 @@ class CaptureService:
                             precommit_validator=None):
         """Persist one explicit, channel-scoped Inbox event with durable idempotency.
 
-        This first adapter accepts authenticated Web actions only. Caller-supplied
-        event IDs are idempotency keys, never caller identity or consent evidence.
+        Caller-supplied event IDs are idempotency keys, never caller identity or
+        consent evidence. Non-Web callers must arrive through a trusted Core adapter.
         """
-        if (getattr(identity, "channel", None) != "web" or
-                getattr(identity, "authentication", None) != "app_session_action"):
-            raise HTTPException(501, "This Inbox channel has no trusted Core adapter")
+        identity = validate_trusted_identity(identity)
         source_channel = identity.channel
         if (not isinstance(source_event_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", source_event_id)
                 or not isinstance(intent, str)
@@ -659,16 +657,24 @@ class CaptureService:
             raise HTTPException(400, "Inbox event time must include a timezone") from exc
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
             raise HTTPException(400, "Text must contain 1-200000 characters")
-        capture_id = hashlib.sha256(
-            ("secondbrain-inbox-event\0" + source_channel + "\0" + source_event_id).encode("utf-8")
-        ).hexdigest()[:32]
+        identity_scope = {"adapter_id": identity.adapter_id, "tenant": identity.tenant,
+                          "principal": consent_subject}
+        if source_channel != "web":
+            identity_scope["consent_evidence_id"] = identity.consent_evidence_id
+        namespace = (source_channel + "\0" + source_event_id if source_channel == "web" else
+                     source_channel + "\0" + identity.adapter_id + "\0" + identity.tenant + "\0" +
+                     consent_subject + "\0" + source_event_id)
+        capture_id = hashlib.sha256(("secondbrain-inbox-event\0" + namespace).encode("utf-8")).hexdigest()[:32]
         event_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        request_digest = hashlib.sha256(json.dumps(
-            {"source_channel": source_channel, "source_event_id": source_event_id,
+        digest_payload = {"source_channel": source_channel, "source_event_id": source_event_id,
              "occurred_at": occurred.isoformat(), "intent": intent,
              "original_text_sha256": event_digest,
              "approved_proposal": approved_proposal,
-             "attachment_refs": verified_attachments},
+             "attachment_refs": verified_attachments}
+        if source_channel != "web":
+            digest_payload["identity_scope"] = identity_scope
+        request_digest = hashlib.sha256(json.dumps(
+            digest_payload,
             sort_keys=True, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
         lock_path = self.state_root / (".inbox-event-" + capture_id + ".lock")
@@ -687,6 +693,8 @@ class CaptureService:
             if existing:
                 if (existing.get("source_channel") != source_channel
                         or existing.get("source_event_id") != source_event_id
+                        or existing.get("identity_scope", {"adapter_id": "web", "tenant": "default",
+                                                            "principal": existing.get("consent_evidence", {}).get("subject")}) != identity_scope
                         or existing.get("intent") != intent
                         or existing.get("original_text_sha256") != event_digest
                         or existing.get("approved_proposal") != approved_proposal
@@ -711,9 +719,16 @@ class CaptureService:
             if precommit_validator is not None:
                 precommit_validator()
             server_time = _now()
-            evidence = {"kind": "authenticated_app_approved_proposal" if approved_proposal else
-                        "authenticated_app_explicit_action", "subject": consent_subject,
+            is_adapter = identity.authentication == "trusted_adapter_v1"
+            evidence = {"kind": ("trusted_adapter_approved_proposal" if approved_proposal else
+                                 "trusted_adapter_explicit_action") if is_adapter else
+                        ("authenticated_app_approved_proposal" if approved_proposal else
+                         "authenticated_app_explicit_action"), "subject": consent_subject,
                         "recorded_at": server_time}
+            if is_adapter:
+                evidence.update({"adapter_id": identity.adapter_id, "channel": source_channel,
+                                 "tenant": identity.tenant,
+                                 "consent_evidence_id": identity.consent_evidence_id})
             if approved_proposal:
                 evidence.update({"proposal_id": approved_proposal["proposal_id"],
                                  "proposal_version": approved_proposal["version"],
@@ -723,6 +738,7 @@ class CaptureService:
                 context="explicit channel event; consent recorded by Core",
                 capture_id=capture_id, exact_raw_name=True,
                 extra_state={"source_channel": source_channel, "source_event_id": source_event_id,
+                             "identity_scope": identity_scope,
                              "occurred_at": occurred.isoformat(), "intent": intent,
                              "original_text_sha256": event_digest,
                              "source_event_request_sha256": request_digest,
