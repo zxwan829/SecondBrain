@@ -1,6 +1,11 @@
 import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
+
+
+SYNTHETIC_WORKDIR = str(Path(tempfile.gettempdir()) / "synthetic")
 
 from fastapi import HTTPException
 
@@ -8,7 +13,7 @@ from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX, FILE_WRITE_A
 
 
 def event(request_id="approval-1", command="pwd"):
-    request = {"schema": 1, "tool": "terminal", "arguments": {"command": command, "workdir": "/private/tmp/synthetic"}}
+    request = {"schema": 1, "tool": "terminal", "arguments": {"command": command, "workdir": SYNTHETIC_WORKDIR}}
     return {"event": "approval.request", "run_id": "run-1", "request_id": request_id,
             "description": APPROVAL_PREFIX + json.dumps(request, sort_keys=True, separators=(",", ":"))}
 
@@ -26,7 +31,7 @@ class RunApprovalRegistryTests(unittest.TestCase):
         card = self.card()
         self.assertEqual(card["session_id"], "session-1")
         self.assertEqual(card["command"], "pwd")
-        self.assertEqual(card["workdir"], "/private/tmp/synthetic")
+        self.assertEqual(card["workdir"], SYNTHETIC_WORKDIR)
         with self.assertRaises(HTTPException) as wrong_session:
             self.registry.begin_resolution(run_id="run-1", session_id="session-2", request_id="approval-1",
                                            owner="owner", digest=card["command_sha256"], choice="once")
