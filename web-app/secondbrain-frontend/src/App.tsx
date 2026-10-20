@@ -769,6 +769,7 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   const [organizeAvailable, setOrganizeAvailable] = useState(false);
   const [organizeBusy, setOrganizeBusy] = useState(false);
   const [organizeMessage, setOrganizeMessage] = useState('');
+  const [anchorFeedback, setAnchorFeedback] = useState('');
   const load = async (showLoading = false) => {
     if (showLoading) setLoading(true);
     setError('');
@@ -791,6 +792,23 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
     const timer = window.setInterval(refresh, 5000);
     return () => { window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
   }, []);
+  useEffect(() => {
+    const match = window.location.hash.match(/^#capture-([a-f\d]{32})$/i);
+    if (!match || loading || error) return;
+    const target = document.getElementById(`capture-${match[1]}`);
+    if (!target) {
+      setAnchorFeedback(locale === 'en'
+        ? 'The requested Inbox source was not found in the loaded list.'
+        : '未在当前收件箱列表中找到指定来源。');
+      return;
+    }
+    setAnchorFeedback('');
+    const frame = window.requestAnimationFrame(() => {
+      target.scrollIntoView?.({ block: 'center' });
+      target.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [items, loading, error, locale]);
   const text = locale === 'en';
   const openPreview = async (item: CaptureItem) => {
     setPreview(item); setPreviewText(null); setPreviewError('');
@@ -831,7 +849,8 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   return <section className="capture-page" aria-labelledby="inbox-title">
     <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{text ? 'Inbox' : '收件箱'}</h1><p className="workspace-subtitle">{text ? 'Captured source material and processing status.' : '查看采集来源、原始素材和处理状态。'}</p></div><div className="inbox-header-actions"><button type="button" disabled={!organizeAvailable || organizeBusy} title={organizeReason} onClick={() => void organizeNow()}>{organizeBusy ? (text ? 'Organizing…' : '整理中…') : (text ? 'Organize now' : '立即整理')}</button><small>{organizeReason || (text ? 'Settings are saved, but the organizer is not active.' : '设置仅保存，自动整理尚未运行。')}</small>{organizeMessage && <small role="status">{organizeMessage}</small>}</div></header>
     {error && <p role="alert" className="capture-alert">{error}</p>}
-    <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" key={item.capture_id}>
+    {anchorFeedback && <p role="status" className="capture-processing-note">{anchorFeedback}</p>}
+    <div className="inbox-list" aria-live="polite">{loading ? <p>{text ? 'Loading…' : '加载中…'}</p> : items.length ? items.map((item) => <article className="inbox-item" id={`capture-${item.capture_id}`} tabIndex={-1} key={item.capture_id}>
       <div className="inbox-item-main"><span className="inbox-type">{item.input_type.toUpperCase()}</span><div><h2>{captureDisplayFilename(item, locale)}</h2><p>{item.source_type} · {capturedAtLabel(item.captured_at, locale)}</p></div><span className={`capture-status status-${item.status}`}>{captureStatus(item.status, text)}</span></div>
       {item.content_preview && <pre className="inbox-preview">{item.content_preview.slice(0, 500)}</pre>}
       {isVisionDescriptionOnly(item)
@@ -899,6 +918,8 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
   const selectedReviewRef = useRef<HTMLButtonElement | null>(null);
   const detailRequestRef = useRef<AbortController | null>(null);
   const detailRequestSequence = useRef(0);
+  const listRequestRef = useRef<AbortController | null>(null);
+  const listRequestSequence = useRef(0);
 
   const request = async <T,>(path: string, init: RequestInit = {}): Promise<T> => {
     const response = await fetch(`/api/promote${path}`, {
@@ -917,49 +938,44 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
   };
 
   const loadList = async () => {
+    listRequestRef.current?.abort();
+    detailRequestSequence.current += 1;
+    detailRequestRef.current?.abort();
+    const controller = new AbortController();
+    listRequestRef.current = controller;
+    const sequence = ++listRequestSequence.current;
     setBusy(true);
     setStatus(t.coreLoading);
     const requestedReviewPath = location.pathname === '/review'
       ? new URLSearchParams(location.search).get('review_path')
       : initialReviewPath;
     try {
-      const result = await request<{ items?: ReviewItem[] }>('/review/items');
-      let captureDates = new Map<string, Set<string>>();
-      try {
-        const response = await fetch('/api/inbox?limit=200', { credentials: 'same-origin' });
-        if (response.ok) {
-          const inbox = await response.json() as { items?: CaptureItem[] };
-          for (const capture of Array.isArray(inbox.items) ? inbox.items : []) {
-            if (!capture.review_path || capturedAtMillis(capture.captured_at) === null) continue;
-            const dates = captureDates.get(capture.review_path) ?? new Set<string>();
-            dates.add(capture.captured_at);
-            captureDates.set(capture.review_path, dates);
-          }
-        }
-      } catch { /* Review frontmatter remains the primary timestamp source. */ }
-      const nextItems = sortByCapturedAt((Array.isArray(result.items) ? result.items : []).map((item) => {
-        if (capturedAtMillis(item.captured_at) !== null) return item;
-        const matches = captureDates.get(item.review_path);
-        return { ...item, captured_at: matches?.size === 1 ? [...matches][0] : null };
-      }), (item) => item.review_path);
+      const result = await request<{ items?: ReviewItem[] }>('/review/items', { signal: controller.signal });
+      if (controller.signal.aborted || sequence !== listRequestSequence.current) return;
+      const nextItems = sortByCapturedAt(Array.isArray(result.items) ? result.items : [], (item) => item.review_path);
       setItems(nextItems);
       setStatus(t.coreConnected.replace('{count}', String(nextItems.length)));
       if (requestedReviewPath) {
         const selected = nextItems.find((item) => item.review_path === requestedReviewPath);
-        if (selected) await loadDetail(selected);
+        if (selected && !controller.signal.aborted) await loadDetail(selected);
         else { setDetail(null); setStatus(locale === 'en' ? 'The requested Review item could not be found.' : '找不到指定的 Review 条目。'); }
-      } else if (nextItems.length) await loadDetail(nextItems[0]);
-      else setDetail(null);
-      const promote = await request<{ promote_enabled?: boolean }>('/status');
+      } else {
+        setDetail(null);
+        setPromotionSelectedPath(null);
+      }
+      if (controller.signal.aborted || sequence !== listRequestSequence.current) return;
+      const promote = await request<{ promote_enabled?: boolean }>('/status', { signal: controller.signal });
+      if (controller.signal.aborted || sequence !== listRequestSequence.current) return;
       setPromoteEnabled(promote.promote_enabled === true);
     } catch (error) {
+      if (controller.signal.aborted || sequence !== listRequestSequence.current) return;
       setItems([]);
       setDetail(null);
       const statusCode = (error as Error & { status?: number }).status;
       if (statusCode === 401) window.location.reload();
       setStatus(error instanceof Error ? apiFailureLabel(error.message, statusCode ?? 0, locale, 'review') : t.coreConnectionFailed);
     } finally {
-      setBusy(false);
+      if (sequence === listRequestSequence.current) setBusy(false);
     }
   };
 
@@ -992,6 +1008,8 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
   }, [initialReviewPath]);
 
   useEffect(() => () => {
+    listRequestSequence.current += 1;
+    listRequestRef.current?.abort();
     detailRequestSequence.current += 1;
     detailRequestRef.current?.abort();
   }, []);
@@ -1076,6 +1094,55 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
 
 type ChatSession = { id: string; title: string; updated?: string | number };
 type ChatMessage = ChatHistoryMessage;
+type CaptureSuggestion = { approvedProposalId: string; approvedProposalVersion: number | null; sourceEventId: string; occurredAt: string; originalText: string; sessionId: string };
+type CaptureApproval = { proposalId: string; version: number; kind: 'journal' | 'review' | 'project'; sourceVersion: string; vocabularyVersion: number };
+type CaptureReceipt = { sessionId: string; inboxId: string; sourceEventId: string; proposalId: string; proposalVersion: number; sourceVersion: string; kind: 'journal' | 'review' | 'project' };
+const captureReceiptKey = (sessionId: string) => `secondbrain.chat.captureReceipt:${sessionId}`;
+const captureIdPattern = /^[0-9a-f]{32}$/;
+const captureStatuses = new Set(['pending', 'prepared', 'processing', 'completed', 'partial_success', 'failed']);
+const parseCaptureApproval = (body: unknown, suggestion: CaptureSuggestion): CaptureApproval | null => {
+  if (!body || typeof body !== 'object') return null;
+  const proposal = (body as Record<string, unknown>).proposal;
+  if (!proposal || typeof proposal !== 'object') return null;
+  const value = proposal as Record<string, unknown>;
+  const proposalSuggestion = value.suggestion;
+  if (!proposalSuggestion || typeof proposalSuggestion !== 'object' || Array.isArray(proposalSuggestion)) return null;
+  const original = (proposalSuggestion as Record<string, unknown>).original;
+  const current = (proposalSuggestion as Record<string, unknown>).current;
+  if (!original || typeof original !== 'object' || Array.isArray(original)) return null;
+  const originalValue = original as Record<string, unknown>;
+  const originalKeys = Object.keys(originalValue).sort();
+  if (originalKeys.length !== 2 || originalKeys[0] !== 'reason' || originalKeys[1] !== 'value'
+    || typeof originalValue.value !== 'string' || typeof originalValue.reason !== 'string') return null;
+  if (!current || typeof current !== 'object' || Array.isArray(current)
+    || typeof (current as Record<string, unknown>).value !== 'string') return null;
+  if (value.proposal_id !== suggestion.approvedProposalId || value.status !== 'approved_recorded'
+    || value.version !== suggestion.approvedProposalVersion || !Number.isInteger(value.version)
+    || !['journal', 'review', 'project'].includes(String(value.kind))
+    || typeof value.source_version !== 'string' || !value.source_version
+    || !Number.isSafeInteger(value.vocabulary_version) || (value.vocabulary_version as number) < 0
+    || originalValue.value !== suggestion.originalText) return null;
+  return { proposalId: value.proposal_id as string, version: value.version as number,
+    kind: value.kind as CaptureApproval['kind'], sourceVersion: value.source_version,
+    vocabularyVersion: value.vocabulary_version as number };
+};
+const parseCaptureReceiptResponse = (body: unknown, receipt: CaptureReceipt) => {
+  if (!body || typeof body !== 'object') return null;
+  const value = body as Record<string, unknown>;
+  const source = value.source as Record<string, unknown> | undefined;
+  const evidence = value.consent_evidence as Record<string, unknown> | undefined;
+  const proposal = value.approved_proposal as Record<string, unknown> | undefined;
+  const recordedAt = typeof evidence?.recorded_at === 'string' ? Date.parse(evidence.recorded_at) : Number.NaN;
+  if (value.inbox_id !== receipt.inboxId || !captureIdPattern.test(String(value.inbox_id))
+    || !captureStatuses.has(String(value.status)) || value.intent !== 'approved_suggestion'
+    || source?.channel !== 'web' || source.event_id !== receipt.sourceEventId
+    || evidence?.kind !== 'authenticated_app_approved_proposal' || typeof evidence.subject !== 'string' || !evidence.subject
+    || !Number.isFinite(recordedAt) || evidence.source_version !== receipt.sourceVersion
+    || evidence.proposal_id !== receipt.proposalId || evidence.proposal_version !== receipt.proposalVersion
+    || proposal?.proposal_id !== receipt.proposalId || proposal.version !== receipt.proposalVersion
+    || proposal.kind !== receipt.kind || proposal.source_version !== receipt.sourceVersion) return null;
+  return String(value.status);
+};
 
 export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = () => undefined, onGoToday = () => undefined }: {
   locale: Locale; blankMode?: boolean; onGoInbox: () => void; onGoJournal?: () => void; onGoToday?: () => void;
@@ -1095,6 +1162,14 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const [runId, setRunId] = useState('');
   const [pendingApproval, setPendingApproval] = useState<RunToolApprovalCard | null>(null);
   const [approvalResolving, setApprovalResolving] = useState(false);
+  const [captureSuggestion, setCaptureSuggestion] = useState<CaptureSuggestion | null>(null);
+  const [captureApproval, setCaptureApproval] = useState<CaptureApproval | null>(null);
+  const [captureReceipt, setCaptureReceipt] = useState<CaptureReceipt | null>(null);
+  const [captureStatus, setCaptureStatus] = useState('');
+  const [captureConfirmation, setCaptureConfirmation] = useState('');
+  const [captureFeedback, setCaptureFeedback] = useState('');
+  const [captureSourceId, setCaptureSourceId] = useState('');
+  const [captureBusy, setCaptureBusy] = useState(false);
   const [inputMode, setInputMode] = useState<'chat' | 'capture'>('chat');
   const [pendingAttachment, setPendingAttachment] = useState<File | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState('');
@@ -1106,6 +1181,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const selectionIntentRef = useRef(0);
   const contentLoadRef = useRef(0);
   const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
+  const captureRequestSequence = useRef(0);
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -1124,6 +1200,32 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       throw new Error(apiFailureLabel(body.detail, response.status, locale, 'chat'));
     }
     return body as T;
+  };
+
+  const refreshCaptureReceipt = async (receipt: CaptureReceipt, sequence: number) => {
+    const payload = await api<Record<string, unknown>>(`/api/inbox/entries/${encodeURIComponent(receipt.inboxId)}`);
+    if (selectedSessionRef.current !== receipt.sessionId || sequence !== captureRequestSequence.current) return;
+    const status = parseCaptureReceiptResponse(payload, receipt);
+    const sourceRef = payload.source_ref as Record<string, unknown> | undefined;
+    if (!status || sourceRef?.capture_id !== receipt.inboxId) throw new Error(en ? 'Core could not verify this exact Inbox entry.' : 'Core 无法核验这条确切的 Inbox 记录。');
+    setCaptureReceipt(receipt); setCaptureSourceId(receipt.inboxId); setCaptureStatus(status);
+    setCaptureFeedback(en ? `Core accepted the entry; current processing status: ${status}.` : `Core 已受理；当前处理状态：${status}。`);
+  };
+
+  const verifyCaptureReceipt = async (receipt: CaptureReceipt, sequence: number) => {
+    if (selectedSessionRef.current !== receipt.sessionId || sequence !== captureRequestSequence.current) return;
+    setCaptureReceipt(receipt);
+    setCaptureSourceId(''); setCaptureStatus('');
+    setCaptureFeedback(en ? 'Verifying the saved receipt against the exact Inbox entry…' : '正在向 Core 核验已保存回执对应的确切 Inbox 记录…');
+    try {
+      await refreshCaptureReceipt(receipt, sequence);
+    } catch (cause) {
+      if (selectedSessionRef.current !== receipt.sessionId || sequence !== captureRequestSequence.current) return;
+      setCaptureSourceId(''); setCaptureStatus('');
+      setCaptureFeedback(en
+        ? `The exact Inbox status is unverified. The opaque receipt is retained; retry verification later. ${cause instanceof Error ? cause.message : ''}`
+        : `确切 Inbox 状态尚未核验。回执标识已保留，可稍后重新核验。${cause instanceof Error ? ` ${cause.message}` : ''}`);
+    }
   };
 
   const persistBlankChatState = (sessionIds: string[], selectedSessionId: string) => {
@@ -1219,9 +1321,17 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     else if (activityResult.status === 'rejected') setError(en ? 'System operation history is temporarily unavailable.' : '系统操作历史暂时不可用。');
   };
 
+  const resetCaptureState = () => {
+    captureRequestSequence.current += 1;
+    setCaptureSuggestion(null); setCaptureApproval(null); setCaptureReceipt(null); setCaptureStatus('');
+    setCaptureConfirmation(''); setCaptureFeedback(''); setCaptureSourceId(''); setCaptureBusy(false);
+  };
+
   const selectSession = async (sessionId: string) => {
     if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     selectionIntentRef.current += 1;
+    abortRef.current?.abort(); abortRef.current = null;
+    resetCaptureState(); setBusy(false); setRunId(''); setProgress('');
     selectedSessionRef.current = sessionId;
     setSelected(sessionId);
     if (blankMode) persistBlankChatState([...blankSessionIdsRef.current], sessionId);
@@ -1280,6 +1390,27 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Hermes API unavailable', locale)); }
   })(); }, []);
 
+  useEffect(() => {
+    if (!selected) return;
+    let stored: CaptureReceipt | null = null;
+    try {
+      const raw = sessionStorage.getItem(captureReceiptKey(selected));
+      const value = raw ? JSON.parse(raw) as Partial<CaptureReceipt> : null;
+      if (value && value.sessionId === selected && typeof value.inboxId === 'string' && captureIdPattern.test(value.inboxId)
+        && typeof value.sourceEventId === 'string' && typeof value.proposalId === 'string' && captureIdPattern.test(value.proposalId)
+        && Number.isInteger(value.proposalVersion) && typeof value.sourceVersion === 'string' && value.sourceVersion
+        && ['journal', 'review', 'project'].includes(String(value.kind))) {
+        stored = value as CaptureReceipt;
+      } else if (raw) sessionStorage.removeItem(captureReceiptKey(selected));
+    } catch { sessionStorage.removeItem(captureReceiptKey(selected)); }
+    if (!stored) return;
+    const receipt = stored;
+    const sequence = ++captureRequestSequence.current;
+    setCaptureReceipt(receipt); setCaptureSourceId(''); setCaptureStatus('');
+    setCaptureFeedback(en ? 'Checking the exact Inbox entry for this session…' : '正在核对本会话对应的 Inbox 记录…');
+    void verifyCaptureReceipt(receipt, sequence);
+  }, [selected]);
+
   const newSession = async () => {
     const selectionIntent = ++selectionIntentRef.current;
     setError('');
@@ -1293,12 +1424,14 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         const nextSelected = stillCurrent ? id : selectedSessionRef.current;
         persistBlankChatState(ids, nextSelected);
         if (stillCurrent) {
+          resetCaptureState();
           selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
         }
         return;
       }
       await reloadSessions(id);
       if (selectionIntent !== selectionIntentRef.current) return;
+      resetCaptureState();
       selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
       localStorage.setItem('secondbrain.chat.session', id);
     } catch (cause) {
@@ -1328,6 +1461,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
     const sessionId = String(payload.session_id ?? '');
     if (!sessionId) throw new Error('Hermes did not return a session identifier');
+    resetCaptureState();
     selectedSessionRef.current = sessionId; setSelected(sessionId); setMessages([]); setActivities([]);
     localStorage.setItem('secondbrain.chat.session', sessionId);
     await reloadSessions(sessionId);
@@ -1433,13 +1567,14 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     setMessages((current) => [...current, { id: `local-${Date.now()}`, role: 'user', text: prompt, timestamp: messageTime }, { id: `assistant-${Date.now()}`, role: 'assistant', text: '', timestamp: messageTime }]);
     let sessionId = selected;
     let startedRunId = '';
+    const runSelectionIntent = selectionIntentRef.current;
     try {
       if (!sessionId) {
         if (blankMode) throw new Error(en ? 'Create a blank test session first.' : '请先明确创建空白合成会话。');
         const created = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
         sessionId = String(created.session_id ?? '');
         if (!sessionId) throw new Error('Hermes did not return a session identifier');
-        selectedSessionRef.current = sessionId; setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
+        resetCaptureState(); selectedSessionRef.current = sessionId; setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
         await reloadSessions(sessionId);
       }
       const idempotencyKey = crypto.randomUUID();
@@ -1461,6 +1596,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
       let sawTerminal = false;
       const consume = (frame: string) => {
+        if (selectedSessionRef.current !== sessionId || runSelectionIntent !== selectionIntentRef.current) return;
         const data: string[] = [];
         for (const line of frame.split(/\r?\n/)) {
           if (line.startsWith(':')) continue;
@@ -1490,6 +1626,26 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         } else if (eventName === 'approval.blocked') {
           setPendingApproval(null);
           setError(en ? 'The approval request could not be verified and was blocked.' : '审批请求无法核验，已拦截。');
+        } else if (eventName === 'capture.suggestion') {
+          const approvedProposalId = payload.approved_proposal_id;
+          const approvedProposalVersion = payload.approved_proposal_version;
+          const sourceEventId = payload.source_event_id;
+          const occurredAt = payload.occurred_at;
+          const originalText = payload.original_text;
+          if ((approvedProposalId === undefined || (typeof approvedProposalId === 'string' && captureIdPattern.test(approvedProposalId)))
+            && (approvedProposalVersion === undefined || (Number.isInteger(approvedProposalVersion) && (approvedProposalVersion as number) > 0))
+            && typeof sourceEventId === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(sourceEventId)
+            && typeof occurredAt === 'string' && !Number.isNaN(Date.parse(occurredAt))
+            && typeof originalText === 'string' && originalText.trim().length > 0 && originalText.length <= 200000) {
+            const suggestion: CaptureSuggestion = { approvedProposalId: typeof approvedProposalId === 'string' ? approvedProposalId : '',
+              approvedProposalVersion: typeof approvedProposalVersion === 'number' ? approvedProposalVersion : null,
+              sourceEventId, occurredAt, originalText, sessionId };
+            setCaptureSuggestion(suggestion); setCaptureApproval(null); setCaptureReceipt(null); setCaptureStatus('');
+            setCaptureConfirmation(''); setCaptureFeedback(''); setCaptureSourceId('');
+          } else {
+            setCaptureSuggestion(null);
+            setError(en ? 'An invalid capture suggestion was ignored.' : '无效的收录建议已忽略。');
+          }
         } else if (eventName === 'run.completed' || eventName === 'assistant.completed') {
           sawTerminal = true;
           setPendingApproval(null);
@@ -1522,6 +1678,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         await pollRun(activeRun, sessionId);
       }
     } catch (cause) {
+      if (selectedSessionRef.current !== sessionId || runSelectionIntent !== selectionIntentRef.current) return;
       setInput((current) => current || prompt);
       if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
         setProgress(en ? 'Connection interrupted; checking run status…' : '连接中断，正在核对任务状态…');
@@ -1532,7 +1689,68 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
           else setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Chat failed', locale));
         } catch (recoveryError) { setError(recoveryError instanceof Error ? chatFailureLabel(recoveryError.message, locale) : chatFailureLabel('Could not recover run status', locale)); }
       }
-    } finally { abortRef.current = null; setRunId(''); setBusy(false); }
+    } finally {
+      if (selectedSessionRef.current === sessionId && runSelectionIntent === selectionIntentRef.current) {
+        abortRef.current = null; setRunId(''); setBusy(false);
+      }
+    }
+  };
+
+  const verifyCaptureApproval = async () => {
+    const suggestion = captureSuggestion;
+    if (!suggestion?.approvedProposalId || !suggestion.approvedProposalVersion || captureBusy
+      || selectedSessionRef.current !== suggestion.sessionId) return;
+    setCaptureBusy(true); setCaptureApproval(null); setCaptureFeedback('');
+    const sequence = ++captureRequestSequence.current;
+    try {
+      const body = await api<unknown>(`/api/inbox/proposals/${encodeURIComponent(suggestion.approvedProposalId)}/history`);
+      if (selectedSessionRef.current !== suggestion.sessionId || sequence !== captureRequestSequence.current) return;
+      const approval = parseCaptureApproval(body, suggestion);
+      if (!approval) throw new Error(en ? 'No current Core approval exactly matches this suggestion.' : '没有与此建议精确匹配且仍有效的 Core 批准记录。');
+      setCaptureApproval(approval);
+      setCaptureFeedback(en ? 'Current Core approval verified. This is not an Inbox write.' : '已核验当前 Core 批准；尚未写入 Inbox。');
+    } catch (cause) {
+      if (selectedSessionRef.current !== suggestion.sessionId || sequence !== captureRequestSequence.current) return;
+      setCaptureFeedback(cause instanceof Error ? cause.message : (en ? 'Core approval could not be verified.' : '无法核验 Core 批准。'));
+    } finally { if (sequence === captureRequestSequence.current) setCaptureBusy(false); }
+  };
+
+  const confirmCaptureSuggestion = async () => {
+    const suggestion = captureSuggestion;
+    const approval = captureApproval;
+    if (!suggestion || !approval || captureBusy || captureConfirmation !== '确认收录'
+      || selectedSessionRef.current !== suggestion.sessionId) return;
+    setCaptureBusy(true); setCaptureFeedback(''); setCaptureSourceId(''); setCaptureStatus('');
+    const receipt: CaptureReceipt = { sessionId: suggestion.sessionId, inboxId: '', sourceEventId: suggestion.sourceEventId,
+      proposalId: approval.proposalId, proposalVersion: approval.version, sourceVersion: approval.sourceVersion, kind: approval.kind };
+    const sequence = ++captureRequestSequence.current;
+    try {
+      const response = await fetch('/api/inbox/entries', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ original_text: suggestion.originalText,
+          source_channel: 'web', source_event_id: suggestion.sourceEventId, occurred_at: suggestion.occurredAt,
+          intent: 'approved_suggestion', approved_proposal_id: approval.proposalId,
+          approved_proposal_version: approval.version }) });
+      const result = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (response.status !== 202) {
+        if (response.status === 409) { setCaptureApproval(null); setCaptureConfirmation(''); }
+        throw new Error(apiFailureLabel(result.detail, response.status, locale, 'chat'));
+      }
+      const inboxId = result.inbox_id;
+      if (typeof inboxId !== 'string' || !captureIdPattern.test(inboxId) || typeof result.captured_at !== 'string'
+        || Number.isNaN(Date.parse(result.captured_at)) || typeof result.replayed !== 'boolean'
+        || result.intent !== 'approved_suggestion') throw new Error(en ? 'Core returned an invalid 202 receipt.' : 'Core 返回的 202 回执无效。');
+      const completedReceipt = { ...receipt, inboxId };
+      if (!parseCaptureReceiptResponse(result, completedReceipt)) throw new Error(en ? 'Core returned a mismatched or incomplete approval receipt.' : 'Core 返回的审批绑定回执不匹配或不完整。');
+      if (selectedSessionRef.current !== suggestion.sessionId || sequence !== captureRequestSequence.current) return;
+      try { sessionStorage.setItem(captureReceiptKey(suggestion.sessionId), JSON.stringify(completedReceipt)); }
+      catch { throw new Error(en ? 'The exact receipt could not be saved for session recovery; confirm the status before retrying.' : '无法保存用于本会话恢复的精确回执；重试前请先核对状态。'); }
+      setCaptureReceipt(completedReceipt); setCaptureSourceId(''); setCaptureStatus('');
+      setCaptureFeedback(en ? 'Core accepted the receipt; verifying the exact Inbox entry…' : 'Core 已受理回执；正在核验确切的 Inbox 记录…');
+      await verifyCaptureReceipt(completedReceipt, sequence);
+    } catch (cause) {
+      if (selectedSessionRef.current !== suggestion.sessionId || sequence !== captureRequestSequence.current) return;
+      setCaptureFeedback(cause instanceof Error ? cause.message : (en ? 'Core could not verify this entry. The original remains available.' : 'Core 无法核验此记录，原文仍保留。'));
+    } finally { if (sequence === captureRequestSequence.current) setCaptureBusy(false); }
   };
 
   const resolveRunToolApproval = async (choice: 'once' | 'deny') => {
@@ -1614,6 +1832,28 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
           </div>
           {item.activity.detail && <small>{item.activity.detail}</small>}
         </article>)}{!timeline.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      {captureSuggestion?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Hermes capture suggestion' : 'Hermes 收录建议'}>
+        <h3>{en ? 'Hermes suggests saving this to Inbox' : 'Hermes 建议将以下内容收录到 Inbox'}</h3>
+        <p>{en ? 'A chat suggestion and typed confirmation are not Core approval. Verify a current Core-approved proposal before submitting.' : '聊天建议和输入确认短语都不等于 Core 批准；提交前必须核验仍有效的 Core 批准记录。'}</p>
+        <blockquote>{captureSuggestion.originalText}</blockquote>
+        {!captureApproval && !captureSourceId && !captureReceipt && <>
+          {captureSuggestion.approvedProposalId && captureSuggestion.approvedProposalVersion
+            ? <button type="button" disabled={captureBusy} onClick={() => void verifyCaptureApproval()}>{captureBusy ? (en ? 'Checking Core approval…' : '正在核验 Core 批准…') : (en ? 'Verify current Core approval' : '核验当前 Core 批准')}</button>
+            : <p role="status">{en ? 'No Core-approved proposal ID and version are attached. Submission is disabled.' : '缺少 Core 已批准 Proposal ID 与版本，已禁用提交。'}</p>}
+        </>}
+        {captureApproval && !captureSourceId && !captureReceipt && <><p role="status">{en ? `Core approval verified: ${captureApproval.kind}, version ${captureApproval.version}.` : `已核验 Core 批准：${captureApproval.kind}，版本 ${captureApproval.version}。`}</p><label htmlFor="capture-suggestion-confirm">{en ? 'Type “确认收录” to continue' : '输入“确认收录”以继续'}</label>
+          <input id="capture-suggestion-confirm" value={captureConfirmation} onChange={(event) => setCaptureConfirmation(event.target.value)} autoComplete="off" />
+          <button type="button" disabled={captureBusy || captureConfirmation !== '确认收录'} onClick={() => void confirmCaptureSuggestion()}>{captureBusy ? (en ? 'Submitting…' : '正在提交…') : (en ? 'Confirm and submit to Core' : '确认并提交给 Core')}</button></>}
+        {captureFeedback && <p role={captureSourceId ? 'status' : 'alert'}>{captureFeedback}{captureStatus ? ` · ${en ? 'Status' : '状态'}: ${captureStatus}` : ''}</p>}
+        {captureReceipt && captureReceipt.sessionId === selected && <button type="button" disabled={captureBusy} onClick={() => void verifyCaptureReceipt(captureReceipt, ++captureRequestSequence.current)}>{en ? 'Refresh Core status' : '刷新 Core 状态'}</button>}
+        {captureSourceId && <a href={`/inbox#capture-${encodeURIComponent(captureSourceId)}`}>{en ? 'Open Inbox source' : '打开 Inbox 来源'}</a>}
+      </section>}
+      {!captureSuggestion && captureReceipt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Inbox capture status' : 'Inbox 收录状态'}>
+        <h3>{en ? 'Inbox entry for this session' : '本会话的 Inbox 记录'}</h3>
+        {captureFeedback && <p role={captureStatus ? 'status' : 'alert'}>{captureFeedback}{captureStatus ? ` · ${en ? 'Status' : '状态'}: ${captureStatus}` : ''}</p>}
+        <button type="button" disabled={captureBusy} onClick={() => void verifyCaptureReceipt(captureReceipt, ++captureRequestSequence.current)}>{en ? 'Refresh Core status' : '刷新 Core 状态'}</button>
+        {captureSourceId && <a href={`/inbox#capture-${encodeURIComponent(captureSourceId)}`}>{en ? 'Open Inbox source' : '打开 Inbox 来源'}</a>}
+      </section>}
       {progress && <div className="chat-progress" role="status">{progress}</div>}{error && <p className="chat-error" role="alert">{error}</p>}
       {pendingApproval && <section className="terminal-approval-card" aria-labelledby="terminal-approval-title">
         <h3 id="terminal-approval-title">{en ? 'Run action approval' : '运行操作审批'}</h3>

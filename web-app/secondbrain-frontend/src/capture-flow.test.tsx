@@ -12,8 +12,344 @@ const ok = (body: unknown, contentType = 'application/json') => ({
   ok: true, status: 200, headers: { get: () => contentType },
   json: async () => body, text: async () => typeof body === 'string' ? body : JSON.stringify(body),
 });
+const sse = (events: Record<string, unknown>[]) => new Response(new ReadableStream<Uint8Array>({
+  start(controller) {
+    const encoder = new TextEncoder();
+    for (const event of events) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+    controller.close();
+  },
+}), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+const proposalId = 'b'.repeat(32);
+const inboxId = 'c'.repeat(32);
+const proposalVersion = 4;
+const sourceVersion = 'sha256:synthetic-source-version';
+const suggestion = (overrides: Record<string, unknown> = {}) => ({ event: 'capture.suggestion', approved_proposal_id: proposalId,
+  approved_proposal_version: proposalVersion, source_event_id: 'synthetic:event-9', occurred_at: '2026-10-20T01:02:03Z',
+  original_text: 'A synthetic insight to capture.', ...overrides });
+const approvalBody = (overrides: Record<string, unknown> = {}) => ({ proposal: {
+  proposal_id: proposalId, status: 'approved_recorded', version: proposalVersion, kind: 'journal',
+  source_version: sourceVersion, vocabulary_version: 12, suggestion: {
+    original: { value: 'A synthetic insight to capture.', reason: 'Synthetic Core approval rationale.' },
+    current: { value: 'A synthetic insight to capture.' },
+  },
+  ...overrides,
+} });
+const inboxBody = (overrides: Record<string, unknown> = {}) => ({ inbox_id: inboxId, status: 'processing',
+  captured_at: '2026-10-20T01:03:00Z', occurred_at: '2026-10-20T01:02:03Z', source: { channel: 'web', event_id: 'synthetic:event-9' },
+  intent: 'approved_suggestion', replayed: false,
+  consent_evidence: { kind: 'authenticated_app_approved_proposal', subject: 'synthetic-owner', recorded_at: '2026-10-20T01:03:00Z',
+    proposal_id: proposalId, proposal_version: proposalVersion, source_version: sourceVersion },
+  approved_proposal: { proposal_id: proposalId, version: proposalVersion, kind: 'journal', source_version: sourceVersion },
+  source_ref: { capture_id: inboxId, review_path: null, review_sha256: null }, ...overrides });
+const chatSessions = [{ session_id: 'synthetic-chat-session', title: 'Synthetic' }];
+const historyPayload = { sessions: chatSessions };
 
 describe('D075.1 capture interactions', () => {
+  it('requires an explicit Core approval check, posts the exact 202 contract, and confirms the single Inbox entry by GET', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const event = suggestion();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); calls.push({ url, init });
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([event, { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify(inboxBody()), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      if (url === `/api/inbox/entries/${inboxId}`) return ok(inboxBody());
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: '普通聊天，不自动收录' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    expect(within(card).getByText(event.original_text)).toBeTruthy();
+    expect(calls.some((call) => call.url === '/api/inbox/entries')).toBe(false);
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    expect(calls.some((call) => call.url === `/api/inbox/proposals/${proposalId}/history`)).toBe(true);
+    const confirmation = within(card).getByLabelText('输入“确认收录”以继续');
+    fireEvent.change(confirmation, { target: { value: '确认' } });
+    expect(within(card).getByRole('button', { name: '确认并提交给 Core' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.change(confirmation, { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('link', { name: '打开 Inbox 来源' })).toBeTruthy();
+    expect(within(card).getByRole('link', { name: '打开 Inbox 来源' }).getAttribute('href')).toBe(`/inbox#capture-${inboxId}`);
+    expect(within(card).getByRole('status').textContent).toContain('processing');
+    const post = calls.find((call) => call.url === '/api/inbox/entries');
+    expect(JSON.parse(String(post?.init?.body))).toEqual({
+      original_text: event.original_text, source_channel: 'web', source_event_id: event.source_event_id,
+      occurred_at: event.occurred_at, intent: 'approved_suggestion', approved_proposal_id: proposalId,
+      approved_proposal_version: proposalVersion,
+    });
+    expect(new Headers(post?.init?.headers).get('Idempotency-Key')).toBeNull();
+    expect(calls.some((call) => call.url === `/api/inbox/entries/${inboxId}`)).toBe(true);
+    expect(sessionStorage.getItem(`secondbrain.chat.captureReceipt:synthetic-chat-session`)).not.toContain(event.original_text);
+  });
+
+  it('keeps a valid 202 receipt unverified and hides its source link when the exact GET mismatches', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify(inboxBody()), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      if (url === `/api/inbox/entries/${inboxId}`) return ok(inboxBody({ source_ref: { capture_id: 'd'.repeat(32), review_path: null, review_sha256: null } }));
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'synthetic only' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+
+    expect((await within(card).findByRole('alert')).textContent).toMatch(/状态尚未核验/);
+    expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+    expect(within(card).queryByLabelText('输入“确认收录”以继续')).toBeNull();
+    expect(within(card).getByRole('button', { name: '刷新 Core 状态' })).toBeTruthy();
+    expect(calls.filter((url) => url === '/api/inbox/entries')).toHaveLength(1);
+    expect(sessionStorage.getItem('secondbrain.chat.captureReceipt:synthetic-chat-session')).toContain(inboxId);
+  });
+
+  it('restores an opaque session receipt without a trusted link while exact GET is pending or fails', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'synthetic-chat-session');
+    const receipt = { sessionId: 'synthetic-chat-session', inboxId, sourceEventId: 'synthetic:event-9', proposalId,
+      proposalVersion, sourceVersion, kind: 'journal' };
+    const storageKey = 'secondbrain.chat.captureReceipt:synthetic-chat-session';
+    window.sessionStorage.setItem(storageKey, JSON.stringify(receipt));
+    let rejectGet!: (response: Response) => void;
+    const exactGet = new Promise<Response>((resolve) => { rejectGet = resolve; });
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return Promise.resolve(ok(historyPayload));
+      if (url.endsWith('/messages')) return Promise.resolve(ok({ messages: [] }));
+      if (url.endsWith('/activities')) return Promise.resolve(ok({ activities: [] }));
+      if (url === `/api/inbox/entries/${inboxId}`) return exactGet;
+      return Promise.resolve(ok({}));
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    expect(await screen.findByRole('region', { name: 'Inbox 收录状态' })).toBeTruthy();
+    expect((await screen.findByRole('alert')).textContent).toContain('正在向 Core 核验已保存回执');
+    expect(screen.queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBe(JSON.stringify(receipt));
+
+    await act(async () => { rejectGet(new Response(JSON.stringify({ detail: 'synthetic unavailable' }), { status: 503 })); });
+    expect((await screen.findByRole('alert')).textContent).toMatch(/状态尚未核验/);
+    expect(screen.queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBe(JSON.stringify(receipt));
+  });
+
+  it('fails closed when SSE has only the untrusted legacy proposal_id', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const event = suggestion({ approved_proposal_id: undefined, approved_proposal_version: undefined, proposal_id: proposalId });
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([event, { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary chat' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    expect(within(card).getByText(/缺少 Core 已批准 Proposal ID/)).toBeTruthy();
+    expect(within(card).queryByLabelText('输入“确认收录”以继续')).toBeNull();
+    expect(within(card).queryByRole('button', { name: '核验当前 Core 批准' })).toBeNull();
+    expect(calls.some((url) => url === '/api/inbox/entries' || url.includes('/api/inbox/proposals/'))).toBe(false);
+    expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+  });
+
+  it.each([
+    ['unapproved status', { status: 'suggested' }],
+    ['stale version', { version: proposalVersion + 1 }],
+    ['changed source text', { suggestion: { original: { value: 'Changed source text.', reason: 'Synthetic rationale.' }, current: { value: 'Changed source text.' } } }],
+    ['source text differs by whitespace', { suggestion: { original: { value: 'A synthetic insight to capture. ', reason: 'Synthetic rationale.' }, current: { value: 'A synthetic insight to capture.' } } }],
+    ['legacy text shape', { suggestion: { original: 'A synthetic insight to capture.', current: { value: 'A synthetic insight to capture.' } } }],
+    ['missing original value', { suggestion: { original: { reason: 'Synthetic rationale.' }, current: { value: 'A synthetic insight to capture.' } } }],
+    ['non-text original value', { suggestion: { original: { value: 42, reason: 'Synthetic rationale.' }, current: { value: 'A synthetic insight to capture.' } } }],
+    ['extra original field', { suggestion: { original: { value: 'A synthetic insight to capture.', reason: 'Synthetic rationale.', extra: 'rejected' }, current: { value: 'A synthetic insight to capture.' } } }],
+  ])('does not allow a Core approval with %s to reach POST', async (_label, invalidApproval) => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody(invalidApproval));
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    expect(await within(card).findByRole('alert')).toBeTruthy();
+    expect(calls.some((url) => url === '/api/inbox/entries')).toBe(false);
+    expect(within(card).queryByLabelText('输入“确认收录”以继续')).toBeNull();
+  });
+
+  it.each([200, 201, 202])('rejects malformed HTTP %i response without an exact Core receipt', async (status) => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify({ inbox_id: 'not-an-id', status: 'processing' }), { status });
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('alert')).toBeTruthy();
+    expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+  });
+
+  it.each([401, 403, 409, 503])('keeps capture unconfirmed when Core POST returns HTTP %i', async (status) => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify({ detail: 'synthetic_failure' }), { status });
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('alert')).toBeTruthy();
+    expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+    expect(sessionStorage.getItem('secondbrain.chat.captureReceipt:synthetic-chat-session')).toBeNull();
+  });
+
+  it('retries an uncertain POST with the same event identity and restores only the session-bound receipt', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    let postAttempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); calls.push({ url, init });
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
+        { session_id: 'synthetic-session-a', title: 'Synthetic A' }, { session_id: 'synthetic-session-b', title: 'Synthetic B' },
+      ] });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') {
+        postAttempts += 1;
+        if (postAttempts === 1) throw new TypeError('synthetic connection lost after request');
+        return new Response(JSON.stringify(inboxBody({ replayed: true })), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === `/api/inbox/entries/${inboxId}`) return ok(inboxBody());
+      return ok({});
+    }));
+    window.localStorage.setItem('secondbrain.chat.session', 'synthetic-session-a');
+    const mounted = render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    const confirmation = within(card).getByLabelText('输入“确认收录”以继续');
+    fireEvent.change(confirmation, { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('alert')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('link', { name: '打开 Inbox 来源' })).toBeTruthy();
+    const posts = calls.filter((call) => call.url === '/api/inbox/entries');
+    expect(posts).toHaveLength(2);
+    expect(JSON.parse(String(posts[0].init?.body))).toEqual(JSON.parse(String(posts[1].init?.body)));
+    expect(JSON.parse(String(posts[1].init?.body)).source_event_id).toBe('synthetic:event-9');
+    mounted.unmount();
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    await waitFor(() => expect(calls.filter((call) => call.url === `/api/inbox/entries/${inboxId}`)).toHaveLength(2));
+    expect(await screen.findByRole('link', { name: '打开 Inbox 来源' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic B/ }));
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith('/synthetic-session-b/messages'))).toBe(true));
+    expect(calls.filter((call) => call.url === `/api/inbox/entries/${inboxId}`)).toHaveLength(2);
+  });
+
+  it('ignores a capture suggestion delivered by an old Run after switching sessions', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const proposal = { event: 'capture.suggestion', proposal_id: 'synthetic-late-proposal', source_event_id: 'synthetic-late-event', occurred_at: '2026-10-20T01:02:03Z', original_text: 'Late old-session suggestion.' };
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const delayedStream = new Response(new ReadableStream<Uint8Array>({ start(controller) { streamController = controller; } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
+        { session_id: 'synthetic-session-a', title: 'Synthetic A' }, { session_id: 'synthetic-session-b', title: 'Synthetic B' },
+      ] });
+      if (url.endsWith('/runs') && url.includes('synthetic-session-a')) return ok({ run_id: 'synthetic-run-a' });
+      if (url.endsWith('/events')) return delayedStream;
+      if (url === '/api/chat/runs/synthetic-run-a') return ok({ status: 'completed' });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(calls).toContain('/api/chat/sessions/synthetic-session-a/runs'));
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic B/ }));
+    await waitFor(() => expect(calls).toContain('/api/chat/sessions/synthetic-session-b/messages'));
+    const encoder = new TextEncoder();
+    await act(async () => {
+      streamController.enqueue(encoder.encode(`data: ${JSON.stringify(proposal)}\n\n`));
+      streamController.enqueue(encoder.encode(`data: ${JSON.stringify({ event: 'run.completed' })}\n\n`));
+      streamController.close();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByRole('region', { name: 'Hermes 收录建议' })).toBeNull();
+    expect(screen.queryByText(proposal.original_text)).toBeNull();
+    expect(calls.some((url) => url === '/api/inbox/entries')).toBe(false);
+  });
+
   it('sorts capture timestamps newest first, keeps ties deterministic, and places unknown dates last', () => {
     const items = [
       { capture_id: 'z', captured_at: '2026-10-14T00:00:00Z' },
@@ -158,6 +494,39 @@ describe('D075.1 capture interactions', () => {
     expect(await screen.findByRole('heading', { name: '收件箱' })).toBeTruthy();
     expect(screen.queryByLabelText('收录内容')).toBeNull();
     expect(screen.getByRole('button', { name: '立即整理' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('waits for Inbox items to load before focusing and scrolling to an exact capture hash', async () => {
+    const captureId = 'e'.repeat(32);
+    const item = { capture_id: captureId, source_type: 'text', input_type: 'md', captured_at: '2026-10-20T00:00:00Z', raw_path: 'synthetic.md', status: 'completed', display_filename: 'synthetic.md' };
+    let finishInbox!: (response: ReturnType<typeof ok>) => void;
+    const pendingInbox = new Promise<ReturnType<typeof ok>>((resolve) => { finishInbox = resolve; });
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => String(input) === '/api/inbox' ? pendingInbox : Promise.resolve(ok({}))));
+    window.history.replaceState({}, '', `/inbox#capture-${captureId}`);
+    const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => { callback(0); return 1; });
+    try {
+      const { container } = render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+      await screen.findByText('加载中…');
+      await act(async () => { finishInbox(ok({ items: [item] })); await pendingInbox; });
+      await screen.findByRole('heading', { name: 'synthetic.md' });
+      const target = container.querySelector(`#capture-${captureId}`) as HTMLElement;
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' }));
+      expect(document.activeElement).toBe(target);
+    } finally {
+      if (previous) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', previous);
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+    }
+  });
+
+  it('reports an exact Inbox source hash that is absent after loading', async () => {
+    const captureId = 'f'.repeat(32);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok({ items: [] })));
+    window.history.replaceState({}, '', `/inbox#capture-${captureId}`);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+    expect((await screen.findByRole('status')).textContent).toContain('未在当前收件箱列表中找到指定来源。');
   });
 
   it('defaults to Hermes chat and explicitly switches unsupported attachments into capture', async () => {
@@ -718,7 +1087,7 @@ describe('D075.1 capture interactions', () => {
     expect(selected?.textContent).toContain('Exact entry');
   });
 
-  it('orders Reviews by verified capture time, joins legacy dates from exact Inbox paths, and keeps unknown last', async () => {
+  it('orders Reviews by metadata-only capture time and leaves missing dates unknown without reading Inbox', async () => {
     const review = (review_path: string, captured_at?: string | null) => ({
       review_path, review_sha256: review_path, target_filename: review_path,
       title: review_path, status: 'pending', captured_at, content: `# ${review_path}`,
@@ -727,16 +1096,14 @@ describe('D075.1 capture interactions', () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/review/items')) return ok({ items: reviews });
-      if (url.includes('/api/inbox')) return ok({ items: [
-        { capture_id: 'legacy-source', captured_at: '2026-10-15T00:00:00Z', review_path: 'legacy.md' },
-      ] });
+      if (url.includes('/api/inbox')) throw new Error('Review list must not load Inbox');
       if (url.endsWith('/status')) return ok({ promote_enabled: false });
       return ok(reviews.find((item) => url.endsWith(item.review_path)));
     }));
     const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
     await screen.findByText('legacy.md', { selector: '.review-page-item strong' });
     const titles = [...container.querySelectorAll('.review-page-item strong')].map((node) => node.textContent);
-    expect(titles).toEqual(['legacy.md', 'date-only.md', 'old.md', 'unknown.md']);
+    expect(titles).toEqual(['date-only.md', 'old.md', 'legacy.md', 'unknown.md']);
     expect(container.querySelector('.review-page-item:last-child')?.textContent).toContain('时间未知');
   });
 
@@ -753,6 +1120,8 @@ describe('D075.1 capture interactions', () => {
       return ok(reviews.find((item) => url.endsWith(item.review_path)));
     }));
     const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    await screen.findByRole('button', { name: /A/ });
+    fireEvent.click(screen.getByRole('button', { name: /A/ }));
     await screen.findByRole('heading', { level: 2, name: 'A' });
     const detail = container.querySelector('.review-page-detail') as HTMLElement;
     detail.scrollTop = 240;
@@ -781,6 +1150,8 @@ describe('D075.1 capture interactions', () => {
       return ok(review);
     }));
     const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    await screen.findByRole('button', { name: /OCR/ });
+    fireEvent.click(screen.getByRole('button', { name: /OCR/ }));
     await waitFor(() => expect(container.querySelector('.review-markdown-raw')?.textContent).toContain('识别正文'));
     expect(container.querySelectorAll('.review-connection-status')).toHaveLength(1);
     expect(container.querySelector('.review-page-toolbar')?.textContent).not.toContain('已连接 Core');
@@ -797,6 +1168,8 @@ describe('D075.1 capture interactions', () => {
     };
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/review/items') ? ok({ items: [review] }) : String(input).endsWith('/status') ? ok({ promote_enabled: false }) : ok(review)));
     const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    await screen.findByRole('button', { name: /扫描资料/ });
+    fireEvent.click(screen.getByRole('button', { name: /扫描资料/ }));
     await waitFor(() => expect(container.querySelector('.review-markdown')?.textContent).toContain('正文第一行'));
     expect(container.querySelector('.review-page-detail')?.textContent).not.toContain('type: "review"');
     expect(screen.getByRole('heading', { level: 2, name: '扫描资料' })).toBeTruthy();
@@ -814,6 +1187,8 @@ describe('D075.1 capture interactions', () => {
     };
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (input: RequestInfo | URL) => String(input).endsWith('/review/items') ? ok({ items: [review] }) : String(input).endsWith('/status') ? ok({ promote_enabled: false }) : ok(review)));
     const { container } = render(<ReviewPage locale="zh-CN" onBack={vi.fn()} />);
+    await screen.findByRole('button', { name: /扫描识别/ });
+    fireEvent.click(screen.getByRole('button', { name: /扫描识别/ }));
     expect((await screen.findAllByText('第一行：编号 A-01', { exact: false })).length).toBeGreaterThan(0);
     expect(container.querySelector('.review-markdown-raw')?.textContent).toContain('第二行  key: value');
     expect(container.querySelector('.review-markdown-raw')?.textContent).not.toContain('tesseract');

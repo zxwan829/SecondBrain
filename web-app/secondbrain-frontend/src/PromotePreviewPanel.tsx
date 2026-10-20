@@ -280,7 +280,7 @@ export function PromotePreviewPanel({ locale, reviewPath, reviewSha256, targetFi
         {operation && <p role={['failed', 'recovery_required'].includes(operation.status) ? 'alert' : 'status'}>{operationLabel(operation, locale)}</p>}
         {operation?.output_sha256 && <p><span>{en ? 'Recorded output SHA-256' : '记录的输出 SHA-256'}：</span> <code>{operation.output_sha256}</code></p>}
         {(outcomeUnknown || (operation && !['promoted', 'already_promoted'].includes(operation.status))) && <button type="button" className="promote-secondary" onClick={() => void readOperation()} disabled={busy}>{phase === 'checking' ? (en ? 'Checking…' : '正在查询…') : (en ? 'Check operation status' : '查询操作状态')}</button>}
-        {phase === 'complete' && <p>{en ? 'You may search Knowledge manually to verify the result.' : '你可以自行进入 Knowledge 检索核对结果。'}</p>}
+        {phase === 'complete' && <p>{en ? 'The exact operation is confirmed. Open Knowledge and search explicitly to verify the entry.' : '精确操作状态已核验。请进入 Knowledge 并主动搜索，核对入库条目。'} <a className="promote-knowledge-link" href="/knowledge">{en ? 'Open Knowledge search' : '打开 Knowledge 搜索'}</a></p>}
       </section>}
     </div>}
 
