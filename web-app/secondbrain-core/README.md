@@ -130,6 +130,26 @@ unchanged.
   exit status alone. Production mounts, ACLs, account provisioning, and
   cross-store recovery protocol still require separate design review and
   authorization. Local tests do not assert OS isolation.
+- `modules/restricted_knowledge_writer.py` is a separate local Writer candidate,
+  not registered by `create_app()` and not a production Promote path. Core must
+  authenticate the App owner, validate the exact approved Review/version/target,
+  render the approved bytes, and send one bounded version-1 Unix-socket request.
+  The Writer pins its configured Knowledge and receipt roots, accepts no root or
+  arbitrary path from the request, checks the kernel peer UID where the platform
+  exposes `SO_PEERCRED`, verifies the exact output SHA-256, and writes only a
+  new flat Markdown filename with `O_EXCL|O_NOFOLLOW`, fsync, one-time receipt,
+  expiry and replay binding. Ambiguous write/receipt state is `recovery_required`
+  and is never retried automatically. Its candidate Knowledge root is Writer-owned
+  `0750` with Core-group read/execute only; receipt state stays Writer-private `0700`.
+  The socket directory is expected to be Writer-owned `0710` and the socket `0660`
+  for the provisioned Core group. These modes have not been provisioned or verified.
+  This candidate trusts Core's authorization
+  decision; a compromised Core can misuse its authorized writer channel, which
+  remains an explicit residual risk. The synthetic tests inject a peer UID and
+  temporary roots. On this macOS runtime Python exposes no `SO_PEERCRED` or
+  `getpeereid` API, so real kernel peer identity and cross-UID behavior remain
+  unverified; unsupported peer credentials fail closed. Do not enable or launch
+  the candidate in production.
 - Task API is always routed but returns an explicit unavailable response unless
   `SB_TASK_ROOT` names an existing Core-owned `0700` directory. It uses one
   locked, atomically replaced JSON store for idempotent create, status/date query,
