@@ -24,6 +24,8 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, sum
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
     if (url === '/api/home') return new Response('{}', { status: 200 });
+    if (url === '/api/projects?limit=1&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 1, offset: 0, has_more: false }, source: null }), { status: 200 });
+    if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url.startsWith('/api/knowledge/search?')) return new Response(JSON.stringify({ items: [], status: 'ok' }), { status: 200 });
     if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify(summaryStatus === 200 ? { status: 'real', items: [{ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', display_filename: 'synthetic.txt', status: 'completed', error_code: null, has_review: false }] } : { detail: 'synthetic failure' }), { status: summaryStatus });
     if (url === `/api/capture/${captureId}`) return new Response(JSON.stringify({ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', raw_path: 'synthetic.txt', display_filename: 'synthetic.txt', title: 'Synthetic capture', status: 'completed', content_preview: 'SYNTHETIC EXACT CAPTURE BODY', review_path: null }), { status: 200 });
@@ -103,6 +105,64 @@ describe('Notes application navigation gate', () => {
     startAt('/');
     await screen.findByRole('heading', { name: '你的工作台' });
     await waitFor(() => expect(calls).toContain('/api/home'));
+  });
+
+  it('loads Projects only from its explicit read endpoint and keeps unconfigured state distinct', async () => {
+    const calls = mockAppFetch();
+    startAt('/projects');
+
+    expect(await screen.findByRole('heading', { name: '项目' })).toBeTruthy();
+    expect(await screen.findByText(/尚未配置可信项目数据源/)).toBeTruthy();
+    expect(document.querySelector('[data-fixture-id="SYNTH-PROJECT-001"]')).toBeNull();
+    expect(location.pathname).toBe('/projects');
+    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=1&offset=0']);
+    fireEvent.click(screen.getByRole('button', { name: '查看本地合成预览' }));
+    expect(screen.getByText('LOCAL_CANDIDATE · SYNTHETIC FIXTURE')).toBeTruthy();
+    expect(document.querySelector('[data-fixture-id="SYNTH-PROJECT-001"]')).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=1&offset=0']);
+  });
+
+  it('fails closed when Projects violates its explicitly empty response contract', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/projects?limit=1&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [{ title: 'must not render' }], pagination: { limit: 1, offset: 0, has_more: false }, source: null }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/projects');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
+    expect(screen.queryByText('must not render')).toBeNull();
+    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=1&offset=0']);
+  });
+
+  it('loads Activity from its explicit read endpoint without session/message or Home reads', async () => {
+    const calls = mockAppFetch();
+    startAt('/activity');
+
+    expect(await screen.findByRole('heading', { name: '动态' })).toBeTruthy();
+    expect((await screen.findAllByText('日记操作')).length).toBeGreaterThan(0);
+    expect(screen.getByText('已完成')).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', '/api/activity?limit=50&offset=0']);
+    expect(calls.some((url) => /sessions|messages|journal\/|tasks/.test(url))).toBe(false);
+  });
+
+  it('rejects an Activity response containing Journal or Task body fields', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', original_text: 'must not render' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/activity');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
+    expect(screen.queryByText('must not render')).toBeNull();
+    expect(calls).toEqual(['/api/auth/session', '/api/activity?limit=50&offset=0']);
   });
 
   it.each(['/chat/blank', '/review'])('does not fetch the Home aggregate after login on direct route %s', async (path) => {
