@@ -136,6 +136,12 @@ unchanged.
   optimistic updates, and traceable state history. Chat accepts only the explicit
   `添加待办：` / `建个待办：` prefixes; Today provides edit, complete, and reopen.
   Reminder delivery is not implemented.
+- Home is an explicitly requested read and caps traversal at 500 directory
+  entries, depth 4, 50 Markdown candidates, and 256 KiB per file. Each section
+  reports status, source, and freshness; truncation is surfaced as `partial`.
+  `GET /api/calendar` requires a paired date window of at most 31 days and
+  returns only opaque IDs, Journal's generic label/date/optional occurred time,
+  and Task due date/status metadata.
 - Tests cover authentication/origin rejection, no-session/forged approval,
   Promote fail-closed, real file reads, deferred status, Hermes server-side
   auth, SSE/stop, and same-origin SPA routing.
