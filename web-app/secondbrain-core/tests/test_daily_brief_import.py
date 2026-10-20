@@ -289,3 +289,8 @@ def test_http_manual_import_rejects_auth_origin_schema_and_unsupported_import(tm
     duplicate_keys = '{"mode":"manual_generate","mode":"manual_generate"}'
     assert client.post("/api/daily-brief", content=duplicate_keys,
                        headers={"Origin": "https://app.test", "Content-Type": "application/json"}).status_code == 422
+    assert client.post("/api/daily-brief", json={**body, "mode": []},
+                       headers={"Origin": "https://app.test"}).status_code == 422
+    nested = '{"mode":' + "[" * 2000 + "0" + "]" * 2000 + "}"
+    assert client.post("/api/daily-brief", content=nested,
+                       headers={"Origin": "https://app.test", "Content-Type": "application/json"}).status_code == 422

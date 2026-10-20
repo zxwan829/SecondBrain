@@ -167,10 +167,10 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
             chunks.append(chunk)
         try:
             body = _strict_json_object(b"".join(chunks))
-        except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        except (UnicodeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
             raise HTTPException(status_code=422, detail="invalid request") from exc
         mode = body.get("mode")
-        if mode not in {"manual_generate", "approved_import"}:
+        if not isinstance(mode, str) or mode not in {"manual_generate", "approved_import"}:
             raise HTTPException(status_code=422, detail="invalid request")
         expected = {"mode", "date", "timezone", "idempotency_key", "categories",
                     "summary", "source_refs", "approved"}
