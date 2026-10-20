@@ -338,14 +338,14 @@ def test_directory_fsync_failure_after_replace_is_ambiguous_then_replay_safe(tmp
     original_fsync = binding_module.os.fsync
     calls = 0
 
-    def fail_after_atomic_replace(fd):
+    def fail_first_directory_fsync(fd):
         nonlocal calls
         calls += 1
         if calls == 2:
             raise OSError("synthetic directory fsync failure after replace")
         return original_fsync(fd)
 
-    monkeypatch.setattr(binding_module.os, "fsync", fail_after_atomic_replace)
+    monkeypatch.setattr(binding_module.os, "fsync", fail_first_directory_fsync)
     try:
         TrustedCaptureSuggestionBindingStore(tmp_path).record(binding)
     except CaptureSuggestionBindingStoreError:
@@ -353,8 +353,36 @@ def test_directory_fsync_failure_after_replace_is_ambiguous_then_replay_safe(tmp
     else:
         raise AssertionError("post-replace directory fsync failure must not report durable success")
     assert (tmp_path / "capture-suggestion-bindings.json").exists()
-    monkeypatch.setattr(binding_module.os, "fsync", original_fsync)
+
+    # Even after restarting the store, an exact replay cannot be called
+    # duplicate until a directory fsync has succeeded.
+    replay_fsync_calls = 0
+
+    def fail_replay_directory_fsync(fd):
+        nonlocal replay_fsync_calls
+        replay_fsync_calls += 1
+        raise OSError("synthetic replay directory fsync failure")
+
+    monkeypatch.setattr(binding_module.os, "fsync", fail_replay_directory_fsync)
+    try:
+        TrustedCaptureSuggestionBindingStore(tmp_path).record(binding)
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("replay without durable directory fsync must not succeed")
+    assert replay_fsync_calls == 1
+
+    successful_replay_fsync_calls = 0
+
+    def count_successful_replay_fsync(fd):
+        nonlocal successful_replay_fsync_calls
+        successful_replay_fsync_calls += 1
+        return original_fsync(fd)
+
+    monkeypatch.setattr(binding_module.os, "fsync", count_successful_replay_fsync)
     assert TrustedCaptureSuggestionBindingStore(tmp_path).record(binding) == (binding, True)
+    assert successful_replay_fsync_calls == 1
+
 
 
 def test_invalid_state_blocks_candidate_recovery_without_deleting_unknown_files(tmp_path):
