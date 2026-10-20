@@ -1,10 +1,10 @@
 # A Web-only synthetic integration evidence
 
-This document records local frontend-only evidence for the Issue #96 integration candidate. The UI test uses React/jsdom and mocked HTTP responses; it does not run Core, write a file, call Hermes, or access NAS, Vault, production accounts, or real data. Its Promote `promoted` response is a fixture only.
+This document records local Web integration evidence for Issue #96. The Vitest walkthrough uses React/jsdom and mocked HTTP responses; a separate isolated Edge run now exercises the fixed frontend against a real local Core HTTP process and temporary synthetic roots. Neither run calls Hermes, accesses NAS, Vault, production accounts, or real data. Promote remains OFF.
 
 ## Frozen inputs and status
 
-- A frontend base: PR #98 HEAD `75b280a44348bfa7569cc03b37a91ac18c800c93`.
+- A frontend base: PR #98 HEAD `98b2ed52eb68bb02f0cb190e92b1c425348b099f`.
 - B wire contract reference only: PR #99 HEAD `c92634fd94b32fec47e50aa7ef4ba107d98f7520`. No B source is merged into this candidate.
 - B Core readiness remains `NOT_MET`; B3 real OS UID/ACL/mount validation is out of scope and is not awaited.
 - This candidate is stacked on PR #98 because the App-level Home-effect fix and synthetic integration test depend on its unmerged frontend. It is not an independent PR against `main`; merge order must keep #98 before this integration PR.
@@ -45,6 +45,16 @@ The following existing tests are run alongside the new App-level test; they cove
 
 These are frontend tests against Mock HTTP or isolated component APIs, not real Core HTTP, browser E2E, Hermes channel integration, filesystem promotion, or production business acceptance.
 
+## Isolated real Core HTTP + Edge retest (2026-10-20)
+
+- Fixed inputs: frontend is PR #98 `98b2ed52eb68bb02f0cb190e92b1c425348b099f` plus this PR's candidate; Core is PR #99 `c92634fd94b32fec47e50aa7ef4ba107d98f7520`.
+- Core ran on `https://127.0.0.1:39697` with a temporary self-signed loopback certificate and a fresh private temporary root containing only synthetic Raw, Review, Knowledge, and Core state. `SB_PROMOTE_ENABLED=false`; Hermes was not configured.
+- Edge used a new headless temporary context, blocked Service Workers and all non-loopback origins. Chat session creation, Run, and SSE were mocked; Proposal History, login, Inbox POST, exact receipt GET, and Review list/status were real Core HTTP.
+- Seeded and approved one synthetic Review proposal whose `suggestion.original.value` exactly equaled the synthetic SSE `originalText`. History returned the real Core object shape; Web accepted it only after exact equality validation.
+- Redacted HTTP sequence: anonymous proposal read `401`; App login `200`; synthetic seed `202`; proposal create/decision/history `200`; after explicit UI confirmation, approved Inbox POST `202`; same opaque Inbox ID GET `200`. POST and GET bindings matched source event ID, proposal ID/version, and `source_ref.capture_id`.
+- Blank route login was `GET /api/auth/session 401` → `POST /api/auth/login 200`; direct `/chat/blank` and subsequent direct `/review` each produced **zero** `/api/home` requests. Blank entry issued no session-list GET. The receipt stored in sessionStorage was bound to the newly created synthetic session ID.
+- External request count was zero. No model/Hermes call, Promote confirmation, production data, NAS access, or deployment occurred. The temporary Core process was stopped after the run; redacted evidence remains outside the repository under `/private/tmp/secondbrain96-object-home-20261020/`.
+
 ## Detected frontend issue and fix
 
 The App-level test reproduced an unintended `GET /api/home` at `/review` while leaving Inbox for an exact Review. Updating the previous-page ref before the transition guard meant a repeated effect execution could see Review as the previous page and fall through to the broad Home aggregate. `App.tsx` now retains a one-transition suppression marker across effect re-entry (including StrictMode replay) and clears it on the next route. The new App-level test asserts that no Home request occurs through Inbox → Review → Knowledge.
@@ -52,5 +62,5 @@ The App-level test reproduced an unintended `GET /api/home` at `/review` while l
 ## Boundaries and remaining checks
 
 - The synthetic Promote success fixture proves frontend request/response handling only. It is not evidence of Promote being enabled, a write occurring, or Core output correctness.
-- No real filesystem output hash, service-side idempotency, cross-process claim, Core restart recovery, authentication/Host behavior against a running Core, browser E2E, actual Hermes adapter, UID/ACL/mount, or B3 readiness was exercised here.
+- No real filesystem Promote output hash, service-side idempotency, cross-process claim, Core restart recovery, actual Hermes adapter, UID/ACL/mount, or B3 readiness was exercised here.
 - Full integration and production readiness remain unclaimed. A ChatGPT review is required before merge; no merge, deployment, NAS access, or real data access is part of this candidate.
