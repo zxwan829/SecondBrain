@@ -27,6 +27,7 @@ from .channel_identity import authenticated_web_identity
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_TEXT_CHARS = 200_000
+MAX_CAPTURE_STATE_BYTES = 1024 * 1024
 MAX_DISPLAY_FILENAME_CHARS = 255
 MAX_WEB_BYTES = 5 * 1024 * 1024
 MAX_REDIRECTS = 4
@@ -243,6 +244,7 @@ class CaptureService:
                 or state_info.st_uid != os.geteuid() or state_info.st_mode & 0o077
                 or not os.access(self.state_root, os.W_OK)):
             raise RuntimeError("Capture state directory must be private and writable by the Core UID")
+        self._state_root_identity = (state_info.st_dev, state_info.st_ino)
 
     @staticmethod
     def _validate_root(path, allow_missing=False):
@@ -283,16 +285,46 @@ class CaptureService:
                 pass
 
     def _read_state(self, path):
+        if (not isinstance(path, Path) or path.parent != self.state_root
+                or not re.fullmatch(r"[0-9a-f]{32}\.json", path.name)):
+            return None
+        root_fd = None
+        state_fd = None
         try:
-            info = path.lstat()
-            if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+            root_fd = os.open(self.state_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0))
+            root_info = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.geteuid()
+                    or root_info.st_mode & 0o077
+                    or (root_info.st_dev, root_info.st_ino) != self._state_root_identity):
                 raise ValueError
-            value = json.loads(path.read_text(encoding="utf-8"))
+            state_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                               | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+            info = os.fstat(state_fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or info.st_size > MAX_CAPTURE_STATE_BYTES):
+                raise ValueError
+            chunks, total = [], 0
+            while True:
+                chunk = os.read(state_fd, min(65536, MAX_CAPTURE_STATE_BYTES + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > MAX_CAPTURE_STATE_BYTES:
+                    raise ValueError
+            value = json.loads(b"".join(chunks).decode("utf-8"))
             if not isinstance(value, dict):
                 raise ValueError
             return value
-        except (OSError, ValueError, json.JSONDecodeError):
+        except (OSError, ValueError, UnicodeError, json.JSONDecodeError, RecursionError):
             return None
+        finally:
+            if state_fd is not None:
+                os.close(state_fd)
+            if root_fd is not None:
+                os.close(root_fd)
 
     def list(self, limit=100):
         result = []

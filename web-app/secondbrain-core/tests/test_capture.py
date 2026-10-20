@@ -32,6 +32,56 @@ class CaptureServiceTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _write_state_fixture(self, capture_id, payload=b'{"capture_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'):
+        path = self.service.state_root / f"{capture_id}.json"
+        path.write_bytes(payload)
+        os.chmod(path, 0o600)
+        return path
+
+    def test_state_reader_rejects_symlink_hardlink_unsafe_mode_and_oversize(self):
+        capture_id = "a" * 32
+        path = self._write_state_fixture(capture_id)
+        self.assertEqual(self.service._read_state(path)["capture_id"], capture_id)
+
+        path.unlink()
+        outside = self.root / "outside.json"
+        outside.write_text('{"capture_id":"' + capture_id + '"}', encoding="utf-8")
+        os.chmod(outside, 0o600)
+        path.symlink_to(outside)
+        self.assertIsNone(self.service._read_state(path))
+
+        path.unlink()
+        path = self._write_state_fixture(capture_id)
+        hardlink = self.root / "state-hardlink.json"
+        os.link(path, hardlink)
+        self.assertIsNone(self.service._read_state(path))
+        hardlink.unlink()
+
+        os.chmod(path, 0o640)
+        self.assertIsNone(self.service._read_state(path))
+        path.unlink()
+        path = self._write_state_fixture(capture_id, b" " * (1024 * 1024 + 1))
+        self.assertIsNone(self.service._read_state(path))
+
+    def test_state_reader_rejects_non_regular_and_replaced_state_roots(self):
+        capture_id = "b" * 32
+        fifo = self.service.state_root / f"{capture_id}.json"
+        os.mkfifo(fifo, 0o600)
+        self.assertIsNone(self.service._read_state(fifo))
+        fifo.unlink()
+
+        path = self._write_state_fixture(capture_id,
+                                         ('{"capture_id":"' + capture_id + '"}').encode())
+        state_bytes = path.read_bytes()
+        original_root = self.service.state_root
+        displaced_root = self.root / "captures-original"
+        original_root.rename(displaced_root)
+        original_root.mkdir(mode=0o700)
+        os.chmod(original_root, 0o700)
+        (original_root / path.name).write_bytes(state_bytes)
+        os.chmod(original_root / path.name, 0o600)
+        self.assertIsNone(self.service._read_state(original_root / path.name))
+
     def test_text_capture_preserves_raw_and_creates_schema_compatible_review(self):
         item = self.service.accept_text("# A captured idea\nKeep this exact body.")
         raw = (self.raw / item["raw_path"]).read_bytes()
@@ -402,6 +452,7 @@ class CaptureApiTests(unittest.TestCase):
             "raw_path": "private.txt", "review_path": "review.md",
             "error": {"code": "attacker-controlled", "message": "SECRET MESSAGE"},
         }), encoding="utf-8")
+        os.chmod(state_path, 0o600)
         before_hash = hashlib.sha256(state_path.read_bytes()).hexdigest()
         before_mtime = state_path.stat().st_mtime_ns
 
