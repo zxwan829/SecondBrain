@@ -368,11 +368,24 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
                                         (f"date=2026-02-30", 400),
                                         (f"date={DAY}&limit=0", 400),
                                         (f"date={DAY}&limit=51", 400),
+                                        (f"date={DAY}&limit=00", 400),
+                                        (f"date={DAY}&limit=%2B1", 400),
+                                        (f"date={DAY}&limit=0x1", 400),
+                                        (f"date={DAY}&limit=%31x", 400),
+                                        (f"date={DAY}&limit={'9' * 5000}", 400),
                                         (f"date={DAY}&limit=1.0", 400)):
                 suffix = f"?{bad_query}" if bad_query else ""
                 invalid = client.get(f"{base_url}{suffix}", headers={"Origin": origin})
                 assert invalid.status_code == expected
+                if expected == 400:
+                    assert invalid.json() == {"detail": "Invalid source selection request"}
+                    assert "Traceback" not in invalid.text and str(root) not in invalid.text
             assert read_calls == 0
+            leading_zero = client.get(f"{base_url}?date={DAY}&limit=01",
+                                      headers={"Origin": origin})
+            assert leading_zero.status_code == 200 and len(leading_zero.json()["items"]) == 1
+            assert read_calls > 0
+            read_calls = 0
 
             expected_ids = sorted(item[0]["id"] for item in rows)
             real = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})

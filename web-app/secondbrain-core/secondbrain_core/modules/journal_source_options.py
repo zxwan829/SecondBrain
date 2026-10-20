@@ -49,8 +49,12 @@ class JournalSourceOptionsService:
         raw_limit = query.get("limit")
         if raw_limit is None:
             limit = 20
-        elif _DECIMAL.fullmatch(raw_limit):
+        elif len(raw_limit) <= 2 and _DECIMAL.fullmatch(raw_limit):
+            # Bound the string before int(): Python limits huge decimal
+            # conversions and must not turn hostile query input into an HTTP 500.
             limit = int(raw_limit)
+            if limit < 1 or limit > _MAX_LIMIT:
+                raise HTTPException(status_code=400, detail="Invalid source selection request")
         else:
             raise HTTPException(status_code=400, detail="Invalid source selection request")
         return self._select_authorized(day, limit)
