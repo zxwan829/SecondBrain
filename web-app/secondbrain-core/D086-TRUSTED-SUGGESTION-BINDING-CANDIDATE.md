@@ -59,6 +59,20 @@ Inbox entry, and does not make source/consent reads atomic with a future Inbox
 write. Any future admission transaction still needs a frozen contract and an
 atomic/recoverable seam with the real Core stores.
 
+The local store requires an absolute canonical root owned by the effective
+user with exact mode `0700`; it pins the root device/inode and uses a
+directory descriptor for file operations. State, lock, and candidate temp
+entries must be regular files owned by the effective user, exact mode `0600`,
+and single-linked. Opens reject symlinks; unsafe hardlinks, modes, owners, or
+temp entries are preserved and fail closed. These checks protect this
+synthetic/local candidate store; they do not establish a production OS
+isolation boundary.
+
+The source expiry must be later than receipt, consent must be recorded no
+later than expiry, and current time must remain within expiry. There is still
+a race window after final source/consent reads and before the local metadata
+write; the candidate does not claim transaction-level revocation safety.
+
 The returned deterministic binding ID is an idempotency correlation value,
 not a bearer credential. Final durable replay/conflict/recovery for Inbox
 events remains owned by the existing Core Inbox event store.
@@ -74,9 +88,10 @@ one cross-line freeze before public integration.
 
 Tests inject local synthetic source and consent readers to exercise exact
 binding, second-read drift/revocation, UTF-8 budgets, candidate ledger replay,
-same-event conflicts, concurrent writes, interrupted replace recovery, and
-corrupt-state fail-closed behavior. They prove candidate logic only, not a
-production Hermes adapter. Existing Core tests separately cover durable Inbox
+same-event conflicts, threaded and real 2/4/8-process cold-start races,
+interrupted replace recovery, post-replace directory-fsync failure/replay,
+symlink/hardlink/owner/mode/root-replacement checks, and corrupt-state
+fail-closed behavior. They prove candidate logic only, not a production Hermes adapter. Existing Core tests separately cover durable Inbox
 replay, conflicts, concurrent requests, interrupted writes, corrupt state
 recovery, proposal approval, stale versions, and dedicated target execution. A real
 localhost test exercises the current `create_app()` Inbox POST/GET and Proposal

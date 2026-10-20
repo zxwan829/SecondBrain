@@ -12,7 +12,8 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
+import secrets
+import stat
 
 
 _EVENT_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -92,9 +93,10 @@ class TrustedCaptureSuggestionBindingAuthority:
                 or len(authenticated_subject) > 256
                 or not isinstance(consent_id, str) or not consent_id or len(consent_id) > 128):
             return None
-        # Read both authorities twice. The second read is the admission-time
-        # check: source edits/version changes and consent revocation between
-        # initial inspection and candidate binding must fail closed.
+        # Read both authorities twice. The second read is the candidate's
+        # final verification point: source edits/version changes and consent
+        # revocation between reads fail closed. This is not transactional with
+        # any later ledger or Inbox write.
         try:
             source = self.source_reader.read_verified_suggestion(source_event_id)
             consent = self.consent_reader.read_consent(consent_id)
@@ -164,7 +166,9 @@ class TrustedCaptureSuggestionBindingAuthority:
             expires_at = expires_at.astimezone(timezone.utc)
             recorded_at = recorded_at.astimezone(timezone.utc)
             now = now.astimezone(timezone.utc)
-            if now > expires_at or received_at > now or recorded_at > now or recorded_at < received_at:
+            if (expires_at <= received_at or now > expires_at or received_at > now
+                    or recorded_at > now or recorded_at < received_at
+                    or recorded_at > expires_at):
                 return None
         except (AttributeError, TypeError, ValueError, OverflowError):
             return None
@@ -187,7 +191,8 @@ def _within_utf8_budget(value):
 class TrustedCaptureSuggestionBindingStore:
     """Durable internal candidate ledger; never writes Inbox or source data.
 
-    The caller supplies an already-existing local directory. This class is not
+    The caller supplies an already-existing canonical absolute local directory
+    owned by the effective user with exact mode 0700. This class is not
     configured in ``create_app``. The event/subject key allows identical
     replays and rejects a different version, consent, or content for that
     event. Atomic replacement leaves either the previous complete state or a
@@ -197,28 +202,74 @@ class TrustedCaptureSuggestionBindingStore:
 
     def __init__(self, root):
         self.root = Path(root)
-        if not self.root.is_dir():
-            raise CaptureSuggestionBindingStoreError("candidate store root must already exist")
-        self.state_path = self.root / "capture-suggestion-bindings.json"
-        self.lock_path = self.root / ".capture-suggestion-bindings.lock"
+        if not self.root.is_absolute() or Path(os.path.realpath(self.root)) != self.root:
+            raise CaptureSuggestionBindingStoreError("candidate store root must be canonical and absolute")
+        root_fd = self._open_root()
+        try:
+            root_stat = os.fstat(root_fd)
+            self.root_identity = (root_stat.st_dev, root_stat.st_ino)
+        finally:
+            os.close(root_fd)
+
+    def _open_root(self):
+        try:
+            fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                         | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as exc:
+            raise CaptureSuggestionBindingStoreError("candidate store root unavailable") from exc
+        try:
+            root_stat = os.fstat(fd)
+            if (not stat.S_ISDIR(root_stat.st_mode) or root_stat.st_uid != os.geteuid()
+                    or stat.S_IMODE(root_stat.st_mode) != 0o700):
+                raise CaptureSuggestionBindingStoreError(
+                    "candidate store root must be owned by this user with mode 0700")
+            if (hasattr(self, "root_identity")
+                    and (root_stat.st_dev, root_stat.st_ino) != self.root_identity):
+                raise CaptureSuggestionBindingStoreError("candidate store root identity changed")
+            return fd
+        except Exception:
+            os.close(fd)
+            raise
+
+    @staticmethod
+    def _validate_private_file(file_stat, label):
+        if (not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != os.geteuid()
+                or stat.S_IMODE(file_stat.st_mode) != 0o600 or file_stat.st_nlink != 1):
+            raise CaptureSuggestionBindingStoreError(f"candidate {label} file is unsafe")
 
     @staticmethod
     def _empty_state():
         return {"schema_version": 1, "records": {}}
 
-    def _load(self):
+    def _load(self, root_fd):
+        state_fd = None
         try:
-            raw = self.state_path.read_bytes()
+            state_fd = os.open("capture-suggestion-bindings.json",
+                               os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                               | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
         except FileNotFoundError:
             return self._empty_state()
         except OSError as exc:
             raise CaptureSuggestionBindingStoreError("candidate state unavailable") from exc
-        if len(raw) > MAX_BINDING_STATE_BYTES:
-            raise CaptureSuggestionBindingStoreError("candidate state exceeds budget")
         try:
-            state = json.loads(raw.decode("utf-8"))
-        except (UnicodeError, ValueError) as exc:
-            raise CaptureSuggestionBindingStoreError("candidate state is corrupt") from exc
+            state_stat = os.fstat(state_fd)
+            self._validate_private_file(state_stat, "state")
+            if state_stat.st_size > MAX_BINDING_STATE_BYTES:
+                raise CaptureSuggestionBindingStoreError("candidate state exceeds budget")
+            with os.fdopen(state_fd, "rb") as state_file:
+                state_fd = None
+                raw = state_file.read(MAX_BINDING_STATE_BYTES + 1)
+            if len(raw) > MAX_BINDING_STATE_BYTES:
+                raise CaptureSuggestionBindingStoreError("candidate state exceeds budget")
+            try:
+                state = json.loads(raw.decode("utf-8"))
+            except (UnicodeError, ValueError) as exc:
+                raise CaptureSuggestionBindingStoreError("candidate state is corrupt") from exc
+        except OSError as exc:
+            raise CaptureSuggestionBindingStoreError("candidate state unavailable") from exc
+        finally:
+            if state_fd is not None:
+                os.close(state_fd)
         if (not isinstance(state, dict) or set(state) != {"schema_version", "records"}
                 or state["schema_version"] != 1 or not isinstance(state["records"], dict)):
             raise CaptureSuggestionBindingStoreError("candidate state schema is invalid")
@@ -233,46 +284,70 @@ class TrustedCaptureSuggestionBindingStore:
                 raise CaptureSuggestionBindingStoreError("candidate state record is invalid")
         return state
 
-    def _remove_orphan_temps(self):
-        for path in self.root.glob(".capture-suggestion-bindings-*.tmp"):
+    def _remove_orphan_temps(self, root_fd):
+        try:
+            names = os.listdir(root_fd)
+        except OSError as exc:
+            raise CaptureSuggestionBindingStoreError("candidate recovery scan failed") from exc
+        for name in names:
+            if not (name.startswith(".capture-suggestion-bindings-") and name.endswith(".tmp")):
+                continue
             try:
-                path.unlink()
+                entry_stat = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
             except FileNotFoundError:
-                pass
+                continue
+            except OSError as exc:
+                raise CaptureSuggestionBindingStoreError("candidate recovery inspection failed") from exc
+            self._validate_private_file(entry_stat, "temporary")
+            try:
+                os.unlink(name, dir_fd=root_fd)
+            except FileNotFoundError:
+                continue
             except OSError as exc:
                 raise CaptureSuggestionBindingStoreError("candidate recovery cleanup failed") from exc
 
-    def _atomic_write(self, state):
+    def _atomic_write(self, state, root_fd):
         raw = json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(raw) > MAX_BINDING_STATE_BYTES:
             raise CaptureSuggestionBindingStoreError("candidate state exceeds budget")
         fd = None
-        temp_path = None
+        temp_name = None
         try:
-            fd, temp_name = tempfile.mkstemp(
-                prefix=".capture-suggestion-bindings-", suffix=".tmp", dir=self.root,
-            )
-            temp_path = Path(temp_name)
+            for _ in range(8):
+                temp_name = f".capture-suggestion-bindings-{secrets.token_hex(16)}.tmp"
+                try:
+                    fd = os.open(temp_name, os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                                 | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=root_fd)
+                    break
+                except FileExistsError:
+                    continue
+            if fd is None:
+                raise OSError("unable to allocate unique candidate temp file")
             with os.fdopen(fd, "wb") as output:
                 fd = None
                 output.write(raw)
                 output.flush()
                 os.fsync(output.fileno())
-            os.replace(temp_path, self.state_path)
-            dir_fd = os.open(self.root, os.O_RDONLY)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
+            temp_stat = os.stat(temp_name, dir_fd=root_fd, follow_symlinks=False)
+            self._validate_private_file(temp_stat, "temporary")
+            os.replace(temp_name, "capture-suggestion-bindings.json",
+                       src_dir_fd=root_fd, dst_dir_fd=root_fd)
+            os.fsync(root_fd)
         except OSError as exc:
             raise CaptureSuggestionBindingStoreError("candidate state write failed") from exc
         finally:
             if fd is not None:
                 os.close(fd)
-            if temp_path is not None:
+            if temp_name is not None:
                 try:
-                    temp_path.unlink()
+                    entry_stat = os.stat(temp_name, dir_fd=root_fd, follow_symlinks=False)
+                    self._validate_private_file(entry_stat, "temporary")
+                    os.unlink(temp_name, dir_fd=root_fd)
                 except FileNotFoundError:
+                    pass
+                except CaptureSuggestionBindingStoreError:
+                    raise
+                except OSError:
                     pass
 
     @staticmethod
@@ -310,33 +385,53 @@ class TrustedCaptureSuggestionBindingStore:
         if binding.binding_id != expected_binding_id:
             raise CaptureSuggestionBindingStoreError("candidate binding digest is invalid")
         try:
-            lock_fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-        except OSError as exc:
-            raise CaptureSuggestionBindingStoreError("candidate lock unavailable") from exc
+            root_fd = self._open_root()
+        except CaptureSuggestionBindingStoreError:
+            raise
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            state = self._load()
-            self._remove_orphan_temps()
-            key = self._record_key(binding)
-            record = self._as_record(binding)
-            existing = state["records"].get(key)
-            if existing is not None:
-                if existing != record:
-                    raise CaptureSuggestionBindingConflict("source event already bound differently")
-                return binding, True
-            state["records"][key] = record
-            self._atomic_write(state)
-            return binding, False
-        except OSError as exc:
-            raise CaptureSuggestionBindingStoreError("candidate lock operation failed") from exc
-        finally:
             try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                lock_name = ".capture-suggestion-bindings.lock"
+                nofollow = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                try:
+                    lock_fd = os.open(lock_name, os.O_CREAT | os.O_EXCL | os.O_RDWR | nofollow,
+                                      0o600, dir_fd=root_fd)
+                except FileExistsError:
+                    lock_fd = os.open(lock_name, os.O_RDWR | nofollow, dir_fd=root_fd)
+            except OSError as exc:
+                raise CaptureSuggestionBindingStoreError("candidate lock unavailable") from exc
+            try:
+                self._validate_private_file(os.fstat(lock_fd), "lock")
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                state = self._load(root_fd)
+                self._remove_orphan_temps(root_fd)
+                key = self._record_key(binding)
+                record = self._as_record(binding)
+                existing = state["records"].get(key)
+                if existing is not None:
+                    if existing != record:
+                        raise CaptureSuggestionBindingConflict("source event already bound differently")
+                    return binding, True
+                state["records"][key] = record
+                self._atomic_write(state, root_fd)
+                return binding, False
+            except OSError as exc:
+                raise CaptureSuggestionBindingStoreError("candidate lock operation failed") from exc
             finally:
-                os.close(lock_fd)
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+        finally:
+            os.close(root_fd)
 
     def record_verified(self, authority, **source_claims):
-        """Verify twice, then durably record metadata; this is not Inbox admission."""
+        """Verify twice, then record metadata; the read/write gap is non-atomic.
+
+        This candidate ledger is not an Inbox admission mechanism. A source
+        edit or consent revocation after final verification can race this local
+        metadata write; a frozen Core-owned transaction contract is required
+        before any real Inbox integration.
+        """
         binding = authority.resolve(**source_claims)
         if binding is None:
             return None, False

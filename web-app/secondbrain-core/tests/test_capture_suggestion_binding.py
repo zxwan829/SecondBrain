@@ -2,6 +2,10 @@ from datetime import datetime, timezone
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import json
+import multiprocessing
+import os
+import stat
+from types import SimpleNamespace
 
 from secondbrain_core.modules.capture_suggestion_binding import (
     CaptureSuggestionBindingConflict,
@@ -82,6 +86,33 @@ def changed_binding(binding, **changes):
         material, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     ).encode()).hexdigest()
     return type(binding)(binding_id=binding_id, **material)
+
+
+def _record_binding_in_process(root, binding, result_queue):
+    try:
+        _, replayed = TrustedCaptureSuggestionBindingStore(root).record(binding)
+        result_queue.put("replay" if replayed else "created")
+    except CaptureSuggestionBindingConflict:
+        result_queue.put("conflict")
+    except Exception as exc:  # surfaced in the parent assertion
+        result_queue.put(f"error:{type(exc).__name__}:{exc}")
+
+
+def _run_process_race(root, bindings):
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    processes = [context.Process(target=_record_binding_in_process,
+                                 args=(str(root), binding, result_queue))
+                 for binding in bindings]
+    for process in processes:
+        process.start()
+    results = [result_queue.get(timeout=30) for _ in processes]
+    for process in processes:
+        process.join(timeout=10)
+        assert not process.is_alive()
+        assert process.exitcode == 0
+    result_queue.close()
+    return results
 
 
 def test_no_trusted_server_adapters_means_no_binding():
@@ -249,6 +280,27 @@ def test_candidate_ledger_concurrent_conflicting_bindings_only_commits_one(tmp_p
     assert len(state["records"]) == 1
 
 
+def test_candidate_ledger_true_process_cold_start_races_2_4_8(tmp_path):
+    binding = resolve()
+    for count in (2, 4, 8):
+        root = tmp_path / f"cold-{count}"
+        root.mkdir(mode=0o700)
+        results = _run_process_race(root, [binding] * count)
+        assert results.count("created") == 1
+        assert results.count("replay") == count - 1
+        assert not [result for result in results if result.startswith("error:")]
+        state = json.loads((root / "capture-suggestion-bindings.json").read_text())
+        assert len(state["records"]) == 1
+
+
+def test_candidate_ledger_true_process_same_event_conflict_is_single_winner(tmp_path):
+    first = resolve()
+    second = changed_binding(first, original_text_sha256="6" * 64)
+    results = _run_process_race(tmp_path, [first, second])
+    assert results.count("created") == 1
+    assert results.count("conflict") == 1
+
+
 def test_interrupted_candidate_replace_recovers_prior_state_and_replays_after_restart(tmp_path, monkeypatch):
     store = TrustedCaptureSuggestionBindingStore(tmp_path)
     first = resolve()
@@ -259,9 +311,10 @@ def test_interrupted_candidate_replace_recovers_prior_state_and_replays_after_re
                              original_text_sha256=second_digest,
                              consent_id="synthetic-consent-0002")
 
-    def interrupted_write(state):
+    def interrupted_write(state, root_fd):
         temp_path = tmp_path / ".capture-suggestion-bindings-interrupted.tmp"
         temp_path.write_text(json.dumps(state))
+        temp_path.chmod(0o600)
         raise OSError("synthetic interruption before atomic replace")
 
     monkeypatch.setattr(store, "_atomic_write", interrupted_write)
@@ -278,11 +331,39 @@ def test_interrupted_candidate_replace_recovers_prior_state_and_replays_after_re
     assert reopened.record(second) == (second, True)
 
 
+def test_directory_fsync_failure_after_replace_is_ambiguous_then_replay_safe(tmp_path, monkeypatch):
+    import secondbrain_core.modules.capture_suggestion_binding as binding_module
+
+    binding = resolve()
+    original_fsync = binding_module.os.fsync
+    calls = 0
+
+    def fail_after_atomic_replace(fd):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("synthetic directory fsync failure after replace")
+        return original_fsync(fd)
+
+    monkeypatch.setattr(binding_module.os, "fsync", fail_after_atomic_replace)
+    try:
+        TrustedCaptureSuggestionBindingStore(tmp_path).record(binding)
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("post-replace directory fsync failure must not report durable success")
+    assert (tmp_path / "capture-suggestion-bindings.json").exists()
+    monkeypatch.setattr(binding_module.os, "fsync", original_fsync)
+    assert TrustedCaptureSuggestionBindingStore(tmp_path).record(binding) == (binding, True)
+
+
 def test_invalid_state_blocks_candidate_recovery_without_deleting_unknown_files(tmp_path):
     state_path = tmp_path / "capture-suggestion-bindings.json"
     state_path.write_text("not-json")
+    state_path.chmod(0o600)
     orphan = tmp_path / ".capture-suggestion-bindings-stale.tmp"
     orphan.write_text("partial")
+    orphan.chmod(0o600)
     try:
         TrustedCaptureSuggestionBindingStore(tmp_path).record(resolve())
     except CaptureSuggestionBindingStoreError:
@@ -291,3 +372,148 @@ def test_invalid_state_blocks_candidate_recovery_without_deleting_unknown_files(
         raise AssertionError("corrupt durable state must require manual review")
     assert state_path.read_text() == "not-json"
     assert orphan.read_text() == "partial"
+
+
+def test_candidate_store_rejects_non_private_root_modes_symlink_and_owner(tmp_path, monkeypatch):
+    private_root = tmp_path / "private-root"
+    private_root.mkdir(mode=0o700)
+    broad_root = tmp_path / "broad-root"
+    broad_root.mkdir(mode=0o755)
+    broad_root.chmod(0o755)
+    try:
+        TrustedCaptureSuggestionBindingStore(broad_root)
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("group/world accessible root must be rejected")
+    root_link = tmp_path / "root-link"
+    root_link.symlink_to(private_root, target_is_directory=True)
+    try:
+        TrustedCaptureSuggestionBindingStore(root_link)
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("symlink root must be rejected")
+    import secondbrain_core.modules.capture_suggestion_binding as binding_module
+    actual_uid = os.geteuid()
+    monkeypatch.setattr(binding_module.os, "geteuid", lambda: actual_uid + 1)
+    try:
+        TrustedCaptureSuggestionBindingStore(private_root)
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("root owned by another effective user must be rejected")
+
+
+def test_candidate_store_rejects_root_path_replacement_after_validation(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir(mode=0o700)
+    store = TrustedCaptureSuggestionBindingStore(root)
+    root.rename(tmp_path / "original-root")
+    root.mkdir(mode=0o700)
+    try:
+        store.record(resolve())
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("replaced root path must not be trusted")
+
+
+def test_candidate_store_rejects_state_symlink_hardlink_and_lock_symlink(tmp_path):
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"schema_version":1,"records":{}}')
+    outside.chmod(0o600)
+    symlink_root = tmp_path / "state-symlink-root"
+    symlink_root.mkdir(mode=0o700)
+    (symlink_root / "capture-suggestion-bindings.json").symlink_to(outside)
+    try:
+        TrustedCaptureSuggestionBindingStore(symlink_root).record(resolve())
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("state symlink must be rejected")
+    assert outside.read_text() == '{"schema_version":1,"records":{}}'
+
+    linked_root = tmp_path / "state-hardlink-root"
+    linked_root.mkdir(mode=0o700)
+    linked_state = linked_root / "capture-suggestion-bindings.json"
+    linked_state.write_text('{"schema_version":1,"records":{}}')
+    linked_state.chmod(0o600)
+    os.link(linked_state, tmp_path / "state-hardlink-outside.json")
+    try:
+        TrustedCaptureSuggestionBindingStore(linked_root).record(resolve())
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("multiply linked state must be rejected")
+
+    mode_root = tmp_path / "state-mode-root"
+    mode_root.mkdir(mode=0o700)
+    bad_mode_state = mode_root / "capture-suggestion-bindings.json"
+    bad_mode_state.write_text('{"schema_version":1,"records":{}}')
+    bad_mode_state.chmod(0o644)
+    try:
+        TrustedCaptureSuggestionBindingStore(mode_root).record(resolve())
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("group-readable state file must be rejected")
+
+    lock_root = tmp_path / "lock-symlink-root"
+    lock_root.mkdir(mode=0o700)
+    (lock_root / ".capture-suggestion-bindings.lock").symlink_to(outside)
+    try:
+        TrustedCaptureSuggestionBindingStore(lock_root).record(resolve())
+    except CaptureSuggestionBindingStoreError:
+        pass
+    else:
+        raise AssertionError("lock symlink must be rejected")
+
+
+def test_candidate_private_file_validator_rejects_wrong_owner_and_mode():
+    actual_uid = os.geteuid()
+    for file_stat in (
+        SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=actual_uid + 1, st_nlink=1),
+        SimpleNamespace(st_mode=stat.S_IFREG | 0o640, st_uid=actual_uid, st_nlink=1),
+        SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=actual_uid, st_nlink=2),
+        SimpleNamespace(st_mode=stat.S_IFLNK | 0o777, st_uid=actual_uid, st_nlink=1),
+    ):
+        try:
+            TrustedCaptureSuggestionBindingStore._validate_private_file(file_stat, "synthetic")
+        except CaptureSuggestionBindingStoreError:
+            pass
+        else:
+            raise AssertionError("unsafe owner, mode, link count or file type was accepted")
+
+
+def test_candidate_store_preserves_unsafe_symlink_hardlink_and_mode_temp_files(tmp_path):
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_text("do-not-change")
+    sentinel.chmod(0o600)
+    for name, setup in (
+        ("symlink", lambda root: (root / ".capture-suggestion-bindings-symlink.tmp").symlink_to(sentinel)),
+        ("hardlink", lambda root: os.link(sentinel, root / ".capture-suggestion-bindings-hardlink.tmp")),
+        ("mode", lambda root: (root / ".capture-suggestion-bindings-mode.tmp").write_text("unknown")),
+    ):
+        root = tmp_path / f"unsafe-temp-{name}"
+        root.mkdir(mode=0o700)
+        setup(root)
+        if name == "mode":
+            (root / ".capture-suggestion-bindings-mode.tmp").chmod(0o644)
+        try:
+            TrustedCaptureSuggestionBindingStore(root).record(resolve())
+        except CaptureSuggestionBindingStoreError:
+            pass
+        else:
+            raise AssertionError(f"unsafe {name} temp must be rejected")
+        assert sentinel.read_text() == "do-not-change"
+        assert (root / f".capture-suggestion-bindings-{name}.tmp").exists()
+
+
+def test_source_and_consent_expiry_ordering_is_enforced():
+    assert resolve(authority(source=source_record(
+        received_at="2026-10-20T12:05:00Z", expires_at="2026-10-20T12:05:00Z",
+    ))) is None
+    assert resolve(authority(consent=consent_record(
+        recorded_at="2026-10-20T12:06:00Z",
+    ))) is None
