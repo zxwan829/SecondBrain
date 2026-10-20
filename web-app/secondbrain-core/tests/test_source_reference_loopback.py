@@ -38,7 +38,7 @@ def _tree_snapshot(root):
     return result
 
 
-def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_path):
+def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_path, monkeypatch):
     roots = {name: _private_dir(tmp_path / name) for name in (
         "review", "raw", "knowledge", "state", "projects", "briefs", "tasks",
         "journal", "notes",
@@ -166,6 +166,43 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
                 assert after == before
             assert ".2026-10-20.lock" not in journal_tree_after
             assert ".permission-probe" not in journal_tree_after
+
+            # Force an atomic path replacement after the exact Journal fd has
+            # yielded bytes but before its post-read path identity check. The
+            # real HTTP Brief route must fail closed and hide the summary.
+            journal_path = roots["journal"] / "2026-10-20.jsonl"
+            journal_path_info = journal_path.stat()
+            journal_bytes = journal_path.read_bytes()
+            original_read = os.read
+            replaced = False
+
+            def replace_journal_during_read(fd, size):
+                nonlocal replaced
+                before_read = os.fstat(fd)
+                chunk = original_read(fd, size)
+                if (chunk and not replaced
+                        and (before_read.st_dev, before_read.st_ino)
+                        == (journal_path_info.st_dev, journal_path_info.st_ino)):
+                    os.chmod(roots["journal"], 0o700)
+                    replacement = roots["journal"] / ".journal-replacement"
+                    replacement.write_bytes(journal_bytes)
+                    os.chmod(replacement, 0o400)
+                    os.replace(replacement, journal_path)
+                    os.chmod(roots["journal"], 0o500)
+                    replaced = True
+                return chunk
+
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "read", replace_journal_during_read)
+                raced = client.get("/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai",
+                                   headers={"Origin": origin})
+            assert replaced is True
+            assert raced.status_code == 200
+            assert raced.json()["status"] in {"unavailable", "partial"}
+            assert raced.json()["items"] == []
+            assert "Synthetic verified-source summary" not in raced.text
+            assert str(roots["journal"]) not in raced.text
+            assert "synthetic Journal row" not in raced.text
 
             brief["source_refs"][1]["version"] = "0" * 64
             brief_path.write_text(json.dumps(brief, separators=(",", ":")), encoding="utf-8")
