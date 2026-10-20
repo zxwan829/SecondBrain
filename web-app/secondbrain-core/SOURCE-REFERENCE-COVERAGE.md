@@ -9,6 +9,7 @@ and a version that Core recomputes from the same source bytes.
 | Brief `project` | Exact document ID from `ProjectsSourceReadStore` | SHA-256 of exact JSON bytes read from configured project root | `daily_brief.read` and `projects.read` | 200 entries, 64 KiB/file, 2 MiB total | Exact unique match verifies; mismatch is stale; incomplete snapshot is unavailable |
 | Brief `task` | TaskStore-issued 32-character UUID hex ID | SHA-256 over the documented canonical fields `id,title,due_date,status,created_at,updated_at,source`; excludes session, command, idempotency, and history | `daily_brief.read` and `task.read` | TaskStore projection capped at 2 MiB/request | Only explicit Web App Tasks with valid fields verify; missing, stale, malformed, or unavailable fails closed |
 | Brief `journal` | JournalStore row ID plus exact `YYYY-MM-DD` file locator (`date:row-id`) | SHA-256 of the persisted JSONL row bytes | `daily_brief.read` and `journal.read` | 1 MiB/day, 5,000 rows/day, 2 MiB/request | Exact date-bounded unique row verifies; date or array position alone is never an ID |
+| `GET /api/daily-brief/source-options/journal` | Same JournalStore `date:row-id`; only `web_app_explicit_intent` and `inbox_approved_proposal` rows | Revalidated by `SourceReferenceAuthority._verify_journal` against the exact row SHA-256 | Trusted same-origin `Origin`, App session, `daily_brief.read`, and `journal.read` | One exact day; 1 MiB/day, 5,000 rows/day, 2 MiB aggregate read budget; response limit 1-50 (default 20) | Metadata-only `kind,id,date,version`; full-day verified, ordered by row ID ascending, then limited; any drift/budget/security failure returns `unavailable` with no items |
 | Project `linked_notes` | Canonical UUID resolved only by the NotesStore Draft ID mapping | NotesStore ETag (SHA-256 of exact Markdown bytes) | `projects.read` and `notes.read` | 1 MiB/note, 2 MiB/request, 100 references/request | Explicit Draft link verifies; other collections, path/title guesses, malformed IDs, stale versions, or unavailable reads fail closed |
 | Project `recent_activity` | No stable event ID in the current Project schema | No event version | `projects.read` | No join/read attempted | Unsupported; timestamps are never joined to Task or Journal records |
 | Brief `note`, `capture`, `review`, Chat, external news | Outside D087 Brief source allowlist | Not applicable | Not read | Not read | Unsupported; the whole Brief summary/items are withheld |
@@ -33,6 +34,12 @@ that check are later filesystem state and do not alter the already captured
 snapshot. On platforms without `O_NOATIME`, the OS may update source-file atime
 on read; tests permit that metadata-only effect and require names, bytes, size,
 mtime/ctime, mode, owner, inode, and link count to remain unchanged.
+
+D087 Journal source options are registered as an authenticated read-only Core
+route. Exact query validation and both action checks run before Journal I/O. The
+Core localhost regression exercises the production route; unit tests may use a
+test harness for service-specific failures. This synthetic evidence does not
+authorize real Vault access or deployment.
 
 The app has one authenticated session boundary rather than per-record ACLs.
 This matrix records the action permissions required by these readers; it does

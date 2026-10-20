@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { parseDailyBriefResponse, type DailyBriefResponse } from './projects-brief-wire';
+import { DailyBriefApproval } from './DailyBriefApproval';
 
 type Locale = 'zh-CN' | 'en';
 type BriefPageState = 'loading' | 'not-configured' | 'empty' | 'real' | 'partial' | 'stale' | 'failed' | 'unauthorized' | 'unavailable' | 'backend-not-implemented';
@@ -123,6 +124,7 @@ export function V1BriefHealthPage({ page, locale }: { page: 'brief' | 'agent-hea
                   <div className="v1-data-card-heading"><h2>{words.title}</h2><span className={`v1-status-pill ${state === 'online' ? 'is-healthy' : 'is-unavailable'}`}>{statusLabel}</span></div>
                   {checkedAt && <dl className="v1-data-fields"><div><dt>{copy.checked}</dt><dd><time>{formatTime(checkedAt)}</time></dd></div>{state !== 'not-configured' && <div><dt>Source</dt><dd>Hermes runtime</dd></div>}</dl>}
                 </article>}
+      {page === 'brief' && <DailyBriefApproval locale={locale} onSaved={() => setRevision((value) => value + 1)} />}
       {import.meta.env.DEV && <section className="v1-local-preview" aria-label={copy.local}>
         <button type="button" className="v1-local-preview-toggle" aria-expanded={preview} onClick={() => setPreview((value) => !value)}>{preview ? copy.hidePreview : copy.localPreview}</button>
         {preview && <div className="v1-local-preview-content"><strong>{copy.local}</strong><p>{copy.disclosure}</p><p>{page === 'brief' ? copy.previewBrief : copy.previewHealth}</p></div>}
