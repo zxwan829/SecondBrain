@@ -8,7 +8,7 @@ function projectsResponse(status = 'real') {
   return {
     status,
     items: status === 'real' || status === 'partial' ? [{
-      id: 'project_synth_1', title: 'Synthetic project', status: 'active', next_step: 'Review synthetic state',
+      id: 'project.synth:1', title: 'Synthetic project', status: 'active', next_step: 'Review synthetic state',
       recent_activity: { kind: 'task', occurred_at: checkedAt }, linked_notes: [{ id: 'note_synth_1', version: hash }],
       updated_at: checkedAt, source_ref: { id: 'project_file_synth_1', version: hash },
     }] : [],
@@ -18,15 +18,15 @@ function projectsResponse(status = 'real') {
   };
 }
 
-function briefResponse(status = 'real', requestedDate = '2026-10-20') {
-  const hasRecord = ['real', 'partial', 'stale', 'failed'].includes(status);
+function briefResponse(status = 'real', requestedDate = '2026-10-20', includeRecord = true) {
+  const hasRecord = includeRecord && ['real', 'partial', 'stale', 'failed'].includes(status);
   const generationStatus = status === 'real' ? 'generated' : status;
   return {
     status,
     items: hasRecord ? [{ brief_id: 'brief_synth_1', date: requestedDate, timezone: 'Asia/Shanghai', generated_at: checkedAt,
       generation_status: generationStatus, categories: ['synthetic'], summary: 'Synthetic daily brief only.',
       source_refs: [{ kind: 'task', id: 'task_synth_1', version: hash }] }] : [],
-    source: status === 'not_configured' || status === 'unavailable' ? null : { kind: 'core-daily-brief-store' },
+    source: status === 'not_configured' ? null : { kind: 'core-daily-brief-store' },
     freshness: { checked_at: checkedAt },
   };
 }
@@ -59,10 +59,29 @@ describe('Projects and Daily Brief frozen read wire', () => {
 
   it('accepts explicit project source refs and only the frozen project fields', () => {
     const parsed = parseProjectsResponse(projectsResponse());
-    expect(parsed?.items[0]).toMatchObject({ id: 'project_synth_1', status: 'active', source_ref: { id: 'project_file_synth_1', version: hash } });
+    expect(parsed?.items[0]).toMatchObject({ id: 'project.synth:1', status: 'active', source_ref: { id: 'project_file_synth_1', version: hash } });
     const withPrivateBody = projectsResponse() as ReturnType<typeof projectsResponse> & { items: Array<Record<string, unknown>> };
     withPrivateBody.items[0].original_text = 'must not pass';
     expect(parseProjectsResponse(withPrivateBody)).toBeNull();
+  });
+
+  it('accepts Core opaque IDs containing dot and colon while rejecting IDs outside its grammar', () => {
+    const parsed = parseProjectsResponse(projectsResponse());
+    expect(parsed?.items[0].id).toBe('project.synth:1');
+    const invalid = projectsResponse() as ReturnType<typeof projectsResponse> & { items: Array<{ id: string }> };
+    invalid.items[0].id = '_leading-underscore';
+    expect(parseProjectsResponse(invalid)).toBeNull();
+  });
+
+  it('accepts Core maximum Project title and next_step bounds', () => {
+    const response = projectsResponse() as ReturnType<typeof projectsResponse> & { items: Array<{ title: string; next_step: string }> };
+    response.items[0].title = 'T'.repeat(300);
+    response.items[0].next_step = 'N'.repeat(2000);
+    expect(parseProjectsResponse(response)?.items[0].next_step).toHaveLength(2000);
+  });
+
+  it('accepts the Core unavailable Projects envelope without a source marker', () => {
+    expect(parseProjectsResponse(projectsResponse('unavailable'))?.source).toBeNull();
   });
 
   it('rejects contradictory Projects states, path-like source IDs, and invalid hashes', () => {
@@ -85,10 +104,35 @@ describe('Projects and Daily Brief frozen read wire', () => {
     expect(parseDailyBriefResponse(briefResponse(), '2026-10-20', 'UTC')).toBeNull();
   });
 
-  it.each(['partial', 'stale', 'failed'] as const)('accepts explicit Brief %s state without promoting it to real', (status) => {
+  it('accepts an explicitly partial verified subset without promoting it to real', () => {
+    const status = 'partial';
     const parsed = parseDailyBriefResponse(briefResponse(status), '2026-10-20', 'Asia/Shanghai');
     expect(parsed?.status).toBe(status);
     expect(parsed?.items[0].generation_status).toBe(status);
+  });
+
+  it.each(['partial', 'stale', 'failed', 'unavailable'] as const)('accepts Core %s status with no exposed summary', (status) => {
+    const parsed = parseDailyBriefResponse(briefResponse(status, '2026-10-20', false), '2026-10-20', 'Asia/Shanghai');
+    expect(parsed?.status).toBe(status);
+    expect(parsed?.items).toEqual([]);
+  });
+
+  it('rejects an unverified Brief partial response that incorrectly includes content without a partial record marker', () => {
+    const response = briefResponse('partial') as ReturnType<typeof briefResponse> & { items: Array<{ summary: string; generation_status: string }> };
+    response.items[0].generation_status = 'generated';
+    expect(parseDailyBriefResponse(response, '2026-10-20', 'Asia/Shanghai')).toBeNull();
+  });
+
+  it.each(['stale', 'failed'] as const)('rejects %s Brief content because Core withholds it', (status) => {
+    expect(parseDailyBriefResponse(briefResponse(status), '2026-10-20', 'Asia/Shanghai')).toBeNull();
+  });
+
+  it('accepts Core maximum Daily Brief category, reference, and summary bounds', () => {
+    const response = briefResponse() as ReturnType<typeof briefResponse> & { items: Array<{ categories: string[]; source_refs: Array<{ kind: string; id: string; version: string }>; summary: string }> };
+    response.items[0].categories = Array.from({ length: 30 }, () => 'C'.repeat(80));
+    response.items[0].source_refs = Array.from({ length: 50 }, (_, index) => ({ kind: 'task', id: `task:${index}`, version: hash }));
+    response.items[0].summary = 'S'.repeat(20000);
+    expect(parseDailyBriefResponse(response, '2026-10-20', 'Asia/Shanghai')?.items[0].summary).toHaveLength(20000);
   });
 
   it('rejects stale source hashes, duplicate refs, and unexpected private fields', () => {

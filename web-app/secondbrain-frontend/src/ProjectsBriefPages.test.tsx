@@ -18,13 +18,13 @@ function projectPayload(status: string) {
 }
 
 function briefPayload(status: string, date: string) {
-  const hasRecord = ['real', 'partial', 'stale', 'failed'].includes(status);
+  const hasRecord = status === 'real';
   return {
     status,
     items: hasRecord ? [{ brief_id: 'brief_ui_synth', date, timezone: 'Asia/Shanghai', generated_at: checkedAt,
       generation_status: status === 'real' ? 'generated' : status, categories: ['Synthetic category'],
       summary: 'SYNTHETIC BRIEF BODY ONLY', source_refs: [{ kind: 'task', id: 'opaque_task_source', version: hash }] }] : [],
-    source: status === 'not_configured' || status === 'unavailable' ? null : { kind: 'core-daily-brief-store' },
+    source: status === 'not_configured' ? null : { kind: 'core-daily-brief-store' },
     freshness: { checked_at: checkedAt },
   };
 }
@@ -81,11 +81,30 @@ describe('Projects and Daily Brief read-only UI', () => {
     expect(screen.queryByText('opaque_task_source')).toBeNull();
   });
 
-  it('warns visibly when a persisted brief is stale', async () => {
+  it('shows stale status visibly when Core withholds the stale summary', async () => {
     mockFetch((url) => Response.json(briefPayload('stale', new URL(`http://local${url}`).searchParams.get('date') ?? '')));
     render(<V1BriefHealthPage page="brief" locale="zh-CN" />);
-    expect(await screen.findByText(/来源版本已变化/)).toBeTruthy();
-    expect(screen.getByText('SYNTHETIC BRIEF BODY ONLY')).toBeTruthy();
+    expect(await screen.findByText(/简报来源已过期；Core 已隐藏摘要内容/)).toBeTruthy();
+    expect(screen.queryByText('SYNTHETIC BRIEF BODY ONLY')).toBeNull();
+  });
+
+  it('shows partial source verification explicitly when Core withholds unverified content', async () => {
+    mockFetch((url) => Response.json(briefPayload('partial', new URL(`http://local${url}`).searchParams.get('date') ?? '')));
+    render(<V1BriefHealthPage page="brief" locale="zh-CN" />);
+    expect(await screen.findByText(/简报来源尚未核验；Core 已隐藏摘要内容/)).toBeTruthy();
+    expect(screen.queryByText('SYNTHETIC BRIEF BODY ONLY')).toBeNull();
+  });
+
+  it('shows failed and configured unavailable states without substituting content', async () => {
+    const calls = mockFetch((url) => Response.json(briefPayload('failed', new URL(`http://local${url}`).searchParams.get('date') ?? '')));
+    render(<V1BriefHealthPage page="brief" locale="zh-CN" />);
+    expect(await screen.findByText(/该日期的简报处理明确失败/)).toBeTruthy();
+    expect(screen.queryByText('SYNTHETIC BRIEF BODY ONLY')).toBeNull();
+    expect(calls).toHaveLength(1);
+    cleanup();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(briefPayload('unavailable', '2026-10-20'))));
+    render(<V1BriefHealthPage page="brief" locale="zh-CN" />);
+    expect(await screen.findByText(/该页面数据暂不可用/)).toBeTruthy();
   });
 
   it('maps authorization failures to the visible denied state', async () => {

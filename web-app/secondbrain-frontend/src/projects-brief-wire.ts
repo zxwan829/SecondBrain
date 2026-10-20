@@ -71,7 +71,9 @@ function isIsoDate(value: unknown): value is string {
 }
 
 function isOpaqueId(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(value);
+  // Keep this aligned with Core's bounded opaque ID contract. These identifiers
+  // are never interpreted as paths by the UI.
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 }
 
 function isSha256(value: unknown): value is string {
@@ -86,13 +88,13 @@ function parseProjectRef(value: unknown): ProjectSourceRef | null {
 function parseProject(value: unknown): ProjectRecord | null {
   const allowed = ['id', 'title', 'status', 'next_step', 'recent_activity', 'linked_notes', 'updated_at', 'source_ref'];
   if (!isRecord(value) || !hasOnlyKeys(value, allowed) || !isOpaqueId(value.id)
-    || typeof value.title !== 'string' || !value.title.trim() || value.title.length > 240
+    || typeof value.title !== 'string' || !value.title.trim() || value.title.length > 300
     || !['active', 'paused', 'completed', 'archived', 'unknown'].includes(String(value.status))) return null;
   const sourceRef = parseProjectRef(value.source_ref);
   if (!sourceRef) return null;
   let nextStep: string | undefined;
   if (value.next_step !== undefined) {
-    if (typeof value.next_step !== 'string' || !value.next_step.trim() || value.next_step.length > 500) return null;
+    if (typeof value.next_step !== 'string' || value.next_step.length > 2000) return null;
     nextStep = value.next_step;
   }
   let recentActivity: ProjectRecord['recent_activity'];
@@ -160,10 +162,10 @@ function parseBriefRecord(value: unknown, requestedDate: string, requestedTimezo
   if (!isRecord(value) || !hasOnlyKeys(value, allowed) || !isOpaqueId(value.brief_id)
     || value.date !== requestedDate || value.timezone !== requestedTimezone || !isIsoDate(value.date)
     || !isIsoDateTime(value.generated_at) || !['generated', 'partial', 'stale', 'failed'].includes(String(value.generation_status))
-    || !Array.isArray(value.categories) || value.categories.length > 20
-    || !value.categories.every((category) => typeof category === 'string' && category.trim().length > 0 && category.length <= 100)
-    || typeof value.summary !== 'string' || value.summary.length > 12000
-    || !Array.isArray(value.source_refs) || value.source_refs.length > 100) return null;
+    || !Array.isArray(value.categories) || value.categories.length > 30
+    || !value.categories.every((category) => typeof category === 'string' && category.trim().length > 0 && category.length <= 80)
+    || typeof value.summary !== 'string' || value.summary.length > 20000
+    || !Array.isArray(value.source_refs) || value.source_refs.length > 50) return null;
   const refs: BriefSourceRef[] = [];
   const seen = new Set<string>();
   for (const raw of value.source_refs) {
@@ -189,10 +191,13 @@ export function parseDailyBriefResponse(value: unknown, requestedDate: string, r
   if (value.source === null) source = null;
   else if (isRecord(value.source) && hasOnlyKeys(value.source, ['kind']) && value.source.kind === 'core-daily-brief-store') source = { kind: 'core-daily-brief-store' };
   else return null;
-  if ((status === 'not_configured' || status === 'unavailable') && (value.items.length !== 0 || source !== null)) return null;
+  if (status === 'not_configured' && (value.items.length !== 0 || source !== null)) return null;
+  if (status === 'unavailable' && value.items.length !== 0) return null;
   if (status === 'empty' && (value.items.length !== 0 || source === null)) return null;
-  if (status === 'failed' && source === null) return null;
-  if (['real', 'partial', 'stale'].includes(status) && (value.items.length !== 1 || source === null)) return null;
+  if (status !== 'not_configured' && status !== 'unavailable' && source === null) return null;
+  if (status === 'real' && value.items.length !== 1) return null;
+  if (['stale', 'failed'].includes(status) && value.items.length !== 0) return null;
+  if (status === 'partial' && value.items.length > 1) return null;
   const items: DailyBriefRecord[] = [];
   for (const raw of value.items) {
     const item = parseBriefRecord(raw, requestedDate, requestedTimezone);
