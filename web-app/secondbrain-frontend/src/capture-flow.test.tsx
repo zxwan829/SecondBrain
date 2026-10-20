@@ -19,21 +19,44 @@ const sse = (events: Record<string, unknown>[]) => new Response(new ReadableStre
     controller.close();
   },
 }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+const proposalId = 'b'.repeat(32);
+const inboxId = 'c'.repeat(32);
+const proposalVersion = 4;
+const sourceVersion = 'sha256:synthetic-source-version';
+const suggestion = (overrides: Record<string, unknown> = {}) => ({ event: 'capture.suggestion', approved_proposal_id: proposalId,
+  approved_proposal_version: proposalVersion, source_event_id: 'synthetic:event-9', occurred_at: '2026-10-20T01:02:03Z',
+  original_text: 'A synthetic insight to capture.', ...overrides });
+const approvalBody = (overrides: Record<string, unknown> = {}) => ({ proposal: {
+  proposal_id: proposalId, status: 'approved_recorded', version: proposalVersion, kind: 'journal',
+  source_version: sourceVersion, vocabulary_version: 12, suggestion: { original: 'A synthetic insight to capture.', current: 'A synthetic insight to capture.' },
+  ...overrides,
+} });
+const inboxBody = (overrides: Record<string, unknown> = {}) => ({ inbox_id: inboxId, status: 'processing',
+  captured_at: '2026-10-20T01:03:00Z', occurred_at: '2026-10-20T01:02:03Z', source: { channel: 'web', event_id: 'synthetic:event-9' },
+  intent: 'approved_suggestion', replayed: false,
+  consent_evidence: { kind: 'authenticated_app_approved_proposal', subject: 'synthetic-owner', recorded_at: '2026-10-20T01:03:00Z',
+    proposal_id: proposalId, proposal_version: proposalVersion, source_version: sourceVersion },
+  approved_proposal: { proposal_id: proposalId, version: proposalVersion, kind: 'journal', source_version: sourceVersion },
+  source_ref: { capture_id: inboxId, review_path: null, review_sha256: null }, ...overrides });
+const chatSessions = [{ session_id: 'synthetic-chat-session', title: 'Synthetic' }];
+const historyPayload = { sessions: chatSessions };
 
 describe('D075.1 capture interactions', () => {
-  it('renders a structured Hermes suggestion and writes only after typed confirmation, then links the Core Inbox ID', async () => {
+  it('requires an explicit Core approval check, posts the exact 202 contract, and confirms the single Inbox entry by GET', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
-    const proposal = { event: 'capture.suggestion', proposal_id: 'synthetic-proposal-17', source_event_id: 'synthetic-event-9', occurred_at: '2026-10-20T01:02:03Z', original_text: 'A synthetic insight to capture.' };
+    const event = suggestion();
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input); calls.push({ url, init });
-      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [{ session_id: 'synthetic-chat-session', title: 'Synthetic' }] });
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
       if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
       if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
-      if (url.endsWith('/events')) return sse([proposal, { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/events')) return sse([event, { event: 'run.completed', output: 'Done.' }]);
       if (url.endsWith('/messages')) return ok({ messages: [] });
       if (url.endsWith('/activities')) return ok({ activities: [] });
-      if (url === '/api/inbox/entries') return new Response(JSON.stringify({ inbox_id: 'synthetic-inbox-42', status: 'accepted', captured_at: '2026-10-20T01:03:00Z', source: { capture_id: 'a'.repeat(32) } }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify(inboxBody()), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      if (url === `/api/inbox/entries/${inboxId}`) return ok(inboxBody());
       return ok({});
     }));
     render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
@@ -41,71 +64,185 @@ describe('D075.1 capture interactions', () => {
     fireEvent.change(input, { target: { value: '普通聊天，不自动收录' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
-    expect(within(card).getByText(proposal.original_text)).toBeTruthy();
+    expect(within(card).getByText(event.original_text)).toBeTruthy();
     expect(calls.some((call) => call.url === '/api/inbox/entries')).toBe(false);
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    expect(calls.some((call) => call.url === `/api/inbox/proposals/${proposalId}/history`)).toBe(true);
     const confirmation = within(card).getByLabelText('输入“确认收录”以继续');
     fireEvent.change(confirmation, { target: { value: '确认' } });
-    expect(within(card).getByRole('button', { name: '确认并收录到 Inbox' }).hasAttribute('disabled')).toBe(true);
+    expect(within(card).getByRole('button', { name: '确认并提交给 Core' }).hasAttribute('disabled')).toBe(true);
     fireEvent.change(confirmation, { target: { value: '确认收录' } });
-    fireEvent.click(within(card).getByRole('button', { name: '确认并收录到 Inbox' }));
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
     expect(await within(card).findByRole('link', { name: '打开 Inbox 来源' })).toBeTruthy();
-    expect(within(card).getByRole('link', { name: '打开 Inbox 来源' }).getAttribute('href')).toBe(`/inbox#capture-${'a'.repeat(32)}`);
+    expect(within(card).getByRole('link', { name: '打开 Inbox 来源' }).getAttribute('href')).toBe(`/inbox#capture-${inboxId}`);
+    expect(within(card).getByRole('status').textContent).toContain('processing');
     const post = calls.find((call) => call.url === '/api/inbox/entries');
     expect(JSON.parse(String(post?.init?.body))).toEqual({
-      original_text: proposal.original_text, source_channel: 'web_chat', source_event_id: proposal.source_event_id,
-      occurred_at: proposal.occurred_at, intent: 'approved_suggestion',
+      original_text: event.original_text, source_channel: 'web', source_event_id: event.source_event_id,
+      occurred_at: event.occurred_at, intent: 'approved_suggestion', approved_proposal_id: proposalId,
+      approved_proposal_version: proposalVersion,
     });
-    expect(new Headers(post?.init?.headers).get('Idempotency-Key')).toBe(proposal.proposal_id);
+    expect(new Headers(post?.init?.headers).get('Idempotency-Key')).toBeNull();
+    expect(calls.some((call) => call.url === `/api/inbox/entries/${inboxId}`)).toBe(true);
+    expect(sessionStorage.getItem(`secondbrain.chat.captureReceipt:synthetic-chat-session`)).not.toContain(event.original_text);
   });
 
-  it('keeps the suggestion and reports a Core conflict without creating a success link', async () => {
+  it('fails closed when SSE has only the untrusted legacy proposal_id', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
-    const proposal = { event: 'capture.suggestion', proposal_id: 'synthetic-proposal-conflict', source_event_id: 'synthetic-event-conflict', occurred_at: '2026-10-20T01:02:03Z', original_text: 'Synthetic conflicted suggestion.' };
+    const event = suggestion({ approved_proposal_id: undefined, approved_proposal_version: undefined, proposal_id: proposalId });
+    const calls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [{ session_id: 'synthetic-chat-session', title: 'Synthetic' }] });
+      calls.push(url);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
       if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
       if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
-      if (url.endsWith('/events')) return sse([proposal, { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/events')) return sse([event, { event: 'run.completed', output: 'Done.' }]);
       if (url.endsWith('/messages')) return ok({ messages: [] });
       if (url.endsWith('/activities')) return ok({ activities: [] });
-      if (url === '/api/inbox/entries') return new Response(JSON.stringify({ detail: 'proposal_conflict' }), { status: 409 });
       return ok({});
     }));
     render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
     fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary chat' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
-    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
-    fireEvent.click(within(card).getByRole('button', { name: '确认并收录到 Inbox' }));
-    expect(await within(card).findByRole('alert')).toBeTruthy();
-    expect(within(card).getByText(proposal.original_text)).toBeTruthy();
+    expect(within(card).getByText(/缺少 Core 已批准 Proposal ID/)).toBeTruthy();
+    expect(within(card).queryByLabelText('输入“确认收录”以继续')).toBeNull();
+    expect(within(card).queryByRole('button', { name: '核验当前 Core 批准' })).toBeNull();
+    expect(calls.some((url) => url === '/api/inbox/entries' || url.includes('/api/inbox/proposals/'))).toBe(false);
     expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
   });
 
-  it('does not report success for a malformed 2xx Core response', async () => {
+  it.each([
+    ['unapproved status', { status: 'suggested' }],
+    ['stale version', { version: proposalVersion + 1 }],
+    ['changed source text', { suggestion: { original: 'Changed source text.', current: 'Changed source text.' } }],
+  ])('does not allow a Core approval with %s to reach POST', async (_label, invalidApproval) => {
     window.localStorage.clear(); window.sessionStorage.clear();
-    const proposal = { event: 'capture.suggestion', proposal_id: 'synthetic-malformed-success', source_event_id: 'synthetic-event-malformed', occurred_at: '2026-10-20T01:02:03Z', original_text: 'Synthetic malformed response.' };
+    const calls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [{ session_id: 'synthetic-chat-session', title: 'Synthetic' }] });
+      calls.push(url);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
       if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
       if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
-      if (url.endsWith('/events')) return sse([proposal, { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
       if (url.endsWith('/messages')) return ok({ messages: [] });
       if (url.endsWith('/activities')) return ok({ activities: [] });
-      if (url === '/api/inbox/entries') return new Response(JSON.stringify({ inbox_id: 'id-only', status: 'accepted' }), { status: 200 });
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody(invalidApproval));
       return ok({});
     }));
     render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
     fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
-    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
-    fireEvent.click(within(card).getByRole('button', { name: '确认并收录到 Inbox' }));
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
     expect(await within(card).findByRole('alert')).toBeTruthy();
-    expect(within(card).getByText(proposal.original_text)).toBeTruthy();
+    expect(calls.some((url) => url === '/api/inbox/entries')).toBe(false);
+    expect(within(card).queryByLabelText('输入“确认收录”以继续')).toBeNull();
+  });
+
+  it.each([200, 201, 202])('rejects malformed HTTP %i response without an exact Core receipt', async (status) => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify({ inbox_id: 'not-an-id', status: 'processing' }), { status });
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('alert')).toBeTruthy();
     expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+  });
+
+  it.each([401, 403, 409, 503])('keeps capture unconfirmed when Core POST returns HTTP %i', async (status) => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url === '/api/chat/sessions') return ok({ session_id: 'synthetic-chat-session' });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify({ detail: 'synthetic_failure' }), { status });
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('alert')).toBeTruthy();
+    expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+    expect(sessionStorage.getItem('secondbrain.chat.captureReceipt:synthetic-chat-session')).toBeNull();
+  });
+
+  it('retries an uncertain POST with the same event identity and restores only the session-bound receipt', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    let postAttempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); calls.push({ url, init });
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
+        { session_id: 'synthetic-session-a', title: 'Synthetic A' }, { session_id: 'synthetic-session-b', title: 'Synthetic B' },
+      ] });
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') {
+        postAttempts += 1;
+        if (postAttempts === 1) throw new TypeError('synthetic connection lost after request');
+        return new Response(JSON.stringify(inboxBody({ replayed: true })), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === `/api/inbox/entries/${inboxId}`) return ok(inboxBody());
+      return ok({});
+    }));
+    window.localStorage.setItem('secondbrain.chat.session', 'synthetic-session-a');
+    const mounted = render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: 'ordinary text' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    const confirmation = within(card).getByLabelText('输入“确认收录”以继续');
+    fireEvent.change(confirmation, { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('alert')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+    expect(await within(card).findByRole('link', { name: '打开 Inbox 来源' })).toBeTruthy();
+    const posts = calls.filter((call) => call.url === '/api/inbox/entries');
+    expect(posts).toHaveLength(2);
+    expect(JSON.parse(String(posts[0].init?.body))).toEqual(JSON.parse(String(posts[1].init?.body)));
+    expect(JSON.parse(String(posts[1].init?.body)).source_event_id).toBe('synthetic:event-9');
+    mounted.unmount();
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    await waitFor(() => expect(calls.filter((call) => call.url === `/api/inbox/entries/${inboxId}`)).toHaveLength(2));
+    expect(await screen.findByRole('link', { name: '打开 Inbox 来源' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic B/ }));
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith('/synthetic-session-b/messages'))).toBe(true));
+    expect(calls.filter((call) => call.url === `/api/inbox/entries/${inboxId}`)).toHaveLength(2);
   });
 
   it('ignores a capture suggestion delivered by an old Run after switching sessions', async () => {

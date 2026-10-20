@@ -1,59 +1,61 @@
-# D086 Web capture suggestion contract (synthetic v0)
+# D086 Web capture suggestion contract
 
-**Status: frontend-only synthetic contract; proposed Core endpoint is not implemented on this base.** This file is for Mock/UI testing and is not evidence that a production Core deployment can accept this request.
+**Status:** frontend consumes the frozen local wire contract from PR #99 HEAD `407ab602a9f286aade434359e4bff8340dec6a05` using synthetic HTTP tests only. PR #99 is not treated as merged or production-ready; B reports `B_CORE_LOCAL_READY=NOT MET` because trusted external-channel integration and OS-level isolation remain incomplete.
 
-## Suggestion event from the existing Chat Run SSE
+## Suggestion and approval proof
 
-The Web layer recognizes only a structured SSE JSON event named `capture.suggestion`:
+The Chat UI accepts a structured `capture.suggestion` SSE event for display only. Its `source_event_id`, `occurred_at`, and exact `original_text` are bounded and validated. The old SSE `proposal_id` is not an authorization credential. To make submission available, the event must include `approved_proposal_id` (32 lowercase hex) and `approved_proposal_version` (positive integer).
 
-```json
-{
-  "event": "capture.suggestion",
-  "proposal_id": "synthetic-proposal-id",
-  "source_event_id": "synthetic-source-event-id",
-  "occurred_at": "2026-10-20T00:00:00Z",
-  "original_text": "Exact proposed text"
-}
+The user must explicitly request verification. The browser then fetches only the exact proposal history:
+
+```http
+GET /api/inbox/proposals/{approved_proposal_id}/history
 ```
 
-The browser rejects missing, malformed, empty, or over-limit fields. Ordinary assistant text is never parsed as a suggestion. Receiving the event does not write or enqueue business data. The user must type the exact phrase `确认收录` and activate the explicit button.
+The frontend requires an exact proposal ID, `approved_recorded` status, matching version, supported kind (`journal`, `review`, or `project`), non-empty current `source_version`, integer `vocabulary_version`, and `proposal.suggestion.original` byte-for-byte equal to the proposed text. Any absent, stale, mismatched, unauthorized, or malformed proof fails closed. This GET is not a write and does not cause the page to enumerate proposals. The Core rechecks source and vocabulary at POST time.
 
-## Confirm request
+The current PR #99 Core registers only authenticated App web identity; it does not yet provide a trusted Hermes identity adapter or a Chat-source Proposal creation path. Therefore a Hermes SSE event without a genuine, current Core-approved binding remains display-only. The frontend never converts it to `explicit_capture` as a fallback. A browser-supplied ID alone does not establish that such an adapter exists.
+
+## Explicit confirm and exact wire
+
+After the exact Core approval has been checked, the user must type `确认收录` and activate the submit button. The frontend sends:
 
 ```http
 POST /api/inbox/entries
 Content-Type: application/json
-Idempotency-Key: <proposal_id>
 ```
 
 ```json
 {
-  "original_text": "Exact proposed text",
-  "source_channel": "web_chat",
-  "source_event_id": "synthetic-source-event-id",
-  "occurred_at": "2026-10-20T00:00:00Z",
-  "intent": "approved_suggestion"
+  "original_text": "Exact approved source text",
+  "source_channel": "web",
+  "source_event_id": "stable-event-key",
+  "occurred_at": "2026-10-20T01:02:03Z",
+  "intent": "approved_suggestion",
+  "approved_proposal_id": "32-lowercase-hex-characters",
+  "approved_proposal_version": 4
 }
 ```
 
-The `intent` field expresses the user's requested action; it is not authorization evidence. The Core must bind the authenticated principal and explicit action server-side, validate source identity and idempotency, and own durable Inbox creation. The frontend does not choose suggestion thresholds, persist proposals, or retry automatically.
+No client-supplied identity or consent evidence is sent. There is no `Idempotency-Key` header: Core derives idempotency from authenticated channel identity plus the stable `source_event_id`. A retry after an uncertain network result reuses the same event ID and exact request body.
 
-## Success and failure
+Only HTTP **202** is accepted. The frontend validates `inbox_id` as a 32-hex Capture ID, `captured_at`, `status`, source `{channel:"web",event_id}`, `intent`, `replayed`, the server-issued consent evidence and its proposal/source-version binding, and the returned approved-proposal binding. It renders 202 as “Core accepted; current processing status: …”; it never presents 202 as Review completion or Knowledge publication.
 
-Synthetic success is HTTP `201` with `{ "inbox_id": "<opaque-id>", "status": "accepted", "captured_at": "<ISO timestamp>", "source": { "capture_id": "<32 lowercase hex characters>" } }`. `inbox_id` is the Core entry identity; the nested source `capture_id` must match the current Inbox summary's existing identifier. The UI shows `/inbox#capture-<source.capture_id>` only after validating this response. The Inbox renders entries with a matching `capture_id` as `id="capture-<capture_id>"`.
+The UI then requests only:
 
-Non-2xx responses remain failures; the UI retains the suggestion text and displays the sanitized localized Core error. HTTP `409` is a conflict/stale proposal and is not treated as success. A malformed 2xx response is also failure. No HTTP status implies durable success unless Core returns the expected accepted payload.
+```http
+GET /api/inbox/entries/{inbox_id}
+```
 
-## Contract gap
+The exact GET must match the saved event, proposal/version, source version, authenticated Core consent evidence, and `source_ref.capture_id`. A validated opaque receipt is stored in `sessionStorage` under a key scoped to the Hermes Session ID; no proposed text or consent subject is stored. On refresh the app restores only that session's exact receipt and performs one ID-addressed GET, never an Inbox list scan. Switching sessions clears visible state and invalidates late responses. Failure, unknown status, malformed 2xx, 401/403/409/503, or response mismatch cannot be shown as successful processing.
 
-Issue #97 proposes `POST /api/inbox/entries` and channel-neutral capture fields, but leaves exact schema/status to a future Core PR. Before real integration, B must either adopt this synthetic v0 contract or publish a compatible frozen contract. The current frontend tests mock it; no real Core endpoint, server-side consent binding, persistence, or production workflow was exercised.
+## Synthetic regression cases
 
-## Local Mock demonstration and coverage
+- No proposal GET or Inbox POST occurs merely from receiving the event.
+- Legacy `proposal_id` without the Core-approved ID/version remains display-only and cannot submit.
+- Exact Core history approval permits the explicitly confirmed request; stale status, ID/version mismatch, source text mismatch, and malformed approval block POST.
+- HTTP 202 with matching source, proposal, and consent bindings is accepted as processing/queued only; 200/201, malformed 202, unknown status, or a mismatched GET cannot claim success.
+- 401/403/409/503 and network ambiguity do not create a success state. A retry uses the exact same event ID/body; Core's `replayed` result and the exact GET are checked.
+- Refresh restores only one Session-scoped opaque receipt. Switching Session does not query or display another session's receipt. Late SSE from an old Session is ignored.
 
-1. Send an ordinary synthetic chat prompt and return a structured `capture.suggestion` SSE event. Confirm that the preview alone makes no Inbox request.
-2. Enter anything other than the exact phrase and confirm submit stays disabled. Enter `确认收录`; return a valid 201 and verify the Inbox link appears only after validating the response and opaque source ID.
-3. Repeat with HTTP 409 and malformed HTTP 2xx bodies; the suggestion remains visible, an error is shown, and no success link appears.
-4. Start a Run in synthetic Session A, switch to Session B before its delayed SSE arrives, then return the suggestion and terminal frame. The stale proposal must not appear and no Inbox write may occur.
-5. Open Inbox with `#capture-<32-hex-id>` while its list request is pending. Once the synthetic list resolves, verify the exact row receives focus and scrolls into view. When the loaded list omits the ID, verify the explicit not-found status.
-
-These steps describe local synthetic tests only. Real Core HTTP behavior, browser login/session behavior, production persistence, and user acceptance remain NOT RUN.
+All verification here is local frontend HTTP mocking. No real Hermes trusted adapter, actual Core process, production persistence, real Vault, browser login, model call, or production acceptance was exercised. `B_CORE_LOCAL_READY` remains separate from this A-line local readiness, and PR #98 must not be described as A/B integration or production approval.
