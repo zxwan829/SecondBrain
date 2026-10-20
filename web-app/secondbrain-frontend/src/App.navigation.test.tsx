@@ -105,6 +105,39 @@ describe('Notes application navigation gate', () => {
     await waitFor(() => expect(calls).toContain('/api/home'));
   });
 
+  it.each(['/chat/blank', '/review'])('does not fetch the Home aggregate after login on direct route %s', async (path) => {
+    let authenticated = false;
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: authenticated ? 200 : 401 });
+      if (url === '/api/auth/login' && init?.method === 'POST') {
+        authenticated = true;
+        return new Response('{}', { status: 200 });
+      }
+      if (url === '/api/promote/review/items') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/promote/status') return new Response(JSON.stringify({ promote_enabled: false }), { status: 200 });
+      if (url === '/api/home') return new Response('{}', { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt(path);
+
+    await screen.findByRole('heading', { name: '欢迎回来' });
+    fireEvent.change(screen.getByLabelText('SecondBrain 登录口令'), { target: { value: 'synthetic-only-passphrase' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+
+    if (path === '/chat/blank') {
+      expect(await screen.findByRole('heading', { name: '空白验收' })).toBeTruthy();
+    } else {
+      expect(await screen.findByRole('heading', { name: '待审核' })).toBeTruthy();
+      await waitFor(() => expect(calls).toContain('/api/promote/review/items'));
+    }
+    expect(calls).toContain('/api/auth/login');
+    expect(calls.filter((url) => url === '/api/auth/session')).toHaveLength(1);
+    expect(calls).not.toContain('/api/home');
+  });
+
   it('opens Knowledge from navigation and does not issue Knowledge reads from other page initialization', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'true');
     const calls = mockAppFetch();

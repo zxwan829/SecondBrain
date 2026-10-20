@@ -745,13 +745,12 @@ describe('D075.1 capture interactions', () => {
     window.history.replaceState({}, '', '/chat/blank');
     const request = vi.fn(async (url: string) => {
       if (url === '/api/auth/session') return ok({});
-      if (url === '/api/home') return ok({});
       throw new Error(`Unexpected blank entry request: ${url}`);
     });
     vi.stubGlobal('fetch', request);
     render(<App />);
     expect(await screen.findByRole('heading', { name: '空白验收' })).toBeTruthy();
-    expect(request.mock.calls.map(([url]) => url)).toEqual(['/api/auth/session', '/api/home']);
+    expect(request.mock.calls.map(([url]) => url)).toEqual(['/api/auth/session']);
     expect(window.localStorage.getItem('secondbrain.chat.session')).toBe('private-trap-id');
   });
 
