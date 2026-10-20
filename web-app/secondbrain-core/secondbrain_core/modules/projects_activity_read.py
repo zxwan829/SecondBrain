@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_LIMIT = 100
 _MAX_OFFSET = 100_000
+_DEFAULT_JOURNAL_LOOKBACK_DAYS = 365
 
 
 def _page(limit, offset):
@@ -139,6 +140,7 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None):
                  timezone_name: str = Query(default="Asia/Shanghai", alias="timezone")):
         auth.require_action(request, "activity.read")
         _page(limit, offset)
+        default_window = from_day is None and to_day is None
         if (from_day is None) != (to_day is None):
             raise HTTPException(status_code=400, detail="from and to must be supplied together")
         zone = _timezone(timezone_name)
@@ -150,10 +152,11 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None):
             if (end - start).days > 30:
                 raise HTTPException(status_code=400, detail="Activity window cannot exceed 31 days")
         else:
-            # Keep the default query bounded without listing an unbounded
-            # Journal directory. Explicit ranges use the same 31-day ceiling.
+            # Query exact date paths in a bounded lookback; never enumerate
+            # the Journal directory. The response is marked partial because
+            # older Journal files may exist beyond this finite lookback.
             end = datetime.now(zone).date()
-            start = end - timedelta(days=30)
+            start = end - timedelta(days=_DEFAULT_JOURNAL_LOOKBACK_DAYS - 1)
 
         configured = [name for name, store in (("journal", journal_store), ("tasks", task_store)) if store is not None]
         if not configured:
@@ -163,12 +166,14 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None):
                 "source": [], "freshness": {"checked_at": datetime.now(timezone.utc).isoformat()},
             }
 
-        rows = _journal_rows(journal_store, start, end, zone) + _task_rows(task_store, start, end, zone)
+        task_start, task_end = (None, None) if default_window else (start, end)
+        rows = (_journal_rows(journal_store, start, end, zone)
+                + _task_rows(task_store, task_start, task_end, zone))
         rows.sort(key=lambda row: (row["occurred_at"], row["activity_id"]), reverse=True)
         page_rows = rows[offset:offset + limit]
         missing_source = len(configured) < 2
         return {
-            "status": "partial" if missing_source else ("ok" if rows else "empty"),
+            "status": "partial" if missing_source or default_window else ("ok" if rows else "empty"),
             "items": page_rows,
             "pagination": {"limit": limit, "offset": offset, "has_more": offset + limit < len(rows)},
             "source": configured,

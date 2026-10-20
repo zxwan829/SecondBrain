@@ -141,9 +141,9 @@ unchanged.
   `GET /api/activity` as a metadata-only projection of Journal/Task records with
   explicit operation and session references. Activity never exposes Journal
   bodies, Task titles/commands, session IDs, or operation IDs. Its default read
-  checks exactly 31 configured Journal day files; explicit date ranges are
-  paired, timezone-aware, and limited to 31 days. No Hermes/session/message
-  history is read by these endpoints.
+  checks at most 365 exact Journal day paths and reports `partial` because older
+  files may exist; explicit date ranges are paired, timezone-aware, and limited
+  to 31 days. No Hermes/session/message history is read by these endpoints.
 - Tests cover authentication/origin rejection, no-session/forged approval,
   Promote fail-closed, real file reads, deferred status, Hermes server-side
   auth, SSE/stop, and same-origin SPA routing.

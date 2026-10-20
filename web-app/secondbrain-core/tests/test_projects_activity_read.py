@@ -121,7 +121,7 @@ def test_activity_window_timezone_and_query_errors(tmp_path):
     assert client.get("/api/activity?limit=0").status_code == 400
 
 
-def test_activity_default_journal_read_uses_fixed_31_day_window(tmp_path, monkeypatch):
+def test_activity_default_journal_read_uses_fixed_365_day_window_and_marks_partial(tmp_path, monkeypatch):
     journal = make_journal(tmp_path)
     calls = []
     original_read = journal.read
@@ -133,8 +133,9 @@ def test_activity_default_journal_read_uses_fixed_31_day_window(tmp_path, monkey
     monkeypatch.setattr(journal, "read", tracked_read)
     response = make_client(tmp_path, journal=journal).get("/api/activity")
     assert response.status_code == 200
-    assert len(calls) == 31
-    assert len(set(calls)) == 31
+    assert len(calls) == 365
+    assert len(set(calls)) == 365
+    assert response.json()["status"] == "partial"
 
 
 def test_activity_ids_distinguish_same_operation_on_separate_journal_days(tmp_path):
