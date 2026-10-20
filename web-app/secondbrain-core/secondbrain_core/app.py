@@ -18,6 +18,7 @@ from .modules.chat_activity import ChatActivityStore, create_chat_activity_route
 from .modules.journal import JournalStore, create_journal_router
 from .modules.tasks import TaskStore, create_task_router
 from .modules.projects_activity_read import create_projects_activity_router
+from .modules.daily_brief_agent_health import create_daily_brief_agent_health_router
 from .modules.notes import configured_notes_store, create_notes_router
 from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
 from .modules.vocabulary import VocabularyStore, create_vocabulary_router
@@ -144,6 +145,7 @@ def create_app():
     app.include_router(create_journal_router(auth, journal_store, hermes, chat_activity_store))
     app.include_router(create_task_router(auth, task_store, hermes, chat_activity_store))
     app.include_router(create_projects_activity_router(auth, journal_store, task_store))
+app.include_router(create_daily_brief_agent_health_router(auth, hermes))
     app.include_router(create_notes_router(auth, notes_store))
     provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,
                                            operations_root=promote_operations_path)

@@ -144,6 +144,11 @@ unchanged.
   checks at most 365 exact Journal day paths and reports `partial` because older
   files may exist; explicit date ranges are paired, timezone-aware, and limited
   to 31 days. No Hermes/session/message history is read by these endpoints.
+- `GET /api/daily-brief?date=YYYY-MM-DD&timezone=...` currently returns
+  `not_configured`; there is no trusted brief source yet, and the route does not
+  read Hermes history or call a model. `GET /api/agent/health` reports only
+  status, source, and checked time from a Hermes capabilities request; it never
+  returns session/message data or upstream diagnostic payloads.
 - Tests cover authentication/origin rejection, no-session/forged approval,
   Promote fail-closed, real file reads, deferred status, Hermes server-side
   auth, SSE/stop, and same-origin SPA routing.
