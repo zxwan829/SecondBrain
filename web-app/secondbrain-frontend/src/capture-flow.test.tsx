@@ -88,6 +88,67 @@ describe('D075.1 capture interactions', () => {
     expect(sessionStorage.getItem(`secondbrain.chat.captureReceipt:synthetic-chat-session`)).not.toContain(event.original_text);
   });
 
+  it('keeps a valid 202 receipt unverified and hides its source link when the exact GET mismatches', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok(historyPayload);
+      if (url.endsWith('/messages')) return ok({ messages: [] });
+      if (url.endsWith('/activities')) return ok({ activities: [] });
+      if (url.endsWith('/runs')) return ok({ run_id: 'synthetic-run' });
+      if (url.endsWith('/events')) return sse([suggestion(), { event: 'run.completed', output: 'Done.' }]);
+      if (url === `/api/inbox/proposals/${proposalId}/history`) return ok(approvalBody());
+      if (url === '/api/inbox/entries') return new Response(JSON.stringify(inboxBody()), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      if (url === `/api/inbox/entries/${inboxId}`) return ok(inboxBody({ source_ref: { capture_id: 'd'.repeat(32), review_path: null, review_sha256: null } }));
+      return ok({});
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'synthetic only' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    const card = await screen.findByRole('region', { name: 'Hermes 收录建议' });
+    fireEvent.click(within(card).getByRole('button', { name: '核验当前 Core 批准' }));
+    await within(card).findByText(/已核验 Core 批准/);
+    fireEvent.change(within(card).getByLabelText('输入“确认收录”以继续'), { target: { value: '确认收录' } });
+    fireEvent.click(within(card).getByRole('button', { name: '确认并提交给 Core' }));
+
+    expect((await within(card).findByRole('alert')).textContent).toMatch(/状态尚未核验/);
+    expect(within(card).queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+    expect(within(card).queryByLabelText('输入“确认收录”以继续')).toBeNull();
+    expect(within(card).getByRole('button', { name: '刷新 Core 状态' })).toBeTruthy();
+    expect(calls.filter((url) => url === '/api/inbox/entries')).toHaveLength(1);
+    expect(sessionStorage.getItem('secondbrain.chat.captureReceipt:synthetic-chat-session')).toContain(inboxId);
+  });
+
+  it('restores an opaque session receipt without a trusted link while exact GET is pending or fails', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    window.localStorage.setItem('secondbrain.chat.session', 'synthetic-chat-session');
+    const receipt = { sessionId: 'synthetic-chat-session', inboxId, sourceEventId: 'synthetic:event-9', proposalId,
+      proposalVersion, sourceVersion, kind: 'journal' };
+    const storageKey = 'secondbrain.chat.captureReceipt:synthetic-chat-session';
+    window.sessionStorage.setItem(storageKey, JSON.stringify(receipt));
+    let rejectGet!: (response: Response) => void;
+    const exactGet = new Promise<Response>((resolve) => { rejectGet = resolve; });
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/chat/sessions?limit=50&offset=0') return Promise.resolve(ok(historyPayload));
+      if (url.endsWith('/messages')) return Promise.resolve(ok({ messages: [] }));
+      if (url.endsWith('/activities')) return Promise.resolve(ok({ activities: [] }));
+      if (url === `/api/inbox/entries/${inboxId}`) return exactGet;
+      return Promise.resolve(ok({}));
+    }));
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    expect(await screen.findByRole('region', { name: 'Inbox 收录状态' })).toBeTruthy();
+    expect((await screen.findByRole('alert')).textContent).toContain('正在向 Core 核验已保存回执');
+    expect(screen.queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBe(JSON.stringify(receipt));
+
+    await act(async () => { rejectGet(new Response(JSON.stringify({ detail: 'synthetic unavailable' }), { status: 503 })); });
+    expect((await screen.findByRole('alert')).textContent).toMatch(/状态尚未核验/);
+    expect(screen.queryByRole('link', { name: '打开 Inbox 来源' })).toBeNull();
+    expect(sessionStorage.getItem(storageKey)).toBe(JSON.stringify(receipt));
+  });
+
   it('fails closed when SSE has only the untrusted legacy proposal_id', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
     const event = suggestion({ approved_proposal_id: undefined, approved_proposal_version: undefined, proposal_id: proposalId });

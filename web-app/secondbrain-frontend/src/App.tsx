@@ -1203,6 +1203,22 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     setCaptureFeedback(en ? `Core accepted the entry; current processing status: ${status}.` : `Core 已受理；当前处理状态：${status}。`);
   };
 
+  const verifyCaptureReceipt = async (receipt: CaptureReceipt, sequence: number) => {
+    if (selectedSessionRef.current !== receipt.sessionId || sequence !== captureRequestSequence.current) return;
+    setCaptureReceipt(receipt);
+    setCaptureSourceId(''); setCaptureStatus('');
+    setCaptureFeedback(en ? 'Verifying the saved receipt against the exact Inbox entry…' : '正在向 Core 核验已保存回执对应的确切 Inbox 记录…');
+    try {
+      await refreshCaptureReceipt(receipt, sequence);
+    } catch (cause) {
+      if (selectedSessionRef.current !== receipt.sessionId || sequence !== captureRequestSequence.current) return;
+      setCaptureSourceId(''); setCaptureStatus('');
+      setCaptureFeedback(en
+        ? `The exact Inbox status is unverified. The opaque receipt is retained; retry verification later. ${cause instanceof Error ? cause.message : ''}`
+        : `确切 Inbox 状态尚未核验。回执标识已保留，可稍后重新核验。${cause instanceof Error ? ` ${cause.message}` : ''}`);
+    }
+  };
+
   const persistBlankChatState = (sessionIds: string[], selectedSessionId: string) => {
     const uniqueIds = [...new Set(sessionIds)];
     const next: BlankChatState = {
@@ -1381,12 +1397,9 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     if (!stored) return;
     const receipt = stored;
     const sequence = ++captureRequestSequence.current;
-    setCaptureReceipt(receipt); setCaptureSourceId(receipt.inboxId); setCaptureStatus('');
+    setCaptureReceipt(receipt); setCaptureSourceId(''); setCaptureStatus('');
     setCaptureFeedback(en ? 'Checking the exact Inbox entry for this session…' : '正在核对本会话对应的 Inbox 记录…');
-    void refreshCaptureReceipt(receipt, sequence).catch((cause) => {
-      if (selectedSessionRef.current !== receipt.sessionId || sequence !== captureRequestSequence.current) return;
-      setCaptureFeedback(cause instanceof Error ? cause.message : (en ? 'Inbox status is unavailable.' : '暂时无法读取 Inbox 状态。'));
-    });
+    void verifyCaptureReceipt(receipt, sequence);
   }, [selected]);
 
   const newSession = async () => {
@@ -1718,14 +1731,13 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         || Number.isNaN(Date.parse(result.captured_at)) || typeof result.replayed !== 'boolean'
         || result.intent !== 'approved_suggestion') throw new Error(en ? 'Core returned an invalid 202 receipt.' : 'Core 返回的 202 回执无效。');
       const completedReceipt = { ...receipt, inboxId };
-      const status = parseCaptureReceiptResponse(result, completedReceipt);
-      if (!status) throw new Error(en ? 'Core returned a mismatched or incomplete approval receipt.' : 'Core 返回的审批绑定回执不匹配或不完整。');
+      if (!parseCaptureReceiptResponse(result, completedReceipt)) throw new Error(en ? 'Core returned a mismatched or incomplete approval receipt.' : 'Core 返回的审批绑定回执不匹配或不完整。');
       if (selectedSessionRef.current !== suggestion.sessionId || sequence !== captureRequestSequence.current) return;
       try { sessionStorage.setItem(captureReceiptKey(suggestion.sessionId), JSON.stringify(completedReceipt)); }
       catch { throw new Error(en ? 'The exact receipt could not be saved for session recovery; confirm the status before retrying.' : '无法保存用于本会话恢复的精确回执；重试前请先核对状态。'); }
-      setCaptureReceipt(completedReceipt); setCaptureSourceId(inboxId); setCaptureStatus(status);
-      setCaptureFeedback(en ? `Core accepted the entry; current processing status: ${status}.` : `Core 已受理；当前处理状态：${status}。`);
-      await refreshCaptureReceipt(completedReceipt, sequence);
+      setCaptureReceipt(completedReceipt); setCaptureSourceId(''); setCaptureStatus('');
+      setCaptureFeedback(en ? 'Core accepted the receipt; verifying the exact Inbox entry…' : 'Core 已受理回执；正在核验确切的 Inbox 记录…');
+      await verifyCaptureReceipt(completedReceipt, sequence);
     } catch (cause) {
       if (selectedSessionRef.current !== suggestion.sessionId || sequence !== captureRequestSequence.current) return;
       setCaptureFeedback(cause instanceof Error ? cause.message : (en ? 'Core could not verify this entry. The original remains available.' : 'Core 无法核验此记录，原文仍保留。'));
@@ -1815,22 +1827,22 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         <h3>{en ? 'Hermes suggests saving this to Inbox' : 'Hermes 建议将以下内容收录到 Inbox'}</h3>
         <p>{en ? 'A chat suggestion and typed confirmation are not Core approval. Verify a current Core-approved proposal before submitting.' : '聊天建议和输入确认短语都不等于 Core 批准；提交前必须核验仍有效的 Core 批准记录。'}</p>
         <blockquote>{captureSuggestion.originalText}</blockquote>
-        {!captureApproval && !captureSourceId && <>
+        {!captureApproval && !captureSourceId && !captureReceipt && <>
           {captureSuggestion.approvedProposalId && captureSuggestion.approvedProposalVersion
             ? <button type="button" disabled={captureBusy} onClick={() => void verifyCaptureApproval()}>{captureBusy ? (en ? 'Checking Core approval…' : '正在核验 Core 批准…') : (en ? 'Verify current Core approval' : '核验当前 Core 批准')}</button>
             : <p role="status">{en ? 'No Core-approved proposal ID and version are attached. Submission is disabled.' : '缺少 Core 已批准 Proposal ID 与版本，已禁用提交。'}</p>}
         </>}
-        {captureApproval && !captureSourceId && <><p role="status">{en ? `Core approval verified: ${captureApproval.kind}, version ${captureApproval.version}.` : `已核验 Core 批准：${captureApproval.kind}，版本 ${captureApproval.version}。`}</p><label htmlFor="capture-suggestion-confirm">{en ? 'Type “确认收录” to continue' : '输入“确认收录”以继续'}</label>
+        {captureApproval && !captureSourceId && !captureReceipt && <><p role="status">{en ? `Core approval verified: ${captureApproval.kind}, version ${captureApproval.version}.` : `已核验 Core 批准：${captureApproval.kind}，版本 ${captureApproval.version}。`}</p><label htmlFor="capture-suggestion-confirm">{en ? 'Type “确认收录” to continue' : '输入“确认收录”以继续'}</label>
           <input id="capture-suggestion-confirm" value={captureConfirmation} onChange={(event) => setCaptureConfirmation(event.target.value)} autoComplete="off" />
           <button type="button" disabled={captureBusy || captureConfirmation !== '确认收录'} onClick={() => void confirmCaptureSuggestion()}>{captureBusy ? (en ? 'Submitting…' : '正在提交…') : (en ? 'Confirm and submit to Core' : '确认并提交给 Core')}</button></>}
         {captureFeedback && <p role={captureSourceId ? 'status' : 'alert'}>{captureFeedback}{captureStatus ? ` · ${en ? 'Status' : '状态'}: ${captureStatus}` : ''}</p>}
-        {captureSourceId && <button type="button" disabled={captureBusy || !captureReceipt} onClick={() => captureReceipt && void refreshCaptureReceipt(captureReceipt, ++captureRequestSequence.current).catch((cause) => setCaptureFeedback(cause instanceof Error ? cause.message : (en ? 'Inbox status is unavailable.' : '暂时无法读取 Inbox 状态。')))}>{en ? 'Refresh Core status' : '刷新 Core 状态'}</button>}
+        {captureReceipt && captureReceipt.sessionId === selected && <button type="button" disabled={captureBusy} onClick={() => void verifyCaptureReceipt(captureReceipt, ++captureRequestSequence.current)}>{en ? 'Refresh Core status' : '刷新 Core 状态'}</button>}
         {captureSourceId && <a href={`/inbox#capture-${encodeURIComponent(captureSourceId)}`}>{en ? 'Open Inbox source' : '打开 Inbox 来源'}</a>}
       </section>}
       {!captureSuggestion && captureReceipt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Inbox capture status' : 'Inbox 收录状态'}>
         <h3>{en ? 'Inbox entry for this session' : '本会话的 Inbox 记录'}</h3>
         {captureFeedback && <p role={captureStatus ? 'status' : 'alert'}>{captureFeedback}{captureStatus ? ` · ${en ? 'Status' : '状态'}: ${captureStatus}` : ''}</p>}
-        <button type="button" disabled={captureBusy} onClick={() => void refreshCaptureReceipt(captureReceipt, ++captureRequestSequence.current).catch((cause) => setCaptureFeedback(cause instanceof Error ? cause.message : (en ? 'Inbox status is unavailable.' : '暂时无法读取 Inbox 状态。')))}>{en ? 'Refresh Core status' : '刷新 Core 状态'}</button>
+        <button type="button" disabled={captureBusy} onClick={() => void verifyCaptureReceipt(captureReceipt, ++captureRequestSequence.current)}>{en ? 'Refresh Core status' : '刷新 Core 状态'}</button>
         {captureSourceId && <a href={`/inbox#capture-${encodeURIComponent(captureSourceId)}`}>{en ? 'Open Inbox source' : '打开 Inbox 来源'}</a>}
       </section>}
       {progress && <div className="chat-progress" role="status">{progress}</div>}{error && <p className="chat-error" role="alert">{error}</p>}

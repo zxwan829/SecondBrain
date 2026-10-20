@@ -39,7 +39,7 @@ Content-Type: application/json
 
 No client-supplied identity or consent evidence is sent. There is no `Idempotency-Key` header: Core derives idempotency from authenticated channel identity plus the stable `source_event_id`. A retry after an uncertain network result reuses the same event ID and exact request body.
 
-Only HTTP **202** is accepted. The frontend validates `inbox_id` as a 32-hex Capture ID, `captured_at`, `status`, source `{channel:"web",event_id}`, `intent`, `replayed`, the server-issued consent evidence and its proposal/source-version binding, and the returned approved-proposal binding. It renders 202 as “Core accepted; current processing status: …”; it never presents 202 as Review completion or Knowledge publication.
+Only HTTP **202** is accepted. The frontend validates `inbox_id` as a 32-hex Capture ID, `captured_at`, `status`, source `{channel:"web",event_id}`, `intent`, `replayed`, the server-issued consent evidence and its proposal/source-version binding, and the returned approved-proposal binding. A valid 202 is only an accepted opaque receipt; it does not make the source link or a verified processing status visible. The UI exposes those only after the exact GET below succeeds. A failed or pending GET leaves the receipt available for recheck while showing an unverified/unknown state, with no trusted source link. It never presents 202 as Review completion or Knowledge publication.
 
 The UI then requests only:
 
@@ -54,7 +54,7 @@ The exact GET must match the saved event, proposal/version, source version, auth
 - No proposal GET or Inbox POST occurs merely from receiving the event.
 - Legacy `proposal_id` without the Core-approved ID/version remains display-only and cannot submit.
 - Exact Core history approval permits the explicitly confirmed request; stale status, ID/version mismatch, source text mismatch, and malformed approval block POST.
-- HTTP 202 with matching source, proposal, and consent bindings is accepted as processing/queued only; 200/201, malformed 202, unknown status, or a mismatched GET cannot claim success.
+- HTTP 202 with matching source, proposal, and consent bindings is accepted as a receipt only. A pending, failed, or mismatched exact GET has no verified status/source link; 200/201, malformed 202, or unknown status cannot claim success. SessionStorage recovery and manual refresh downgrade visible verification before GET, and preserve the opaque receipt after failure.
 - 401/403/409/503 and network ambiguity do not create a success state. A retry uses the exact same event ID/body; Core's `replayed` result and the exact GET are checked.
 - Refresh restores only one Session-scoped opaque receipt. Switching Session does not query or display another session's receipt. Late SSE from an old Session is ignored.
 
