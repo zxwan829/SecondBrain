@@ -227,26 +227,16 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.assertEqual(restored.status_code, 200, restored.text)
         self.assertEqual(restored.json()["status"], "promoted")
 
-    def test_synthetic_confirm_uses_bounded_subprocess_worker_candidate(self):
+    def test_promote_enabled_refuses_same_uid_subprocess_candidate_before_startup(self):
         self.env["SB_PROMOTE_ENABLED"] = "true"
         self.env["SB_PROMOTE_WORKER_MODE"] = "subprocess"
         self.client.close()
-        self.app = self._create_app()
-        self.client = TestClient(self.app, base_url="https://testserver")
-        self.login()
-        self.assertEqual(self.unlock().status_code, 200)
-        preview = self.preview().json()
-        result = self.confirm(preview["preview_id"])
-        self.assertEqual(result.status_code, 200, result.text)
-        self.assertEqual(result.json()["status"], "promoted")
-        target = self.knowledge / "synthetic-approved.md"
-        self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(), preview["output_sha256"])
-        operation = self.client.get(f"/api/promote/operations/{preview['request_id']}", headers=self.headers)
-        self.assertEqual(operation.status_code, 200, operation.text)
-        self.assertEqual(operation.json()["status"], "promoted")
-        source = self.client.get("/api/knowledge/search?q=Synthetic approved", headers=self.headers).json()["items"][0]
-        result = self.client.get(f"/api/knowledge/items/{source['id']}/source", headers=self.headers)
-        self.assertEqual(result.json()["provenance_status"], "verified")
+        with self.assertRaisesRegex(RuntimeError, "same-UID subprocess candidate"):
+            self._create_app()
+        self.assertEqual(list((self.state / "approvals").iterdir()), [])
+        self.assertEqual(list((self.state / "b1b-operations").iterdir()), [])
+        self.assertFalse((self.state / "audit.jsonl").exists())
+        self.assertEqual(list(self.knowledge.iterdir()), [])
 
     def test_legacy_b1a_approval_is_verified_only_for_reconstructed_canonical_bytes(self):
         from secondbrain_core.modules.review_promote.service import PromoteService

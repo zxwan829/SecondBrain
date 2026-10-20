@@ -21,11 +21,11 @@ unchanged.
   example as production configuration.
 - `SB_PROMOTE_ENABLED` defaults to `false`. Keep it false until separately
   authorized production deployment, mount isolation, and approval validation.
-- `SB_PROMOTE_WORKER_MODE=subprocess` selects the synthetic/local one-request
-  subprocess candidate. It uses a bounded JSON pipe, a minimal child environment,
-  resource limits, and the existing exact Review/Approval/Knowledge/Audit checks.
-  It still runs under the Core UID and has no OS ACL or mount sandbox; it does
-  not satisfy production Promote isolation or authorize enabling Promote.
+- `SB_PROMOTE_WORKER_MODE=subprocess` selects the one-request subprocess
+  candidate only while Promote is disabled. If `SB_PROMOTE_ENABLED=true`, Core
+  refuses startup: the child retains the Core UID and has no OS ACL or mount
+  sandbox, so this candidate is not an isolation boundary. The gate does not
+  provision or imply a worker identity, ACL, or production authorization.
 - Organizer's SiliconFlow adapter is not loaded unless
   `SB_ORGANIZER_MODEL_ENABLED=true` is explicitly configured. Its preferred
   candidate is `deepseek-ai/DeepSeek-V4-Flash`; the key must come from a private
@@ -105,9 +105,26 @@ unchanged.
   `unverified` with no source link.
 - The subprocess Worker is a local process-boundary candidate only. It accepts
   one bounded Promote request, receives no App secret, closes inherited file
-  descriptors, and runs under CPU/file/output bounds. A separate OS UID, read-only
-  approval/Review mounts, and write-only-or-minimal Knowledge/Audit ACLs are not
-  provisioned here; therefore B3 production isolation remains blocked.
+  descriptors, and runs under CPU/file/output bounds. Core startup rejects the
+  combination of this same-UID candidate and enabled Promote. A separate OS UID,
+  read-only approval/Review mounts, and write-only-or-minimal Knowledge/Audit
+  ACLs are not provisioned here; therefore B3 production isolation remains
+  blocked.
+- B3 isolation design (not implemented or deployment-authorized): run the
+  worker under a dedicated OS UID with a fixed executable and fixed, configured
+  roots; expose only a versioned, size-bounded request over a private Unix
+  domain socket and authenticate the peer UID (for example, platform peer
+  credentials). Do not accept caller-selected filesystem roots. The worker
+  should read only the exact pinned Review and Approval evidence; it should
+  receive narrowly scoped write access only to the approved Knowledge target
+  and append-only audit destination, while operation claims/state remain under
+  Core ownership. Core and worker state directories must have explicit owner,
+  group, and mode checks before startup. Timeout, malformed IPC, wrong peer,
+  disconnect, or uncertain completion must fail closed and require explicit
+  recovery with the same durable request ID; never infer success from child
+  exit status alone. Production mounts, ACLs, account provisioning, and
+  cross-store recovery protocol still require separate design review and
+  authorization. Local tests do not assert OS isolation.
 - Task API is always routed but returns an explicit unavailable response unless
   `SB_TASK_ROOT` names an existing Core-owned `0700` directory. It uses one
   locked, atomically replaced JSON store for idempotent create, status/date query,

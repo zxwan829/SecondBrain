@@ -45,6 +45,13 @@ def create_app():
     if promote_enabled_value not in {"true", "false"}:
         raise RuntimeError("SB_PROMOTE_ENABLED must be true or false")
     promote_enabled = promote_enabled_value == "true"
+    worker_mode = os.environ.get("SB_PROMOTE_WORKER_MODE", "inline").strip().lower()
+    if worker_mode not in {"inline", "subprocess"}:
+        raise RuntimeError("SB_PROMOTE_WORKER_MODE must be inline or subprocess")
+    if worker_mode == "subprocess" and promote_enabled:
+        raise RuntimeError(
+            "Promote cannot use the same-UID subprocess candidate; OS identity and mount isolation are required",
+        )
 
     state_info = os.stat(approval_root, follow_symlinks=False)
     if (not os.path.isdir(approval_root) or os.path.islink(approval_root)
@@ -68,13 +75,10 @@ def create_app():
         raise RuntimeError("B1b operation directory must be private and owned by the Core UID")
     service = PromoteService(review_root, knowledge_root,
                              approvals_path, audit_path)
-    worker_mode = os.environ.get("SB_PROMOTE_WORKER_MODE", "inline").strip().lower()
     if worker_mode == "subprocess":
         service.worker = SubprocessPromoteWorker(
             review_root, knowledge_root, audit_path, approvals_path,
         )
-    elif worker_mode != "inline":
-        raise RuntimeError("SB_PROMOTE_WORKER_MODE must be inline or subprocess")
     app_password_file = os.environ["SB_APP_PASSWORD_FILE"]
     auth = AppSessionAuth(app_password_file, origins, ttl)
     promote_unlock_ttl = int(os.environ.get("SB_PROMOTE_UNLOCK_TTL", "900"))
