@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UnifiedInboxPage } from './UnifiedInboxPage';
 import { suggestInboxClassification } from './unified-inbox';
@@ -95,6 +95,72 @@ beforeEach(() => {
 });
 
 describe('UnifiedInboxPage', () => {
+  it('cancels a superseded Inbox source load and ignores its late Capture response', async () => {
+    const request = vi.mocked(fetch);
+    const original = request.getMockImplementation()!;
+    let finishInitial!: (response: Response) => void;
+    let firstSignal: AbortSignal | undefined;
+    let captureReads = 0;
+    request.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/inbox?limit=100') {
+        captureReads += 1;
+        if (captureReads === 1) {
+          firstSignal = init?.signal as AbortSignal | undefined;
+          return new Promise<Response>((resolve) => { finishInitial = resolve; });
+        }
+        return ok({ items: [{ capture_id: 'capture-current', raw_path: 'raw/current.md', status: 'completed', display_filename: 'Current source.md' }] });
+      }
+      return original(input, init);
+    });
+
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} />);
+    await waitFor(() => expect(firstSignal).toBeTruthy());
+    window.dispatchEvent(new Event('sb-inbox-refresh'));
+    expect(await screen.findByRole('heading', { name: 'Current source.md' })).toBeTruthy();
+    expect(firstSignal?.aborted).toBe(true);
+
+    await act(async () => { finishInitial(ok({ items: [{ capture_id: 'capture-stale', raw_path: 'raw/stale.md', status: 'completed', display_filename: 'Stale source.md' }] })); });
+    expect(screen.getByRole('heading', { name: 'Current source.md' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Stale source.md' })).toBeNull();
+  });
+
+  it('aborts an older proposal read and ignores its late response after a newer approval state loads', async () => {
+    const request = vi.mocked(fetch);
+    const original = request.getMockImplementation()!;
+    let finishInitial!: (response: Response) => void;
+    let firstSignal: AbortSignal | undefined;
+    let proposalReadCount = 0;
+    request.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('/api/inbox/proposals?')) {
+        proposalReadCount += 1;
+        if (proposalReadCount === 1) {
+          firstSignal = init?.signal as AbortSignal | undefined;
+          return new Promise<Response>((resolve) => { finishInitial = resolve; });
+        }
+        return ok({ proposals: savedProposals });
+      }
+      if (url === '/api/inbox/proposals' && init?.method === 'POST') {
+        const response = await original(input, init);
+        savedProposals = savedProposals.map((record) => record.kind === 'journal' ? { ...record, status: 'approved_recorded' } : record);
+        return response;
+      }
+      return original(input, init);
+    });
+
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    const card = (await screen.findByRole('heading', { name: '新建合成会议' })).closest('article') as HTMLElement;
+    await waitFor(() => expect(firstSignal).toBeTruthy());
+    fireEvent.click(within(card).getByRole('button', { name: '生成确定性 Mock 建议' }));
+
+    expect(await within(card).findByRole('button', { name: '准备目标预览' })).toBeTruthy();
+    expect(firstSignal?.aborted).toBe(true);
+    await act(async () => { finishInitial(ok({ proposals: [] })); });
+
+    expect(within(card).getByRole('button', { name: '准备目标预览' })).toBeTruthy();
+    expect(within(card).getByText(/决定已记录到 Core/)).toBeTruthy();
+  });
+
   it('keeps every request bound to one Draft through creation, approval, preview, execution, history, and refresh', async () => {
     const request = vi.mocked(fetch);
     render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);

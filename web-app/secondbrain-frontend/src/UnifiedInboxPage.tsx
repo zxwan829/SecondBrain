@@ -138,6 +138,27 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   const [proposalHistory, setProposalHistory] = useState<Record<string, { event: string; actor: string; at: string; version: number }[]>>({});
   const [sourceBindingBlocked, setSourceBindingBlocked] = useState<Record<string, boolean>>({});
   const editInFlight = useRef(new Set<string>());
+  const loadGeneration = useRef(0);
+  const activeLoadController = useRef<AbortController | null>(null);
+  const proposalReadControllers = useRef(new Map<string, AbortController>());
+  const proposalReadGenerations = useRef(new Map<string, number>());
+
+  const invalidateProposalRead = useCallback((itemId: string) => {
+    proposalReadGenerations.current.set(itemId, (proposalReadGenerations.current.get(itemId) || 0) + 1);
+    proposalReadControllers.current.get(itemId)?.abort();
+    proposalReadControllers.current.delete(itemId);
+  }, []);
+
+  useEffect(() => () => {
+    loadGeneration.current += 1;
+    activeLoadController.current?.abort();
+    activeLoadController.current = null;
+    for (const [itemId, controller] of proposalReadControllers.current) {
+      proposalReadGenerations.current.set(itemId, (proposalReadGenerations.current.get(itemId) || 0) + 1);
+      controller.abort();
+    }
+    proposalReadControllers.current.clear();
+  }, []);
 
   const matchesSingleSource = useCallback((record: PersistedProposal, item: UnifiedInboxItem) =>
     record.source_kind === 'notes' && record.source_id === `${item.collection}:${item.sourcePath}`
@@ -151,6 +172,11 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   };
 
   const load = useCallback(async (showLoading = false) => {
+    activeLoadController.current?.abort();
+    const controller = new AbortController();
+    activeLoadController.current = controller;
+    const generation = ++loadGeneration.current;
+    const isCurrent = () => loadGeneration.current === generation && !controller.signal.aborted;
     if (showLoading) setLoading(true);
     setCaptureError(''); setNotesError('');
     if (singleSourceMode) {
@@ -158,10 +184,12 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
         setNotes([]);
         setNotesError(en ? 'A valid Draft source is required. No Inbox sources were loaded.' : '必须提供有效的 Draft 来源；未加载任何收件箱来源。');
         setLoading(false);
+        if (activeLoadController.current === controller) activeLoadController.current = null;
         return;
       }
       try {
-        const note = await notesApi.read(singleSource.collection, singleSource.path);
+        const note = await notesApi.read(singleSource.collection, singleSource.path, controller.signal);
+        if (!isCurrent()) return;
         if (note.collection !== singleSource.collection || note.path !== singleSource.path) {
           setCaptures([]); setNotes([]);
           setNotesError(en ? 'Core returned a different Draft; no Inbox source was shown.' : 'Core 返回了其他 Draft；未展示任何收件箱来源。');
@@ -175,25 +203,29 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
           content: note.content, collection: singleSource.collection, readOnly: note.read_only,
         }]);
       } catch {
+        if (!isCurrent()) return;
         setCaptures([]); setNotes([]);
         setNotesError(en ? 'The selected Draft could not be read under the current Core session.' : '当前 Core 会话无法读取所选 Draft。');
-      } finally { setLoading(false); }
+      } finally {
+        if (isCurrent()) setLoading(false);
+        if (activeLoadController.current === controller) activeLoadController.current = null;
+      }
       return;
     }
-    const captureTask = notesOnly ? Promise.resolve([] as CaptureItem[]) : fetch('/api/inbox?limit=100', { credentials: 'same-origin' }).then(async (response) => {
+    const captureTask = notesOnly ? Promise.resolve([] as CaptureItem[]) : fetch('/api/inbox?limit=100', { credentials: 'same-origin', signal: controller.signal }).then(async (response) => {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return Array.isArray(payload.items) ? payload.items as CaptureItem[] : [];
     });
     const notesTask = (async () => {
-      const { collections } = await notesApi.collections();
+      const { collections } = await notesApi.collections(controller.signal);
       const available = (Array.isArray(collections) ? collections : []).filter((collection) => collection.kind === 'drafts').slice(0, 1);
       const lists = await Promise.all(available.map(async (collection: NoteCollection) => ({
         collection,
-        items: (await notesApi.list(collection.id)).items.slice(0, 100),
+        items: (await notesApi.list(collection.id, controller.signal)).items.slice(0, 100),
       })));
       const rows = await Promise.all(lists.flatMap(({ collection, items }) => items.slice(0, 100).map(async (item) => {
-        const note = await notesApi.read(collection.id, item.path);
+        const note = await notesApi.read(collection.id, item.path, controller.signal);
         return {
           id: makeUnifiedInboxId('notes', collection.id, item.path),
           source: 'notes' as const,
@@ -208,6 +240,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       return rows;
     })();
     const [captureResult, notesResult] = await Promise.allSettled([captureTask, notesTask]);
+    if (!isCurrent()) return;
     if (captureResult.status === 'fulfilled') setCaptures(captureResult.value);
     else setCaptureError(en ? 'Capture inbox could not be loaded.' : 'Capture 收件箱暂时无法加载。');
     if (notesResult.status === 'fulfilled') setNotes(notesResult.value);
@@ -216,6 +249,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       setNotesError(en ? 'Notes are unavailable under the current Core session or configuration.' : '当前 Core 会话或配置未开放 Notes；Capture 收件箱仍可单独使用。');
     }
     setLoading(false);
+    if (activeLoadController.current === controller) activeLoadController.current = null;
   }, [en, notesOnly, singleSourceMode, singleSource?.collection, singleSource?.path]);
 
   useEffect(() => {
@@ -244,11 +278,25 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
 
   const refreshProposals = useCallback(async (item: UnifiedInboxItem, clearResolvedConflicts = false) => {
     if (item.captureId === 'synthetic-capture-demo') return;
+    proposalReadControllers.current.get(item.id)?.abort();
+    const controller = new AbortController();
+    proposalReadControllers.current.set(item.id, controller);
+    const generation = (proposalReadGenerations.current.get(item.id) || 0) + 1;
+    proposalReadGenerations.current.set(item.id, generation);
     const params = new URLSearchParams({ source_kind: item.source === 'capture' ? 'capture' : 'notes', source_id: item.captureId || `${item.collection}:${item.sourcePath}` });
     if (item.source === 'notes') { params.set('collection', item.collection || ''); params.set('path', item.sourcePath); }
-    const response = await fetch(`/api/inbox/proposals?${params}`, { credentials: 'same-origin' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
+    let payload: any;
+    try {
+      const response = await fetch(`/api/inbox/proposals?${params}`, { credentials: 'same-origin', signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      payload = await response.json();
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      throw cause;
+    } finally {
+      if (proposalReadControllers.current.get(item.id) === controller) proposalReadControllers.current.delete(item.id);
+    }
+    if (proposalReadGenerations.current.get(item.id) !== generation || controller.signal.aborted) return;
     const records = Array.isArray(payload.proposals) ? payload.proposals as PersistedProposal[] : [];
     if (singleSourceMode && records.some((record) => !matchesSingleSource(record, item))) {
       blockSourceBinding(item, en ? 'Core returned a proposal bound to another source; all results were hidden.' : 'Core 返回了绑定到其他来源的提案；已隐藏全部结果。');
@@ -321,6 +369,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   const suggest = async (item: UnifiedInboxItem) => {
     if (item.captureId === 'synthetic-capture-demo') return;
     if (sourceBindingBlocked[item.id]) return;
+    invalidateProposalRead(item.id);
     const source = item.source === 'capture' ? { source_kind: 'capture', source_id: item.captureId } : { source_kind: 'notes', source_id: `${item.collection}:${item.sourcePath}`, collection: item.collection, path: item.sourcePath };
     const idempotencyKey = suggestionKeys.current[item.id] || (suggestionKeys.current[item.id] = crypto.randomUUID());
     const response = await fetch('/api/inbox/proposals', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(source) });
@@ -357,6 +406,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       setSavingEdits((current) => ({ ...current, [itemId]: false }));
       return;
     }
+    invalidateProposalRead(itemId);
     try {
       const suggestion = kind === 'type' ? { ...record.suggestion.current, value }
         : kind === 'tags' ? { ...record.suggestion.current, values: value.split(',').map((tag) => tag.trim()).filter(Boolean) }
@@ -397,6 +447,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     const recordKind = kind === 'knowledge' ? 'review' : kind;
     const record = proposalRecords[item.id]?.find((candidate) => candidate.kind === recordKind);
     if (!record || record.status !== 'suggested') return;
+    invalidateProposalRead(item.id);
     const idempotencyKey = decisionKeys.current[record.proposal_id] || (decisionKeys.current[record.proposal_id] = crypto.randomUUID());
     const response = await fetch(`/api/inbox/proposals/${record.proposal_id}/decision`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ decision: status === 'rejected' ? 'rejected' : 'approved_recorded', expected_version: record.version }) });
     if (!response.ok) {
@@ -421,6 +472,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
   };
 
   const executeProposal = async (item: UnifiedInboxItem, record: PersistedProposal, target: ExecutionPreview['target']) => {
+    invalidateProposalRead(item.id);
     const headers = { 'Content-Type': 'application/json' };
     const previewResponse = await fetch(`/api/inbox/proposals/${record.proposal_id}/execution-preview`, { method: 'POST', credentials: 'same-origin', headers, body: JSON.stringify({ target_text: target.text, ...(target.title !== undefined ? { target_title: target.title } : {}), ...(target.date !== undefined ? { target_date: target.date } : {}) }) });
     const preview = await previewResponse.json().catch(() => ({}));

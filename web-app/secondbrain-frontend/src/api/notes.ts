@@ -17,9 +17,9 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 const pathUrl = (collection: string, path: string) => `/api/notes/${encodeURIComponent(collection)}/${path.split('/').map(encodeURIComponent).join('/')}`;
 
 export const notesApi = {
-  collections: () => json<{ collections: NoteCollection[] }>('/api/notes'),
-  list: (collection: string) => json<{ items: { path: string; title: string }[] }>(`/api/notes/${encodeURIComponent(collection)}`),
-  read: (collection: string, path: string) => json<Note>(pathUrl(collection, path)),
+  collections: (signal?: AbortSignal) => json<{ collections: NoteCollection[] }>('/api/notes', signal ? { signal } : undefined),
+  list: (collection: string, signal?: AbortSignal) => json<{ items: { path: string; title: string }[] }>(`/api/notes/${encodeURIComponent(collection)}`, signal ? { signal } : undefined),
+  read: (collection: string, path: string, signal?: AbortSignal) => json<Note>(pathUrl(collection, path), signal ? { signal } : undefined),
   create: (content: string) => json<Note>('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }),
   save: (note: Note, content: string) => json<Note>(pathUrl(note.collection, note.path), { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"` }, body: JSON.stringify({ content }) }),
   history: (note: Note) => json<{ versions: { etag: string; content: string }[] }>(`${pathUrl(note.collection, note.path)}/history`),
