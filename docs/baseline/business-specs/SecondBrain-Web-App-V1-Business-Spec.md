@@ -1,6 +1,6 @@
 ---
 version: 1.1
-updated: 2026-10-16
+updated: 2026-10-20
 status: canonical
 type: business-spec
 product: SecondBrain Web App / Personal OS
@@ -11,6 +11,8 @@ product: SecondBrain Web App / Personal OS
 > **D077 补充（2026-10-16）：** 本文件的原 Web App V1 MUST/SHOULD/DEFERRED 均保留；用户明确批准的新最高目标及 Companion MVP 见 `Decision-Log.md` D077（目标与批准决策）、`Architecture.md`（稳定设计）及 `00-CURRENT.md`（MVP 验收和 NEXT）。从此 Web App 不只是漂亮的仪表盘/搜索页面，而是持续了解用户的 AI 伙伴交互入口。新智能能力的实际状态仍以 `00-CURRENT.md` 为准。
 
 ## 1. Product definition
+
+> D087 渠道架构：Web 继续通过 App/BFF；微信与飞书优先复用 Hermes 原生 Gateway/渠道入口进入同一 Agent Runtime，共用 Core 业务授权与审计。这是已批准的方向，不代表已接入或已完成平台合规验证。详见 `Decision-Log.md` D087 与 `Architecture.md`。
 
 SecondBrain Web App / Personal OS is the user-facing web entry point for daily SecondBrain use. It is not a Hermes administration-console skin, a single dashboard, a file manager, or a traditional enterprise back office.
 
@@ -34,7 +36,7 @@ V1 navigation includes Home, Chat, Today/Calendar, Inbox, Review, Projects, Know
 - **Review/Approval:** 10-Review, Skill pending, Human Approval items, and Promote candidates; preserve WAITING FOR ME semantics and approval boundaries.
 - **Projects:** active projects, status, recent activity, next action, and related notes without exposing a raw file tree as the main UI.
 - **Knowledge:** recent knowledge, search, tags, type, date, and related project; no complex graph in V1.
-- **Daily Brief:** latest brief, summaries, categories, and history.
+- **Daily Brief (D088):** 汇总用户个人 Tasks、Projects 与 Journal 回顾，不包括外部新闻摘要。首阶段用户明确触发生成，或用户明确批准导入已有记录后整理；后台无用户触发的自动生成/调度与外部数据源不在范围内。用户触发的模型调用仍受既有数据范围和费用门禁约束。所有 source references 由 Core 重新验证。具体实施/验收状态以 `00-CURRENT.md` 为准。
 - **Activity:** user-understandable Capture, Review, Promote, Agent, Skill, and project activity, not a raw debug log. Companion stage should surface understandable memory learning/correction and proactive suggestions without exposing internal trace logs or sensitive contents.
 
 ## 5. Extensibility contracts

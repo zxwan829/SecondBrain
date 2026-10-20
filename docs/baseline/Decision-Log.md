@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-16
+updated: 2026-10-20
 status: current
 type: decision-log
 ---
@@ -435,6 +435,25 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 
 **自主能力与风险边界：** Hermes 可在授权范围回顾历史聊天、SecondBrain/Obsidian、Task、个人记忆，主动建议收录、标签、关联和规划；可搜索公开互联网并标明来源，不得在搜索词中泄露私人内容。Private 保持排除；向外部服务发送私人数据、真实数据分析和付费调用仍按独立授权。初期允许 Hermes 随时主动联系，用户反馈转为可调整的软偏好；Web 设置分别控制主动回顾与主动联系频次。Core 对主动和被动调用分别以每日/月度估算金额门禁监督；主动耗尽暂停，被动耗尽先提示预计消耗，用户可临时追加或稍后继续。估算不等于供应商硬封顶。
 
-**词汇管理与写入边界：** 标签与类型作为独立集中管理功能，具体词库、最多 10 种类型、自动应用、用户纠正、同义词、停用及删除审批规则以 `业务规范.md` 第 4 节为唯一细则来源。Hermes 可选用既有词汇和在 SecondBrain 受控元数据中建立关联；新词、持久映射、正式 Knowledge 文件回写及批量改写分别遵守用户审批，不能绕过 Core/Promote。状态和日期由系统维护，项目分类由用户手动添加。初始目录/词库盘点只读并需另行授权。
+**词汇管理与写入边界：** 标签与类型作为独立集中管理功能，具体词库、最多 10 种类型、自动应用、用户纠正、同义词、停用及删除审批规则以 `业务规范.md` 第 4 节为唯一细则来源。Hermes 可选用既有词汇并在获准的 SecondBrain 受控元数据中建立关联；新词、持久映射、正式 Knowledge 文件回写及批量改写分别遵守用户审批，不能绕过 Core/Promote。状态、创建日期和修改日期不是本功能的集中管理项，也不得由该功能自动创建、补写或更新；项目分类由用户手动添加。初始目录/词库盘点只读并需另行授权。
 
 **状态：** 这是已批准的产品与信任边界，不代表实现、生产启用、真实 Vault 读取、付费模型、外部数据出站或用户体验验收。最新阶段状态和唯一 NEXT 仍见 `00-CURRENT.md`；具体业务细则见 `业务规范.md`，实施任务见 Issue #55 等关联 Issue。
+
+
+## D087 — 2026-10-20 微信/飞书渠道与 Hermes/Core 边界（APPROVED ARCHITECTURE DECISION）
+
+**决定：** Web 继续通过 SecondBrain App/BFF；微信与飞书优先复用 Hermes 原生 Gateway/渠道入口进入同一 Hermes Agent Runtime。各入口共享 SecondBrain Core 提供的业务授权、Inbox/Task/Journal/Knowledge 规则与审计，不为渠道另造第二套业务语义或 Agent Runtime。允许保留 Hermes 在授权范围内的自主学习能力，Core 仍是长期个人记忆业务数据的权威接口和授权边界。
+
+**边界：** 该架构偏好不证明平台接入已可用、合规或已实施。真实渠道接入前须独立核对官方接口/平台规则、身份映射、用户同意证据、附件来源绑定、重放/幂等、权限和费用；未核实的能力应标为未知。合成渠道适配器不等于真实微信/飞书验收。详见 `Architecture.md` 与 `Agent-Rules.md`。
+
+## D088 — 2026-10-20 Daily Brief V1 业务范围与触发边界（APPROVED PRODUCT DECISION）
+
+**决定：** Daily Brief 只覆盖用户个人 Task、Project 与 Journal 回顾，不扩展为新闻或外部信息摘要。首阶段由用户明确触发生成，或由用户明确批准导入已有记录后整理；不采用无用户触发的后台自动生成/定时调度。用户触发的模型调用仍须遵守既有数据范围和费用门禁。Brief 正文与来源仍由 Core 校验和持久化，来源 ID/版本/权限不得由客户端自证。
+
+**状态区分：** #123/#125 已交付 Core 来源验证及人工提交内容持久化切片；不代表用户触发的 AI 撰写、approved_import、后台调度或生产业务闭环已经实现。当前实现和验收以 `00-CURRENT.md` 为准。
+
+## D089 — 2026-10-20 Journal Brief 来源选项只读 API 合同（FROZEN CONTRACT）
+
+**冻结范围：** `GET /api/daily-brief/source-options/journal?date=YYYY-MM-DD&limit=N`。要求规范日期、limit 默认 20 且范围 1–50；校验可信 Origin、App Session、`daily_brief.read` 与 `journal.read`。响应仅包含 `status/items/freshness`，每项仅含 `kind/id/date/version`；不得返回正文、路径、Session、异常细节。只读同日记录，按稳定行 ID 排序并执行 1 MiB 单日字节、5000 行/日及 2 MiB 请求预算，超限 fail closed。
+
+**状态：** D089 合同已由 PR #128 固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b` 合并至 main（merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）；Core 正式只读路由已注册。B 报告 Core 全量和 localhost HTTP 验证通过，A 留有对最终 HEAD 的独立验收记录。该状态仅代表源码合并及本地合成证据，不代表部署、真实 Journal/Vault 访问或用户验收；实施状态见 `00-CURRENT.md`，证据见 `Progress-Log.md`。此 ID 取代 #97/#128 历史评论中误用的 D087 标签，不影响 D087 渠道架构决定。
