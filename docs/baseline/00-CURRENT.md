@@ -1,12 +1,19 @@
 ---
 created: 2026-09-30
-updated: 2026-10-19
+updated: 2026-10-20
 status: current
 source: GitHub SecondBrain Monorepo
 ---
 # SecondBrain — 当前交付基线（V1 + Personal Intelligence）
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
+
+## 2026-10-20 主线源码合并与分层门禁（Issue #76/#96/#97）
+
+- **已合入源码：** 前端 PR [#98](https://github.com/zxwan829/SecondBrain/pull/98)（受审 HEAD `98b2ed52eb68bb02f0cb190e92b1c425348b099f`；merge `135578697bcabbd5c892fa21528e45ca251323cd`）、其堆叠增量 PR [#102](https://github.com/zxwan829/SecondBrain/pull/102)（HEAD `098f4bfa27660758c7cf8f2922826a4e615bb0a2`；merge `579d5fa404fe0044a23066f53b89c9ba1fb010b6`）、Core PR [#99](https://github.com/zxwan829/SecondBrain/pull/99)（HEAD `c92634fd94b32fec47e50aa7ef4ba107d98f7520`；merge `8ff8383f2f08e79e4e9b9ee6e16d060d3f92a8a0`）。三项均由 A 按授权在独立代码审查、依赖及定向本地合成证据后合并；GitHub status API 没有报告自动检查，不冒称 CI PASS。
+- **隔离本地 Web→Core HTTP 合成：通过（范围限定）。** Issue [#96](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6281971019) 的 A Codex 记录：真实 loopback Core HTTP + 隔离 Edge，Core Proposal History 200 → Web 用户明确确认 → Inbox POST 202 → 同 opaque ID 精确 GET 200；数据/批准版本/会话绑定吻合；`/chat/blank`、直达 `/review` 登录后多余 `/api/home` 请求均为零；外部请求零。Chat Session/Run/SSE 为**合成 stub**，不是可信真实 Hermes 渠道。定向前端 112 tests 通过、typecheck/build/diff-check 通过（Codex 本地报告，ChatGPT 未独立重跑）；早一轮 Core 合成运行已证明认证/409、Promote OFF/423、Knowledge 只读。真实数据和生产业务验收 NOT RUN。
+- **尚未合并：** B3 Draft PR [#100](https://github.com/zxwan829/SecondBrain/pull/100) 与 [#103](https://github.com/zxwan829/SecondBrain/pull/103)，D086 Draft PR [#101](https://github.com/zxwan829/SecondBrain/pull/101)，以及 B3 真正独立 OS UID/peer credentials/ACL/mount 运行验证。#99 中的同 UID subprocess 只是本地候选，**不是生产安全边界**。B3 全模式默认关闭/拒绝门禁的强化存在 #103 Draft，**尚未进入 main**；生产 `SB_PROMOTE_ENABLED=false` 仍是硬要求，不得开启。真实外部渠道可信身份适配、生产部署、真实 Vault/Private、真实模型及用户体验验收均 NOT RUN / NOT AUTHORIZED。
+- **唯一当前 NEXT（本阶段源码合并后）：** 保持 NAS/生产现状，先由 PMO 独立审查 B3 OS 分权与全部 Promote 模式安全门禁及外部可信适配的部署前提、验证/回滚授权；再决定 #100/#103/#101 的依赖合并与环境验证范围。**源码已合并 ≠ 已部署 ≠ 生产安全准入 ≠ 用户业务验收。**
 
 ## 1. V1 完成定义与当前状态
 
