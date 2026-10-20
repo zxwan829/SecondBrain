@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { knowledgeApi, KnowledgeApiError, type KnowledgeDetail, type KnowledgeSearchItem } from './api/knowledge';
+import { knowledgeApi, KnowledgeApiError, type KnowledgeDetail, type KnowledgeSearchItem, type KnowledgeSource } from './api/knowledge';
 import { ReviewMarkdown } from './ReviewMarkdown';
 
 type Locale = 'zh-CN' | 'en';
 type SearchStatus = 'idle' | 'loading' | 'ready' | 'error';
 type DetailStatus = 'idle' | 'loading' | 'ready' | 'error';
+type SourceStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 function failureMessage(status: number | null, locale: Locale): string {
   if (status === 401) return locale === 'en' ? 'Your session has expired. Sign in again to search Knowledge.' : '登录状态已失效，请重新登录后搜索知识库。';
@@ -29,6 +30,8 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
   const [items, setItems] = useState<KnowledgeSearchItem[]>([]);
   const [selected, setSelected] = useState<KnowledgeSearchItem | null>(null);
   const [detail, setDetail] = useState<KnowledgeDetail | null>(null);
+  const [source, setSource] = useState<KnowledgeSource | null>(null);
+  const [sourceStatus, setSourceStatus] = useState<SourceStatus>('idle');
   const [searchStatus, setSearchStatus] = useState<SearchStatus>('idle');
   const [detailStatus, setDetailStatus] = useState<DetailStatus>('idle');
   const [partial, setPartial] = useState(false);
@@ -61,6 +64,8 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
     setItems([]);
     setSelected(null);
     setDetail(null);
+    setSource(null);
+    setSourceStatus('idle');
     setPartial(false);
     setErrorStatus(null);
     try {
@@ -83,6 +88,8 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
     const { controller, sequence } = beginRequest();
     setSelected(item);
     setDetail(null);
+    setSource(null);
+    setSourceStatus('idle');
     setDetailStatus('loading');
     setErrorStatus(null);
     try {
@@ -103,12 +110,33 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
     }
   }
 
+  async function checkSource() {
+    if (!selected || sourceStatus === 'loading') return;
+    const { controller, sequence } = beginRequest();
+    setSource(null);
+    setSourceStatus('loading');
+    setErrorStatus(null);
+    try {
+      const result = await knowledgeApi.source(selected.id, controller.signal);
+      if (sequence !== requestSequence.current || controller.signal.aborted) return;
+      setSource(result);
+      setSourceStatus('ready');
+    } catch (error) {
+      if (sequence !== requestSequence.current || controller.signal.aborted) return;
+      setSource(null);
+      setSourceStatus('error');
+      setErrorStatus(error instanceof KnowledgeApiError ? error.status : null);
+    }
+  }
+
   function clearQuery() {
     invalidateRequests();
     setQuery('');
     setItems([]);
     setSelected(null);
     setDetail(null);
+    setSource(null);
+    setSourceStatus('idle');
     setSearchStatus('idle');
     setDetailStatus('idle');
     setPartial(false);
@@ -122,6 +150,8 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
     invalidateRequests();
     setSelected(null);
     setDetail(null);
+    setSource(null);
+    setSourceStatus('idle');
     setDetailStatus('idle');
     setErrorStatus(null);
   }
@@ -193,6 +223,30 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
               {provenanceLabel(detail.provenance_status, locale)}
               {detail.provenance_status === 'unverified' && <span>{en ? '; no verified source link is available.' : '；没有可验证的来源链接。'}</span>}
             </p>
+            <section className="knowledge-source-trace" aria-label={en ? 'Verified source trace' : '来源回溯'}>
+              <button type="button" onClick={() => void checkSource()} disabled={sourceStatus === 'loading'}>
+                {sourceStatus === 'loading' ? (en ? 'Checking source…' : '正在核验来源…') : (en ? 'Check source trace' : '检查来源回溯')}
+              </button>
+              {sourceStatus === 'error' && <p className="knowledge-error" role="alert">{failureMessage(errorStatus, locale)}</p>}
+              {sourceStatus === 'loading' && <p role="status">{en ? 'Requesting Core source verification…' : '正在请求 Core 来源验证结果…'}</p>}
+              {source?.status === 'available' && source.provenance_status === 'verified' && <div className="knowledge-source-trace-result">
+                <p className="knowledge-source-status is-verified">{en ? 'Core verified the Review source.' : 'Core 已验证此 Review 来源。'}</p>
+                <dl>
+                  <dt>{en ? 'Review reference' : 'Review 来源路径'}</dt><dd>{source.source.ref}</dd>
+                  <dt>{en ? 'Review SHA-256' : 'Review 来源 SHA-256'}</dt><dd><code>{source.source.sha256}</code></dd>
+                  <dt>{en ? 'Promote operation' : '入库操作 ID'}</dt><dd><code>{source.source.request_id}</code></dd>
+                </dl>
+                <a href={`/review?${new URLSearchParams({ review_path: source.source.ref })}`}>
+                  {en ? 'Open verified source Review' : '打开已验证的来源 Review'}
+                </a>
+              </div>}
+              {source?.status === 'unavailable' && <p className="knowledge-source-status is-unverified" role="status">
+                {en ? 'Core could not verify the source. No source link is available.' : 'Core 无法验证该来源；不提供来源链接。'}
+              </p>}
+              {source?.status === 'missing' && <p className="knowledge-source-status is-missing" role="status">
+                {en ? 'No source reference is recorded for this item.' : '此条目没有来源记录。'}
+              </p>}
+            </section>
             <div className="knowledge-markdown"><ReviewMarkdown source={detail.content} /></div>
           </>}
         </>}

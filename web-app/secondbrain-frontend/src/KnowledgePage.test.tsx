@@ -14,6 +14,10 @@ function detailResponse(id: string, content = '# Synthetic detail\n\nSafe body.'
   return new Response(JSON.stringify({ id, content, sha256: 'c'.repeat(64), updated: '2026-10-18T00:00:02Z', provenance_status: 'unverified' }), { status: 200 });
 }
 
+function sourceResponse(value: unknown) {
+  return new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
 function submitSearch(value = 'Needle') {
   fireEvent.change(screen.getByRole('searchbox', { name: /搜索关键词|Search terms/ }), { target: { value } });
   fireEvent.click(screen.getByRole('button', { name: /搜索|Search/ }));
@@ -63,6 +67,112 @@ describe('Knowledge read-only page', () => {
     expect(calls.map((call) => call.url)).toEqual([
       '/api/knowledge/search?q=Needle&limit=50', '/api/knowledge/items/opaque-a',
     ]);
+  });
+
+  it('checks the Core source only after an explicit action and links only a validated verified Review ref', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.startsWith('/api/knowledge/search?')) return searchResponse([itemA]);
+      if (url === '/api/knowledge/items/opaque-a') return detailResponse('opaque-a');
+      if (url === '/api/knowledge/items/opaque-a/source') return sourceResponse({
+        status: 'available', provenance_status: 'verified',
+        source: { kind: 'review', ref: 'candidate.md', sha256: 'f'.repeat(64), request_id: 'b1b-synthetic-1' },
+      });
+      return new Response('{}', { status: 404 });
+    });
+    render(<KnowledgePage locale="zh-CN" />);
+    submitSearch();
+    fireEvent.click(await screen.findByRole('button', { name: /Synthetic Alpha/ }));
+    await screen.findByRole('heading', { name: 'Synthetic detail' });
+    expect(calls.some((call) => call.url.endsWith('/source'))).toBe(false);
+    expect(screen.queryByRole('link', { name: '打开已验证的来源 Review' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '检查来源回溯' }));
+    const sourceLink = await screen.findByRole('link', { name: '打开已验证的来源 Review' });
+    expect(sourceLink.getAttribute('href')).toBe('/review?review_path=candidate.md');
+    expect(screen.getByText('Core 已验证此 Review 来源。')).toBeTruthy();
+    expect(screen.getByText('b1b-synthetic-1')).toBeTruthy();
+    const sourceCall = calls.find((call) => call.url.endsWith('/source'))!;
+    expect(sourceCall.url).toBe('/api/knowledge/items/opaque-a/source');
+    expect(sourceCall.init?.credentials).toBe('same-origin');
+    expect(sourceCall.init?.cache).toBe('no-store');
+  });
+
+  it.each([
+    ['unverified source', { status: 'unavailable', provenance_status: 'unverified', source: null }, 'Core 无法验证该来源；不提供来源链接。'],
+    ['missing source', { status: 'missing', provenance_status: 'missing', source: null }, '此条目没有来源记录。'],
+  ])('does not invent a Review link for a %s', async (_name, source, message) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith('/api/knowledge/search?')) return searchResponse([itemA]);
+      if (url === '/api/knowledge/items/opaque-a') return detailResponse('opaque-a');
+      if (url.endsWith('/source')) return sourceResponse(source);
+      return new Response('{}', { status: 404 });
+    });
+    render(<KnowledgePage locale="zh-CN" />);
+    submitSearch();
+    fireEvent.click(await screen.findByRole('button', { name: /Synthetic Alpha/ }));
+    await screen.findByRole('heading', { name: 'Synthetic detail' });
+    fireEvent.click(screen.getByRole('button', { name: '检查来源回溯' }));
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '打开已验证的来源 Review' })).toBeNull();
+  });
+
+  it.each([
+    ['path traversal', { status: 'available', provenance_status: 'verified', source: { kind: 'review', ref: '../private.md', sha256: 'f'.repeat(64), request_id: 'b1b-synthetic-1' } }],
+    ['mismatched status', { status: 'available', provenance_status: 'unverified', source: null }],
+  ])('fails closed for malformed %s source responses', async (_name, source) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith('/api/knowledge/search?')) return searchResponse([itemA]);
+      if (url === '/api/knowledge/items/opaque-a') return detailResponse('opaque-a');
+      if (url.endsWith('/source')) return sourceResponse(source);
+      return new Response('{}', { status: 404 });
+    });
+    render(<KnowledgePage locale="zh-CN" />);
+    submitSearch();
+    fireEvent.click(await screen.findByRole('button', { name: /Synthetic Alpha/ }));
+    await screen.findByRole('heading', { name: 'Synthetic detail' });
+    fireEvent.click(screen.getByRole('button', { name: '检查来源回溯' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByText('知识库加载失败，请重试。')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '打开已验证的来源 Review' })).toBeNull();
+    expect(screen.queryByText('../private.md')).toBeNull();
+  });
+
+  it('aborts a source lookup when the selected Knowledge result changes', async () => {
+    let finishSource!: (response: Response) => void;
+    const pendingSource = new Promise<Response>((resolve) => { finishSource = resolve; });
+    let sourceSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/knowledge/search?')) return Promise.resolve(searchResponse());
+      if (url === '/api/knowledge/items/opaque-a') return Promise.resolve(detailResponse('opaque-a', '# Alpha detail'));
+      if (url === '/api/knowledge/items/opaque-b') return Promise.resolve(detailResponse('opaque-b', '# Beta detail'));
+      if (url === '/api/knowledge/items/opaque-a/source') {
+        sourceSignal = init?.signal as AbortSignal | undefined;
+        return pendingSource;
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    render(<KnowledgePage locale="en" />);
+    submitSearch();
+    fireEvent.click(await screen.findByRole('button', { name: /Synthetic Alpha/ }));
+    expect(await screen.findByRole('heading', { name: 'Alpha detail' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Check source trace' }));
+    await waitFor(() => expect(sourceSignal).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic Beta/ }));
+    expect(await screen.findByRole('heading', { name: 'Beta detail' })).toBeTruthy();
+    expect(sourceSignal?.aborted).toBe(true);
+    await act(async () => { finishSource(sourceResponse({
+      status: 'available', provenance_status: 'verified',
+      source: { kind: 'review', ref: 'stale-alpha.md', sha256: 'f'.repeat(64), request_id: 'b1b-synthetic-old' },
+    })); await pendingSource; });
+    expect(screen.queryByText('Core verified the Review source.')).toBeNull();
+    expect(screen.queryByText('stale-alpha.md')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Beta detail' })).toBeTruthy();
   });
 
   it('shows truncated coverage without implying complete results and clears query without fetching', async () => {
