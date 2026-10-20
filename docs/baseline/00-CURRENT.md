@@ -8,14 +8,19 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-20 Projects / Brief 来源接线最终集成（Issue #96 / #97）
+## 2026-10-20 最新阶段裁定与 NEXT（Issue #76/#96/#97）
 
-- **源码合并：** Home 平板 P2 CSS PR [#116](https://github.com/zxwan829/SecondBrain/pull/116) 已合并（`13cda7df4b4221c7117073c116ca408b508f4d95`）；Core GET wire / source readers PR [#120](https://github.com/zxwan829/SecondBrain/pull/120) 固定 HEAD `9f55a4e86f94bef9287b21e6e7411932a63a4659`，merge `291ca14699117deed2d50bd4fb72ed0e631ddcad`；Web Projects / Brief 精确契约 PR [#119](https://github.com/zxwan829/SecondBrain/pull/119) 固定 HEAD `900f8488708aa65ec059dba90eacbe162b36fab9`，merge `4f27d077433ea8af6a17627c100292ed76ea66d3`。来源 Draft #117/#118 的等效实现全部包含于 #120，原 PR 关闭 SUPERSEDED，未重复合并。
-- **合成联调：PASS（有限范围）。** A Codex 在独立临时根以真正 Core loopback HTTP、Vite、Edge 和合成数据执行，Issue [#96](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6284685472) 有脱敏证据：Core 51 pytest PASS、Web 261 Vitest PASS、typecheck/build/diff-check PASS。Projects `real/partial/empty/unavailable/not_configured` 按受限合成来源正确映射；Brief 无来源验真器时 `partial+items=[]` 并隐藏摘要、`stale/failed/empty/unavailable/not_configured` 降级准确；200/401/403、UTC `freshness.checked_at`、请求隔离及 1440×1000/820×1180/390×667 六次页面视口无横向溢出。本轮 ChatGPT 对 GitHub 固定 HEAD 进行了独立源码与证据复审，**没有亲自运行 Mac 测试**；未见自动 GitHub CI，不标 CI PASS。测试存在既有大 chunk 警告；既有 npm audit 2 low+2 moderate 未自动升级。
-- **仍为 NOT BUSINESS CLOSED：** Projects 的 `real` 目前仅指合成显式索引符合 schema/owner/权限/hash，不代表真实 `30-Projects` 已授权或验证，Task/Notes 关联也未权威回查。Daily Brief **没有实际可信 source-reference verifier**，可信 `real` 正文 HTTP 验收 NOT RUN；合成 `partial` 不证明简报已生成。真实 Vault、NAS、私人业务数据、生产部署、用户业务验收、模型/可信 Hermes 渠道、OS 隔离 Writer 和生产 Promote 均 NOT RUN/NOT AUTHORIZED。生产 `SB_PROMOTE_ENABLED=false`，不得开启。
-- **唯一当前 NEXT：** PMO 先明确 Projects 显式权威来源及 Task/Notes 关联回查边界、Daily Brief 可信来源验证器和持久记录形成的授权/验收标准；B 在合成环境做窄的安全验证候选，A 适配并做所需的一次验证。涉及真实 Vault/生产/付费/权限的步骤必须取得另行授权。原 V1 全量 MUST 保持 **NOT DONE**。
+- **最新 main：** `bff59297b0c33430c9ab2760d74231d32b3d6f71`。源码合并 PR #123（Daily Brief 来源校验）、#124（Core 测试路径可移植性）及 #125（Daily Brief 人工内容持久化）；本节按合并后的状态修正早期快照。#125 保存的是用户明确提交的人工撰写内容，并在读取时重新验证 Task/Project/Journal 来源；不代表 AI 自动生成、定时调度或生产数据闭环。
+- **Projects / Activity / Daily Brief 基础接线：** #107/#108/#111/#114/#116/#119/#120 已合并。当前 Projects 的显式 registry 与状态仅有合成/受限来源证据，尚未连接真实业务项目并完成用户验收；Brief Core 来源验证与人工文本保存已合并，`approved_import` 仍返回 501；用户明确触发的 AI 编写属于批准的产品方向但尚未实现，后台自动生成/调度尚未获批。
+- **Daily Brief UI #126：** Draft。固定 HEAD 已通过 source/hash、幂等、POST→GET、冲突与错误响应的隔离 HTTP 验证；Edge 启动 SIGABRT、Chromium 启动 SIGTRAP，真实点击和三视口浏览器验收 **BLOCKED_ENV / NOT RUN**，不得重复消耗主线时间做同环境诊断。
+- **A 线 Web #127/#129：** Draft；独立源码审查通过，定向及全量 Web 测试、typecheck/build 报告通过；真实浏览器验收仍受上述环境阻断。继续处理不依赖该浏览器环境的已授权前端切片。
+- **B 线 Core #128：** Draft，当前固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b`；B 报告 420 Core tests + 28 subtests 及正式本地 HTTP 路由验证通过，A 对该固定 HEAD 的独立复审尚未完成。其 Journal source-options 接口合同编号统一为 D089。
+- **其他未完成切片：** #106 Restricted Writer 仅为合成候选，OS 身份/ACL/mount/peer 隔离未验证；#101 仅为合成可信渠道适配器，未连接微信/飞书。均保持 Draft，不视为生产能力。
+- **总体交付：** 原 V1 MUST 和 D077 Companion MVP 均 **NOT DONE**。源码合并、隔离合成测试、NAS 部署、真实业务数据、生产安全准入和用户验收分层记录。最新环境事实仍仅由 `Environment-Baseline.md` 的 2026-10-19 快照代表，本轮未重新核验生产。
+- **10 月 22 日目标风险：** “形成基本 V1 业务闭环，可接受小型修补”目前 **AT RISK**。核心存储切片已进入 main，但 Web 真实点击、真实数据/用户业务验收及正式 Knowledge Promote 闭环仍缺证据；不能把源码合并等同目标达成。
+- **唯一 NEXT：** A 继续已授权的本地 Web 切片和独立复审；B 继续 #128 固定 HEAD 的正式独立复审及获准的 Core 合成工作。等两线各自给出可复审证据后，由 PMO 再决定统一集成；不要求为浏览器环境门禁停下可独立推进的工作。不得合并 PR、部署、读取/写入真实 Vault、启用 Promote、调用付费模型或接入真实渠道，除非另行明确授权。
 
-## 2026-10-20 主线源码进展与分层门禁（Issue #76/#96/#97）
+## 2026-10-20 主线源码进展与分层门禁（历史快照；被本文件顶部后续裁定更新）
 
 - **本阶段最新 main 源码：** 合并安全门禁 PR [#105](https://github.com/zxwan829/SecondBrain/pull/105) `d42e3ce7fb652e77d2b1526dd9031bcbb64468e4`、Web Projects/Activity PR [#107](https://github.com/zxwan829/SecondBrain/pull/107) `525d05870fe31592fdbd6553d485381a5b17e713`、Daily Brief/Agent Health PR [#108](https://github.com/zxwan829/SecondBrain/pull/108) `054b989e3cea1a5b1422dfc5ad53a3436caa6c02`、Home/Calendar PR [#111](https://github.com/zxwan829/SecondBrain/pull/111) `1720e2649dc1b8c96acb44f372b055988625e32e`。#108 堆叠 #107、#111 堆叠 #108，逐项更新 base 并核验剩余文件后合并；此前 #98/#102/#99 亦已合入（参见 #76）。
 - **安全门禁：SOURCE MERGED / CODE-LEVEL FAIL-CLOSED（非生产安全准入）。** Core 生产 `create_app()` 对 `SB_PROMOTE_ENABLED=true` 的 `inline` 与同 UID `subprocess` 均拒绝启动；成功 Promote 仅在 tests 内显式组装合成路由。A Codex 报告定向 59 passed/19 subtests + Web BFF 25 passed、语法及 diff-check PASS；A ChatGPT 审查源码增量，未独立重跑。旧 Draft #100/#103 的等效安全变更已通过 #105 合并，旧 Draft 不再单独重复合入；**独立 OS UID/ACL/mount/peer 身份隔离仍未实现或实测，生产 Promote 不可启用**。
@@ -153,11 +158,11 @@ PR #63 已合并至 main，Merge Commit `d781541785bbc20c64c3f4f676a1b9d1bd431e0
 | Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
 | Inbox | PROD-PARTIAL：统一 Capture 已部署；`/inbox/source` 在精确 B1 Draft 下 Proposal/审批/执行/刷新有限 PASS；**旧 `/inbox` 全量读取入口 BLOCKED**（#74） | 安全的来源选择/请求隔离、正式多来源摘要契约、手机及真实资料体验仍未验收；音频与微信渠道待完成 |
 | Review / Approval | PROD-PARTIAL：历史只读已验收；B1 单来源持久审批、明确执行与刷新恢复有限生产 PASS | 完整旧 Inbox/Review 聚合入口需安全范围收敛（#74）；正式 Knowledge Promote 未启用、未验收 |
-| Projects | NOT CONNECTED：UNAVAILABLE | 真实项目、状态、最近活动、下一步、相关笔记 |
+| Projects | 源码已合并（#107/#114/#119/#120）；真实项目 registry/业务来源未验收 | 连接并核验获准真实项目来源、Task/Notes 权威关联与用户体验 |
 | Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |
-| Daily Brief | NOT CONNECTED | 最新简报、摘要、分类、历史的真实业务接口/页面 |
-| Activity | NOT CONNECTED | Capture、Review、Promote、Agent、Skill、Project 的可理解真实活动记录 |
-| Agent Health / 状态 | UNAVAILABLE | 接入可信可解释的 Agent 状态；位置可在 Home 或次级系统区 |
+| Daily Brief | #123 来源验证及 #125 人工内容持久化已合并；#126 UI Draft，浏览器验收 BLOCKED_ENV | 完成用户明确触发的 Brief 流程与用户验收；AI 撰写、approved_import 和后台调度仍未实现，其中无用户触发调度不属于首阶段范围 |
+| Activity | 页面/API 源码已合并（#107/#114）；当前仅有合成状态证据 | 核验真实业务活动源和用户可理解的完整活动视图 |
+| Agent Health / 状态 | 页面/API 源码已合并（#108/#114）；真实运行态与用户验收未复核 | 接入可信运行状态并验收失败/不可用语义 |
 | 模块注册 / Home 与 Calendar 聚合 | UNKNOWN / 未完成验收 | 导航模块注册、页面契约、Home widget 扩展；模拟未来模块无需重构 Shell |
 | Responsive / Desktop/iPad/Mobile | PROD-PARTIAL：Mac/PC 和 iPhone 视觉接受 | iPad 基本可用、iPhone Safari 功能回归、跨设备真实操作 |
 | Private exclusion / Human Approval | PARTIAL：Private 无挂载、Knowledge 主挂载 RO 已验证；仍需真实业务权限及审批验收 | 运行时写入边界、API 拒绝、审核与失败回滚验收 |
@@ -201,7 +206,7 @@ PR #63 已合并至 main，Merge Commit `d781541785bbc20c64c3f4f676a1b9d1bd431e0
 | **Phase 1-B（已部署；合成运行验证）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；Core Linux 回归 154 passed、2 subtests passed（Run 38857429530）；Hermes v0.22.2 + Core + 确定性本地 Stub 四步闭环通过 | 真实模型的学习与回答质量、真实会话及用户验收仍待完成 |
 | P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | 最近核验生产 App `secondbrain-app:m1-473948dd-notes` / 源码 `473948dd`，healthy；Hermes v0.22.2 Guard 不变；M1 用户有限验收结项，尚非完整 V1 | 真实模型和浏览器记忆体验未验收；生产真实 Run/SSE 未执行；设置页、Composer、手机 Review、真实 PDF OCR 仍有既有缺口，Promote 关闭、Knowledge RO |
 | P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
-| P1 | Web App 真实业务模块 | 所有正式 MUST 页面接真实数据或符合真实空态，不能 DEMO 代替；跨端可用 | Projects、Brief、Activity 等尚未接入 |
+| P1 | Web App 真实业务模块 | 所有正式 MUST 页面接获准真实数据或明确真实空态，不能以 DEMO 代替 | Projects、Daily Brief UI、Activity 等源码已部分接线；真实数据、浏览器和用户验收仍缺，#126 受环境阻断 |
 | P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
 
 **依赖矩阵说明：** 本表描述能力交付依赖，不取代 Section 1 的唯一 NEXT。Issue #14 保留 D078 阶段证据；API Terminal 保持关闭。
