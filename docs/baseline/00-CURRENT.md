@@ -10,7 +10,7 @@ source: GitHub SecondBrain Monorepo
 
 ## 2026-10-20 最新阶段裁定与 NEXT（Issue #76/#96/#97）
 
-- **最新 main：** `87671644356e01d58ec2780d0c45bd11f4c3edfe`。除 PR #123（Daily Brief 来源校验）、#124（Core 测试路径可移植性）及 #125（Daily Brief 人工内容持久化）外，D089 Journal source-options Core 路由 PR #128 也已合并（固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b`，merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）。B 报告 Core 全量 420 tests + 28 subtests 与正式 localhost HTTP 验证通过；A 对固定 HEAD 的独立验收记录了真实 `create_app()` + Uvicorn 正式路由定向测试 1 passed，未报告 P0/P1。源码合并与本地合成证据不代表部署、真实 Journal/Vault 访问或用户业务验收。#125 保存的是用户明确提交的人工撰写内容，并在读取时重新验证 Task/Project/Journal 来源；不代表 AI 自动生成、定时调度或生产数据闭环。
+- **最新应用源码主线：** `87671644356e01d58ec2780d0c45bd11f4c3edfe`。之后 PR #131（main merge `18fac18f89ce3275d9d693bd89f57cdb83083a96`）仅合并治理文档，不改应用源码。Daily Brief 来源校验 #123、Core 测试路径可移植性 #124、人工内容持久化 #125 均已合并；D089 Journal source-options Core 路由 PR #128 亦已合并（固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b`，merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）。B 报告 Core 全量 420 tests + 28 subtests 与正式 localhost HTTP 验证通过；A 对固定 HEAD 的独立验收记录了真实 `create_app()` + Uvicorn 正式路由定向测试 1 passed，未报告 P0/P1。源码合并与本地合成证据不代表部署、真实 Journal/Vault 访问或用户业务验收。#125 保存的是用户明确提交的人工撰写内容，并在读取时重新验证 Task/Project/Journal 来源；不代表 AI 自动生成、定时调度或生产数据闭环。
 - **Projects / Activity / Daily Brief 基础接线：** #107/#108/#111/#114/#116/#119/#120 已合并。当前 Projects 的显式 registry 与状态仅有合成/受限来源证据，尚未连接真实业务项目并完成用户验收；Brief Core 来源验证与人工文本保存已合并，`approved_import` 仍返回 501；用户明确触发的 AI 编写属于批准的产品方向但尚未实现，后台自动生成/调度尚未获批。
 - **Daily Brief UI #126：** Draft。固定 HEAD 已通过 source/hash、幂等、POST→GET、冲突与错误响应的隔离 HTTP 验证；Edge 启动 SIGABRT、Chromium 启动 SIGTRAP，真实点击和三视口浏览器验收 **BLOCKED_ENV / NOT RUN**，不得重复消耗主线时间做同环境诊断。
 - **A 线 Web #127/#129：** Draft；独立源码审查通过，定向及全量 Web 测试、typecheck/build 报告通过；真实浏览器验收仍受上述环境阻断。
