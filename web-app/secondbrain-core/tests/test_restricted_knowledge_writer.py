@@ -287,3 +287,29 @@ def test_core_client_and_writer_exchange_exact_synthetic_bytes_over_socketpair(t
     assert response["status"] == "written"
     assert response["output_sha256"] == hashlib.sha256(OUTPUT).hexdigest()
     assert (knowledge / "synthetic-note.md").read_bytes() == OUTPUT
+
+
+@pytest.mark.parametrize("target_state", ["missing", "unreadable"])
+def test_written_receipt_with_missing_or_unreadable_target_requires_manual_recovery(tmp_path, target_state):
+    writer, knowledge, _ = make_writer(tmp_path)
+    writer.handle(request(), CORE_UID)
+    target = knowledge / "synthetic-note.md"
+    target.unlink()
+    if target_state == "unreadable":
+        target.mkdir()
+
+    with pytest.raises(RecoveryRequired):
+        writer.handle(request(), CORE_UID)
+    assert target.exists() is (target_state == "unreadable")
+    assert len(list(knowledge.iterdir())) == (1 if target_state == "unreadable" else 0)
+
+
+def test_corrupt_written_receipt_fails_closed_on_replay(tmp_path):
+    writer, knowledge, receipts = make_writer(tmp_path)
+    writer.handle(request(), CORE_UID)
+    (receipts / "synthetic-request-001.json").write_text("{broken receipt", encoding="utf-8")
+
+    with pytest.raises(RecoveryRequired, match="receipt_state_invalid"):
+        writer.handle(request(), CORE_UID)
+    assert (knowledge / "synthetic-note.md").read_bytes() == OUTPUT
+    assert len(list(knowledge.iterdir())) == 1
