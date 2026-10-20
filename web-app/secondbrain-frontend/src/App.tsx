@@ -24,6 +24,7 @@ import { parseExplicitTaskCommand } from './task-intent';
 import { activityTimeLabel, mergeChatTimeline, type ChatActivity, type ChatHistoryMessage } from './chat-activity';
 import { V1ReadOnlyPage } from './V1ReadOnlyPages';
 import { V1BriefHealthPage } from './V1BriefHealthPages';
+import { CalendarPage } from './CalendarPage';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -139,7 +140,7 @@ export function singleDraftSourceFromSearch(search: string): { collection: 'draf
 const messages = {
   'zh-CN': {
     brand: 'SecondBrain', workspace: '你的工作台', subtitle: '一眼掌握当前状态，专注今日最重要的事情',
-    home: '首页', chat: '对话', today: '今日', inbox: '收件箱', review: '待审核', projects: '项目',
+    home: '首页', chat: '对话', today: '今日', calendar: '日历', inbox: '收件箱', review: '待审核', projects: '项目',
     knowledge: '知识库', brief: '简报', agentHealth: 'Agent 状态', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', settings: '设置',
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
@@ -152,7 +153,7 @@ const messages = {
     localeLabel: '中文', menu: '打开导航菜单', closeMenu: '关闭导航菜单', demo: 'DEMO', real: 'REAL',
     demoTrend: '趋势示意', demoSources: '来源占比示意', pending: '待审核', apiEntries: 'API 返回条目',
     unavailable: '尚未统计', noTodayData: '今日数据结构暂不可识别', technicalItems: 'Home API 当前返回的是项目目录文件，尚非业务项目列表。',
-    viewAll: '查看全部', reviewStatus: '待审核', projectType: '项目条目', knowledgeType: '知识条目',
+    viewAll: '查看全部', viewCalendar: '查看完整日历', reviewStatus: '待审核', projectType: '项目条目', knowledgeType: '知识条目',
     statusUnavailable: '状态未提供', demoDelta: '趋势示意',
     briefDescription: '每日为你生成关键信息摘要', activityDescription: '聚合与你协作的动态',
     chatDescription: '与 SecondBrain 对话', reviewDescription: '查看待处理内容',
@@ -171,7 +172,7 @@ const messages = {
   },
   en: {
     brand: 'SecondBrain', workspace: 'Your workspace', subtitle: 'See your current state and focus on what matters today',
-    home: 'Home', chat: 'Chat', today: 'Today', inbox: 'Inbox', review: 'Review', projects: 'Projects',
+    home: 'Home', chat: 'Chat', today: 'Today', calendar: 'Calendar', inbox: 'Inbox', review: 'Review', projects: 'Projects',
     knowledge: 'Knowledge', brief: 'Brief', agentHealth: 'Agent Health', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', settings: 'Settings',
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
@@ -185,7 +186,7 @@ const messages = {
     demoTrend: 'illustrative trend', demoSources: 'illustrative source mix', pending: 'Pending',
     apiEntries: 'API returned entries', unavailable: 'Not available', noTodayData: 'Today data shape is not recognized',
     technicalItems: 'The Home API currently returns project-directory files, not business project records.',
-    viewAll: 'View all', reviewStatus: 'Pending review', projectType: 'Project entry', knowledgeType: 'Knowledge entry',
+    viewAll: 'View all', viewCalendar: 'View full calendar', reviewStatus: 'Pending review', projectType: 'Project entry', knowledgeType: 'Knowledge entry',
     statusUnavailable: 'Status unavailable', demoDelta: 'illustrative change',
     briefDescription: 'A daily summary of the information that matters', activityDescription: 'A view of the work happening around you',
     chatDescription: 'Talk with SecondBrain', reviewDescription: 'Review items waiting for you',
@@ -208,6 +209,7 @@ const navItems = [
   { id: 'home', key: 'home', icon: 'home', section: 'top', route: '/' },
   { id: 'chat', key: 'chat', icon: 'message', section: 'top', route: '/chat' },
   { id: 'today', key: 'today', icon: 'calendar', section: 'work', route: '/today' },
+  { id: 'calendar', key: 'calendar', icon: 'calendar', section: 'work', route: '/calendar' },
   { id: 'inbox', key: 'inbox', icon: 'inbox', section: 'work', route: '/inbox' },
   { id: 'review', key: 'review', icon: 'check', section: 'work', route: '/review' },
   { id: 'projects', key: 'projects', icon: 'folder', section: 'library', route: '/projects' },
@@ -222,7 +224,7 @@ const navItems = [
 ] as const;
 
 const anchorByNav: Record<string, string> = {
-  home: 'top', today: 'today', inbox: 'waiting', review: 'waiting',
+  home: 'top', today: 'today', calendar: 'calendar', inbox: 'waiting', review: 'waiting',
   projects: 'projects', knowledge: 'knowledge', brief: 'brief', 'agent-health': 'agent-health', activity: 'activity',
 };
 
@@ -381,6 +383,10 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     if (!enableNotes) return;
+    // Notes availability is checked only after an explicit Notes or single-source
+    // Inbox route. The authenticated shell must not read the Notes collection
+    // just to render unrelated pages or discover whether the nav item is usable.
+    if (page !== 'notes' && !isSingleSourceInboxPath) return;
     if (isInboxRoute && !isSingleSourceInboxPath) return;
     if (isSingleSourceInboxPath) {
       // The exact-source Notes read is the Core permission check for this isolated route.
@@ -395,7 +401,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
       if (active) { setNotesAvailable(false); setNotesGateChecked(true); }
     });
     return () => { active = false; };
-  }, [enableNotes, isSingleSourceInboxPath, isInboxRoute]);
+  }, [enableNotes, isSingleSourceInboxPath, isInboxRoute, page]);
 
   useEffect(() => {
     const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/') || location.pathname === '/inbox/source';
@@ -428,7 +434,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     <nav className={mobile ? 'nav-list mobile-nav-list' : 'nav-list'} aria-label={t.brand}>
       {(['top', 'work', 'library', 'bottom'] as const).map((section) => (
         <div className={`nav-section nav-section-${section}`} key={section}>
-          {navItems.filter((item) => item.section === section && (item.id !== 'notes' || (enableNotes && notesAvailable))).map((item) => (
+          {navItems.filter((item) => item.section === section && (item.id !== 'notes' || (enableNotes && (!notesGateChecked || notesAvailable)))).map((item) => (
             <button
               type="button"
               key={item.id}
@@ -474,9 +480,12 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
 
         {page === 'brief' || page === 'agent-health' ? <V1BriefHealthPage page={page} locale={locale} />
           : page === 'projects' || page === 'activity' ? <V1ReadOnlyPage page={page} locale={locale} />
+          : page === 'calendar' ? <CalendarPage locale={locale} />
           : page === 'knowledge' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Knowledge…' : '正在加载知识库…'}</div>}><KnowledgePage locale={locale} /></Suspense>
           : page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
-          : page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
+          : page === 'journal' ? <JournalPage /> : page === 'notes' ? (!notesGateChecked
+          ? <div role="status">{locale === 'en' ? 'Checking Notes availability…' : '正在检查笔记状态…'}</div>
+          : enableNotes && notesAvailable
           ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Notes…' : '正在加载笔记…'}</div>}><NotesPage onRegisterNavigationGuard={registerNotesNavigationGuard} onOpenInboxSource={(collection, path) => {
             const query = new URLSearchParams({ collection, path });
             pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1);
@@ -510,7 +519,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         <section className="primary-grid" aria-label={t.today}>
-          <TodayCard state={view.today} locale={locale} />
+          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} />
           <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} />
         </section>
 
@@ -2096,11 +2105,11 @@ function ModuleTitle({ title, icon, trailing }: { title: string; icon: string; t
   return <div className="module-title"><span className={`module-icon ${icon}`}><Icon name={icon} size={17} /></span><h2>{title}</h2>{trailing ?? <span className="module-menu" aria-hidden="true">•••</span>}</div>;
 }
 
-function TodayCard({ state, locale }: { state: ReturnType<typeof adaptHome>['today']; locale: Locale }) {
+function TodayCard({ state, locale, onViewCalendar }: { state: ReturnType<typeof adaptHome>['today']; locale: Locale; onViewCalendar: () => void }) {
   const t = messages[locale];
   return <article className="dashboard-card today-card" id="today">
     <img className="today-background" src={todayLandscapeUrl} alt="" aria-hidden="true" />
-    <ModuleTitle title={t.today} icon="calendar" trailing={<span className="card-link">{t.viewAll}<Icon name="chevron" size={14} /></span>} />
+    <ModuleTitle title={t.today} icon="calendar" trailing={<button type="button" className="card-link" onClick={onViewCalendar} aria-label={t.viewCalendar}>{t.viewAll}<Icon name="chevron" size={14} /></button>} />
     <p className="today-description">{t.todayDescription}</p>
     {state.kind === 'content' ? <div className="today-items">{state.items.map((item, index) => <div className="today-item" key={`${item.title}-${index}`}><span className="timeline-dot"/><strong>{item.title}</strong></div>)}</div>
       : state.kind === 'empty' ? <IllustratedEmpty locale={locale} />
