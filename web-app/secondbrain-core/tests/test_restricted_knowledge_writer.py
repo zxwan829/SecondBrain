@@ -81,6 +81,20 @@ def test_wrong_or_missing_kernel_peer_is_rejected_before_write(tmp_path, peer_ui
     assert list(knowledge.iterdir()) == []
 
 
+def test_writer_refuses_same_uid_configuration(tmp_path):
+    knowledge = tmp_path / "knowledge"
+    receipts = tmp_path / "receipts"
+    knowledge.mkdir(mode=0o750)
+    receipts.mkdir(mode=0o700)
+    os.chmod(knowledge, 0o750)
+    os.chmod(receipts, 0o700)
+    with pytest.raises(WriterRejected, match="writer_core_uid_not_separated"):
+        RestrictedKnowledgeWriter(
+            str(knowledge), str(receipts), os.geteuid(), expected_core_gid=knowledge.stat().st_gid,
+            peer_uid_reader=lambda _sock: os.geteuid(),
+        )
+
+
 @pytest.mark.parametrize("changes", [
     {"extra": "caller root"},
     {"target_filename": "../outside.md"},

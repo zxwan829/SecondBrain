@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import socket
 import stat
 import struct
@@ -135,6 +136,8 @@ class RestrictedKnowledgeWriter:
             raise ValueError("Knowledge and Writer receipt roots must be separate")
         if not isinstance(expected_core_uid, int) or expected_core_uid < 0:
             raise ValueError("A specific expected Core UID is required")
+        if expected_core_uid == os.geteuid():
+            raise WriterRejected("writer_core_uid_not_separated")
         if not isinstance(expected_core_gid, int) or expected_core_gid < 0:
             raise ValueError("A specific expected Core GID is required")
         self.expected_core_uid = expected_core_uid
@@ -394,6 +397,34 @@ def serve_unix_socket(writer, socket_path, stop_event):
                 pass
 
 
+def main():
+    """Optional standalone candidate entry point; never started by Core app."""
+    if not hasattr(socket, "SO_PEERCRED"):
+        raise SystemExit("Writer requires kernel SO_PEERCRED support; refusing startup")
+    required = ("SB_KNOWLEDGE_WRITER_ROOT", "SB_KNOWLEDGE_WRITER_RECEIPT_ROOT",
+                "SB_KNOWLEDGE_WRITER_SOCKET", "SB_CORE_UID", "SB_CORE_GID")
+    if any(not os.environ.get(key) for key in required):
+        raise SystemExit("Writer configuration is incomplete")
+    try:
+        core_uid = int(os.environ["SB_CORE_UID"])
+        core_gid = int(os.environ["SB_CORE_GID"])
+    except ValueError as exc:
+        raise SystemExit("Writer peer identity configuration is invalid") from exc
+    writer = RestrictedKnowledgeWriter(
+        os.environ["SB_KNOWLEDGE_WRITER_ROOT"],
+        os.environ["SB_KNOWLEDGE_WRITER_RECEIPT_ROOT"],
+        core_uid,
+        expected_core_gid=core_gid,
+    )
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_args: stop.set())
+    signal.signal(signal.SIGINT, lambda *_args: stop.set())
+    try:
+        serve_unix_socket(writer, os.environ["SB_KNOWLEDGE_WRITER_SOCKET"], stop)
+    finally:
+        writer.close()
+
+
 class RestrictedWriterIPCClient:
     """Core-side client for exact approved output bytes; never accepts a root path.
 
@@ -454,3 +485,7 @@ class RestrictedWriterIPCClient:
                 or result.get("output_sha256") != payload["output_sha256"]):
             raise RecoveryRequired("writer_response_binding_invalid")
         return result
+
+
+if __name__ == "__main__":
+    main()

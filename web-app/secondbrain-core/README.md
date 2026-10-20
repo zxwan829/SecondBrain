@@ -149,7 +149,12 @@ unchanged.
   temporary roots. On this macOS runtime Python exposes no `SO_PEERCRED` or
   `getpeereid` API, so real kernel peer identity and cross-UID behavior remain
   unverified; unsupported peer credentials fail closed. Do not enable or launch
-  the candidate in production.
+  the candidate in production. A standalone candidate entry point is available
+  only via explicit `python -m secondbrain_core.modules.restricted_knowledge_writer`
+  with provisioned `SB_KNOWLEDGE_WRITER_ROOT`,
+  `SB_KNOWLEDGE_WRITER_RECEIPT_ROOT`, `SB_KNOWLEDGE_WRITER_SOCKET`, `SB_CORE_UID`,
+  and `SB_CORE_GID`; it rejects unsupported peer credentials and same-UID mode.
+  This command was not launched in this task.
 - Task API is always routed but returns an explicit unavailable response unless
   `SB_TASK_ROOT` names an existing Core-owned `0700` directory. It uses one
   locked, atomically replaced JSON store for idempotent create, status/date query,
