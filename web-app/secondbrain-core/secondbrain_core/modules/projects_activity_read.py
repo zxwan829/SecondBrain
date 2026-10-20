@@ -17,6 +17,10 @@ _MAX_OFFSET = 100_000
 _DEFAULT_JOURNAL_LOOKBACK_DAYS = 365
 _PROJECTS_MAX_LIMIT = 50
 _PROJECTS_MAX_OFFSET = 5000
+_ACTIVITY_JOURNAL_MAX_BYTES = 2 * 1024 * 1024
+_ACTIVITY_JOURNAL_MAX_BYTES_PER_DAY = 1024 * 1024
+_ACTIVITY_JOURNAL_MAX_ROWS = 10_000
+_ACTIVITY_JOURNAL_MAX_ROWS_PER_DAY = 5000
 
 
 def _checked_at():
@@ -103,13 +107,45 @@ def _within_window(stamp, start, end, zone):
 
 def _journal_rows(store, start, end, zone):
     if store is None:
-        return []
-    rows = []
+        return [], True
+    rows, bytes_read, rows_read, complete = [], 0, 0, True
     days = (date.fromordinal(start.toordinal() + offset).isoformat()
             for offset in range((end - start).days + 1))
     for day in days:
-        data = store.read(day)
-        for record in data["entries"]:
+        remaining = _ACTIVITY_JOURNAL_MAX_BYTES - bytes_read
+        remaining_rows = _ACTIVITY_JOURNAL_MAX_ROWS - rows_read
+        if remaining <= 0 or remaining_rows <= 0:
+            complete = False
+            break
+        try:
+            snapshot = store.read_source_day(
+                day,
+                max_bytes=min(_ACTIVITY_JOURNAL_MAX_BYTES_PER_DAY, remaining),
+                max_entries=min(_ACTIVITY_JOURNAL_MAX_ROWS_PER_DAY, remaining_rows),
+            )
+        except Exception:
+            complete = False
+            break
+        if not isinstance(snapshot, dict) or not snapshot.get("available"):
+            complete = False
+            break
+        day_bytes = snapshot.get("bytes_read")
+        entries = snapshot.get("entries")
+        if (not isinstance(day_bytes, int) or isinstance(day_bytes, bool) or day_bytes < 0
+                or day_bytes > min(_ACTIVITY_JOURNAL_MAX_BYTES_PER_DAY, remaining)
+                or not isinstance(entries, dict)):
+            complete = False
+            break
+        bytes_read += day_bytes
+        if len(entries) > remaining_rows:
+            complete = False
+            entries = dict(list(entries.items())[:remaining_rows])
+        rows_read += len(entries)
+        for item in entries.values():
+            if not isinstance(item, dict) or not isinstance(item.get("record"), dict):
+                complete = False
+                continue
+            record = item["record"]
             operation_id = record.get("operation_id")
             session_id = record.get("session_id")
             if not isinstance(operation_id, str) or not operation_id or not isinstance(session_id, str) or not session_id:
@@ -124,7 +160,7 @@ def _journal_rows(store, start, end, zone):
                 "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
                 "journal_date": record.get("date") if isinstance(record.get("date"), str) else day,
             })
-    return rows
+    return rows, not complete
 
 
 def _task_rows(store, start, end, zone):
@@ -238,7 +274,7 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
                 "source": [], "freshness": {"checked_at": datetime.now(timezone.utc).isoformat()},
             }
 
-        rows = _journal_rows(journal_store, start, end, zone)
+        rows, journal_read_incomplete = _journal_rows(journal_store, start, end, zone)
         task_read_failed = False
         try:
             rows.extend(_task_rows(task_store, start, end, zone))
@@ -250,7 +286,7 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
         page_rows = rows[offset:offset + limit]
         missing_source = len(configured) < 2
         return {
-            "status": "partial" if missing_source or default_window or task_read_failed else ("ok" if rows else "empty"),
+            "status": "partial" if missing_source or default_window or task_read_failed or journal_read_incomplete else ("ok" if rows else "empty"),
             "items": page_rows,
             "pagination": {"limit": limit, "offset": offset, "has_more": offset + limit < len(rows)},
             "source": configured,
