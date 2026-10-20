@@ -43,6 +43,12 @@ def _file_state(path):
     }
 
 
+def _directory_state(path):
+    info = path.lstat()
+    return (stat.S_IMODE(info.st_mode), info.st_uid, info.st_gid, info.st_dev,
+            info.st_ino, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def test_source_read_succeeds_in_nonwritable_root_without_lock_or_other_side_effects(tmp_path):
     root, store, entries = _store_with_rows(tmp_path)
     source = root / f"{DAY}.jsonl"
@@ -59,6 +65,7 @@ def test_source_read_succeeds_in_nonwritable_root_without_lock_or_other_side_eff
     assert not probe.exists()
 
     root_entries_before = sorted(path.name for path in root.iterdir())
+    root_state_before = _directory_state(root)
     before = _file_state(source)
     expected_row = json.loads(source.read_text(encoding="utf-8").splitlines()[0])
     result = store.read_source_day(DAY)
@@ -72,6 +79,7 @@ def test_source_read_succeeds_in_nonwritable_root_without_lock_or_other_side_eff
                  "version": result["entries"][expected_row["id"]]["version"]}
     assert authority.verify(reference) == "verified"
     assert sorted(path.name for path in root.iterdir()) == root_entries_before
+    assert _directory_state(root) == root_state_before
     after = _file_state(source)
     for key in before:
         if key == "atime_ns" and not getattr(os, "O_NOATIME", 0):

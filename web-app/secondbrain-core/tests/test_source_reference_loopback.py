@@ -38,6 +38,12 @@ def _tree_snapshot(root):
     return result
 
 
+def _directory_state(path):
+    info = Path(path).lstat()
+    return (stat.S_IMODE(info.st_mode), info.st_uid, info.st_gid, info.st_dev,
+            info.st_ino, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_path, monkeypatch):
     roots = {name: _private_dir(tmp_path / name) for name in (
         "review", "raw", "knowledge", "state", "projects", "briefs", "tasks",
@@ -70,6 +76,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
         denied_create.unlink(missing_ok=True)
         raise AssertionError("synthetic Journal fixture unexpectedly permits file creation")
     journal_tree_before = _tree_snapshot(roots["journal"])
+    journal_dir_before = _directory_state(roots["journal"])
     notes_store = NotesStore(str(roots["notes"]))
     note = notes_store.create("# Synthetic Project Note\n")
 
@@ -158,6 +165,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             # metadata, bytes, modes, identities, and directory entries must
             # remain identical.
             assert set(journal_tree_after) == set(journal_tree_before)
+            assert _directory_state(roots["journal"]) == journal_dir_before
             for name in journal_tree_before:
                 before = dict(journal_tree_before[name])
                 after = dict(journal_tree_after[name])
