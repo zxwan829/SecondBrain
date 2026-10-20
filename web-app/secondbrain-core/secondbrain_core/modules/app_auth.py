@@ -12,6 +12,18 @@ from fastapi import HTTPException, Request
 
 class AppSessionAuth:
     COOKIE_NAME = "sb_app_session"
+    SUPPORTED_ACTIONS = frozenset({
+        "activity.read", "agent.health.read", "auth.logout", "auth.session",
+        "automation.run", "automation.settings.read", "automation.settings.write",
+        "automation.status.read", "calendar.read", "capture.read", "capture.write",
+        "chat.approve_tool", "chat.manage", "chat.read", "chat.run", "chat.stop",
+        "chat.write", "daily_brief.read", "daily_brief.write", "home.read",
+        "inbox.read", "journal.append", "journal.read", "knowledge.read", "notes.read",
+        "notes.create", "notes.write", "personal_memory.read", "personal_memory.write",
+        "projects.read", "promote.read", "review.defer",
+        "review.read", "task.read", "task.write", "vocabulary.read", "vocabulary.write",
+        "inbox.proposals.read", "inbox.proposals.write",
+    })
 
     def __init__(self, password_file, allowed_origins, session_ttl=28800):
         if not os.path.isabs(password_file):
@@ -87,6 +99,8 @@ class AppSessionAuth:
         """Authorization seam for business operations; V1 maps every action to its single owner."""
         if not isinstance(action, str) or not action:
             raise ValueError("An action name is required")
+        if action not in self.SUPPORTED_ACTIONS:
+            raise HTTPException(status_code=403, detail="Action is not enabled")
         return self.require_owner(request)
 
     def logout(self, request):
