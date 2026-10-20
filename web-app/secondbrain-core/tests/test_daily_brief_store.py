@@ -8,6 +8,7 @@ from secondbrain_core.modules.daily_brief_store import DailyBriefRecordReadStore
 
 DAY = "2026-10-20"
 ZONE = "Asia/Shanghai"
+REFS = [{"kind": "note", "id": "note-synthetic", "version": "a" * 64}]
 
 
 def make_root(tmp_path):
@@ -17,17 +18,25 @@ def make_root(tmp_path):
     return root
 
 
-def write_record(root, *, day=DAY, timezone=ZONE, refs=None):
+def record_payload(*, day=DAY, timezone=ZONE, refs=None, **overrides):
     payload = {
+        "brief_id": "brief-synthetic",
         "date": day,
         "timezone": timezone,
         "generated_at": "2026-10-20T08:00:00+08:00",
-        "categories": [],
+        "generation_status": "generated",
+        "categories": ["synthetic"],
         "summary": "Synthetic durable brief",
-        "source_refs": refs if refs is not None else [{"source_id": "synthetic-ref", "sha256": "a" * 64}],
+        "source_refs": REFS if refs is None else refs,
     }
+    payload.update(overrides)
+    return payload
+
+
+def write_record(root, *, day=DAY, timezone=ZONE, refs=None, **overrides):
     path = root / f"{day}.json"
-    path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+    path.write_text(json.dumps(record_payload(day=day, timezone=timezone, refs=refs,
+                                             **overrides), separators=(",", ":")), encoding="utf-8")
     os.chmod(path, 0o600)
     return path
 
@@ -40,7 +49,7 @@ def test_unconfigured_daily_brief_has_no_record_and_no_trusted_claim(tmp_path):
     assert snapshot.source_verification == "unverified"
 
 
-def test_daily_brief_reads_one_exact_day_and_verifies_only_with_injected_source_proof(tmp_path, monkeypatch):
+def test_daily_brief_reads_exact_day_and_verifies_only_with_injected_source_proof(tmp_path, monkeypatch):
     root = make_root(tmp_path)
     write_record(root)
     (root / "2026-10-19.json").write_text("not read", encoding="utf-8")
@@ -56,17 +65,32 @@ def test_daily_brief_reads_one_exact_day_and_verifies_only_with_injected_source_
     assert len(snapshot.sha256) == 64
     assert snapshot.source_verification == "unverified"
 
-    verified = store.read(DAY, ZONE, source_verifier=lambda ref: (
-        ref.get("source_id") == "synthetic-ref" and ref.get("sha256") == "a" * 64))
+    verified = store.read(DAY, ZONE, source_verifier=lambda ref: ref == REFS[0])
     assert verified.source_verification == "verified"
-    partial = store.read(DAY, ZONE, source_verifier=lambda _ref: False)
-    assert partial.source_verification == "partial"
 
 
-def test_daily_brief_unconfigured_day_is_distinct_from_unavailable_root(tmp_path):
+def test_all_source_failures_are_not_misreported_as_partial(tmp_path):
     root = make_root(tmp_path)
+    write_record(root, refs=[REFS[0], {**REFS[0], "id": "another-note"}])
     store = DailyBriefRecordReadStore(str(root))
-    missing = store.read(DAY, ZONE)
+    assert store.read(DAY, ZONE, source_verifier=lambda _ref: False).source_verification == "missing"
+    assert store.read(DAY, ZONE, source_verifier=lambda _ref: "unavailable").source_verification == "unavailable"
+    assert store.read(DAY, ZONE, source_verifier=lambda _ref: "stale").source_verification == "stale"
+    assert store.read(DAY, ZONE, source_verifier=lambda _ref: (_ for _ in ()).throw(
+        RuntimeError("synthetic verifier failure"))).source_verification == "failed"
+
+
+def test_mixed_source_verification_is_partial_only_when_some_refs_pass(tmp_path):
+    root = make_root(tmp_path)
+    write_record(root, refs=[REFS[0], {**REFS[0], "id": "missing-note"}])
+    store = DailyBriefRecordReadStore(str(root))
+    result = store.read(DAY, ZONE, source_verifier=lambda ref: ref["id"] == "note-synthetic")
+    assert result.source_verification == "partial"
+
+
+def test_daily_brief_unconfigured_day_differs_from_unavailable_root(tmp_path):
+    root = make_root(tmp_path)
+    missing = DailyBriefRecordReadStore(str(root)).read(DAY, ZONE)
     assert missing.configured is True
     assert missing.available is True
     assert missing.found is False
@@ -94,43 +118,52 @@ def test_daily_brief_rejects_corrupt_or_duplicate_key_records(tmp_path, bad_payl
     assert snapshot.source_verification == "unverified"
 
 
-def test_daily_brief_requires_matching_date_timezone_and_valid_reference_count(tmp_path):
+@pytest.mark.parametrize("field,value", [
+    ("private_body", "not allowed"),
+    ("brief_id", "../escape"),
+    ("generation_status", "unknown"),
+    ("generated_at", "2026-10-20 08:00:00"),
+    ("categories", ["", 7]),
+    ("summary", None),
+    ("source_refs", [{}]),
+    ("source_refs", [{"kind": "note", "id": "n", "version": "bad"}]),
+])
+def test_daily_brief_rejects_unknown_or_malformed_record_fields(tmp_path, field, value):
+    root = make_root(tmp_path)
+    write_record(root, **{field: value})
+    snapshot = DailyBriefRecordReadStore(str(root)).read(DAY, ZONE)
+    assert snapshot.available is False
+    assert snapshot.record is None
+    assert snapshot.source_verification == "unverified"
+
+
+def test_daily_brief_requires_matching_date_timezone_and_timezone_local_generation_day(tmp_path):
     root = make_root(tmp_path)
     write_record(root, timezone="UTC")
-    mismatch = DailyBriefRecordReadStore(str(root)).read(DAY, ZONE)
-    assert mismatch.available is False
-    assert mismatch.record is None
+    store = DailyBriefRecordReadStore(str(root))
+    assert store.read(DAY, ZONE).available is False
 
-    path = root / f"{DAY}.json"
-    payload = json.loads(path.read_text())
-    payload["timezone"] = ZONE
-    payload["source_refs"] = [{}] * 3
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    os.chmod(path, 0o600)
-    bounded = DailyBriefRecordReadStore(str(root), max_source_refs=2).read(DAY, ZONE)
-    assert bounded.available is False
-    assert bounded.record is None
+    write_record(root, generated_at="2026-10-20T00:30:00+14:00")
+    assert store.read(DAY, ZONE).available is False
 
 
-def test_daily_brief_refuses_symlink_hardlink_oversize_and_public_file(tmp_path):
+def test_daily_brief_requires_single_link_private_bounded_record_and_reference_count(tmp_path):
     root = make_root(tmp_path)
-    path = write_record(root)
+    path = write_record(root, refs=[REFS[0], {**REFS[0], "id": "second"},
+                                   {**REFS[0], "id": "third"}])
+    assert DailyBriefRecordReadStore(str(root), max_source_refs=2).read(DAY, ZONE).available is False
     os.link(path, root / "other.json")
-    linked = DailyBriefRecordReadStore(str(root)).read(DAY, ZONE)
-    assert linked.available is False
+    assert DailyBriefRecordReadStore(str(root)).read(DAY, ZONE).available is False
 
     path.unlink()
-    path.write_text("{}", encoding="utf-8")
-    os.chmod(path, 0o600)
+    path = write_record(root)
     path.write_bytes(b" " * 4097)
     os.chmod(path, 0o600)
-    oversize = DailyBriefRecordReadStore(str(root), max_record_bytes=4096).read(DAY, ZONE)
-    assert oversize.available is False
+    assert DailyBriefRecordReadStore(str(root), max_record_bytes=4096).read(DAY, ZONE).available is False
 
     path.write_text("{}", encoding="utf-8")
     os.chmod(path, 0o644)
-    public = DailyBriefRecordReadStore(str(root)).read(DAY, ZONE)
-    assert public.available is False
+    assert DailyBriefRecordReadStore(str(root)).read(DAY, ZONE).available is False
 
 
 def test_daily_brief_refuses_symlink_record_and_bad_queries(tmp_path):
@@ -144,3 +177,13 @@ def test_daily_brief_refuses_symlink_record_and_bad_queries(tmp_path):
     assert snapshot.record is None
     with pytest.raises(ValueError, match="invalid query"):
         DailyBriefRecordReadStore(str(root)).read("2026-02-30", ZONE)
+
+
+def test_empty_source_refs_only_allowed_for_explicit_generation_failure(tmp_path):
+    root = make_root(tmp_path)
+    write_record(root, refs=[])
+    assert DailyBriefRecordReadStore(str(root)).read(DAY, ZONE).available is False
+    write_record(root, refs=[], generation_status="failed")
+    accepted = DailyBriefRecordReadStore(str(root)).read(DAY, ZONE)
+    assert accepted.available is True
+    assert accepted.record["generation_status"] == "failed"
