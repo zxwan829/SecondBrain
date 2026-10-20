@@ -24,9 +24,9 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, sum
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
     if (url === '/api/home') return new Response('{}', { status: 200 });
-    if (url === '/api/projects?limit=1&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 1, offset: 0, has_more: false }, source: null }), { status: 200 });
+    if (url === '/api/projects?limit=1&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 1, offset: 0, has_more: false }, source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
-    if (url.startsWith('/api/daily-brief?')) return new Response(JSON.stringify({ status: 'not_configured', items: [], source: null }), { status: 200 });
+    if (url.startsWith('/api/daily-brief?')) return new Response(JSON.stringify({ status: 'not_configured', items: [], source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url === '/api/agent/health') return new Response(JSON.stringify({ status: 'not_configured', source: null, checked_at: '2026-10-20T01:30:00Z' }), { status: 200 });
     if (url.startsWith('/api/calendar?')) {
       const query = new URLSearchParams(url.split('?')[1]);

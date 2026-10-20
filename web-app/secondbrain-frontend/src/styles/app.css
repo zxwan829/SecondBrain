@@ -269,6 +269,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .v1-local-preview { padding: 14px; background: rgb(17 28 46 / 56%); border: 1px dashed rgb(121 158 205 / 30%); border-radius: 12px; }
 .v1-local-preview-content { display: grid; gap: 7px; margin-top: 12px; color: #c5d4e8; font-size: 13px; line-height: 1.55; }
 .v1-local-preview-content p { margin: 0; }
+.v1-daily-brief-summary { margin-top: 16px; color: #d9e6f8; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .calendar-month { min-width: 0; padding: clamp(10px, 1.6vw, 18px); background: rgb(13 22 38 / 84%); border: 1px solid rgb(151 177 215 / 16%); border-radius: 14px; }
 .calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
 .calendar-month-title { margin: 0 0 12px; color: #edf4ff; font-size: 15px; font-weight: 600; }

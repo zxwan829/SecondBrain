@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { parseProjectsResponse, type ProjectRecord, type ProjectsResponse } from './projects-brief-wire';
 
 type Locale = 'zh-CN' | 'en';
 type PageId = 'projects' | 'activity';
@@ -91,7 +92,12 @@ const copy = {
     activity: { eyebrow: 'WORKSPACE / ACTIVITY', title: '动态', description: '按时间查看收录、审核与协作事件。' },
     unavailable: '该页面数据暂不可用。请稍后重试。', unauthorized: '当前账户无权读取此页面数据。',
     notImplemented: 'BACKEND_NOT_IMPLEMENTED · 只读接口尚未进入 main。',
-    projectsUnconfigured: '尚未配置可信项目数据源。当前不会扫描文件目录或从收件箱推断项目。',
+    projectsUnconfigured: 'NOT BUSINESS CLOSED · 尚未配置可信项目数据源。当前不会扫描文件目录或从收件箱推断项目。',
+    projectsEmpty: '可信项目索引已读取，但当前没有项目记录。',
+    projectsUnavailable: '可信项目数据源暂不可用。没有回退到目录扫描或推断。',
+    projectPartial: '部分项目来源或关联未通过核验；仅展示 Core 已确认的记录。',
+    projectStatuses: { active: '进行中', paused: '已暂停', completed: '已完成', archived: '已归档', unknown: '未知' },
+    projectRecent: '最近活动', linkedNoteRefs: '已核验关联笔记引用',
     activityUnconfigured: '暂无可展示的 Core Journal/Task 操作动态。未读取 Hermes 会话或消息。',
     partial: '部分来源暂不可用；以下仅展示可确认的来源。', empty: '暂无动态。',
     retry: '重试', localPreview: '查看本地合成预览', hidePreview: '隐藏合成预览',
@@ -105,7 +111,12 @@ const copy = {
     activity: { eyebrow: 'WORKSPACE / ACTIVITY', title: 'Activity', description: 'Review capture, approval, and collaboration events.' },
     unavailable: 'This page data is unavailable. Try again later.', unauthorized: 'This account cannot read this page.',
     notImplemented: 'BACKEND_NOT_IMPLEMENTED · The read-only API is not on main yet.',
-    projectsUnconfigured: 'No trusted project source is configured. Files are not scanned and projects are not inferred from Inbox.',
+    projectsUnconfigured: 'NOT BUSINESS CLOSED · No trusted project source is configured. Files are not scanned and projects are not inferred from Inbox.',
+    projectsEmpty: 'The trusted project index was read successfully and contains no project records.',
+    projectsUnavailable: 'The trusted project source is unavailable. No directory scan or inference was used as a fallback.',
+    projectPartial: 'Some project sources or relations could not be verified; only Core-confirmed records are shown.',
+    projectStatuses: { active: 'Active', paused: 'Paused', completed: 'Completed', archived: 'Archived', unknown: 'Unknown' },
+    projectRecent: 'Recent activity', linkedNoteRefs: 'Verified linked note references',
     activityUnconfigured: 'No Core Journal/Task activity is available. Hermes sessions and messages were not read.',
     partial: 'Some sources are unavailable; only confirmed sources are shown.', empty: 'No activity yet.',
     retry: 'Retry', localPreview: 'Show local synthetic preview', hidePreview: 'Hide synthetic preview',
@@ -121,6 +132,7 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
   const t = copy[locale];
   const [state, setState] = useState<PageLoadState>('loading');
   const [activity, setActivity] = useState<ActivityResponse | null>(null);
+  const [projects, setProjects] = useState<ProjectsResponse | null>(null);
   const [preview, setPreview] = useState(false);
   const [revision, setRevision] = useState(0);
   const load = useCallback(async (signal: AbortSignal) => {
@@ -129,11 +141,9 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
       const payload = await loadPage(page, signal);
       if (signal.aborted) return;
       if (page === 'projects') {
-        if (!isRecord(payload) || payload.status !== 'not_configured' || !Array.isArray(payload.items)
-          || payload.items.length !== 0 || !isRecord(payload.pagination) || payload.source !== null
-          || Object.keys(payload).some((field) => !['status', 'items', 'pagination', 'source'].includes(field))
-          || Object.keys(payload.pagination).some((field) => !['limit', 'offset', 'has_more'].includes(field))
-          || payload.pagination.limit !== 1 || payload.pagination.offset !== 0 || payload.pagination.has_more !== false) throw new Error('unavailable');
+        const parsed = parseProjectsResponse(payload);
+        if (!parsed) throw new Error('unavailable');
+        setProjects(parsed);
         setState('loaded');
         return;
       }
@@ -172,7 +182,13 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
         : state === 'backend-not-implemented' ? <p className="v1-page-state is-unavailable" role="status">{t.notImplemented}</p>
           : state === 'unauthorized' ? <p className="v1-page-state is-unavailable" role="alert">{t.unauthorized}</p>
             : state === 'unavailable' ? <p className="v1-page-state is-unavailable" role="alert">{t.unavailable}</p>
-              : page === 'projects' ? <p className="v1-page-state" role="status">{t.projectsUnconfigured}</p>
+              : page === 'projects' && projects?.status === 'not_configured' ? <p className="v1-page-state" role="status">{t.projectsUnconfigured}</p>
+                : page === 'projects' && projects?.status === 'unavailable' ? <p className="v1-page-state is-unavailable" role="alert">{t.projectsUnavailable}</p>
+                  : page === 'projects' && projects?.status === 'empty' ? <p className="v1-page-state" role="status">{t.projectsEmpty} · {locale === 'en' ? 'Checked' : '检查时间'} {new Date(projects.freshness.checked_at).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}</p>
+                    : page === 'projects' && projects ? <>
+                      {projects.status === 'partial' && <p className="v1-page-state is-partial" role="status">{t.projectPartial}</p>}
+                      <ProjectList items={projects.items} locale={locale} checkedAt={projects.freshness.checked_at} />
+                    </>
                 : activity?.status === 'unavailable' ? <p className="v1-page-state is-unavailable" role="alert">{t.unavailable}</p>
                   : activity?.items.length === 0 ? <p className="v1-page-state" role="status">{t.empty}</p>
                     : <>
@@ -212,4 +228,22 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
       </section>}
     </section>
   );
+}
+
+function ProjectList({ items, locale, checkedAt }: { items: ProjectRecord[]; locale: Locale; checkedAt: string }) {
+  const t = copy[locale];
+  return <>
+    <p className="calendar-source-note">{locale === 'en' ? 'Source checked' : '来源检查时间'} · {new Date(checkedAt).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}</p>
+    <div className="v1-project-grid">
+      {items.map((project) => <article className="v1-data-card v1-project-card" key={project.id}>
+        <div className="v1-data-card-heading"><h2>{project.title}</h2><span className="v1-status-pill">{t.projectStatuses[project.status]}</span></div>
+        {(project.next_step || project.updated_at || project.recent_activity || project.linked_notes) && <dl className="v1-data-fields">
+          {project.next_step && <div><dt>{t.next}</dt><dd>{project.next_step}</dd></div>}
+          {project.updated_at && <div><dt>{t.checkedAt}</dt><dd><time>{new Date(project.updated_at).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}</time></dd></div>}
+          {project.recent_activity && <div><dt>{t.projectRecent}</dt><dd>{project.recent_activity.kind} · <time>{new Date(project.recent_activity.occurred_at).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}</time></dd></div>}
+          {project.linked_notes && project.linked_notes.length > 0 && <div><dt>{t.linkedNoteRefs}</dt><dd>{project.linked_notes.length}</dd></div>}
+        </dl>}
+      </article>)}
+    </div>
+  </>;
 }
