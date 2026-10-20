@@ -2,7 +2,9 @@
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -11,56 +13,155 @@ from fastapi.responses import StreamingResponse
 from .app_auth import AppSessionAuth
 from .hermes_api import HermesAPI
 from .run_approvals import RunApprovalRegistry
-from .review_promote.approval import _read_review
+
+
+_HOME_SCAN_ENTRY_LIMIT = 500
+_HOME_SCAN_DEPTH_LIMIT = 4
+_HOME_FILE_LIMIT = 50
+_HOME_FILE_BYTES_LIMIT = 256 * 1024
+
+
+def _read_bounded_review(root, relative):
+    parts = relative.split("/")
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise OSError("invalid Review path")
+    directory_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                           | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        current_fd = directory_fd
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0), dir_fd=current_fd)
+            if current_fd != directory_fd:
+                os.close(current_fd)
+            current_fd = next_fd
+        file_fd = os.open(parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=current_fd)
+        try:
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise OSError("Review item is not a regular file")
+            chunks = []
+            remaining = _HOME_FILE_BYTES_LIMIT + 1
+            while remaining:
+                chunk = os.read(file_fd, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+            if len(payload) > _HOME_FILE_BYTES_LIMIT:
+                raise OSError("Review item exceeds Home read limit")
+            return payload
+        finally:
+            os.close(file_fd)
+    finally:
+        if current_fd != directory_fd:
+            os.close(current_fd)
+        os.close(directory_fd)
+
+
+def _bounded_markdown_paths(root, *, max_entries=_HOME_SCAN_ENTRY_LIMIT,
+                            max_depth=_HOME_SCAN_DEPTH_LIMIT, max_files=_HOME_FILE_LIMIT):
+    """Return a bounded, no-symlink traversal of Markdown paths and truncation state."""
+    root = Path(root)
+    try:
+        if not root.is_dir() or root.is_symlink():
+            return [], False
+    except OSError:
+        return [], False
+    pending = [(root, 0)]
+    paths = []
+    visited = 0
+    truncated = False
+    while pending:
+        current, depth = pending.pop(0)
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    if visited >= max_entries:
+                        truncated = True
+                        break
+                    visited += 1
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            if depth < max_depth:
+                                pending.append((Path(entry.path), depth + 1))
+                            else:
+                                truncated = True
+                            continue
+                        if (entry.is_file(follow_symlinks=False)
+                                and Path(entry.name).suffix.lower() == ".md"):
+                            if len(paths) >= max_files:
+                                truncated = True
+                                break
+                            paths.append(Path(entry.path))
+                    except OSError:
+                        continue
+        except OSError:
+            truncated = True
+        if truncated:
+            break
+    return paths, truncated
+
+
+def _trusted_directory_available(root):
+    try:
+        return Path(root).is_dir() and not Path(root).is_symlink()
+    except OSError:
+        return False
 
 
 def _review_items(review_root, service):
     root = Path(review_root)
     items = []
-    if not root.is_dir() or root.is_symlink():
-        return items
-    for current, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(name for name in dirs if not Path(current, name).is_symlink())
-        for name in sorted(files):
-            absolute = Path(current, name)
-            if absolute.suffix.lower() != ".md" or absolute.is_symlink():
+    paths, truncated = _bounded_markdown_paths(root)
+    for absolute in paths:
+        try:
+            info = absolute.lstat()
+            if info.st_size > _HOME_FILE_BYTES_LIMIT:
+                truncated = True
                 continue
             relative = absolute.relative_to(root).as_posix()
-            try:
-                content = _read_review(str(root), relative)
-            except Exception:
-                continue
+            content = _read_bounded_review(str(root), relative)
             decoded = content.decode("utf-8", errors="replace")
             title = next((line[2:].strip() for line in decoded.splitlines() if line.startswith("# ")), absolute.stem)
             digest = hashlib.sha256(content).hexdigest()
             decision = service.get_decision(relative, digest)
             items.append({"review_path": relative, "review_sha256": digest,
-                          "target_filename": name, "title": title,
+                          "target_filename": absolute.name, "title": title,
                           "status": (decision or {}).get("status") or "pending",
                           "decision": decision,
-                          "updated": absolute.lstat().st_mtime})
-    return items
+                          "updated": info.st_mtime})
+        except (OSError, ValueError):
+            truncated = True
+            continue
+    return items, truncated
 
 
 def _knowledge_items(knowledge_root, limit=8):
     root = Path(knowledge_root)
     items = []
-    if not root.is_dir() or root.is_symlink():
-        return items
-    for current, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = [name for name in dirs if not Path(current, name).is_symlink()]
-        for name in files:
-            path = Path(current, name)
-            if path.suffix.lower() != ".md" or path.is_symlink():
+    paths, truncated = _bounded_markdown_paths(root)
+    for path in paths:
+        fd = None
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > _HOME_FILE_BYTES_LIMIT:
+                truncated = True
                 continue
-            try:
-                stat = path.stat(follow_symlinks=False)
-                with path.open("r", encoding="utf-8", errors="replace") as stream:
-                    title = next((line[2:].strip() for line in stream if line.startswith("# ")), path.stem)
-                items.append({"title": title, "status": "active", "updated": stat.st_mtime})
-            except OSError:
-                continue
-    return sorted(items, key=lambda row: row["updated"], reverse=True)[:limit]
+            with os.fdopen(fd, "r", encoding="utf-8", errors="replace", closefd=False) as stream:
+                title = next((line[2:].strip() for line in stream
+                              if line.startswith("# ") and len(line) <= 4096), path.stem)
+            items.append({"title": title, "status": "active", "updated": info.st_mtime})
+        except OSError:
+            truncated = True
+            continue
+        finally:
+            if fd is not None:
+                os.close(fd)
+    return sorted(items, key=lambda row: row["updated"], reverse=True)[:limit], truncated
 
 
 def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, review_root, knowledge_root,
@@ -89,22 +190,39 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
     @router.get("/home")
     async def home(request: Request):
         auth.require_action(request, "home.read")
-        all_reviews = _review_items(review_root, service)
+        checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        all_reviews, reviews_truncated = _review_items(review_root, service)
         pending = [item for item in all_reviews if item["status"] in {"pending", "failed"}]
-        knowledge = _knowledge_items(knowledge_root)
+        knowledge, knowledge_truncated = _knowledge_items(knowledge_root)
+        review_available = _trusted_directory_available(review_root)
+        knowledge_available = _trusted_directory_available(knowledge_root)
         try:
+            if not getattr(hermes, "configured", False):
+                raise HTTPException(status_code=503, detail="Hermes is not configured")
             await hermes.capabilities()
-            agent = {"status": "online", "source": "hermes-runtime"}
+            agent_status = "online"
         except HTTPException:
-            agent = {"status": "unavailable", "source": "unavailable"}
+            agent_status = "unavailable" if getattr(hermes, "configured", False) else "not_configured"
         home_items = pending[:50]
+        review_status = ("unavailable" if not review_available else
+                         "partial" if reviews_truncated else ("real" if home_items else "empty"))
+        knowledge_status = ("unavailable" if not knowledge_available else
+                            "partial" if knowledge_truncated else ("real" if knowledge else "empty"))
         return {
             "status": "ok",
-            "review": {"status": "real" if home_items else "empty", "items": home_items, "pending_count": len(home_items)},
-            "knowledge": {"status": "real" if knowledge else "empty", "items": knowledge},
-            "projects": {"status": "unavailable", "items": []},
-            "today": None,
-            "agent": agent,
+            "review": {"status": review_status, "items": home_items,
+                       "pending_count": len(home_items),
+                       "source": "configured-review-root" if review_available else None,
+                       "freshness": {"checked_at": checked_at}},
+            "knowledge": {"status": knowledge_status, "items": knowledge,
+                          "source": "configured-knowledge-root" if knowledge_available else None,
+                          "freshness": {"checked_at": checked_at}},
+            "projects": {"status": "not_configured", "items": [], "source": None,
+                         "freshness": {"checked_at": checked_at}},
+            "today": {"status": "not_configured", "items": [], "source": None,
+                      "freshness": {"checked_at": checked_at}},
+            "agent": {"status": agent_status, "items": [], "source": "hermes-runtime",
+                      "freshness": {"checked_at": checked_at}},
         }
 
     @router.get("/chat/capabilities")

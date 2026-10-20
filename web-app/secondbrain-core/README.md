@@ -149,6 +149,13 @@ unchanged.
   read Hermes history or call a model. `GET /api/agent/health` reports only
   status, source, and checked time from a Hermes capabilities request; it never
   returns session/message data or upstream diagnostic payloads.
+- Home is an explicitly requested read and caps traversal at 500 directory
+  entries, depth 4, 50 Markdown candidates, and 256 KiB per file. Each section
+  reports status, source, and freshness; truncation is surfaced as `partial`.
+  `GET /api/calendar` requires a paired single-month date window of at most 31
+  days and returns the strict `{status,items,source,freshness}` envelope.
+  Items allow only opaque `id`, `kind`, `date`, optional `occurred_at`, and
+  optional Task `status`; Journal labels are localized by the client.
 - Tests cover authentication/origin rejection, no-session/forged approval,
   Promote fail-closed, real file reads, deferred status, Hermes server-side
   auth, SSE/stop, and same-origin SPA routing.
