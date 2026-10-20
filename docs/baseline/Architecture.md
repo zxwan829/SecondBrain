@@ -1,5 +1,5 @@
 ---
-updated: 2026-10-17
+updated: 2026-10-20
 status: current
 type: architecture
 ---
@@ -40,7 +40,7 @@ type: architecture
 
 ### D077 智能伙伴的能力分层（批准方向，不等于全部上线）
 
-用户入口为 Web App/Core，微信经验证后加入同一业务入口。普通 Chat 可由 Hermes 主动询问是否收录；用户明确收录或同意建议后，Core 先将原文保存到统一业务 Inbox，再经授权转为 Journal、正式 Knowledge 或其他目标。普通闲聊不自动形成 Inbox/Journal/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。明确 Task 意图走其独立业务授权；具体规则见 `业务规范.md`。
+用户入口为 Web App/Core；微信和飞书优先复用 Hermes 原生 Gateway/渠道入口进入同一 Agent Runtime，再调用共用 Core 业务接口。真实平台兼容、身份与同意绑定仍需核验（D087）。普通 Chat 可由 Hermes 主动询问是否收录；用户明确收录或同意建议后，Core 先将原文保存到统一业务 Inbox，再经授权转为 Journal、正式 Knowledge 或其他目标。普通闲聊不自动形成 Inbox/Journal/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。明确 Task 意图走其独立业务授权；具体规则见 `业务规范.md`。
 
 **双闭环**：Personal Learning Loop 在授权范围由 Core 建立带来源、时间、推断标记、版本、纠错/撤销的个人记忆；Knowledge Integrity Loop 仍为 Raw → Review → 用户明确批准 → Core Promote → 正式 Knowledge，不把外部材料摘要和模型推断当成用户事实。
 
@@ -107,4 +107,12 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 - App 到 Hermes：Compose 内部服务发现及受认证 API；不发布 Hermes API 端口到宿主或公网。
 - App 到业务文件：通过显式根路径和模块服务访问 Inbox、Review、Knowledge 等数据区；Private 不在允许根路径内。
 - 新业务优先扩展 Core 模块与 API；只有确认超出模块化单体能力后才重新评估部署边界。不得为了未来设想预建空模块、复杂插件机制或数据库。
-- 用户批准的最高产品方向见 `Decision-Log.md` D077，对话收录、主动协作和词汇管理见 D086 与 `业务规范.md`，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `business-specs/SecondBrain-Web-App-V1-Business-Spec.md`、`business-specs/Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
+- 用户批准的最高产品方向见 `Decision-Log.md` D077，对话收录、主动协作和词汇管理见 D086 与 `业务规范.md`；渠道架构、Daily Brief 业务范围和 Journal 来源选项合同分别见 D087、D088、D089，目标效果、阶段范围和验收门槛见 `00-CURRENT.md`；原 V1 业务细则仍以 `business-specs/SecondBrain-Web-App-V1-Business-Spec.md`、`business-specs/Universal-Capture-Business-Spec.md` 为准。新增 Companion MVP 验收必须与原 V1 MUST 并行跟踪，不能默认为已上线。架构决策与替代关系见 `Decision-Log.md` D077。
+
+
+## 6. 多渠道与 Daily Brief 决策边界（D087-D089）
+
+- Web 由 SecondBrain App/BFF 提供同源界面并调用 Core；微信与飞书优先复用 Hermes 原生 Gateway 接入同一 Agent Runtime。身份与同意证据须由渠道适配层可信认证后交给 Core；Inbox、Task、Journal、Knowledge、审批、审计和费用门禁共用 Core 业务语义。
+- 真实渠道认证、附件绑定、平台规则与端到端接入仍需独立验证；合成适配器不代表已接入。D087 是架构方向，不授予真实渠道连接或数据出站许可。
+- Daily Brief 限于用户个人 Task、Project 与 Journal 回顾。首阶段由用户明确触发生成，或由用户明确批准导入已有记录后整理；不扩展为新闻摘要，不使用无用户触发的后台生成/调度或外部来源（D088）。显式触发的模型调用仍受数据范围与费用门禁约束。
+- Journal source-options 的精确只读 API 合同见 D089。接口冻结不能替代实现、合并、生产连接或用户验收。
