@@ -238,6 +238,68 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.assertFalse((self.state / "audit.jsonl").exists())
         self.assertEqual(list(self.knowledge.iterdir()), [])
 
+    def test_default_promote_off_allows_subprocess_start_but_confirm_is_read_only(self):
+        from secondbrain_core.modules.review_promote.subprocess_worker_client import SubprocessPromoteWorker
+
+        self.env.pop("SB_PROMOTE_ENABLED", None)
+        self.env["SB_PROMOTE_WORKER_MODE"] = "subprocess"
+        self.client.close()
+        with patch("secondbrain_core.app.SubprocessPromoteWorker",
+                   wraps=SubprocessPromoteWorker) as worker_factory:
+            self.app = self._create_app()
+        worker_factory.assert_called_once_with(
+            str(self.review), str(self.knowledge), str(self.state / "audit.jsonl"),
+            str(self.state / "approvals"),
+        )
+        self.client = TestClient(self.app, base_url="https://testserver")
+        self.login()
+        self.assertEqual(self.unlock().status_code, 200)
+        preview = self.preview()
+        self.assertEqual(preview.status_code, 200, preview.text)
+        result = self.confirm(preview.json()["preview_id"])
+        self.assertEqual(result.status_code, 423, result.text)
+        self.assertEqual(result.json()["detail"]["code"], "promote_disabled")
+        self.assertEqual(list((self.state / "approvals").iterdir()), [])
+        self.assertEqual(list((self.state / "b1b-operations").iterdir()), [])
+        self.assertFalse((self.state / "audit.jsonl").exists())
+        self.assertEqual(list(self.knowledge.iterdir()), [])
+
+    def test_subprocess_protocol_rejection_fails_closed_without_writes(self):
+        from types import SimpleNamespace
+        from secondbrain_core.modules.review_promote.subprocess_worker_client import SubprocessPromoteWorker
+        from secondbrain_core.modules.review_promote.worker import PromotionError
+
+        worker = SubprocessPromoteWorker(
+            str(self.review), str(self.knowledge), str(self.state / "audit.jsonl"),
+            str(self.state / "approvals"),
+        )
+        invalid_responses = (
+            SimpleNamespace(returncode=1, stdout=b'{"error":"worker_operation_failed"}'),
+            SimpleNamespace(returncode=0, stdout=b"not-json"),
+            SimpleNamespace(returncode=0, stdout=b'{"status":"promoted","request_id":"other"}'),
+        )
+        for response in invalid_responses:
+            with self.subTest(response=response):
+                with patch("secondbrain_core.modules.review_promote.subprocess_worker_client.subprocess.run",
+                           return_value=response) as run_worker:
+                    with self.assertRaises(PromotionError):
+                        worker.promote("synthetic-protocol-request", "candidate.md", "a" * 64)
+                    run_worker.assert_called_once()
+                self.assertEqual(list((self.state / "approvals").iterdir()), [])
+                self.assertEqual(list((self.state / "b1b-operations").iterdir()), [])
+                self.assertFalse((self.state / "audit.jsonl").exists())
+                self.assertEqual(list(self.knowledge.iterdir()), [])
+
+    def test_worker_rejects_malformed_ipc_before_opening_paths(self):
+        from secondbrain_core.modules.review_promote.subprocess_worker import _run
+
+        with self.assertRaises(ValueError):
+            _run({"request_id": "synthetic-malformed"})
+        self.assertEqual(list((self.state / "approvals").iterdir()), [])
+        self.assertEqual(list((self.state / "b1b-operations").iterdir()), [])
+        self.assertFalse((self.state / "audit.jsonl").exists())
+        self.assertEqual(list(self.knowledge.iterdir()), [])
+
     def test_legacy_b1a_approval_is_verified_only_for_reconstructed_canonical_bytes(self):
         from secondbrain_core.modules.review_promote.service import PromoteService
 
