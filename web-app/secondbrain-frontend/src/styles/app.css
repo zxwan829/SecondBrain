@@ -580,6 +580,14 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .knowledge-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .knowledge-detail-heading h2 { margin: 4px 0 10px; overflow-wrap: anywhere; font-size: 20px; }
 .knowledge-source-status { margin: 8px 0 16px; font-size: 12px; }
+.knowledge-source-trace { display: grid; justify-items: start; gap: 8px; margin: 0 0 16px; padding: 12px; border: 1px solid var(--sb-border); border-radius: 9px; background: var(--sb-surface-inset); }
+.knowledge-source-trace > button { min-height: 36px; padding: 7px 12px; color: var(--sb-text); background: var(--sb-surface-raised); border: 1px solid var(--sb-border-strong); border-radius: 8px; cursor: pointer; }
+.knowledge-source-trace > button:disabled { opacity: .55; cursor: not-allowed; }
+.knowledge-source-trace-result { width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.knowledge-source-trace-result dl { display: grid; grid-template-columns: minmax(100px, auto) minmax(0, 1fr); gap: 5px 12px; font-size: 12px; }
+.knowledge-source-trace-result dd { margin: 0; }
+.knowledge-source-trace-result code { overflow-wrap: anywhere; }
+.knowledge-source-trace-result a { display: inline-block; margin-top: 8px; }
 .knowledge-markdown { min-width: 0; }
 .knowledge-markdown img { max-width: 100%; }
 @media (max-width: 760px) {
