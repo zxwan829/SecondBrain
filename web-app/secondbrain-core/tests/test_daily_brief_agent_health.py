@@ -2,11 +2,13 @@ import hashlib
 import os
 import time
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.app_auth import AppSessionAuth
 from secondbrain_core.modules.daily_brief_agent_health import create_daily_brief_agent_health_router
+from secondbrain_core.modules.hermes_api import HermesAPI
 
 
 class FakeHermes:
@@ -91,3 +93,17 @@ def test_agent_health_requires_app_session(tmp_path):
     client = make_client(tmp_path, FakeHermes())
     client.cookies.clear()
     assert client.get("/api/agent/health").status_code == 401
+
+
+def test_agent_health_maps_real_hermes_transport_timeout_to_unavailable(tmp_path):
+    def timeout(_request):
+        raise httpx.ReadTimeout("synthetic Hermes timeout")
+
+    hermes = HermesAPI(base_url="https://hermes.test", api_key="synthetic-key",
+                       transport=httpx.MockTransport(timeout))
+    response = make_client(tmp_path, hermes).get("/api/agent/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["source"] == "hermes-runtime"
+    assert set(response.json()) == {"status", "source", "checked_at"}
+    assert "synthetic Hermes timeout" not in response.text
