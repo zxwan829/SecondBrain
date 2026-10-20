@@ -10,6 +10,7 @@ from starlette.staticfiles import StaticFiles
 from .modules.app_auth import AppSessionAuth
 from .modules.auto_organize import OrganizerControlStore, create_auto_organize_router
 from .modules.capture import CaptureService, create_capture_router, create_inbox_entry_router
+from .modules.capture_suggestion_binding import TrustedCaptureSuggestionBindingAuthority
 from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.personal_memory import PersonalMemoryStore, create_personal_memory_router
@@ -144,6 +145,9 @@ def create_app():
 
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
+    # No trusted Hermes source adapter or Core consent ledger is configured.
+    # Keep the internal candidate fail-closed and expose no HTTP route.
+    app.state.capture_suggestion_binding_authority = TrustedCaptureSuggestionBindingAuthority()
     journal_source_options = JournalSourceOptionsService(journal_store, auth)
     app.state.journal_source_options_service = journal_source_options
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
