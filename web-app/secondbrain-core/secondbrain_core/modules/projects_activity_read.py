@@ -285,6 +285,8 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
         rows.sort(key=lambda row: (row["occurred_at"], row["activity_id"]), reverse=True)
         page_rows = rows[offset:offset + limit]
         missing_source = len(configured) < 2
+        # Pagination covers only the verified rows collected in this request.
+        # `status=partial` separately warns that source coverage is incomplete.
         return {
             "status": "partial" if missing_source or default_window or task_read_failed or journal_read_incomplete else ("ok" if rows else "empty"),
             "items": page_rows,
