@@ -155,7 +155,7 @@ def create_app():
         auth, journal_store, task_store, projects_store=projects_store,
     ))
     app.include_router(create_daily_brief_agent_health_router(
-        auth, hermes, brief_store=daily_brief_store,
+        auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,
     ))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
     app.include_router(create_notes_router(auth, notes_store))

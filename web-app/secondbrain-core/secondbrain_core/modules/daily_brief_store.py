@@ -193,15 +193,23 @@ class DailyBriefRecordReadStore:
                     results.append("missing")
                 elif isinstance(result, str) and result in {"stale", "unavailable", "failed"}:
                     results.append(result)
+                elif isinstance(result, str) and result in {"unsupported", "forbidden"}:
+                    results.append(result)
                 else:
                     verifier_failed = True
                     results.append("failed")
             if not results:
                 source_status = "unverified"
+            elif "forbidden" in results:
+                # Keep this distinction internal; the HTTP mapper withholds
+                # content and maps it to the frozen partial envelope.
+                source_status = "forbidden"
             elif "stale" in results:
                 source_status = "stale"
             elif all(result == "verified" for result in results):
                 source_status = "verified"
+            elif "unsupported" in results:
+                source_status = "unsupported"
             elif all(result != "verified" for result in results):
                 if "unavailable" in results:
                     source_status = "unavailable"

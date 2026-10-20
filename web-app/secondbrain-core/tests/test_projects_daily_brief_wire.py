@@ -5,7 +5,7 @@ import re
 import time
 from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.app_auth import AppSessionAuth
@@ -57,17 +57,26 @@ def write_brief(root, *, day=DAY, timezone=ZONE, **overrides):
     return path
 
 
-def make_client(tmp_path, *, projects_store=None, brief_store=None):
+def make_client(tmp_path, *, projects_store=None, brief_store=None, deny_projects=False):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-app-password-value\n")
     os.chmod(password_file, 0o600)
     auth = AppSessionAuth(str(password_file), ["https://app.test"])
+    if deny_projects:
+        require_action = auth.require_action
+
+        def guarded_require_action(request, action):
+            if action == "projects.read":
+                raise HTTPException(status_code=403, detail="forbidden")
+            return require_action(request, action)
+
+        auth.require_action = guarded_require_action
     token = "synthetic-app-session"
     auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
     app = FastAPI()
     app.include_router(create_projects_activity_router(auth, projects_store=projects_store))
     app.include_router(create_daily_brief_agent_health_router(
-        auth, FakeHermes(), brief_store=brief_store,
+        auth, FakeHermes(), brief_store=brief_store, projects_store=projects_store,
     ))
     client = TestClient(app, base_url="https://app.test")
     client.cookies.set(auth.COOKIE_NAME, token)
@@ -180,6 +189,82 @@ def test_daily_brief_wire_withholds_unverified_summary_and_never_claims_real(tmp
     assert body["source"] == {"kind": "core-daily-brief-store"}
     assert "Synthetic summary" not in response.text
     assert_checked_at(body["freshness"]["checked_at"])
+
+
+def test_daily_brief_verifies_exact_project_source_and_withholds_stale_or_unknown_refs(tmp_path):
+    projects_root = private_dir(tmp_path / "projects")
+    project_path = write_project(projects_root, "project-source")
+    project_version = hashlib.sha256(project_path.read_bytes()).hexdigest()
+    project_store = ProjectsSourceReadStore(str(projects_root))
+    briefs_root = private_dir(tmp_path / "briefs")
+    client = make_client(tmp_path, projects_store=project_store,
+                         brief_store=DailyBriefRecordReadStore(str(briefs_root)))
+
+    write_brief(briefs_root, source_refs=[{"kind": "project", "id": "project-source",
+                                           "version": project_version}])
+    verified = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+    assert verified["status"] == "real"
+    assert len(verified["items"]) == 1
+    assert verified["items"][0]["source_refs"] == [{
+        "kind": "project", "id": "project-source", "version": project_version,
+    }]
+
+    write_brief(briefs_root, source_refs=[{"kind": "project", "id": "project-source",
+                                           "version": "0" * 64}])
+    stale = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+    assert stale["status"] == "stale" and stale["items"] == []
+    assert "Synthetic summary" not in json.dumps(stale)
+
+    for reference in (
+        {"kind": "project", "id": "missing-project", "version": "a" * 64},
+    ):
+        write_brief(briefs_root, source_refs=[reference])
+        body = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+        assert body["items"] == []
+        assert "Synthetic summary" not in json.dumps(body)
+        assert body["status"] == "partial"
+
+    for kind in ("task", "note", "capture", "review", "journal"):
+        write_brief(briefs_root, source_refs=[{"kind": kind, "id": f"{kind}-id",
+                                               "version": "b" * 64}])
+        body = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
+        assert body["status"] == "partial" and body["items"] == []
+        assert "Synthetic summary" not in json.dumps(body)
+
+
+def test_daily_brief_does_not_disclose_project_existence_without_projects_permission(tmp_path):
+    projects_root = private_dir(tmp_path / "projects")
+    project_path = write_project(projects_root, "project-private")
+    version = hashlib.sha256(project_path.read_bytes()).hexdigest()
+    briefs_root = private_dir(tmp_path / "briefs")
+    write_brief(briefs_root, source_refs=[
+        {"kind": "project", "id": "project-private", "version": version},
+        {"kind": "project", "id": "project-private", "version": "0" * 64},
+    ])
+    client = make_client(tmp_path, projects_store=ProjectsSourceReadStore(str(projects_root)),
+                         brief_store=DailyBriefRecordReadStore(str(briefs_root)),
+                         deny_projects=True)
+    response = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["items"] == []
+    assert "project-private" not in response.text
+    assert "Synthetic summary" not in response.text
+
+
+def test_daily_brief_does_not_verify_absence_from_incomplete_project_snapshot(tmp_path):
+    projects_root = private_dir(tmp_path / "projects")
+    write_project(projects_root, "project-present")
+    store = ProjectsSourceReadStore(str(projects_root), max_entries=0)
+    briefs_root = private_dir(tmp_path / "briefs")
+    write_brief(briefs_root, source_refs=[{"kind": "project", "id": "not-enumerated",
+                                           "version": "a" * 64}])
+    response = make_client(tmp_path, projects_store=store,
+                           brief_store=DailyBriefRecordReadStore(str(briefs_root))).get(
+                               f"/api/daily-brief?date={DAY}&timezone={ZONE}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["items"] == []
 
 
 def test_daily_brief_wire_distinguishes_empty_unavailable_failed_stale_and_generation_failure(tmp_path):
