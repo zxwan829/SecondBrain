@@ -13,12 +13,13 @@ source: GitHub SecondBrain Monorepo
 - **最新 main：** `bff59297b0c33430c9ab2760d74231d32b3d6f71`。源码合并 PR #123（Daily Brief 来源校验）、#124（Core 测试路径可移植性）及 #125（Daily Brief 人工内容持久化）；本节按合并后的状态修正早期快照。#125 保存的是用户明确提交的人工撰写内容，并在读取时重新验证 Task/Project/Journal 来源；不代表 AI 自动生成、定时调度或生产数据闭环。
 - **Projects / Activity / Daily Brief 基础接线：** #107/#108/#111/#114/#116/#119/#120 已合并。当前 Projects 的显式 registry 与状态仅有合成/受限来源证据，尚未连接真实业务项目并完成用户验收；Brief Core 来源验证与人工文本保存已合并，`approved_import` 仍返回 501；用户明确触发的 AI 编写属于批准的产品方向但尚未实现，后台自动生成/调度尚未获批。
 - **Daily Brief UI #126：** Draft。固定 HEAD 已通过 source/hash、幂等、POST→GET、冲突与错误响应的隔离 HTTP 验证；Edge 启动 SIGABRT、Chromium 启动 SIGTRAP，真实点击和三视口浏览器验收 **BLOCKED_ENV / NOT RUN**，不得重复消耗主线时间做同环境诊断。
-- **A 线 Web #127/#129：** Draft；独立源码审查通过，定向及全量 Web 测试、typecheck/build 报告通过；真实浏览器验收仍受上述环境阻断。继续处理不依赖该浏览器环境的已授权前端切片。
+- **A 线 Web #127/#129：** Draft；独立源码审查通过，定向及全量 Web 测试、typecheck/build 报告通过；真实浏览器验收仍受上述环境阻断。
+- **A 线 D086 Chat→Inbox #130：** Draft、Web-only；明确 Journal 意图将原文提交统一 Inbox，不直接写 Journal、不创建 Hermes Run。PR 报告 Web 283 tests、typecheck/build 及合成 Core HTTP 回归通过；真实浏览器未运行且尚未合并，main 当前路径未改变。
 - **B 线 Core #128：** Draft，当前固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b`；B 报告 420 Core tests + 28 subtests 及正式本地 HTTP 路由验证通过，A 对该固定 HEAD 的独立复审尚未完成。其 Journal source-options 接口合同编号统一为 D089。
 - **其他未完成切片：** #106 Restricted Writer 仅为合成候选，OS 身份/ACL/mount/peer 隔离未验证；#101 仅为合成可信渠道适配器，未连接微信/飞书。均保持 Draft，不视为生产能力。
 - **总体交付：** 原 V1 MUST 和 D077 Companion MVP 均 **NOT DONE**。源码合并、隔离合成测试、NAS 部署、真实业务数据、生产安全准入和用户验收分层记录。最新环境事实仍仅由 `Environment-Baseline.md` 的 2026-10-19 快照代表，本轮未重新核验生产。
 - **10 月 22 日目标风险：** “形成基本 V1 业务闭环，可接受小型修补”目前 **AT RISK**。核心存储切片已进入 main，但 Web 真实点击、真实数据/用户业务验收及正式 Knowledge Promote 闭环仍缺证据；不能把源码合并等同目标达成。
-- **唯一 NEXT：** A 继续已授权且不依赖崩溃浏览器环境的 Web 切片；PMO/A 对 #128 当前固定 HEAD 做独立复审。B 不重复修改 #128 已冻结合同，可在 #97 授权内继续不重叠的 Core 合成任务（如 #106 Writer 候选、#101 合成渠道适配器），并按复审意见修复。两线 readiness 均提交后再由 PMO 决定集成；不因浏览器门禁停止可独立推进的工作。不得合并 PR、部署、读取/写入真实 Vault、启用 Promote、调用付费模型或接入真实渠道，除非另行明确授权。
+- **唯一 NEXT：** A 继续 #130 和不依赖崩溃浏览器环境的已授权 Web 切片；PMO/A 对 #128 当前固定 HEAD 做独立复审。B 不重复修改 #128 已冻结合同，可在 #97 授权内继续不重叠的 Core 合成任务（如 #106 Writer 候选、#101 合成渠道适配器），并按复审意见修复。两线 readiness 均提交后再由 PMO 决定集成；不因浏览器门禁停止可独立推进的工作。不得合并 PR、部署、读取/写入真实 Vault、启用 Promote、调用付费模型或接入真实渠道，除非另行明确授权。
 
 ## 2026-10-20 主线源码进展与分层门禁（历史快照；被本文件顶部后续裁定更新）
 
@@ -86,7 +87,7 @@ PR #50 已合入 main（merge `12af0aa3417a76f0b787cb82c40e00d577b9e20f`），�
 
 ### 新批准的产品规则：D086 对话收录与标签类型管理
 
-`Decision-Log.md` D086 与 [`业务规范.md`](业务规范.md) 已确认：普通 Chat 保持自然对话，Hermes 可有节制地询问是否收录；用户明确收录或同意后，Core 先将原文存入统一 Inbox，日记意图也须经 Inbox 和用户确认后再写 Journal。Hermes 可在授权范围回顾并主动建议，主动/被动调用分开设每日及每月估算金额额度；类型/标签集中管理代码已由 PR #58 合入 main 并随 M1 镜像部署；尚未对真实 Vault 盘点或应用元数据。类型最多 10 种，既有有效标签可自动应用。**D086 对话收录及真实内容处理仍未实现或验收**；当前 Chat 显式 Journal 直写路径仍是既有实现，需后续任务按新规范调整。Issue #55 不授权读取真实 Vault、改写历史文件、启动付费模型或生产变更。当前下一步以本文件顶部 2026-10-20 唯一 NEXT 为准。
+`Decision-Log.md` D086 与 [`业务规范.md`](业务规范.md) 已确认：普通 Chat 保持自然对话，Hermes 可有节制地询问是否收录；用户明确收录或同意后，Core 先将原文存入统一 Inbox，日记意图也须经 Inbox 和用户确认后再写 Journal。Hermes 可在授权范围回顾并主动建议，主动/被动调用分开设每日及每月估算金额额度；类型/标签集中管理代码已由 PR #58 合入 main 并随 M1 镜像部署；尚未对真实 Vault 盘点或应用元数据。类型最多 10 种，既有有效标签可自动应用。**D086 的 inbox-first Chat 路径尚未进入 main 或验收**；PR [#130](https://github.com/zxwan829/SecondBrain/pull/130) 是 Web-only Draft 候选，将明确 Journal 意图改送统一 Inbox，不直接创建 Journal。当前 main 现有 Chat 显式 Journal 直写路径未改变，待 PR 审查、合并及后续业务验收。Issue #55 不授权读取真实 Vault、改写历史文件、启动付费模型或生产变更。当前下一步以本文件顶部 2026-10-20 唯一 NEXT 为准。
 
 ### 并行开发状态：D085-C2b 来源绑定建议与审批留痕
 
