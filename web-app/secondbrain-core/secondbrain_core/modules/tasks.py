@@ -17,6 +17,7 @@ from .chat_activity import task_activity
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_TITLE_BYTES = 4096
+_MAX_PROJECTION_BYTES = 2 * 1024 * 1024
 
 
 def _now():
@@ -62,7 +63,7 @@ class TaskStore:
         fcntl.flock(fd, fcntl.LOCK_EX)
         return fd
 
-    def _read_unlocked(self):
+    def _read_unlocked(self, max_bytes=None):
         try:
             fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         except FileNotFoundError:
@@ -73,6 +74,8 @@ class TaskStore:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise HTTPException(status_code=500, detail="Task data file is not private")
+            if max_bytes is not None and info.st_size > max_bytes:
+                raise HTTPException(status_code=503, detail="Task projection exceeds read budget")
             with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as stream:
                 data = json.load(stream)
             if not isinstance(data, dict) or not isinstance(data.get("tasks"), list) or not isinstance(data.get("idempotency"), dict):
@@ -169,6 +172,19 @@ class TaskStore:
                      if task.get("session_id") == session_id and task.get("operation_id")]
             return [item for item in items if item], False
         return self._with_lock(operation)
+
+    def list_for_projection(self):
+        """Read metadata for Core read projections only within a fixed byte budget."""
+        fd = self._lock()
+        try:
+            data = self._read_unlocked(max_bytes=_MAX_PROJECTION_BYTES)
+            items = list(data["tasks"])
+            items.sort(key=lambda item: (item.get("due_date") or "9999-12-31",
+                                         item.get("created_at", ""), item.get("id", "")))
+            return {"tasks": items}
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
     def list(self, status="open", due_date=None):
         if status not in {"open", "completed", "all"}:

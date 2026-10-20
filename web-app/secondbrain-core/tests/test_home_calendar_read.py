@@ -120,3 +120,40 @@ def test_calendar_requires_auth_and_rejects_unbounded_or_invalid_ranges(tmp_path
     assert client.get("/api/calendar?from=2026-10-01&to=2026-10-01&timezone=NoSuch/Zone").status_code == 400
     client.cookies.clear()
     assert client.get("/api/calendar?from=2026-10-01&to=2026-10-01").status_code == 401
+
+
+def test_calendar_task_projection_refuses_store_over_fixed_read_budget(tmp_path, monkeypatch):
+    auth, token = make_auth(tmp_path)
+    task_root = tmp_path / "tasks"
+    task_root.mkdir(mode=0o700)
+    tasks = TaskStore(str(task_root))
+    tasks.path.write_bytes(b" " * (2 * 1024 * 1024 + 1))
+    os.chmod(tasks.path, 0o600)
+    monkeypatch.setattr(tasks, "list", lambda **_kwargs: (_ for _ in ()).throw(
+        AssertionError("unbounded Task list must not be used by Calendar")))
+
+    day = date.today().isoformat()
+    response = make_client(auth, token, create_calendar_read_router(auth, task_store=tasks)).get(
+        f"/api/calendar?from={day}&to={day}&timezone=Asia%2FShanghai")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert body["source"] == []
+    assert body["items"] == []
+
+
+def test_home_truncated_candidates_remain_partial_across_enumeration_orders(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from secondbrain_core.modules import web_app
+
+    review = tmp_path / "review"
+    review.mkdir(mode=0o700)
+    for index in range(60):
+        (review / f"{index:03}.md").write_text("# Synthetic\n", encoding="utf-8")
+
+    real_scandir = os.scandir
+    entries = list(real_scandir(review))
+    monkeypatch.setattr(web_app.os, "scandir", lambda _path: nullcontext(iter(reversed(entries))))
+    paths, truncated = web_app._bounded_markdown_paths(review, max_entries=500, max_depth=4, max_files=50)
+    assert len(paths) == 50
+    assert truncated is True

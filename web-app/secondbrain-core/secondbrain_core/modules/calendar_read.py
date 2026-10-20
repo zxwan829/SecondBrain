@@ -93,7 +93,7 @@ def create_calendar_read_router(auth, journal_store=None, task_store=None):
                 failed = True
         if task_store is not None:
             try:
-                for task in task_store.list(status="all")["tasks"]:
+                for task in task_store.list_for_projection()["tasks"]:
                     due = task.get("due_date")
                     task_status = task.get("status")
                     if not isinstance(due, str) or not _DATE.fullmatch(due):
