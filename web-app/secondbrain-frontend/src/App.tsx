@@ -25,6 +25,10 @@ import { activityTimeLabel, mergeChatTimeline, type ChatActivity, type ChatHisto
 import { V1ReadOnlyPage } from './V1ReadOnlyPages';
 import { V1BriefHealthPage } from './V1BriefHealthPages';
 import { CalendarPage } from './CalendarPage';
+import { journalInboxAttemptKey, journalInboxFailureLabel, journalInboxReceiptKey,
+  makeJournalInboxAttempt, parseJournalInboxAttempt, parseJournalInboxGet,
+  parseJournalInboxPostReceipt, parseJournalInboxReceipt,
+  type JournalInboxAttempt, type JournalInboxReceipt } from './chat-inbox';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -1198,6 +1202,13 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const [captureFeedback, setCaptureFeedback] = useState('');
   const [captureSourceId, setCaptureSourceId] = useState('');
   const [captureBusy, setCaptureBusy] = useState(false);
+  const [journalInboxAttempt, setJournalInboxAttempt] = useState<JournalInboxAttempt | null>(null);
+  const [journalInboxReceipt, setJournalInboxReceipt] = useState<JournalInboxReceipt | null>(null);
+  const [journalInboxStatus, setJournalInboxStatus] = useState('');
+  const [journalInboxFeedback, setJournalInboxFeedback] = useState('');
+  const journalInboxAttemptsRef = useRef(new Map<string, JournalInboxAttempt>());
+  const journalInboxSubmittingRef = useRef(false);
+  const journalInboxSequenceRef = useRef(0);
   const [inputMode, setInputMode] = useState<'chat' | 'capture'>('chat');
   const [pendingAttachment, setPendingAttachment] = useState<File | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState('');
@@ -1293,6 +1304,63 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     } catch { sessionStorage.removeItem(pendingActivityKey(sessionId)); }
   };
 
+  const resetJournalInboxView = () => {
+    journalInboxSequenceRef.current += 1;
+    setJournalInboxAttempt(null); setJournalInboxReceipt(null); setJournalInboxStatus(''); setJournalInboxFeedback('');
+  };
+
+  const verifyJournalInboxReceipt = async (receipt: JournalInboxReceipt, sequence: number) => {
+    try {
+      const response = await fetch(`/api/inbox/entries/${encodeURIComponent(receipt.inboxId)}`, { credentials: 'same-origin' });
+      const payload = await response.json().catch(() => ({})) as unknown;
+      if (!response.ok) {
+        if (selectedSessionRef.current === receipt.sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxStatus('');
+          setJournalInboxFeedback(en ? `Inbox returned HTTP ${response.status} for the read-only status check. The POST was accepted; no Journal entry was created. Retry status verification later.` : `Inbox 状态只读核验返回 HTTP ${response.status}。此前 POST 已受理，但没有创建 Journal 日记；可稍后重新核验。`);
+        }
+        return;
+      }
+      const status = parseJournalInboxGet(payload, receipt);
+      if (!status) {
+        if (selectedSessionRef.current === receipt.sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxStatus('');
+          setJournalInboxFeedback(en ? 'Core returned a different or incomplete Inbox entry. The Journal was not created.' : 'Core 返回了其他或不完整的 Inbox 记录；尚未创建日记。');
+        }
+        return;
+      }
+      if (selectedSessionRef.current !== receipt.sessionId || sequence !== journalInboxSequenceRef.current) return;
+      setJournalInboxReceipt(receipt); setJournalInboxStatus(status);
+      setJournalInboxFeedback(en ? 'Original text is in the pending Inbox. No Journal entry has been created.' : '原文已进入待处理 Inbox；尚未创建 Journal 日记。');
+      journalInboxAttemptsRef.current.delete(receipt.sessionId);
+      try { sessionStorage.removeItem(journalInboxAttemptKey(receipt.sessionId)); } catch { /* the exact receipt remains available */ }
+    } catch {
+      if (selectedSessionRef.current === receipt.sessionId && sequence === journalInboxSequenceRef.current) {
+        setJournalInboxStatus(''); setJournalInboxFeedback(en ? 'Inbox accepted the original text, but the read-only status check had no confirmed response. No Journal entry was created; retry status verification later.' : 'Inbox 已受理原文，但状态只读核验未收到确定响应。没有创建 Journal 日记；可稍后重新核验。');
+      }
+    }
+  };
+
+  const loadJournalInboxState = (sessionId: string) => {
+    let attempt: JournalInboxAttempt | null = null;
+    let receipt: JournalInboxReceipt | null = null;
+    try {
+      attempt = parseJournalInboxAttempt(sessionStorage.getItem(journalInboxAttemptKey(sessionId)), sessionId);
+      receipt = parseJournalInboxReceipt(sessionStorage.getItem(journalInboxReceiptKey(sessionId)), sessionId);
+      if (!attempt && sessionStorage.getItem(journalInboxAttemptKey(sessionId))) sessionStorage.removeItem(journalInboxAttemptKey(sessionId));
+      if (!receipt && sessionStorage.getItem(journalInboxReceiptKey(sessionId))) sessionStorage.removeItem(journalInboxReceiptKey(sessionId));
+    } catch { /* keep the UI fail-closed when tab storage is unavailable */ }
+    if (attempt) journalInboxAttemptsRef.current.set(sessionId, attempt);
+    else journalInboxAttemptsRef.current.delete(sessionId);
+    setJournalInboxAttempt(attempt); setJournalInboxReceipt(receipt); setJournalInboxStatus('');
+    setJournalInboxFeedback(attempt ? (en ? 'The prior result is not confirmed. The original text, event ID, time, and full request are retained for an exact retry.' : '上次结果尚未确认；原文、事件 ID、时间和完整请求均已保留，可原样重试。') : '');
+    if (attempt) setInput((current) => current || attempt!.body.original_text);
+    if (receipt) {
+      const sequence = ++journalInboxSequenceRef.current;
+      setJournalInboxFeedback(en ? 'Checking the exact Inbox entry; no Journal write will be made.' : '正在核对确切的 Inbox 记录；不会写入 Journal。');
+      void verifyJournalInboxReceipt(receipt, sequence);
+    }
+  };
+
   const loadSessionContent = async (sessionId: string) => {
     if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     const requestId = ++contentLoadRef.current;
@@ -1301,6 +1369,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/activities`),
     ]);
     if (requestId !== contentLoadRef.current || selectedSessionRef.current !== sessionId) return;
+    loadJournalInboxState(sessionId);
     if (historyResult.status === 'fulfilled') {
       const payload = historyResult.value;
       const raw = Array.isArray(payload.messages) ? payload.messages : Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : [];
@@ -1358,8 +1427,9 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const selectSession = async (sessionId: string) => {
     if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     selectionIntentRef.current += 1;
+    journalInboxSequenceRef.current += 1;
     abortRef.current?.abort(); abortRef.current = null;
-    resetCaptureState(); setBusy(false); setRunId(''); setProgress('');
+    resetCaptureState(); resetJournalInboxView(); setBusy(false); setRunId(''); setProgress('');
     selectedSessionRef.current = sessionId;
     setSelected(sessionId);
     if (blankMode) persistBlankChatState([...blankSessionIdsRef.current], sessionId);
@@ -1452,14 +1522,14 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         const nextSelected = stillCurrent ? id : selectedSessionRef.current;
         persistBlankChatState(ids, nextSelected);
         if (stillCurrent) {
-          resetCaptureState();
+          resetCaptureState(); resetJournalInboxView();
           selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
         }
         return;
       }
       await reloadSessions(id);
       if (selectionIntent !== selectionIntentRef.current) return;
-      resetCaptureState();
+      resetCaptureState(); resetJournalInboxView();
       selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
       localStorage.setItem('secondbrain.chat.session', id);
     } catch (cause) {
@@ -1489,7 +1559,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
     const sessionId = String(payload.session_id ?? '');
     if (!sessionId) throw new Error('Hermes did not return a session identifier');
-    resetCaptureState();
+    resetCaptureState(); resetJournalInboxView();
     selectedSessionRef.current = sessionId; setSelected(sessionId); setMessages([]); setActivities([]);
     localStorage.setItem('secondbrain.chat.session', sessionId);
     await reloadSessions(sessionId);
@@ -1573,6 +1643,94 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     }
   };
 
+  const submitJournalIntentToInbox = async (originalText: string) => {
+    if (journalInboxSubmittingRef.current) return;
+    journalInboxSubmittingRef.current = true;
+    setError(''); setBusy(true); setProgress(en ? 'Saving the original text to Inbox…' : '正在将原文保存到 Inbox…');
+    let sessionId = '';
+    let attempt: JournalInboxAttempt | null = null;
+    let sequence = 0;
+    try {
+      sessionId = await ensureSelectedSession();
+      attempt = journalInboxAttemptsRef.current.get(sessionId) ?? null;
+      if (!attempt) {
+        try { attempt = parseJournalInboxAttempt(sessionStorage.getItem(journalInboxAttemptKey(sessionId)), sessionId); }
+        catch { attempt = null; }
+      }
+      if (attempt && attempt.body.original_text !== originalText) {
+        if (selectedSessionRef.current === sessionId) {
+          setJournalInboxAttempt(attempt);
+          setJournalInboxFeedback(en ? 'A prior Inbox result is still unknown. Restore its exact text before retrying; no new request was sent.' : '上一条 Inbox 结果仍未知。请先恢复完全相同的原文再重试；本次没有发送新请求。');
+        }
+        return;
+      }
+      if (!attempt) {
+        attempt = makeJournalInboxAttempt(sessionId, originalText, crypto.randomUUID(), new Date().toISOString());
+      }
+      journalInboxAttemptsRef.current.set(sessionId, attempt);
+      // Persist the complete immutable request before every send so storage
+      // failures cannot leave a retryable in-memory request that was never made durable.
+      sessionStorage.setItem(journalInboxAttemptKey(sessionId), JSON.stringify(attempt));
+      if (selectedSessionRef.current === sessionId) {
+        setJournalInboxAttempt(attempt); setJournalInboxReceipt(null); setJournalInboxStatus('');
+        setJournalInboxFeedback(en ? 'Submitting the exact original text to the pending Inbox; this does not create a Journal entry.' : '正在将完全相同的原文提交到待处理 Inbox；此操作不会创建 Journal 日记。');
+      }
+      sequence = ++journalInboxSequenceRef.current;
+      const response = await fetch('/api/inbox/entries', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: attempt.bodyJson });
+      const payload = await response.json().catch(() => ({})) as unknown;
+      if (response.status !== 202) {
+        if (selectedSessionRef.current === sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxStatus(''); setJournalInboxFeedback(journalInboxFailureLabel(response.status, en)); setProgress('');
+        }
+        return;
+      }
+      const accepted = parseJournalInboxPostReceipt(payload, attempt);
+      if (!accepted) {
+        if (selectedSessionRef.current === sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxStatus(''); setJournalInboxFeedback(en ? 'Core returned an unverified acceptance. The exact request and original text are retained for safe retry.' : 'Core 返回的受理回执无法核验；完整请求和原文已保留，可安全重试。'); setProgress('');
+        }
+        return;
+      }
+      const receipt: JournalInboxReceipt = { sessionId, inboxId: accepted.inboxId,
+        sourceEventId: attempt.body.source_event_id, occurredAt: attempt.body.occurred_at };
+      try {
+        sessionStorage.setItem(journalInboxReceiptKey(sessionId), JSON.stringify(receipt));
+        sessionStorage.removeItem(journalInboxAttemptKey(sessionId));
+        journalInboxAttemptsRef.current.delete(sessionId);
+      } catch {
+        if (selectedSessionRef.current === sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxReceipt(receipt); setJournalInboxStatus('');
+          setJournalInboxFeedback(en ? 'Core accepted the Inbox entry, but this tab could not persist its receipt. Your text remains available; retry uses the same event identity.' : 'Core 已受理 Inbox 原文，但当前标签页无法保存回执；输入内容仍保留，重试会复用同一事件身份。');
+          setProgress('');
+        }
+        return;
+      }
+      if (selectedSessionRef.current === sessionId && sequence === journalInboxSequenceRef.current) {
+        setJournalInboxAttempt(null); setJournalInboxReceipt(receipt); setJournalInboxStatus('');
+        setJournalInboxFeedback(en ? 'Original text is in the pending Inbox. No Journal entry has been created.' : '原文已进入待处理 Inbox；尚未创建 Journal 日记。');
+        setProgress('');
+        setInput((current) => current === originalText ? '' : current);
+      }
+      await verifyJournalInboxReceipt(receipt, sequence);
+    } catch {
+      if (sessionId && attempt) journalInboxAttemptsRef.current.set(sessionId, attempt);
+      if (sessionId && selectedSessionRef.current === sessionId && (!sequence || sequence === journalInboxSequenceRef.current)) {
+        setJournalInboxAttempt(attempt); setJournalInboxStatus('');
+        setJournalInboxFeedback(sequence
+          ? journalInboxFailureLabel(null, en)
+          : (en ? 'Could not safely retain the exact request in this tab, so nothing was sent. Retry only after storage is available.' : '无法在当前标签页安全保存完整请求，因此没有发送任何写入；请等存储可用后再重试。'));
+        setProgress('');
+      } else if (!sessionId) {
+        setError(en ? 'Could not prepare the Inbox request. Your original text is still in the composer.' : '无法准备 Inbox 请求；原文仍保留在输入框中。');
+        setProgress('');
+      }
+    } finally {
+      journalInboxSubmittingRef.current = false;
+      setBusy(false);
+    }
+  };
+
   const send = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = input.trim();
@@ -1582,7 +1740,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       return;
     }
     if (!pendingAttachment && isExplicitJournalIntent(input)) {
-      await submitExplicitActivity('journal', input);
+      await submitJournalIntentToInbox(input);
       return;
     }
     const taskCommand = !pendingAttachment ? parseExplicitTaskCommand(input) : null;
@@ -1602,7 +1760,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         const created = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
         sessionId = String(created.session_id ?? '');
         if (!sessionId) throw new Error('Hermes did not return a session identifier');
-        resetCaptureState(); selectedSessionRef.current = sessionId; setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
+        resetCaptureState(); resetJournalInboxView(); selectedSessionRef.current = sessionId; setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
         await reloadSessions(sessionId);
       }
       const idempotencyKey = crypto.randomUUID();
@@ -1860,6 +2018,24 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
           </div>
           {item.activity.detail && <small>{item.activity.detail}</small>}
         </article>)}{!timeline.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      {journalInboxAttempt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent retry status' : '日记意图重试状态'}>
+        <h3>{en ? 'Inbox save is not confirmed' : 'Inbox 保存结果尚未确认'}</h3>
+        <p role="alert">{journalInboxFeedback || (en ? 'The original text and exact request are retained.' : '原文和完整请求已保留。')}</p>
+        <button type="button" disabled={busy} onClick={() => void submitJournalIntentToInbox(journalInboxAttempt.body.original_text)}>{en ? 'Retry the same request' : '使用同一请求重试'}</button>
+      </section>}
+      {journalInboxReceipt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent Inbox receipt' : '日记意图 Inbox 回执'}>
+        <h3>{en ? 'Original text saved to Inbox' : '原文已保存到 Inbox'}</h3>
+        <p>{en ? 'This is a pending Inbox entry only. No Journal entry has been created.' : '这只表示原文进入待处理 Inbox；尚未创建 Journal 日记。'}</p>
+        {journalInboxStatus && <p role="status">{en ? 'Verified Inbox status' : '已核验 Inbox 状态'}: {journalInboxStatus}</p>}
+        {journalInboxFeedback && !journalInboxStatus && <p role="alert">{journalInboxFeedback}</p>}
+        <button type="button" disabled={busy} onClick={() => {
+          const sequence = ++journalInboxSequenceRef.current;
+          setJournalInboxStatus('');
+          setJournalInboxFeedback(en ? 'Checking the exact Inbox entry using a read-only request…' : '正在通过只读请求核对确切的 Inbox 记录…');
+          void verifyJournalInboxReceipt(journalInboxReceipt, sequence);
+        }}>{en ? 'Refresh Inbox status' : '刷新 Inbox 状态'}</button>
+        {journalInboxStatus && <a href={`/inbox#capture-${encodeURIComponent(journalInboxReceipt.inboxId)}`}>{en ? 'Open Inbox entry' : '打开 Inbox 条目'}</a>}
+      </section>}
       {captureSuggestion?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Hermes capture suggestion' : 'Hermes 收录建议'}>
         <h3>{en ? 'Hermes suggests saving this to Inbox' : 'Hermes 建议将以下内容收录到 Inbox'}</h3>
         <p>{en ? 'A chat suggestion and typed confirmation are not Core approval. Verify a current Core-approved proposal before submitting.' : '聊天建议和输入确认短语都不等于 Core 批准；提交前必须核验仍有效的 Core 批准记录。'}</p>
