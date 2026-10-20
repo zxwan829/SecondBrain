@@ -6,6 +6,7 @@ Core app does not register a Journal source-options route before A freezes D087.
 import hashlib
 import json
 import os
+import re
 import socket
 import stat
 import threading
@@ -84,6 +85,9 @@ def test_read_only_selector_uses_allowlist_and_0500_0400_without_side_effects(tm
     assert response.status_code == 200
     body = response.json()
     assert set(body) == {"status", "items", "freshness"}
+    assert set(body["freshness"]) == {"checked_at"}
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+                        body["freshness"]["checked_at"])
     assert body["status"] == "real" and len(body["items"]) == 1
     item = body["items"][0]
     assert set(item) == {"kind", "id", "date", "version"}
@@ -131,6 +135,29 @@ def test_result_limit_is_capped_and_order_is_stable(tmp_path):
     assert response.status_code == 200
     assert len(response.json()["items"]) == 50
     assert [item["id"].split(":", 1)[1] for item in response.json()["items"]] == expected_ids
+
+
+def test_two_megabyte_aggregate_read_budget_allows_exact_boundary(tmp_path):
+    root, auth, token, store, service = setup(tmp_path)
+    path = root / f"{DAY}.jsonl"
+    row = {"id": hashlib.sha256(b"boundary-row").hexdigest(), "date": DAY,
+           "source": "web_app_explicit_intent", "original_text": ""}
+    base_size = len(json.dumps(row, separators=(",", ":")).encode())
+    row["original_text"] = "x" * (1024 * 1024 - base_size)
+    raw = json.dumps(row, separators=(",", ":")).encode()
+    assert len(raw) == 1024 * 1024
+    path.write_bytes(raw)
+    os.chmod(path, 0o600)
+    app = _test_app(service, auth)
+    with _client(app, token, "https://app.test") as client:
+        response = client.get(f"/__test/journal-source-options?date={DAY}",
+                              headers={"Origin": "https://app.test"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "real"
+    assert response.json()["items"] == [{
+        "kind": "journal", "id": f"{DAY}:{row['id']}", "date": DAY,
+        "version": hashlib.sha256(raw).hexdigest(),
+    }]
 
 
 @pytest.mark.parametrize("denied_action", ["daily_brief.read", "journal.read"])
