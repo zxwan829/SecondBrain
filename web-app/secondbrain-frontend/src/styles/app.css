@@ -270,6 +270,20 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .v1-local-preview-content { display: grid; gap: 7px; margin-top: 12px; color: #c5d4e8; font-size: 13px; line-height: 1.55; }
 .v1-local-preview-content p { margin: 0; }
 .v1-daily-brief-summary { margin-top: 16px; color: #d9e6f8; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.journal-source-picker { margin-top: 20px; padding: 18px; border: 1px solid var(--sb-border); border-radius: 16px; background: var(--sb-surface); }
+.journal-source-picker-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.journal-source-picker-heading h2 { margin: 0; font-size: 1.05rem; }
+.journal-source-picker-heading p { max-width: 64ch; margin: 6px 0 0; color: var(--sb-muted); line-height: 1.55; }
+.journal-source-picker-list { display: grid; gap: 8px; margin: 16px 0 0; padding: 12px; border: 1px solid var(--sb-border); border-radius: 12px; }
+.journal-source-option { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 42px; }
+.journal-source-option code { color: var(--sb-muted); font-size: .8rem; }
+.journal-source-picker-selection, .journal-source-picker-freshness { margin: 12px 0 0; color: var(--sb-muted); font-size: .9rem; line-height: 1.5; }
+@media (max-width: 600px) {
+  .journal-source-picker { padding: 14px; }
+  .journal-source-picker-heading { flex-direction: column; }
+  .journal-source-option { grid-template-columns: auto minmax(0, 1fr); }
+  .journal-source-option code { grid-column: 2; }
+}
 .calendar-month { min-width: 0; padding: clamp(10px, 1.6vw, 18px); background: rgb(13 22 38 / 84%); border: 1px solid rgb(151 177 215 / 16%); border-radius: 14px; }
 .calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
 .calendar-month-title { margin: 0 0 12px; color: #edf4ff; font-size: 15px; font-weight: 600; }
