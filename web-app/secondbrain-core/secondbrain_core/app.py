@@ -21,6 +21,7 @@ from .modules.projects_activity_read import create_projects_activity_router
 from .modules.daily_brief_agent_health import create_daily_brief_agent_health_router
 from .modules.projects_source_read import ProjectsSourceReadStore
 from .modules.daily_brief_store import DailyBriefRecordReadStore
+from .modules.daily_brief_import import DailyBriefAuditStore, DailyBriefImportStore
 from .modules.calendar_read import create_calendar_read_router
 from .modules.notes import configured_notes_store, create_notes_router
 from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
@@ -134,6 +135,8 @@ def create_app():
     projects_store = ProjectsSourceReadStore(projects_root or None)
     daily_brief_root = os.environ.get("SB_DAILY_BRIEF_STORE_ROOT", "").strip()
     daily_brief_store = DailyBriefRecordReadStore(daily_brief_root or None)
+    daily_brief_import_store = DailyBriefImportStore(daily_brief_root or None)
+    daily_brief_audit_store = DailyBriefAuditStore(os.path.join(approval_root, "daily-brief-audit.jsonl"))
 
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
@@ -157,6 +160,7 @@ def create_app():
     app.include_router(create_daily_brief_agent_health_router(
         auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,
         task_store=task_store, journal_store=journal_store, notes_store=notes_store,
+        brief_import_store=daily_brief_import_store, brief_audit_store=daily_brief_audit_store,
     ))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
     app.include_router(create_notes_router(auth, notes_store))

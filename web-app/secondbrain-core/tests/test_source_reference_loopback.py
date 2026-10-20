@@ -7,6 +7,8 @@ import socket
 import threading
 import time
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 import uvicorn
@@ -45,6 +47,7 @@ def _directory_state(path):
 
 
 def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_path, monkeypatch):
+    brief_day = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
     roots = {name: _private_dir(tmp_path / name) for name in (
         "review", "raw", "knowledge", "state", "projects", "briefs", "tasks",
         "journal", "notes",
@@ -56,15 +59,15 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
     task_store = TaskStore(str(roots["tasks"]))
     task = task_store.create("Synthetic Task", "2026-10-21", "loopback-task-key")["task"]
     journal_store = JournalStore(str(roots["journal"]))
-    journal = journal_store.append("2026-10-20", "记一下 synthetic Journal row",
+    journal = journal_store.append(brief_day, "记一下 synthetic Journal row",
                                    "loopback-journal-key")["entry"]
-    journal_version = journal_store.read_source_day("2026-10-20")["entries"][journal["id"]]["version"]
+    journal_version = journal_store.read_source_day(brief_day)["entries"][journal["id"]]["version"]
     # The source reader must work without a pre-existing daily lock and without
     # write permission. The regular Journal write path above created it, so
     # remove it as fixture setup before freezing the synthetic root read-only.
-    (roots["journal"] / ".2026-10-20.lock").unlink()
+    (roots["journal"] / f".{brief_day}.lock").unlink()
     (roots["journal"] / ".operations.lock").unlink()
-    os.chmod(roots["journal"] / "2026-10-20.jsonl", 0o400)
+    os.chmod(roots["journal"] / f"{brief_day}.jsonl", 0o400)
     os.chmod(roots["journal"], 0o500)
     assert os.geteuid() != 0 and not os.access(roots["journal"], os.W_OK)
     denied_create = roots["journal"] / ".permission-probe"
@@ -89,19 +92,11 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
     os.chmod(project_path, 0o600)
     project_version = ProjectsSourceReadStore(str(roots["projects"])).read_snapshot().documents[0].sha256
 
-    brief_path = roots["briefs"] / "2026-10-20.json"
-    brief = {
-        "brief_id": "brief-loopback", "date": "2026-10-20", "timezone": "Asia/Shanghai",
-        "generated_at": "2026-10-20T08:00:00+08:00", "generation_status": "generated",
-        "categories": ["synthetic"], "summary": "Synthetic verified-source summary",
-        "source_refs": [
-            {"kind": "project", "id": project["id"], "version": project_version},
-            {"kind": "task", "id": task["id"], "version": task_source_version(task)},
-            {"kind": "journal", "id": f"2026-10-20:{journal['id']}", "version": journal_version},
-        ],
-    }
-    brief_path.write_text(json.dumps(brief, separators=(",", ":")), encoding="utf-8")
-    os.chmod(brief_path, 0o600)
+    brief_refs = [
+        {"kind": "project", "id": project["id"], "version": project_version},
+        {"kind": "task", "id": task["id"], "version": task_source_version(task)},
+        {"kind": "journal", "id": f"{brief_day}:{journal['id']}", "version": journal_version},
+    ]
 
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -154,11 +149,23 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             assert note["path"] not in projects.text
             assert "Synthetic Project Note" not in projects.text
 
-            daily = client.get("/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai",
+            import_body = {
+                "mode": "manual_generate", "date": brief_day, "timezone": "Asia/Shanghai",
+                "idempotency_key": "loopback-brief-key-20261020-123456",
+                "categories": ["synthetic"],
+                "summary": "Synthetic verified-source summary",
+                "source_refs": brief_refs, "approved": True,
+            }
+            imported = client.post("/api/daily-brief", headers={"Origin": origin}, json=import_body)
+            assert imported.status_code == 201
+            assert set(imported.json()) == {"status", "brief_id", "date", "timezone"}
+            assert "Synthetic verified-source summary" not in imported.text
+            daily = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                headers={"Origin": origin})
             assert daily.status_code == 200
             assert daily.json()["status"] == "real"
-            assert daily.json()["items"][0]["source_refs"] == brief["source_refs"]
+            assert daily.json()["items"][0]["source_refs"] == brief_refs
+            assert daily.json()["items"][0]["summary"] == import_body["summary"]
             assert "Synthetic Task" not in daily.text
             assert "synthetic Journal row" not in daily.text
             journal_tree_after = _tree_snapshot(roots["journal"])
@@ -173,7 +180,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
                 before.pop("atime_ns")
                 after.pop("atime_ns")
                 assert after == before
-            assert ".2026-10-20.lock" not in journal_tree_after
+            assert f".{brief_day}.lock" not in journal_tree_after
             assert ".operations.lock" not in journal_tree_after
             assert ".permission-probe" not in journal_tree_after
 
@@ -182,7 +189,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             before_denied_dir = _directory_state(roots["journal"])
             denied_append = client.post("/api/journal/entries",
                                         headers={"Origin": origin, "Idempotency-Key": "readonly-http-denied"},
-                                        json={"date": "2026-10-20", "text": denied_text})
+                                        json={"date": brief_day, "text": denied_text})
             assert denied_append.status_code == 503
             assert denied_append.json() == {"detail": "Journal storage is temporarily unavailable"}
             for private_value in (str(roots["journal"]), denied_text, "synthetic-loopback-password",
@@ -201,7 +208,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             # Force an atomic path replacement after the exact Journal fd has
             # yielded bytes but before its post-read path identity check. The
             # real HTTP Brief route must fail closed and hide the summary.
-            journal_path = roots["journal"] / "2026-10-20.jsonl"
+            journal_path = roots["journal"] / f"{brief_day}.jsonl"
             journal_path_info = journal_path.stat()
             journal_bytes = journal_path.read_bytes()
             original_read = os.read
@@ -225,7 +232,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
 
             with monkeypatch.context() as patch:
                 patch.setattr(os, "read", replace_journal_during_read)
-                raced = client.get("/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai",
+                raced = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                    headers={"Origin": origin})
             assert replaced is True
             assert raced.status_code == 200
@@ -235,16 +242,15 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             assert str(roots["journal"]) not in raced.text
             assert "synthetic Journal row" not in raced.text
 
-            brief["source_refs"][1]["version"] = "0" * 64
-            brief_path.write_text(json.dumps(brief, separators=(",", ":")), encoding="utf-8")
-            os.chmod(brief_path, 0o600)
-            stale = client.get("/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai",
+            task_store.update(task["id"], {"expected_updated_at": task["updated_at"],
+                                            "title": "Synthetic Task changed after import"})
+            stale = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                headers={"Origin": origin})
             assert stale.status_code == 200
             assert stale.json()["status"] == "stale" and stale.json()["items"] == []
             assert "Synthetic verified-source summary" not in stale.text
 
-            denied_origin = client.get("/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai",
+            denied_origin = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                        headers={"Origin": "http://evil.test"})
             assert denied_origin.status_code == 403
     finally:
