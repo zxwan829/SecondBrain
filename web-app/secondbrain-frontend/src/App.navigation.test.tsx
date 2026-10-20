@@ -26,6 +26,8 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, sum
     if (url === '/api/home') return new Response('{}', { status: 200 });
     if (url === '/api/projects?limit=1&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 1, offset: 0, has_more: false }, source: null }), { status: 200 });
     if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
+    if (url.startsWith('/api/daily-brief?')) return new Response(JSON.stringify({ status: 'not_configured', items: [], source: null }), { status: 200 });
+    if (url === '/api/agent/health') return new Response(JSON.stringify({ status: 'not_configured', source: null, checked_at: '2026-10-20T01:30:00Z' }), { status: 200 });
     if (url.startsWith('/api/knowledge/search?')) return new Response(JSON.stringify({ items: [], status: 'ok' }), { status: 200 });
     if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify(summaryStatus === 200 ? { status: 'real', items: [{ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', display_filename: 'synthetic.txt', status: 'completed', error_code: null, has_review: false }] } : { detail: 'synthetic failure' }), { status: summaryStatus });
     if (url === `/api/capture/${captureId}`) return new Response(JSON.stringify({ capture_id: captureId, source_type: 'text', input_type: 'text', captured_at: '2026-10-18T00:00:00Z', raw_path: 'synthetic.txt', display_filename: 'synthetic.txt', title: 'Synthetic capture', status: 'completed', content_preview: 'SYNTHETIC EXACT CAPTURE BODY', review_path: null }), { status: 200 });
@@ -163,6 +165,60 @@ describe('Notes application navigation gate', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
     expect(screen.queryByText('must not render')).toBeNull();
     expect(calls).toEqual(['/api/auth/session', '/api/activity?limit=50&offset=0']);
+  });
+
+  it('loads Daily Brief only for Shanghai date and never generates or reads source content', async () => {
+    const calls = mockAppFetch();
+    startAt('/brief');
+
+    expect(await screen.findByRole('heading', { name: '每日简报' })).toBeTruthy();
+    expect((await screen.findByRole('status')).textContent).toContain('DAILY_BRIEF_NOT_CONFIGURED');
+    const briefRequest = calls.find((url) => url.startsWith('/api/daily-brief?'));
+    expect(briefRequest).toMatch(/^\/api\/daily-brief\?date=\d{4}-\d{2}-\d{2}&timezone=Asia%2FShanghai$/);
+    expect(calls).toEqual(['/api/auth/session', briefRequest]);
+    expect(calls.some((url) => /home|sessions|messages|journal\/|tasks|promote|run/i.test(url))).toBe(false);
+  });
+
+  it('marks Daily Brief API absence explicitly instead of generating a fallback', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url.startsWith('/api/daily-brief?')) return new Response('{}', { status: 404 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/brief');
+
+    expect((await screen.findByRole('status')).textContent).toContain('BACKEND_NOT_IMPLEMENTED');
+    expect(calls).toHaveLength(2);
+    expect(calls.every((url) => !/sessions|messages|journal\/|tasks|home|run/i.test(url))).toBe(true);
+  });
+
+  it('loads Agent Health from the capability-only endpoint and rejects session/message payloads', async () => {
+    const calls = mockAppFetch();
+    startAt('/agent-health');
+
+    expect(await screen.findByRole('heading', { name: 'Agent 状态' })).toBeTruthy();
+    expect(screen.getByText('未配置')).toBeTruthy();
+    expect(calls).toEqual(['/api/auth/session', '/api/agent/health']);
+    expect(calls.some((url) => /home|sessions|messages|runs|journal|tasks/i.test(url))).toBe(false);
+  });
+
+  it('fails closed when Agent Health includes session or message data', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/agent/health') return new Response(JSON.stringify({ status: 'online', source: 'hermes-runtime', checked_at: '2026-10-20T01:30:00Z', session_id: 'private-session' }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/agent-health');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
+    expect(screen.queryByText('private-session')).toBeNull();
+    expect(calls).toEqual(['/api/auth/session', '/api/agent/health']);
   });
 
   it.each(['/chat/blank', '/review'])('does not fetch the Home aggregate after login on direct route %s', async (path) => {

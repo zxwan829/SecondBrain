@@ -23,6 +23,7 @@ import { isExplicitJournalIntent } from './journal-intent';
 import { parseExplicitTaskCommand } from './task-intent';
 import { activityTimeLabel, mergeChatTimeline, type ChatActivity, type ChatHistoryMessage } from './chat-activity';
 import { V1ReadOnlyPage } from './V1ReadOnlyPages';
+import { V1BriefHealthPage } from './V1BriefHealthPages';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -139,7 +140,7 @@ const messages = {
   'zh-CN': {
     brand: 'SecondBrain', workspace: '你的工作台', subtitle: '一眼掌握当前状态，专注今日最重要的事情',
     home: '首页', chat: '对话', today: '今日', inbox: '收件箱', review: '待审核', projects: '项目',
-    knowledge: '知识库', brief: '简报', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', settings: '设置',
+    knowledge: '知识库', brief: '简报', agentHealth: 'Agent 状态', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', settings: '设置',
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
@@ -171,7 +172,7 @@ const messages = {
   en: {
     brand: 'SecondBrain', workspace: 'Your workspace', subtitle: 'See your current state and focus on what matters today',
     home: 'Home', chat: 'Chat', today: 'Today', inbox: 'Inbox', review: 'Review', projects: 'Projects',
-    knowledge: 'Knowledge', brief: 'Brief', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', settings: 'Settings',
+    knowledge: 'Knowledge', brief: 'Brief', agentHealth: 'Agent Health', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', settings: 'Settings',
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
     returnedItems: 'API entries', agentSupport: 'SecondBrain V1', source: 'Data source',
@@ -211,7 +212,8 @@ const navItems = [
   { id: 'review', key: 'review', icon: 'check', section: 'work', route: '/review' },
   { id: 'projects', key: 'projects', icon: 'folder', section: 'library', route: '/projects' },
   { id: 'knowledge', key: 'knowledge', icon: 'book', section: 'library', route: '/knowledge' },
-  { id: 'brief', key: 'brief', icon: 'file', section: 'library' },
+  { id: 'brief', key: 'brief', icon: 'file', section: 'library', route: '/brief' },
+  { id: 'agent-health', key: 'agentHealth', icon: 'brain', section: 'library', route: '/agent-health' },
   { id: 'activity', key: 'activity', icon: 'activity', section: 'library', route: '/activity' },
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
   { id: 'notes', key: 'notes', icon: 'notes', section: 'library', route: '/notes' },
@@ -221,7 +223,7 @@ const navItems = [
 
 const anchorByNav: Record<string, string> = {
   home: 'top', today: 'today', inbox: 'waiting', review: 'waiting',
-  projects: 'projects', knowledge: 'knowledge', brief: 'brief', activity: 'activity',
+  projects: 'projects', knowledge: 'knowledge', brief: 'brief', 'agent-health': 'agent-health', activity: 'activity',
 };
 
 export function App() {
@@ -470,7 +472,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           <button type="button" className="locale-button" onClick={changeLocale}>{t.localeLabel}</button>
         </div>
 
-        {page === 'projects' || page === 'activity' ? <V1ReadOnlyPage page={page} locale={locale} />
+        {page === 'brief' || page === 'agent-health' ? <V1BriefHealthPage page={page} locale={locale} />
+          : page === 'projects' || page === 'activity' ? <V1ReadOnlyPage page={page} locale={locale} />
           : page === 'knowledge' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Knowledge…' : '正在加载知识库…'}</div>}><KnowledgePage locale={locale} /></Suspense>
           : page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
           : page === 'journal' ? <JournalPage /> : page === 'notes' ? (enableNotes && notesAvailable
