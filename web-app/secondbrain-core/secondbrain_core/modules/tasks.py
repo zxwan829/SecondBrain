@@ -177,29 +177,39 @@ class TaskStore:
             os.close(root_fd)
 
     def _write_unlocked(self, data):
-        temporary = self.root / f".tasks-{uuid.uuid4().hex}.tmp"
+        temporary = f".tasks-{uuid.uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(temporary, flags, 0o600)
+        root_fd = self._open_root()
+        fd = None
         try:
+            fd = os.open(temporary, flags, 0o600, dir_fd=root_fd)
             with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as stream:
                 json.dump(data, stream, ensure_ascii=False, separators=(",", ":"))
                 stream.write("\n")
                 stream.flush()
                 os.fsync(fd)
-            os.replace(temporary, self.path)
-            root_fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+            os.replace(temporary, self.path.name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+            os.fsync(root_fd)
+            # The directory FD keeps all writes pinned to the initialized root. A
+            # final identity check prevents reporting success after its path moved.
+            check_fd = self._open_root()
+            os.close(check_fd)
+        except HTTPException:
             try:
-                os.fsync(root_fd)
-            finally:
-                os.close(root_fd)
+                os.unlink(temporary, dir_fd=root_fd)
+            except OSError:
+                pass
+            raise
         except OSError as exc:
             try:
-                temporary.unlink(missing_ok=True)
+                os.unlink(temporary, dir_fd=root_fd)
             except OSError:
                 pass
             raise HTTPException(status_code=500, detail="Task update failed safely") from exc
         finally:
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
+            os.close(root_fd)
 
     def _with_lock(self, operation):
         fd = self._lock()

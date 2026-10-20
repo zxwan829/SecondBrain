@@ -122,6 +122,49 @@ class TaskStoreTests(unittest.TestCase):
             self.store.list("all")
         self.assertEqual(replaced.exception.status_code, 503)
 
+    def test_task_write_does_not_follow_root_replaced_after_lock_and_read(self):
+        displaced = Path(self.temp.name) / "tasks-original"
+        original_read = self.store._read_unlocked
+
+        def read_then_replace_root(*args, **kwargs):
+            data = original_read(*args, **kwargs)
+            self.root.rename(displaced)
+            self.root.mkdir(mode=0o700)
+            self.root.chmod(0o700)
+            return data
+
+        with patch.object(self.store, "_read_unlocked", side_effect=read_then_replace_root):
+            with self.assertRaises(HTTPException) as replaced:
+                self.store.create("Synthetic root swap", None, "root-swap-create")
+
+        self.assertEqual(replaced.exception.status_code, 503)
+        self.assertFalse((self.root / "tasks.json").exists())
+
+    def test_task_write_fd_stays_pinned_if_root_moves_after_open(self):
+        displaced = Path(self.temp.name) / "tasks-original"
+        original_open_root = self.store._open_root
+        calls = {"count": 0}
+
+        def open_then_replace_root():
+            calls["count"] += 1
+            fd = original_open_root()
+            if calls["count"] == 3:  # lock, read, then write directory FD
+                self.root.rename(displaced)
+                self.root.mkdir(mode=0o700)
+                self.root.chmod(0o700)
+            return fd
+
+        with patch.object(self.store, "_open_root", side_effect=open_then_replace_root):
+            with self.assertRaises(HTTPException) as replaced:
+                self.store.create("Synthetic pinned fd", None, "pinned-fd-create")
+
+        self.assertEqual(replaced.exception.status_code, 503)
+        self.assertFalse((self.root / "tasks.json").exists())
+        self.assertFalse(list(self.root.glob(".tasks-*.tmp")))
+        # A fail-closed error may leave the atomic write in the displaced private
+        # directory, but it must never cross into the replacement path.
+        self.assertTrue((displaced / "tasks.json").exists())
+
     def test_task_data_reader_preserves_owner_only_read_only_file_compatibility(self):
         task = self.store.create("Synthetic read-only legacy mode", None, "legacy-mode-create")["task"]
         self.store.path.chmod(0o400)
