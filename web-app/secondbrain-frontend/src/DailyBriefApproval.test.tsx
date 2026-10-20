@@ -7,6 +7,13 @@ import { V1BriefHealthPage } from './V1BriefHealthPages';
 import { DailyBriefApproval } from './DailyBriefApproval';
 
 const checkedAt = '2026-10-20T01:30:00Z';
+function currentShanghaiDate(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
 function cryptoFor(randomUUID: () => string = () => '11111111-1111-4111-8111-111111111111') {
   return { subtle: webcrypto.subtle, randomUUID } as unknown as Crypto;
 }
@@ -101,8 +108,9 @@ describe('Daily Brief explicit approval UI draft', () => {
 
   it('loads Journal only on click, submits the exact Core ref after confirmation, then verifies by GET', async () => {
     vi.stubGlobal('crypto', cryptoFor());
+    const sourceDate = currentShanghaiDate();
     const calls: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [];
-    const sourceId = `2026-10-20:${'e'.repeat(64)}`;
+    const sourceId = `${sourceDate}:${'e'.repeat(64)}`;
     const sourceVersion = 'e'.repeat(64);
     let posted: Record<string, unknown> | null = null;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -110,7 +118,7 @@ describe('Daily Brief explicit approval UI draft', () => {
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) as Record<string, unknown> : undefined;
       calls.push({ path, method, ...(body ? { body } : {}) });
       if (path.startsWith('/api/daily-brief/source-options/journal?')) return Response.json({
-        status: 'real', items: [{ kind: 'journal', id: sourceId, date: '2026-10-20', version: sourceVersion }],
+        status: 'real', items: [{ kind: 'journal', id: sourceId, date: sourceDate, version: sourceVersion }],
         freshness: { checked_at: checkedAt },
       });
       if (path === '/api/daily-brief' && method === 'POST') {
@@ -119,8 +127,8 @@ describe('Daily Brief explicit approval UI draft', () => {
           timezone: 'Asia/Shanghai', record_version: 'f'.repeat(64), operation_id: `dbi-${'a'.repeat(64)}` }, { status: 201 });
       }
       if (path.startsWith('/api/daily-brief?')) {
-        if (!posted) return Response.json(brief('not_configured', '2026-10-20'));
-        return Response.json({ status: 'real', items: [{ brief_id: 'brief_journal_synthetic', date: '2026-10-20',
+        if (!posted) return Response.json(brief('not_configured', sourceDate));
+        return Response.json({ status: 'real', items: [{ brief_id: 'brief_journal_synthetic', date: sourceDate,
           timezone: 'Asia/Shanghai', generated_at: checkedAt, generation_status: 'generated', categories: ['Journal 回顾'],
           summary: 'Synthetic Journal brief', source_refs: (posted.source_refs as unknown[]) }],
           source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt } });
@@ -149,7 +157,7 @@ describe('Daily Brief explicit approval UI draft', () => {
     const post = calls.find((call) => call.method === 'POST');
     expect(post?.body?.source_refs).toEqual([{ kind: 'journal', id: sourceId, version: sourceVersion }]);
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
-    expect(calls.some((call) => call.path === '/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai')).toBe(true);
+    expect(calls.some((call) => call.path === `/api/daily-brief?date=${sourceDate}&timezone=Asia%2FShanghai`)).toBe(true);
     expect(screen.queryByText(/Journal 正文/)).toBeNull();
   });
 
@@ -238,11 +246,12 @@ describe('Daily Brief explicit approval UI draft', () => {
 
   it('fails closed when the selected Journal version drifts before POST', async () => {
     vi.stubGlobal('crypto', cryptoFor());
+    const sourceDate = currentShanghaiDate();
     const posts: Array<Record<string, unknown>> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path.startsWith('/api/daily-brief/source-options/journal?')) return Response.json({
-        status: 'real', items: [{ kind: 'journal', id: `2026-10-20:${'e'.repeat(64)}`, date: '2026-10-20', version: 'e'.repeat(64) }],
+        status: 'real', items: [{ kind: 'journal', id: `${sourceDate}:${'e'.repeat(64)}`, date: sourceDate, version: 'e'.repeat(64) }],
         freshness: { checked_at: checkedAt },
       });
       if (path === '/api/daily-brief' && init?.method === 'POST') {
@@ -263,7 +272,7 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(screen.queryByRole('checkbox', { name: /Journal 来源 1/ })).toBeNull();
     expect(screen.queryByText(/SENSITIVE_SYNTHETIC_SOURCE_VERSION/)).toBeNull();
     expect(posts).toHaveLength(1);
-    expect(posts[0].source_refs).toEqual([{ kind: 'journal', id: `2026-10-20:${'e'.repeat(64)}`, version: 'e'.repeat(64) }]);
+    expect(posts[0].source_refs).toEqual([{ kind: 'journal', id: `${sourceDate}:${'e'.repeat(64)}`, version: 'e'.repeat(64) }]);
   });
 
   it('retries an unknown transport result with identical key and body', async () => {
