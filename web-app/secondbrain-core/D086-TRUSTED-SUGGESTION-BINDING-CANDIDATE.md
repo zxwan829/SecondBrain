@@ -37,16 +37,31 @@ must not be read as evidence of Hermes integration or production acceptance.
 ## Internal candidate boundary
 
 `TrustedCaptureSuggestionBindingAuthority` is deliberately unregistered from
-`create_app()` and has no route or persistence side effect. It can return a
-metadata-only binding only when an injected server-side source reader verifies
-an exact event record and an injected Core consent reader returns an explicit
-consent audit row for the same authenticated subject, event ID, source text
-SHA-256, and source record version. The adapter's server-side receive time must not be in the future, the source
-expiry must still be current, and the Core consent timestamp must fall between
-receipt and the current time.
+`create_app()` and has no route or Inbox persistence side effect. It reads the
+source and consent authorities twice and requires both immutable snapshots to
+match. A source edit/version change or consent revocation between reads fails
+closed. The source reader must verify the exact event record; the Core consent
+reader must return an explicit consent audit row for the same authenticated
+subject, event ID, source text SHA-256, and source record version. The adapter's
+server-side receive time must not be in the future, the source expiry must
+still be current, and the Core consent timestamp must fall between receipt and
+the current time. Original text is capped by UTF-8 bytes, not character count,
+and the complete source/consent projection has a bounded serialized budget.
+
+`TrustedCaptureSuggestionBindingStore` is an unconfigured internal candidate
+ledger for synthetic/local validation. It binds one event+subject to one
+metadata tuple under an inter-process lock, replays an identical tuple, and
+rejects a conflicting content/version/consent tuple. It uses fsync plus atomic
+replace; on restart it validates the last complete state before clearing an
+orphan temporary file. Corrupt authoritative state fails closed and leaves
+files untouched. This ledger is not the Core consent store, does not create an
+Inbox entry, and does not make source/consent reads atomic with a future Inbox
+write. Any future admission transaction still needs a frozen contract and an
+atomic/recoverable seam with the real Core stores.
+
 The returned deterministic binding ID is an idempotency correlation value,
-not a bearer credential. Final durable replay/conflict/recovery remains owned
-by the existing Core Inbox event store.
+not a bearer credential. Final durable replay/conflict/recovery for Inbox
+events remains owned by the existing Core Inbox event store.
 
 The current app injects neither adapter, so this candidate fails closed. The
 candidate deliberately does not select a public URL, accept Web Session/Run
@@ -58,10 +73,12 @@ one cross-line freeze before public integration.
 ## Synthetic evidence scope
 
 Tests inject local synthetic source and consent readers to exercise exact
-binding and rejection cases. They prove candidate logic only, not a production
-Hermes adapter. Existing Core tests separately cover durable Inbox replay,
-conflicts, concurrent requests, interrupted writes, corrupt state recovery,
-proposal approval, stale versions, and dedicated target execution. A real
+binding, second-read drift/revocation, UTF-8 budgets, candidate ledger replay,
+same-event conflicts, concurrent writes, interrupted replace recovery, and
+corrupt-state fail-closed behavior. They prove candidate logic only, not a
+production Hermes adapter. Existing Core tests separately cover durable Inbox
+replay, conflicts, concurrent requests, interrupted writes, corrupt state
+recovery, proposal approval, stale versions, and dedicated target execution. A real
 localhost test exercises the current `create_app()` Inbox POST/GET and Proposal
 approval flow with synthetic data; no model, NAS, Vault, real chat, or external
 adapter is involved.
