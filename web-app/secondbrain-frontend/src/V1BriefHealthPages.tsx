@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { parseDailyBriefResponse, type DailyBriefResponse } from './projects-brief-wire';
 
 type Locale = 'zh-CN' | 'en';
-type BriefPageState = 'loading' | 'not-configured' | 'unauthorized' | 'unavailable' | 'backend-not-implemented';
+type BriefPageState = 'loading' | 'not-configured' | 'empty' | 'real' | 'partial' | 'stale' | 'failed' | 'unauthorized' | 'unavailable' | 'backend-not-implemented';
 type HealthPageState = 'loading' | 'online' | 'not-configured' | 'unavailable' | 'unauthorized' | 'backend-not-implemented';
 type AgentHealth = { status: 'online' | 'unavailable' | 'not_configured'; source: 'hermes-runtime' | null; checked_at: string };
 
@@ -29,12 +30,6 @@ async function read(path: string, signal: AbortSignal): Promise<unknown> {
   return response.json();
 }
 
-function isNotConfiguredBrief(value: unknown): boolean {
-  return isRecord(value) && Object.keys(value).every((key) => ['status', 'items', 'source'].includes(key))
-    && value.status === 'not_configured' && Array.isArray(value.items)
-    && value.items.length === 0 && value.source === null;
-}
-
 function parseAgentHealth(value: unknown): AgentHealth | null {
   if (!isRecord(value) || !['online', 'unavailable', 'not_configured'].includes(String(value.status))
     || (value.source !== 'hermes-runtime' && value.source !== null) || !isIsoDateTime(value.checked_at)) return null;
@@ -45,7 +40,7 @@ function parseAgentHealth(value: unknown): AgentHealth | null {
 
 const text = {
   'zh-CN': {
-    brief: { eyebrow: 'WORKSPACE / DAILY BRIEF', title: '每日简报', description: '查看当天已获准提供的简报。', notConfigured: 'DAILY_BRIEF_NOT_CONFIGURED · 当前没有已批准的简报来源；此页面不会自动汇总或生成内容。' },
+    brief: { eyebrow: 'WORKSPACE / DAILY BRIEF', title: '每日简报', description: '查看当天已获准提供的简报。', notConfigured: 'NOT BUSINESS CLOSED · DAILY_BRIEF_NOT_CONFIGURED · 当前没有已批准的简报来源；此页面不会自动汇总或生成内容。', empty: '该日期没有已保存的简报记录。', failed: '该日期的简报处理明确失败；没有生成替代内容。', recordTitle: '已保存的每日简报', states: { real: '来源已核验', partial: '部分来源', stale: '来源已变化', failed: '生成失败', empty: '暂无记录', not_configured: '未配置', unavailable: '暂不可用' }, partial: '部分来源未能核验；以下内容按 Core 标记为不完整。', stale: '来源版本已变化；此内容已过期，请勿视为当前摘要。', date: '日期与时区', generatedAt: '生成时间', references: '来源引用数', categories: '分类' },
     health: { eyebrow: 'WORKSPACE / AGENT HEALTH', title: 'Agent 状态', description: '查看 Hermes 运行能力检查结果，不加载会话或消息。', online: '在线', notConfigured: '未配置', unavailable: '暂不可用' },
     loading: '正在检查…', unauthorized: '当前账户无权读取此页面数据。', unavailable: '该页面数据暂不可用。请稍后重试。',
     notImplemented: 'BACKEND_NOT_IMPLEMENTED · 只读接口尚未进入 main。', retry: '重试', checked: '检查时间',
@@ -53,7 +48,7 @@ const text = {
     disclosure: '仅本地开发预览样例，不是真实 Agent 状态或已生成简报。', previewBrief: '本地样例：暂无已配置简报。', previewHealth: '本地样例：未连接 Agent 服务。',
   },
   en: {
-    brief: { eyebrow: 'WORKSPACE / DAILY BRIEF', title: 'Daily Brief', description: 'View an approved brief for today.', notConfigured: 'DAILY_BRIEF_NOT_CONFIGURED · No approved brief source is configured; this page does not summarize or generate content.' },
+    brief: { eyebrow: 'WORKSPACE / DAILY BRIEF', title: 'Daily Brief', description: 'View an approved brief for today.', notConfigured: 'NOT BUSINESS CLOSED · DAILY_BRIEF_NOT_CONFIGURED · No approved brief source is configured; this page does not summarize or generate content.', empty: 'No saved brief record exists for this date.', failed: 'Brief processing for this date failed; no substitute content was generated.', recordTitle: 'Saved daily brief', states: { real: 'Sources verified', partial: 'Partial sources', stale: 'Sources changed', failed: 'Generation failed', empty: 'No record', not_configured: 'Not configured', unavailable: 'Unavailable' }, partial: 'Some sources could not be verified; Core marks this content incomplete.', stale: 'Source versions changed; this content is stale and must not be treated as current.', date: 'Date and time zone', generatedAt: 'Generated at', references: 'Source references', categories: 'Categories' },
     health: { eyebrow: 'WORKSPACE / AGENT HEALTH', title: 'Agent Health', description: 'View the Hermes runtime capability check without loading sessions or messages.', online: 'Online', notConfigured: 'Not configured', unavailable: 'Unavailable' },
     loading: 'Checking…', unauthorized: 'This account cannot read this page.', unavailable: 'This page data is unavailable. Try again later.',
     notImplemented: 'BACKEND_NOT_IMPLEMENTED · The read-only API is not on main yet.', retry: 'Retry', checked: 'Checked at',
@@ -68,21 +63,28 @@ export function V1BriefHealthPage({ page, locale }: { page: 'brief' | 'agent-hea
   const words = copy[page === 'brief' ? 'brief' : 'health'];
   const [state, setState] = useState<BriefPageState | HealthPageState>('loading');
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const [brief, setBrief] = useState<DailyBriefResponse | null>(null);
   const [preview, setPreview] = useState(false);
   const [revision, setRevision] = useState(0);
 
   const load = useCallback(async (signal: AbortSignal) => {
     setState('loading');
     setCheckedAt(null);
+    setBrief(null);
     try {
+      const requestedDate = shanghaiDate();
+      const requestedTimezone = 'Asia/Shanghai';
       const path = page === 'brief'
-        ? `/api/daily-brief?date=${shanghaiDate()}&timezone=Asia%2FShanghai`
+        ? `/api/daily-brief?date=${requestedDate}&timezone=${encodeURIComponent(requestedTimezone)}`
         : '/api/agent/health';
       const payload = await read(path, signal);
       if (signal.aborted) return;
       if (page === 'brief') {
-        if (!isNotConfiguredBrief(payload)) throw new Error('unavailable');
-        setState('not-configured');
+        const parsed = parseDailyBriefResponse(payload, requestedDate, requestedTimezone);
+        if (!parsed) throw new Error('unavailable');
+        setBrief(parsed);
+        setCheckedAt(parsed.freshness.checked_at);
+        setState(parsed.status === 'not_configured' ? 'not-configured' : parsed.status);
         return;
       }
       const health = parseAgentHealth(payload);
@@ -104,6 +106,7 @@ export function V1BriefHealthPage({ page, locale }: { page: 'brief' | 'agent-hea
 
   const formatTime = (value: string) => new Date(value).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
   const statusLabel = state === 'online' ? copy.health.online : state === 'not-configured' ? copy.health.notConfigured : copy.health.unavailable;
+  const briefRecord = page === 'brief' ? brief?.items[0] : undefined;
 
   return (
     <section className={`v1-readonly-page v1-readonly-page-${page}`} aria-labelledby={`${page}-title`}>
@@ -115,7 +118,7 @@ export function V1BriefHealthPage({ page, locale }: { page: 'brief' | 'agent-hea
         : state === 'unauthorized' ? <p className="v1-page-state is-unavailable" role="alert">{copy.unauthorized}</p>
           : state === 'unavailable' ? <p className="v1-page-state is-unavailable" role="alert">{copy.unavailable}</p>
             : state === 'backend-not-implemented' ? <p className="v1-page-state is-unavailable" role="status">{copy.notImplemented}</p>
-              : page === 'brief' ? <p className="v1-contract-notice" role="status">{copy.brief.notConfigured}</p>
+              : page === 'brief' ? <DailyBriefView state={state as BriefPageState} record={briefRecord} checkedAt={checkedAt} locale={locale} />
                 : <article className="v1-data-card v1-agent-health-card" aria-label={words.title}>
                   <div className="v1-data-card-heading"><h2>{words.title}</h2><span className={`v1-status-pill ${state === 'online' ? 'is-healthy' : 'is-unavailable'}`}>{statusLabel}</span></div>
                   {checkedAt && <dl className="v1-data-fields"><div><dt>{copy.checked}</dt><dd><time>{formatTime(checkedAt)}</time></dd></div>{state !== 'not-configured' && <div><dt>Source</dt><dd>Hermes runtime</dd></div>}</dl>}
@@ -126,4 +129,27 @@ export function V1BriefHealthPage({ page, locale }: { page: 'brief' | 'agent-hea
       </section>}
     </section>
   );
+}
+
+function DailyBriefView({ state, record, checkedAt, locale }: { state: BriefPageState; record: DailyBriefResponse['items'][number] | undefined; checkedAt: string | null; locale: Locale }) {
+  const copy = text[locale];
+  const time = (value: string) => new Date(value).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
+  if (state === 'not-configured') return <p className="v1-contract-notice" role="status">{copy.brief.notConfigured}{checkedAt && ` · ${copy.checked} ${time(checkedAt)}`}</p>;
+  if (state === 'empty') return <p className="v1-page-state" role="status">{copy.brief.empty}{checkedAt && ` · ${copy.checked} ${time(checkedAt)}`}</p>;
+  if (state === 'failed' || state === 'unavailable') return <p className="v1-page-state is-unavailable" role="alert">{state === 'failed' ? copy.brief.failed : copy.unavailable}</p>;
+  if (!record) return <p className="v1-page-state is-unavailable" role="alert">{copy.unavailable}</p>;
+  const stateLabel = copy.brief.states[state as 'real' | 'partial' | 'stale'];
+  return <article className="v1-data-card v1-daily-brief-card" aria-label={copy.brief.recordTitle}>
+    <div className="v1-data-card-heading"><h2>{copy.brief.recordTitle}</h2><span className={`v1-status-pill ${state === 'real' ? 'is-healthy' : 'is-unavailable'}`}>{stateLabel}</span></div>
+    {state === 'partial' && <p className="v1-page-state is-partial" role="status">{copy.brief.partial}</p>}
+    {state === 'stale' && <p className="v1-page-state is-unavailable" role="status">{copy.brief.stale}</p>}
+    <dl className="v1-data-fields">
+      <div><dt>{copy.brief.date}</dt><dd><time>{record.date}</time> · {record.timezone}</dd></div>
+      <div><dt>{copy.brief.generatedAt}</dt><dd><time>{time(record.generated_at)}</time></dd></div>
+      <div><dt>{copy.brief.references}</dt><dd>{record.source_refs.length}</dd></div>
+    </dl>
+    {record.categories.length > 0 && <div className="v1-related-notes"><h3>{copy.brief.categories}</h3><ul>{record.categories.map((category) => <li key={category}>{category}</li>)}</ul></div>}
+    <div className="v1-daily-brief-summary">{record.summary}</div>
+    {checkedAt && <p className="calendar-source-note">{copy.checked} · {time(checkedAt)}</p>}
+  </article>;
 }
