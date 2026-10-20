@@ -1105,14 +1105,23 @@ const parseCaptureApproval = (body: unknown, suggestion: CaptureSuggestion): Cap
   const proposal = (body as Record<string, unknown>).proposal;
   if (!proposal || typeof proposal !== 'object') return null;
   const value = proposal as Record<string, unknown>;
-  const suggestionText = value.suggestion && typeof value.suggestion === 'object'
-    ? (value.suggestion as Record<string, unknown>).original : undefined;
+  const proposalSuggestion = value.suggestion;
+  if (!proposalSuggestion || typeof proposalSuggestion !== 'object' || Array.isArray(proposalSuggestion)) return null;
+  const original = (proposalSuggestion as Record<string, unknown>).original;
+  const current = (proposalSuggestion as Record<string, unknown>).current;
+  if (!original || typeof original !== 'object' || Array.isArray(original)) return null;
+  const originalValue = original as Record<string, unknown>;
+  const originalKeys = Object.keys(originalValue).sort();
+  if (originalKeys.length !== 2 || originalKeys[0] !== 'reason' || originalKeys[1] !== 'value'
+    || typeof originalValue.value !== 'string' || typeof originalValue.reason !== 'string') return null;
+  if (!current || typeof current !== 'object' || Array.isArray(current)
+    || typeof (current as Record<string, unknown>).value !== 'string') return null;
   if (value.proposal_id !== suggestion.approvedProposalId || value.status !== 'approved_recorded'
     || value.version !== suggestion.approvedProposalVersion || !Number.isInteger(value.version)
     || !['journal', 'review', 'project'].includes(String(value.kind))
     || typeof value.source_version !== 'string' || !value.source_version
     || !Number.isSafeInteger(value.vocabulary_version) || (value.vocabulary_version as number) < 0
-    || suggestionText !== suggestion.originalText) return null;
+    || originalValue.value !== suggestion.originalText) return null;
   return { proposalId: value.proposal_id as string, version: value.version as number,
     kind: value.kind as CaptureApproval['kind'], sourceVersion: value.source_version,
     vocabularyVersion: value.vocabulary_version as number };

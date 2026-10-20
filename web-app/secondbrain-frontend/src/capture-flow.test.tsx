@@ -28,7 +28,10 @@ const suggestion = (overrides: Record<string, unknown> = {}) => ({ event: 'captu
   original_text: 'A synthetic insight to capture.', ...overrides });
 const approvalBody = (overrides: Record<string, unknown> = {}) => ({ proposal: {
   proposal_id: proposalId, status: 'approved_recorded', version: proposalVersion, kind: 'journal',
-  source_version: sourceVersion, vocabulary_version: 12, suggestion: { original: 'A synthetic insight to capture.', current: 'A synthetic insight to capture.' },
+  source_version: sourceVersion, vocabulary_version: 12, suggestion: {
+    original: { value: 'A synthetic insight to capture.', reason: 'Synthetic Core approval rationale.' },
+    current: { value: 'A synthetic insight to capture.' },
+  },
   ...overrides,
 } });
 const inboxBody = (overrides: Record<string, unknown> = {}) => ({ inbox_id: inboxId, status: 'processing',
@@ -178,7 +181,12 @@ describe('D075.1 capture interactions', () => {
   it.each([
     ['unapproved status', { status: 'suggested' }],
     ['stale version', { version: proposalVersion + 1 }],
-    ['changed source text', { suggestion: { original: 'Changed source text.', current: 'Changed source text.' } }],
+    ['changed source text', { suggestion: { original: { value: 'Changed source text.', reason: 'Synthetic rationale.' }, current: { value: 'Changed source text.' } } }],
+    ['source text differs by whitespace', { suggestion: { original: { value: 'A synthetic insight to capture. ', reason: 'Synthetic rationale.' }, current: { value: 'A synthetic insight to capture.' } } }],
+    ['legacy text shape', { suggestion: { original: 'A synthetic insight to capture.', current: { value: 'A synthetic insight to capture.' } } }],
+    ['missing original value', { suggestion: { original: { reason: 'Synthetic rationale.' }, current: { value: 'A synthetic insight to capture.' } } }],
+    ['non-text original value', { suggestion: { original: { value: 42, reason: 'Synthetic rationale.' }, current: { value: 'A synthetic insight to capture.' } } }],
+    ['extra original field', { suggestion: { original: { value: 'A synthetic insight to capture.', reason: 'Synthetic rationale.', extra: 'rejected' }, current: { value: 'A synthetic insight to capture.' } } }],
   ])('does not allow a Core approval with %s to reach POST', async (_label, invalidApproval) => {
     window.localStorage.clear(); window.sessionStorage.clear();
     const calls: string[] = [];
