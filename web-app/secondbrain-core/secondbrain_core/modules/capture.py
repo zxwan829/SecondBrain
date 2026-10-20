@@ -384,17 +384,10 @@ class CaptureService:
             try:
                 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
                              getattr(os, "O_NOFOLLOW", 0), 0o600)
-            except FileExistsError:
-                try:
-                    existing_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-                    with os.fdopen(existing_fd, "rb") as existing:
-                        info = os.fstat(existing.fileno())
-                        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                                or info.st_mode & 0o077 or existing.read() != data):
-                            raise ValueError("Existing idempotent Raw asset does not match")
-                except OSError as exc:
-                    raise ValueError("Existing idempotent Raw asset is unsafe") from exc
-                return safe
+            except FileExistsError as exc:
+                # A matching Raw without its durable state is an interrupted write,
+                # not proof that this request may recreate the missing state.
+                raise FileExistsError("Inbox Raw/state recovery requires manual review") from exc
             with os.fdopen(fd, "wb") as output:
                 output.write(data)
                 output.flush()
@@ -443,6 +436,8 @@ class CaptureService:
             raw_data = f"Original URL: {source_url}\nCaptured at: {captured_at}\n".encode("utf-8")
         try:
             raw_path = self._create_raw(filename, raw_data, exact_name=exact_raw_name)
+        except FileExistsError as exc:
+            raise HTTPException(503, "Inbox Raw/state recovery requires manual review") from exc
         except (OSError, ValueError) as exc:
             raise HTTPException(500, "Could not preserve Raw evidence") from exc
         state = {"capture_id": capture_id, "source_type": source_type,
@@ -512,7 +507,8 @@ class CaptureService:
         return verified
 
     def accept_channel_text(self, *, text, identity, source_event_id, intent,
-                            occurred_at, approved_proposal=None, attachment_refs=None):
+                            occurred_at, approved_proposal=None, attachment_refs=None,
+                            precommit_validator=None):
         """Persist one explicit, channel-scoped Inbox event with durable idempotency.
 
         This first adapter accepts authenticated Web actions only. Caller-supplied
@@ -563,7 +559,10 @@ class CaptureService:
                 raise HTTPException(503, "Inbox idempotency state is unsafe")
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             state_path = self._state_path(capture_id)
-            existing = self._read_state(state_path) if state_path.exists() else None
+            state_present = os.path.lexists(state_path)
+            existing = self._read_state(state_path) if state_present else None
+            if state_present and existing is None:
+                raise HTTPException(503, "Inbox event recovery requires manual review")
             if existing:
                 if (existing.get("source_channel") != source_channel
                         or existing.get("source_event_id") != source_event_id
@@ -588,6 +587,8 @@ class CaptureService:
                 except OSError as exc:
                     raise HTTPException(503, "Inbox event recovery requires review") from exc
                 return existing, True
+            if precommit_validator is not None:
+                precommit_validator()
             server_time = _now()
             evidence = {"kind": "authenticated_app_approved_proposal" if approved_proposal else
                         "authenticated_app_explicit_action", "subject": consent_subject,
@@ -1075,6 +1076,7 @@ def create_inbox_entry_router(auth, service, proposals=None, proposal_sources=No
         attachments = body.get("attachment_refs", [])
         identity = authenticated_web_identity(subject, body.get("source_channel"))
         approved_proposal = None
+        precommit_validator = None
         text = body.get("original_text")
         if body.get("intent") == "approved_suggestion":
             proposal_id = body.get("approved_proposal_id")
@@ -1083,31 +1085,41 @@ def create_inbox_entry_router(auth, service, proposals=None, proposal_sources=No
                     not isinstance(proposal_id, str) or not re.fullmatch(r"[0-9a-f]{32}", proposal_id) or
                     not isinstance(proposal_version, int) or isinstance(proposal_version, bool)):
                 raise HTTPException(409, "Approved suggestion must identify an existing Core approval")
-            proposal = proposals.get(proposal_id)
-            if (proposal.get("status") != "approved_recorded" or
-                    proposal.get("version") != proposal_version or
-                    proposal.get("kind") not in {"journal", "review", "project"}):
-                raise HTTPException(409, "Approved suggestion is missing, stale, or not approved")
-            if (vocabulary_store is not None and
-                    proposal.get("vocabulary_version") != vocabulary_store.read().get("revision")):
-                raise HTTPException(409, "Approved suggestion vocabulary changed after approval")
-            try:
-                _, source_version, approved_text, _, _ = proposal_sources.execution_content(proposal)
-            except HTTPException as exc:
-                raise HTTPException(409, "Approved suggestion source is unavailable or changed") from exc
-            if source_version != proposal.get("source_version"):
-                raise HTTPException(409, "Approved suggestion source changed after approval")
-            if not isinstance(text, str) or text != approved_text:
-                raise HTTPException(409, "Approved suggestion content must match its approved source")
-            approved_proposal = {"proposal_id": proposal_id, "version": proposal_version,
-                                 "kind": proposal["kind"], "source_version": source_version}
+
+            def current_approval_binding():
+                proposal = proposals.get(proposal_id)
+                if (proposal.get("status") != "approved_recorded" or
+                        proposal.get("version") != proposal_version or
+                        proposal.get("kind") not in {"journal", "review", "project"}):
+                    raise HTTPException(409, "Approved suggestion is missing, stale, or not approved")
+                if (vocabulary_store is not None and
+                        proposal.get("vocabulary_version") != vocabulary_store.read().get("revision")):
+                    raise HTTPException(409, "Approved suggestion vocabulary changed after approval")
+                try:
+                    _, source_version, approved_text, _, _ = proposal_sources.execution_content(proposal)
+                except HTTPException as exc:
+                    raise HTTPException(409, "Approved suggestion source is unavailable or changed") from exc
+                if source_version != proposal.get("source_version"):
+                    raise HTTPException(409, "Approved suggestion source changed after approval")
+                if not isinstance(text, str) or text != approved_text:
+                    raise HTTPException(409, "Approved suggestion content must match its approved source")
+                return {"proposal_id": proposal_id, "version": proposal_version,
+                        "kind": proposal["kind"], "source_version": source_version}
+
+            approved_proposal = current_approval_binding()
+
+            def revalidate_before_persist():
+                if current_approval_binding() != approved_proposal:
+                    raise HTTPException(409, "Approved suggestion changed before Inbox persistence")
+
+            precommit_validator = revalidate_before_persist
         elif "approved_proposal_id" in body or "approved_proposal_version" in body:
             raise HTTPException(400, "Proposal approval binding is only valid for approved_suggestion")
         state, replayed = service.accept_channel_text(
             text=text, identity=identity,
             source_event_id=body.get("source_event_id"), intent=body.get("intent"),
             occurred_at=body.get("occurred_at"), approved_proposal=approved_proposal,
-            attachment_refs=attachments,
+            attachment_refs=attachments, precommit_validator=precommit_validator,
         )
         if state.get("status") == "processing" and service.mark_scheduled(state):
             raw_path = service.raw_root / state["raw_path"]

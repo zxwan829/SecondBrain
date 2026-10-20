@@ -73,6 +73,18 @@ unchanged.
   `approved_suggestion` requires an exact current `approved_recorded` proposal ID,
   version, and matching source content; it persists only through Capture Raw →
   Review and does not execute Journal, Project, Knowledge, or other target actions.
+  Core repeats the proposal decision/version, source digest, and vocabulary
+  revision checks under the per-event persistence lock immediately before the
+  first Raw/state write. This closes changes injected after the initial HTTP
+  validation and before persistence starts; it is not a cross-store transaction,
+  so a mutation in the remaining interval after that check is still a documented
+  race pending an explicitly designed shared lock/transaction boundary.
+  Same-key concurrent identical requests reuse one durable Capture; competing
+  payloads (including time, proposal version, or attachment binding) conflict.
+  If a write leaves Raw without valid state, or state is corrupt/missing or no
+  longer matches Raw, Core preserves the bytes and returns a recovery error for
+  manual review; it never reconstructs missing state or overwrites the Raw on
+  retry.
   Attachment references are limited to up to five existing Core Capture IDs
   plus SHA-256 values, which Core reopens without following links and rehashes;
   arbitrary paths, stale hashes, unsupported channel-owned sources, and repeated

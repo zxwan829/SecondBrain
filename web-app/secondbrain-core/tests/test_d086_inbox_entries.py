@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -56,6 +58,57 @@ class D086InboxEntryHTTPTests(unittest.TestCase):
                   "attachment_refs": []}
         result.update(changes)
         return result
+
+    def inbox_dependencies(self):
+        route = next(route for included in self.app.routes
+                     for route in getattr(getattr(included, "original_router", None), "routes", [])
+                     if getattr(route, "name", None) == "create_entry")
+        endpoint = route.endpoint
+        return dict(zip(endpoint.__code__.co_freevars,
+                        (cell.cell_contents for cell in endpoint.__closure__ or ())))
+
+    def create_approved_suggestion(self, suffix=""):
+        original = self.payload(original_text="记一下：approved synthetic journal content",
+                                source_event_id="source-for-proposal" + suffix)
+        captured = self.client.post("/api/inbox/entries", headers=self.headers, json=original)
+        self.assertEqual(captured.status_code, 202, captured.text)
+        proposal_response = self.client.post(
+            "/api/inbox/proposals", headers={**self.headers, "Idempotency-Key": "proposal-create-1" + suffix},
+            json={"source_kind": "capture", "source_id": captured.json()["inbox_id"]},
+        )
+        self.assertEqual(proposal_response.status_code, 200, proposal_response.text)
+        proposal = next(item for item in proposal_response.json()["proposals"] if item["kind"] == "journal")
+        approved = self.client.post(
+            f"/api/inbox/proposals/{proposal['proposal_id']}/decision",
+            headers={**self.headers, "Idempotency-Key": "proposal-approve-1" + suffix},
+            json={"decision": "approved_recorded", "expected_version": 1},
+        )
+        self.assertEqual(approved.status_code, 200, approved.text)
+        version = approved.json()["proposal"]["version"]
+        request = self.payload(
+            original_text=original["original_text"],
+            source_event_id=f"proposal:{proposal['proposal_id']}:v{version}",
+            intent="approved_suggestion", approved_proposal_id=proposal["proposal_id"],
+            approved_proposal_version=version,
+        )
+        return request, proposal["proposal_id"], captured.json()["inbox_id"]
+
+    def inject_after_initial_approval_read(self, request, mutation):
+        deps = self.inbox_dependencies()
+        service = deps["service"]
+        original = service.accept_channel_text
+        calls = 0
+
+        def mutate_before_persist(**kwargs):
+            nonlocal calls
+            calls += 1
+            mutation()
+            return original(**kwargs)
+
+        with patch.object(service, "accept_channel_text", side_effect=mutate_before_persist):
+            response = self.client.post("/api/inbox/entries", headers=self.headers, json=request)
+        self.assertEqual(calls, 1)
+        return response
 
     def test_explicit_capture_is_authenticated_persisted_and_restorable(self):
         self.assertEqual(self.client.post("/api/inbox/entries", headers=self.headers,
@@ -172,6 +225,198 @@ class D086InboxEntryHTTPTests(unittest.TestCase):
         stale_request = dict(request, source_event_id="stale-vocabulary-proposal")
         stale = self.client.post("/api/inbox/entries", headers=self.headers, json=stale_request)
         self.assertEqual(stale.status_code, 409, stale.text)
+
+    def test_approved_suggestion_rechecks_proposal_decision_before_first_persist(self):
+        self.login()
+        proposals = self.inbox_dependencies()["proposals"]
+        for change in ("decision", "version"):
+            with self.subTest(change=change):
+                request, proposal_id, _ = self.create_approved_suggestion("-" + change)
+                raw_count_before = len(list(self.raw.glob("*.md")))
+
+                def mutate_approval():
+                    def update(data):
+                        record = data["records"][proposal_id]
+                        if change == "decision":
+                            record["status"] = "rejected"
+                            record["decision_at"] = "2026-10-20T00:00:00Z"
+                            record["updated_at"] = record["decision_at"]
+                            record["target_execution_status"] = "not_executed"
+                            record["execution"] = {"status": "not_executed"}
+                            record["history"].append({"event": "rejected", "actor": "owner",
+                                                      "at": record["decision_at"], "version": record["version"] + 1})
+                        record["version"] += 1
+                        return None, True
+                    proposals._transaction(update)
+
+                response = self.inject_after_initial_approval_read(request, mutate_approval)
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertEqual(len(list(self.raw.glob("*.md"))), raw_count_before,
+                                 "no approved-suggestion Raw may be written")
+                capture_id = hashlib.sha256(("secondbrain-inbox-event\0web\0" + request["source_event_id"]).encode()).hexdigest()[:32]
+                self.assertFalse((self.state / "captures" / (capture_id + ".json")).exists())
+
+    def test_approved_suggestion_rechecks_source_and_vocabulary_before_first_persist(self):
+        self.login()
+        for changed in ("source", "vocabulary"):
+            with self.subTest(changed=changed):
+                request, _, source_capture_id = self.create_approved_suggestion("-" + changed)
+                deps = self.inbox_dependencies()
+                raw_count_before = len(list(self.raw.glob("*.md")))
+
+                def mutate():
+                    if changed == "source":
+                        source = deps["service"].get(source_capture_id)
+                        raw = self.raw / source["raw_path"]
+                        raw.write_text("changed synthetic source after approval", encoding="utf-8")
+                    else:
+                        vocabulary = deps["vocabulary_store"]
+                        catalog = vocabulary.read()
+                        catalog["revision"] += 1
+                        vocabulary.path.write_text(json.dumps(catalog), encoding="utf-8")
+                        vocabulary.path.chmod(0o600)
+
+                response = self.inject_after_initial_approval_read(request, mutate)
+                self.assertEqual(response.status_code, 409, response.text)
+                capture_id = hashlib.sha256(("secondbrain-inbox-event\0web\0" + request["source_event_id"]).encode()).hexdigest()[:32]
+                self.assertFalse((self.state / "captures" / (capture_id + ".json")).exists())
+                self.assertEqual(len(list(self.raw.glob("*.md"))), raw_count_before)
+
+    def test_same_event_concurrent_identical_and_conflicting_payloads_are_serialized(self):
+        self.login()
+
+        def concurrent_posts(payloads):
+            barrier = Barrier(len(payloads))
+
+            def post(payload):
+                with TestClient(self.app, base_url=ORIGIN) as client:
+                    login = client.post("/api/auth/login", headers=self.headers,
+                                        json={"password": "synthetic-d086-app-password"})
+                    if login.status_code != 200:
+                        return login.status_code, login.text
+                    barrier.wait(timeout=5)
+                    response = client.post("/api/inbox/entries", headers=self.headers, json=payload)
+                    return response.status_code, response.json()
+
+            with ThreadPoolExecutor(max_workers=len(payloads)) as pool:
+                return list(pool.map(post, payloads))
+
+        identical = self.payload(source_event_id="parallel-identical")
+        results = concurrent_posts([identical, identical])
+        self.assertEqual([status for status, _ in results], [202, 202])
+        self.assertEqual(len({body["inbox_id"] for _, body in results}), 1)
+        self.assertEqual(sum(bool(body["replayed"]) for _, body in results), 1)
+        self.assertEqual(len(list(self.raw.glob("*.md"))), 1)
+        self.assertEqual(len(list((self.state / "captures").glob("*.json"))), 1)
+
+        conflict_a = self.payload(source_event_id="parallel-conflict", original_text="candidate A")
+        conflict_b = self.payload(source_event_id="parallel-conflict", original_text="candidate B")
+        conflicts = concurrent_posts([conflict_a, conflict_b])
+        self.assertEqual(sorted(status for status, _ in conflicts), [202, 409])
+        self.assertEqual(len(list(self.raw.glob("*.md"))), 2)
+        self.assertEqual(len(list((self.state / "captures").glob("*.json"))), 2)
+
+        time_a = self.payload(source_event_id="parallel-time", occurred_at="2026-10-20T03:00:00Z")
+        time_b = dict(time_a, occurred_at="2026-10-20T04:00:00Z")
+        times = concurrent_posts([time_a, time_b])
+        self.assertEqual(sorted(status for status, _ in times), [202, 409])
+        self.assertEqual(len(list(self.raw.glob("*.md"))), 3)
+
+        approved, _, _ = self.create_approved_suggestion("-parallel")
+        approved["source_event_id"] += "-same-payload"
+        approved_retries = concurrent_posts([approved, approved])
+        self.assertEqual([status for status, _ in approved_retries], [202, 202])
+        self.assertEqual(len({body["inbox_id"] for _, body in approved_retries}), 1)
+        self.assertEqual(sum(bool(body["replayed"]) for _, body in approved_retries), 1)
+        proposal_conflict = dict(approved, approved_proposal_version=approved["approved_proposal_version"] + 1)
+        versions = concurrent_posts([approved, proposal_conflict])
+        self.assertEqual(sorted(status for status, _ in versions), [202, 409])
+
+        attachment_refs = []
+        for event_id in ("parallel-attachment-source-a", "parallel-attachment-source-b"):
+            source = self.client.post("/api/inbox/entries", headers=self.headers,
+                                      json=self.payload(source_event_id=event_id))
+            self.assertEqual(source.status_code, 202, source.text)
+            source_state = json.loads((self.state / "captures" /
+                                       (source.json()["inbox_id"] + ".json")).read_text())
+            attachment_refs.append({"capture_id": source.json()["inbox_id"],
+                                    "sha256": source_state["raw_sha256"]})
+        attachment_event_a = dict(approved, source_event_id="parallel-attachment-event",
+                                  attachment_refs=[attachment_refs[0]])
+        attachment_event_b = dict(approved, source_event_id="parallel-attachment-event",
+                                  attachment_refs=[attachment_refs[1]])
+        attachments = concurrent_posts([attachment_event_a, attachment_event_b])
+        self.assertEqual(sorted(status for status, _ in attachments), [202, 409])
+        self.assertEqual(len(list(self.knowledge.iterdir())), 0)
+        self.assertFalse((self.state / "journal").exists())
+        self.assertFalse((self.state / "tasks").exists())
+
+    def test_incomplete_event_state_never_replays_as_success_or_rewrites_raw(self):
+        self.login()
+        request = self.payload(source_event_id="interrupted-write")
+        capture_id = hashlib.sha256(("secondbrain-inbox-event\0web\0" + request["source_event_id"]).encode()).hexdigest()[:32]
+        raw_path = self.raw / f"Inbox-{capture_id}.md"
+        service = self.inbox_dependencies()["service"]
+        original_write_state = service._write_state
+
+        def fail_state_write(state):
+            if state.get("capture_id") == capture_id:
+                raise OSError("synthetic state persistence interruption")
+            return original_write_state(state)
+
+        with TestClient(self.app, base_url=ORIGIN, raise_server_exceptions=False) as failing_client:
+            failing_client.post("/api/auth/login", headers=self.headers,
+                                json={"password": "synthetic-d086-app-password"})
+            with patch.object(service, "_write_state", side_effect=fail_state_write):
+                failed = failing_client.post("/api/inbox/entries", headers=self.headers, json=request)
+        self.assertEqual(failed.status_code, 500)
+        self.assertTrue(raw_path.is_file())
+        raw_before_retry = raw_path.read_bytes()
+        retry = self.client.post("/api/inbox/entries", headers=self.headers, json=request)
+        self.assertEqual(retry.status_code, 503, retry.text)
+        self.assertEqual(raw_path.read_bytes(), raw_before_retry)
+        self.assertFalse((self.state / "captures" / (capture_id + ".json")).exists())
+
+        complete = self.client.post("/api/inbox/entries", headers=self.headers,
+                                    json=self.payload(source_event_id="corrupt-state"))
+        self.assertEqual(complete.status_code, 202, complete.text)
+        complete_id = complete.json()["inbox_id"]
+        complete_state = self.state / "captures" / (complete_id + ".json")
+        complete_raw = self.raw / json.loads(complete_state.read_text())["raw_path"]
+        complete_raw_before = complete_raw.read_bytes()
+        complete_state.write_text("{corrupt", encoding="utf-8")
+        corrupt_retry = self.client.post("/api/inbox/entries", headers=self.headers,
+                                         json=self.payload(source_event_id="corrupt-state"))
+        self.assertEqual(corrupt_retry.status_code, 503, corrupt_retry.text)
+        self.assertEqual(complete_raw.read_bytes(), complete_raw_before)
+        self.assertEqual(complete_state.read_text(), "{corrupt")
+
+    def test_missing_state_or_mismatched_raw_requires_manual_recovery(self):
+        self.login()
+        payload = self.payload(source_event_id="missing-state")
+        created = self.client.post("/api/inbox/entries", headers=self.headers, json=payload)
+        self.assertEqual(created.status_code, 202, created.text)
+        capture_id = created.json()["inbox_id"]
+        state_path = self.state / "captures" / (capture_id + ".json")
+        state = json.loads(state_path.read_text())
+        raw_path = self.raw / state["raw_path"]
+        state_path.unlink()
+        raw_before = raw_path.read_bytes()
+        retry = self.client.post("/api/inbox/entries", headers=self.headers, json=payload)
+        self.assertEqual(retry.status_code, 503, retry.text)
+        self.assertEqual(raw_path.read_bytes(), raw_before)
+        self.assertFalse(state_path.exists())
+
+        second = self.payload(source_event_id="mismatched-raw")
+        accepted = self.client.post("/api/inbox/entries", headers=self.headers, json=second)
+        self.assertEqual(accepted.status_code, 202, accepted.text)
+        state = json.loads((self.state / "captures" / (accepted.json()["inbox_id"] + ".json")).read_text())
+        raw_path = self.raw / state["raw_path"]
+        raw_path.write_text("tampered after accepted request", encoding="utf-8")
+        tampered = raw_path.read_bytes()
+        conflict = self.client.post("/api/inbox/entries", headers=self.headers, json=second)
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(raw_path.read_bytes(), tampered)
 
     def test_attachment_refs_are_exact_capture_ids_and_hashes_and_restore_without_path_disclosure(self):
         self.login()
