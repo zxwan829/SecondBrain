@@ -1,8 +1,4 @@
-"""Synthetic coverage for the internal D087 Journal source selector.
-
-The loopback endpoint below exists only in this test harness. The production
-Core app does not register a Journal source-options route before A freezes D087.
-"""
+"""Synthetic unit and real-Core loopback coverage for D087 Journal options."""
 import hashlib
 import json
 import os
@@ -118,6 +114,12 @@ def test_empty_invalid_dates_and_limits_are_exact_and_fail_closed(tmp_path):
                           headers={"Origin": "https://app.test"}).status_code == 400
         for limit in (0, 51):
             assert client.get(f"/__test/journal-source-options?date={DAY}&limit={limit}",
+                              headers={"Origin": "https://app.test"}).status_code == 400
+        assert client.get("/__test/journal-source-options",
+                          headers={"Origin": "https://app.test"}).status_code == 422
+        for query in (f"date={DAY}&extra=x", f"date={DAY}&date={DAY}",
+                      f"date={DAY}&limit=1&limit=2", f"date={DAY}&limit=1.0"):
+            assert client.get(f"/__test/journal-source-options?{query}",
                               headers={"Origin": "https://app.test"}).status_code == 400
 
 
@@ -263,10 +265,15 @@ def test_unreadable_journal_root_is_unavailable_and_does_not_leak(tmp_path):
         os.chmod(root, 0o700)
 
 
-def test_real_localhost_http_runs_core_with_test_only_internal_selector_route(tmp_path, monkeypatch):
+def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypatch):
     root = private_dir(tmp_path / "journal")
-    row, raw = append_row(root / f"{DAY}.jsonl", "synthetic localhost source")
-    os.chmod(root / f"{DAY}.jsonl", 0o600)
+    journal_path = root / f"{DAY}.jsonl"
+    rows = [append_row(journal_path, f"synthetic localhost source {index}",
+                       key=f"loopback-{index:03d}") for index in range(65)]
+    append_row(journal_path, "synthetic unsupported source", source="legacy_import",
+               key="unsupported-source")
+    os.chmod(journal_path, 0o400)
+    os.chmod(root, 0o500)
     roots = {name: private_dir(tmp_path / name) for name in (
         "review", "raw", "knowledge", "state", "projects", "briefs", "tasks", "notes",
     )}
@@ -298,17 +305,22 @@ def test_real_localhost_http_runs_core_with_test_only_internal_selector_route(tm
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     app = create_app()
-    assert not any(getattr(route, "path", None) ==
-                   "/api/daily-brief/source-options/journal" for route in app.routes)
-    test_router = APIRouter()
+    assert hasattr(app.state, "journal_source_options_service")
+    service = app.state.journal_source_options_service
+    source_store = service.journal_store
+    original_read = source_store.read_source_day
+    read_calls = 0
 
-    @test_router.get("/__test/journal-source-options")
-    def internal_test_projection(request: Request, date: str, limit: int = 20):
-        return app.state.journal_source_options_service.select(request, date, limit)
+    def count_reads(*args, **kwargs):
+        nonlocal read_calls
+        read_calls += 1
+        return original_read(*args, **kwargs)
 
-    # The only source-options HTTP route is test-local and is attached after
-    # create_app() to exercise Core auth, middleware and storage over loopback.
-    app.include_router(test_router)
+    monkeypatch.setattr(source_store, "read_source_day", count_reads)
+    initial_names = sorted(path.name for path in root.iterdir())
+    initial_root = root.stat()
+    initial_file = journal_path.stat()
+    initial_bytes = journal_path.read_bytes()
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="critical",
                                            lifespan="off", access_log=False))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
@@ -322,24 +334,223 @@ def test_real_localhost_http_runs_core_with_test_only_internal_selector_route(tm
             login = client.post("/api/auth/login", headers={"Origin": origin},
                                 json={"password": "synthetic-journal-selector-password"})
             assert login.status_code == 200
-            good = client.get(f"/__test/journal-source-options?date={DAY}",
-                              headers={"Origin": origin})
-            assert good.status_code == 200 and good.json()["status"] == "real"
-            assert good.json()["items"] == [{
-                "kind": "journal", "id": f"{DAY}:{row['id']}", "date": DAY,
-                "version": hashlib.sha256(raw).hexdigest(),
-            }]
-            assert "synthetic localhost source" not in good.text
-            assert str(root) not in good.text
-            denied = client.get(f"/__test/journal-source-options?date={DAY}",
-                                headers={"Origin": "http://attacker.invalid"})
-            assert denied.status_code == 403
-            unauth = httpx.get(f"{origin}/__test/journal-source-options?date={DAY}",
-                               headers={"Origin": origin}, trust_env=False)
-            assert unauth.status_code == 401
+            base_url = "/api/daily-brief/source-options/journal"
+
+            anonymous = httpx.get(f"{origin}{base_url}", headers={"Origin": origin},
+                                  trust_env=False)
+            assert anonymous.status_code == 401
+            anonymous_bad_origin = httpx.get(
+                f"{origin}{base_url}?date={DAY}", headers={"Origin": "http://attacker.invalid"},
+                trust_env=False,
+            )
+            assert anonymous_bad_origin.status_code == 403
+            assert read_calls == 0
+
+            denied = client.get(f"{base_url}?date={DAY}", headers={"Origin": "http://attacker.invalid"})
+            assert denied.status_code == 403 and read_calls == 0
+            auth = service.auth
+            original_action = auth.require_action
+            for action in ("daily_brief.read", "journal.read"):
+                def reject_action(request, current, denied_action=action):
+                    if current == denied_action:
+                        from fastapi import HTTPException
+                        raise HTTPException(status_code=403, detail="forbidden")
+                    return original_action(request, current)
+                monkeypatch.setattr(auth, "require_action", reject_action)
+                denied_action = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+                assert denied_action.status_code == 403 and read_calls == 0
+                monkeypatch.setattr(auth, "require_action", original_action)
+
+            # Authorization precedes syntax checks and Journal IO.
+            for bad_query, expected in (("", 422), (f"date={DAY}&extra=x", 400),
+                                        (f"date={DAY}&date={DAY}", 400),
+                                        (f"date={DAY}&limit=1&limit=2", 400),
+                                        (f"date=2026-02-30", 400),
+                                        (f"date={DAY}&limit=0", 400),
+                                        (f"date={DAY}&limit=51", 400),
+                                        (f"date={DAY}&limit=1.0", 400)):
+                suffix = f"?{bad_query}" if bad_query else ""
+                invalid = client.get(f"{base_url}{suffix}", headers={"Origin": origin})
+                assert invalid.status_code == expected
+            assert read_calls == 0
+
+            expected_ids = sorted(item[0]["id"] for item in rows)
+            real = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+            assert real.status_code == 200
+            body = real.json()
+            assert set(body) == {"status", "items", "freshness"}
+            assert set(body["freshness"]) == {"checked_at"}
+            assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+                                body["freshness"]["checked_at"])
+            assert body["status"] == "real" and len(body["items"]) == 20
+            assert [item["id"].split(":", 1)[1] for item in body["items"]] == expected_ids[:20]
+            assert all(set(item) == {"kind", "id", "date", "version"} for item in body["items"])
+            assert all(item["kind"] == "journal" and item["date"] == DAY for item in body["items"])
+            assert "synthetic localhost source" not in real.text
+            assert "synthetic-operation" not in real.text
+            assert str(root) not in real.text and "legacy_import" not in real.text
+            current_root = root.stat()
+            current_file = journal_path.stat()
+            assert sorted(path.name for path in root.iterdir()) == initial_names
+            assert (current_root.st_mode & 0o777, current_root.st_mtime_ns,
+                    current_root.st_ctime_ns, current_root.st_uid, current_root.st_gid,
+                    current_root.st_ino, current_root.st_nlink) == \
+                   (initial_root.st_mode & 0o777, initial_root.st_mtime_ns,
+                    initial_root.st_ctime_ns, initial_root.st_uid, initial_root.st_gid,
+                    initial_root.st_ino, initial_root.st_nlink)
+            assert (current_file.st_mode & 0o777, current_file.st_ino,
+                    current_file.st_size, current_file.st_mtime_ns,
+                    current_file.st_ctime_ns, current_file.st_uid, current_file.st_gid,
+                    current_file.st_nlink) == \
+                   (initial_file.st_mode & 0o777, initial_file.st_ino,
+                    initial_file.st_size, initial_file.st_mtime_ns,
+                    initial_file.st_ctime_ns, initial_file.st_uid, initial_file.st_gid,
+                    initial_file.st_nlink)
+            assert journal_path.read_bytes() == initial_bytes
+            assert (root / ".operations.lock").exists() is False
+            assert (root / f".{DAY}.lock").exists() is False
+            fifty = client.get(f"{base_url}?date={DAY}&limit=50", headers={"Origin": origin})
+            assert fifty.status_code == 200 and len(fifty.json()["items"]) == 50
+            assert [item["id"].split(":", 1)[1] for item in fifty.json()["items"]] == expected_ids[:50]
+            assert read_calls >= 2
+
+            empty = client.get(f"{base_url}?date=2026-10-21", headers={"Origin": origin})
+            assert empty.status_code == 200 and empty.json()["status"] == "empty"
+            assert empty.json()["items"] == []
+
+            # A missing store and a filesystem permission failure both map to
+            # the exact 200/unavailable envelope without local detail.
+            monkeypatch.setattr(service, "journal_store", None)
+            unavailable = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+            assert unavailable.status_code == 200 and unavailable.json()["status"] == "unavailable"
+            assert unavailable.json()["items"] == [] and str(root) not in unavailable.text
+            monkeypatch.setattr(service, "journal_store", source_store)
+            if os.geteuid() != 0:
+                os.chmod(journal_path, 0o000)
+                permission_denied = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+                assert permission_denied.status_code == 200
+                assert permission_denied.json()["status"] == "unavailable"
+                assert permission_denied.json()["items"] == []
+                os.chmod(journal_path, 0o400)
+
+            # Restore a writable synthetic fixture for drift and boundary cases.
+            os.chmod(root, 0o700)
+            os.chmod(journal_path, 0o600)
+            row_id = rows[0][0]["id"]
+            version_row = {"id": row_id, "date": DAY, "source": "web_app_explicit_intent",
+                           "original_text": "before-drift"}
+            journal_path.write_text(json.dumps(version_row, separators=(",", ":")) + "\n")
+            os.chmod(journal_path, 0o600)
+            read_calls = 0
+
+            def mutate_between_reads(day, **kwargs):
+                nonlocal read_calls
+                read_calls += 1
+                if read_calls == 2:
+                    version_row["original_text"] = "after-drift"
+                    journal_path.write_text(json.dumps(version_row, separators=(",", ":")) + "\n")
+                    os.chmod(journal_path, 0o600)
+                return original_read(day, **kwargs)
+
+            monkeypatch.setattr(source_store, "read_source_day", mutate_between_reads)
+            drift = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+            assert drift.status_code == 200 and drift.json()["status"] == "unavailable"
+            assert drift.json()["items"] == [] and "after-drift" not in drift.text
+            monkeypatch.setattr(source_store, "read_source_day", original_read)
+
+            # Atomic replacement during the fd read must also fail closed.
+            large_row = {"id": hashlib.sha256(b"atomic-race").hexdigest(), "date": DAY,
+                         "source": "web_app_explicit_intent", "original_text": "x" * 130_000}
+            journal_path.write_text(json.dumps(large_row, separators=(",", ":")) + "\n")
+            os.chmod(journal_path, 0o600)
+            original_inode = journal_path.stat().st_ino
+            raw_read = os.read
+            replaced = False
+
+            def replace_during_read(fd, size):
+                nonlocal replaced
+                chunk = raw_read(fd, size)
+                if chunk and not replaced and os.fstat(fd).st_ino == original_inode:
+                    replacement = root / ".synthetic-replacement"
+                    replacement.write_text(json.dumps({**large_row, "original_text": "replaced"},
+                                                       separators=(",", ":")) + "\n")
+                    os.chmod(replacement, 0o600)
+                    os.replace(replacement, journal_path)
+                    replaced = True
+                return chunk
+
+            monkeypatch.setattr(os, "read", replace_during_read)
+            atomic = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+            assert replaced and atomic.status_code == 200
+            assert atomic.json()["status"] == "unavailable" and atomic.json()["items"] == []
+            assert "replaced" not in atomic.text and str(root) not in atomic.text
+            monkeypatch.setattr(os, "read", raw_read)
+
+            # The exact 1 MiB first snapshot plus exact 1 MiB verifier snapshot
+            # reaches, but does not exceed, the 2 MiB total request budget.
+            boundary = {"id": hashlib.sha256(b"exact-budget").hexdigest(), "date": DAY,
+                        "source": "web_app_explicit_intent", "original_text": ""}
+            padding = 1024 * 1024 - len(json.dumps(boundary, separators=(",", ":")).encode())
+            boundary["original_text"] = "x" * padding
+            boundary_bytes = json.dumps(boundary, separators=(",", ":")).encode()
+            assert len(boundary_bytes) == 1024 * 1024
+            journal_path.write_bytes(boundary_bytes)
+            os.chmod(journal_path, 0o600)
+            exact_bytes = client.get(f"{base_url}?date={DAY}&limit=1", headers={"Origin": origin})
+            assert exact_bytes.status_code == 200 and exact_bytes.json()["status"] == "real"
+            assert exact_bytes.json()["items"][0]["version"] == hashlib.sha256(boundary_bytes).hexdigest()
+
+            journal_path.write_bytes(boundary_bytes + b" ")
+            os.chmod(journal_path, 0o600)
+            over_bytes = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+            assert over_bytes.status_code == 200 and over_bytes.json()["status"] == "unavailable"
+            assert over_bytes.json()["items"] == [] and str(root) not in over_bytes.text
+
+            exact_rows = []
+            for index in range(5000):
+                entry_id = hashlib.sha256(f"row-{index}".encode()).hexdigest()
+                row_wire = json.dumps({"id": entry_id, "date": DAY,
+                                      "source": "web_app_explicit_intent"},
+                                     separators=(",", ":"))
+                exact_rows.append((row_wire + "\n").encode())
+            journal_path.write_bytes(b"".join(exact_rows))
+            os.chmod(journal_path, 0o600)
+            started = time.monotonic()
+            five_thousand = client.get(f"{base_url}?date={DAY}&limit=50", headers={"Origin": origin})
+            elapsed = time.monotonic() - started
+            assert five_thousand.status_code == 200 and five_thousand.json()["status"] == "real"
+            ids_5000 = sorted(hashlib.sha256(f"row-{index}".encode()).hexdigest()
+                              for index in range(5000))
+            assert [item["id"].split(":", 1)[1] for item in five_thousand.json()["items"]] == ids_5000[:50]
+            assert len(five_thousand.json()["items"]) == 50
+            print(f"D087 5000-row full-day verification: {elapsed:.3f}s")
+
+            journal_path.write_bytes(b"".join(exact_rows) + exact_rows[-1])
+            os.chmod(journal_path, 0o600)
+            over_rows = client.get(f"{base_url}?date={DAY}&limit=1", headers={"Origin": origin})
+            assert over_rows.status_code == 200 and over_rows.json()["status"] == "unavailable"
+            assert over_rows.json()["items"] == []
+
+            journal_path.write_bytes(b'{"id":')
+            os.chmod(journal_path, 0o600)
+            half_row = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+            assert half_row.status_code == 200 and half_row.json()["status"] == "unavailable"
+            assert half_row.json()["items"] == []
+
+            journal_path.unlink()
+            outside = tmp_path / "synthetic-outside.jsonl"
+            outside.write_bytes(b"synthetic outside must not be read\n")
+            os.chmod(outside, 0o600)
+            journal_path.symlink_to(outside)
+            unsafe = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
+            assert unsafe.status_code == 200 and unsafe.json()["status"] == "unavailable"
+            assert unsafe.json()["items"] == [] and "synthetic outside" not in unsafe.text
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+        os.chmod(root, 0o700)
+        if (root / f"{DAY}.jsonl").is_symlink():
+            (root / f"{DAY}.jsonl").unlink()
         if not thread.is_alive():
             listener.close()
 
@@ -348,8 +559,8 @@ def _test_app(service, auth, host="app.test"):
     router = APIRouter()
 
     @router.get("/__test/journal-source-options")
-    def internal_test_projection(request: Request, date: str, limit: int = 20):
-        return service.select(request, date, limit)
+    def internal_test_projection(request: Request):
+        return service.select_from_request(request)
 
     app = FastAPI()
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=[host])
