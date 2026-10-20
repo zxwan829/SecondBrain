@@ -93,10 +93,11 @@ def test_calendar_projects_only_journal_and_task_metadata(tmp_path):
         f"/api/calendar?from={day}&to={day}&timezone=Asia%2FShanghai")
     assert response.status_code == 200
     body = response.json()
+    assert set(body) == {"status", "items", "source", "freshness"}
     assert body["status"] == "ok"
     assert body["source"] == ["journal", "tasks"]
     assert {row["kind"] for row in body["items"]} == {"journal", "task"}
-    assert all(set(row) <= {"event_id", "kind", "date", "occurred_at", "label", "status", "source"}
+    assert all(set(row) <= {"id", "kind", "date", "occurred_at", "status"}
                for row in body["items"])
     assert "PRIVATE" not in response.text
     assert "private-session-id" not in response.text
@@ -104,8 +105,8 @@ def test_calendar_projects_only_journal_and_task_metadata(tmp_path):
     assert "synthetic-task-key" not in response.text
     refreshed = make_client(auth, token, create_calendar_read_router(auth, journal, tasks)).get(
         f"/api/calendar?from={day}&to={day}&timezone=Asia%2FShanghai")
-    assert [row["event_id"] for row in refreshed.json()["items"]] == [
-        row["event_id"] for row in body["items"]
+    assert [row["id"] for row in refreshed.json()["items"]] == [
+        row["id"] for row in body["items"]
     ]
 
 
@@ -114,6 +115,7 @@ def test_calendar_requires_auth_and_rejects_unbounded_or_invalid_ranges(tmp_path
     client = make_client(auth, token, create_calendar_read_router(auth))
     assert client.get("/api/calendar").status_code == 422
     assert client.get("/api/calendar?from=2026-10-01&to=2026-11-01").status_code == 400
+    assert client.get("/api/calendar?from=2026-10-31&to=2026-11-01").status_code == 400
     assert client.get("/api/calendar?from=2026-02-30&to=2026-03-01").status_code == 400
     assert client.get("/api/calendar?from=2026-10-01&to=2026-10-01&timezone=NoSuch/Zone").status_code == 400
     client.cookies.clear()

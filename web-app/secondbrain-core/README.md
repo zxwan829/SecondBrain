@@ -139,9 +139,10 @@ unchanged.
 - Home is an explicitly requested read and caps traversal at 500 directory
   entries, depth 4, 50 Markdown candidates, and 256 KiB per file. Each section
   reports status, source, and freshness; truncation is surfaced as `partial`.
-  `GET /api/calendar` requires a paired date window of at most 31 days and
-  returns only opaque IDs, Journal's generic label/date/optional occurred time,
-  and Task due date/status metadata.
+  `GET /api/calendar` requires a paired single-month date window of at most 31
+  days and returns the strict `{status,items,source,freshness}` envelope.
+  Items allow only opaque `id`, `kind`, `date`, optional `occurred_at`, and
+  optional Task `status`; Journal labels are localized by the client.
 - Tests cover authentication/origin rejection, no-session/forged approval,
   Promote fail-closed, real file reads, deferred status, Hermes server-side
   auth, SSE/stop, and same-origin SPA routing.

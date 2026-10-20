@@ -65,6 +65,8 @@ def create_calendar_read_router(auth, journal_store=None, task_store=None):
             raise HTTPException(status_code=400, detail="to must not be before from")
         if (end - start).days >= _MAX_DAYS:
             raise HTTPException(status_code=400, detail="Calendar window cannot exceed 31 days")
+        if (start.year, start.month) != (end.year, end.month):
+            raise HTTPException(status_code=400, detail="Calendar window must stay within one month")
 
         items = []
         sources = []
@@ -77,12 +79,10 @@ def create_calendar_read_router(auth, journal_store=None, task_store=None):
                         if not isinstance(record, dict):
                             continue
                         item = {
-                            "event_id": _opaque_id("journal", day,
-                                                    str(record.get("id") or index)),
+                            "id": _opaque_id("journal", day,
+                                             str(record.get("id") or index)),
                             "kind": "journal",
                             "date": day,
-                            "label": "Journal",
-                            "source": "journal",
                         }
                         occurred = _occurred_at(record.get("created_at"), zone)
                         if occurred is not None:
@@ -96,8 +96,14 @@ def create_calendar_read_router(auth, journal_store=None, task_store=None):
                 for task in task_store.list(status="all")["tasks"]:
                     due = task.get("due_date")
                     task_status = task.get("status")
-                    if (not isinstance(due, str) or not _DATE.fullmatch(due)
-                            or not start.isoformat() <= due <= end.isoformat()):
+                    if not isinstance(due, str) or not _DATE.fullmatch(due):
+                        continue
+                    try:
+                        due_day = _parse_date(due, "task due_date")
+                    except HTTPException:
+                        failed = True
+                        continue
+                    if not start <= due_day <= end:
                         continue
                     if task_status not in {"open", "completed"}:
                         continue
@@ -105,25 +111,23 @@ def create_calendar_read_router(auth, journal_store=None, task_store=None):
                     if not isinstance(task_id, str) or not task_id:
                         continue
                     items.append({
-                        "event_id": _opaque_id("task", due, task_id),
+                        "id": _opaque_id("task", due, task_id),
                         "kind": "task",
                         "date": due,
                         "status": task_status,
-                        "source": "tasks",
                     })
                 sources.append("tasks")
             except (HTTPException, OSError, ValueError):
                 failed = True
 
-        items.sort(key=lambda item: (item["date"], item["kind"], item["event_id"]))
+        items.sort(key=lambda item: (item["date"], item["kind"], item["id"]))
         if not sources:
             status = "unavailable"
         elif failed or len(sources) < 2:
             status = "partial"
         else:
             status = "ok" if items else "empty"
-        return {"status": status, "items": items, "from": start.isoformat(),
-                "to": end.isoformat(), "timezone": timezone_name, "source": sources,
+        return {"status": status, "items": items, "source": sources,
                 "freshness": {"checked_at": datetime.now(timezone.utc).isoformat()}}
 
     return router
