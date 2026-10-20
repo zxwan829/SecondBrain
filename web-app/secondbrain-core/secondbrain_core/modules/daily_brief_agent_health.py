@@ -4,6 +4,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from .daily_brief_store import DailyBriefRecordReadStore
+
 
 def _valid_date(value):
     try:
@@ -29,8 +31,9 @@ def _checked_at():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def create_daily_brief_agent_health_router(auth, hermes):
+def create_daily_brief_agent_health_router(auth, hermes, brief_store=None):
     router = APIRouter(prefix="/api")
+    brief_store = brief_store or DailyBriefRecordReadStore(None)
 
     @router.get("/daily-brief")
     def daily_brief(request: Request,
@@ -39,9 +42,46 @@ def create_daily_brief_agent_health_router(auth, hermes):
         auth.require_action(request, "daily_brief.read")
         day = _valid_date(day)
         timezone_name = _valid_timezone(timezone_name)
-        # No trusted Daily Brief source exists yet. Never generate a temporary
-        # summary, read Hermes history, or call a model from this endpoint.
-        return {"status": "not_configured", "items": [], "source": None}
+        checked_at = _checked_at()
+        source = {"kind": "core-daily-brief-store"} if brief_store.configured else None
+        try:
+            # No authoritative verifier currently exists for the Brief's cross-module refs.
+            # The store therefore returns unverified and this route withholds summary content.
+            snapshot = brief_store.read(day, timezone_name)
+        except Exception:
+            return {"status": "unavailable", "items": [], "source": source,
+                    "freshness": {"checked_at": checked_at}}
+        if not snapshot.configured:
+            status, items = "not_configured", []
+        elif snapshot.failure_status == "unavailable":
+            status, items = "unavailable", []
+        elif snapshot.failure_status == "failed":
+            status, items = "failed", []
+        elif not snapshot.available:
+            status, items = "unavailable", []
+        elif not snapshot.found:
+            status, items = "empty", []
+        else:
+            record = snapshot.record
+            if record["generation_status"] == "failed":
+                status, items = "failed", []
+            elif record["generation_status"] == "stale" or snapshot.source_verification == "stale":
+                status, items = "stale", []
+            elif snapshot.source_verification == "unavailable":
+                status, items = "unavailable", []
+            elif snapshot.source_verification == "failed":
+                status, items = "failed", []
+            elif snapshot.source_verification != "verified":
+                # Do not expose an unverified summary to the public API.
+                status, items = "partial", []
+            else:
+                status = "partial" if record["generation_status"] == "partial" else "real"
+                items = [{key: record[key] for key in (
+                    "brief_id", "date", "timezone", "generated_at", "generation_status",
+                    "categories", "summary", "source_refs",
+                )}]
+        return {"status": status, "items": items, "source": source,
+                "freshness": {"checked_at": checked_at}}
 
     @router.get("/agent/health")
     async def agent_health(request: Request):

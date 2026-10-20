@@ -7,11 +7,42 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from .projects_source_read import ProjectsSourceReadStore
+
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_LIMIT = 100
 _MAX_OFFSET = 100_000
 _DEFAULT_JOURNAL_LOOKBACK_DAYS = 365
+_PROJECTS_MAX_LIMIT = 50
+_PROJECTS_MAX_OFFSET = 5000
+
+
+def _checked_at():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _project_page(limit, offset):
+    if not isinstance(limit, int) or not 1 <= limit <= _PROJECTS_MAX_LIMIT:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 50")
+    if not isinstance(offset, int) or not 0 <= offset <= _PROJECTS_MAX_OFFSET:
+        raise HTTPException(status_code=400, detail="offset must be between 0 and 5000")
+
+
+def _project_item(document, source_version):
+    item = {key: document[key] for key in ("id", "title", "status", "next_step", "updated_at")
+            if key in document}
+    unverified_association = False
+    for key in ("recent_activity", "linked_notes"):
+        if key not in document:
+            continue
+        references = document[key] if key == "linked_notes" else [document[key]]
+        # No authoritative Task/Notes/Activity ref verifier is wired yet.
+        # Suppress association data and downgrade instead of trusting JSON shape.
+        if references:
+            unverified_association = True
+    item["source_ref"] = {"id": document["id"], "version": source_version}
+    return item, unverified_association
 
 
 def _page(limit, offset):
@@ -119,18 +150,44 @@ def _task_rows(store, start, end, zone):
     return rows
 
 
-def create_projects_activity_router(auth, journal_store=None, task_store=None):
+def create_projects_activity_router(auth, journal_store=None, task_store=None,
+                                    projects_store=None):
     router = APIRouter(prefix="/api")
+    projects_store = projects_store or ProjectsSourceReadStore(None)
 
     @router.get("/projects")
     def projects(request: Request, limit: int = 1, offset: int = 0):
         auth.require_action(request, "projects.read")
-        _page(limit, offset)
+        _project_page(limit, offset)
+        checked_at = _checked_at()
+        try:
+            snapshot = projects_store.read_snapshot()
+        except Exception:
+            snapshot = None
+        if snapshot is None:
+            return {"status": "unavailable", "items": [],
+                    "pagination": {"limit": limit, "offset": offset, "has_more": False},
+                    "source": None, "freshness": {"checked_at": checked_at}}
+        if not snapshot.configured:
+            status, items, source, has_more = "not_configured", [], None, False
+        elif not snapshot.available:
+            status, items, source, has_more = "unavailable", [], None, False
+        else:
+            mapped = [_project_item(row.document, row.sha256)
+                      for row in snapshot.documents]
+            rows = [item for item, _unverified in mapped]
+            associations_unverified = any(unverified for _, unverified in mapped)
+            page = rows[offset:offset + limit]
+            has_more = snapshot.has_more or offset + len(page) < len(rows)
+            status = ("partial" if not snapshot.complete or associations_unverified else
+                      "empty" if not rows else "real")
+            items, source = page, {"kind": "explicit-project-index"}
         return {
-            "status": "not_configured",
-            "items": [],
-            "pagination": {"limit": limit, "offset": offset, "has_more": False},
-            "source": None,
+            "status": status,
+            "items": items,
+            "pagination": {"limit": limit, "offset": offset, "has_more": has_more},
+            "source": source,
+            "freshness": {"checked_at": checked_at},
         }
 
     @router.get("/activity")

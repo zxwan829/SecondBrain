@@ -44,7 +44,11 @@ def test_daily_brief_is_authenticated_and_explicitly_not_configured(tmp_path):
     client = make_client(tmp_path, hermes)
     response = client.get("/api/daily-brief?date=2026-10-20&timezone=Asia%2FShanghai")
     assert response.status_code == 200
-    assert response.json() == {"status": "not_configured", "items": [], "source": None}
+    body = response.json()
+    assert set(body) == {"status", "items", "source", "freshness"}
+    assert body["status"] == "not_configured"
+    assert body["items"] == [] and body["source"] is None
+    assert body["freshness"]["checked_at"].endswith("Z")
     assert hermes.calls == 0
 
     client.cookies.clear()
