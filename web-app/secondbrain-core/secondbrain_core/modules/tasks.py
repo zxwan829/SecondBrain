@@ -86,40 +86,95 @@ class TaskStore:
                 or info.st_mode & 0o077 or not os.access(path, os.W_OK)):
             raise ValueError("Task root must be a private writable directory owned by the Core UID")
         self.root = path
+        self.root_identity = (info.st_dev, info.st_ino)
         self.path = path / "tasks.json"
         self.lock_path = path / ".tasks.lock"
 
-    def _lock(self):
-        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    def _open_root(self):
+        try:
+            fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                         | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Task storage is unavailable") from exc
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077
+                or (info.st_dev, info.st_ino) != self.root_identity):
+            os.close(fd)
+            raise HTTPException(status_code=503, detail="Task storage is unavailable")
+        return fd
+
+    def _lock(self):
+        root_fd = self._open_root()
+        try:
+            try:
+                fd = os.open(self.lock_path.name, os.O_CREAT | os.O_EXCL | os.O_RDWR
+                             | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=root_fd)
+            except FileExistsError:
+                fd = os.open(self.lock_path.name, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                             dir_fd=root_fd)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="Task lock file could not be opened safely") from exc
+        finally:
+            os.close(root_fd)
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
             os.close(fd)
             raise HTTPException(status_code=500, detail="Task lock file is not private")
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            os.close(fd)
+            raise HTTPException(status_code=500, detail="Task lock could not be acquired safely") from exc
         return fd
 
     def _read_unlocked(self, max_bytes=None):
+        root_fd = self._open_root()
+        fd = None
         try:
-            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        except FileNotFoundError:
-            return {"tasks": [], "idempotency": {}}
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail="Task data file could not be opened safely") from exc
-        try:
+            try:
+                fd = os.open(self.path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+            except FileNotFoundError:
+                return {"tasks": [], "idempotency": {}}
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail="Task data file could not be opened safely") from exc
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077 or info.st_nlink != 1):
                 raise HTTPException(status_code=500, detail="Task data file is not private")
             if max_bytes is not None and info.st_size > max_bytes:
                 raise HTTPException(status_code=503, detail="Task projection exceeds read budget")
-            with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as stream:
-                data = json.load(stream)
+            read_limit = max_bytes if max_bytes is not None else info.st_size
+            chunks, total = [], 0
+            while True:
+                chunk = os.read(fd, min(65536, read_limit + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > read_limit:
+                    if max_bytes is not None:
+                        raise HTTPException(status_code=503, detail="Task projection exceeds read budget")
+                    raise HTTPException(status_code=503, detail="Task data changed while being read")
+            if total != info.st_size:
+                raise HTTPException(status_code=503, detail="Task data changed while being read")
+            try:
+                data = json.loads(b"".join(chunks).decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+                raise HTTPException(status_code=500, detail="Task data is invalid") from exc
             if not isinstance(data, dict) or not isinstance(data.get("tasks"), list) or not isinstance(data.get("idempotency"), dict):
                 raise ValueError("invalid Task store")
             return data
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        except HTTPException:
+            raise
+        except (OSError, ValueError) as exc:
             raise HTTPException(status_code=500, detail="Task data is invalid") from exc
         finally:
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
+            os.close(root_fd)
 
     def _write_unlocked(self, data):
         temporary = self.root / f".tasks-{uuid.uuid4().hex}.tmp"

@@ -1,11 +1,14 @@
 import concurrent.futures
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from secondbrain_core.modules.tasks import TaskStore
+from secondbrain_core.modules import tasks as tasks_module
 
 
 class TaskStoreTests(unittest.TestCase):
@@ -74,6 +77,55 @@ class TaskStoreTests(unittest.TestCase):
         self.store.path.symlink_to(outside)
         with self.assertRaises(HTTPException):
             self.store.list("all")
+
+    def test_projection_read_enforces_actual_byte_budget_after_fstat(self):
+        self.store.create("Synthetic bounded task", None, "bounded-task-create")
+        original_read = os.read
+        changed = {"done": False}
+
+        def grow_store_before_read(fd, size):
+            if not changed["done"]:
+                changed["done"] = True
+                with self.store.path.open("ab") as output:
+                    output.write(b" " * (2 * 1024 * 1024 + 1))
+                    output.flush()
+                    os.fsync(output.fileno())
+            return original_read(fd, size)
+
+        with patch.object(tasks_module.os, "read", side_effect=grow_store_before_read):
+            with self.assertRaises(HTTPException) as over_budget:
+                self.store.list_for_projection()
+        self.assertEqual(over_budget.exception.status_code, 503)
+        self.assertEqual(over_budget.exception.detail, "Task projection exceeds read budget")
+
+    def test_projection_accepts_exact_budget_and_rejects_one_byte_over(self):
+        budget = 2 * 1024 * 1024
+        prefix = b'{"tasks":[],"idempotency":{},"padding":"'
+        suffix = b'"}'
+        exact = prefix + b"x" * (budget - len(prefix) - len(suffix)) + suffix
+        self.store.path.write_bytes(exact)
+        self.store.path.chmod(0o600)
+        self.assertEqual(self.store.list_for_projection(), {"tasks": []})
+        self.store.path.write_bytes(exact + b" ")
+        self.store.path.chmod(0o600)
+        with self.assertRaises(HTTPException) as over_budget:
+            self.store.list_for_projection()
+        self.assertEqual(over_budget.exception.status_code, 503)
+
+    def test_task_store_rejects_replaced_root_after_initialization(self):
+        self.store.create("Synthetic root pin", None, "root-pin-create")
+        displaced = Path(self.temp.name) / "tasks-original"
+        self.root.rename(displaced)
+        self.root.mkdir(mode=0o700)
+        self.root.chmod(0o700)
+        with self.assertRaises(HTTPException) as replaced:
+            self.store.list("all")
+        self.assertEqual(replaced.exception.status_code, 503)
+
+    def test_task_data_reader_preserves_owner_only_read_only_file_compatibility(self):
+        task = self.store.create("Synthetic read-only legacy mode", None, "legacy-mode-create")["task"]
+        self.store.path.chmod(0o400)
+        self.assertEqual(self.store.list("all")["tasks"], [task])
 
 
 if __name__ == "__main__":
