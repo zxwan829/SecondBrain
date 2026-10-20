@@ -14,6 +14,7 @@ import httpx
 import uvicorn
 
 from secondbrain_core.app import create_app
+from secondbrain_core.modules.daily_brief_import import DailyBriefAuditStore
 from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.notes import NotesStore
 from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStore
@@ -156,18 +157,74 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
                 "summary": "Synthetic verified-source summary",
                 "source_refs": brief_refs, "approved": True,
             }
+            audit_failed_once = False
+            original_audit_append = DailyBriefAuditStore.append
+            def fail_first_created_audit(store, event):
+                nonlocal audit_failed_once
+                if event["outcome"] == "created" and not audit_failed_once:
+                    audit_failed_once = True
+                    raise OSError("synthetic audit append failure")
+                return original_audit_append(store, event)
+            monkeypatch.setattr(DailyBriefAuditStore, "append", fail_first_created_audit)
+            failed_import = client.post("/api/daily-brief", headers={"Origin": origin}, json=import_body)
+            assert failed_import.status_code == 503
+            assert failed_import.json() == {"detail": "Daily Brief unavailable"}
+            assert import_body["summary"] not in failed_import.text
+            assert not (roots["briefs"] / f"{brief_day}.json").exists()
+            empty_after_failed_audit = client.get(
+                f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
+                headers={"Origin": origin},
+            )
+            assert empty_after_failed_audit.status_code == 200
+            assert empty_after_failed_audit.json()["status"] == "empty"
+            assert empty_after_failed_audit.json()["items"] == []
             imported = client.post("/api/daily-brief", headers={"Origin": origin}, json=import_body)
             assert imported.status_code == 201
-            assert set(imported.json()) == {"status", "brief_id", "date", "timezone"}
+            assert set(imported.json()) == {
+                "status", "brief_id", "date", "timezone", "record_version", "operation_id",
+            }
+            assert imported.json()["status"] == "created"
+            assert imported.json()["record_version"] == hashlib.sha256(
+                (roots["briefs"] / f"{brief_day}.json").read_bytes()).hexdigest()
             assert "Synthetic verified-source summary" not in imported.text
             daily = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                headers={"Origin": origin})
             assert daily.status_code == 200
+            assert set(daily.json()) == {"status", "items", "source", "freshness"}
             assert daily.json()["status"] == "real"
+            assert daily.json()["source"] == {"kind": "core-daily-brief-store"}
+            assert set(daily.json()["freshness"]) == {"checked_at"}
+            assert set(daily.json()["items"][0]) == {
+                "brief_id", "date", "timezone", "generated_at", "generation_status",
+                "categories", "summary", "source_refs",
+            }
             assert daily.json()["items"][0]["source_refs"] == brief_refs
             assert daily.json()["items"][0]["summary"] == import_body["summary"]
             assert "Synthetic Task" not in daily.text
             assert "synthetic Journal row" not in daily.text
+            duplicate = client.post("/api/daily-brief", headers={"Origin": origin}, json=import_body)
+            assert duplicate.status_code == 200
+            assert duplicate.json() == {"status": "duplicate", "brief_id": imported.json()["brief_id"],
+                                        "date": brief_day, "timezone": "Asia/Shanghai",
+                                        "record_version": imported.json()["record_version"],
+                                        "operation_id": imported.json()["operation_id"]}
+            different_key = {**import_body, "idempotency_key": "loopback-brief-other-key-20261020"}
+            conflict = client.post("/api/daily-brief", headers={"Origin": origin}, json=different_key)
+            assert conflict.status_code == 409
+            assert conflict.json() == {"detail": "Daily Brief conflict"}
+            unsupported = client.post("/api/daily-brief", headers={"Origin": origin}, json={
+                **import_body, "mode": "approved_import",
+                "import_ref": {"kind": "existing_brief", "id": "brief-synthetic", "version": "c" * 64},
+            })
+            assert unsupported.status_code == 501
+            assert unsupported.json() == {"detail": "approved import unavailable"}
+            assert "brief-synthetic" not in unsupported.text
+            unauthenticated = httpx.get(f"{origin}/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
+                                        headers={"Origin": origin}, trust_env=False, timeout=3.0)
+            assert unauthenticated.status_code == 401
+            denied_origin = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
+                                       headers={"Origin": "http://evil.test"})
+            assert denied_origin.status_code == 403
             journal_tree_after = _tree_snapshot(roots["journal"])
             # A read may update atime on platforms without O_NOATIME; all other
             # metadata, bytes, modes, identities, and directory entries must

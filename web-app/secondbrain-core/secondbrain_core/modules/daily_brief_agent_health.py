@@ -107,6 +107,9 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
         checked_at = _checked_at()
         source = {"kind": "core-daily-brief-store"} if brief_store.configured else None
         try:
+            if brief_import_store.has_pending_for_date(day):
+                return {"status": "unavailable", "items": [], "source": source,
+                        "freshness": {"checked_at": checked_at}}
             # Each request gets one bounded, exact-ID Projects snapshot. No
             # arbitrary caller path or cross-scope lookup enters this adapter.
             authority = authority_factory(request)
@@ -214,6 +217,10 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
 
         candidate = {key: body[key] for key in ("date", "timezone", "categories", "summary", "source_refs")}
         request_sha256 = hashlib.sha256(_canonical(body)).hexdigest()
+        def audit_created(result):
+            write_audit(request_id=request_id, brief_id=result["brief_id"], day=day,
+                        timezone_name=timezone_name, refs=refs,
+                        outcome="created", actor=actor)
         try:
             result = brief_import_store.import_idempotent(
                 candidate,
@@ -221,6 +228,7 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
                 idempotency_key=key,
                 actor=actor,
                 request_sha256=request_sha256,
+                before_commit=audit_created,
             )
         except BriefImportConflict as exc:
             try:
@@ -246,17 +254,20 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
             except Exception:
                 pass
             raise HTTPException(status_code=503, detail="Daily Brief unavailable") from exc
-        try:
-            write_audit(request_id=request_id, brief_id=result["brief_id"], day=day,
-                        timezone_name=timezone_name, refs=refs,
-                        outcome=result["status"], actor=actor)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Daily Brief unavailable") from exc
+        if result["status"] == "duplicate":
+            try:
+                write_audit(request_id=request_id, brief_id=result["brief_id"], day=day,
+                            timezone_name=timezone_name, refs=refs,
+                            outcome="duplicate", actor=actor)
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="Daily Brief unavailable") from exc
         from fastapi.responses import JSONResponse
         response_status = 201 if result["status"] == "created" else 200
         return JSONResponse(status_code=response_status, content={
             "status": result["status"], "brief_id": result["brief_id"],
             "date": day, "timezone": timezone_name,
+            "record_version": result["record_sha256"],
+            "operation_id": result["operation_id"],
         })
 
     @router.get("/agent/health")
