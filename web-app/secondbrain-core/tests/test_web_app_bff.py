@@ -14,6 +14,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.hermes_api import HermesAPI
+from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX, FILE_WRITE_APPROVAL_PREFIX
 from secondbrain_core.modules.auto_organize import OrganizerControlStore, OrganizeSettingsStore, next_scheduled_at
 from datetime import datetime, timezone
@@ -232,6 +233,57 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in self.review.iterdir()), before_reviews)
         self.assertEqual([path.name for path in self.knowledge.iterdir()], ["known.md"])
         self.assertEqual(self.calls, [])
+
+    def test_authorized_journal_append_on_read_only_root_returns_safe_503_without_changes(self):
+        self.login()
+        day = "2026-10-17"
+        body_text = "记一下：SYNTHETIC-PRIVATE-JOURNAL-BODY-7f3a"
+        headers = {"Origin": "https://testserver", "Idempotency-Key": "readonly-root-write"}
+        created = self.client.post("/api/journal/entries", json={"date": day, "text": body_text},
+                                   headers=headers)
+        self.assertEqual(created.status_code, 200, created.text)
+
+        source = self.journal / f"{day}.jsonl"
+        # Remove write-coordination files so this verifies the first lock
+        # creation is denied. The source reader must remain lock-free.
+        (self.journal / ".operations.lock").unlink()
+        (self.journal / f".{day}.lock").unlink()
+        store = JournalStore(str(self.journal))
+        snapshot = store.read_source_day(day)
+        self.assertTrue(snapshot["available"])
+        self.assertIn(created.json()["entry"]["id"], snapshot["entries"])
+        self.assertFalse((self.journal / ".operations.lock").exists())
+        self.assertFalse((self.journal / f".{day}.lock").exists())
+
+        before_names = sorted(path.name for path in self.journal.iterdir())
+        before_bytes = source.read_bytes()
+        os.chmod(source, 0o400)
+        os.chmod(self.journal, 0o500)
+        try:
+            self.assertNotEqual(os.geteuid(), 0, "permission-denial test requires a non-root UID")
+            self.assertFalse(os.access(self.journal, os.W_OK))
+            before_root = self.journal.stat()
+            before_source = source.stat()
+            response = self.client.post("/api/journal/entries", json={"date": day, "text": body_text},
+                                        headers={"Origin": "https://testserver",
+                                                 "Idempotency-Key": "readonly-root-denied"})
+            self.assertEqual(response.status_code, 503, response.text)
+            self.assertEqual(response.json(), {"detail": "Journal storage is temporarily unavailable"})
+            for private_value in (str(self.journal), body_text, "session_id", "session-1"):
+                self.assertNotIn(private_value, response.text)
+            self.assertEqual(sorted(path.name for path in self.journal.iterdir()), before_names)
+            self.assertEqual(source.read_bytes(), before_bytes)
+            after_source = source.stat()
+            self.assertEqual((after_source.st_mode, after_source.st_size, after_source.st_mtime_ns,
+                              after_source.st_ino),
+                             (before_source.st_mode, before_source.st_size, before_source.st_mtime_ns,
+                              before_source.st_ino))
+            after_root = self.journal.stat()
+            self.assertEqual((after_root.st_mode, after_root.st_mtime_ns, after_root.st_ino),
+                             (before_root.st_mode, before_root.st_mtime_ns, before_root.st_ino))
+        finally:
+            os.chmod(self.journal, 0o700)
+            os.chmod(source, 0o600)
 
     def test_unconfigured_journal_fails_clearly_without_creating_a_store(self):
         with patch.dict(os.environ, {**self.env, "SB_JOURNAL_ROOT": ""}), patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):

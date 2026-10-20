@@ -63,6 +63,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
     # write permission. The regular Journal write path above created it, so
     # remove it as fixture setup before freezing the synthetic root read-only.
     (roots["journal"] / ".2026-10-20.lock").unlink()
+    (roots["journal"] / ".operations.lock").unlink()
     os.chmod(roots["journal"] / "2026-10-20.jsonl", 0o400)
     os.chmod(roots["journal"], 0o500)
     assert os.geteuid() != 0 and not os.access(roots["journal"], os.W_OK)
@@ -173,7 +174,29 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
                 after.pop("atime_ns")
                 assert after == before
             assert ".2026-10-20.lock" not in journal_tree_after
+            assert ".operations.lock" not in journal_tree_after
             assert ".permission-probe" not in journal_tree_after
+
+            denied_text = "记一下：SYNTHETIC-PRIVATE-HTTP-WRITE-4c2e"
+            before_denied_tree = _tree_snapshot(roots["journal"])
+            before_denied_dir = _directory_state(roots["journal"])
+            denied_append = client.post("/api/journal/entries",
+                                        headers={"Origin": origin, "Idempotency-Key": "readonly-http-denied"},
+                                        json={"date": "2026-10-20", "text": denied_text})
+            assert denied_append.status_code == 503
+            assert denied_append.json() == {"detail": "Journal storage is temporarily unavailable"}
+            for private_value in (str(roots["journal"]), denied_text, "synthetic-loopback-password",
+                                  "session_id", "session-1"):
+                assert private_value not in denied_append.text
+            after_denied_tree = _tree_snapshot(roots["journal"])
+            assert _directory_state(roots["journal"]) == before_denied_dir
+            assert set(after_denied_tree) == set(before_denied_tree)
+            for name in before_denied_tree:
+                before = dict(before_denied_tree[name])
+                after = dict(after_denied_tree[name])
+                before.pop("atime_ns")
+                after.pop("atime_ns")
+                assert after == before
 
             # Force an atomic path replacement after the exact Journal fd has
             # yielded bytes but before its post-read path identity check. The

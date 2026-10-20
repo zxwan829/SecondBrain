@@ -110,8 +110,13 @@ class JournalStore:
         # authoritative, so retries can recover after a lost response without
         # relying on a separate index that could become stale.
         operation_lock_path = self.root / ".operations.lock"
-        operation_lock_fd = os.open(operation_lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        operation_lock_fd = None
         try:
+            operation_lock_fd = os.open(
+                operation_lock_path,
+                os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
             operation_lock_stat = os.fstat(operation_lock_fd)
             if (not stat.S_ISREG(operation_lock_stat.st_mode) or operation_lock_stat.st_uid != os.geteuid()
                     or operation_lock_stat.st_mode & 0o077):
@@ -173,11 +178,16 @@ class JournalStore:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
                 os.close(lock_fd)
             return {"status": "created", "date": day, "entry": record}
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Journal storage is temporarily unavailable") from exc
+        except (UnicodeError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=500, detail="Journal append failed safely") from exc
         finally:
-            fcntl.flock(operation_lock_fd, fcntl.LOCK_UN)
-            os.close(operation_lock_fd)
+            if operation_lock_fd is not None:
+                try:
+                    fcntl.flock(operation_lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(operation_lock_fd)
 
     def read(self, day):
         path = self._path(day)
