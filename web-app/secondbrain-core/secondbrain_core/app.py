@@ -19,6 +19,8 @@ from .modules.journal import JournalStore, create_journal_router
 from .modules.tasks import TaskStore, create_task_router
 from .modules.projects_activity_read import create_projects_activity_router
 from .modules.daily_brief_agent_health import create_daily_brief_agent_health_router
+from .modules.projects_source_read import ProjectsSourceReadStore
+from .modules.daily_brief_store import DailyBriefRecordReadStore
 from .modules.calendar_read import create_calendar_read_router
 from .modules.notes import configured_notes_store, create_notes_router
 from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
@@ -128,6 +130,10 @@ def create_app():
     journal_store = JournalStore(journal_root) if journal_root else None
     task_root = os.environ.get("SB_TASK_ROOT", "").strip()
     task_store = TaskStore(task_root) if task_root else None
+    projects_root = os.environ.get("SB_PROJECTS_INDEX_ROOT", "").strip()
+    projects_store = ProjectsSourceReadStore(projects_root or None)
+    daily_brief_root = os.environ.get("SB_DAILY_BRIEF_STORE_ROOT", "").strip()
+    daily_brief_store = DailyBriefRecordReadStore(daily_brief_root or None)
 
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
@@ -145,8 +151,12 @@ def create_app():
                                                    journal_store, task_store))
     app.include_router(create_journal_router(auth, journal_store, hermes, chat_activity_store))
     app.include_router(create_task_router(auth, task_store, hermes, chat_activity_store))
-    app.include_router(create_projects_activity_router(auth, journal_store, task_store))
-    app.include_router(create_daily_brief_agent_health_router(auth, hermes))
+    app.include_router(create_projects_activity_router(
+        auth, journal_store, task_store, projects_store=projects_store,
+    ))
+    app.include_router(create_daily_brief_agent_health_router(
+        auth, hermes, brief_store=daily_brief_store,
+    ))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
     app.include_router(create_notes_router(auth, notes_store))
     provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,

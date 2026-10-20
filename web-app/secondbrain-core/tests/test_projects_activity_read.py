@@ -49,7 +49,9 @@ def test_projects_is_authenticated_truthful_empty_contract(tmp_path):
         "items": [],
         "pagination": {"limit": 7, "offset": 2, "has_more": False},
         "source": None,
+        "freshness": {"checked_at": response.json()["freshness"]["checked_at"]},
     }
+    assert response.json()["freshness"]["checked_at"].endswith("Z")
 
     client.cookies.clear()
     assert client.get("/api/projects").status_code == 401
