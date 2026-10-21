@@ -21,11 +21,12 @@ export function TaskPage({ locale }: { locale: Locale }) {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const createRetries = useRef(new Map<string, string>());
+  const createAttempt = useRef<{ signature: string; key: string } | null>(null);
+  const refreshAfterCreate = useRef(false);
   const activeLoad = useRef<AbortController | null>(null);
   const loadSequence = useRef(0);
 
-  const load = useCallback(async (showLoading = true) => {
+  const load = useCallback(async (showLoading = true, afterCreate = false) => {
     activeLoad.current?.abort();
     const controller = new AbortController();
     activeLoad.current = controller;
@@ -47,8 +48,11 @@ export function TaskPage({ locale }: { locale: Locale }) {
       setTasks(Array.isArray(body.tasks) ? body.tasks : []);
     } catch (cause) {
       if (controller.signal.aborted || sequence !== loadSequence.current) return;
-      setTasks([]);
-      setError(cause instanceof Error ? cause.message : (en ? 'Tasks could not be loaded.' : '待办暂时无法读取。'));
+      if (!afterCreate) setTasks([]);
+      const detail = cause instanceof Error ? cause.message : (en ? 'Tasks could not be loaded.' : '待办暂时无法读取。');
+      setError(afterCreate
+        ? (en ? `Task was created, but the list could not be refreshed: ${detail}` : `待办已创建，但列表刷新失败：${detail}`)
+        : detail);
     } finally {
       if (sequence === loadSequence.current) {
         setLoading(false);
@@ -58,7 +62,9 @@ export function TaskPage({ locale }: { locale: Locale }) {
   }, [dueDate, en, status]);
 
   useEffect(() => {
-    void load();
+    const afterCreate = refreshAfterCreate.current;
+    refreshAfterCreate.current = false;
+    void load(!afterCreate, afterCreate);
     return () => {
       activeLoad.current?.abort();
       activeLoad.current = null;
@@ -90,8 +96,10 @@ export function TaskPage({ locale }: { locale: Locale }) {
     const title = newTitle.trim();
     const dueDateValue = newDueDate || null;
     const signature = JSON.stringify({ title, due_date: dueDateValue });
-    let key = createRetries.current.get(signature);
-    if (!key) { key = crypto.randomUUID(); createRetries.current.set(signature, key); }
+    if (createAttempt.current?.signature !== signature) {
+      createAttempt.current = { signature, key: crypto.randomUUID() };
+    }
+    const key = createAttempt.current.key;
     const originalCommand = `添加待办：${title}${dueDateValue ? `；截止：${dueDateValue}` : ''}`;
     setCreating(true); setError(''); setNotice('');
     try {
@@ -100,7 +108,7 @@ export function TaskPage({ locale }: { locale: Locale }) {
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
         body: JSON.stringify({ title, due_date: dueDateValue, original_command: originalCommand }),
       });
-      const body = await response.json().catch(() => ({})) as { detail?: string; task?: Task };
+      const body = await response.json().catch(() => ({})) as { detail?: string; status?: string; task?: Task };
       if (response.status === 401) { window.location.reload(); return; }
       if (!response.ok) {
         throw new Error(response.status === 409
@@ -109,14 +117,19 @@ export function TaskPage({ locale }: { locale: Locale }) {
             ? (en ? 'Task storage is not enabled in this environment. Your task is still here.' : '当前环境未启用待办存储，内容仍保留。')
             : String(body.detail ?? `HTTP ${response.status}`));
       }
-      if (!body.task || typeof body.task.id !== 'string' || body.task.title !== title || body.task.status !== 'open') {
+      if ((body.status !== 'created' && body.status !== 'duplicate')
+        || !body.task || typeof body.task.id !== 'string' || !/^[0-9a-f]{32}$/.test(body.task.id)
+        || body.task.title !== title || body.task.due_date !== dueDateValue || body.task.status !== 'open') {
         throw new Error(en ? 'The save response could not be verified. Your task is still here; retry safely.' : '无法核实保存回执，内容仍保留；可安全重试。');
       }
-      createRetries.current.delete(signature);
+      createAttempt.current = null;
       setNewTitle(''); setNewDueDate(''); setCreateOpen(false);
       setNotice(en ? 'Task created.' : '待办已创建。');
-      if (status !== 'open' || dueDate) { setStatus('open'); setDueDate(''); }
-      else await load(false);
+      setTasks((current) => [body.task!, ...current.filter((task) => task.id !== body.task!.id)]);
+      if (status !== 'open' || dueDate) {
+        refreshAfterCreate.current = true;
+        setStatus('open'); setDueDate('');
+      } else await load(false, true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : (en ? 'Task creation failed. Your task is still here.' : '待办创建失败，内容仍保留。'));
     } finally { setCreating(false); }
@@ -124,12 +137,13 @@ export function TaskPage({ locale }: { locale: Locale }) {
 
   const cancelCreate = () => {
     setCreateOpen(false); setNewTitle(''); setNewDueDate('');
+    createAttempt.current = null;
     setError('');
   };
 
   return <div className="task-page">
     <header className="module-header"><div><p className="eyebrow">SECONDBRAIN / TODAY</p><h1>{en ? 'Today & Tasks' : '今日与待办'}</h1><p className="workspace-subtitle">{en ? 'Manage persisted tasks here or create one from Chat. Reminders are not enabled.' : '可直接管理待办，也可从 Chat 创建；提醒通知尚未实现。'}</p></div>
-      <div className="task-header-actions"><button type="button" className="capture-primary" onClick={() => { setCreateOpen((value) => !value); setError(''); }}>{createOpen ? (en ? 'Close form' : '收起') : (en ? 'New task' : '新建待办')}</button><button type="button" className="capture-secondary" disabled={loading} onClick={() => void load()}>{loading ? (en ? 'Loading…' : '读取中…') : (en ? 'Refresh' : '刷新')}</button></div></header>
+      <div className="task-header-actions"><button type="button" className="capture-primary" onClick={() => { if (createOpen) cancelCreate(); else { setCreateOpen(true); setError(''); } }}>{createOpen ? (en ? 'Close form' : '收起') : (en ? 'New task' : '新建待办')}</button><button type="button" className="capture-secondary" disabled={loading} onClick={() => void load()}>{loading ? (en ? 'Loading…' : '读取中…') : (en ? 'Refresh' : '刷新')}</button></div></header>
     <section className="task-panel" aria-labelledby="task-list-heading">
       <div className="task-toolbar"><h2 id="task-list-heading">{en ? 'Tasks' : '待办'}</h2><div className="task-filters"><label>{en ? 'Due date' : '截止日期'} <input aria-label={en ? 'Filter by due date' : '按截止日期筛选'} type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label><label>{en ? 'Status' : '状态'} <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="open">{en ? 'Open' : '未完成'}</option><option value="completed">{en ? 'Completed' : '已完成'}</option><option value="all">{en ? 'All' : '全部'}</option></select></label></div></div>
       {error && <p className="task-alert" role="alert">{error}</p>}{notice && <p role="status" className="task-notice">{notice}</p>}

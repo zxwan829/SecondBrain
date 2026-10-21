@@ -123,4 +123,79 @@ describe('TaskPage', () => {
     expect(new Headers(postCalls[1][1]?.headers).get('Idempotency-Key')).toBe(new Headers(postCalls[0][1]?.headers).get('Idempotency-Key'));
     expect(await screen.findByRole('status')).toBeTruthy();
   });
+
+  it('uses a new key after cancelling an ambiguous create and reopening with identical content', async () => {
+    const second = { ...task, id: 'd'.repeat(32), title: '重复内容', due_date: null };
+    let posts = 0;
+    const keys: string[] = [];
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/tasks?')) return ok({ tasks: posts > 1 ? [second] : [] });
+      if (url === '/api/tasks' && init?.method === 'POST') {
+        posts += 1;
+        keys.push(new Headers(init.headers).get('Idempotency-Key') ?? '');
+        return posts === 1
+          ? { ok: false, status: 500, json: async () => ({ detail: 'response lost after commit' }) }
+          : ok({ status: 'created', task: second });
+      }
+      return ok({});
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    const startCreate = () => {
+      fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+      fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '重复内容' } });
+      fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    };
+    startCreate();
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: '收起' }));
+    startCreate();
+    expect(await screen.findByRole('heading', { name: '重复内容' })).toBeTruthy();
+    expect(posts).toBe(2);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBeTruthy();
+    expect(keys[1]).not.toBe(keys[0]);
+    expect((await screen.findAllByRole('heading', { name: '重复内容' })).length).toBe(1);
+  });
+
+  it.each([
+    ['unknown status', { status: 'updated' }],
+    ['wrong due date', { task: { ...task, title: '回执任务', due_date: '2026-10-25' } }],
+    ['malformed task id', { task: { ...task, id: 'task-1', title: '回执任务' } }],
+  ])('keeps the form open when the create receipt has %s', async (_caseName, patch) => {
+    const response = { status: 'created', task: { ...task, title: '回执任务', due_date: null }, ...patch };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => url === '/api/tasks' && init?.method === 'POST'
+      ? ok(response) : ok({ tasks: [] })));
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '回执任务' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('无法核实保存回执');
+    expect((screen.getByLabelText('待办内容') as HTMLInputElement).value).toBe('回执任务');
+    expect(screen.queryByText('待办已创建。')).toBeNull();
+  });
+
+  it('reports a list refresh failure separately after a verified create receipt', async () => {
+    let listReads = 0;
+    const created = { ...task, id: 'e'.repeat(32), title: '已创建任务' };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') return ok({ status: 'created', task: created });
+      if (url.startsWith('/api/tasks?')) {
+        listReads += 1;
+        return listReads === 1 ? ok({ tasks: [] }) : { ok: false, status: 503, json: async () => ({ detail: 'list unavailable' }) };
+      }
+      return ok({});
+    }));
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '已创建任务' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByText('待办已创建，但列表刷新失败：list unavailable')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('待办已创建。');
+    expect(screen.getByRole('heading', { name: '已创建任务' })).toBeTruthy();
+    expect(screen.queryByLabelText('待办内容')).toBeNull();
+  });
 });
