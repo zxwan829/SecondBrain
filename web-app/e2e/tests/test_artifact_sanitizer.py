@@ -1,0 +1,465 @@
+import importlib.util
+import json
+import shutil
+import struct
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+
+from PIL import Image, PngImagePlugin
+import pytest
+
+
+E2E = Path(__file__).parents[1]
+SCRIPT = E2E / "scripts" / "run_synthetic_ci.py"
+SPEC = importlib.util.spec_from_file_location("run_synthetic_ci", SCRIPT)
+module = importlib.util.module_from_spec(SPEC)
+assert SPEC and SPEC.loader
+SPEC.loader.exec_module(module)
+
+
+def _write_secret(path: Path, value: str = "synthetic-only-passphrase") -> Path:
+    path.write_text(value + "\n")
+    return path
+
+
+def _seed_raw_reports(raw: Path, secret: str = "synthetic-only-passphrase") -> None:
+    (raw / "test-results" / "capture").mkdir(parents=True)
+    (raw / "junit.xml").write_text(
+        '<testsuites><testsuite tests="1"><testcase classname="Inbox" name="safe" '
+        'url="http://127.0.0.1:4173/?token=SYNTHETIC_QUERY_SECRET"><failure '
+        f'message="{secret}">Authorization: Bearer SYNTHETIC_AUTH_SECRET; '
+        'Cookie: sb_app_session=SYNTHETIC_COOKIE_HEADER_VALUE; '
+        'SYNTHETIC_REQUEST_BODY SYNTHETIC_RESPONSE_BODY</failure><system-out>'
+        'Cookie: sb_app_session=SYNTHETIC_COOKIE_VALUE</system-out></testcase></testsuite></testsuites>'
+    )
+    (raw / "local-http-request-metadata.json").write_text(json.dumps([{
+        "method": "POST", "path": "/api/inbox/entries?token=SYNTHETIC_QUERY_SECRET",
+        "status": 202, "elapsed_ms": 4, "headers": {"Cookie": "SYNTHETIC_COOKIE_VALUE"},
+        "request_body": "SYNTHETIC_REQUEST_BODY", "response_body": "SYNTHETIC_RESPONSE_BODY",
+    }]))
+    (raw / "run-summary.json").write_text(json.dumps({
+        "result": "FAIL", "exit_code": 1, "python": "3.12", "node": "v22",
+        "passphrase": secret, "private_payload": "SYNTHETIC_RESPONSE_BODY", "screenshots_uploaded": 0,
+    }))
+    trace = raw / "test-results" / "capture" / "trace.zip"
+    with zipfile.ZipFile(trace, "w") as archive:
+        archive.writestr("trace.trace", json.dumps({
+            "type": "request", "method": "POST",
+            "url": "http://127.0.0.1:4173/api/inbox/entries?token=SYNTHETIC_QUERY_SECRET",
+            "headers": [{"name": "authorization", "value": "SYNTHETIC_AUTH_SECRET"}],
+            "postData": "SYNTHETIC_REQUEST_BODY", "opaque_id": "a" * 32,
+        }) + "\n")
+        archive.writestr("trace.network", "{}\n")
+        archive.writestr("trace.stacks", "{}\n")
+        archive.writestr("resources/response.json", "SYNTHETIC_RESPONSE_BODY")
+        archive.writestr("resources/failure.png", b"SYNTHETIC_COOKIE_VALUE")
+    (raw / "html").mkdir()
+    (raw / "html" / "index.html").write_text("SYNTHETIC_RESPONSE_BODY")
+    (raw / "test-results" / "capture" / "test-failed-1.png").write_bytes(b"SYNTHETIC_COOKIE_VALUE")
+    (raw / "runner.log").write_text("SYNTHETIC_AUTH_SECRET SYNTHETIC_RESPONSE_BODY")
+
+
+def test_trace_sanitizer_drops_bodies_headers_queries_and_attachments(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    trace_dir = artifacts / "test-results" / "capture"
+    trace_dir.mkdir(parents=True)
+    archive = trace_dir / "trace.zip"
+    opaque = "a" * 32
+    record = {
+        "type": "request", "method": "POST",
+        "url": f"http://127.0.0.1:4173/api/inbox/entries/{opaque}?token=SYNTHETIC_QUERY_SECRET",
+        "headers": [{"name": "cookie", "value": "SYNTHETIC_COOKIE_VALUE"}],
+        "postData": "SYNTHETIC_REQUEST_BODY", "status": 202,
+    }
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("trace.trace", json.dumps(record) + "\n")
+        output.writestr("resources/response.json", "SYNTHETIC_RESPONSE_BODY")
+        output.writestr("resources/failure.png", b"SYNTHETIC_COOKIE_VALUE")
+
+    module.sanitize_trace_archives(artifacts)
+
+    with zipfile.ZipFile(archive) as sanitized:
+        names = sanitized.namelist()
+        trace = sanitized.read("trace.trace").decode()
+        assert names == ["trace.trace"]
+        for marker in ("SYNTHETIC_QUERY_SECRET", "SYNTHETIC_COOKIE_VALUE", "SYNTHETIC_REQUEST_BODY", opaque):
+            assert marker not in trace
+        assert "?token=" not in trace
+        assert '"status":202' in trace
+
+
+def test_workflow_uploads_only_exact_sanitized_directory_and_is_manual_read_only():
+    workflow = (Path(__file__).parents[3] / ".github" / "workflows" / "a-web-playwright-synthetic.yml").read_text()
+    runner = SCRIPT.read_text()
+    config = (E2E / "playwright.config.ts").read_text()
+    assert "  workflow_dispatch:" in workflow
+    assert "  push:" not in workflow and "  pull_request:" not in workflow and "  workflow_call:" not in workflow
+    assert "permissions:\n  contents: read" in workflow
+    assert "contents: write" not in workflow and "secrets." not in workflow
+    assert "runs-on: ubuntu-24.04" in workflow and "persist-credentials: false" in workflow
+    assert "path: web-app/e2e/artifacts-sanitized/" in workflow
+    assert "path: web-app/e2e/artifacts-sanitized/${{ github.run_id }}-${{ github.run_attempt }}/" in workflow
+    assert "path: web-app/e2e/artifacts/" not in workflow
+    assert "path: web-app/e2e/artifacts-raw/" not in workflow
+    assert "if: always()" in workflow and "if-no-files-found: ignore" in workflow
+    assert "steps.synthetic.outputs.artifacts_verified == 'true'" in workflow
+    assert 'prefix=".artifacts-verified-"' in runner
+    assert "os.replace(staging_root, publish_root)" in runner
+    assert "SB_E2E_RAW_ARTIFACTS" in runner and "artifacts-sanitized" in runner
+    assert "SB_E2E_RAW_ARTIFACTS" in config and "artifacts-raw" in config
+    assert runner.index("wait_for_test_process(test_process)") < runner.index("publish_verified_reports(raw_artifacts, publish_root, password_path)")
+    assert runner.index("publish_verified_reports(raw_artifacts, publish_root, password_path)") < runner.rindex("mark_verified_artifact_output()")
+
+
+def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
+    workflow = (Path(__file__).parents[3] / ".github" / "workflows" / "a-web-playwright-synthetic.yml").read_text()
+    runner = SCRIPT.read_text()
+    config = (E2E / "playwright.config.ts").read_text()
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "runs-on: ubuntu-24.04" in workflow
+    assert "npx playwright install --with-deps chromium" in workflow
+    assert "screenshot: 'only-on-failure'" in config
+    assert "serviceWorkers: 'block'" in config
+    assert "ALLOW_FAILURE_SCREENSHOT_PUBLICATION = (" in runner
+    assert 'sys.platform == "linux"' in runner and 'os.environ.get("GITHUB_ACTIONS") == "true"' in runner
+    assert "new URL(request.url())" in browser_spec and "if (url.origin !== baseOrigin)" in browser_spec
+    assert "await route.abort('blockedbyclient')" in browser_spec
+    assert "synthetic-" in browser_spec and "randomUUID()" in browser_spec
+    assert "Synthetic completion" in browser_spec
+    assert "toHaveAttribute('type', 'password')" in browser_spec
+    assert "FAILURE_SCREENSHOT_TEST_SLUG" in runner
+
+
+def test_allowlisted_publish_redacts_reports_and_omits_html_unknown_images_and_files(tmp_path):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir(mode=0o700)
+    secret = _write_secret(tmp_path / "password")
+    _seed_raw_reports(raw)
+
+    module.publish_verified_reports(raw, published, secret)
+
+    published_files = {path.relative_to(published).as_posix() for path in published.rglob("*") if path.is_file()}
+    assert published_files == {
+        "junit.xml", "local-http-request-metadata.json", "run-summary.json",
+        "test-results/capture/trace.zip",
+    }
+    content = "\n".join(path.read_text(errors="ignore") for path in published.rglob("*") if path.is_file() and not zipfile.is_zipfile(path))
+    with zipfile.ZipFile(published / "test-results/capture/trace.zip") as archive:
+        content += "\n" + "\n".join(archive.read(name).decode("utf-8", "replace") for name in archive.namelist())
+        assert archive.namelist() == ["trace.trace", "trace.network"]
+    for marker in ("synthetic-only-passphrase", "SYNTHETIC_QUERY_SECRET", "SYNTHETIC_AUTH_SECRET",
+                   "SYNTHETIC_COOKIE_VALUE", "SYNTHETIC_COOKIE_HEADER_VALUE", "SYNTHETIC_REQUEST_BODY",
+                   "SYNTHETIC_RESPONSE_BODY", "sb_app_session", "?token="):
+        assert marker.lower() not in content.lower()
+    assert "failure details withheld" in content
+    assert "SYNTHETIC_RESPONSE_BODY" in (raw / "html" / "index.html").read_text()
+    assert (raw / "runner.log").exists()
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in published.rglob("*") if path.is_file())
+
+
+def _write_png(path: Path, *, metadata: dict[str, str] | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    info = PngImagePlugin.PngInfo()
+    for key, value in (metadata or {}).items():
+        info.add_text(key, value)
+    Image.new("RGB", (80, 40), color=(35, 45, 55)).save(path, format="PNG", pnginfo=info)
+
+
+def _png_chunk_types(path: Path) -> list[bytes]:
+    data = path.read_bytes()
+    chunks = []
+    cursor = 8
+    while cursor + 12 <= len(data):
+        size = struct.unpack(">I", data[cursor:cursor + 4])[0]
+        chunks.append(data[cursor + 4:cursor + 8])
+        cursor += 12 + size
+    assert cursor == len(data)
+    return chunks
+
+
+def _enable_current_linux_browser_run(monkeypatch):
+    monkeypatch.setattr(module, "ALLOW_FAILURE_SCREENSHOT_PUBLICATION", True)
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+
+def test_current_linux_fixture_failure_png_is_allowlisted_and_metadata_is_removed(tmp_path, monkeypatch):
+    _enable_current_linux_browser_run(monkeypatch)
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir(mode=0o700)
+    secret = _write_secret(tmp_path / "password")
+    _seed_raw_reports(raw)
+    screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-desktop-1440x1000-chromium" / "test-failed-1.png"
+    _write_png(screenshot, metadata={
+        "Comment": "synthetic-query-secret SYNTHETIC_RESPONSE_BODY",
+        "Description": "synthetic-only-passphrase SYNTHETIC_COOKIE_VALUE",
+    })
+    summary = json.loads((raw / "run-summary.json").read_text())
+    summary["screenshots_uploaded"] = 1
+    (raw / "run-summary.json").write_text(json.dumps(summary))
+
+    assert module.count_allowlisted_failure_screenshots(raw) == 1
+    assert module.publish_verified_reports(raw, published, secret) == 1
+
+    published_png = published / screenshot.relative_to(raw)
+    assert published_png.is_file()
+    with Image.open(published_png) as image:
+        assert image.format == "PNG"
+        assert image.info == {}
+        assert image.size == (80, 40)
+    data = published_png.read_bytes().lower()
+    for marker in (b"synthetic-query-secret", b"synthetic-response-body", b"synthetic-only-passphrase",
+                   b"synthetic-cookie-value", b"comment", b"description"):
+        assert marker not in data
+    assert _png_chunk_types(published_png) == [b"IHDR", b"IDAT", b"IEND"]
+    assert json.loads((published / "run-summary.json").read_text())["screenshots_uploaded"] == 1
+
+
+def test_pngs_outside_failure_name_viewport_or_current_run_are_never_published(tmp_path, monkeypatch):
+    _enable_current_linux_browser_run(monkeypatch)
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-desktop-1440x1000-chromium" / "test-failed-2.png")
+    _write_png(raw / "test-results" / "unrelated-test-desktop-1440x1000" / "test-failed-1.png")
+    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-unknown-viewport" / "test-failed-1.png")
+    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "attachment.png")
+    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "resources" / "failure.png")
+
+    assert module.count_allowlisted_failure_screenshots(raw) == 0
+    assert module.publish_verified_reports(raw, published, secret) == 0
+    assert not list(published.rglob("*.png"))
+
+
+def test_failure_screenshot_is_not_published_outside_github_linux_browser_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "ALLOW_FAILURE_SCREENSHOT_PUBLICATION", True)
+    monkeypatch.setattr(module.sys, "platform", "darwin")
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-tablet-820x1180-chromium" / "test-failed-1.png")
+    secret = _write_secret(tmp_path / "password")
+
+    assert module.count_allowlisted_failure_screenshots(raw) == 0
+    assert module.publish_verified_reports(raw, published, secret) == 0
+    assert not list(published.rglob("*.png"))
+
+
+def test_final_gate_detects_unsanitized_png_metadata_and_withholds_entire_upload(tmp_path, monkeypatch):
+    _enable_current_linux_browser_run(monkeypatch)
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-desktop-1440x1000-chromium" / "test-failed-1.png"
+    _write_png(screenshot, metadata={"Comment": "SYNTHETIC_QUERY_SECRET SYNTHETIC_RESPONSE_BODY"})
+    monkeypatch.setattr(module, "_sanitize_failure_screenshots", lambda _root: None)
+
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+
+def test_duplicate_screenshots_for_same_viewport_fail_closed(tmp_path, monkeypatch):
+    _enable_current_linux_browser_run(monkeypatch)
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    for suffix in ("-one", "-two"):
+        _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-tablet-820x1180-chromium{suffix}" / "test-failed-1.png")
+
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+
+def test_malformed_or_oversized_allowlisted_png_fails_closed(tmp_path, monkeypatch):
+    _enable_current_linux_browser_run(monkeypatch)
+    for payload in (b"not a PNG",):
+        raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+        screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-tablet-820x1180-chromium" / "test-failed-1.png"
+        screenshot.parent.mkdir(parents=True)
+        screenshot.write_bytes(payload)
+        secret = _write_secret(tmp_path / "password")
+        with pytest.raises(RuntimeError, match="upload withheld"):
+            module.publish_verified_reports(raw, published, secret)
+        assert list(published.iterdir()) == []
+        shutil.rmtree(raw)
+        shutil.rmtree(published)
+
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "test-failed-1.png"
+    _write_png(screenshot)
+    screenshot.write_bytes(b"x" * (module.MAX_SCREENSHOT_BYTES + 1))
+    secret = _write_secret(tmp_path / "password")
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+    raw, published = tmp_path / "raw-dimensions", tmp_path / "published-dimensions"
+    screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "test-failed-1.png"
+    _write_png(screenshot)
+    Image.new("RGB", (module.MAX_SCREENSHOT_WIDTH + 1, 1)).save(screenshot, format="PNG")
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+
+def test_nonallowlisted_png_in_staging_is_rejected_by_final_leak_gate(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    secret = _write_secret(tmp_path / "password")
+    _write_png(artifacts / "unknown" / "failure.png")
+    with pytest.raises(RuntimeError, match="non-allowlisted PNG"):
+        module.verify_artifact_redaction(artifacts, secret)
+
+
+def test_allowlisted_screenshot_symlink_fails_closed(tmp_path, monkeypatch):
+    _enable_current_linux_browser_run(monkeypatch)
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    outside = tmp_path / "outside.png"
+    _write_png(outside)
+    target = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "test-failed-1.png"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(outside)
+    secret = _write_secret(tmp_path / "password")
+
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+
+def test_sanitizer_exception_leaves_upload_tree_empty_and_raw_tree_unpublished(tmp_path, monkeypatch):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    _seed_raw_reports(raw)
+    original_failure = "injected sanitizer failure"
+
+    def fail_sanitizer(_root):
+        raise ValueError(original_failure)
+
+    monkeypatch.setattr(module, "sanitize_trace_archives", fail_sanitizer)
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+    assert "SYNTHETIC_RESPONSE_BODY" in (raw / "html" / "index.html").read_text()
+
+
+def test_leak_validation_failure_discards_staging_and_keeps_publish_root_empty(tmp_path, monkeypatch):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    _seed_raw_reports(raw)
+    monkeypatch.setattr(module, "sanitize_text_reports", lambda _root, _secret: None)
+
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+
+@pytest.mark.parametrize("returncode", [-9, None])
+def test_abnormal_or_incomplete_test_process_is_rejected_before_publish(returncode, tmp_path, monkeypatch):
+    class Process:
+        pid = 1
+
+        def wait(self, timeout):
+            if returncode is None:
+                raise subprocess.TimeoutExpired("playwright", timeout)
+            self.returncode = returncode
+
+        def poll(self):
+            return self.returncode
+
+    process = Process()
+    process.returncode = returncode
+    monkeypatch.setattr(module, "stop", lambda _process: None)
+    github_output = tmp_path / "github-output"
+    github_output.write_text("")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+    with pytest.raises(RuntimeError, match="abnormally|10-minute limit"):
+        module.wait_for_test_process(process)
+    publish_root = tmp_path / "artifacts-sanitized"
+    publish_root.mkdir()
+    assert list(publish_root.iterdir()) == []
+    assert "artifacts_verified=true" not in github_output.read_text()
+
+
+def test_startup_failure_never_places_raw_reports_in_upload_tree(tmp_path, monkeypatch):
+    class ExitedProcess:
+        pid = -1
+        returncode = 17
+
+        def poll(self):
+            return self.returncode
+
+    e2e = tmp_path / "e2e"
+    core, frontend = tmp_path / "core", tmp_path / "frontend"
+    e2e.mkdir(); core.mkdir(); frontend.mkdir()
+    published = e2e / "artifacts-sanitized"
+    monkeypatch.setattr(module, "E2E", e2e)
+    monkeypatch.setattr(module, "CORE", core)
+    monkeypatch.setattr(module, "FRONTEND", frontend)
+    monkeypatch.setattr(module, "ARTIFACTS", published)
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: ExitedProcess())
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT)])
+
+    with pytest.raises(RuntimeError, match="exited before readiness"):
+        module.main()
+
+    run_dirs = list(published.iterdir())
+    assert len(run_dirs) == 1 and run_dirs[0].is_dir() and list(run_dirs[0].iterdir()) == []
+
+
+def test_test_process_spawn_exception_cannot_mark_artifacts_verified(tmp_path, monkeypatch):
+    published = tmp_path / "artifacts-sanitized" / "workflow-run-1"
+    published.mkdir(parents=True)
+    github_output = tmp_path / "github-output"
+    github_output.write_text("")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(github_output))
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("injected spawn failure")))
+
+    with pytest.raises(OSError, match="injected spawn failure"):
+        module.launch_browser_tests({}, None)
+
+    assert list(published.iterdir()) == []
+    assert "artifacts_verified=true" not in github_output.read_text()
+
+
+def test_invalid_trace_archive_is_withheld(tmp_path):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    (raw / "test-results" / "capture").mkdir(parents=True)
+    (raw / "test-results" / "capture" / "trace.zip").write_bytes(b"not a zip")
+    secret = _write_secret(tmp_path / "password")
+
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+
+def test_atomic_publication_failure_discards_verified_staging(tmp_path, monkeypatch):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    _seed_raw_reports(raw)
+    monkeypatch.setattr(module.os, "replace", lambda *_args: (_ for _ in ()).throw(OSError("injected rename failure")))
+
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert published.exists() and list(published.iterdir()) == []
+    assert not list(tmp_path.glob(".artifacts-verified-*"))
+
+
+def test_symlink_report_is_rejected_without_upload(tmp_path):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    outside = tmp_path / "outside.xml"
+    outside.write_text("SYNTHETIC_RESPONSE_BODY")
+    (raw / "junit.xml").symlink_to(outside)
+
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
