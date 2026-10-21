@@ -26,13 +26,22 @@ const sessions = { sessions: [
   { session_id: 'session-b', title: 'Synthetic B' },
 ] };
 
-function mockChat(historyResponse: (sessionId: string, runId: string) => Response = (sessionId, runId) => json(history(sessionId, runId))) {
+function mockChat(historyResponse: (sessionId: string, runId: string) => Response = (sessionId, runId) => json(history(sessionId, runId)),
+  contextResponse: (sessionId: string, init?: RequestInit) => Response | Promise<Response> = (sessionId) => json({
+    schema_version: 'context.v1', request_id: 'request-context-1', session_id: sessionId,
+    evaluated_at: '2026-10-22T08:00:00Z', status: 'available',
+    source_status: { personal_memory: 'available', knowledge: 'none' },
+    items: [{ source_kind: 'personal_memory', source_id: 'opaque-memory-id-123', source_version: 'revision-7', sha256: 'b'.repeat(64),
+      source_timestamp: '2026-10-22T07:59:00Z', fact_kind: 'preference', verification_status: 'user_confirmed', state: 'active', expires_at: null }],
+  })) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input); calls.push({ url, init });
     if (url === '/api/chat/sessions?limit=50&offset=0') return json(sessions);
     if (url.endsWith('/messages')) return json({ messages: [] });
     if (url.endsWith('/activities')) return json({ activities: [] });
+    const contextMatch = url.match(/^\/api\/chat\/sessions\/([^/]+)\/context-preview$/);
+    if (contextMatch && init?.method === 'POST') return contextResponse(decodeURIComponent(contextMatch[1]), init);
     if (url === '/api/chat/sessions/session-a/runs' && init?.method === 'POST') return json({ run_id: 'run-a' });
     if (url === '/api/chat/runs/run-a/events') return sse([
       history('session-a', 'run-a'),
@@ -128,5 +137,74 @@ describe('Chat Knowledge citation UI and recovery', () => {
     await openChat();
     expect(await screen.findByText('暂时无法核验检索参考。')).toBeTruthy();
     expect(screen.queryByText('合成知识条目')).toBeNull();
+  });
+
+  it('previews metadata only after an explicit click and rechecks after switching sessions', async () => {
+    localStorage.setItem('secondbrain.chat.session', 'session-a');
+    const calls = mockChat();
+    const input = await openChat();
+    fireEvent.change(input, { target: { value: '  合成偏好查询  ' } });
+    fireEvent.click(screen.getByRole('button', { name: '检索可用上下文' }));
+    expect(await screen.findByText('个人记忆')).toBeTruthy();
+    expect(screen.getByText('opaque-memory-id-123')).toBeTruthy();
+    expect(screen.getByText('用户确认')).toBeTruthy();
+    expect(screen.getByText(/不会把这些信息发送给 Hermes/)).toBeTruthy();
+    const previewCall = calls.find((call) => call.url.endsWith('/context-preview'));
+    expect(previewCall?.url).toBe('/api/chat/sessions/session-a/context-preview');
+    expect(previewCall?.init?.cache).toBe('no-store');
+    expect(previewCall?.init?.credentials).toBe('same-origin');
+    expect(JSON.parse(String(previewCall?.init?.body))).toEqual({ query: '合成偏好查询' });
+    expect(JSON.stringify(previewCall?.init?.body)).not.toContain('source_id');
+
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic B/ }));
+    await waitFor(() => expect(screen.queryByText('opaque-memory-id-123')).toBeNull());
+    fireEvent.change(screen.getByPlaceholderText('发送消息给 Hermes…'), { target: { value: 'synthetic B query' } });
+    fireEvent.click(screen.getByRole('button', { name: '检索可用上下文' }));
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith('/session-b/context-preview'))).toBe(true));
+    expect(await screen.findByText('opaque-memory-id-123')).toBeTruthy();
+  });
+
+  it('shows revoked permission as unavailable and lets the user retry explicitly', async () => {
+    localStorage.setItem('secondbrain.chat.session', 'session-a');
+    let requests = 0;
+    mockChat(undefined, (sessionId) => {
+      requests += 1;
+      return requests === 1 ? json({}, 403) : json({
+        schema_version: 'context.v1', request_id: 'request-context-2', session_id: sessionId,
+        evaluated_at: '2026-10-22T08:02:00Z', status: 'none',
+        source_status: { personal_memory: 'none', knowledge: 'none' }, items: [],
+      });
+    });
+    const input = await openChat();
+    fireEvent.change(input, { target: { value: 'synthetic query' } });
+    fireEvent.click(screen.getByRole('button', { name: '检索可用上下文' }));
+    expect(await screen.findByText('上下文访问已被拒绝；权限变化后请重新核验。')).toBeTruthy();
+    expect(screen.queryByText('opaque-memory-id-123')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '刷新预览' }));
+    await waitFor(() => expect(screen.getByLabelText('上下文预览').textContent).toContain('没有匹配的来源'));
+    expect(requests).toBe(2);
+  });
+
+  it('ignores a preview response that arrives after the user changes sessions', async () => {
+    localStorage.setItem('secondbrain.chat.session', 'session-a');
+    let release: ((response: Response) => void) | undefined;
+    const calls = mockChat(undefined, (sessionId) => sessionId === 'session-a'
+      ? new Promise<Response>((resolve) => { release = resolve; })
+      : json({ schema_version: 'context.v1', request_id: 'request-b', session_id: sessionId,
+        evaluated_at: '2026-10-22T08:03:00Z', status: 'none',
+        source_status: { personal_memory: 'none', knowledge: 'none' }, items: [] }));
+    const input = await openChat();
+    fireEvent.change(input, { target: { value: 'synthetic A query' } });
+    fireEvent.click(screen.getByRole('button', { name: '检索可用上下文' }));
+    await waitFor(() => expect(release).toBeTypeOf('function'));
+    fireEvent.click(screen.getByRole('button', { name: /Synthetic B/ }));
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith('/session-b/messages'))).toBe(true));
+    release!(json({ schema_version: 'context.v1', request_id: 'request-a', session_id: 'session-a',
+      evaluated_at: '2026-10-22T08:03:00Z', status: 'available',
+      source_status: { personal_memory: 'available', knowledge: 'none' },
+      items: [{ source_kind: 'personal_memory', source_id: 'opaque-memory-id-123', source_version: 'revision-7', sha256: 'b'.repeat(64),
+        source_timestamp: '2026-10-22T07:59:00Z', fact_kind: 'preference', verification_status: 'user_confirmed', state: 'active', expires_at: null }] }));
+    await waitFor(() => expect(screen.queryByText('opaque-memory-id-123')).toBeNull());
+    expect(screen.getByText('上下文预览')).toBeTruthy();
   });
 });

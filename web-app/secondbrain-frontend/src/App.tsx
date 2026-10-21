@@ -33,6 +33,8 @@ import { journalInboxAttemptKey, journalInboxFailureLabel, journalInboxReceiptKe
   type JournalInboxAttempt, type JournalInboxReceipt } from './chat-inbox';
 import { inboxEntryErrorLabel, inboxEntryStatusLabel, parseVerifiedInboxEntry } from './inbox-entry';
 import { ChatKnowledgeCitations } from './ChatKnowledgeCitations';
+import { ChatContextPreview } from './ChatContextPreview';
+import { fetchContextPreview, type ContextPreview } from './chat-context-preview';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -1260,6 +1262,9 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const [citationBundles, setCitationBundles] = useState<KnowledgeCitationBundle[]>([]);
   const [citationHistoryLoading, setCitationHistoryLoading] = useState(false);
   const [citationPersistenceIssue, setCitationPersistenceIssue] = useState(false);
+  const [contextPreview, setContextPreview] = useState<ContextPreview | null>(null);
+  const [contextPreviewLoading, setContextPreviewLoading] = useState(false);
+  const [contextPreviewError, setContextPreviewError] = useState('');
   const timeline = mergeChatTimeline(messages, activities);
   const [input, setInput] = useState('');
   const [progress, setProgress] = useState('');
@@ -1294,11 +1299,23 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const selectionIntentRef = useRef(0);
   const contentLoadRef = useRef(0);
   const citationHistoryAbortRef = useRef<AbortController | null>(null);
+  const contextPreviewAbortRef = useRef<AbortController | null>(null);
+  const contextPreviewSequenceRef = useRef(0);
   const citationFrameByRunRef = useRef(new Map<string, string>());
   const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
   const captureRequestSequence = useRef(0);
 
-  useEffect(() => () => citationHistoryAbortRef.current?.abort(), []);
+  useEffect(() => () => {
+    citationHistoryAbortRef.current?.abort();
+    contextPreviewSequenceRef.current += 1;
+    contextPreviewAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    contextPreviewSequenceRef.current += 1;
+    contextPreviewAbortRef.current?.abort();
+    setContextPreview(null); setContextPreviewLoading(false); setContextPreviewError('');
+  }, [input]);
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -1549,12 +1566,41 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     abortRef.current?.abort(); abortRef.current = null;
     resetCaptureState(); resetJournalInboxView(); setBusy(false); setRunId(''); setProgress('');
     citationHistoryAbortRef.current?.abort(); setCitationBundles([]); setCitationHistoryLoading(false); setCitationPersistenceIssue(false);
+    contextPreviewSequenceRef.current += 1; contextPreviewAbortRef.current?.abort();
+    setContextPreview(null); setContextPreviewLoading(false); setContextPreviewError('');
     selectedSessionRef.current = sessionId;
     setSelected(sessionId);
     if (blankMode) persistBlankChatState([...blankSessionIdsRef.current], sessionId);
     else localStorage.setItem('secondbrain.chat.session', sessionId);
     setError(''); setMessages([]); setActivities([]); setInput('');
     try { await loadSessionContent(sessionId); } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not load session history', locale)); }
+  };
+
+  const previewContext = async () => {
+    const sessionId = selectedSessionRef.current;
+    if (!sessionId || blankMode || busy) return;
+    contextPreviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    contextPreviewAbortRef.current = controller;
+    const sequence = ++contextPreviewSequenceRef.current;
+    setContextPreview(null); setContextPreviewError(''); setContextPreviewLoading(true);
+    try {
+      const result = await fetchContextPreview(sessionId, input, controller.signal);
+      if (controller.signal.aborted || sequence !== contextPreviewSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      setContextPreview(result);
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== contextPreviewSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      const status = (cause as Error & { status?: number }).status;
+      setContextPreviewError(status === 401
+        ? (en ? 'Sign in again to check authorized context.' : '请重新登录后再核验获准的上下文。')
+        : status === 403 ? (en ? 'Context access was denied. Refresh to check current permissions.' : '上下文访问已被拒绝；权限变化后请重新核验。')
+          : status === 400 ? (en ? 'Enter a query between 1 and 200 characters.' : '请输入 1 到 200 个字符的查询内容。')
+            : status === 404 ? (en ? 'This session is unavailable.' : '此会话不可用。')
+              : status === 503 ? (en ? 'Authorized sources are temporarily unavailable.' : '获准来源暂时不可用。')
+                : (en ? 'Context could not be verified. No metadata is shown.' : '上下文未能核验，未展示任何元数据。'));
+    } finally {
+      if (sequence === contextPreviewSequenceRef.current) setContextPreviewLoading(false);
+    }
   };
 
   const pollRun = async (activeRun: string, sessionId: string) => {
@@ -2153,6 +2199,8 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
           </div>
           {item.activity.detail && <small>{item.activity.detail}</small>}
         </article>)}{!timeline.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      {!blankMode && <ChatContextPreview preview={contextPreview} loading={contextPreviewLoading} error={contextPreviewError}
+        onRefresh={() => void previewContext()} disabled={!selected || busy || input.trim().length === 0 || [...input.trim()].length > 200} locale={locale} />}
       <ChatKnowledgeCitations bundles={citationBundles.filter((bundle) => bundle.session_id === selected)} loading={citationHistoryLoading}
         persistenceIssue={citationPersistenceIssue} locale={locale} />
       {journalInboxAttempt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent retry status' : '日记意图重试状态'}>

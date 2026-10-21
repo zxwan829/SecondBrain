@@ -690,6 +690,19 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .chat-knowledge-citations h3 { margin: 0; color: var(--sb-text); font-size: 13px; }
 .chat-knowledge-citations p { margin: 0; color: var(--sb-text-soft); font-size: 12px; line-height: 1.55; }
 .chat-knowledge-citations-note { color: var(--sb-muted) !important; }
+.chat-context-preview { flex: 0 0 auto; display: grid; gap: 9px; margin: 0 2px 14px; padding: 13px 15px; border: 1px solid var(--sb-border); border-radius: 12px; background: var(--sb-surface); }
+.chat-context-preview h3 { margin: 0; color: var(--sb-text); font-size: 13px; }
+.chat-context-preview p { margin: 0; color: var(--sb-text-soft); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.chat-context-preview-note { color: var(--sb-muted) !important; }
+.chat-context-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chat-context-preview-heading button { border: 1px solid var(--sb-border); border-radius: 8px; padding: 7px 10px; color: var(--sb-text); background: var(--sb-surface-raised, var(--sb-surface)); cursor: pointer; }
+.chat-context-preview-heading button:disabled { opacity: .55; cursor: not-allowed; }
+.chat-context-preview ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.chat-context-preview li { padding: 10px; border: 1px solid var(--sb-border); border-radius: 8px; overflow-wrap: anywhere; }
+.chat-context-preview li strong { color: var(--sb-text); }
+.chat-context-preview dl { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 4px 10px; margin: 8px 0 0; font-size: 11px; }
+.chat-context-preview dt { color: var(--sb-muted); }
+.chat-context-preview dd { margin: 0; color: var(--sb-text-soft); overflow-wrap: anywhere; }
 .chat-knowledge-citation-run { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid var(--sb-border); }
 .chat-knowledge-citation-run ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .chat-knowledge-citation-run li { display: grid; gap: 4px; min-width: 0; padding: 9px 10px; border-radius: 8px; background: var(--sb-surface-inset); overflow-wrap: anywhere; }
