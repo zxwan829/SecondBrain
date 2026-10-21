@@ -208,6 +208,12 @@ def create_app():
     @app.middleware("http")
     async def security_headers(request, call_next):
         response = await call_next(request)
+        # Core API payloads are owner-scoped or authentication/authorization
+        # decisions. Default them to non-cacheable, including error responses
+        # returned before route handlers can attach response headers. Existing
+        # route-specific directives (for example SSE no-transform) are kept.
+        if request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "private, no-store")
         if (request.url.path.startswith("/api/daily-brief") or request.url.path in {
                 "/api/promote/auth/unlock", "/api/promote/auth/lock",
                 "/api/promote/review/preview", "/api/promote/review/confirm",

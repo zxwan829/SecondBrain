@@ -145,10 +145,33 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
 
             projects = client.get("/api/projects", headers={"Origin": origin})
             assert projects.status_code == 200
+            assert projects.headers["cache-control"] == "private, no-store"
             assert projects.json()["status"] == "real"
             assert "linked_notes" not in projects.json()["items"][0]
             assert note["path"] not in projects.text
             assert "Synthetic Project Note" not in projects.text
+
+            private_reads = (
+                client.get("/api/tasks?status=all", headers={"Origin": origin}),
+                client.get(f"/api/journal/{brief_day}", headers={"Origin": origin}),
+                client.get("/api/inbox/summary", headers={"Origin": origin}),
+                client.get("/api/knowledge/search?q=Synthetic", headers={"Origin": origin}),
+                client.get("/api/notes", headers={"Origin": origin}),
+            )
+            assert all(response.status_code == 200 for response in private_reads), [
+                (response.url.path, response.status_code) for response in private_reads
+            ]
+            assert all(response.headers["cache-control"] == "private, no-store"
+                       for response in private_reads)
+
+            # Unauthorized API errors are non-cacheable too, so an intermediary
+            # cannot retain an auth-dependent result from a prior request.
+            for path in ("/api/projects", "/api/tasks?status=all", f"/api/journal/{brief_day}",
+                         "/api/inbox/summary", "/api/knowledge/search?q=Synthetic", "/api/notes"):
+                response = httpx.get(f"{origin}{path}", headers={"Origin": origin},
+                                     trust_env=False, timeout=3.0)
+                assert response.status_code == 401
+                assert response.headers["cache-control"] == "private, no-store"
 
             import_body = {
                 "mode": "manual_generate", "date": brief_day, "timezone": "Asia/Shanghai",
