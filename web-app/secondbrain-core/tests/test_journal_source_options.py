@@ -335,6 +335,27 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
                                 json={"password": "synthetic-journal-selector-password"})
             assert login.status_code == 200
             base_url = "/api/daily-brief/source-options/journal"
+            # Real localhost HTTP: browser-style same-origin GET has no Origin.
+            # The login above deliberately retains strict explicit Origin.
+            originless = client.get(f"{base_url}?date={DAY}", headers={
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty",
+            })
+            assert originless.status_code == 200
+            assert originless.json()["status"] == "real"
+            assert read_calls > 0
+            read_calls = 0
+            for rejected_headers in (
+                {"Sec-Fetch-Site": "cross-site"},
+                {"Sec-Fetch-Site": "same-site"},
+                {"Sec-Fetch-Site": "same-origin", "Host": "evil.invalid"},
+                {"Sec-Fetch-Site": "same-origin", "Origin": "null"},
+                {"Sec-Fetch-Site": "same-origin", "Origin": "http://evil.invalid"},
+            ):
+                denied_originless = client.get(f"{base_url}?date={DAY}",
+                                               headers=rejected_headers)
+                assert denied_originless.status_code == 403
+                assert read_calls == 0
 
             anonymous = httpx.get(f"{origin}{base_url}", headers={"Origin": origin},
                                   trust_env=False)
