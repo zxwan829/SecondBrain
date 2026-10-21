@@ -66,3 +66,32 @@ def test_synthetic_source_reader_pair_drift_rejected():
         expected_event_id="m1-event", expected_text="start",
         expected_version="1", expected_subject="owner", now=NOW,
     ) is None
+
+
+def test_actual_two_reads_detect_interleaved_mutation_and_fail_closed():
+    """Mutate the owned authority during the *actual* second reader call."""
+    authority = SyntheticSourceAuthority(clock=lambda: NOW)
+    original = authority.register(event_id="m1-event", subject="owner", original_text="before")
+
+    class InterleavedReader:
+        def __init__(self):
+            self.count = 0
+
+        def read_verified_suggestion(self, event_id):
+            self.count += 1
+            if self.count == 2:
+                authority.revise(event_id, original_text="after")
+            return authority.read_verified_suggestion(event_id)
+
+    reader = InterleavedReader()
+    first = reader.read_verified_suggestion("m1-event")
+    second = reader.read_verified_suggestion("m1-event")
+    assert reader.count == 2
+    assert first == original
+    assert second.source_record_version == "2"
+    assert validate_verified_capture_suggestion_source(
+        first, second, allowed_source_systems={"synthetic.m1"},
+        expected_event_id="m1-event", expected_text=original.original_text,
+        expected_version="1", expected_subject="owner", now=NOW,
+    ) is None
+    assert authority.read_verified_suggestion("m1-event").original_text == "after"
