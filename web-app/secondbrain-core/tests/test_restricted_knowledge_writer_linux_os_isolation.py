@@ -205,4 +205,3 @@ else:
         if stop.is_alive():
             stop.kill()
             stop.join(timeout=2)
-
