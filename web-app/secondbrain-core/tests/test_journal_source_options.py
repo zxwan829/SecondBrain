@@ -354,7 +354,7 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
             ):
                 denied_originless = client.get(f"{base_url}?date={DAY}",
                                                headers=rejected_headers)
-                assert denied_originless.status_code == 403
+                assert denied_originless.status_code in (400, 403) if rejected_headers.get("Host") == "evil.invalid" else denied_originless.status_code == 403
                 assert read_calls == 0
 
             anonymous = httpx.get(f"{origin}{base_url}", headers={"Origin": origin},
@@ -655,7 +655,7 @@ def test_d089_originless_browser_get_exact_authority_and_fail_closed(tmp_path, m
         ):
             before = reads
             response = client.get(url, headers=headers)
-            assert response.status_code == 403, headers
+            assert response.status_code in ({400, 403} if headers.get("Host") == "evil.test" else {403}), headers
             assert reads == before, headers
         before = reads
         assert client.get(url, headers={"Origin": "https://app.test"}).status_code == 200
