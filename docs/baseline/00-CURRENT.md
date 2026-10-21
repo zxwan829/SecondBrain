@@ -8,7 +8,24 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 当前阶段裁定与唯一 NEXT（Issue #76/#96/#97）
+## 2026-10-22 阶段一收口与阶段二 P2-1 唯一 NEXT（Issue #76/#96/#97）
+
+- **GitHub 应用源码基线：** main `b590c15d81a3a1822304c955c788bfa4c912fea1`。该提交先合入 Core PR #171（merge `2abdf4b25420a2efea3088448238cfc4d48af9d8`），再合入包含 Core merge parent 的 Web PR #170（merge `b590c15d81a3a1822304c955c788bfa4c912fea1`）。两次均使用 GitHub 普通 merge，并以固定 PR HEAD `dcb252060d1067ad322837085648942097c4b1a5`、`c778ae6932ae8ccb091afeb6e82aa2d065aa6855` 锁定 expected head。PR #170/#171 已关闭并合并。main 不是 NAS 运行版本；本次未核验/改变生产。
+- **阶段一六部分状态盘点：**
+
+  | 部分 | 源码/实现状态 | 合成证据与限制 |
+  |---|---|---|
+  | 1–2 | 当前 #96/#97 阶段账本及此前 CURRENT 未找到独立编号的交付/Gate 记录；不从页面存在推断已完成。原 V1 MUST 仍按下方完整矩阵逐项追踪。 | 独立阶段 Gate 未找到可引用证据；不标 PASS。 |
+  | 3 Inbox→Review→Knowledge 差距审计 | 源码交叉审查没有确认新 P0/P1；没有新增 PR。 | `STAGE1_PART3_SYNTHETIC_GATE=PASS_WITH_LIMITS`；Core+Vite 合成 HTTP 覆盖 Capture、Inbox、审批执行和 Knowledge 来源状态；不含成功 Promote、生产 Writer 或真实用户数据。[证据](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6317106891) |
+  | 4 Knowledge 查询与复用 | Core #165 / Web #166 已合并，分别 merge `b825466c2bc8068e5b014adb807a31601c0cdbba` / `b6cd1ffb9423b1941ea2be5cff63e846b07758f8`。有界只读召回、SHA/provenance 重验、SSE/history“检索参考”展示与刷新回读。 | `PASS_WITH_LIMITS`；只证明检索参考元数据，不证明模型真正使用知识回答。最终 Core HEAD 全量未重跑。[合并记录](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6318641390) |
+  | 5 Journal / Projects / Daily Brief | Core #167 / Web #168 已合并，分别 merge `9455a108b747a317fd37c03c3949b3b2f93761d6` / `a32bf3907878f2f4f2eac5621a5e58ed7e25c`。支持 Task/Project/Journal 受权来源、版本检查、用户手工 Brief 保存/回读与来源回跳。 | `STAGE1_PART5_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`；Core/Vite localhost HTTP 与 Web 合成测试通过；Brief 仍不自动生成，`approved_import` 为 501。[Gate](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6319368596) |
+  | 6 V1 综合验收与安全一致性 | Core #171 / Web #170 已合并；PR #170 内含 Review-root-relative path 修复与 Inbox→Review 版本绑定 UI 测试。 | `STAGE1_PART6_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`；Core+Vite HTTP、Core 定向 28 passed/4 subtests、Web 定向 10 passed、typecheck/build/diff-check 通过。[Gate](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323445544)、[独立复审](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323490860)。真实浏览器未启动。 |
+
+- **V1 MUST / Companion MVP 未完成项：** V1 与 D077 Companion MVP 整体仍 `NOT DONE`。#130 D086 Chat→Inbox 已 `MERGED`（merge `1954f88d1546c3c802c82a97a708aff7c32461f7`）；不等于 Journal/Knowledge 已获人工批准写入。#164 Today Task 创建仍为 Draft/Open，不是已合入功能。#106 Restricted Writer 仍 Draft；生产 OS UID/GID、ACL、mount、peer 隔离与安全准入 `BLOCKED`。#151 合成 Raw admission 仍有同 UID namespace/commit 时间窗风险，生产信任边界 `BLOCKED`。真实浏览器 `BROWSER_BLOCKED_ENV/NOT RUN`；真实 Hermes 低信任上下文与模型 grounding、真实业务数据及用户体验均 `NOT RUN`。Private 继续排除，Writer/Promote 生产保持 OFF；没有部署、真实数据或模型调用。
+- **阶段二 P2-1 Web｜当前唯一 NEXT：** B 已在 [#97 #6323865325](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6323865325) 冻结 Context v1，并在 [#96 #6323867891](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323867891) 同步。A 立即按 `POST /api/chat/sessions/{session_id}/context-preview` 接入 metadata-only UI；三项 Core action 先于 Hermes/source IO 校验、逐 Session 精确绑定、每次新请求、no-store、source drift/撤权/预算失败语义按合同执行。Web 不缓存、不发送任何来源内容或元数据给 Hermes。`MODEL_CONTEXT_ADMISSION=BLOCKED`；没有经验证低信任角色时不得标注 grounded。交付一个 Web Draft PR、固定 HEAD 与 `A_P2_1_WEB_READY`，之后等待 B READY 做一次合成 Gate。
+- 最近的生产快照仍以 `Environment-Baseline.md` 为准；本轮未核验或操作 NAS/生产、未读写真实 Vault/Private、未触发 CI/Actions、未调用收费或真实模型、未开启 Writer/Promote。
+
+## 2026-10-22 前一阶段裁定（已被上方收口状态替代；Issue #76/#96/#97）
 
 - **GitHub 当前源码权威基线：** `main a32bf3907878f2f4f2eac5621a5e58ed6e7be25c`，是阶段一第 5 部分两条功能 PR 合并后的提交；这不是 NAS 正在运行的镜像版本。最近一次已证据化的生产运行状态仍以 `Environment-Baseline.md` 为准，本次未核验/变更生产。
 - **阶段一第 4 部分（可信 Knowledge 检索参考）已合并：** Core [PR #165](https://github.com/zxwan829/SecondBrain/pull/165) merge `b825466c2bc8068e5b014adb807a31601c0cdbba`；Web [PR #166](https://github.com/zxwan829/SecondBrain/pull/166) merge `b6cd1ffb9423b1941ea2be5cff63e846b07758f8`。[#96 合成证据](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6318462056)、[#97 Core 修复证据](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6318466092)，评审结论 `PASS_WITH_LIMITS`。交付内容为 Core 受控检索、SHA/provenance 再验证、SSE/history 参考元数据与 Web“检索参考”展示/本地刷新回读；**不证明模型使用 Knowledge 形成回答**。知识正文未注入 Hermes system-level instructions 或原始 input；低信任模型上下文角色验证、跨设备 run 索引与真实模型 grounding 均尚未完成。Core 最终 HEAD 定向 32 passed；此前全量 469 项属于前一 HEAD，最终 HEAD 全量 `NOT RUN`（明确接受限制）。
