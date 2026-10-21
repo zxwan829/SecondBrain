@@ -391,6 +391,37 @@ class D086InboxEntryHTTPTests(unittest.TestCase):
         self.assertEqual(complete_raw.read_bytes(), complete_raw_before)
         self.assertEqual(complete_state.read_text(), "{corrupt")
 
+    def test_raw_directory_fsync_failure_never_commits_or_rewrites_after_restart(self):
+        self.login()
+        request = self.payload(source_event_id="raw-directory-fsync-unknown")
+        capture_id = hashlib.sha256(("secondbrain-inbox-event\0web\0" + request["source_event_id"]).encode()).hexdigest()[:32]
+        raw_path = self.raw / f"Inbox-{capture_id}.md"
+        state_path = self.state / "captures" / f"{capture_id}.json"
+        service = self.inbox_dependencies()["service"]
+
+        # The Raw file has been written and file-fsynced when this directory
+        # sync runs. Its directory-entry durability is now unknown.
+        with patch.object(service, "_fsync_directory",
+                          side_effect=OSError("synthetic Raw parent directory fsync failure")):
+            first = self.client.post("/api/inbox/entries", headers=self.headers, json=request)
+        self.assertGreaterEqual(first.status_code, 400)
+        self.assertTrue(raw_path.is_file())
+        raw_before_restart = raw_path.read_bytes()
+        self.assertEqual(raw_before_restart, request["original_text"].encode("utf-8"))
+        self.assertFalse(state_path.exists())
+
+        with patch.dict(os.environ, self.env, clear=True):
+            restarted_app = create_app()
+        with TestClient(restarted_app, base_url=ORIGIN) as restarted_client:
+            login = restarted_client.post("/api/auth/login", headers=self.headers,
+                                          json={"password": "synthetic-d086-app-password"})
+            self.assertEqual(login.status_code, 200, login.text)
+            replay = restarted_client.post("/api/inbox/entries", headers=self.headers, json=request)
+        self.assertGreaterEqual(replay.status_code, 400, replay.text)
+        self.assertEqual(raw_path.read_bytes(), raw_before_restart)
+        self.assertFalse(state_path.exists())
+        self.assertEqual(len(list(self.raw.glob("*.md"))), 1)
+
     def test_missing_state_or_mismatched_raw_requires_manual_recovery(self):
         self.login()
         payload = self.payload(source_event_id="missing-state")
