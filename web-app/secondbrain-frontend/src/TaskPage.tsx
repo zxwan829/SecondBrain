@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 type Task = {
   id: string; title: string; due_date: string | null; status: 'open' | 'completed';
@@ -17,14 +17,22 @@ export function TaskPage({ locale }: { locale: Locale }) {
   const [editing, setEditing] = useState<{ id: string; title: string; due_date: string } | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const activeLoad = useRef<AbortController | null>(null);
+  const loadSequence = useRef(0);
 
-  const load = async (showLoading = true) => {
+  const load = useCallback(async (showLoading = true) => {
+    activeLoad.current?.abort();
+    const controller = new AbortController();
+    activeLoad.current = controller;
+    const sequence = ++loadSequence.current;
     if (showLoading) setLoading(true);
     setError('');
+    if (showLoading) setTasks([]);
     try {
       const dateFilter = dueDate ? `&due_date=${encodeURIComponent(dueDate)}` : '';
-      const response = await fetch(`/api/tasks?status=${status}${dateFilter}`, { credentials: 'same-origin' });
+      const response = await fetch(`/api/tasks?status=${status}${dateFilter}`, { credentials: 'same-origin', signal: controller.signal });
       const body = await response.json().catch(() => ({})) as { detail?: string; tasks?: Task[] };
+      if (controller.signal.aborted || sequence !== loadSequence.current) return;
       if (!response.ok) {
         if (response.status === 401) window.location.reload();
         throw new Error(response.status === 503 && body.detail === 'Task is not enabled'
@@ -32,11 +40,26 @@ export function TaskPage({ locale }: { locale: Locale }) {
           : String(body.detail ?? `HTTP ${response.status}`));
       }
       setTasks(Array.isArray(body.tasks) ? body.tasks : []);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : (en ? 'Tasks could not be loaded.' : '待办暂时无法读取。')); }
-    finally { setLoading(false); }
-  };
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== loadSequence.current) return;
+      setTasks([]);
+      setError(cause instanceof Error ? cause.message : (en ? 'Tasks could not be loaded.' : '待办暂时无法读取。'));
+    } finally {
+      if (sequence === loadSequence.current) {
+        setLoading(false);
+        if (activeLoad.current === controller) activeLoad.current = null;
+      }
+    }
+  }, [dueDate, en, status]);
 
-  useEffect(() => { void load(); }, [status, dueDate]);
+  useEffect(() => {
+    void load();
+    return () => {
+      activeLoad.current?.abort();
+      activeLoad.current = null;
+      loadSequence.current += 1;
+    };
+  }, [load]);
 
   const update = async (task: Task, changes: Record<string, unknown>) => {
     if (savingId) return;
