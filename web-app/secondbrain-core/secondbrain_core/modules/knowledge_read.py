@@ -365,6 +365,80 @@ class KnowledgeReadStore:
         return {"status": "unavailable" if status == "unverified" else "missing",
                 "provenance_status": status, "source": None}
 
+    def chat_recall(self, query, *, max_items=3, max_item_bytes=8 * 1024,
+                    max_total_bytes=16 * 1024):
+        """Build a bounded internal Chat context from exact verified Knowledge.
+
+        This is deliberately separate from the public search response: the
+        relative path and content stay server-side and are never accepted from
+        a browser. Only documents whose exact current bytes have verified
+        provenance are eligible for a reference citation.
+        """
+        rows = self.search(query, max_items)
+        selected = []
+        total = 0
+        partial = rows["status"] != "ok"
+        for row in rows["items"]:
+            if len(selected) >= max_items or total >= max_total_bytes:
+                partial = True
+                break
+            try:
+                relative, expected_sha256 = _decode_token(row["id"], self._id_secret)
+                source = self.source(row["id"])
+                if source.get("status") != "available" or source.get("provenance_status") != "verified":
+                    continue
+                detail = self.detail(row["id"])
+                payload = detail["content"].encode("utf-8")
+                digest = hashlib.sha256(payload).hexdigest()
+                if (not hmac.compare_digest(digest, expected_sha256)
+                        or not hmac.compare_digest(digest, detail["sha256"])):
+                    partial = True
+                    continue
+                remaining = max_total_bytes - total
+                excerpt = payload[:min(max_item_bytes, remaining)].decode("utf-8", errors="ignore")
+                if not excerpt:
+                    partial = True
+                    continue
+                selected.append({"relative_path": relative, "title": row["title"],
+                                 "sha256": digest, "content": excerpt,
+                                 "provenance_status": "verified"})
+                total += len(excerpt.encode("utf-8"))
+                if len(payload) > len(excerpt.encode("utf-8")):
+                    partial = True
+            except HTTPException as exc:
+                if exc.status_code in {404, 409, 413, 422, 503}:
+                    partial = True
+                    continue
+                raise
+        return {"items": selected,
+                "status": "available" if selected and not partial else
+                          "partial" if partial else "none"}
+
+    def verify_chat_reference(self, relative_path, expected_sha256):
+        """Re-read one stored internal reference without exposing its path."""
+        if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+            return False
+        root_fd = self._root_fd()
+        try:
+            try:
+                fd, info = _open_exact(root_fd, relative_path)
+            except (OSError, ValueError, UnicodeError):
+                return False
+            try:
+                if info.st_size > MAX_FILE_BYTES:
+                    return False
+                payload = _read_bounded(fd, MAX_FILE_BYTES)
+                if len(payload) > MAX_FILE_BYTES:
+                    return False
+            finally:
+                os.close(fd)
+        finally:
+            os.close(root_fd)
+        digest = hashlib.sha256(payload).hexdigest()
+        if not hmac.compare_digest(digest, expected_sha256):
+            return False
+        return self._verified_source(relative_path, payload, digest) is not None
+
     def _verified_source(self, relative, content, digest):
         if self.provenance_verifier is None:
             return None

@@ -35,6 +35,15 @@ class RunApprovalRegistry:
             self._runs[run_id] = {"session_id": session_id, "owner": owner,
                                   "expires_at": self._clock() + RUN_TTL_SECONDS}
 
+    def session_for_run(self, run_id, owner):
+        """Return the registered Session only for the matching App owner."""
+        with self._lock:
+            self._prune()
+            run = self._runs.get(run_id)
+            if not run or run.get("owner") != owner:
+                return None
+            return run.get("session_id")
+
     def _prune(self):
         now = self._clock()
         for key, record in list(self._approvals.items()):
