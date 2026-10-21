@@ -391,6 +391,45 @@ class D086InboxEntryHTTPTests(unittest.TestCase):
         self.assertEqual(complete_raw.read_bytes(), complete_raw_before)
         self.assertEqual(complete_state.read_text(), "{corrupt")
 
+    def test_raw_only_interruption_stays_fail_closed_after_core_app_restart(self):
+        self.login()
+        request = self.payload(source_event_id="restart-after-raw-only")
+        capture_id = hashlib.sha256(("secondbrain-inbox-event\0web\0" + request["source_event_id"]).encode()).hexdigest()[:32]
+        raw_path = self.raw / f"Inbox-{capture_id}.md"
+        state_path = self.state / "captures" / f"{capture_id}.json"
+        service = self.inbox_dependencies()["service"]
+
+        def interrupt_after_raw_write(state):
+            if state.get("capture_id") == capture_id:
+                raise OSError("synthetic process interruption after Raw persistence")
+            return original_write_state(state)
+
+        original_write_state = service._write_state
+        with TestClient(self.app, base_url=ORIGIN, raise_server_exceptions=False) as failing_client:
+            failing_client.post("/api/auth/login", headers=self.headers,
+                                json={"password": "synthetic-d086-app-password"})
+            with patch.object(service, "_write_state", side_effect=interrupt_after_raw_write):
+                interrupted = failing_client.post("/api/inbox/entries", headers=self.headers, json=request)
+        self.assertEqual(interrupted.status_code, 500)
+        self.assertTrue(raw_path.is_file())
+        raw_before_restart = raw_path.read_bytes()
+        self.assertFalse(state_path.exists())
+
+        # Recreate the application over the same synthetic stores to model a
+        # process restart, then prove that an orphan Raw file cannot be
+        # mistaken for a committed Inbox event or silently rewritten.
+        with patch.dict(os.environ, self.env, clear=True):
+            restarted_app = create_app()
+        with TestClient(restarted_app, base_url=ORIGIN) as restarted_client:
+            login = restarted_client.post("/api/auth/login", headers=self.headers,
+                                          json={"password": "synthetic-d086-app-password"})
+            self.assertEqual(login.status_code, 200, login.text)
+            replay = restarted_client.post("/api/inbox/entries", headers=self.headers, json=request)
+        self.assertEqual(replay.status_code, 503, replay.text)
+        self.assertEqual(raw_path.read_bytes(), raw_before_restart)
+        self.assertFalse(state_path.exists())
+        self.assertEqual(len(list(self.raw.glob("*.md"))), 1)
+
     def test_missing_state_or_mismatched_raw_requires_manual_recovery(self):
         self.login()
         payload = self.payload(source_event_id="missing-state")
