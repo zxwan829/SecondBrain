@@ -20,12 +20,13 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 SAFE_REF = re.compile(r"^[A-Za-z0-9_.:/#@+ -]{1,512}$")
 MAX_CONTENT_BYTES = 8_192
+MAX_EVENTS_FILE_BYTES = 8 * 1024 * 1024
 EVENTS_FILE = "personal-memory.jsonl"
 LOCK_FILE = "personal-memory.lock"
 
@@ -41,6 +42,10 @@ def _json_bytes(value: Any) -> bytes:
 
 class MemoryStoreError(RuntimeError):
     pass
+
+
+class MemoryConflictError(ValueError):
+    """A stale revision or reused idempotency key with different intent."""
 
 
 class PersonalMemoryStore:
@@ -89,7 +94,14 @@ class PersonalMemoryStore:
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise MemoryStoreError("Personal memory data must be a private regular file owned by Core")
             with os.fdopen(fd, "rb", closefd=False) as stream:
-                raw = stream.read()
+                if info.st_size > MAX_EVENTS_FILE_BYTES:
+                    raise MemoryStoreError("Personal memory exceeds the configured read budget")
+                raw = stream.read(MAX_EVENTS_FILE_BYTES + 1)
+            after = os.fstat(fd)
+            if (len(raw) > MAX_EVENTS_FILE_BYTES or after.st_dev != info.st_dev
+                    or after.st_ino != info.st_ino or after.st_size != info.st_size
+                    or after.st_mtime_ns != info.st_mtime_ns or after.st_ctime_ns != info.st_ctime_ns):
+                raise MemoryStoreError("Personal memory changed during a bounded read")
         finally:
             os.close(fd)
         events: list[dict[str, Any]] = []
@@ -116,6 +128,12 @@ class PersonalMemoryStore:
                         or not isinstance(event.get("event_id"), str)
                         or event.get("event_id") in event_ids or not isinstance(event.get("content"), dict)):
                     raise ValueError("invalid event")
+                key = event.get("idempotency_key")
+                digest = event.get("idempotency_digest")
+                if ((key is not None and (not isinstance(key, str) or not SAFE_ID.fullmatch(key)))
+                        or (digest is not None and (not isinstance(digest, str)
+                                                    or not re.fullmatch(r"[0-9a-f]{64}", digest)))):
+                    raise ValueError("invalid idempotency metadata")
                 memory_id = event["memory_id"]
                 previous_revision = latest_revisions.get(memory_id)
                 if ((event["operation"] == "create" and (previous_revision is not None or event["revision"] != 1))
@@ -131,9 +149,25 @@ class PersonalMemoryStore:
 
     def _read_events(self) -> list[dict[str, Any]]:
         with self._thread_lock:
-            fd = self._open_lock()
+            self._validate_root()
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                fd = os.open(self.lock_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            except FileNotFoundError:
+                # Read-only calls must not create a lock file. Two bounded,
+                # stable snapshots fail closed if a writer races this legacy
+                # lockless state; new writes create and use the lock normally.
+                first = self._read_events_unlocked()
+                second = self._read_events_unlocked()
+                if first != second:
+                    raise MemoryStoreError("Personal memory changed during a read")
+                return second
+            except OSError as exc:
+                raise MemoryStoreError("Personal memory lock is unavailable") from exc
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                    raise MemoryStoreError("Personal memory lock must be a private regular file owned by Core")
+                fcntl.flock(fd, fcntl.LOCK_SH)
                 return self._read_events_unlocked()
             finally:
                 fcntl.flock(fd, fcntl.LOCK_UN)
@@ -147,16 +181,27 @@ class PersonalMemoryStore:
                 events = self._read_events_unlocked()
                 key = event.get("idempotency_key")
                 if key and (prior := next((row for row in events if row.get("idempotency_key") == key), None)):
+                    if event.get("idempotency_digest"):
+                        if (prior.get("idempotency_digest") == event.get("idempotency_digest")
+                                or (prior.get("idempotency_digest") is None
+                                    and all(prior.get(name) == event.get(name) for name in (
+                                        "operation", "source_ref", "source_type", "content", "category",
+                                        "fact_kind", "exact", "expires_at")))):
+                            return prior
+                        raise MemoryConflictError("Idempotency key was already used for a different memory")
                     if any(prior.get(name) != event.get(name)
-                           for name in ("operation", "source_ref", "content", "category", "fact_kind")):
-                        raise ValueError("Idempotency key was already used for a different memory")
+                           for name in ("operation", "source_ref", "source_type", "content", "category",
+                                        "fact_kind", "exact", "expires_at")):
+                        raise MemoryConflictError("Idempotency key was already used for a different memory")
                     return prior
                 if event.get("operation") in {"correct", "revoked", "expired"}:
                     current = next((row for row in reversed(events)
                                     if row.get("memory_id") == event.get("memory_id")), None)
                     if (current is None or current.get("revision") != event.get("expected_revision")
                             or event.get("revision") != event.get("expected_revision") + 1):
-                        raise ValueError("Memory changed concurrently; reload before retrying")
+                        raise MemoryConflictError("Memory changed concurrently; reload before retrying")
+                    if current.get("status") != "active":
+                        raise MemoryConflictError("Inactive memories cannot be changed")
                 stored_event = {name: value for name, value in event.items() if name != "expected_revision"}
                 line = _json_bytes(stored_event) + b"\n"
                 try:
@@ -245,13 +290,18 @@ class PersonalMemoryStore:
             "source_type": source_type, "source_ref": source_ref.strip(), "content": content,
             "category": category, "fact_kind": fact_kind,
         })).hexdigest()
+        idempotency_digest = hashlib.sha256(_json_bytes({
+            "operation": "create", "source_type": source_type, "source_ref": source_ref.strip(),
+            "content": content, "category": category, "fact_kind": fact_kind,
+            "exact": bool(exact), "expires_at": expires_at,
+        })).hexdigest()
         event = {"schema": 1, "event_id": str(uuid.uuid4()), "memory_id": str(uuid.uuid4()),
                  "revision": 1, "operation": "create", "content": content, "category": category,
                  "fact_kind": fact_kind, "source_type": source_type, "source_ref": source_ref.strip(),
                  "exact": bool(exact),
                  "verification_status": "source_required" if exact or category == "fact" else "not_required",
                  "recorded_at": _now(), "status": status, "expires_at": expires_at,
-                 "idempotency_key": candidate_key}
+                 "idempotency_key": candidate_key, "idempotency_digest": idempotency_digest}
         return self._append(event)
 
     def _current(self, memory_id: str) -> dict[str, Any]:
@@ -268,37 +318,70 @@ class PersonalMemoryStore:
             raise KeyError(memory_id)
         return item
 
+    @staticmethod
+    def _mutation_idempotency_key(key: str) -> str:
+        if not isinstance(key, str) or not SAFE_ID.fullmatch(key):
+            raise ValueError("Invalid idempotency key")
+        return key
+
+    @staticmethod
+    def _mutation_digest(*, operation: str, memory_id: str, expected_revision: int,
+                         source_type: str, source_ref: str, content: dict[str, Any] | None = None,
+                         category: str | None = None, fact_kind: str | None = None) -> str:
+        return hashlib.sha256(_json_bytes({
+            "operation": operation, "memory_id": memory_id,
+            "expected_revision": expected_revision, "source_type": source_type,
+            "source_ref": source_ref.strip(), "content": content,
+            "category": category, "fact_kind": fact_kind,
+        })).hexdigest()
+
     def correct(self, memory_id: str, *, content: dict[str, Any], source_type: str,
-                source_ref: str, fact_kind: str | None = None) -> dict[str, Any]:
+                source_ref: str, expected_revision: int, idempotency_key: str,
+                fact_kind: str | None = None) -> dict[str, Any]:
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("Expected revision must be a positive integer")
+        idempotency_key = self._mutation_idempotency_key(idempotency_key)
         current = self._current(memory_id)
-        if current["status"] in {"revoked", "expired", "superseded"}:
-            raise ValueError("Inactive memories cannot be corrected")
         content = self._validate_content(content)
         self._validate_source(source_type, source_ref, current["exact"])
         if fact_kind is not None and fact_kind not in {"user_stated", "user_confirmed", "inference"}:
             raise ValueError("Unsupported memory fact kind")
+        effective_fact_kind = fact_kind or current["fact_kind"]
         return self._append({**current, "event_id": str(uuid.uuid4()), "revision": current["revision"] + 1,
-                             "expected_revision": current["revision"],
+                             "expected_revision": expected_revision,
                              "operation": "correct", "content": content, "source_type": source_type,
                              "source_ref": source_ref.strip(), "recorded_at": _now(),
-                             "fact_kind": fact_kind or current["fact_kind"], "status": "active",
-                             "idempotency_key": None})
+                             "fact_kind": effective_fact_kind, "status": "active",
+                             "idempotency_key": idempotency_key,
+                             "idempotency_digest": self._mutation_digest(
+                                 operation="correct", memory_id=memory_id, expected_revision=expected_revision,
+                                 source_type=source_type, source_ref=source_ref, content=content,
+                                 category=current["category"], fact_kind=effective_fact_kind)})
 
-    def _change_status(self, memory_id: str, status: str, source_type: str, source_ref: str) -> dict[str, Any]:
+    def _change_status(self, memory_id: str, status: str, source_type: str, source_ref: str,
+                       expected_revision: int, idempotency_key: str) -> dict[str, Any]:
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise ValueError("Expected revision must be a positive integer")
+        idempotency_key = self._mutation_idempotency_key(idempotency_key)
         current = self._current(memory_id)
-        if current["status"] in {"revoked", "expired", "superseded"}:
-            raise ValueError("Memory is already inactive")
         self._validate_source(source_type, source_ref, False)
         return self._append({**current, "event_id": str(uuid.uuid4()), "revision": current["revision"] + 1,
-                             "expected_revision": current["revision"],
+                             "expected_revision": expected_revision,
                              "operation": status, "source_type": source_type, "source_ref": source_ref.strip(),
-                             "recorded_at": _now(), "status": status, "idempotency_key": None})
+                             "recorded_at": _now(), "status": status, "idempotency_key": idempotency_key,
+                             "idempotency_digest": self._mutation_digest(
+                                 operation=status, memory_id=memory_id, expected_revision=expected_revision,
+                                 source_type=source_type, source_ref=source_ref)})
 
-    def revoke(self, memory_id: str, *, source_type: str, source_ref: str) -> dict[str, Any]:
-        return self._change_status(memory_id, "revoked", source_type, source_ref)
+    def revoke(self, memory_id: str, *, source_type: str, source_ref: str,
+               expected_revision: int, idempotency_key: str) -> dict[str, Any]:
+        return self._change_status(memory_id, "revoked", source_type, source_ref,
+                                   expected_revision, idempotency_key)
 
-    def expire(self, memory_id: str, *, source_type: str, source_ref: str) -> dict[str, Any]:
-        return self._change_status(memory_id, "expired", source_type, source_ref)
+    def expire(self, memory_id: str, *, source_type: str, source_ref: str,
+               expected_revision: int, idempotency_key: str) -> dict[str, Any]:
+        return self._change_status(memory_id, "expired", source_type, source_ref,
+                                   expected_revision, idempotency_key)
 
     def history(self, memory_id: str) -> list[dict[str, Any]]:
         if not SAFE_ID.fullmatch(memory_id):
@@ -359,11 +442,15 @@ class CorrectMemory(BaseModel):
     source_type: str
     source_ref: str
     fact_kind: str | None = None
+    expected_revision: StrictInt
+    idempotency_key: str
 
 
 class StatusMemory(BaseModel):
     source_type: str
     source_ref: str
+    expected_revision: StrictInt
+    idempotency_key: str
 
 
 def create_personal_memory_router(auth, store: PersonalMemoryStore) -> APIRouter:
@@ -375,6 +462,11 @@ def create_personal_memory_router(auth, store: PersonalMemoryStore) -> APIRouter
         dump = getattr(body, "model_dump", None)
         return dump() if dump else body.dict()
 
+    def public_event(event: dict[str, Any]) -> dict[str, Any]:
+        # Digest is an internal idempotency comparison aid, not part of the
+        # stable Personal Memory event response contract.
+        return {key: value for key, value in event.items() if key != "idempotency_digest"}
+
     def guard(request: Request, action: str) -> None:
         auth.require_action(request, action)
 
@@ -382,7 +474,7 @@ def create_personal_memory_router(auth, store: PersonalMemoryStore) -> APIRouter
     def recall(request: Request, query: str | None = None, limit: int = 10):
         guard(request, "personal_memory.read")
         try:
-            return {"items": store.active_view(query=query, limit=limit)}
+            return {"items": [public_event(row) for row in store.active_view(query=query, limit=limit)]}
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except MemoryStoreError as exc:
@@ -392,7 +484,9 @@ def create_personal_memory_router(auth, store: PersonalMemoryStore) -> APIRouter
     def create(request: Request, body: CreateMemory):
         guard(request, "personal_memory.write")
         try:
-            return store.create(**payload(body))
+            return public_event(store.create(**payload(body)))
+        except MemoryConflictError as exc:
+            raise HTTPException(status_code=409, detail="Idempotency key conflict") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except MemoryStoreError as exc:
@@ -409,15 +503,17 @@ def create_personal_memory_router(auth, store: PersonalMemoryStore) -> APIRouter
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         if not rows:
             raise HTTPException(status_code=404, detail="Memory not found")
-        return {"memory_id": memory_id, "revisions": rows}
+        return {"memory_id": memory_id, "revisions": [public_event(row) for row in rows]}
 
     @router.post("/{memory_id}/correct")
     def correct(request: Request, memory_id: str, body: CorrectMemory):
         guard(request, "personal_memory.write")
         try:
-            return store.correct(memory_id, **payload(body))
+            return public_event(store.correct(memory_id, **payload(body)))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Memory not found") from exc
+        except MemoryConflictError as exc:
+            raise HTTPException(status_code=409, detail="Memory changed; reload before retrying") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except MemoryStoreError as exc:
@@ -427,9 +523,11 @@ def create_personal_memory_router(auth, store: PersonalMemoryStore) -> APIRouter
     def revoke(request: Request, memory_id: str, body: StatusMemory):
         guard(request, "personal_memory.write")
         try:
-            return store.revoke(memory_id, **payload(body))
+            return public_event(store.revoke(memory_id, **payload(body)))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Memory not found") from exc
+        except MemoryConflictError as exc:
+            raise HTTPException(status_code=409, detail="Memory changed; reload before retrying") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except MemoryStoreError as exc:
@@ -439,9 +537,11 @@ def create_personal_memory_router(auth, store: PersonalMemoryStore) -> APIRouter
     def expire(request: Request, memory_id: str, body: StatusMemory):
         guard(request, "personal_memory.write")
         try:
-            return store.expire(memory_id, **payload(body))
+            return public_event(store.expire(memory_id, **payload(body)))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Memory not found") from exc
+        except MemoryConflictError as exc:
+            raise HTTPException(status_code=409, detail="Memory changed; reload before retrying") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except MemoryStoreError as exc:
