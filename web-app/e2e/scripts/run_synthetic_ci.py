@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import secrets
@@ -24,6 +25,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[3]
 CORE = ROOT / "web-app" / "secondbrain-core"
@@ -56,7 +58,9 @@ FAILURE_JUNIT_TESTCASE_VIEWPORTS = {
 }
 FAILURE_DIAGNOSTIC_STAGES = {
     "login", "session", "first_submit", "retry", "conflict",
-    "ordinary_chat", "source_protection", "viewport_layout",
+    "ordinary_chat", "source_protection", "daily_brief_read", "daily_brief_sources",
+    "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
+    "daily_brief_readback", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 MAX_FAILURE_DIAGNOSTIC_BYTES = 512
@@ -186,7 +190,8 @@ def _sanitize_run_summary(path: Path) -> None:
         raise RuntimeError("run summary schema rejected")
     allowed = {"result", "core", "web", "browser", "promote_enabled", "hermes",
                "raw_record_count", "journal_files", "knowledge_files", "exit_code",
-               "python", "node", "html_report_uploaded", "screenshots_uploaded"}
+               "journal_source_fixture_files", "brief_files", "python", "node",
+               "html_report_uploaded", "screenshots_uploaded"}
     path.write_text(json.dumps({key: summary[key] for key in allowed if key in summary}, indent=2) + "\n",
                     encoding="utf-8")
 
@@ -642,6 +647,58 @@ def assert_no_business_files(root: Path, label: str) -> None:
         raise RuntimeError(f"source-protection check failed: {label} contains {len(files)} file(s)")
 
 
+def seed_daily_brief_sources(dirs: dict[str, Path]) -> dict[str, bytes]:
+    """Seed one synthetic row in each frozen Brief source; never use external data."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    stamp = now.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    day = now.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    task = {
+        "id": uuid.uuid4().hex,
+        "title": "Synthetic brief task source",
+        "due_date": day,
+        "status": "open",
+        "created_at": stamp,
+        "updated_at": stamp,
+        "source": "web_app_explicit_task",
+        "original_command": "synthetic fixture only",
+        "operation_id": "synthetic-brief-fixture-task",
+        "session_id": "synthetic-brief-fixture-session",
+        "history": [],
+    }
+    (dirs["task"] / "tasks.json").write_text(
+        json.dumps({"tasks": [task], "idempotency": {}}, ensure_ascii=False, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    os.chmod(dirs["task"] / "tasks.json", 0o600)
+
+    project = {"id": "synthetic-brief-project", "title": "Synthetic brief project source", "status": "active"}
+    (dirs["projects"] / "synthetic-brief-project.json").write_text(
+        json.dumps(project, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8",
+    )
+    os.chmod(dirs["projects"] / "synthetic-brief-project.json", 0o600)
+
+    journal_record = {
+        "id": hashlib.sha256(f"synthetic-journal-source:{uuid.uuid4()}".encode()).hexdigest(),
+        "operation_id": "synthetic-brief-fixture-journal",
+        "session_id": "synthetic-brief-fixture-session",
+        "date": day,
+        "created_at": now.astimezone(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
+        "source": "web_app_explicit_intent",
+        "original_text": "Synthetic Journal source fixture; never read or published by the UI.",
+    }
+    journal_file = dirs["journal"] / f"{day}.jsonl"
+    journal_file.write_text(json.dumps(journal_record, ensure_ascii=False, separators=(",", ":")) + "\n",
+                            encoding="utf-8")
+    os.chmod(journal_file, 0o600)
+    return {item.name: item.read_bytes() for item in dirs["journal"].iterdir() if item.is_file()}
+
+
+def assert_journal_fixture_unchanged(root: Path, baseline: dict[str, bytes]) -> None:
+    current = {item.name: item.read_bytes() for item in root.iterdir() if item.is_file()}
+    if current != baseline:
+        raise RuntimeError("synthetic Journal source changed during Brief acceptance")
+
+
 def http_smoke(password_path: Path) -> list[dict]:
     """Exercise real Core HTTP through Vite without launching a browser."""
     jar = http.cookiejar.CookieJar()
@@ -684,6 +741,95 @@ def http_smoke(password_path: Path) -> list[dict]:
     if status != 200:
         raise RuntimeError("synthetic App session check failed")
 
+    day = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    status, tasks, _ = request("GET", "/api/tasks?status=all")
+    if status != 200 or not isinstance(tasks, dict):
+        raise RuntimeError("synthetic Task source did not return HTTP 200")
+    task_rows = tasks.get("tasks")
+    if not isinstance(task_rows, list) or len(task_rows) != 1:
+        raise RuntimeError("synthetic Task source fixture was not uniquely available")
+    task = task_rows[0]
+    task_fields = ("id", "title", "due_date", "status", "created_at", "updated_at", "source")
+    if task.get("title") != "Synthetic brief task source":
+        raise RuntimeError("Task source did not match the synthetic fixture")
+    task_canonical = {key: task[key] for key in task_fields}
+    task_version = hashlib.sha256(json.dumps(
+        task_canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    task_ref = {"kind": "task", "id": task["id"], "version": task_version}
+
+    status, projects, _ = request("GET", "/api/projects?limit=50&offset=0")
+    if status != 200 or not isinstance(projects, dict) or projects.get("status") != "real":
+        safe_status = projects.get("status") if isinstance(projects, dict) else "invalid-response"
+        raise RuntimeError(f"synthetic Project source was not real (HTTP {status}, status={safe_status})")
+    project_rows = projects.get("items")
+    if not isinstance(project_rows, list) or len(project_rows) != 1:
+        raise RuntimeError("synthetic Project source fixture was not uniquely available")
+    project = project_rows[0]
+    if project.get("id") != "synthetic-brief-project":
+        raise RuntimeError("Project source did not match the synthetic fixture")
+    project_ref = {"kind": "project", **project["source_ref"]}
+
+    status, journals, _ = request(
+        "GET", f"/api/daily-brief/source-options/journal?date={day}"
+    )
+    if status != 200 or not isinstance(journals, dict) or journals.get("status") != "real":
+        raise RuntimeError("synthetic Journal source did not return HTTP 200 real data")
+    journal_rows = journals.get("items")
+    if not isinstance(journal_rows, list) or len(journal_rows) != 1:
+        raise RuntimeError("synthetic Journal source fixture was not uniquely available")
+    journal_row = journal_rows[0]
+    if journal_row.get("date") != day or journal_row.get("kind") != "journal":
+        raise RuntimeError("Journal source did not match the expected synthetic day")
+    journal_ref = {"kind": "journal", "id": journal_row["id"],
+                   "version": journal_row["version"]}
+
+    brief_path = f"/api/daily-brief?date={day}&timezone=Asia%2FShanghai"
+    status, current, _ = request("GET", brief_path)
+    if status != 200 or not isinstance(current, dict) or current.get("status") != "empty":
+        raise RuntimeError("Daily Brief did not start in the expected empty state")
+    brief_payload = {
+        "mode": "manual_generate", "date": day, "timezone": "Asia/Shanghai",
+        "idempotency_key": f"synthetic-a96-{uuid.uuid4().hex}",
+        "categories": ["synthetic"],
+        "summary": "Synthetic local-only Daily Brief integration result.",
+        "source_refs": [task_ref, project_ref, journal_ref], "approved": True,
+    }
+    status, receipt, _ = request("POST", "/api/daily-brief", brief_payload)
+    receipt_fields = {"status", "brief_id", "date", "timezone", "record_version", "operation_id"}
+    if status != 201 or not isinstance(receipt, dict) or set(receipt) != receipt_fields:
+        raise RuntimeError("Daily Brief manual POST did not return the exact HTTP 201 receipt")
+    if receipt.get("status") != "created" or receipt.get("date") != day:
+        raise RuntimeError("Daily Brief POST receipt did not confirm the requested synthetic day")
+    status, readback, _ = request("GET", brief_path)
+    if status != 200 or not isinstance(readback, dict) or readback.get("status") != "real":
+        raise RuntimeError("Daily Brief exact GET did not return the created record")
+    brief_rows = readback.get("items")
+    if not isinstance(brief_rows, list) or len(brief_rows) != 1:
+        raise RuntimeError("Daily Brief GET did not return exactly one synthetic record")
+    brief = brief_rows[0]
+    if brief.get("brief_id") != receipt["brief_id"] or brief.get("summary") != brief_payload["summary"]:
+        raise RuntimeError("Daily Brief GET did not match the exact POST receipt and request")
+    if brief.get("source_refs") != brief_payload["source_refs"]:
+        raise RuntimeError("Daily Brief GET source references did not match the verified inputs")
+    duplicate_status, duplicate, _ = request("POST", "/api/daily-brief", brief_payload)
+    if duplicate_status != 200 or not isinstance(duplicate, dict) or duplicate.get("status") != "duplicate":
+        raise RuntimeError("Daily Brief exact retry was not idempotently acknowledged")
+    if duplicate.get("brief_id") != receipt["brief_id"] or duplicate.get("operation_id") != receipt["operation_id"]:
+        raise RuntimeError("Daily Brief idempotent retry did not preserve the original receipt")
+    conflict_payload = {**brief_payload, "summary": brief_payload["summary"] + " changed"}
+    conflict_status, _, _ = request("POST", "/api/daily-brief", conflict_payload)
+    if conflict_status != 409:
+        raise RuntimeError("Daily Brief changed payload with the same key did not return HTTP 409")
+    unsupported_status, unsupported, unsupported_raw = request("POST", "/api/daily-brief", {
+        **brief_payload, "mode": "approved_import",
+        "import_ref": {"kind": "existing_brief", "id": "synthetic-import", "version": "a" * 64},
+    })
+    if (unsupported_status != 501 or not isinstance(unsupported, dict)
+            or unsupported.get("detail") != "approved import unavailable"
+            or b"synthetic-import" in unsupported_raw):
+        raise RuntimeError("unsupported approved_import was not safely rejected with HTTP 501")
+
     denied_payload = {"original_text": "synthetic origin denial", "source_channel": "web",
                       "source_event_id": f"e2e-{uuid.uuid4()}",
                       "occurred_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -719,8 +865,17 @@ def http_smoke(password_path: Path) -> list[dict]:
     unauth_status, _, _ = request("GET", f"/api/inbox/entries/{inbox_id}", opener=anonymous)
     if unauth_status != 401:
         raise RuntimeError("anonymous exact Inbox GET did not fail with HTTP 401")
-    if any(entry["path"].startswith(("/api/journal/entries", "/api/knowledge", "/api/projects")) for entry in request_log):
+    allowed_source_paths = {
+        "/api/tasks?status=all", "/api/projects?limit=50&offset=0",
+        f"/api/daily-brief/source-options/journal?date={day}", brief_path,
+        "/api/daily-brief",
+    }
+    if any(entry["path"].startswith(("/api/journal/entries", "/api/knowledge", "/api/capture"))
+           for entry in request_log):
         raise RuntimeError("HTTP smoke unexpectedly called a protected target API")
+    if any(entry["path"].startswith(("/api/tasks", "/api/projects", "/api/daily-brief"))
+           and entry["path"] not in allowed_source_paths for entry in request_log):
+        raise RuntimeError("HTTP smoke called an unapproved source or Brief endpoint")
     return request_log
 
 
@@ -745,7 +900,11 @@ def main() -> int:
     while web_port == core_port:
         web_port = ephemeral_port()
     CORE_URL, WEB_URL = f"http://127.0.0.1:{core_port}", f"http://127.0.0.1:{web_port}"
-    root = Path(tempfile.mkdtemp(prefix="secondbrain-a-web-e2e-"))
+    # Core opens every configured data root with O_NOFOLLOW from /. macOS
+    # commonly returns a /var/folders temporary path whose /var parent is a
+    # symlink; canonicalize the harness-owned root before passing its children
+    # to Core so only these temporary directories are opened.
+    root = Path(tempfile.mkdtemp(prefix="secondbrain-a-web-e2e-")).resolve()
     os.chmod(root, 0o700)
     raw_artifacts = root / "playwright-raw"
     raw_artifacts.mkdir(mode=0o700)
@@ -753,9 +912,10 @@ def main() -> int:
     log_files = []
     result = 1
     try:
-        dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task")}
+        dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs")}
         for path in dirs.values():
             path.mkdir(mode=0o700)
+        journal_fixture = seed_daily_brief_sources(dirs)
         password_path = root / "app-password"
         password_path.write_text(secrets.token_urlsafe(32) + "\n", encoding="utf-8")
         os.chmod(password_path, 0o600)
@@ -768,6 +928,8 @@ def main() -> int:
             "SB_CAPTURE_RAW_ROOT": str(dirs["raw"]),
             "SB_JOURNAL_ROOT": str(dirs["journal"]),
             "SB_TASK_ROOT": str(dirs["task"]),
+            "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
+            "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
             "SB_DASHBOARD_ORIGINS": WEB_URL,
             "SB_CORE_ALLOWED_HOSTS": "127.0.0.1,localhost",
@@ -826,8 +988,12 @@ def main() -> int:
             expected_raw = 1 if options.http_smoke_only else 3
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
-            assert_no_business_files(dirs["journal"], "Journal root")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
+            assert_journal_fixture_unchanged(dirs["journal"], journal_fixture)
+            if not options.http_smoke_only and not (dirs["briefs"] / (
+                    datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
+            )).is_file():
+                raise RuntimeError("expected exactly one manually approved synthetic Daily Brief")
         screenshot_count = count_allowlisted_failure_screenshots(raw_artifacts)
         summary = {
             "result": "PASS" if test_returncode == 0 else "FAIL",
@@ -837,7 +1003,11 @@ def main() -> int:
             "promote_enabled": False,
             "hermes": "fixture-only Chat endpoints; no Hermes service or credentials",
             "raw_record_count": len(raw_files),
-            "journal_files": sum(path.is_file() for path in dirs["journal"].rglob("*")),
+            # No Journal write is expected; one exact source fixture is read-only.
+            "journal_files": 0,
+            "journal_source_fixture_files": len(journal_fixture),
+            "brief_files": sum(path.name == datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
+                                for path in dirs["briefs"].glob("*.json")),
             "knowledge_files": sum(path.is_file() for path in dirs["knowledge"].rglob("*")),
             "exit_code": test_returncode,
             "python": python,

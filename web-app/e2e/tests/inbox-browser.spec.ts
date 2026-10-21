@@ -13,7 +13,9 @@ const viewports = [
 
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
 type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
-  | 'ordinary_chat' | 'source_protection' | 'viewport_layout';
+  | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
+  | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
+  | 'daily_brief_readback' | 'viewport_layout';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function safePath(value: string): string {
@@ -31,6 +33,8 @@ async function configurePage(page: Page) {
   let createdInboxId = '';
   let firstInboxResponse = true;
   let lastInboxBody: Record<string, unknown> | null = null;
+  let dailyBriefPostCount = 0;
+  let lastDailyBriefBody: Record<string, unknown> | null = null;
   let failureStage: FailureStage = 'login';
 
   page.on('request', (request) => {
@@ -40,6 +44,11 @@ async function configurePage(page: Page) {
       inboxPostCount += 1;
       try { lastInboxBody = JSON.parse(request.postData() ?? 'null') as Record<string, unknown>; }
       catch { lastInboxBody = null; }
+    }
+    if (url.pathname === '/api/daily-brief' && request.method() === 'POST') {
+      dailyBriefPostCount += 1;
+      try { lastDailyBriefBody = JSON.parse(request.postData() ?? 'null') as Record<string, unknown>; }
+      catch { lastDailyBriefBody = null; }
     }
   });
   const recordedResponses = new WeakSet<Request>();
@@ -92,9 +101,25 @@ async function configurePage(page: Page) {
       }
       return;
     }
-    const inboxPath = /^\/api\/inbox\/entries(?:\/[0-9a-f]{32})?$/.test(url.pathname);
+    const inboxPath = /^\/api\/inbox\/entries(?:\/[0-9a-f]{32})?$/.test(url.pathname)
+      && ['GET', 'POST'].includes(route.request().method());
     const authPath = ['/api/auth/session', '/api/auth/login', '/api/auth/logout'].includes(url.pathname);
-    if (url.pathname.startsWith('/api/') && !inboxPath && !authPath) {
+    const params = url.searchParams;
+    const exactParams = (expected: Record<string, string>) => Array.from(params.keys()).length === Object.keys(expected).length
+      && Object.entries(expected).every(([key, value]) => params.get(key) === value);
+    const briefPath = route.request().method() === 'GET' && url.pathname === '/api/daily-brief'
+      ? exactParams({ date: params.get('date') ?? '', timezone: 'Asia/Shanghai' })
+        && /^\d{4}-\d{2}-\d{2}$/.test(params.get('date') ?? '')
+      : route.request().method() === 'POST' && url.pathname === '/api/daily-brief' && params.size === 0;
+    const journalSourcePath = route.request().method() === 'GET'
+      && url.pathname === '/api/daily-brief/source-options/journal'
+      && exactParams({ date: params.get('date') ?? '' })
+      && /^\d{4}-\d{2}-\d{2}$/.test(params.get('date') ?? '');
+    const sourceListPath = route.request().method() === 'GET'
+      && ((url.pathname === '/api/tasks' && exactParams({ status: 'all' }))
+        || (url.pathname === '/api/projects' && exactParams({ limit: '50', offset: '0' })));
+    if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
+      && !briefPath && !journalSourcePath && !sourceListPath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
       return;
@@ -124,8 +149,76 @@ async function configurePage(page: Page) {
     get failureStage() { return failureStage; },
     get inboxPostCount() { return inboxPostCount; },
     get lastInboxBody() { return lastInboxBody; },
+    get dailyBriefPostCount() { return dailyBriefPostCount; },
+    get lastDailyBriefBody() { return lastDailyBriefBody; },
     get inboxId() { return createdInboxId; },
   };
+}
+
+async function inspectOrCreateDailyBrief(
+  page: Page,
+  viewport: { name: string; width: number; height: number },
+  observed: Awaited<ReturnType<typeof configurePage>>,
+) {
+  observed.setFailureStage('daily_brief_read');
+  await page.goto('/brief');
+  await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible();
+  const beforeOpen = observed.dailyBriefPostCount;
+  expect(beforeOpen).toBe(0);
+  const desktopWriter = viewport.name === 'desktop-1440x1000';
+  if (!desktopWriter) {
+    // The desktop viewport is the sole writer for today's singleton Brief.
+    // Tablet and mobile independently verify the persisted read-only result.
+    await expect(page.getByText('Synthetic manually approved daily brief')).toBeVisible();
+  }
+
+  expect(observed.dailyBriefPostCount).toBe(0);
+  observed.setFailureStage('daily_brief_sources');
+  await page.getByRole('button', { name: '手动准备简报' }).click();
+  await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: /Synthetic brief project source/ })).toBeVisible();
+  expect(observed.dailyBriefPostCount).toBe(0);
+  expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
+
+  observed.setFailureStage('daily_brief_journal');
+  await page.getByRole('button', { name: '加载 Journal 来源' }).click();
+  const journalSource = page.getByRole('checkbox', { name: /Journal 来源 1/ });
+  await expect(journalSource).toBeVisible();
+  await expect(page.getByText('Synthetic Journal source fixture; never read or published by the UI.')).toHaveCount(0);
+  expect(observed.dailyBriefPostCount).toBe(0);
+
+  await page.getByRole('checkbox', { name: /Task · Synthetic brief task source/ }).check();
+  await page.getByRole('checkbox', { name: /Project · Synthetic brief project source/ }).check();
+  await journalSource.check();
+  await page.getByLabel(/简报正文/).fill('Synthetic manually approved daily brief');
+  await page.getByLabel('分类（逗号分隔）').fill('合成验收');
+
+  observed.setFailureStage('daily_brief_preview');
+  await page.getByRole('button', { name: '预览并确认' }).click();
+  await expect(page.getByText('确认要保存这份简报？')).toBeVisible();
+  expect(observed.dailyBriefPostCount).toBe(0);
+  if (!desktopWriter) return;
+
+  observed.setFailureStage('daily_brief_confirm');
+  await page.getByRole('button', { name: '确认并创建简报' }).click();
+  observed.setFailureStage('daily_brief_readback');
+  await expect(page.getByText('当前简报已核验：Brief 和来源版本与本次提交一致。')).toBeVisible();
+  await expect(page.getByText('Synthetic manually approved daily brief')).toBeVisible();
+  expect(observed.dailyBriefPostCount).toBe(1);
+  expect(observed.lastDailyBriefBody).toMatchObject({ mode: 'manual_generate', approved: true,
+    summary: 'Synthetic manually approved daily brief', timezone: 'Asia/Shanghai' });
+  const refs = observed.lastDailyBriefBody?.source_refs as Array<{ kind: string }>;
+  expect(new Set(refs.map((ref) => ref.kind))).toEqual(new Set(['task', 'project', 'journal']));
+  expect(observed.requestRecords.filter((item) => item.method === 'POST' && item.path === '/api/daily-brief'))
+    .toEqual([expect.objectContaining({ status: 201 })]);
+  expect(observed.requestRecords.filter((item) => item.method === 'GET' && item.path === '/api/daily-brief').length)
+    .toBeGreaterThanOrEqual(2);
+  expect(observed.requestRecords.some((item) => item.method === 'GET'
+    && item.path === '/api/daily-brief/source-options/journal' && item.status === 200)).toBe(true);
+  expect(observed.requestRecords.some((item) => item.method === 'GET'
+    && item.path === '/api/tasks' && item.status === 200)).toBe(true);
+  expect(observed.requestRecords.some((item) => item.method === 'GET'
+    && item.path === '/api/projects' && item.status === 200)).toBe(true);
 }
 
 async function signInAndCreateBlankSession(page: Page, viewport: { width: number; height: number }, observed: Awaited<ReturnType<typeof configurePage>>) {
@@ -221,6 +314,8 @@ for (const viewport of viewports) {
     await page.getByRole('button', { name: '发送' }).click();
     await expect(page.getByText('Synthetic completion')).toBeVisible();
     expect(observed.inboxPostCount).toBe(postsBeforeOrdinaryChat);
+
+    await inspectOrCreateDailyBrief(page, viewport, observed);
     expect(observed.blockedOrigins.size).toBe(0);
 
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
