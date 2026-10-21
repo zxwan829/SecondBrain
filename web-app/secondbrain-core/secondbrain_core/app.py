@@ -201,6 +201,7 @@ def create_app():
         if (request.url.path in {
                 "/api/promote/auth/unlock", "/api/promote/auth/lock",
                 "/api/promote/review/preview", "/api/promote/review/confirm",
+                "/api/daily-brief/source-options/journal",
         } or request.url.path.startswith("/api/promote/operations/")):
             response.headers["Cache-Control"] = "private, no-store"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
