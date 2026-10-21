@@ -593,3 +593,76 @@ def _client(app, token, host):
     if token:
         client.cookies.set(AppSessionAuth.COOKIE_NAME, token)
     return client
+
+
+def test_d089_originless_browser_get_exact_authority_and_fail_closed(tmp_path, monkeypatch):
+    root, auth, token, store, service = setup(tmp_path)
+    append_row(root / f"{DAY}.jsonl", "synthetic d089 row")
+    reads = 0
+    original = store.read_source_day
+
+    def counted(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "read_source_day", counted)
+    app = _test_app(service, auth)
+    url = f"/__test/journal-source-options?date={DAY}"
+    with _client(app, token, "https://app.test") as client:
+        allowed = client.get(url, headers={
+            "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+        })
+        assert allowed.status_code == 200 and allowed.json()["status"] == "real"
+        assert reads > 0
+        for headers in (
+            {},
+            {"Sec-Fetch-Site": "same-site"},
+            {"Sec-Fetch-Site": "cross-site"},
+            {"Sec-Fetch-Site": "none"},
+            {"Sec-Fetch-Site": "same-origin, cross-site"},
+            {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate"},
+            {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Dest": "document"},
+            {"Sec-Fetch-Site": "same-origin", "Origin": "null"},
+            {"Sec-Fetch-Site": "same-origin", "Origin": ""},
+            {"Sec-Fetch-Site": "same-origin", "Origin": "https://evil.test"},
+            {"Sec-Fetch-Site": "same-origin", "Origin": "https://app.test:444"},
+            {"Sec-Fetch-Site": "same-origin", "Host": "evil.test"},
+            {"Sec-Fetch-Site": "same-origin", "X-Forwarded-Host": "evil.test",
+             "X-Forwarded-Proto": "http", "Host": "evil.test"},
+        ):
+            before = reads
+            response = client.get(url, headers=headers)
+            assert response.status_code == 403, headers
+            assert reads == before, headers
+        before = reads
+        assert client.get(url, headers={"Origin": "https://app.test"}).status_code == 200
+        assert reads > before
+    with _client(app, None, "https://app.test") as client:
+        before = reads
+        assert client.get(url, headers={"Sec-Fetch-Site": "same-origin"}).status_code == 401
+        assert reads == before
+    for action in ("daily_brief.read", "journal.read"):
+        _, deny_auth, deny_token, deny_store, deny_service = setup(
+            tmp_path / f"deny-{action}", deny={action})
+        denied_app = _test_app(deny_service, deny_auth)
+        with _client(denied_app, deny_token, "https://app.test") as client:
+            assert client.get(url, headers={"Sec-Fetch-Site": "same-origin"}).status_code == 403
+
+
+def test_d089_rejects_duplicated_origin_and_fetch_metadata(tmp_path):
+    _, auth, token, _, service = setup(tmp_path)
+    from fastapi.testclient import TestClient
+    with _client(_test_app(service, auth), token, "https://app.test") as client:
+        url = f"/__test/journal-source-options?date={DAY}"
+        for pairs in (
+            [("Sec-Fetch-Site", "same-origin"), ("Sec-Fetch-Site", "same-origin")],
+            [("Origin", "https://app.test"), ("Origin", "https://app.test")],
+            [("Sec-Fetch-Site", "same-origin"), ("Sec-Fetch-Mode", "cors"),
+             ("Sec-Fetch-Mode", "cors")],
+            [("Sec-Fetch-Site", "same-origin"), ("Host", "app.test"),
+             ("Host", "app.test")],
+        ):
+            response = client.get(url, headers=pairs)
+            assert response.status_code == 403, pairs
