@@ -8,6 +8,7 @@ import json
 class AdmissionModel:
     actor: str = "synthetic-owner"
     event_id: str = "synthetic-event-1"
+    source_system: str = "synthetic.hermes"
     intent: str = "journal_intent"
     idempotency_key: str = "synthetic-key-1"
     source_version: int = 4
@@ -48,7 +49,7 @@ def commit(model):
 
 
 def deterministic_inbox_id(model):
-    material = (model.actor, model.event_id, model.intent,
+    material = (model.actor, model.source_system, model.event_id, model.intent,
                 model.idempotency_key, model.source_version,
                 model.source_digest, model.checked_revision)
     return hashlib.sha256(json.dumps(material, separators=(",", ":")).encode()).hexdigest()
@@ -76,14 +77,14 @@ def operation_status(model):
 def replay_result(existing, candidate):
     if not existing.commit_record_durable or not candidate.commit_record_durable:
         return "unknown"
-    same_slot = (existing.event_id, existing.intent) == (
-        candidate.event_id, candidate.intent,
+    same_slot = (existing.actor, existing.source_system, existing.event_id) == (
+        candidate.actor, candidate.source_system, candidate.event_id,
     )
     if not same_slot:
         return "new-slot"
-    exact = (existing.actor, existing.idempotency_key, existing.source_version,
+    exact = (existing.intent, existing.idempotency_key, existing.source_version,
              existing.source_digest, existing.consent_revision) == (
-        candidate.actor, candidate.idempotency_key, candidate.source_version,
+        candidate.intent, candidate.idempotency_key, candidate.source_version,
         candidate.source_digest, candidate.consent_revision,
     )
     return "replay" if exact else "conflict"
@@ -141,9 +142,21 @@ def test_s3_exact_replay_is_stable_and_tuple_drift_conflicts_without_key_bypass(
     assert replay_result(first, replay) == "replay"
     for changed in (
         replace(replay, idempotency_key="rotated-key"),
-        replace(replay, actor="other-owner"),
+        replace(replay, intent="task_intent"),
         replace(replay, source_version=5),
         replace(replay, source_digest="b" * 64),
         replace(replay, consent_revision=8),
     ):
         assert replay_result(first, changed) == "conflict"
+
+
+def test_s3_unrelated_source_event_or_subject_is_independent():
+    first = commit(stage_raw(check_consent(AdmissionModel())))
+    for independent in (
+        replace(AdmissionModel(), event_id="synthetic-event-2"),
+        replace(AdmissionModel(), source_system="synthetic.other"),
+        replace(AdmissionModel(), actor="other-owner"),
+    ):
+        candidate = commit(stage_raw(check_consent(independent)))
+        assert replay_result(first, candidate) == "new-slot"
+        assert deterministic_inbox_id(first) != deterministic_inbox_id(candidate)
