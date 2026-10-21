@@ -96,6 +96,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .task-item h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; }
 .task-item p { margin: 6px 0 0; color: var(--sb-muted); font-size: 11px; overflow-wrap: anywhere; }
 .task-item.completed h3 { color: #a5b5cc; text-decoration: line-through; }
+.task-item.is-brief-source, .v1-project-card.is-brief-source, .journal-entry-list li.is-brief-source { border-color: rgb(56 189 248 / 65%); box-shadow: 0 0 0 2px rgb(56 189 248 / 12%); }
 .task-actions { justify-content: flex-start; margin-top: 10px; }
 .task-edit-form { display: grid; gap: 10px; }
 .task-edit-form input { width: 100%; }
@@ -261,6 +262,9 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .v1-activity-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 13px 0 0; }
 .v1-page-retry, .v1-local-preview-toggle { min-height: 38px; padding: 8px 12px; color: #dce7f7; background: rgb(39 60 90 / 65%); border: 1px solid rgb(151 177 215 / 22%); border-radius: 9px; cursor: pointer; }
 .v1-page-retry:disabled { opacity: .6; cursor: wait; }
+.v1-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; color: var(--sb-muted); font-size: 12px; }
+.v1-pagination button { min-height: 36px; padding: 7px 11px; color: var(--sb-text-soft); background: var(--sb-surface); border: 1px solid var(--sb-border); border-radius: 8px; cursor: pointer; }
+.v1-pagination button:disabled { opacity: .55; cursor: not-allowed; }
 .v1-page-state { margin: 0; padding: 14px 16px; color: #c8d8ee; background: rgb(26 41 63 / 72%); border: 1px solid rgb(139 167 205 / 18%); border-radius: 10px; line-height: 1.6; }
 .v1-page-state.is-unavailable { color: #ffd2cb; background: rgb(91 42 37 / 32%); border-color: rgb(226 117 97 / 25%); }
 .v1-page-state.is-partial { color: #ffe3aa; background: rgb(97 72 28 / 25%); border-color: rgb(215 169 83 / 25%); }

@@ -13,7 +13,6 @@ type ManualBriefRequest = {
 type StoredPending = { body: ManualBriefRequest; receipt: WriteReceipt | null };
 type Phase = 'idle' | 'loading-sources' | 'editing' | 'confirming' | 'submitting' | 'unknown' | 'resolving-unknown' | 'unknown-date-blocked' | 'unknown-date-match' | 'done';
 type ReadbackState = 'pending' | 'verified' | 'matched-content-unconfirmed' | 'unavailable' | 'stale' | 'empty' | 'mismatch';
-const TASK_SOURCE_VERSION_FIELDS = ['id', 'title', 'due_date', 'status', 'created_at', 'updated_at', 'source'] as const;
 const PENDING_STORAGE_KEY = 'secondbrain.dailyBrief.pending.v1';
 
 const text = {
@@ -82,38 +81,15 @@ function isCalendarDate(value: unknown): value is string {
   return day >= 1 && day <= days[month - 1];
 }
 
-function isCoreTaskTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
-  if (!match || !isCalendarDate(match[1])) return false;
-  const hour = Number(match[2]); const minute = Number(match[3]); const second = Number(match[4]);
-  const offsetHour = match[8] ? Number(match[8]) : 0; const offsetMinute = match[9] ? Number(match[9]) : 0;
-  return hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59
-    && Number.isFinite(Date.parse(value));
-}
-
-async function taskReference(task: Record<string, unknown>): Promise<SourceRef | null> {
-  if (typeof task.source !== 'string') throw new Error('task_source_unverifiable');
-  if (task.source !== 'web_app_explicit_task') return null;
-  if (TASK_SOURCE_VERSION_FIELDS.some((key) => !Object.hasOwn(task, key))
+function taskReference(task: Record<string, unknown>): SourceRef | null {
+  if (task.source !== 'web_app_explicit_task' || typeof task.title !== 'string' || !task.title.trim()) return null;
+  const sourceRef = task.source_ref;
+  if (!isRecord(sourceRef) || Object.keys(sourceRef).length !== 2
+    || !Object.hasOwn(sourceRef, 'id') || !Object.hasOwn(sourceRef, 'version')
     || typeof task.id !== 'string' || !/^[0-9a-f]{32}$/.test(task.id)
-    || typeof task.title !== 'string' || !task.title.trim()
-    || (task.due_date !== null && !isCalendarDate(task.due_date))
-    || (task.status !== 'open' && task.status !== 'completed')
-    || !isCoreTaskTimestamp(task.created_at) || !isCoreTaskTimestamp(task.updated_at)) {
-    throw new Error('task_source_unverifiable');
-  }
-  const titleBytes = new TextEncoder().encode(task.title);
-  if (titleBytes.length > 4096 || new TextDecoder('utf-8', { fatal: true }).decode(titleBytes) !== task.title) {
-    throw new Error('task_source_unverifiable');
-  }
-  // Match Python json.dumps(..., ensure_ascii=False, sort_keys=True, separators=(',', ':')).
-  const canonical = JSON.stringify(Object.fromEntries([...TASK_SOURCE_VERSION_FIELDS].sort().map((key) => [key, task[key]])));
-  const canonicalBytes = new TextEncoder().encode(canonical);
-  if (new TextDecoder('utf-8', { fatal: true }).decode(canonicalBytes) !== canonical) throw new Error('task_source_unverifiable');
-  const digest = await crypto.subtle.digest('SHA-256', canonicalBytes);
-  const version = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return { kind: 'task', id: task.id, version };
+    || sourceRef.id !== task.id || !/^[0-9a-f]{32}$/.test(String(sourceRef.id))
+    || typeof sourceRef.version !== 'string' || !/^[a-f0-9]{64}$/.test(sourceRef.version)) return null;
+  return { kind: 'task', id: sourceRef.id, version: sourceRef.version };
 }
 
 function parseReceipt(value: unknown, expectedDate: string): WriteReceipt | null {
@@ -198,7 +174,7 @@ async function loadSources(): Promise<SourceChoice[]> {
   const tasks: SourceChoice[] = [];
   for (const item of taskPayload.tasks) {
     if (!isRecord(item)) throw new Error('source_read_failed');
-    const ref = await taskReference(item);
+    const ref = taskReference(item);
     if (ref) tasks.push({ key: `${ref.kind}:${ref.id}`, label: item.title as string, ref });
   }
   const projectChoices = projects.items.map((project: ProjectRecord) => ({
