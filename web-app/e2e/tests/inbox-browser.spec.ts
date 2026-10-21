@@ -122,7 +122,9 @@ async function configurePage(page: Page) {
 async function signInAndCreateBlankSession(page: Page, viewport: { width: number; height: number }, observed: Awaited<ReturnType<typeof configurePage>>) {
   await page.setViewportSize(viewport);
   await page.goto('/chat/blank');
-  await page.getByLabel('SecondBrain 登录口令').fill(await readSyntheticPassword());
+  const passwordInput = page.getByLabel('SecondBrain 登录口令');
+  await expect(passwordInput).toHaveAttribute('type', 'password');
+  await passwordInput.fill(await readSyntheticPassword());
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
   expect(observed.requestRecords.some((request) => request.method === 'GET'
