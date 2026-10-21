@@ -33,13 +33,14 @@ def _store_with_rows(tmp_path, count=1, text="synthetic journal entry"):
 
 
 def _file_state(path):
+    contents = path.read_bytes()
     info = path.lstat()
     return {
         "mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid,
         "dev": info.st_dev, "ino": info.st_ino, "nlink": info.st_nlink,
         "size": info.st_size, "mtime_ns": info.st_mtime_ns,
         "ctime_ns": info.st_ctime_ns, "atime_ns": info.st_atime_ns,
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "sha256": hashlib.sha256(contents).hexdigest(),
     }
 
 
@@ -66,13 +67,13 @@ def test_source_read_succeeds_in_nonwritable_root_without_lock_or_other_side_eff
 
     root_entries_before = sorted(path.name for path in root.iterdir())
     root_state_before = _directory_state(root)
+    expected_bytes = source.read_bytes()
+    expected_row = json.loads(expected_bytes.decode("utf-8").splitlines()[0])
+    expected_version = hashlib.sha256(expected_bytes.splitlines()[0]).hexdigest()
     before = _file_state(source)
-    expected_row = json.loads(source.read_text(encoding="utf-8").splitlines()[0])
     result = store.read_source_day(DAY)
     assert result["available"] is True
-    assert result["entries"][entries[0]["id"]]["version"] == hashlib.sha256(
-        source.read_bytes().splitlines()[0]
-    ).hexdigest()
+    assert result["entries"][entries[0]["id"]]["version"] == expected_version
     authority = SourceReferenceAuthority(journal_store=store,
                                          permission_checks={"journal": lambda: None})
     reference = {"kind": "journal", "id": f"{DAY}:{expected_row['id']}",
