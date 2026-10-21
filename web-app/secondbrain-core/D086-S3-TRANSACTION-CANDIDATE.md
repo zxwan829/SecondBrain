@@ -35,11 +35,17 @@ provide this shared CAS/serialization point, S3 must remain unimplemented.
 
 ## Replay, conflict and crash outcomes
 
-Same server-owned event + subject + intent + idempotency key + source version +
-digest + consent revision must map to the same operation and Inbox ID. A
-different actor, intent, key, revision, digest or decision conflicts; changing
-keys cannot bypass a prior same-event/subject/intent result. The Inbox endpoint
-wire code for pending, conflict and unknown durability remains unfrozen.
+For the Hermes suggestion domain, the unique replay slot is the same
+**server-authenticated subject + source_system + source_event_id**. Intent is
+immutable request content, **not** a namespace: reusing the same source event
+with a changed intent or rotated idempotency key is a conflict, not a new slot.
+Exact intent + key + source version + digest + consent revision replay maps to
+the same operation and stable Inbox ID. Changing source version, digest,
+consent or decision also conflicts within the slot. A different source event
+(or a different authenticated subject/source system) is an independent slot
+requiring its own authorized evidence. This model does not retroactively change
+existing Web explicit-capture semantics; no caller-supplied source fields are
+authoritative. The Inbox endpoint wire code for pending, conflict and unknown durability remains unfrozen.
 
 | Crash point | Candidate internal meaning | Automatic action |
 | --- | --- | --- |
