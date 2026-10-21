@@ -288,7 +288,12 @@ def create_task_router(auth, store, hermes=None, activity_store=None):
     def list_tasks(request: Request, status: str = "open", due_date: str | None = None):
         auth.require_action(request, "task.read")
         configured()
-        return store.list(status, due_date)
+        result = store.list(status, due_date)
+        for task in result["tasks"]:
+            version = task_source_version(task)
+            if version is not None:
+                task["source_ref"] = {"id": task["id"], "version": version}
+        return result
 
     @router.post("")
     async def create_task(request: Request, body: dict):
