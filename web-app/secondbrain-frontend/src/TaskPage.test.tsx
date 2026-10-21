@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { TaskPage } from './TaskPage';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -53,5 +53,40 @@ describe('TaskPage', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({ detail: 'Task is not enabled' }) }));
     render(<TaskPage locale="zh-CN" />);
     expect((await screen.findByRole('alert')).textContent).toContain('当前环境未启用 Task 存储。');
+  });
+
+  it('clears the previous filter results when the next Task read fails', async () => {
+    const request = vi.fn(async (url: string) => url.endsWith('status=open')
+      ? ok({ tasks: [task] })
+      : ({ ok: false, status: 503, json: async () => ({ detail: 'Task is temporarily unavailable' }) }));
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    expect(await screen.findByRole('heading', { name: '合成任务' })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'completed' } });
+    expect(screen.queryByRole('heading', { name: '合成任务' })).toBeNull();
+    expect((await screen.findByRole('alert')).textContent).toContain('Task is temporarily unavailable');
+    expect(screen.queryByRole('heading', { name: '合成任务' })).toBeNull();
+  });
+
+  it('aborts an older filter request and ignores its late Task response', async () => {
+    let finishOpen!: (value: ReturnType<typeof ok>) => void;
+    let openSignal: AbortSignal | undefined;
+    const pendingOpen = new Promise<ReturnType<typeof ok>>((resolve) => { finishOpen = resolve; });
+    const completedTask = { ...task, id: 'b'.repeat(32), title: '已完成的合成任务', status: 'completed' as const };
+    const request = vi.fn((url: string, init?: RequestInit) => {
+      if (url.endsWith('status=open')) { openSignal = init?.signal as AbortSignal; return pendingOpen; }
+      return Promise.resolve(ok({ tasks: [completedTask] }));
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByLabelText('状态');
+    fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'completed' } });
+
+    expect(await screen.findByRole('heading', { name: '已完成的合成任务' })).toBeTruthy();
+    expect(openSignal?.aborted).toBe(true);
+    await act(async () => { finishOpen(ok({ tasks: [task] })); await pendingOpen; });
+    expect(screen.getByRole('heading', { name: '已完成的合成任务' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '合成任务' })).toBeNull();
   });
 });
