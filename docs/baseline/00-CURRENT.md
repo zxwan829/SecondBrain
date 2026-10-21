@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-20
+updated: 2026-10-21
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -8,7 +8,15 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-20 最新阶段裁定与 NEXT（Issue #76/#96/#97）
+## 2026-10-21 最新裁定与唯一 NEXT：D089 浏览器 GET 认证
+
+- **核验源码基线：** main `ce3f8472501c05b44dedf2503878c104c8a5faca`（PR #157）；#126/#127/#129/#130/#149/#155/#156/#157 已合并。以下 2026-10-20 段落仅为历史阶段快照，不以其中旧 HEAD、Draft 或浏览器阻断描述覆盖本段。
+- **浏览器状态分项：** Linux Chromium Chat→Inbox 三视口 Run [39580114026](https://github.com/zxwan829/SecondBrain/actions/runs/39580114026) PASS，原浏览器启动阻断已在此环境解决；新增 Daily Brief Run [39583907704](https://github.com/zxwan829/SecondBrain/actions/runs/39583907704) FAIL，桌面 Journal source 未通过导致平板/手机依赖流程未达成。Edge/macOS 仍未验；不能把先前局部 PASS 或本次业务 FAIL 扩大成全部 Web 通过/浏览器不可用。
+- **认证争议裁定：** Journal source-options 的正式编号为 **D089**，D087 仍为微信/飞书渠道架构。按 Decision-Log D089 的 2026-10-21 修订，唯一指定只读 GET 可在精确可信请求 authority、`Sec-Fetch-Site:same-origin`、有效 App Session 及双 action 下接受真正缺失 Origin 的浏览器同源请求；带 Origin 仍严格核验，写接口不变。生产 HTTPS、受信任代理与仅 loopback 合成 HTTP 的范围分别明确，不能全局放宽 GET。
+- **依据与未验：** #97 #6313899613 已在真实 localhost HTTP 复现无 Origin→403、零 Journal IO，有 Origin→200；失败浏览器 Run 未捕获确切请求头，根因只能视为有复现依据的机制推断。新合同尚无实现/复验通过证据。B #106 Linux OS gate 为有限证据，最终 HEAD Linux full Core 尚未复验，生产隔离未通过。
+- **唯一 NEXT：** B 按上述 scoped 合同实施独立 Core Draft PR、200/401/403 与零拒绝读矩阵及真实 Core+Vite HTTP 验证；A 独立复审并纳入 #158 的准确文件统计/脱敏证据，固定候选后开展集中 Linux Chromium 三视口复验，再回到 #96/#97 长任务与原汇合门槛。最新 Issue 裁定为此针对性复验补充最多 2 个 CI 批次（一次首验，必要时一次有新修复的重验），每批限 30 分钟，不重跑已通过旧 SHA。尚未授权 main 合并、生产部署、真实数据/模型出站或启用 Promote。
+
+## 2026-10-20 阶段快照（已由上方最新裁定取代）（Issue #76/#96/#97）
 
 - **最新应用源码主线：** `87671644356e01d58ec2780d0c45bd11f4c3edfe`。之后 PR #131（main merge `18fac18f89ce3275d9d693bd89f57cdb83083a96`）仅合并治理文档，不改应用源码。Daily Brief 来源校验 #123、Core 测试路径可移植性 #124、人工内容持久化 #125 均已合并；D089 Journal source-options Core 路由 PR #128 亦已合并（固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b`，merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）。B 报告 Core 全量 420 tests + 28 subtests 与正式 localhost HTTP 验证通过；A 对固定 HEAD 的独立验收记录了真实 `create_app()` + Uvicorn 正式路由定向测试 1 passed，未报告 P0/P1。源码合并与本地合成证据不代表部署、真实 Journal/Vault 访问或用户业务验收。#125 保存的是用户明确提交的人工撰写内容，并在读取时重新验证 Task/Project/Journal 来源；不代表 AI 自动生成、定时调度或生产数据闭环。
 - **Projects / Activity / Daily Brief 基础接线：** #107/#108/#111/#114/#116/#119/#120 已合并。当前 Projects 的显式 registry 与状态仅有合成/受限来源证据，尚未连接真实业务项目并完成用户验收；Brief Core 来源验证与人工文本保存已合并，`approved_import` 仍返回 501；用户明确触发的 AI 编写属于批准的产品方向但尚未实现，后台自动生成/调度尚未获批。
@@ -19,7 +27,7 @@ source: GitHub SecondBrain Monorepo
 - **其他未完成切片：** #106 Restricted Writer 仅为合成候选，OS 身份/ACL/mount/peer 隔离未验证；#101 仅为合成可信渠道适配器，未连接微信/飞书。均保持 Draft，不视为生产能力。
 - **总体交付：** 原 V1 MUST 和 D077 Companion MVP 均 **NOT DONE**。源码合并、隔离合成测试、NAS 部署、真实业务数据、生产安全准入和用户验收分层记录。最新环境事实仍仅由 `Environment-Baseline.md` 的 2026-10-19 快照代表，本轮未重新核验生产。
 - **10 月 22 日目标风险：** “形成基本 V1 业务闭环，可接受小型修补”目前 **AT RISK**。核心存储切片已进入 main，但 Web 真实点击、真实数据/用户业务验收及正式 Knowledge Promote 闭环仍缺证据；不能把源码合并等同目标达成。
-- **唯一 NEXT：** A 继续 #130 及不依赖崩溃浏览器环境的 Web 切片；Daily Brief UI 后续按已合并 D089 Core 合同推进，真实浏览器验收仍受环境阻断。B 在 #97 授权内继续与 #128 不重叠的 Core 合成任务（如 #106 Writer 候选、#101 合成渠道适配器）；不重复实现 D089。各切片分别提交 readiness，再由 PMO 裁定集成。不得部署、读取/写入真实 Vault、启用 Promote、调用付费模型或接入真实渠道，除非另行明确授权。
+- **历史 NEXT（由上方 2026-10-21 裁定取代）：** 继续 #130 及不依赖崩溃浏览器环境的 Web 切片；Daily Brief UI 后续按已合并 D089 Core 合同推进，真实浏览器验收仍受环境阻断。B 在 #97 授权内继续与 #128 不重叠的 Core 合成任务（如 #106 Writer 候选、#101 合成渠道适配器）；不重复实现 D089。各切片分别提交 readiness，再由 PMO 裁定集成。不得部署、读取/写入真实 Vault、启用 Promote、调用付费模型或接入真实渠道，除非另行明确授权。
 
 ## 2026-10-20 主线源码进展与分层门禁（历史快照；被本文件顶部后续裁定更新）
 
