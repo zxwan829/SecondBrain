@@ -32,6 +32,88 @@ afterEach(() => {
 });
 
 describe('A Web-only synthetic UI to HTTP integration', () => {
+  it('carries an explicit Chat Journal intent through the exact Inbox receipt into its version-matched Review', async () => {
+    const inboxId = '7'.repeat(32);
+    const sourcePath = '10-Review/synthetic-chat-journal.md';
+    const sourceSha = 'f'.repeat(64);
+    const originalText = '记一下：合成验收的原始内容';
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    history.replaceState({}, '', '/chat/blank');
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    let acceptedBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method || 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method, body });
+      if (url === '/api/auth/session') return json({ authenticated: true });
+      if (url === '/api/chat/sessions' && method === 'POST') return json({ session_id: 'synthetic-blank-session' });
+      if (url === '/api/chat/sessions/synthetic-blank-session/messages') return json({ messages: [] });
+      if (url === '/api/chat/sessions/synthetic-blank-session/activities') return json({ activities: [] });
+      if (url === '/api/inbox/entries' && method === 'POST') {
+        acceptedBody = body;
+        return new Response(JSON.stringify({
+        inbox_id: inboxId, status: 'processing', captured_at: '2026-10-21T08:00:00.000Z', occurred_at: body?.occurred_at,
+        source: { channel: 'web', event_id: body?.source_event_id }, intent: 'journal_intent', replayed: false,
+        consent_evidence: { kind: 'authenticated_app_explicit_action', subject: 'synthetic-user', recorded_at: body?.occurred_at },
+      }), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === `/api/inbox/entries/${inboxId}`) return json({
+        inbox_id: inboxId, status: 'completed', captured_at: '2026-10-21T08:00:00.000Z', occurred_at: acceptedBody?.occurred_at,
+        source: { channel: 'web', event_id: acceptedBody?.source_event_id }, intent: 'journal_intent',
+        consent_evidence: { kind: 'authenticated_app_explicit_action', subject: 'synthetic-user', recorded_at: acceptedBody?.occurred_at },
+        approved_proposal: null,
+        source_ref: { capture_id: inboxId, review_path: sourcePath, review_sha256: sourceSha },
+      });
+      if (url === '/api/promote/review/items') return json({ items: [{
+        review_path: sourcePath, review_sha256: sourceSha, target_filename: 'Knowledge/synthetic-chat-journal.md',
+        title: 'Synthetic Chat Journal source', status: 'pending', captured_at: '2026-10-21T08:00:00.000Z',
+      }] });
+      if (url === `/api/promote/review/items/${sourcePath}`) return json({
+        review_path: sourcePath, review_sha256: sourceSha, target_filename: 'Knowledge/synthetic-chat-journal.md',
+        title: 'Synthetic Chat Journal source', status: 'pending', content: '# Synthetic Review source only',
+      });
+      if (url === '/api/promote/status') return json({ promote_enabled: false });
+      return json({ detail: 'unmatched synthetic route' }, 404);
+    });
+
+    const chatApp = render(<App />);
+    expect(await screen.findByRole('heading', { name: '空白验收' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '创建合成会话' }));
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: originalText } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    const inboxLink = await screen.findByRole('link', { name: '打开 Inbox 条目' });
+    expect(inboxLink.getAttribute('href')).toBe(`/inbox#capture-${inboxId}`);
+    chatApp.unmount();
+    history.replaceState({}, '', inboxLink.getAttribute('href')!);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Inbox 条目状态' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Core Inbox 状态已核对' })).toBeTruthy();
+    expect(await screen.findByText('处理完成')).toBeTruthy();
+    expect(location.pathname).toBe('/inbox');
+    expect(location.hash).toBe(`#capture-${inboxId}`);
+    expect(calls.find((call) => call.url === '/api/inbox/entries' && call.method === 'POST')?.body).toEqual({
+      original_text: originalText, source_channel: 'web', source_event_id: expect.any(String),
+      occurred_at: expect.any(String), intent: 'journal_intent',
+    });
+    expect(calls.filter((call) => call.url === `/api/inbox/entries/${inboxId}`)).toHaveLength(2);
+    expect(calls.some((call) => call.url === '/api/journal/entries' || call.url.endsWith('/runs')
+      || call.url === '/api/promote/review/preview' || call.url === '/api/promote/auth/unlock'
+      || call.url === '/api/promote/review/confirm' || call.url.startsWith('/api/knowledge/'))).toBe(false);
+    expect(screen.queryByText(originalText)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '打开版本匹配的 Review 来源' }));
+    expect(await screen.findByText('Synthetic Review source only')).toBeTruthy();
+    expect(location.pathname).toBe('/review');
+    expect(new URLSearchParams(location.search).get('review_path')).toBe(sourcePath);
+    expect(new URLSearchParams(location.search).get('source_sha256')).toBe(sourceSha);
+    expect(screen.queryByText(originalText)).toBeNull();
+    expect(calls.some((call) => call.url === '/api/promote/review/preview'
+      || call.url === '/api/promote/auth/unlock' || call.url === '/api/promote/review/confirm')).toBe(false);
+  });
+
   it('requires explicit Inbox, Review, Promote, search and detail actions and preserves the exact mocked contract', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'false');
     localStorage.clear(); sessionStorage.clear();
