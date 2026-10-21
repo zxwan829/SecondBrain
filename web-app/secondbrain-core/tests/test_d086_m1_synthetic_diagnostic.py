@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import os
 from pathlib import Path
+import time
 
 from secondbrain_core.modules.d086_m1_synthetic_consent import (
     SyntheticActionProofAuthority,
@@ -37,14 +38,20 @@ def make_store(root, *, admitted=True):
         expires_at=source.expires_at,
     )
     consent = ledger.accept(proof)
-    admission = SyntheticInboxAdmission(ledger, clock=lambda: NOW)
+    admission = SyntheticInboxAdmission(ledger, source_reader=source_authority,
+                                        clock=lambda: NOW)
     if admitted:
-        admission.admit(first_source_read=source, second_source_read=source,
-                        expected_event_id=source.source_event_id,
-                        expected_text=text, expected_version="1",
-                        expected_subject=source.subject, intent="save_note",
-                        action_key="synthetic-admission", consent_id=consent.consent_id,
-                        expected_consent_revision=1)
+        admission_proof = authority.issue_test_proof(
+            action="admit", subject=source.subject, source_system=source.source_system,
+            source_event_id=source.source_event_id, source_version="1",
+            source_sha256=source.original_text_sha256, intent="save_note",
+            action_key="synthetic-admission", origin=ORIGIN,
+            issued_at=NOW.isoformat(),
+            action_expires_at=(NOW + timedelta(minutes=5)).isoformat(),
+            expires_at=source.expires_at, consent_id=consent.consent_id,
+            expected_revision=consent.revision,
+        )
+        admission.admit_from_reader(admission_proof)
     return ledger, source, consent, admission
 
 
@@ -138,3 +145,266 @@ def test_redacted_digest_prefixes_are_bounded_and_never_full_hash(tmp_path):
     assert report.digest_prefixes[0] == digest[:12]
     assert digest not in repr(report)
     assert "orphan.raw" not in repr(report)
+
+
+def test_db_symlink_swap_between_lstat_and_open_fails_without_reading_target(tmp_path, monkeypatch):
+    root = tmp_path / "synthetic"
+    make_store(root, admitted=False)
+    db = root / SyntheticConsentLedger.database_name
+    saved = root / "db.saved"
+    decoy = tmp_path / "outside-db"
+    decoy.write_bytes(b"outside synthetic database sentinel")
+    os.chmod(decoy, 0o600)
+    target_identity = (decoy.stat().st_dev, decoy.stat().st_ino)
+    diagnostic = SyntheticOperatorDiagnostic(root)
+    opened = []
+    original_read = diagnostic._read_fd
+
+    def tracked_read(fd, limit):
+        st = os.fstat(fd)
+        opened.append((st.st_dev, st.st_ino))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(diagnostic, "_read_fd", tracked_read)
+
+    class SwapDbBeforeOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == "before_db_open":
+                db.rename(saved)
+                db.symlink_to(decoy)
+
+    report = SwapDbBeforeOpen(root).run()
+    assert report.status == "unavailable"
+    assert target_identity not in opened
+    db.unlink()
+    saved.rename(db)
+
+
+def test_db_path_replacement_after_open_reads_only_pinned_database_fd(tmp_path, monkeypatch):
+    root = tmp_path / "synthetic"
+    make_store(root, admitted=False)
+    db = root / SyntheticConsentLedger.database_name
+    saved = root / "db.saved"
+    decoy = tmp_path / "outside-db"
+    decoy.write_bytes(b"outside synthetic database sentinel")
+    os.chmod(decoy, 0o600)
+    target_identity = (decoy.stat().st_dev, decoy.stat().st_ino)
+    opened = []
+    diagnostic = SyntheticOperatorDiagnostic(root)
+    original_read = diagnostic._read_fd
+
+    def tracked_read(fd, limit):
+        st = os.fstat(fd)
+        opened.append((st.st_dev, st.st_ino))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(diagnostic, "_read_fd", tracked_read)
+
+    class SwapDbAfterOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == "after_db_open":
+                db.rename(saved)
+                db.symlink_to(decoy)
+
+    report = SwapDbAfterOpen(root).run()
+    assert report.status == "unavailable"
+    assert target_identity not in opened
+    db.unlink()
+    saved.rename(db)
+
+
+def test_raw_directory_swap_between_stat_and_open_rejects_symlink(tmp_path, monkeypatch):
+    root = tmp_path / "synthetic"
+    make_store(root, admitted=False)
+    raw = root / "Raw"
+    saved = root / "Raw.saved"
+    outside = tmp_path / "outside-raw"
+    outside.mkdir(mode=0o700)
+    os.chmod(outside, 0o700)
+    sentinel = outside / "sentinel.raw"
+    sentinel.write_bytes(b"outside raw sentinel")
+    os.chmod(sentinel, 0o600)
+    outside_identity = (sentinel.stat().st_dev, sentinel.stat().st_ino)
+    opened = []
+    diagnostic = SyntheticOperatorDiagnostic(root)
+    original_read = diagnostic._read_fd
+
+    def tracked_read(fd, limit):
+        st = os.fstat(fd)
+        opened.append((st.st_dev, st.st_ino))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(diagnostic, "_read_fd", tracked_read)
+
+    class SwapRawBeforeOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == "before_raw_dir_open":
+                raw.rename(saved)
+                raw.symlink_to(outside, target_is_directory=True)
+
+    report = SwapRawBeforeOpen(root).run()
+    assert report.status == "unavailable"
+    assert outside_identity not in opened
+    raw.unlink()
+    saved.rename(raw)
+
+
+def test_raw_directory_replacement_after_open_stays_on_anchored_fd(tmp_path, monkeypatch):
+    root = tmp_path / "synthetic"
+    make_store(root)
+    raw = root / "Raw"
+    saved = root / "Raw.saved"
+    outside = tmp_path / "outside-raw"
+    outside.mkdir(mode=0o700)
+    os.chmod(outside, 0o700)
+    sentinel = outside / "sentinel.raw"
+    sentinel.write_bytes(b"outside raw sentinel")
+    os.chmod(sentinel, 0o600)
+    target_identity = (sentinel.stat().st_dev, sentinel.stat().st_ino)
+    opened = []
+    diagnostic = SyntheticOperatorDiagnostic(root)
+    original_read = diagnostic._read_fd
+
+    def tracked_read(fd, limit):
+        st = os.fstat(fd)
+        opened.append((st.st_dev, st.st_ino))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(diagnostic, "_read_fd", tracked_read)
+
+    class SwapRawAfterOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == "after_raw_dir_open":
+                raw.rename(saved)
+                raw.symlink_to(outside, target_is_directory=True)
+
+    report = SwapRawAfterOpen(root).run()
+    assert report.status == "unavailable"
+    assert target_identity not in opened
+    raw.unlink()
+    saved.rename(raw)
+
+
+def test_root_replacement_after_fd_anchor_fails_closed_without_following_decoy(tmp_path, monkeypatch):
+    root = tmp_path / "synthetic"
+    make_store(root)
+    moved = tmp_path / "original-root"
+    decoy = tmp_path / "replacement-root"
+    decoy.mkdir(mode=0o700)
+    os.chmod(decoy, 0o700)
+    sentinel = decoy / "sentinel"
+    sentinel.write_bytes(b"must never be read")
+    os.chmod(sentinel, 0o600)
+    target_identity = (sentinel.stat().st_dev, sentinel.stat().st_ino)
+    opened = []
+    diagnostic = SyntheticOperatorDiagnostic(root)
+    original_read = diagnostic._read_fd
+
+    def tracked_read(fd, limit):
+        st = os.fstat(fd)
+        opened.append((st.st_dev, st.st_ino))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(diagnostic, "_read_fd", tracked_read)
+
+    class SwapRootAfterAnchor(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == "before_db_open":
+                root.rename(moved)
+                root.symlink_to(decoy, target_is_directory=True)
+
+    report = SwapRootAfterAnchor(root).run()
+    assert report.status == "unavailable"
+    assert target_identity not in opened
+    root.unlink()
+    moved.rename(root)
+
+
+def test_root_symlink_substitution_before_component_open_is_rejected(tmp_path, monkeypatch):
+    root = tmp_path / "synthetic"
+    make_store(root, admitted=False)
+    moved = tmp_path / "original-root"
+    decoy = tmp_path / "decoy-root"
+    decoy.mkdir(mode=0o700)
+    os.chmod(decoy, 0o700)
+
+    class SwapRootBeforeOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == f"before_root_component_{len(Path(root).parts) - 2}":
+                root.rename(moved)
+                root.symlink_to(decoy, target_is_directory=True)
+
+    report = SwapRootBeforeOpen(root).run()
+    assert report.status == "unavailable"
+    root.unlink()
+    moved.rename(root)
+
+
+def test_intermediate_parent_symlink_swap_is_rejected(tmp_path):
+    parent = tmp_path
+    root = parent / "synthetic"
+    make_store(root, admitted=False)
+    moved_parent = parent.with_name(parent.name + ".saved")
+    decoy_parent = parent.with_name(parent.name + ".replacement")
+    decoy_parent.mkdir(mode=0o700)
+    os.chmod(decoy_parent, 0o700)
+
+    class SwapIntermediateBeforeOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == f"before_root_component_{len(Path(root).parts) - 3}":
+                parent.rename(moved_parent)
+                parent.symlink_to(decoy_parent, target_is_directory=True)
+
+    report = SwapIntermediateBeforeOpen(root).run()
+    assert report.status == "unavailable"
+    parent.unlink()
+    moved_parent.rename(parent)
+
+
+def test_raw_child_symlink_swap_before_open_does_not_read_target(tmp_path, monkeypatch):
+    root = tmp_path / "synthetic"
+    make_store(root)
+    raw = root / "Raw"
+    child = next(raw.iterdir())
+    saved = raw / "child.saved"
+    decoy = tmp_path / "outside-raw-file"
+    decoy.write_bytes(b"outside raw file sentinel")
+    os.chmod(decoy, 0o600)
+    target_identity = (decoy.stat().st_dev, decoy.stat().st_ino)
+    opened = []
+    diagnostic = SyntheticOperatorDiagnostic(root)
+    original_read = diagnostic._read_fd
+
+    def tracked_read(fd, limit):
+        st = os.fstat(fd)
+        opened.append((st.st_dev, st.st_ino))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(diagnostic, "_read_fd", tracked_read)
+
+    class SwapRawChildBeforeOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == "before_raw_file_open":
+                child.rename(saved)
+                child.symlink_to(decoy)
+
+    report = SwapRawChildBeforeOpen(root).run()
+    assert report.status == "unavailable"
+    assert target_identity not in opened
+    child.unlink()
+    saved.rename(child)
+
+
+def test_time_budget_exhaustion_returns_redacted_unavailable(tmp_path):
+    root = tmp_path / "synthetic"
+    make_store(root)
+
+    class SlowOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == "before_root_component_0":
+                time.sleep(0.02)
+
+    report = SlowOpen(root, time_budget_seconds=0.005).run()
+    assert report.status == "unavailable"
+    assert report.findings == ("synthetic_store_unavailable",)
+    assert str(root) not in repr(report)
