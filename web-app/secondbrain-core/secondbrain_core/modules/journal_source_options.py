@@ -84,8 +84,9 @@ class JournalSourceOptionsService:
         elif parsed.scheme != "https":
             raise HTTPException(status_code=403, detail="Trusted App Origin required")
         if origins:
-            # Existing explicitly trusted Origin semantics are preserved.
-            if not origins[0] or origins[0] == "null":
+            # For this read endpoint, explicit Origin must itself describe
+            # exactly the already trusted effective request authority.
+            if origins[0] != effective:
                 raise HTTPException(status_code=403, detail="Trusted App Origin required")
             self.auth.check_origin(request)
         elif site != "same-origin":
