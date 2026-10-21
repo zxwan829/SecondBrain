@@ -114,6 +114,127 @@ def test_source_consent_raw_manifest_same_db_commit_and_restart(tmp_path):
                                            source_event_id="event-1").inbox_id == result.inbox_id
 
 
+def _replace_raw_entry_with_external_symlink(root, external, *, detached="Raw.detached"):
+    (root / "Raw").rename(root / detached)
+    (root / "Raw").symlink_to(external, target_is_directory=True)
+
+
+def _count_admission_rows(ledger):
+    conn = sqlite3.connect(ledger.database_path)
+    try:
+        return (conn.execute("SELECT count(*) FROM inbox_operations").fetchone()[0],
+                conn.execute("SELECT count(*) FROM inbox_raw_manifest").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_raw_directory_replaced_after_constructor_fails_before_any_external_write(tmp_path):
+    root = tmp_path / "synthetic"
+    ledger, _, source, consent, admission = make_context(root)
+    external = tmp_path / "external"
+    external.mkdir(mode=0o700)
+    _replace_raw_entry_with_external_symlink(root, external)
+
+    with pytest.raises(SyntheticConsentUnavailable):
+        admit(admission, source, consent)
+
+    assert list(external.iterdir()) == []
+    assert _count_admission_rows(ledger) == (0, 0)
+    assert list((root / "Raw.detached").iterdir()) == []
+
+
+def test_raw_directory_replaced_at_child_open_boundary_fails_closed(tmp_path):
+    root = tmp_path / "synthetic"
+    ledger, _, source, consent, admission = make_context(root)
+    external = tmp_path / "external"
+    external.mkdir(mode=0o700)
+    fired = []
+
+    def replace_before_create(checkpoint):
+        if checkpoint == "before_child_create" and not fired:
+            fired.append(True)
+            _replace_raw_entry_with_external_symlink(root, external)
+
+    admission._raw_checkpoint = replace_before_create
+    with pytest.raises(SyntheticConsentUnavailable):
+        admit(admission, source, consent)
+
+    assert fired == [True]
+    assert list(external.iterdir()) == []
+    assert list((root / "Raw.detached").iterdir()) == []
+    assert _count_admission_rows(ledger) == (0, 0)
+
+
+def test_raw_directory_rename_to_valid_replacement_is_rejected_by_inode_identity(tmp_path):
+    root = tmp_path / "synthetic"
+    ledger, _, source, consent, admission = make_context(root)
+    fired = []
+
+    def replace_with_new_directory(checkpoint):
+        if checkpoint == "before_child_create" and not fired:
+            fired.append(True)
+            (root / "Raw").rename(root / "Raw.detached")
+            (root / "Raw").mkdir(mode=0o700)
+
+    admission._raw_checkpoint = replace_with_new_directory
+    with pytest.raises(SyntheticConsentUnavailable):
+        admit(admission, source, consent)
+
+    assert fired == [True]
+    assert list((root / "Raw").iterdir()) == []
+    assert list((root / "Raw.detached").iterdir()) == []
+    assert _count_admission_rows(ledger) == (0, 0)
+
+
+def test_raw_directory_rename_only_detach_after_write_leaves_uncommitted_orphan(tmp_path):
+    root = tmp_path / "synthetic"
+    ledger, _, source, consent, admission = make_context(root)
+    fired = []
+
+    def detach_after_fsync(checkpoint):
+        if checkpoint == "after_file_fsync" and not fired:
+            fired.append(True)
+            (root / "Raw").rename(root / "Raw.detached")
+            (root / "Raw").mkdir(mode=0o700)
+
+    admission._raw_checkpoint = detach_after_fsync
+    with pytest.raises(SyntheticConsentUnavailable):
+        admit(admission, source, consent)
+
+    assert fired == [True]
+    assert list((root / "Raw").iterdir()) == []
+    assert len(list((root / "Raw.detached").iterdir())) == 1
+    assert _count_admission_rows(ledger) == (0, 0)
+
+
+@pytest.mark.parametrize("checkpoint", ["after_file_fsync", "before_manifest_commit",
+                                         "before_transaction_commit", "database_commit"])
+def test_raw_directory_rename_after_stage_never_commits_manifest_or_writes_symlink_target(
+        tmp_path, checkpoint):
+    root = tmp_path / "synthetic"
+    ledger, _, source, consent, admission = make_context(root)
+    external = tmp_path / "external"
+    external.mkdir(mode=0o700)
+    fired = []
+
+    def replace_at_boundary(name):
+        if name == checkpoint and not fired:
+            fired.append(True)
+            _replace_raw_entry_with_external_symlink(root, external)
+
+    admission._raw_checkpoint = replace_at_boundary
+    with pytest.raises(SyntheticConsentUnavailable):
+        admit(admission, source, consent)
+
+    assert fired == [True]
+    assert list(external.iterdir()) == []
+    # The already fsynced object remains in the renamed in-root directory;
+    # this model deliberately neither deletes nor adopts that orphan.
+    detached = list((root / "Raw.detached").iterdir())
+    assert len(detached) == 1
+    assert _count_admission_rows(ledger) == (0, 0)
+
+
 def test_revocation_before_admission_blocks_and_after_commit_preserves_raw(tmp_path):
     root = tmp_path / "before"
     ledger, _, source, consent, admission = make_context(root)

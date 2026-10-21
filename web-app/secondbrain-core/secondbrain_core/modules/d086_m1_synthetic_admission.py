@@ -7,6 +7,7 @@ not repair or delete it. The filesystem and SQLite are not claimed to be one
 atomic transaction.
 """
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import os
@@ -68,20 +69,79 @@ class SyntheticInboxAdmission:
         self._initialize()
 
     def _ensure_raw_root(self):
+        root_fd = raw_fd = None
+        directory_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                           | getattr(os, "O_NOFOLLOW", 0))
         try:
-            self.raw_root.mkdir(mode=0o700)
-        except FileExistsError:
-            pass
-        except OSError as exc:
-            raise SyntheticConsentUnavailable("synthetic Raw root unavailable") from exc
-        try:
-            st = self.raw_root.lstat()
-            if (not stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode)
-                    or st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) != 0o700
-                    or self.raw_root.resolve(strict=True) != self.raw_root):
+            root_fd = os.open(self.ledger.root, directory_flags)
+            root_stat = os.fstat(root_fd)
+            if ((root_stat.st_dev, root_stat.st_ino) != self.ledger.root_identity
+                    or not stat.S_ISDIR(root_stat.st_mode)):
+                raise SyntheticConsentUnavailable("synthetic root identity changed")
+            try:
+                os.mkdir("Raw", mode=0o700, dir_fd=root_fd)
+                os.fsync(root_fd)
+            except FileExistsError:
+                pass
+            raw_fd = os.open("Raw", directory_flags, dir_fd=root_fd)
+            st = os.fstat(raw_fd)
+            named = os.stat("Raw", dir_fd=root_fd, follow_symlinks=False)
+            if ((st.st_dev, st.st_ino) != (named.st_dev, named.st_ino)
+                    or not stat.S_ISDIR(st.st_mode)
+                    or st.st_uid != os.geteuid()
+                    or stat.S_IMODE(st.st_mode) != 0o700):
                 raise SyntheticConsentUnavailable("synthetic Raw root is unsafe")
+            self._raw_identity = (st.st_dev, st.st_ino)
         except OSError as exc:
             raise SyntheticConsentUnavailable("synthetic Raw root unavailable") from exc
+        finally:
+            if raw_fd is not None:
+                os.close(raw_fd)
+            if root_fd is not None:
+                os.close(root_fd)
+
+    @contextmanager
+    def _pinned_raw_directory(self):
+        """Pin root/Raw and reject a replaced configured directory entry."""
+        root_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        raw_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        root_fd = raw_fd = None
+        try:
+            root_fd = os.open(self.ledger.root, root_flags)
+            root_stat = os.fstat(root_fd)
+            if ((root_stat.st_dev, root_stat.st_ino) != self.ledger.root_identity
+                    or not stat.S_ISDIR(root_stat.st_mode)):
+                raise SyntheticConsentUnavailable("synthetic root identity changed")
+            raw_fd = os.open("Raw", raw_flags, dir_fd=root_fd)
+            self._assert_raw_directory(root_fd, raw_fd)
+            yield root_fd, raw_fd
+        except SyntheticConsentUnavailable:
+            raise
+        except OSError as exc:
+            raise SyntheticConsentUnavailable("synthetic Raw root unavailable") from exc
+        finally:
+            if raw_fd is not None:
+                os.close(raw_fd)
+            if root_fd is not None:
+                os.close(root_fd)
+
+    def _assert_raw_directory(self, root_fd, raw_fd):
+        try:
+            pinned = os.fstat(raw_fd)
+            named = os.stat("Raw", dir_fd=root_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise SyntheticConsentUnavailable("synthetic Raw root changed") from exc
+        expected = self._raw_identity
+        if ((pinned.st_dev, pinned.st_ino) != expected
+                or (named.st_dev, named.st_ino) != expected
+                or not stat.S_ISDIR(pinned.st_mode)
+                or not stat.S_ISDIR(named.st_mode)
+                or pinned.st_uid != os.geteuid()
+                or stat.S_IMODE(pinned.st_mode) != 0o700):
+            raise SyntheticConsentUnavailable("synthetic Raw root identity changed")
+
+    def _raw_checkpoint(self, _name):
+        """No-op fault-injection seam used only by local synthetic tests."""
 
     def _initialize(self):
         try:
@@ -120,46 +180,69 @@ class SyntheticInboxAdmission:
             raise SyntheticConsentUnavailable("synthetic clock must be timezone-aware")
         return now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    def _raw_path(self, relative):
+    def _raw_name(self, relative):
         if (not isinstance(relative, str) or not relative.startswith("Raw/")
                 or not _KEY.fullmatch(relative[4:])):
             raise SyntheticConsentUnavailable("synthetic Raw reference is invalid")
-        path = self.ledger.root / relative
+        return relative[4:]
+
+    def _read_raw(self, root_fd, raw_fd, relative):
+        name = self._raw_name(relative)
         try:
-            st = path.lstat()
-            if (not stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)
+            self._assert_raw_directory(root_fd, raw_fd)
+            fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=raw_fd)
+            st = os.fstat(fd)
+            if (not stat.S_ISREG(st.st_mode)
                     or st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) != 0o600
                     or st.st_nlink != 1):
                 raise SyntheticConsentUnavailable("synthetic Raw object is unsafe")
-            return path
+            with os.fdopen(fd, "rb") as stream:
+                fd = None
+                raw = stream.read(self.max_raw_bytes + 1)
+            self._assert_raw_directory(root_fd, raw_fd)
+            return raw
+        except SyntheticConsentUnavailable:
+            raise
         except OSError as exc:
             raise SyntheticConsentUnavailable("synthetic Raw object unavailable") from exc
+        finally:
+            if "fd" in locals() and fd is not None:
+                os.close(fd)
 
-    def _stage_raw(self, *, inbox_id, raw_bytes, digest):
+    def _stage_raw(self, *, root_fd, raw_fd, inbox_id, raw_bytes, digest):
         relative = f"{inbox_id}.raw"
-        path = self.raw_root / relative
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = None
         try:
-            fd = os.open(path, flags, 0o600)
+            self._raw_checkpoint("before_child_create")
+            self._assert_raw_directory(root_fd, raw_fd)
+            fd = os.open(relative, flags, 0o600, dir_fd=raw_fd)
+            opened = os.fstat(fd)
+            if (not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.geteuid()
+                    or stat.S_IMODE(opened.st_mode) != 0o600 or opened.st_nlink != 1):
+                raise SyntheticConsentUnavailable("synthetic Raw object is unsafe")
             with os.fdopen(fd, "wb") as stream:
+                fd = None
                 stream.write(raw_bytes)
                 stream.flush()
                 os.fsync(stream.fileno())
-            dir_fd = os.open(self.raw_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-            verified = self._raw_path(f"Raw/{relative}")
-            with verified.open("rb") as stream:
-                current = stream.read(self.max_raw_bytes + 1)
+            self._raw_checkpoint("after_file_fsync")
+            self._assert_raw_directory(root_fd, raw_fd)
+            os.fsync(raw_fd)
+            current = self._read_raw(root_fd, raw_fd, f"Raw/{relative}")
             if len(current) != len(raw_bytes) or hashlib.sha256(current).hexdigest() != digest:
                 raise SyntheticConsentUnavailable("synthetic Raw verification failed")
+            self._assert_raw_directory(root_fd, raw_fd)
             return f"Raw/{relative}"
         except FileExistsError as exc:
             raise SyntheticConsentUnavailable("synthetic Raw id collision") from exc
+        except SyntheticConsentUnavailable:
+            raise
         except OSError as exc:
             raise SyntheticConsentUnavailable("synthetic Raw durability check failed") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
 
     def admit_from_reader(self, action_proof):
         """Read source from the injected authority and admit a signed action."""
@@ -184,101 +267,109 @@ class SyntheticInboxAdmission:
         # SQLite commit. Real remote source systems need a separately proven
         # revision CAS/lock; a last read alone cannot close that TOCTOU window.
         with source_guard(action_proof.source_event_id):
-            with self.ledger.transaction() as conn:
-                first = read_source(action_proof.source_event_id)
-                second = read_source(action_proof.source_event_id)
-                expected_text = getattr(first, "original_text", "")
-                source = validate_verified_capture_suggestion_source(
-                    first, second, allowed_source_systems={"synthetic.m1"},
-                    expected_event_id=action_proof.source_event_id,
-                    expected_text=expected_text,
-                    expected_version=action_proof.source_version,
-                    expected_subject=action_proof.subject,
-                    now=action_now,
-                )
-                if source is None or source.original_text_sha256 != action_proof.source_sha256:
-                    raise SyntheticConsentConflict("trusted source validation failed closed")
-                try:
-                    raw_bytes = source.original_text.encode("utf-8")
-                except UnicodeError as exc:
-                    raise SyntheticConsentConflict("source encoding invalid") from exc
-                if len(raw_bytes) > self.max_raw_bytes:
-                    raise SyntheticConsentConflict("source exceeds synthetic Raw budget")
-                digest = hashlib.sha256(raw_bytes).hexdigest()
-                if digest != source.original_text_sha256:
-                    raise SyntheticConsentConflict("source digest changed")
-
-                prior = conn.execute(
-                    "SELECT operation_id,inbox_id,consent_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path,raw_sha256,action_key "
-                    "FROM inbox_operations WHERE subject=? AND source_system=? AND source_event_id=?",
-                    (source.subject, source.source_system, source.source_event_id),
-                ).fetchone()
-                if prior:
-                    exact = (prior[2], prior[3], prior[4], prior[5], prior[6], prior[7],
-                             prior[8], prior[9], prior[12]) == (
-                        consent_id, source.subject, source.source_system,
-                        source.source_event_id, source.source_record_version,
-                        source.original_text_sha256, intent, expected_consent_revision,
-                        action_key,
+            with self._pinned_raw_directory() as (root_fd, raw_fd):
+                with self.ledger.transaction(
+                        before_commit=lambda: self._check_raw_commit(root_fd, raw_fd)) as conn:
+                    first = read_source(action_proof.source_event_id)
+                    second = read_source(action_proof.source_event_id)
+                    expected_text = getattr(first, "original_text", "")
+                    source = validate_verified_capture_suggestion_source(
+                        first, second, allowed_source_systems={"synthetic.m1"},
+                        expected_event_id=action_proof.source_event_id,
+                        expected_text=expected_text,
+                        expected_version=action_proof.source_version,
+                        expected_subject=action_proof.subject,
+                        now=action_now,
                     )
-                    if not exact:
-                        raise SyntheticConsentConflict("source event already admitted with different intent or key")
-                    path = self._raw_path(prior[10])
-                    with path.open("rb") as stream:
-                        raw = stream.read(self.max_raw_bytes + 1)
-                    if hashlib.sha256(raw).hexdigest() != prior[11]:
-                        raise SyntheticConsentUnavailable("synthetic Raw manifest verification failed")
-                    return SyntheticAdmission(*prior[:11], replayed=True)
+                    if source is None or source.original_text_sha256 != action_proof.source_sha256:
+                        raise SyntheticConsentConflict("trusted source validation failed closed")
+                    try:
+                        raw_bytes = source.original_text.encode("utf-8")
+                    except UnicodeError as exc:
+                        raise SyntheticConsentConflict("source encoding invalid") from exc
+                    if len(raw_bytes) > self.max_raw_bytes:
+                        raise SyntheticConsentConflict("source exceeds synthetic Raw budget")
+                    digest = hashlib.sha256(raw_bytes).hexdigest()
+                    if digest != source.original_text_sha256:
+                        raise SyntheticConsentConflict("source digest changed")
 
-                consent = conn.execute(
-                    "SELECT subject,source_system,source_event_id,source_version,source_sha256,intent,state,revision,expires_at "
-                    "FROM consent_records WHERE consent_id=?",
-                    (consent_id,),
-                ).fetchone()
-                expected = (source.subject, source.source_system, source.source_event_id,
-                            source.source_record_version, source.original_text_sha256,
-                            intent, "active", expected_consent_revision)
-                if not consent or consent[:8] != expected or consent[8] != action_proof.expires_at:
-                    raise SyntheticConsentConflict("consent state or revision changed")
-                expires = datetime.fromisoformat(consent[8].replace("Z", "+00:00"))
-                if expires.tzinfo is None or action_now >= expires:
-                    raise SyntheticConsentConflict("consent expired")
-                operation_id = secrets.token_hex(16)
-                inbox_id = hashlib.sha256(
-                    f"{consent_id}\0{action_key}\0{source.original_text_sha256}".encode()
-                ).hexdigest()[:32]
-                relative = self._stage_raw(inbox_id=inbox_id, raw_bytes=raw_bytes, digest=digest)
+                    prior = conn.execute(
+                        "SELECT operation_id,inbox_id,consent_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path,raw_sha256,action_key "
+                        "FROM inbox_operations WHERE subject=? AND source_system=? AND source_event_id=?",
+                        (source.subject, source.source_system, source.source_event_id),
+                    ).fetchone()
+                    if prior:
+                        exact = (prior[2], prior[3], prior[4], prior[5], prior[6], prior[7],
+                                 prior[8], prior[9], prior[12]) == (
+                            consent_id, source.subject, source.source_system,
+                            source.source_event_id, source.source_record_version,
+                            source.original_text_sha256, intent, expected_consent_revision,
+                            action_key,
+                        )
+                        if not exact:
+                            raise SyntheticConsentConflict("source event already admitted with different intent or key")
+                        raw = self._read_raw(root_fd, raw_fd, prior[10])
+                        if hashlib.sha256(raw).hexdigest() != prior[11]:
+                            raise SyntheticConsentUnavailable("synthetic Raw manifest verification failed")
+                        return SyntheticAdmission(*prior[:11], replayed=True)
 
-                # Re-read at the commit edge while both synthetic source and
-                # SQLite CAS guards remain held.
-                final_source = read_source(action_proof.source_event_id)
-                still_current = validate_verified_capture_suggestion_source(
-                    source, final_source, allowed_source_systems={"synthetic.m1"},
-                    expected_event_id=action_proof.source_event_id,
-                    expected_text=source.original_text,
-                    expected_version=action_proof.source_version,
-                    expected_subject=action_proof.subject,
-                    now=self.clock(),
-                )
-                if still_current is None or still_current.original_text_sha256 != action_proof.source_sha256:
-                    raise SyntheticConsentConflict("source changed before commit")
-                conn.execute(
-                    "INSERT INTO inbox_operations(operation_id,consent_id,action_key,inbox_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path,raw_sha256,raw_bytes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (operation_id, consent_id, action_key, inbox_id, source.subject,
-                     source.source_system, source.source_event_id,
-                     source.source_record_version, source.original_text_sha256,
-                     intent, expected_consent_revision, relative, digest, len(raw_bytes),
-                     now_iso),
-                )
-                conn.execute(
-                    "INSERT INTO inbox_raw_manifest(inbox_id,relative_path,sha256,byte_length,verified) VALUES(?,?,?,?,1)",
-                    (inbox_id, relative, digest, len(raw_bytes)),
-                )
-                return SyntheticAdmission(operation_id, inbox_id, consent_id,
-                                          source.subject, source.source_system,
-                                          source.source_event_id, source.source_record_version,
-                                          digest, intent, expected_consent_revision,
-                                          relative)
+                    consent = conn.execute(
+                        "SELECT subject,source_system,source_event_id,source_version,source_sha256,intent,state,revision,expires_at "
+                        "FROM consent_records WHERE consent_id=?",
+                        (consent_id,),
+                    ).fetchone()
+                    expected = (source.subject, source.source_system, source.source_event_id,
+                                source.source_record_version, source.original_text_sha256,
+                                intent, "active", expected_consent_revision)
+                    if not consent or consent[:8] != expected or consent[8] != action_proof.expires_at:
+                        raise SyntheticConsentConflict("consent state or revision changed")
+                    expires = datetime.fromisoformat(consent[8].replace("Z", "+00:00"))
+                    if expires.tzinfo is None or action_now >= expires:
+                        raise SyntheticConsentConflict("consent expired")
+                    operation_id = secrets.token_hex(16)
+                    inbox_id = hashlib.sha256(
+                        f"{consent_id}\0{action_key}\0{source.original_text_sha256}".encode()
+                    ).hexdigest()[:32]
+                    relative = self._stage_raw(root_fd=root_fd, raw_fd=raw_fd,
+                                               inbox_id=inbox_id, raw_bytes=raw_bytes, digest=digest)
+
+                    # Re-read at the commit edge while both synthetic source and
+                    # SQLite CAS guards remain held.
+                    final_source = read_source(action_proof.source_event_id)
+                    still_current = validate_verified_capture_suggestion_source(
+                        source, final_source, allowed_source_systems={"synthetic.m1"},
+                        expected_event_id=action_proof.source_event_id,
+                        expected_text=source.original_text,
+                        expected_version=action_proof.source_version,
+                        expected_subject=action_proof.subject,
+                        now=self.clock(),
+                    )
+                    if still_current is None or still_current.original_text_sha256 != action_proof.source_sha256:
+                        raise SyntheticConsentConflict("source changed before commit")
+                    self._raw_checkpoint("before_manifest_commit")
+                    self._assert_raw_directory(root_fd, raw_fd)
+                    conn.execute(
+                        "INSERT INTO inbox_operations(operation_id,consent_id,action_key,inbox_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path,raw_sha256,raw_bytes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (operation_id, consent_id, action_key, inbox_id, source.subject,
+                         source.source_system, source.source_event_id,
+                         source.source_record_version, source.original_text_sha256,
+                         intent, expected_consent_revision, relative, digest, len(raw_bytes),
+                         now_iso),
+                    )
+                    conn.execute(
+                        "INSERT INTO inbox_raw_manifest(inbox_id,relative_path,sha256,byte_length,verified) VALUES(?,?,?,?,1)",
+                        (inbox_id, relative, digest, len(raw_bytes)),
+                    )
+                    # Recheck after the SQL rows are staged and immediately before
+                    # the transaction context commits. Any observed rename rolls
+                    # back both rows; the Raw object remains untouched as an orphan.
+                    self._raw_checkpoint("before_transaction_commit")
+                    self._assert_raw_directory(root_fd, raw_fd)
+                    return SyntheticAdmission(operation_id, inbox_id, consent_id,
+                                              source.subject, source.source_system,
+                                              source.source_event_id, source.source_record_version,
+                                              digest, intent, expected_consent_revision,
+                                              relative)
 
     @staticmethod
     def _proof_matches_request(action_proof):
@@ -293,18 +384,22 @@ class SyntheticInboxAdmission:
                 and type(action_proof.expected_revision) is int
                 and action_proof.expected_revision >= 1)
 
+    def _check_raw_commit(self, root_fd, raw_fd):
+        self._raw_checkpoint("database_commit")
+        self._assert_raw_directory(root_fd, raw_fd)
+
     def get_by_event(self, *, subject, source_system, source_event_id):
-        with self.ledger.transaction() as conn:
-            row = conn.execute(
-                "SELECT operation_id,inbox_id,consent_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path "
-                "FROM inbox_operations WHERE subject=? AND source_system=? AND source_event_id=?",
-                (subject, source_system, source_event_id),
-            ).fetchone()
-            if not row:
-                return None
-            path = self._raw_path(row[10])
-            with path.open("rb") as stream:
-                raw = stream.read(self.max_raw_bytes + 1)
-            if hashlib.sha256(raw).hexdigest() != row[7]:
-                raise SyntheticConsentUnavailable("synthetic Raw manifest verification failed")
-            return SyntheticAdmission(*row)
+        with self._pinned_raw_directory() as (root_fd, raw_fd):
+            with self.ledger.transaction(
+                    before_commit=lambda: self._assert_raw_directory(root_fd, raw_fd)) as conn:
+                row = conn.execute(
+                    "SELECT operation_id,inbox_id,consent_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path "
+                    "FROM inbox_operations WHERE subject=? AND source_system=? AND source_event_id=?",
+                    (subject, source_system, source_event_id),
+                ).fetchone()
+                if not row:
+                    return None
+                raw = self._read_raw(root_fd, raw_fd, row[10])
+                if hashlib.sha256(raw).hexdigest() != row[7]:
+                    raise SyntheticConsentUnavailable("synthetic Raw manifest verification failed")
+                return SyntheticAdmission(*row)

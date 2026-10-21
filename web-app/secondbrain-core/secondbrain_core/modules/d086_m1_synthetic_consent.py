@@ -256,14 +256,18 @@ class SyntheticConsentLedger:
             raise SyntheticConsentUnavailable("synthetic DB unavailable") from exc
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, before_commit=None):
         """Expose a single serialization domain for S3's synthetic CAS model."""
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
             yield conn
             try:
+                if before_commit is not None:
+                    before_commit()
                 conn.commit()
+            except SyntheticConsentUnavailable:
+                raise
             except sqlite3.Error as exc:
                 raise SyntheticConsentUnavailable("synthetic commit outcome unknown") from exc
         except BaseException:
