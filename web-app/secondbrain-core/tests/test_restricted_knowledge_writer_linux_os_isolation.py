@@ -1,7 +1,7 @@
 """Real UID/GID and Unix-kernel credential checks for an isolated Linux run.
 
 This test deliberately skips unless run as root inside a disposable Linux
-container with ``SB_WRITER_OS_ISOLATION=disposable-container``. It changes
+runner/container with ``SB_WRITER_OS_ISOLATION=disposable-linux``. It changes
 ownership only below pytest's temporary directory. It is not a macOS or
 same-UID substitute for the OS isolation acceptance.
 """
@@ -68,8 +68,8 @@ def _run_as(uid, real_gid, effective_gid, source, *, env):
 @pytest.mark.skipif(
     platform.system() != "Linux" or os.geteuid() != 0
     or not hasattr(socket, "SO_PEERCRED")
-    or os.environ.get("SB_WRITER_OS_ISOLATION") != "disposable-container",
-    reason="requires explicit root inside a disposable Linux container with SO_PEERCRED",
+    or os.environ.get("SB_WRITER_OS_ISOLATION") != "disposable-linux",
+    reason="requires explicit root inside a disposable Linux runner/container with SO_PEERCRED",
 )
 def test_real_linux_uids_kernel_peer_socket_permissions_and_recovery(tmp_path):
     root = Path(tmp_path)

@@ -17,15 +17,31 @@ changed to attempt this test.
 integration test. It skips unless all of these are true:
 
 - Linux with the real kernel `SO_PEERCRED` interface;
-- root **inside a disposable local Linux container** (not host root);
-- `SB_WRITER_OS_ISOLATION=disposable-container`;
+- root **inside an ephemeral, disposable Linux runner/container**;
+- `SB_WRITER_OS_ISOLATION=disposable-linux`;
 - Python and pytest are already available in the isolated environment.
 
-Run from `web-app/secondbrain-core` inside that container:
+Run from `web-app/secondbrain-core` in that isolated runner/container:
 
 ```sh
-SB_WRITER_OS_ISOLATION=disposable-container PYTHONPATH=. python -m pytest -q -p no:cacheprovider tests/test_restricted_knowledge_writer_linux_os_isolation.py
+SB_WRITER_OS_ISOLATION=disposable-linux PYTHONPATH=. python -m pytest -q -p no:cacheprovider tests/test_restricted_knowledge_writer_linux_os_isolation.py
 ```
+
+The repository's existing `D077 Core Linux tests` workflow now runs this same
+command through `sudo` on its ephemeral `ubuntu-24.04` GitHub-hosted runner,
+then runs the complete Core suite as the ordinary runner user. Dispatch that
+existing workflow against the PR branch (the workflow file is already present
+on `main`):
+
+```sh
+gh workflow run d077-core-linux-tests.yml --ref codex/knowledge-writer-minimal-20261020
+```
+
+The root process only changes IDs and ownership below pytest's synthetic
+temporary directory. No repository secret is read, no production path is
+mounted, and no persistent runner identity or permission is changed. The
+workflow run is the only authorized Linux OS evidence for this candidate; a
+local macOS skip remains `NOT RUN`.
 
 The test provisions only numeric identities and synthetic paths below
 pytest's temporary root. It starts the actual Writer entry point as UID 31003,
@@ -57,7 +73,7 @@ the harness, provide or explicitly authorize one **ephemeral, local, disposable
 Linux container** using a preloaded, trusted Python+pytest image. The run needs
 only:
 
-- container-local root capability to `chown`, `setgroups`, `setresgid`, and
+- runner/container-local root capability to `chown`, `setgroups`, `setresgid`, and
   `setresuid` inside pytest's synthetic temporary directory;
 - no `--privileged`, host namespace access, host `/etc/passwd` changes, or
   host UID/GID creation;
