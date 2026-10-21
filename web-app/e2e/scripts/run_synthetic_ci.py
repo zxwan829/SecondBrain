@@ -190,7 +190,8 @@ def _sanitize_run_summary(path: Path) -> None:
         raise RuntimeError("run summary schema rejected")
     allowed = {"result", "core", "web", "browser", "promote_enabled", "hermes",
                "raw_record_count", "journal_files", "knowledge_files", "exit_code",
-               "journal_source_fixture_files", "brief_files", "python", "node",
+               "journal_source_fixture_files", "journal_mutated_files", "brief_files",
+               "brief_file_set_verified", "python", "node",
                "html_report_uploaded", "screenshots_uploaded"}
     path.write_text(json.dumps({key: summary[key] for key in allowed if key in summary}, indent=2) + "\n",
                     encoding="utf-8")
@@ -694,9 +695,39 @@ def seed_daily_brief_sources(dirs: dict[str, Path]) -> dict[str, bytes]:
 
 
 def assert_journal_fixture_unchanged(root: Path, baseline: dict[str, bytes]) -> None:
-    current = {item.name: item.read_bytes() for item in root.iterdir() if item.is_file()}
+    current = _read_regular_file_snapshot(root)
     if current != baseline:
         raise RuntimeError("synthetic Journal source changed during Brief acceptance")
+
+
+def _read_regular_file_snapshot(root: Path) -> dict[str, bytes]:
+    snapshot = {}
+    for item in root.iterdir():
+        if item.is_symlink() or not item.is_file():
+            raise RuntimeError("synthetic data directory contains a non-regular entry")
+        snapshot[item.name] = item.read_bytes()
+    return snapshot
+
+
+def _assert_exact_brief_file_set(root: Path, date_file_name: str) -> int:
+    names = set()
+    for item in root.iterdir():
+        if item.is_symlink() or not item.is_file():
+            raise RuntimeError("synthetic Daily Brief directory contains a non-regular entry")
+        names.add(item.name)
+    operation_hashes = {
+        match.group(1) for name in names
+        if (match := re.fullmatch(r"\.op-([a-f0-9]{64})\.json", name)) is not None
+    }
+    lock_hashes = {
+        match.group(1) for name in names
+        if (match := re.fullmatch(r"\.op-lock-([a-f0-9]{64})", name)) is not None
+    }
+    expected_shape = (date_file_name in names and len(operation_hashes) == 1
+                      and operation_hashes == lock_hashes and len(names) == 3)
+    if not expected_shape:
+        raise RuntimeError("synthetic Daily Brief directory file set mismatch")
+    return len(names)
 
 
 def http_smoke(password_path: Path) -> list[dict]:
@@ -984,16 +1015,25 @@ def main() -> int:
             test_returncode = wait_for_test_process(test_process)
 
         raw_files = [path for path in dirs["raw"].iterdir() if path.is_file()]
+        journal_after = _read_regular_file_snapshot(dirs["journal"])
+        journal_mutated_files = sum(
+            name not in journal_after or journal_after.get(name) != contents for name, contents in journal_fixture.items()
+        ) + sum(name not in journal_fixture for name in journal_after)
+        today_brief_name = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
+        brief_file_set_verified = False
         if test_returncode == 0:
             expected_raw = 1 if options.http_smoke_only else 3
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
             assert_journal_fixture_unchanged(dirs["journal"], journal_fixture)
-            if not options.http_smoke_only and not (dirs["briefs"] / (
-                    datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
-            )).is_file():
-                raise RuntimeError("expected exactly one manually approved synthetic Daily Brief")
+            if not options.http_smoke_only and journal_after != journal_fixture:
+                raise RuntimeError("synthetic Journal source changed during Brief acceptance")
+            _assert_exact_brief_file_set(dirs["briefs"], today_brief_name)
+            brief_file_set_verified = True
+        brief_directory_files = sum(
+            1 for path in dirs["briefs"].iterdir() if path.is_file() and not path.is_symlink()
+        )
         screenshot_count = count_allowlisted_failure_screenshots(raw_artifacts)
         summary = {
             "result": "PASS" if test_returncode == 0 else "FAIL",
@@ -1003,11 +1043,12 @@ def main() -> int:
             "promote_enabled": False,
             "hermes": "fixture-only Chat endpoints; no Hermes service or credentials",
             "raw_record_count": len(raw_files),
-            # No Journal write is expected; one exact source fixture is read-only.
-            "journal_files": 0,
+            # Report actual source files separately from any mutations.
+            "journal_files": len(journal_after),
             "journal_source_fixture_files": len(journal_fixture),
-            "brief_files": sum(path.name == datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
-                                for path in dirs["briefs"].glob("*.json")),
+            "journal_mutated_files": journal_mutated_files,
+            "brief_files": brief_directory_files,
+            "brief_file_set_verified": brief_file_set_verified,
             "knowledge_files": sum(path.is_file() for path in dirs["knowledge"].rglob("*")),
             "exit_code": test_returncode,
             "python": python,
