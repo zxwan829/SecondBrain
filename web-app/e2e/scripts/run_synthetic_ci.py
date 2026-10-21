@@ -50,9 +50,9 @@ FAILURE_SCREENSHOT_DIR_VIEWPORTS = {
     "inbox-browser-explicit-Inb-7095f-rotection-at-mobile-390x844": "mobile-390x844",
 }
 FAILURE_JUNIT_TESTCASE_VIEWPORTS = {
-    ("tests/inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000"): "desktop-1440x1000",
-    ("tests/inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at tablet-820x1180"): "tablet-820x1180",
-    ("tests/inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at mobile-390x844"): "mobile-390x844",
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000"): "desktop-1440x1000",
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at tablet-820x1180"): "tablet-820x1180",
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at mobile-390x844"): "mobile-390x844",
 }
 FAILURE_DIAGNOSTIC_STAGES = {
     "login", "session", "first_submit", "retry", "conflict",

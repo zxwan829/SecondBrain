@@ -167,7 +167,7 @@ def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
 def test_junit_identity_allowlist_tracks_only_the_three_fixed_browser_cases():
     browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
     expected = {
-        ("tests/inbox-browser.spec.ts", f"explicit Inbox capture, retry, conflict and source protection at {viewport}"): viewport
+        ("inbox-browser.spec.ts", f"explicit Inbox capture, retry, conflict and source protection at {viewport}"): viewport
         for viewport in ("desktop-1440x1000", "tablet-820x1180", "mobile-390x844")
     }
     assert module.FAILURE_JUNIT_TESTCASE_VIEWPORTS == expected
@@ -251,9 +251,21 @@ def test_unrelated_failed_junit_testcase_is_rejected(tmp_path):
         module._collect_failure_diagnostics(raw)
 
 
+def test_junit_classname_must_match_actual_playwright_filename_not_tests_path(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    cases = [
+        ("tests/inbox-browser.spec.ts", name, viewport == "desktop-1440x1000")
+        for (_, name), viewport in module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.items()
+    ]
+    _write_junit(raw, {"desktop-1440x1000"}, cases=cases)
+    with pytest.raises(RuntimeError, match="testcase identity rejected"):
+        module._collect_failure_diagnostics(raw)
+
+
 @pytest.mark.parametrize("bad_identity", [
-    ("tests/inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000"),
-    ("tests/inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000 (retry #1)"),
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000"),
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000 (retry #1)"),
 ])
 def test_duplicate_or_ambiguous_failed_junit_identity_is_rejected(tmp_path, bad_identity):
     raw = tmp_path / "raw"
@@ -265,8 +277,8 @@ def test_duplicate_or_ambiguous_failed_junit_identity_is_rejected(tmp_path, bad_
         for (classname, name), viewport in module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.items()
         if viewport != "tablet-820x1180"
     ]
-    # The first case duplicates an approved identity; the second replaces it
-    # with a near-match that cannot be mapped to a viewport.
+    # The first case duplicates an approved identity; the second adds a
+    # near-match title that cannot be mapped to a viewport.
     cases.append((*bad_identity, True))
     if bad_identity == desktop_identity:
         with pytest.raises(RuntimeError, match="testcase set rejected"):
