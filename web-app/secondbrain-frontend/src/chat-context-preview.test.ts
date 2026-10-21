@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchContextPreview, parseContextPreview } from './chat-context-preview';
+import { fetchContextCandidates, fetchContextPreview, parseContextPreview } from './chat-context-preview';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -53,6 +53,19 @@ describe('Context v1 preview contract', () => {
     expect(init.credentials).toBe('same-origin');
     expect(JSON.parse(String(init.body))).toEqual({ query: 'synthetic question' });
     expect(Object.keys(JSON.parse(String(init.body)))).toEqual(['query']);
+  });
+
+  it('uses the frozen natural-candidate route with only the current input', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(preview()), {
+      status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchContextCandidates('session-a', '  ordinary message  ', new AbortController().signal);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('/api/chat/sessions/session-a/context-candidates');
+    expect(init.cache).toBe('no-store');
+    expect(init.credentials).toBe('same-origin');
+    expect(JSON.parse(String(init.body))).toEqual({ input: 'ordinary message' });
   });
 
   it('rejects empty and overlength requests before network access', async () => {

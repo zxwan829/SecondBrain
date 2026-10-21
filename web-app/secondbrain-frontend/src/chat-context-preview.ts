@@ -114,3 +114,25 @@ export async function fetchContextPreview(sessionId: string, query: string, sign
   if (!parsed) throw Object.assign(new Error('Invalid context preview response'), { status: 502 });
   return parsed;
 }
+
+/** Metadata-only natural recall contract. It never alters the Hermes Run payload. */
+export async function fetchContextCandidates(sessionId: string, input: string, signal: AbortSignal): Promise<ContextPreview> {
+  const trimmed = input.trim();
+  if (!SESSION_ID.test(sessionId) || [...trimmed].length < 1 || [...trimmed].length > 2000) {
+    throw Object.assign(new Error('Invalid context candidate request'), { status: 400 });
+  }
+  const response = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}/context-candidates`, {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store', signal,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ input: trimmed }),
+  });
+  const cacheControl = response.headers.get('Cache-Control')?.toLowerCase().split(',').map((value) => value.trim()) ?? [];
+  if (!cacheControl.includes('private') || !cacheControl.includes('no-store')) {
+    throw Object.assign(new Error('Context candidates cache policy was not verified'), { status: 502 });
+  }
+  if (!response.ok) throw Object.assign(new Error('Context candidates unavailable'), { status: response.status });
+  const payload: unknown = await response.json();
+  const parsed = parseContextPreview(payload, sessionId);
+  if (!parsed) throw Object.assign(new Error('Invalid context candidate response'), { status: 502 });
+  return parsed;
+}

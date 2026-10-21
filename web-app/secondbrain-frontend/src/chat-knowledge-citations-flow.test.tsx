@@ -33,7 +33,7 @@ function mockChat(historyResponse: (sessionId: string, runId: string) => Respons
     source_status: { personal_memory: 'available', knowledge: 'none' },
     items: [{ source_kind: 'personal_memory', source_id: 'opaque-memory-id-123', source_version: 'revision-7', sha256: 'b'.repeat(64),
       source_timestamp: '2026-10-22T07:59:00Z', fact_kind: 'preference', verification_status: 'user_confirmed', state: 'active', expires_at: null }],
-  })) {
+  }), naturalResponse?: (sessionId: string, init?: RequestInit) => Response | Promise<Response>) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input); calls.push({ url, init });
@@ -42,6 +42,8 @@ function mockChat(historyResponse: (sessionId: string, runId: string) => Respons
     if (url.endsWith('/activities')) return json({ activities: [] });
     const contextMatch = url.match(/^\/api\/chat\/sessions\/([^/]+)\/context-preview$/);
     if (contextMatch && init?.method === 'POST') return contextResponse(decodeURIComponent(contextMatch[1]), init);
+    const candidateMatch = url.match(/^\/api\/chat\/sessions\/([^/]+)\/context-candidates$/);
+    if (candidateMatch && init?.method === 'POST' && naturalResponse) return naturalResponse(decodeURIComponent(candidateMatch[1]), init);
     if (url === '/api/chat/sessions/session-a/runs' && init?.method === 'POST') return json({ run_id: 'run-a' });
     if (url === '/api/chat/runs/run-a/events') return sse([
       history('session-a', 'run-a'),
@@ -162,6 +164,31 @@ describe('Chat Knowledge citation UI and recovery', () => {
     fireEvent.click(screen.getByRole('button', { name: '检索可用上下文' }));
     await waitFor(() => expect(calls.some((call) => call.url.endsWith('/session-b/context-preview'))).toBe(true));
     expect(await screen.findByText('opaque-memory-id-123')).toBeTruthy();
+  });
+
+  it('checks natural candidates after a normal Run without adding metadata to the Hermes payload', async () => {
+    localStorage.setItem('secondbrain.chat.session', 'session-a');
+    const calls = mockChat(undefined, undefined, (sessionId) => json({
+      schema_version: 'context.v1', request_id: 'request-context-natural', session_id: sessionId,
+      evaluated_at: '2026-10-22T08:00:00Z', status: 'available',
+      source_status: { personal_memory: 'available', knowledge: 'none' },
+      items: [{ source_kind: 'personal_memory', source_id: 'opaque-memory-id-123', source_version: 'revision-7', sha256: 'b'.repeat(64),
+        source_timestamp: '2026-10-22T07:59:00Z', fact_kind: 'preference', verification_status: 'user_confirmed', state: 'active', expires_at: null }],
+    }));
+    const input = await openChat();
+    fireEvent.change(input, { target: { value: 'synthetic natural recall request' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText('可能相关的来源')).toBeTruthy();
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith('/context-candidates'))).toBe(true));
+    expect(await screen.findByText('opaque-memory-id-123')).toBeTruthy();
+    const candidate = calls.find((call) => call.url.endsWith('/context-candidates'));
+    const run = calls.find((call) => call.url.endsWith('/runs') && call.init?.method === 'POST');
+    expect(JSON.parse(String(candidate?.init?.body))).toEqual({ input: 'synthetic natural recall request' });
+    expect(candidate?.init?.cache).toBe('no-store');
+    expect(candidate?.init?.credentials).toBe('same-origin');
+    expect(JSON.parse(String(run?.init?.body))).toEqual({ input: 'synthetic natural recall request' });
+    expect(String(run?.init?.body)).not.toContain('opaque-memory-id-123');
+    expect(screen.getByText(/不表示回答使用或核验了这些来源/)).toBeTruthy();
   });
 
   it('shows revoked permission as unavailable and lets the user retry explicitly', async () => {

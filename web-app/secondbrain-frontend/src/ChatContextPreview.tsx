@@ -57,3 +57,23 @@ export function ChatContextPreview({ preview, loading, error, onRefresh, disable
     </>}
   </section>;
 }
+
+export function ChatNaturalCandidates({ preview, loading, error, locale }: {
+  preview: ContextPreview | null; loading: boolean; error: string; locale: 'zh-CN' | 'en';
+}) {
+  const en = locale === 'en';
+  if (!preview && !loading && !error) return null;
+  return <section className="chat-context-preview" aria-label={en ? 'Possible related sources' : '可能相关的来源'}>
+    <div className="chat-context-preview-heading"><h3>{en ? 'Possible related sources' : '可能相关的来源'}</h3></div>
+    <p className="chat-context-preview-note">{en
+      ? 'Core checked authorized sources for this message. These metadata were not added to Hermes input and do not mean the response used or verified them.'
+      : 'Core 为这条消息检查了获准来源。这里的信息没有加入 Hermes 输入，也不表示回答使用或核验了这些来源。'}</p>
+    {loading && <p role="status">{en ? 'Checking relevant sources…' : '正在检查可能相关的来源…'}</p>}
+    {error && <p role="status">{error}</p>}
+    {preview && <>
+      <p role="status">{statusLabel(preview.status, en)} · {en ? 'Checked' : '检查时间'}: {preview.evaluated_at}</p>
+      <p>{en ? 'Personal memory' : '个人记忆'}: {statusLabel(preview.source_status.personal_memory, en)} · Knowledge: {statusLabel(preview.source_status.knowledge, en)}</p>
+      {preview.items.length > 0 && <ul>{preview.items.map((item) => <Item key={`${item.source_kind}:${item.source_id}:${item.source_version}`} item={item} en={en} />)}</ul>}
+    </>}
+  </section>;
+}

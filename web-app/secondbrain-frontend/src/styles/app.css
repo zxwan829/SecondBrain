@@ -749,6 +749,20 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .chat-capture-suggestion button { justify-self: start; padding: 8px 13px; border: 1px solid rgb(56 189 248 / 45%); border-radius: 8px; color: var(--sb-text); background: rgb(8 47 73 / 65%); cursor: pointer; }
 .chat-capture-suggestion button:disabled { opacity: .55; cursor: not-allowed; }
 .chat-capture-suggestion a { color: #7dd3fc; }
+.personal-memory-page { display: grid; gap: 14px; max-width: 1080px; }
+.personal-memory-page .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.personal-memory-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.personal-memory-list article, .personal-memory-confirm { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--sb-border); border-radius: 12px; background: var(--sb-surface); color: var(--sb-text); }
+.personal-memory-receipt { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--sb-border); border-radius: 10px; color: var(--sb-text); background: var(--sb-surface); }
+.personal-memory-list article header, .personal-memory-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.personal-memory-list article header { justify-content: space-between; }
+.personal-memory-list p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.personal-memory-list small { color: var(--sb-muted); overflow-wrap: anywhere; }
+.personal-memory-actions button, .personal-memory-confirm button, .personal-memory-page > .page-header button { padding: 7px 10px; border: 1px solid var(--sb-border); border-radius: 8px; color: var(--sb-text); background: var(--sb-surface-raised, var(--sb-surface)); cursor: pointer; }
+.personal-memory-confirm label { display: grid; gap: 6px; }
+.personal-memory-confirm textarea, .personal-memory-confirm input { width: min(100%, 620px); padding: 9px; border: 1px solid var(--sb-border); border-radius: 8px; color: var(--sb-text); background: var(--sb-surface); }
+.personal-memory-confirm textarea { min-height: 100px; }
+.personal-memory-confirm button:disabled, .personal-memory-actions button:disabled { opacity: .55; cursor: not-allowed; }
 .terminal-approval-card { display: grid; gap: 10px; padding: 16px; border: 1px solid rgb(251 191 36 / 55%); border-radius: 12px; background: rgb(69 39 10 / 35%); color: var(--sb-text); }
 .terminal-approval-card h3, .terminal-approval-card p { margin: 0; }
 .terminal-approval-card h3 { font-size: 15px; }
