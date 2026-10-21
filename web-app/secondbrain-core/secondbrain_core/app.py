@@ -16,6 +16,7 @@ from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.personal_memory import PersonalMemoryStore, create_personal_memory_router
 from .modules.personal_learning import PersonalLearningPipeline
 from .modules.chat_activity import ChatActivityStore, create_chat_activity_router
+from .modules.chat_knowledge import ChatKnowledgeCitationStore
 from .modules.journal import JournalStore, create_journal_router
 from .modules.journal_source_options import (
     JournalSourceOptionsService,
@@ -132,6 +133,11 @@ def create_app():
             learning = PersonalLearningPipeline(memory_store)
 
     chat_activity_store = ChatActivityStore(Path(approval_root) / "chat-activity")
+    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,
+                                           operations_root=promote_operations_path)
+    knowledge_read_store = KnowledgeReadStore(knowledge_root, provenance_verifier=provenance)
+    chat_knowledge_citation_store = ChatKnowledgeCitationStore(
+        Path(approval_root) / "chat-knowledge-citations", knowledge_read_store)
     journal_root = os.environ.get("SB_JOURNAL_ROOT", "").strip()
     journal_store = JournalStore(journal_root) if journal_root else None
     task_root = os.environ.get("SB_TASK_ROOT", "").strip()
@@ -145,14 +151,20 @@ def create_app():
 
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
+    app.state.app_auth = auth
+    app.state.knowledge_read_store = knowledge_read_store
+    app.state.chat_knowledge_citation_store = chat_knowledge_citation_store
     # No trusted Hermes source adapter or Core consent ledger is configured.
     # Keep the internal candidate fail-closed and expose no HTTP route.
     app.state.capture_suggestion_binding_authority = TrustedCaptureSuggestionBindingAuthority()
     journal_source_options = JournalSourceOptionsService(journal_store, auth)
     app.state.journal_source_options_service = journal_source_options
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
-    app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root,
-                                             organizer, personal_learning=learning))
+    app.include_router(create_web_app_router(
+        auth, hermes, service, review_root, knowledge_root, organizer,
+        personal_learning=learning, knowledge_store=knowledge_read_store,
+        citation_store=chat_knowledge_citation_store,
+    ))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
     app.include_router(create_inbox_entry_router(
@@ -175,10 +187,8 @@ def create_app():
     app.include_router(create_journal_source_options_router(journal_source_options))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
     app.include_router(create_notes_router(auth, notes_store))
-    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,
-                                           operations_root=promote_operations_path)
     app.include_router(create_knowledge_read_router(
-        auth, KnowledgeReadStore(knowledge_root, provenance_verifier=provenance)))
+        auth, knowledge_read_store))
     app.include_router(create_vocabulary_router(auth, vocabulary_store))
     app.include_router(create_inbox_proposal_router(
         auth, inbox_proposals, inbox_proposal_sources, vocabulary_store,
@@ -203,6 +213,8 @@ def create_app():
                 "/api/promote/review/preview", "/api/promote/review/confirm",
                 "/api/daily-brief/source-options/journal",
         } or request.url.path.startswith("/api/promote/operations/")):
+            response.headers["Cache-Control"] = "private, no-store"
+        if request.url.path.endswith("/knowledge-citations"):
             response.headers["Cache-Control"] = "private, no-store"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
