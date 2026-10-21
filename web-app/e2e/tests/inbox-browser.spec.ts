@@ -169,13 +169,17 @@ for (const viewport of viewports) {
     const replayBody = observed.lastInboxBody;
     expect(replayBody).toEqual(firstBody);
 
-    const conflict = { ...firstBody!, original_text: `${original} changed` };
-    const conflictStatus = await page.evaluate(async (body) => {
-      const response = await fetch('/api/inbox/entries', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      return response.status;
-    }, conflict);
-    expect(conflictStatus).toBe(409);
+    const changedText = `记一下：冲突保护合成测试 ${randomUUID()}`;
+    await composer.fill(changedText);
+    await page.evaluate((eventId) => {
+      Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () => eventId });
+    }, firstBody!.source_event_id as string);
+    await page.getByRole('button', { name: '发送' }).click();
+    await expect(page.getByRole('alert')).toContainText('事件标识冲突');
+    expect(observed.lastInboxBody?.source_event_id).toBe(firstBody?.source_event_id);
+    expect(observed.lastInboxBody?.original_text).toBe(changedText);
+    expect(observed.requestRecords.some((request) => request.method === 'POST'
+      && request.path === '/api/inbox/entries' && request.status === 409)).toBe(true);
     expect(observed.inboxPostCount).toBe(3);
 
     const inboxGet = observed.requestRecords.filter((request) => request.method === 'GET' && request.path === '/api/inbox/entries/<opaque-id>');
@@ -192,6 +196,8 @@ for (const viewport of viewports) {
 
     // Plain conversation stays on the fixture Hermes route and never creates
     // an Inbox entry.
+    await page.getByRole('button', { name: '创建合成会话' }).click();
+    await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
     const postsBeforeOrdinaryChat = observed.inboxPostCount;
     await composer.fill(`普通聊天合成文本 ${randomUUID()}`);
     await page.getByRole('button', { name: '发送' }).click();
