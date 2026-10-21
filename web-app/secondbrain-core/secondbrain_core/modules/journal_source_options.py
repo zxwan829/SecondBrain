@@ -1,5 +1,7 @@
 """Authenticated, read-only D087 Daily Brief Journal source options."""
 import re
+import ipaddress
+from urllib.parse import urlsplit
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -29,9 +31,69 @@ class JournalSourceOptionsService:
         self.journal_store = journal_store
         self.auth = auth
 
+    def _check_d089_same_origin(self, request):
+        """D089: limited browser-originless exception for this one read-only GET.
+
+        The request URL must already be constructed from a trusted ASGI scope;
+        untrusted forwarding headers must not control its scheme/authority.
+        """
+        if request.method != "GET":
+            self.auth.check_origin(request)
+            return
+        headers = request.headers
+        origins = headers.getlist("origin")
+        fetch_sites = headers.getlist("sec-fetch-site")
+        fetch_modes = headers.getlist("sec-fetch-mode")
+        fetch_dests = headers.getlist("sec-fetch-dest")
+        if (len(origins) > 1 or len(fetch_sites) > 1
+                or len(fetch_modes) > 1 or len(fetch_dests) > 1):
+            raise HTTPException(status_code=403, detail="Trusted App Origin required")
+        site = fetch_sites[0] if fetch_sites else None
+        if site is not None and site != "same-origin":
+            raise HTTPException(status_code=403, detail="Trusted App Origin required")
+        if (fetch_modes and fetch_modes[0] not in {"cors", "same-origin"}) or (
+                fetch_dests and fetch_dests[0] != "empty"):
+            raise HTTPException(status_code=403, detail="Trusted App Origin required")
+        # Reject ambiguous Host syntax and mismatched request authorities before
+        # relying on the ASGI server's already-validated request URL.
+        hosts = headers.getlist("host")
+        if len(hosts) != 1 or not hosts[0] or hosts[0].strip() != hosts[0]:
+            raise HTTPException(status_code=403, detail="Trusted App Origin required")
+        effective = f"{request.url.scheme}://{request.url.netloc}"
+        if (effective not in self.auth.allowed_origins
+                or request.url.netloc.lower() != hosts[0].lower()):
+            raise HTTPException(status_code=403, detail="Trusted App Origin required")
+        parsed = urlsplit(effective)
+        if not parsed.hostname or parsed.username or parsed.password:
+            raise HTTPException(status_code=403, detail="Trusted App Origin required")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail="Trusted App Origin required") from exc
+        if parsed.scheme == "http":
+            # Explicit local HTTP exception; never broaden to LAN/public HTTP.
+            if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or port is None:
+                raise HTTPException(status_code=403, detail="Trusted App Origin required")
+            client = request.client.host if request.client else ""
+            try:
+                loopback_client = ipaddress.ip_address(client).is_loopback
+            except ValueError:
+                loopback_client = client == "localhost"
+            if not loopback_client:
+                raise HTTPException(status_code=403, detail="Trusted App Origin required")
+        elif parsed.scheme != "https":
+            raise HTTPException(status_code=403, detail="Trusted App Origin required")
+        if origins:
+            # Existing explicitly trusted Origin semantics are preserved.
+            if not origins[0] or origins[0] == "null":
+                raise HTTPException(status_code=403, detail="Trusted App Origin required")
+            self.auth.check_origin(request)
+        elif site != "same-origin":
+            raise HTTPException(status_code=403, detail="Trusted App Origin required")
+
     def _authorize(self, request):
         # Authorization must happen before query validation and all Journal IO.
-        self.auth.check_origin(request)
+        self._check_d089_same_origin(request)
         self.auth.require_action(request, "daily_brief.read")
         self.auth.require_action(request, "journal.read")
 
