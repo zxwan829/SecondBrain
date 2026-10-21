@@ -22,6 +22,8 @@ import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLa
 import { isExplicitJournalIntent } from './journal-intent';
 import { parseExplicitTaskCommand } from './task-intent';
 import { activityTimeLabel, mergeChatTimeline, type ChatActivity, type ChatHistoryMessage } from './chat-activity';
+import { citationErrorBundle, parseKnowledgeCitationBundle, readCitationRunLocators, rememberCitationRun,
+  type CitationRunLocator, type KnowledgeCitationBundle } from './chat-knowledge-citations';
 import { V1ReadOnlyPage } from './V1ReadOnlyPages';
 import { V1BriefHealthPage } from './V1BriefHealthPages';
 import { CalendarPage } from './CalendarPage';
@@ -30,6 +32,7 @@ import { journalInboxAttemptKey, journalInboxFailureLabel, journalInboxReceiptKe
   parseJournalInboxPostReceipt, parseJournalInboxReceipt,
   type JournalInboxAttempt, type JournalInboxReceipt } from './chat-inbox';
 import { inboxEntryErrorLabel, inboxEntryStatusLabel, parseVerifiedInboxEntry } from './inbox-entry';
+import { ChatKnowledgeCitations } from './ChatKnowledgeCitations';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -1254,6 +1257,9 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const [selected, setSelected] = useState(() => blankMode ? blankState.selectedSessionId : '');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activities, setActivities] = useState<ChatActivity[]>([]);
+  const [citationBundles, setCitationBundles] = useState<KnowledgeCitationBundle[]>([]);
+  const [citationHistoryLoading, setCitationHistoryLoading] = useState(false);
+  const [citationPersistenceIssue, setCitationPersistenceIssue] = useState(false);
   const timeline = mergeChatTimeline(messages, activities);
   const [input, setInput] = useState('');
   const [progress, setProgress] = useState('');
@@ -1287,8 +1293,12 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const selectedSessionRef = useRef(blankMode ? blankState.selectedSessionId : '');
   const selectionIntentRef = useRef(0);
   const contentLoadRef = useRef(0);
+  const citationHistoryAbortRef = useRef<AbortController | null>(null);
+  const citationFrameByRunRef = useRef(new Map<string, string>());
   const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
   const captureRequestSequence = useRef(0);
+
+  useEffect(() => () => citationHistoryAbortRef.current?.abort(), []);
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -1429,6 +1439,45 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     }
   };
 
+  const restoreCitationReferences = async (sessionId: string, contentRequestId: number) => {
+    citationHistoryAbortRef.current?.abort();
+    const controller = new AbortController();
+    citationHistoryAbortRef.current = controller;
+    const locators = blankMode ? [] : readCitationRunLocators(sessionId);
+    if (!locators.length) {
+      if (contentRequestId === contentLoadRef.current && selectedSessionRef.current === sessionId) {
+        setCitationBundles([]);
+        setCitationHistoryLoading(false);
+      }
+      return;
+    }
+    setCitationBundles([]);
+    setCitationHistoryLoading(true);
+    const restored: KnowledgeCitationBundle[] = [];
+    for (const locator of locators) {
+      if (controller.signal.aborted) return;
+      try {
+        const response = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(locator.run_id)}/knowledge-citations`, {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) {
+          restored.push(citationErrorBundle(locator, response.status));
+          continue;
+        }
+        const payload: unknown = await response.json();
+        restored.push(parseKnowledgeCitationBundle(payload, locator) ?? citationErrorBundle(locator, 502));
+      } catch (cause) {
+        if (controller.signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError')) return;
+        restored.push(citationErrorBundle(locator, 503));
+      }
+    }
+    if (controller.signal.aborted || contentRequestId !== contentLoadRef.current
+      || selectedSessionRef.current !== sessionId) return;
+    setCitationBundles(restored);
+    setCitationHistoryLoading(false);
+  };
+
   const loadSessionContent = async (sessionId: string) => {
     if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     const requestId = ++contentLoadRef.current;
@@ -1484,6 +1533,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     if (historyResult.status === 'rejected') setError(historyResult.reason instanceof Error
       ? chatFailureLabel(historyResult.reason.message, locale) : chatFailureLabel('Could not load session history', locale));
     else if (activityResult.status === 'rejected') setError(en ? 'System operation history is temporarily unavailable.' : '系统操作历史暂时不可用。');
+    void restoreCitationReferences(sessionId, requestId);
   };
 
   const resetCaptureState = () => {
@@ -1498,6 +1548,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     journalInboxSequenceRef.current += 1;
     abortRef.current?.abort(); abortRef.current = null;
     resetCaptureState(); resetJournalInboxView(); setBusy(false); setRunId(''); setProgress('');
+    citationHistoryAbortRef.current?.abort(); setCitationBundles([]); setCitationHistoryLoading(false); setCitationPersistenceIssue(false);
     selectedSessionRef.current = sessionId;
     setSelected(sessionId);
     if (blankMode) persistBlankChatState([...blankSessionIdsRef.current], sessionId);
@@ -1838,6 +1889,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       const activeRun = String(started.run_id ?? '');
       if (!activeRun) throw new Error('Hermes did not return a run identifier');
       startedRunId = activeRun;
+      if (!blankMode && !rememberCitationRun({ session_id: sessionId, run_id: activeRun })) setCitationPersistenceIssue(true);
       setInput('');
       setRunId(activeRun); setProgress(en ? 'Connected to Hermes' : '已连接 Hermes');
       if (!blankMode) {
@@ -1861,7 +1913,22 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         try { payload = JSON.parse(data.join('\n')) as Record<string, unknown>; } catch { payload = { text: data.join('\n') }; }
         const eventName = String(payload.event ?? 'message');
         const name = String(payload.name ?? payload.tool_name ?? payload.tool ?? 'tool');
-        if (eventName === 'message.delta' || eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
+        if (eventName === 'knowledge.citations') {
+          const locator: CitationRunLocator = { session_id: sessionId, run_id: activeRun };
+          const parsed = parseKnowledgeCitationBundle(payload, locator);
+          if (!parsed) {
+            setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), citationErrorBundle(locator, 502)]);
+          } else {
+            const fingerprint = JSON.stringify(parsed);
+            const previous = citationFrameByRunRef.current.get(activeRun);
+            if (previous && previous !== fingerprint) {
+              setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), citationErrorBundle(locator, 409)]);
+            } else if (!previous) {
+              citationFrameByRunRef.current.set(activeRun, fingerprint);
+              setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), parsed]);
+            }
+          }
+        } else if (eventName === 'message.delta' || eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
           const delta = String(payload.delta ?? payload.text ?? payload.output_text ?? payload.content ?? '');
           if (delta) setMessages((current) => current.map((message, index) => index === current.length - 1 && message.role === 'assistant' ? { ...message, text: message.text + delta } : message));
         } else if (eventName.startsWith('tool.')) {
@@ -2086,6 +2153,8 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
           </div>
           {item.activity.detail && <small>{item.activity.detail}</small>}
         </article>)}{!timeline.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      <ChatKnowledgeCitations bundles={citationBundles.filter((bundle) => bundle.session_id === selected)} loading={citationHistoryLoading}
+        persistenceIssue={citationPersistenceIssue} locale={locale} />
       {journalInboxAttempt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent retry status' : '日记意图重试状态'}>
         <h3>{en ? 'Inbox save is not confirmed' : 'Inbox 保存结果尚未确认'}</h3>
         <p role="alert">{journalInboxFeedback || (en ? 'The original text and exact request are retained.' : '原文和完整请求已保留。')}</p>
