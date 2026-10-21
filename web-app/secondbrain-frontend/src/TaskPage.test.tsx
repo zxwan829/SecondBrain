@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { TaskPage } from './TaskPage';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.unstubAllGlobals(); });
 
 const task = {
   id: 'a'.repeat(32), title: '合成任务', due_date: null, status: 'open' as const,
@@ -161,7 +161,10 @@ describe('TaskPage', () => {
 
   it.each([
     ['unknown status', { status: 'updated' }],
+    ['missing task receipt', { task: undefined }],
+    ['wrong title', { task: { ...task, title: '另一项任务' } }],
     ['wrong due date', { task: { ...task, title: '回执任务', due_date: '2026-10-25' } }],
+    ['wrong task status', { task: { ...task, title: '回执任务', status: 'completed' } }],
     ['malformed task id', { task: { ...task, id: 'task-1', title: '回执任务' } }],
   ])('keeps the form open when the create receipt has %s', async (_caseName, patch) => {
     const response = { status: 'created', task: { ...task, title: '回执任务', due_date: null }, ...patch };
@@ -197,5 +200,209 @@ describe('TaskPage', () => {
     expect(screen.getByRole('status').textContent).toBe('待办已创建。');
     expect(screen.getByRole('heading', { name: '已创建任务' })).toBeTruthy();
     expect(screen.queryByLabelText('待办内容')).toBeNull();
+  });
+
+  it('locks the whole create intent during a pending POST and ignores duplicate submits', async () => {
+    let finishPost!: (value: ReturnType<typeof ok>) => void;
+    const pendingPost = new Promise<ReturnType<typeof ok>>((resolve) => { finishPost = resolve; });
+    const created = { ...task, id: 'f'.repeat(32), title: '并发提交任务' };
+    const request = vi.fn((url: string, init?: RequestInit) => url === '/api/tasks' && init?.method === 'POST'
+      ? pendingPost : Promise.resolve(ok({ tasks: [] })));
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '并发提交任务' } });
+    const form = screen.getByLabelText('待办内容').closest('form')!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    await waitFor(() => expect(request.mock.calls.filter(([url, init]) => url === '/api/tasks' && init?.method === 'POST')).toHaveLength(1));
+    expect((screen.getByLabelText('待办内容') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText('状态') as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '收起' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '刷新' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(window.sessionStorage.length).toBe(1);
+
+    await act(async () => { finishPost(ok({ status: 'created', task: created })); await pendingPost; });
+    expect(await screen.findByRole('heading', { name: '并发提交任务' })).toBeTruthy();
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it('restores an ambiguous in-flight create after unmount and safely reconciles it with the same key', async () => {
+    let finishFirst!: (value: ReturnType<typeof ok>) => void;
+    let finishSecond!: (value: ReturnType<typeof ok>) => void;
+    const firstPost = new Promise<ReturnType<typeof ok>>((resolve) => { finishFirst = resolve; });
+    const secondPost = new Promise<ReturnType<typeof ok>>((resolve) => { finishSecond = resolve; });
+    const created = { ...task, id: '1'.repeat(32), title: '离开页面时创建' };
+    const keys: string[] = [];
+    let postNumber = 0;
+    const request = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') {
+        keys.push(new Headers(init.headers).get('Idempotency-Key') ?? '');
+        postNumber += 1;
+        return postNumber === 1 ? firstPost : secondPost;
+      }
+      return Promise.resolve(ok({ tasks: [] }));
+    });
+    vi.stubGlobal('fetch', request);
+    const first = render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '离开页面时创建' } });
+    fireEvent.submit(screen.getByLabelText('待办内容').closest('form')!);
+    await waitFor(() => expect(postNumber).toBe(1));
+
+    first.unmount();
+    render(<TaskPage locale="zh-CN" />);
+    expect(await screen.findByText('上次创建结果尚未确认；可用相同内容安全重试，或取消后重新创建。')).toBeTruthy();
+    expect((screen.getByLabelText('待办内容') as HTMLInputElement).value).toBe('离开页面时创建');
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    await waitFor(() => expect(postNumber).toBe(2));
+    expect(keys[1]).toBe(keys[0]);
+
+    await act(async () => { finishFirst(ok({ status: 'created', task: created })); await firstPost; });
+    await act(async () => { finishSecond(ok({ status: 'duplicate', task: created })); await secondPost; });
+    expect(await screen.findByRole('heading', { name: '离开页面时创建' })).toBeTruthy();
+    expect(screen.getAllByRole('heading', { name: '离开页面时创建' })).toHaveLength(1);
+  });
+
+  it('keeps a verified create visible when the following list response is stale', async () => {
+    const created = { ...task, id: '2'.repeat(32), title: '列表快照落后的任务' };
+    let listReads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') return ok({ status: 'created', task: created });
+      if (url.startsWith('/api/tasks?')) { listReads += 1; return ok({ tasks: [] }); }
+      return ok({});
+    }));
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '列表快照落后的任务' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByRole('heading', { name: '列表快照落后的任务' })).toBeTruthy();
+    await waitFor(() => expect(listReads).toBe(2));
+    expect(screen.getByRole('heading', { name: '列表快照落后的任务' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('待办已创建。');
+  });
+
+  it('aborts and ignores a list request that was already in flight when create starts', async () => {
+    let finishList!: (value: ReturnType<typeof ok>) => void;
+    let listSignal: AbortSignal | undefined;
+    const pendingList = new Promise<ReturnType<typeof ok>>((resolve) => { finishList = resolve; });
+    const created = { ...task, id: '5'.repeat(32), title: '避免旧列表覆盖' };
+    let listCalls = 0;
+    const request = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') return Promise.resolve(ok({ status: 'created', task: created }));
+      if (url.startsWith('/api/tasks?')) {
+        listCalls += 1;
+        if (listCalls === 1) { listSignal = init?.signal as AbortSignal; return pendingList; }
+      }
+      return Promise.resolve(ok({ tasks: [] }));
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '避免旧列表覆盖' } });
+    fireEvent.submit(screen.getByLabelText('待办内容').closest('form')!);
+    expect(listSignal?.aborted).toBe(true);
+    await act(async () => { finishList(ok({ tasks: [task] })); await pendingList; });
+    expect(await screen.findByRole('heading', { name: '避免旧列表覆盖' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: '合成任务' })).toBeNull();
+  });
+
+  it.each([403, 409, 429, 500])('preserves create input and its retry key after HTTP %i', async (status) => {
+    const keys: string[] = [];
+    let posts = 0;
+    const created = { ...task, id: '3'.repeat(32), title: '保留输入的任务' };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') {
+        posts += 1;
+        keys.push(new Headers(init.headers).get('Idempotency-Key') ?? '');
+        return posts === 1 ? { ok: false, status, json: async () => ({ detail: `synthetic ${status}` }) }
+          : ok({ status: 'duplicate', task: created });
+      }
+      return ok({ tasks: [] });
+    }));
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '保留输入的任务' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    const message = (await screen.findByRole('alert')).textContent ?? '';
+    expect(message).toContain(status === 409 ? '创建请求发生冲突' : `synthetic ${status}`);
+    expect((screen.getByLabelText('待办内容') as HTMLInputElement).value).toBe('保留输入的任务');
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByRole('heading', { name: '保留输入的任务' })).toBeTruthy();
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it('starts a fresh intent key after an unresolved payload is edited', async () => {
+    const keys: string[] = [];
+    let posts = 0;
+    const created = { ...task, id: '4'.repeat(32), title: '改过内容' };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') {
+        posts += 1;
+        keys.push(new Headers(init.headers).get('Idempotency-Key') ?? '');
+        return posts === 1 ? { ok: false, status: 500, json: async () => ({ detail: 'unknown result' }) }
+          : ok({ status: 'created', task: created });
+      }
+      return ok({ tasks: [] });
+    }));
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '原始内容' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    await screen.findByRole('alert');
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '改过内容' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByRole('heading', { name: '改过内容' })).toBeTruthy();
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it('switches back to the open view without briefly mixing completed tasks into a create result', async () => {
+    const completed = { ...task, id: '6'.repeat(32), title: '既有已完成', status: 'completed' as const };
+    const created = { ...task, id: '7'.repeat(32), title: '从全部视图新建' };
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') return ok({ status: 'created', task: created });
+      if (url.startsWith('/api/tasks?')) return ok({ tasks: url.includes('status=all') ? [completed] : [] });
+      return ok({});
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'all' } });
+    expect(await screen.findByRole('heading', { name: '既有已完成' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '从全部视图新建' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByRole('heading', { name: '从全部视图新建' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('heading', { name: '既有已完成' })).toBeNull());
+  });
+
+  it('preserves an ambiguous network failure for same-key retry', async () => {
+    const keys: string[] = [];
+    let posts = 0;
+    const created = { ...task, id: '8'.repeat(32), title: '网络中断重试' };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') {
+        posts += 1;
+        keys.push(new Headers(init.headers).get('Idempotency-Key') ?? '');
+        if (posts === 1) throw new TypeError('network disconnected');
+        return ok({ status: 'duplicate', task: created });
+      }
+      return ok({ tasks: [] });
+    }));
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '网络中断重试' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('network disconnected');
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByRole('heading', { name: '网络中断重试' })).toBeTruthy();
+    expect(keys[1]).toBe(keys[0]);
   });
 });
