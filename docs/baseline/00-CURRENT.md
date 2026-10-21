@@ -8,13 +8,13 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-21 最新裁定与唯一 NEXT：D089 浏览器 GET 认证
+## 2026-10-21 最新裁定与唯一 NEXT：D089 已集成；Writer 隔离仍阻断生产
 
-- **核验源码基线：** main `ce3f8472501c05b44dedf2503878c104c8a5faca`（PR #157）；#126/#127/#129/#130/#149/#155/#156/#157 已合并。以下 2026-10-20 段落仅为历史阶段快照，不以其中旧 HEAD、Draft 或浏览器阻断描述覆盖本段。
-- **浏览器状态分项：** Linux Chromium Chat→Inbox 三视口 Run [39580114026](https://github.com/zxwan829/SecondBrain/actions/runs/39580114026) PASS，原浏览器启动阻断已在此环境解决；新增 Daily Brief Run [39583907704](https://github.com/zxwan829/SecondBrain/actions/runs/39583907704) FAIL，桌面 Journal source 未通过导致平板/手机依赖流程未达成。Edge/macOS 仍未验；不能把先前局部 PASS 或本次业务 FAIL 扩大成全部 Web 通过/浏览器不可用。
-- **认证争议裁定：** Journal source-options 的正式编号为 **D089**，D087 仍为微信/飞书渠道架构。按 Decision-Log D089 的 2026-10-21 修订，唯一指定只读 GET 可在精确可信请求 authority、`Sec-Fetch-Site:same-origin`、有效 App Session 及双 action 下接受真正缺失 Origin 的浏览器同源请求；带 Origin 仍严格核验，写接口不变。生产 HTTPS、受信任代理与仅 loopback 合成 HTTP 的范围分别明确，不能全局放宽 GET。
-- **依据与未验：** #97 #6313899613 已在真实 localhost HTTP 复现无 Origin→403、零 Journal IO，有 Origin→200；失败浏览器 Run 未捕获确切请求头，根因只能视为有复现依据的机制推断。新合同尚无实现/复验通过证据。B #106 Linux OS gate 为有限证据，最终 HEAD Linux full Core 尚未复验，生产隔离未通过。
-- **唯一 NEXT：** B 按上述 scoped 合同实施独立 Core Draft PR、200/401/403 与零拒绝读矩阵及真实 Core+Vite HTTP 验证；A 独立复审并纳入 #158 的准确文件统计/脱敏证据，固定候选后开展集中 Linux Chromium 三视口复验，再回到 #96/#97 长任务与原汇合门槛。最新 Issue 裁定为此针对性复验补充最多 2 个 CI 批次（一次首验，必要时一次有新修复的重验），每批限 30 分钟，不重跑已通过旧 SHA。尚未授权 main 合并、生产部署、真实数据/模型出站或启用 Promote。
+- **核验源码基线：** main `7ceec110c6e361ba8661c2ab005ab8906ea2323a`（PR #163）。PR #163 将 #158/#159/#160/#162 集成；D089 Core 最终候选 #162 HEAD `a0663e20704134883197dd68d639e303dd62d654` 已在该 main 集成提交中。PR #161 的本文件及 Decision-Log 更新仍是 Draft，尚未合入。
+- **D089 决策与源码状态：** D089 只允许指定 Journal source-options GET 在有效 App Session、`daily_brief.read` 与 `journal.read` 双 action、可信 authority 及明确同源证据下接受缺失 Origin；显式 Origin 继续严格核验，其他方法及 Promote 不变。B 对最终 Core HEAD 的定向/全量及真实 localhost HTTP 验证通过；A 对固定 HEAD 独立复验通过（见 #97 #6315016638）。Linux 合成浏览器集成 Run [39593305415](https://github.com/zxwan829/SecondBrain/actions/runs/39593305415) 三视口通过。上述仅为源码与合成验收，不代表生产代理配置、macOS/Edge、真实 Journal/Vault 或用户业务验收。
+- **Host 状态码边界：** 真实 Core HTTP 中，不在 TrustedHost allowlist 的 Host 被中间件在路由前拒绝为 400；allowlisted Host 但 authority/port 与受信任 Origin 不一致由 D089 路由拒绝为 403；两者均在 Journal IO 前 fail-closed。该实测边界及 D089 对“所有非法 Host 均 403”的解释差异记录在 Decision-Log；未绕过或放宽 TrustedHost。
+- **项目交付与 Writer gate：** PR #106 Restricted Writer 仍是合成候选。既有一次性 Linux runner 证明只覆盖其当时固定 SHA 的 OS UID/GID、内核 peer credentials、Socket 与受控写入场景；PR #106 当前累计候选的 Linux full-Core/生产身份隔离没有通过证据。Raw 同 UID 目录迁移、生产 ACL/mount/服务拓扑仍未证明。总体 V1 MUST / D077 Companion MVP 为 **NOT DONE**；源码合并、合成测试、生产部署、真实数据与用户验收分开记录。
+- **唯一 NEXT：** A 继续 Issue #96 的用户可见 Web/Inbox→Review→Knowledge/Task/Daily Brief 业务闭环。B 并行继续 #106 的本地 Writer 安全隔离候选；若当前环境不能提供真实 Linux 不同 UID/GID 与内核 peer credential 验证，应标为 BLOCKED，不以 Mock 或 macOS 测试替代。不得部署、接入真实 Hermes/业务数据、启用 Promote 或修改生产权限；新增长任务证据写入 #97，按授权在相应 Draft PR 中交审。
 
 ## 2026-10-20 阶段快照（已由上方最新裁定取代）（Issue #76/#96/#97）
 
