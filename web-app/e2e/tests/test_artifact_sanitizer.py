@@ -426,6 +426,48 @@ def _enable_current_linux_browser_run(monkeypatch):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
 
 
+def test_run_summary_reports_journal_sources_separately_from_mutations(tmp_path):
+    summary = tmp_path / "run-summary.json"
+    summary.write_text(json.dumps({
+        "journal_files": 1,
+        "journal_source_fixture_files": 1,
+        "journal_mutated_files": 0,
+        "brief_files": 0,
+        "brief_file_set_verified": False,
+        "authorization_header": "SYNTHETIC_SECRET",
+    }))
+
+    module._sanitize_run_summary(summary)
+
+    result = json.loads(summary.read_text())
+    assert result == {
+        "journal_files": 1,
+        "journal_source_fixture_files": 1,
+        "journal_mutated_files": 0,
+        "brief_files": 0,
+        "brief_file_set_verified": False,
+    }
+
+
+def test_daily_brief_file_set_assertion_rejects_unexpected_files_and_symlinks(tmp_path):
+    brief_root = tmp_path / "briefs"
+    brief_root.mkdir()
+    operation_hash = "a" * 64
+    (brief_root / "2026-10-21.json").write_text("synthetic")
+    (brief_root / f".op-{operation_hash}.json").write_text("synthetic")
+    (brief_root / f".op-lock-{operation_hash}").touch()
+    assert module._assert_exact_brief_file_set(brief_root, "2026-10-21.json") == 3
+
+    (brief_root / "unexpected.json").write_text("synthetic")
+    with pytest.raises(RuntimeError, match="file set mismatch"):
+        module._assert_exact_brief_file_set(brief_root, "2026-10-21.json")
+
+    (brief_root / "unexpected.json").unlink()
+    (brief_root / "linked.json").symlink_to(brief_root / "2026-10-21.json")
+    with pytest.raises(RuntimeError, match="non-regular entry"):
+        module._assert_exact_brief_file_set(brief_root, "2026-10-21.json")
+
+
 def test_current_linux_fixture_failure_png_is_allowlisted_and_metadata_is_removed(tmp_path, monkeypatch):
     _enable_current_linux_browser_run(monkeypatch)
     raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
