@@ -27,8 +27,24 @@ SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 SAFE_REF = re.compile(r"^[A-Za-z0-9_.:/#@+ -]{1,512}$")
 MAX_CONTENT_BYTES = 8_192
 MAX_EVENTS_FILE_BYTES = 8 * 1024 * 1024
+MAX_CONTEXT_INPUT_CHARS = 2_000
 EVENTS_FILE = "personal-memory.jsonl"
 LOCK_FILE = "personal-memory.lock"
+_CONTEXT_STOP_WORDS = {
+    "about", "after", "also", "and", "are", "can", "could", "from", "have",
+    "help", "how", "into", "just", "please", "that", "the", "this", "with",
+    "would", "you", "your", "我", "的", "了", "是", "在", "这个", "一下",
+}
+
+
+def _context_terms(value: str) -> set[str]:
+    terms: set[str] = set()
+    for part in re.findall(r"[A-Za-z0-9]+|[\u3400-\u9fff]+", value.casefold()):
+        if "\u3400" <= part[0] <= "\u9fff":
+            terms.update(part[index:index + 2] for index in range(max(1, len(part) - 1)))
+        elif len(part) >= 3:
+            terms.add(part)
+    return terms - _CONTEXT_STOP_WORDS
 
 
 def _now() -> str:
@@ -407,6 +423,69 @@ class PersonalMemoryStore:
         # Reads directly from the data file without creating/locking the write
         # lock file. A second bounded snapshot detects append, correction, or
         # revoke races before metadata leaves Core.
+        first = select(self._read_events_unlocked())
+        second = select(self._read_events_unlocked())
+        if first != second:
+            raise MemoryStoreError("Personal memory changed during context verification")
+        return first
+
+    def context_candidates_for_input(self, *, user_input: str, limit: int = 3) -> list[dict[str, Any]]:
+        """Select bounded lexical candidates from an ordinary user turn."""
+        if (not isinstance(user_input, str) or not user_input.strip()
+                or len(user_input) > MAX_CONTEXT_INPUT_CHARS):
+            raise ValueError("Context input must contain 1-2000 characters")
+        if type(limit) is not int or not 1 <= limit <= 3:
+            raise ValueError("Context limit must be from 1 to 3")
+        query_terms = _context_terms(user_input)
+        if not query_terms:
+            return []
+        self._validate_root()
+
+        def select(events):
+            latest: dict[str, dict[str, Any]] = {}
+            for row in events:
+                latest[row["memory_id"]] = row
+            now = datetime.now(timezone.utc)
+            ranked = []
+            for row in latest.values():
+                if (row.get("status") != "active"
+                        or row.get("fact_kind") not in {"user_stated", "user_confirmed"}
+                        or row.get("verification_status") == "source_required"):
+                    continue
+                text = row.get("content", {}).get("text", "")
+                recorded_at = row.get("recorded_at")
+                if not isinstance(text, str) or not isinstance(recorded_at, str):
+                    raise MemoryStoreError("Personal memory source metadata is invalid")
+                try:
+                    recorded = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+                    if recorded.tzinfo is None:
+                        raise ValueError
+                except (ValueError, AttributeError) as exc:
+                    raise MemoryStoreError("Personal memory source timestamp is invalid") from exc
+                expiry = row.get("expires_at")
+                if expiry:
+                    try:
+                        if datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= now:
+                            continue
+                    except (ValueError, AttributeError) as exc:
+                        raise MemoryStoreError("Personal memory expiry timestamp is invalid") from exc
+                score = len(query_terms & _context_terms(text + " " + str(row.get("category", ""))))
+                if not score:
+                    continue
+                item = {
+                    "source_id": row["memory_id"],
+                    "source_version": str(row["revision"]),
+                    "sha256": hashlib.sha256(_json_bytes(row)).hexdigest(),
+                    "source_timestamp": recorded.astimezone(timezone.utc).isoformat(
+                        timespec="seconds").replace("+00:00", "Z"),
+                    "fact_kind": row["fact_kind"],
+                    "state": "active",
+                    "expires_at": expiry,
+                }
+                ranked.append((score, item["source_timestamp"], item))
+            ranked.sort(key=lambda row: (row[0], row[1], row[2]["source_id"]), reverse=True)
+            return [item for _, _, item in ranked[:limit]]
+
         first = select(self._read_events_unlocked())
         second = select(self._read_events_unlocked())
         if first != second:

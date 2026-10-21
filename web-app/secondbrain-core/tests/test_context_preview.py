@@ -96,6 +96,19 @@ def test_memory_context_candidates_are_metadata_only_and_do_not_create_lock(tmp_
     assert "content" not in rows[0] and "source_ref" not in rows[0]
 
 
+def test_natural_turn_memory_selector_uses_relevant_terms_not_search_phrase(tmp_path):
+    root = _private_dir(tmp_path / "memory")
+    _append_event(root, _event(memory_id="concise", text="I prefer concise summaries"))
+    with (root / "personal-memory.jsonl").open("ab") as stream:
+        stream.write(json.dumps(_event(memory_id="unrelated", text="I prefer metric units"),
+                                ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+    store = PersonalMemoryStore(root)
+    rows = store.context_candidates_for_input(
+        user_input="Could you please keep the explanation concise and clear?", limit=3)
+    assert [row["source_id"] for row in rows] == ["concise"]
+    assert not (root / "personal-memory.lock").exists()
+
+
 def test_memory_context_rejects_oversized_ledger_and_detects_snapshot_drift(tmp_path, monkeypatch):
     root = _private_dir(tmp_path / "memory")
     path = root / "personal-memory.jsonl"
@@ -166,6 +179,24 @@ def test_knowledge_context_rejects_forged_path_or_version_and_never_returns_sour
     assert _knowledge_items(FakeKnowledge("../Private/secret.md", "version_verified"), "needle")[0] == "partial"
     assert _knowledge_items(FakeKnowledge("Projects/ok.md", "stale"), "needle")[0] == "partial"
 
+    class NaturalKnowledge(FakeKnowledge):
+        def __init__(self):
+            super().__init__("Projects/ok.md", "version_verified")
+            self.queries = []
+            self.budgets = []
+
+        def chat_recall(self, query, **kwargs):
+            self.queries.append(query)
+            self.budgets.append(kwargs["max_scan_bytes"])
+            return super().chat_recall(query, **kwargs)
+
+    natural = NaturalKnowledge()
+    status, rows = _knowledge_items(natural, "Could you explain the concise project workflow?", natural=True)
+    assert status == "available" and rows
+    assert "concise" in natural.queries
+    assert len(natural.queries) <= 3
+    assert sum(natural.budgets) <= 16 * 1024 * 1024 - 9 * 256 * 1024
+
 
 def test_malicious_memory_content_is_only_used_as_query_data(tmp_path):
     root = _private_dir(tmp_path / "memory")
@@ -184,6 +215,10 @@ def test_context_preview_real_localhost_http_returns_only_session_bound_metadata
     origin = f"http://{host}:{port}"
     app, roots = _configured_app(tmp_path, monkeypatch, origin, host)
     _append_event(roots["memory"], _event())
+    async def forbidden_run(self, *args, **kwargs):
+        raise AssertionError("metadata candidate endpoint must not start a Hermes Run")
+
+    monkeypatch.setattr(HermesAPI, "start_run", forbidden_run)
     # Explicit loopback only for this synthetic HTTP fixture.
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="critical",
                                            lifespan="off", access_log=False, proxy_headers=False))
@@ -219,6 +254,20 @@ def test_context_preview_real_localhost_http_returns_only_session_bound_metadata
             assert "I prefer" not in response.text and "synthetic-session-1" not in response.text
             assert str(roots["memory"]) not in response.text
             assert len(response.content) <= 8 * 1024
+            # Ordinary natural language triggers candidate selection without a
+            # search command. This remains metadata-only and is not a Hermes Run.
+            candidates = client.post("/api/chat/sessions/session-A/context-candidates", headers=headers,
+                                     json={"input": "Could you keep this concise, please?"})
+            assert candidates.status_code == 200, candidates.text
+            assert candidates.headers["cache-control"] == "private, no-store"
+            candidate_body = candidates.json()
+            assert set(candidate_body) == set(body)
+            assert candidate_body["schema_version"] == "context.v1"
+            assert candidate_body["session_id"] == "session-A"
+            assert candidate_body["items"][0]["source_id"] == "memory-1"
+            assert "I prefer" not in candidates.text and "synthetic-session-1" not in candidates.text
+            assert str(roots["memory"]) not in candidates.text
+            assert len(candidates.content) <= 8 * 1024
             second = client.post("/api/chat/sessions/session-B/context-preview", headers=headers,
                                  json={"query": "concise"})
             assert second.status_code == 200
@@ -248,6 +297,9 @@ def test_context_authorization_precedes_hermes_and_source_io(tmp_path, monkeypat
     original_memory = app.state.personal_memory_store.context_candidates
     monkeypatch.setattr(app.state.personal_memory_store, "context_candidates",
                         lambda **kwargs: memory_reads.append(kwargs) or original_memory(**kwargs))
+    original_natural_memory = app.state.personal_memory_store.context_candidates_for_input
+    monkeypatch.setattr(app.state.personal_memory_store, "context_candidates_for_input",
+                        lambda **kwargs: memory_reads.append(kwargs) or original_natural_memory(**kwargs))
     original = app.state.app_auth.require_action
 
     denied = {"action": "chat.run"}
@@ -277,6 +329,12 @@ def test_context_authorization_precedes_hermes_and_source_io(tmp_path, monkeypat
             assert calls == expected
             assert hermes_calls == []
             assert memory_reads == []
+            candidate = client.post("/api/chat/sessions/session-A/context-candidates",
+                                    headers={"Origin": "https://testserver"},
+                                    json={"input": "ordinary discussion about concise answers"})
+            assert candidate.status_code == 403
+            assert hermes_calls == []
+            assert memory_reads == []
 
 
 def test_context_requires_authenticated_app_session_before_hermes_or_source_io(tmp_path, monkeypatch):
@@ -294,6 +352,12 @@ def test_context_requires_authenticated_app_session_before_hermes_or_source_io(t
                                headers={"Origin": "https://testserver"}, json={"query": "concise"})
         assert response.status_code == 401
         assert response.headers["cache-control"] == "private, no-store"
+        assert hermes_calls == source_calls == []
+        candidate_response = client.post("/api/chat/sessions/session-A/context-candidates",
+                                         headers={"Origin": "https://testserver"},
+                                         json={"input": "ordinary conversation without a search command"})
+        assert candidate_response.status_code == 401
+        assert candidate_response.headers["cache-control"] == "private, no-store"
         assert hermes_calls == source_calls == []
 
 
@@ -371,9 +435,18 @@ def test_context_preview_rejects_extra_or_overlong_query_without_source_reads(tm
                            json={"query": "x" * 201})
         oversized = client.post("/api/chat/sessions/session-A/context-preview", headers=headers,
                                 content=b" " * (4 * 1024 + 1))
+        candidate_extra = client.post("/api/chat/sessions/session-A/context-candidates", headers=headers,
+                                      json={"input": "ordinary conversation", "query": "forged"})
+        candidate_long = client.post("/api/chat/sessions/session-A/context-candidates", headers=headers,
+                                     json={"input": "x" * 2_001})
+        candidate_oversized = client.post("/api/chat/sessions/session-A/context-candidates", headers=headers,
+                                          content=b" " * (16 * 1024 + 1))
         assert extra.status_code == 400
         assert long.status_code == 400
         assert oversized.status_code == 400
+        assert candidate_extra.status_code == 400
+        assert candidate_long.status_code == 400
+        assert candidate_oversized.status_code == 400
         assert reads == []
 
 

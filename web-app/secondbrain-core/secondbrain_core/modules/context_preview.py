@@ -19,19 +19,37 @@ from fastapi import APIRouter, HTTPException, Request
 from .knowledge_read import MAX_FILE_BYTES, MAX_TOTAL_BYTES
 
 MAX_QUERY_CHARS = 200
+MAX_CANDIDATE_INPUT_CHARS = 2_000
 MAX_ITEMS_PER_SOURCE = 3
 MAX_RESPONSE_BYTES = 8 * 1024
 MAX_REQUEST_BYTES = 4 * 1024
+MAX_CANDIDATE_REQUEST_BYTES = 16 * 1024
 MAX_TOTAL_SECONDS = 0.75
 _SESSION_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,256}$")
 _REQUIRED_ACTIONS = ("chat.run", "personal_memory.read", "knowledge.read")
+_RECALL_STOP_WORDS = {"about", "after", "also", "and", "are", "can", "could", "for", "from",
+                      "have", "help", "how", "into", "just", "please", "that", "the", "this",
+                      "with", "would", "you", "your", "我", "的", "了", "是", "在", "这个", "一下"}
 
 
-def _memory_items(store, query):
+def _natural_query_terms(value: str) -> list[str]:
+    terms = set()
+    for part in re.findall(r"[A-Za-z0-9]+|[\u3400-\u9fff]+", value.casefold()):
+        if "\u3400" <= part[0] <= "\u9fff":
+            terms.update(part[index:index + 2] for index in range(max(1, len(part) - 1)))
+        elif len(part) >= 3:
+            terms.add(part[:MAX_QUERY_CHARS])
+    return sorted(terms - _RECALL_STOP_WORDS, key=lambda term: (-len(term), term))[:3]
+
+
+def _memory_items(store, query, *, natural=False):
     if store is None:
         return "unavailable", []
     try:
-        rows = store.context_candidates(query=query, limit=MAX_ITEMS_PER_SOURCE)
+        if natural:
+            rows = store.context_candidates_for_input(user_input=query, limit=MAX_ITEMS_PER_SOURCE)
+        else:
+            rows = store.context_candidates(query=query, limit=MAX_ITEMS_PER_SOURCE)
     except Exception:
         return "unavailable", []
     return ("available" if rows else "none"), [
@@ -41,22 +59,36 @@ def _memory_items(store, query):
     ]
 
 
-def _knowledge_items(store, query):
+def _knowledge_items(store, query, *, natural=False):
     if store is None:
         return "unavailable", []
     try:
-        result = store.chat_recall(
-            query, max_items=MAX_ITEMS_PER_SOURCE,
-            max_item_bytes=8 * 1024, max_total_bytes=16 * 1024,
-            max_scan_bytes=MAX_TOTAL_BYTES - MAX_ITEMS_PER_SOURCE * 3 * MAX_FILE_BYTES,
-        )
+        terms = _natural_query_terms(query) if natural else [query]
+        if not terms:
+            return "none", []
+        result_items = []
+        result_status = "none"
+        per_scan_budget = max(1, (MAX_TOTAL_BYTES - MAX_ITEMS_PER_SOURCE * 3 * MAX_FILE_BYTES) // len(terms))
+        for term in terms:
+            result = store.chat_recall(
+                term, max_items=MAX_ITEMS_PER_SOURCE,
+                max_item_bytes=8 * 1024, max_total_bytes=16 * 1024,
+                max_scan_bytes=per_scan_budget,
+            )
+            if not isinstance(result, dict) or not isinstance(result.get("items"), list):
+                return "unavailable", []
+            if result.get("status") not in {"available", "partial", "none"}:
+                return "unavailable", []
+            if result["status"] == "partial":
+                result_status = "partial"
+            result_items.extend(result["items"])
+            if len(result_items) >= MAX_ITEMS_PER_SOURCE:
+                break
     except Exception:
-        return "unavailable", []
-    if not isinstance(result, dict) or not isinstance(result.get("items"), list):
         return "unavailable", []
     rows = []
     rejected = False
-    for item in result["items"][:MAX_ITEMS_PER_SOURCE]:
+    for item in result_items[:MAX_ITEMS_PER_SOURCE]:
         if (not isinstance(item, dict) or item.get("provenance_status") != "verified"
                 or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))
                 or not isinstance(item.get("relative_path"), str)
@@ -101,10 +133,7 @@ def _knowledge_items(store, query):
             "state": "available",
             "expires_at": None,
         })
-    status = result.get("status")
-    if status not in {"available", "partial", "none"}:
-        return "unavailable", []
-    if status == "partial" or rejected:
+    if result_status == "partial" or rejected:
         return "partial", rows
     return ("available" if rows else "none"), rows
 
@@ -112,25 +141,27 @@ def _knowledge_items(store, query):
 def create_context_preview_router(auth, hermes, memory_store, knowledge_store):
     router = APIRouter(prefix="/api/chat/sessions", tags=["chat-context"])
 
-    @router.post("/{session_id}/context-preview")
-    async def context_preview(session_id: str, request: Request):
+    async def read_query(request: Request, *, field: str, max_bytes: int, max_chars: int, label: str):
         raw = bytearray()
         try:
             async for chunk in request.stream():
-                if len(raw) + len(chunk) > MAX_REQUEST_BYTES:
-                    raise HTTPException(status_code=400, detail="Invalid context request")
+                if len(raw) + len(chunk) > max_bytes:
+                    raise HTTPException(status_code=400, detail=f"Invalid {label} request")
                 raw.extend(chunk)
             body = json.loads(raw.decode("utf-8"))
         except HTTPException:
             raise
         except (UnicodeDecodeError, JSONDecodeError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="Invalid context request") from exc
-        if not isinstance(body, dict) or set(body) != {"query"}:
-            raise HTTPException(status_code=400, detail="Invalid context request")
-        query_value = body.get("query")
+            raise HTTPException(status_code=400, detail=f"Invalid {label} request") from exc
+        if not isinstance(body, dict) or set(body) != {field}:
+            raise HTTPException(status_code=400, detail=f"Invalid {label} request")
+        query_value = body.get(field)
         query = query_value.strip() if isinstance(query_value, str) else ""
-        if not query or len(query) > MAX_QUERY_CHARS:
-            raise HTTPException(status_code=400, detail="Invalid context query")
+        if not query or len(query) > max_chars:
+            raise HTTPException(status_code=400, detail=f"Invalid {label} input")
+        return query
+
+    async def build_candidates(session_id: str, request: Request, query: str, *, natural=False):
         if not _SESSION_ID.fullmatch(session_id):
             raise HTTPException(status_code=400, detail="Invalid session identifier")
 
@@ -160,8 +191,8 @@ def create_context_preview_router(auth, hermes, memory_store, knowledge_store):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise HTTPException(status_code=503, detail="Context preview unavailable")
-        jobs = [asyncio.to_thread(_memory_items, memory_store, query),
-                asyncio.to_thread(_knowledge_items, knowledge_store, query)]
+        jobs = [asyncio.to_thread(_memory_items, memory_store, query, natural=natural),
+                asyncio.to_thread(_knowledge_items, knowledge_store, query, natural=natural)]
         try:
             memory_result, knowledge_result = await asyncio.wait_for(
                 asyncio.gather(*jobs), timeout=remaining)
@@ -209,5 +240,19 @@ def create_context_preview_router(auth, hermes, memory_store, knowledge_store):
         if response["status"] == "unavailable":
             raise HTTPException(status_code=503, detail="Context preview unavailable")
         return response
+
+    @router.post("/{session_id}/context-preview")
+    async def context_preview(session_id: str, request: Request):
+        query = await read_query(request, field="query", max_bytes=MAX_REQUEST_BYTES,
+                                 max_chars=MAX_QUERY_CHARS, label="context")
+        return await build_candidates(session_id, request, query)
+
+    @router.post("/{session_id}/context-candidates")
+    async def context_candidates(session_id: str, request: Request):
+        user_input = await read_query(request, field="input", max_bytes=MAX_CANDIDATE_REQUEST_BYTES,
+                                      max_chars=MAX_CANDIDATE_INPUT_CHARS, label="candidate")
+        # This is a read-only metadata selector for ordinary turns. It deliberately
+        # does not modify the Hermes Run request or persist/cache source material.
+        return await build_candidates(session_id, request, user_input, natural=True)
 
     return router
