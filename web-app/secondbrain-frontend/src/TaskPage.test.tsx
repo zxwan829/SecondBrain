@@ -89,4 +89,16 @@ describe('TaskPage', () => {
     expect(screen.getByRole('heading', { name: '已完成的合成任务' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '合成任务' })).toBeNull();
   });
+
+  it('opens all Task states and highlights a Task linked from a Daily Brief', async () => {
+    window.history.replaceState({}, '', `/today?task_id=${task.id}#task-${task.id}`);
+    const request = vi.fn(async (url: string) => {
+      expect(url).toBe('/api/tasks?status=all');
+      return ok({ tasks: [task] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    expect(await screen.findByText('此待办被每日简报引用。')).toBeTruthy();
+    expect(document.getElementById(`task-${task.id}`)).toBeTruthy();
+  });
 });

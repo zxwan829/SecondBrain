@@ -1,17 +1,17 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { V1ReadOnlyPage } from './V1ReadOnlyPages';
 import { V1BriefHealthPage } from './V1BriefHealthPages';
 
 const checkedAt = '2026-10-20T01:30:00Z';
 const hash = 'b'.repeat(64);
 
-function projectPayload(status: string) {
+function projectPayload(status: string, limit = 50, offset = 0, hasMore = false) {
   return {
     status,
     items: status === 'real' || status === 'partial' ? [{ id: 'project_ui_synth', title: 'Synthetic project card', status: 'active', next_step: 'Synthetic next action', source_ref: { id: 'project_source_opaque', version: hash } }] : [],
-    pagination: { limit: 1, offset: 0, has_more: false },
+    pagination: { limit, offset, has_more: hasMore },
     source: status === 'not_configured' || status === 'unavailable' ? null : { kind: 'explicit-project-index' },
     freshness: { checked_at: checkedAt },
   };
@@ -45,7 +45,7 @@ describe('Projects and Daily Brief read-only UI', () => {
     render(<V1ReadOnlyPage page="projects" locale="zh-CN" />);
     expect(await screen.findByText(/NOT BUSINESS CLOSED.*尚未配置可信项目数据源/)).toBeTruthy();
     expect(screen.queryByText('Synthetic project card')).toBeNull();
-    expect(calls).toEqual(['/api/projects?limit=1&offset=0']);
+    expect(calls).toEqual(['/api/projects?limit=50&offset=0']);
   });
 
   it('renders only Core-confirmed project fields and not opaque source IDs', async () => {
@@ -54,6 +54,21 @@ describe('Projects and Daily Brief read-only UI', () => {
     expect(await screen.findByText('Synthetic project card')).toBeTruthy();
     expect(screen.getByText('Synthetic next action')).toBeTruthy();
     expect(screen.queryByText('project_source_opaque')).toBeNull();
+  });
+
+  it('paginates the Core project registry so a brief source beyond the first page can be found', async () => {
+    const calls = mockFetch((url) => {
+      const offset = Number(new URL(`http://local${url}`).searchParams.get('offset'));
+      return Response.json(projectPayload(offset === 0 ? 'real' : 'empty', 50, offset, offset === 0));
+    });
+    render(<V1ReadOnlyPage page="projects" locale="zh-CN" />);
+    expect(await screen.findByText('Synthetic project card')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '更多项目' }));
+    await waitFor(() => expect(calls).toContain('/api/projects?limit=50&offset=50'));
+    expect(await screen.findByText(/可信项目索引已读取，但当前没有项目记录/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '上一页项目' }));
+    await waitFor(() => expect(calls.filter((url) => url === '/api/projects?limit=50&offset=0')).toHaveLength(2));
+    expect(await screen.findByText('Synthetic project card')).toBeTruthy();
   });
 
   it('keeps a partial project response visibly partial', async () => {
@@ -78,7 +93,25 @@ describe('Projects and Daily Brief read-only UI', () => {
     expect(await screen.findByText('SYNTHETIC BRIEF BODY ONLY')).toBeTruthy();
     expect(screen.getByText('来源已核验')).toBeTruthy();
     expect(screen.getByText('Synthetic category')).toBeTruthy();
+    expect(screen.getByRole('link', { name: '返回待办来源' }).getAttribute('href')).toMatch(/^\/today\?task_id=opaque_task_source$/);
     expect(screen.queryByText('opaque_task_source')).toBeNull();
+  });
+
+  it('offers exact links back to synthetic Task, Project and Journal source views', async () => {
+    mockFetch((url) => {
+      const date = new URL(`http://local${url}`).searchParams.get('date') ?? '';
+      const response = briefPayload('real', date) as { items: Array<{ source_refs: unknown[] }> };
+      response.items[0].source_refs = [
+        { kind: 'task', id: 'a'.repeat(32), version: hash },
+        { kind: 'project', id: 'project_ui_synth', version: hash },
+        { kind: 'journal', id: 'journal_entry_synth', version: hash },
+      ];
+      return Response.json(response);
+    });
+    render(<V1BriefHealthPage page="brief" locale="zh-CN" />);
+    expect((await screen.findByRole('link', { name: '返回待办来源' })).getAttribute('href')).toBe(`/today?task_id=${'a'.repeat(32)}`);
+    expect(screen.getByRole('link', { name: '返回项目来源列表' }).getAttribute('href')).toBe('/projects?project_id=project_ui_synth');
+    expect(screen.getByRole('link', { name: '返回 Journal 日期' }).getAttribute('href')).toMatch(/^\/journal\?date=\d{4}-\d{2}-\d{2}&entry_id=journal_entry_synth$/);
   });
 
   it('shows stale status visibly when Core withholds the stale summary', async () => {

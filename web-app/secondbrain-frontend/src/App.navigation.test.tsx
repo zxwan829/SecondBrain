@@ -24,7 +24,7 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, sum
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
     if (url === '/api/home') return new Response('{}', { status: 200 });
-    if (url === '/api/projects?limit=1&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 1, offset: 0, has_more: false }, source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
+    if (url === '/api/projects?limit=50&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 50, offset: 0, has_more: false }, source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url.startsWith('/api/daily-brief?')) return new Response(JSON.stringify({ status: 'not_configured', items: [], source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url === '/api/agent/health') return new Response(JSON.stringify({ status: 'not_configured', source: null, checked_at: '2026-10-20T01:30:00Z' }), { status: 200 });
@@ -167,11 +167,11 @@ describe('Notes application navigation gate', () => {
     expect(await screen.findByText(/尚未配置可信项目数据源/)).toBeTruthy();
     expect(document.querySelector('[data-fixture-id="SYNTH-PROJECT-001"]')).toBeNull();
     expect(location.pathname).toBe('/projects');
-    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=1&offset=0']);
+    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=50&offset=0']);
     fireEvent.click(screen.getByRole('button', { name: '查看本地合成预览' }));
     expect(screen.getByText('LOCAL_CANDIDATE · SYNTHETIC FIXTURE')).toBeTruthy();
     expect(document.querySelector('[data-fixture-id="SYNTH-PROJECT-001"]')).toBeTruthy();
-    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=1&offset=0']);
+    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=50&offset=0']);
   });
 
   it('fails closed when Projects violates its explicitly empty response contract', async () => {
@@ -180,14 +180,14 @@ describe('Notes application navigation gate', () => {
       const url = String(input);
       calls.push(url);
       if (url === '/api/auth/session') return new Response('{}', { status: 200 });
-      if (url === '/api/projects?limit=1&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [{ title: 'must not render' }], pagination: { limit: 1, offset: 0, has_more: false }, source: null }), { status: 200 });
+      if (url === '/api/projects?limit=50&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [{ title: 'must not render' }], pagination: { limit: 50, offset: 0, has_more: false }, source: null }), { status: 200 });
       return new Response('{}', { status: 200 });
     });
     startAt('/projects');
 
     expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
     expect(screen.queryByText('must not render')).toBeNull();
-    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=1&offset=0']);
+    expect(calls).toEqual(['/api/auth/session', '/api/projects?limit=50&offset=0']);
   });
 
   it('loads Activity from its explicit read endpoint without session/message or Home reads', async () => {

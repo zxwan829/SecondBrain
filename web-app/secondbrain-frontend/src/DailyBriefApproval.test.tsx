@@ -1,6 +1,4 @@
 import React from 'react';
-// @ts-expect-error Node's Web Crypto is used only by this Vitest test, not shipped in the browser bundle.
-import { webcrypto } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { V1BriefHealthPage } from './V1BriefHealthPages';
@@ -15,12 +13,12 @@ function currentShanghaiDate(): string {
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
 function cryptoFor(randomUUID: () => string = () => '11111111-1111-4111-8111-111111111111') {
-  return { subtle: webcrypto.subtle, randomUUID } as unknown as Crypto;
+  return { randomUUID } as unknown as Crypto;
 }
 const task = {
   id: 'a'.repeat(32), title: 'Synthetic task source', due_date: null, status: 'open',
   created_at: '2026-10-20T01:00:00+00:00', updated_at: '2026-10-20T01:00:00+00:00',
-  source: 'web_app_explicit_task',
+  source: 'web_app_explicit_task', source_ref: { id: 'a'.repeat(32), version: 'a'.repeat(64) },
 };
 const project = { id: 'project_synthetic_1', title: 'Synthetic project source', status: 'active',
   source_ref: { id: 'project_synthetic_1', version: 'b'.repeat(64) } };
@@ -319,58 +317,41 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(screen.queryByRole('button', { name: '用同一请求安全重试' })).toBeNull();
   });
 
-  it('matches Core task_source_version for Unicode, dates, field ordering, and updated versions', async () => {
-    const variants = [
-      { id: 'a'.repeat(32), title: 'Café 東京 😀 - "Daily"', due_date: '2026-10-21', status: 'open', created_at: '2026-10-20T01:00:00.123456+00:00', updated_at: '2026-10-20T01:01:02.123456+08:00', source: 'web_app_explicit_task' },
-      { source: 'web_app_explicit_task', updated_at: '2026-10-20T01:01:03.123456+08:00', title: 'Café 東京 😀 - "Daily"', status: 'open', created_at: '2026-10-20T01:00:00.123456+00:00', id: 'a'.repeat(32), due_date: '2026-10-21' },
-      { updated_at: '2026-10-20T01:01:02.123456+08:00', due_date: null, status: 'open', title: 'Café 東京 😀 - "Daily"', source: 'web_app_explicit_task', id: 'a'.repeat(32), created_at: '2026-10-20T01:00:00.123456+00:00' },
-    ];
-    const expected = [
-      '69f9cca6aec30b645f23b302ae92425945bfa53e6b190672d9a18e5b07b64c3c',
-      '9ea3fef0a8083a5d2d0366882d3dc7de9f2259147ebabce6fcdc65ecf81e8e5f',
-      '57f85a20005f85a8ef2e588b4fe36a216060ed69938fd58b2ae1e5b3317358cd',
-    ];
-    for (const [index, sourceTask] of variants.entries()) {
-      cleanup();
-      window.sessionStorage.clear();
-      vi.stubGlobal('crypto', cryptoFor());
-      const posts: Array<Record<string, unknown>> = [];
-      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = String(input);
-        if (path.startsWith('/api/daily-brief?')) return Response.json(brief('not_configured', new URL(`http://test${path}`).searchParams.get('date') ?? ''));
-        if (path === '/api/daily-brief' && init?.method === 'POST') {
-          const body = JSON.parse(String(init.body)) as Record<string, unknown>; posts.push(body);
-          return Response.json({ status: 'created', brief_id: 'brief_hash_vector', date: body.date, timezone: 'Asia/Shanghai', record_version: 'c'.repeat(64), operation_id: `dbi-${'d'.repeat(64)}` }, { status: 201 });
-        }
-        return sourceResponse(path, [sourceTask]);
-      }));
-      render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} />);
-      fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
-      expect(await screen.findByRole('checkbox', { name: /Café 東京/ })).toBeTruthy();
-      fireEvent.click(screen.getByRole('checkbox', { name: /Café 東京/ }));
-      fireEvent.change(screen.getByLabelText(/简报正文/), { target: { value: 'Synthetic hash vector' } });
-      fireEvent.click(screen.getByRole('button', { name: '预览并确认' }));
-      fireEvent.click(screen.getByRole('button', { name: '确认并创建简报' }));
-      await waitFor(() => expect(posts).toHaveLength(1));
-      expect((posts[0].source_refs as Array<{ kind: string; id: string; version: string }>)[0]).toEqual({
-        kind: 'task', id: 'a'.repeat(32), version: expected[index],
-      });
-    }
+  it('uses only the Core-issued Task ID and version as the Brief source reference', async () => {
+    const sourceTask = { ...task, title: 'Café 東京 😀', updated_at: '2026-10-20T01:01:02.123456+08:00',
+      source_ref: { id: task.id, version: 'f'.repeat(64) } };
+    const posts: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('crypto', cryptoFor());
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith('/api/daily-brief?')) return Response.json(brief('not_configured', new URL(`http://test${path}`).searchParams.get('date') ?? ''));
+      if (path === '/api/daily-brief' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>; posts.push(body);
+        return Response.json({ status: 'created', brief_id: 'brief_core_ref', date: body.date, timezone: 'Asia/Shanghai', record_version: 'c'.repeat(64), operation_id: `dbi-${'d'.repeat(64)}` }, { status: 201 });
+      }
+      return sourceResponse(path, [sourceTask]);
+    }));
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Café 東京/ }));
+    fireEvent.change(screen.getByLabelText(/简报正文/), { target: { value: 'Synthetic Core reference' } });
+    fireEvent.click(screen.getByRole('button', { name: '预览并确认' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认并创建简报' }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect((posts[0].source_refs as Array<{ kind: string; id: string; version: string }>)[0]).toEqual({
+      kind: 'task', id: task.id, version: 'f'.repeat(64),
+    });
   });
 
-  it.each([
-    ['invalid due date', { due_date: '2026-02-30' }],
-    ['invalid timestamp', { updated_at: '2026-10-20T25:00:00+00:00' }],
-    ['missing canonical field', { source: undefined }],
-  ])('fails closed when a Task source has %s', async (_caseName, patch) => {
-    const invalidTask = { ...task, ...patch };
+  it('does not offer an older Task candidate without a valid Core-issued source_ref', async () => {
+    const unsupportedTask = { ...task, source_ref: undefined };
     vi.stubGlobal('crypto', cryptoFor());
     const calls: string[] = [];
     const posts: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input); calls.push(path);
       if (path.startsWith('/api/daily-brief?')) return Response.json(brief('not_configured', '2026-10-20'));
-      if (path === '/api/tasks?status=all') return Response.json({ tasks: [invalidTask] });
+      if (path === '/api/tasks?status=all') return Response.json({ tasks: [unsupportedTask] });
       if (path === '/api/projects?limit=50&offset=0') return Response.json({ status: 'empty', items: [],
         pagination: { limit: 50, offset: 0, has_more: false }, source: { kind: 'explicit-project-index' }, freshness: { checked_at: checkedAt } });
       if (path === '/api/daily-brief' && init?.method === 'POST') { posts.push(path); return Response.json({}); }
@@ -379,8 +360,8 @@ describe('Daily Brief explicit approval UI draft', () => {
     render(<V1BriefHealthPage page="brief" locale="zh-CN" />);
     expect(await screen.findByText(/DAILY_BRIEF_NOT_CONFIGURED/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/来源读取失败/);
-    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(await screen.findByLabelText(/简报正文/)).toBeTruthy();
+    expect(screen.queryByRole('checkbox', { name: /Synthetic task source/ })).toBeNull();
     expect(posts).toHaveLength(0);
   });
 
