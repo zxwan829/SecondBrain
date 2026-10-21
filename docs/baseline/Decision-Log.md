@@ -454,6 +454,21 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 
 ## D089 — 2026-10-20 Journal Brief 来源选项只读 API 合同（FROZEN CONTRACT）
 
-**冻结范围：** `GET /api/daily-brief/source-options/journal?date=YYYY-MM-DD&limit=N`。要求规范日期、limit 默认 20 且范围 1–50；校验可信 Origin、App Session、`daily_brief.read` 与 `journal.read`。响应仅包含 `status/items/freshness`，每项仅含 `kind/id/date/version`；不得返回正文、路径、Session、异常细节。只读同日记录，按稳定行 ID 排序并执行 1 MiB 单日字节、5000 行/日及 2 MiB 请求预算，超限 fail closed。
+**冻结范围：** `GET /api/daily-brief/source-options/journal?date=YYYY-MM-DD&limit=N`。要求规范日期、limit 默认 20 且范围 1–50；按本节 2026-10-21 修订校验可信同源请求、App Session、`daily_brief.read` 与 `journal.read`。响应仅包含 `status/items/freshness`，每项仅含 `kind/id/date/version`；不得返回正文、路径、Session、异常细节。只读同日记录，按稳定行 ID 排序并执行 1 MiB 单日字节、5000 行/日及 2 MiB 请求预算，超限 fail closed。
 
 **状态：** D089 合同已由 PR #128 固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b` 合并至 main（merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）；Core 正式只读路由已注册。B 报告 Core 全量和 localhost HTTP 验证通过，A 留有对最终 HEAD 的独立验收记录。该状态仅代表源码合并及本地合成证据，不代表部署、真实 Journal/Vault 访问或用户验收；实施状态见 `00-CURRENT.md`，证据见 `Progress-Log.md`。此 ID 取代 #97/#128 历史评论中误用的 D087 标签，不影响 D087 渠道架构决定。
+
+### 2026-10-21 PMO 修订：D089 浏览器只读 GET 同源认证（本轮批准的合同；实现待验收）
+
+本修订解决 #96/#97 的浏览器 GET 兼容争议（历史讨论误称 D087；D087 渠道架构不变）。依据 #97 评论 #6313899613：无 Origin 且 Sec-Fetch-Site:same-origin 的 localhost 请求在现有严格 Origin 门禁返回 403，未读 Journal；可信 Origin 对照 200。#96 Run 39583907704 的实际浏览器请求头尚未捕获，不能将该机制直接写成该 Run 已证实根因。
+
+**适用范围仅为** `GET /api/daily-brief/source-options/journal`。本修订不自动扩大到其他 GET/HEAD/OPTIONS，不改变任何 POST/PUT/PATCH/DELETE、登录、审批或 Promote 的校验。
+
+1. **认证与权限继续独立成立。** 成功前必须有有效 App Session，并同时满足 `daily_brief.read` 和 `journal.read`；鉴权及来源校验在查询解析和任何 Journal IO 前完成。Fetch Metadata、Host、浏览器头或测试 fixture 均不能替代身份与权限。
+2. **请求带 Origin：** Origin 必须为明确配置的可信值，其规范化 scheme/host/port 与受信任请求的有效 origin 完全一致；`Origin: null`、空值、歧义/重复 Origin、错 host/port/scheme 或相互矛盾的 Fetch Metadata 一律拒绝。对于本接口，出现 `Sec-Fetch-Site: cross-site/same-site/none` 或非法值，不能因 Origin 看似正确而放行；缺该头的非浏览器请求仍可按现有显式可信 Origin 路径认证。
+3. **请求确实没有 Origin：** 仅在 `Sec-Fetch-Site` 恰为 `same-origin`，并且服务端确认有效 scheme + Host/port 对应一个精确配置可信 origin、Host 经现有可信 Host 规则校验时允许继续认证。缺失、空、非法或重复/组合 Fetch Metadata，以及 same-site/cross-site/none 均拒绝；Referer 不作为降级依据。若有 Sec-Fetch-Mode/Dest，必须与同源脚本 fetch 一致（mode 为 cors 或 same-origin，dest 为 empty）；不能用浏览器或测试脚本人为添加 Origin/Sec-Fetch 让正常成功用例通过。
+4. **传输与代理：** 正式非本机入口必须 HTTPS。只复用现有受信任代理配置得到的 scheme/authority，不能直接信任任意客户端 X-Forwarded-Host/Proto 或 Forwarded。HTTP 只可用于显式配置的 loopback 开发/合成环境：可信 origin 的 hostname 为 127.0.0.1、localhost 或 ::1，固定实际端口，服务仅绑定 loopback，代理到 Core 亦限 loopback；不能因客户端 IP 在回环或传入头就启用例外，不能放行任意 HTTP Origin、LAN 地址或 wildcard。现有 Promote originless GET 的 HTTPS/双会话规则不降低。
+5. **响应与副作用：** 通过 origin/authority 校验且会话缺失/过期 => 401；权限不足 => 403；非法来源/authority => 403，均固定脱敏错误且 Journal 读取计数为零。合法请求保持既有 200 real/empty/unavailable 元数据响应，不回传正文、路径或内部认证细节；现有读取预算、0500/0400 只读要求不变。响应不公开缓存；若经过任何缓存层须正确按认证及来源上下文隔离，优先 no-store。
+6. **验收矩阵：** 可信显式 Origin（可无 Fetch Metadata）通过；自然浏览器无 Origin+same-origin 通过；错 Origin/Host/port、伪造转发头、null/空 Origin、缺失或歧义同源证据、跨站/同站、无 Session/缺任一 action 拒绝且零 Journal IO。验证 trusted-proxy 与未受信任 proxy 负例，HTTP loopback 与非本机 HTTP 的区别，POST 仍严格 Origin；用真实 Core+Vite+浏览器记录脱敏的 Origin 是否存在、Sec-Fetch-Site/Mode/Dest、状态码及是否读取 Journal。不得记录 Cookie、凭据、正文、源 ID 或真实路径。
+
+**实施与证据状态：** 本轮只批准此 scoped read contract、Core 候选修复与合成验证，不批准生产配置/部署/真实数据/扩大权限；尚无新 Core 修复或浏览器 PASS。B 实施与真实 HTTP 矩阵，A 独立复审并集中浏览器复验；详见 #96/#97 当前任务。未证明的代理兼容性按具体场景 BLOCKED，不用去掉校验解决。
