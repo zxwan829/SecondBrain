@@ -7,11 +7,13 @@ export default defineConfig({
   retries: 0,
   timeout: 30_000,
   expect: { timeout: 5_000 },
-  outputDir: './artifacts/test-results',
+  outputDir: process.env.SB_E2E_RAW_ARTIFACTS
+    ? `${process.env.SB_E2E_RAW_ARTIFACTS}/test-results`
+    : './artifacts-raw/test-results',
   reporter: [
     ['list'],
-    ['junit', { outputFile: './artifacts/junit.xml' }],
-    ['html', { outputFolder: './artifacts/html', open: 'never' }],
+    ['junit', { outputFile: process.env.PLAYWRIGHT_JUNIT_OUTPUT_NAME ?? './artifacts-raw/junit.xml' }],
+    ['html', { outputFolder: process.env.PLAYWRIGHT_HTML_OUTPUT_DIR ?? './artifacts-raw/html', open: 'never' }],
   ],
   use: {
     ...devices['Desktop Chrome'],

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -19,6 +20,7 @@ import argparse
 import datetime
 import uuid
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -26,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[3]
 CORE = ROOT / "web-app" / "secondbrain-core"
 FRONTEND = ROOT / "web-app" / "secondbrain-frontend"
 E2E = Path(__file__).resolve().parents[1]
-ARTIFACTS = E2E / "artifacts"
+ARTIFACTS = E2E / "artifacts-sanitized"
 CORE_URL = ""
 WEB_URL = ""
 OPAQUE_ID = __import__("re").compile(r"(?i)\b[0-9a-f]{32}\b")
@@ -34,6 +36,8 @@ REPORT_ID = __import__("re").compile(r"(?i)\b(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9
 SENSITIVE_KEYS = ("header", "cookie", "authorization", "bearer", "token", "credential", "passphrase",
                   "postdata", "post_data", "body", "content", "snapshot", "params", "value", "text",
                   "message", "resource", "payload", "stack", "source")
+TRACE_SAFE_KEYS = {"type", "method", "url", "request", "response", "status", "statusCode",
+                   "startTime", "endTime", "duration", "resourceType", "isNavigationRequest"}
 
 
 def ephemeral_port() -> int:
@@ -47,7 +51,7 @@ def clean_trace_value(value):
         result = {}
         for key, child in value.items():
             lowered = str(key).lower()
-            if any(word in lowered for word in SENSITIVE_KEYS):
+            if key not in TRACE_SAFE_KEYS or any(word in lowered for word in SENSITIVE_KEYS):
                 continue
             if lowered in {"url", "requesturl"} and isinstance(child, str):
                 parts = urlsplit(child)
@@ -65,16 +69,18 @@ def clean_trace_value(value):
     return value
 
 
-def sanitize_trace_archives() -> None:
-    for archive in ARTIFACTS.rglob("trace.zip"):
+def sanitize_trace_archives(artifacts_root: Path) -> None:
+    for archive in artifacts_root.rglob("trace.zip"):
         temporary = archive.with_suffix(".sanitized.zip")
         with zipfile.ZipFile(archive, "r") as source, zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as target:
             for item in source.infolist():
                 name = item.filename
-                # Screenshots are synthetic UI evidence. Drop snapshots, network
-                # resource bodies, source files and every unrecognized payload.
-                if not (name.endswith("trace.trace") or name.endswith("trace.network")
-                        or name.endswith("trace.stacks") or (name.startswith("resources/") and name.endswith(".png"))):
+                # Trace archives may contain DOM snapshots, screenshots, source
+                # files, request/response bodies, and attachments. Publish only
+                # the two structured metadata streams; screenshot/report
+                # attachments are deliberately withheld because image redaction
+                # cannot be proven by this sanitizer.
+                if name not in {"trace.trace", "trace.network"}:
                     continue
                 data = source.read(item)
                 if name.endswith(("trace.trace", "trace.network", "trace.stacks")):
@@ -82,7 +88,7 @@ def sanitize_trace_archives() -> None:
                     for line in data.decode("utf-8", "replace").splitlines():
                         try:
                             rows.append(json.dumps(clean_trace_value(json.loads(line)), separators=(",", ":")))
-                        except json.JSONDecodeError:
+                        except (json.JSONDecodeError, UnicodeDecodeError):
                             continue
                     data = ("\n".join(rows) + "\n").encode()
                 target.writestr(name, data)
@@ -90,47 +96,189 @@ def sanitize_trace_archives() -> None:
         temporary.replace(archive)
 
 
-def sanitize_text_reports(password_path: Path) -> None:
+def _sanitize_url(value: str) -> str:
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return "<redacted-url>"
+    if not parts.scheme or not parts.netloc:
+        return OPAQUE_ID.sub("<opaque-id>", value.split("?", 1)[0].split("#", 1)[0])
+    try:
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        return "<redacted-url>"
+    if host not in {"127.0.0.1", "localhost"}:
+        return "<blocked-origin>"
+    netloc = f"[{host}]" if host and ":" in host else str(host)
+    if port is not None:
+        netloc += f":{port}"
+    return f"{parts.scheme}://{netloc}{OPAQUE_ID.sub('<opaque-id>', parts.path)}"
+
+
+def _sanitize_junit(path: Path) -> None:
+    tree = ET.parse(path)
+    root = tree.getroot()
+    for parent in root.iter():
+        for child in list(parent):
+            if child.tag.rsplit("}", 1)[-1] in {"system-out", "system-err"}:
+                parent.remove(child)
+        for child in parent:
+            if child.tag.rsplit("}", 1)[-1] in {"failure", "error"}:
+                child.attrib.clear()
+                child.set("message", "failure details withheld")
+                child.text = ""
+        for key, value in tuple(parent.attrib.items()):
+            if key.lower() in {"url", "requesturl"}:
+                parent.attrib[key] = _sanitize_url(value)
+            else:
+                parent.attrib[key] = REPORT_ID.sub("<opaque-id>", value)
+    tree.write(path, encoding="utf-8", xml_declaration=True)
+
+
+def _sanitize_request_metadata(path: Path) -> None:
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(entries, list):
+        raise RuntimeError("request metadata schema rejected")
+    safe_entries = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise RuntimeError("request metadata row rejected")
+        safe_entries.append({
+            "method": str(entry.get("method", ""))[:12],
+            "path": _sanitize_url(str(entry.get("path", ""))),
+            "status": entry.get("status") if isinstance(entry.get("status"), int) else None,
+            "elapsed_ms": entry.get("elapsed_ms") if isinstance(entry.get("elapsed_ms"), int) else None,
+        })
+    path.write_text(json.dumps(safe_entries, indent=2) + "\n", encoding="utf-8")
+
+
+def _sanitize_run_summary(path: Path) -> None:
+    summary = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(summary, dict):
+        raise RuntimeError("run summary schema rejected")
+    allowed = {"result", "core", "web", "browser", "promote_enabled", "hermes",
+               "raw_record_count", "journal_files", "knowledge_files", "exit_code",
+               "python", "node", "html_report_uploaded", "screenshots_uploaded"}
+    path.write_text(json.dumps({key: summary[key] for key in allowed if key in summary}, indent=2) + "\n",
+                    encoding="utf-8")
+
+
+def sanitize_text_reports(artifacts_root: Path, password_path: Path) -> None:
     secret = password_path.read_text(encoding="utf-8").strip().encode()
-    for path in ARTIFACTS.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in {".html", ".xml", ".json", ".txt", ".md"}:
+    for path in artifacts_root.rglob("*"):
+        if not path.is_file():
             continue
-        try:
-            content = path.read_bytes().decode("utf-8")
-        except UnicodeDecodeError:
+        if path.name == "junit.xml":
+            _sanitize_junit(path)
+        elif path.name == "local-http-request-metadata.json":
+            _sanitize_request_metadata(path)
+        elif path.name == "run-summary.json":
+            _sanitize_run_summary(path)
+        else:
             continue
-        content = REPORT_ID.sub("<opaque-id>", content)
-        content = content.replace("sb_app_session", "<session-cookie>")
-        if secret:
-            content = content.replace(secret.decode(), "<redacted>")
-        path.write_text(content, encoding="utf-8")
+        content = path.read_bytes()
+        if secret and secret in content:
+            content = content.replace(secret, b"<redacted>")
+            path.write_bytes(content)
         os.chmod(path, 0o600)
 
 
-def verify_artifact_redaction(password_path: Path) -> None:
+def verify_artifact_redaction(artifacts_root: Path, password_path: Path) -> None:
     secret = password_path.read_bytes().strip()
-    for path in ARTIFACTS.rglob("*"):
+    for path in artifacts_root.rglob("*"):
         if not path.is_file():
             continue
+        if path.suffix.lower() in {".html", ".png", ".jpg", ".jpeg", ".webp"}:
+            raise RuntimeError("active content and screenshot artifacts are not publishable")
         blobs = [path.read_bytes()]
         if zipfile.is_zipfile(path):
             with zipfile.ZipFile(path) as archive:
                 blobs.extend(archive.read(name) for name in archive.namelist())
+        joined = b"\n".join(blobs).lower()
         if any(secret and secret in blob for blob in blobs):
             raise RuntimeError("report redaction check failed; artifacts are withheld")
-        if any(b"sb_app_session" in blob for blob in blobs):
-            raise RuntimeError("report cookie redaction check failed; artifacts are withheld")
+        if any(marker in joined for marker in (b"sb_app_session", b"authorization:", b"cookie:",
+                                                b"set-cookie:", b"synthetic-request-body",
+                                                b"synthetic-response-body", b"synthetic-cookie-value",
+                                                b"synthetic-query-secret", b"synthetic-auth-secret",
+                                                b"synthetic-cookie-header-value")):
+            raise RuntimeError("sensitive report marker found; artifacts are withheld")
+        if re.search(rb"https?://[^\s\"<>]*\?[^\s\"<>]*", joined):
+            raise RuntimeError("URL query data found; artifacts are withheld")
+        if re.search(rb"https?://[^/\s@]+@[^/\s]+", joined):
+            raise RuntimeError("URL user-info found; artifacts are withheld")
 
 
-def sanitize_or_withhold_artifacts(password_path: Path) -> None:
+def _copy_publishable_files(raw_root: Path, staging_root: Path) -> None:
+    def copy_regular(source: Path, target: Path) -> None:
+        if source.is_symlink():
+            raise RuntimeError("symlink report rejected; upload withheld")
+        if not source.is_file():
+            return
+        if not source.resolve().is_relative_to(raw_root.resolve()):
+            raise RuntimeError("report escaped the raw artifact root")
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+    fixed_files = ("junit.xml", "local-http-request-metadata.json", "run-summary.json")
+    for relative in fixed_files:
+        source = raw_root / relative
+        if source.exists() or source.is_symlink():
+            copy_regular(source, staging_root / relative)
+    results = raw_root / "test-results"
+    if results.exists():
+        for source in results.rglob("trace.zip"):
+            target = staging_root / source.relative_to(raw_root)
+            copy_regular(source, target)
+
+
+def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: Path) -> None:
+    """Atomically publish an allowlist of fully sanitized reports or publish nothing."""
+    publish_root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if publish_root.is_symlink() or (publish_root.exists() and not publish_root.is_dir()):
+        raise RuntimeError("artifact publication path is not a regular directory")
+    if publish_root.exists() and any(publish_root.iterdir()):
+        raise RuntimeError("artifact publication path is not empty; upload withheld")
+    publish_root.mkdir(mode=0o700, exist_ok=True)
+    staging_root = Path(tempfile.mkdtemp(prefix=".artifacts-verified-", dir=publish_root.parent))
     try:
-        sanitize_trace_archives()
-        sanitize_text_reports(password_path)
-        verify_artifact_redaction(password_path)
+        _copy_publishable_files(raw_root, staging_root)
+        sanitize_trace_archives(staging_root)
+        sanitize_text_reports(staging_root, password_path)
+        verify_artifact_redaction(staging_root, password_path)
+        for path in staging_root.rglob("*"):
+            if path.is_file():
+                os.chmod(path, 0o600)
+            elif path.is_dir():
+                os.chmod(path, 0o700)
+        publish_root.rmdir()
+        os.replace(staging_root, publish_root)
     except Exception as error:
-        shutil.rmtree(ARTIFACTS, ignore_errors=True)
-        ARTIFACTS.mkdir(mode=0o700, parents=True, exist_ok=True)
-        raise RuntimeError("report redaction failed; artifact upload withheld") from error
+        shutil.rmtree(staging_root, ignore_errors=True)
+        if publish_root.exists() and publish_root.is_dir() and not publish_root.is_symlink():
+            for child in publish_root.iterdir():
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child, ignore_errors=True)
+                else:
+                    child.unlink(missing_ok=True)
+        elif not publish_root.exists():
+            publish_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        raise RuntimeError("report validation failed; artifact upload withheld") from error
+
+
+def artifact_run_directory() -> Path:
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
+    label = f"{run_id}-{attempt}" if run_id and attempt else f"local-{uuid.uuid4()}"
+    return ARTIFACTS / label
+
+
+def mark_verified_artifact_output() -> None:
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with Path(output).open("a", encoding="utf-8") as handle:
+            handle.write("artifacts_verified=true\n")
 
 
 def wait_http(url: str, process: subprocess.Popen, label: str) -> None:
@@ -159,6 +307,22 @@ def stop(process: subprocess.Popen | None) -> None:
         except ProcessLookupError:
             pass
         process.wait(timeout=5)
+
+
+def wait_for_test_process(test_process: subprocess.Popen) -> int:
+    try:
+        test_process.wait(timeout=600)
+    except subprocess.TimeoutExpired as error:
+        stop(test_process)
+        raise RuntimeError("Playwright browser acceptance exceeded its 10-minute limit") from error
+    if test_process.returncode is None or test_process.returncode < 0:
+        raise RuntimeError("Playwright runner terminated abnormally; artifact upload withheld")
+    return test_process.returncode
+
+
+def launch_browser_tests(env: dict[str, str], output_log) -> subprocess.Popen:
+    return subprocess.Popen(["npm", "test"], cwd=E2E, env=env, stdout=output_log,
+                            stderr=subprocess.STDOUT, start_new_session=True)
 
 
 def assert_no_business_files(root: Path, label: str) -> None:
@@ -254,13 +418,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--http-smoke-only", action="store_true", help="run synthetic Core HTTP checks without launching a browser")
     options = parser.parse_args()
-    ARTIFACTS.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for child in ARTIFACTS.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-    os.chmod(ARTIFACTS, 0o700)
+    # The workflow uploads only this directory. It starts empty on every run;
+    # raw Playwright output lives in the private temp root below and is never a
+    # parent or sibling matched by the upload-artifact path.
+    publish_root = artifact_run_directory()
+    publish_root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if publish_root.is_symlink() or (publish_root.exists() and not publish_root.is_dir()):
+        raise RuntimeError("artifact publication path is not a regular directory")
+    if publish_root.exists() and any(publish_root.iterdir()):
+        raise RuntimeError("artifact publication path is not empty; upload withheld")
+    publish_root.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(publish_root, 0o700)
 
     core_port, web_port = ephemeral_port(), ephemeral_port()
     while web_port == core_port:
@@ -268,6 +436,8 @@ def main() -> int:
     CORE_URL, WEB_URL = f"http://127.0.0.1:{core_port}", f"http://127.0.0.1:{web_port}"
     root = Path(tempfile.mkdtemp(prefix="secondbrain-a-web-e2e-"))
     os.chmod(root, 0o700)
+    raw_artifacts = root / "playwright-raw"
+    raw_artifacts.mkdir(mode=0o700)
     processes: list[subprocess.Popen] = []
     log_files = []
     result = 1
@@ -297,7 +467,9 @@ def main() -> int:
             "SB_E2E_BASE_URL": WEB_URL,
             "SB_CORE_PROXY_TARGET": CORE_URL,
             "SB_E2E_PASSWORD_FILE": str(password_path),
-            "PLAYWRIGHT_JUNIT_OUTPUT_NAME": str(ARTIFACTS / "junit.xml"),
+            "SB_E2E_RAW_ARTIFACTS": str(raw_artifacts),
+            "PLAYWRIGHT_JUNIT_OUTPUT_NAME": str(raw_artifacts / "junit.xml"),
+            "PLAYWRIGHT_HTML_OUTPUT_DIR": str(raw_artifacts / "html"),
             "CI": "true",
         })
         core_log = (root / "core.log").open("wb")
@@ -325,18 +497,14 @@ def main() -> int:
         request_log = None
         if options.http_smoke_only:
             request_log = http_smoke(password_path)
-            (ARTIFACTS / "local-http-request-metadata.json").write_text(json.dumps(request_log, indent=2) + "\n", encoding="utf-8")
+            (raw_artifacts / "local-http-request-metadata.json").write_text(json.dumps(request_log, indent=2) + "\n", encoding="utf-8")
             test_returncode = 0
         else:
-            test_process = subprocess.Popen(["npm", "test"], cwd=E2E, env=env, start_new_session=True)
+            test_log = (root / "playwright-runner.log").open("wb")
+            log_files.append(test_log)
+            test_process = launch_browser_tests(env, test_log)
             processes.append(test_process)
-            try:
-                test_process.wait(timeout=600)
-            except subprocess.TimeoutExpired as error:
-                stop(test_process)
-                raise RuntimeError("Playwright browser acceptance exceeded its 10-minute limit") from error
-            test_returncode = test_process.returncode
-            sanitize_or_withhold_artifacts(password_path)
+            test_returncode = wait_for_test_process(test_process)
 
         raw_files = [path for path in dirs["raw"].iterdir() if path.is_file()]
         if test_returncode == 0:
@@ -358,9 +526,13 @@ def main() -> int:
             "exit_code": test_returncode,
             "python": python,
             "node": node,
+            "html_report_uploaded": False,
+            "screenshots_uploaded": 0,
         }
-        (ARTIFACTS / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-        os.chmod(ARTIFACTS / "run-summary.json", 0o600)
+        (raw_artifacts / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        os.chmod(raw_artifacts / "run-summary.json", 0o600)
+        publish_verified_reports(raw_artifacts, publish_root, password_path)
+        mark_verified_artifact_output()
         result = test_returncode
         return result
     finally:

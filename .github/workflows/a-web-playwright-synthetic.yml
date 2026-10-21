@@ -50,12 +50,15 @@ jobs:
       - name: Verify trace artifact redaction
         run: python -m pytest -q web-app/e2e/tests/test_artifact_sanitizer.py
       - name: Run isolated Core + Web browser acceptance
+        id: synthetic
         run: python web-app/e2e/scripts/run_synthetic_ci.py
       - name: Upload sanitized acceptance evidence
-        if: always()
+        if: always() && steps.synthetic.outputs.artifacts_verified == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: a-web-playwright-synthetic-${{ github.run_id }}
-          path: web-app/e2e/artifacts/
-          if-no-files-found: warn
+          # The run-specific directory is uploaded only after the runner emits
+          # a success output following allowlist + redaction + leak validation.
+          path: web-app/e2e/artifacts-sanitized/${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: ignore
           retention-days: 7
