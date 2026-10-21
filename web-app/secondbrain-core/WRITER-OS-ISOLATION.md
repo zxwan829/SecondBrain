@@ -2,14 +2,22 @@
 
 ## Evidence status
 
-**`OS_ISOLATION_NOT_VERIFIED` (local environment snapshot: 2026-10-20).** The
+**`OS_ISOLATION_NOT_VERIFIED` for production (local environment snapshot: 2026-10-21).** The
 available machine is macOS 14.8.9, x86_64, UID 501/GID 20. Python has no
 `socket.SO_PEERCRED` on this platform (it exposes `LOCAL_PEERCRED`, which this
 Linux-specific Writer entry point does not accept). No Docker, Podman, Colima,
 Lima, Multipass, or QEMU executable was found. Existing Writer unit and socket
 pair tests use injected peer identity or one OS identity; neither is OS
 isolation evidence. No host identity, group, ACL, mount, or permission was
-changed to attempt this test.
+changed to attempt this test. No new Linux container/VM was provisioned.
+
+### 2026-10-21 latest-main revalidation
+
+- Candidate was rebased onto main `7ceec110c6e361ba8661c2ab005ab8906ea2323a`; fixed PR HEAD is recorded in PR #106 and Issue #97.
+- On macOS 14.8.9 x86_64 with Python 3.12.14, Writer focused tests reported **24 passed, 1 skipped**. The skipped test is the Linux-only real UID/GID + `SO_PEERCRED` harness; it is **NOT RUN**, not a pass.
+- Full Core on this latest-main candidate reported **488 passed, 1 skipped, 28 subtests passed**. The single skip is the same Linux-only kernel isolation test.
+- Linux workflow run [39583394667](https://github.com/zxwan829/SecondBrain/actions/runs/39583394667) reports **1 passed** in its dedicated OS isolation step at workflow SHA `accfe3e4b643a8d1ca1402e274255d4e1e94071c`. The Writer implementation and Linux isolation test files are unchanged from that tested SHA through the rebased candidate. The workflow's separate full Core step failed on an atime-ordering fixture; that fixture was corrected later, but the Linux full Core suite has not been rerun. Do not claim latest-main Linux full-suite PASS.
+- `git diff --check origin/main...HEAD` and `git merge-tree --write-tree origin/main HEAD` passed on this rebased candidate. The disposable Linux runner is synthetic-only evidence; production identity, service topology, ACL/mount and NAS behavior remain **NOT VERIFIED**.
 
 ## Reproducible Linux harness
 
