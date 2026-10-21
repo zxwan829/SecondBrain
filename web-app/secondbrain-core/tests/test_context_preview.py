@@ -279,6 +279,24 @@ def test_context_authorization_precedes_hermes_and_source_io(tmp_path, monkeypat
             assert memory_reads == []
 
 
+def test_context_requires_authenticated_app_session_before_hermes_or_source_io(tmp_path, monkeypatch):
+    app, _ = _configured_app(tmp_path, monkeypatch)
+    hermes_calls = []
+    source_calls = []
+    monkeypatch.setattr(HermesAPI, "get_session",
+                        lambda self, session_id: hermes_calls.append(session_id))
+    monkeypatch.setattr(app.state.personal_memory_store, "context_candidates",
+                        lambda **kwargs: source_calls.append("memory") or [])
+    monkeypatch.setattr(app.state.knowledge_read_store, "chat_recall",
+                        lambda *args, **kwargs: source_calls.append("knowledge") or {"items": [], "status": "none"})
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.post("/api/chat/sessions/session-A/context-preview",
+                               headers={"Origin": "https://testserver"}, json={"query": "concise"})
+        assert response.status_code == 401
+        assert response.headers["cache-control"] == "private, no-store"
+        assert hermes_calls == source_calls == []
+
+
 def test_context_rechecks_authorization_after_session_lookup_before_source_io(tmp_path, monkeypatch):
     app, roots = _configured_app(tmp_path, monkeypatch)
     _append_event(roots["memory"], _event())
