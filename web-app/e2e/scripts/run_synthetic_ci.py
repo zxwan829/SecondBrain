@@ -40,9 +40,27 @@ SENSITIVE_KEYS = ("header", "cookie", "authorization", "bearer", "token", "crede
 TRACE_SAFE_KEYS = {"type", "method", "url", "request", "response", "status", "statusCode",
                    "startTime", "endTime", "duration", "resourceType", "isNavigationRequest"}
 FAILURE_SCREENSHOT_NAME = "test-failed-1.png"
-FAILURE_SCREENSHOT_VIEWPORTS = {"desktop-1440x1000", "tablet-820x1180", "mobile-390x844"}
-FAILURE_SCREENSHOT_TEST_SLUG = "explicit-inbox-capture-retry-conflict-and-source-protection-at"
-MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_VIEWPORTS)
+# These are the exact Playwright 1.56.1 output directory names for the sole
+# approved test file/title and its three fixed viewport cases. Playwright
+# sanitizes and hash-truncates the long title; a substring/viewport match would
+# broaden the screenshot allowlist to unrelated tests.
+FAILURE_SCREENSHOT_DIR_VIEWPORTS = {
+    "inbox-browser-explicit-Inb-3c225-ection-at-desktop-1440x1000": "desktop-1440x1000",
+    "inbox-browser-explicit-Inb-33ff6-otection-at-tablet-820x1180": "tablet-820x1180",
+    "inbox-browser-explicit-Inb-7095f-rotection-at-mobile-390x844": "mobile-390x844",
+}
+FAILURE_JUNIT_TESTCASE_VIEWPORTS = {
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000"): "desktop-1440x1000",
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at tablet-820x1180"): "tablet-820x1180",
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at mobile-390x844"): "mobile-390x844",
+}
+FAILURE_DIAGNOSTIC_STAGES = {
+    "login", "session", "first_submit", "retry", "conflict",
+    "ordinary_chat", "source_protection", "viewport_layout",
+}
+FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
+MAX_FAILURE_DIAGNOSTIC_BYTES = 512
+MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_SCREENSHOT_WIDTH = 2048
 MAX_SCREENSHOT_HEIGHT = 1600
@@ -173,6 +191,120 @@ def _sanitize_run_summary(path: Path) -> None:
                     encoding="utf-8")
 
 
+def _validate_failure_diagnostics(value) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) > MAX_FAILURE_SCREENSHOTS:
+        raise RuntimeError("failure diagnostic schema rejected; upload withheld")
+    validated = []
+    seen_viewports = set()
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != {"viewport", "stage", "code"}:
+            raise RuntimeError("failure diagnostic fields rejected; upload withheld")
+        viewport = entry["viewport"]
+        stage = entry["stage"]
+        code = entry["code"]
+        if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
+                or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
+                or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
+                or viewport in seen_viewports):
+            raise RuntimeError("failure diagnostic value rejected; upload withheld")
+        seen_viewports.add(viewport)
+        validated.append({"viewport": viewport, "stage": stage, "code": code})
+    return validated
+
+
+def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, str]]:
+    junit_path = raw_root / "junit.xml"
+    summary_path = raw_root / "run-summary.json"
+    if junit_path.is_symlink() or summary_path.is_symlink():
+        raise RuntimeError("failure diagnostic source symlink rejected; upload withheld")
+    if not junit_path.exists():
+        if summary_path.exists():
+            if summary_path.stat().st_size > 4096 or not summary_path.is_file():
+                raise RuntimeError("failure diagnostic run summary rejected; upload withheld")
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+                raise RuntimeError("failure diagnostic run summary rejected; upload withheld") from error
+            if not isinstance(summary, dict):
+                raise RuntimeError("failure diagnostic run summary rejected; upload withheld")
+            if summary.get("result") == "FAIL":
+                raise RuntimeError("failed browser run has no JUnit diagnostics; upload withheld")
+        return []
+    if not junit_path.is_file():
+        raise RuntimeError("failure diagnostic JUnit path rejected; upload withheld")
+
+    try:
+        junit = ET.parse(junit_path).getroot()
+    except (ET.ParseError, OSError) as error:
+        raise RuntimeError("failure diagnostic JUnit rejected; upload withheld") from error
+    testcase_viewports = []
+    failed_viewports = []
+    for element in junit.iter():
+        if element.tag.rsplit("}", 1)[-1] != "testcase":
+            continue
+        identity = (element.attrib.get("classname"), element.attrib.get("name"))
+        viewport = FAILURE_JUNIT_TESTCASE_VIEWPORTS.get(identity)
+        if viewport is None:
+            raise RuntimeError("failure diagnostic JUnit testcase identity rejected; upload withheld")
+        testcase_viewports.append(viewport)
+        if any(child.tag.rsplit("}", 1)[-1] in {"failure", "error"} for child in element):
+            failed_viewports.append(viewport)
+    if (len(testcase_viewports) != len(FAILURE_JUNIT_TESTCASE_VIEWPORTS)
+            or set(testcase_viewports) != set(FAILURE_JUNIT_TESTCASE_VIEWPORTS.values())
+            or len(set(testcase_viewports)) != len(testcase_viewports)):
+        raise RuntimeError("failure diagnostic JUnit testcase set rejected; upload withheld")
+    failed_viewport_set = set(failed_viewports)
+    if summary_path.exists():
+        if summary_path.stat().st_size > 4096 or not summary_path.is_file():
+            raise RuntimeError("failure diagnostic run summary rejected; upload withheld")
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+            raise RuntimeError("failure diagnostic run summary rejected; upload withheld") from error
+        if not isinstance(summary, dict):
+            raise RuntimeError("failure diagnostic run summary rejected; upload withheld")
+        if summary.get("result") == "FAIL" and not failed_viewports:
+            raise RuntimeError("failed browser run has no failed testcase diagnostics; upload withheld")
+
+    results = raw_root / "test-results"
+    if results.is_symlink():
+        raise RuntimeError("failure diagnostic result root symlink rejected; upload withheld")
+    diagnostics = []
+    if results.exists():
+        if not results.is_dir():
+            raise RuntimeError("failure diagnostic result root rejected; upload withheld")
+        for directory in results.iterdir():
+            if directory.is_symlink():
+                raise RuntimeError("failure diagnostic directory symlink rejected; upload withheld")
+            if not directory.is_dir():
+                continue
+            source = directory / "failure-summary.json"
+            if not source.exists() and not source.is_symlink():
+                continue
+            viewport = FAILURE_SCREENSHOT_DIR_VIEWPORTS.get(directory.name)
+            if viewport is None or source.is_symlink() or not source.is_file():
+                raise RuntimeError("failure diagnostic source path rejected; upload withheld")
+            if source.stat().st_size > MAX_FAILURE_DIAGNOSTIC_BYTES:
+                raise RuntimeError("failure diagnostic size rejected; upload withheld")
+            try:
+                raw = json.loads(source.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+                raise RuntimeError("failure diagnostic JSON rejected; upload withheld") from error
+            if (not isinstance(raw, dict) or set(raw) != {"schema_version", "viewport", "stage", "code"}
+                    or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 1
+                    or raw.get("viewport") != viewport):
+                raise RuntimeError("failure diagnostic source schema rejected; upload withheld")
+            diagnostics.append({"viewport": viewport, "stage": raw.get("stage"), "code": raw.get("code")})
+
+    diagnostics = _validate_failure_diagnostics(diagnostics)
+    diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
+    if failed_viewport_set != diagnostic_viewports:
+        raise RuntimeError("failure diagnostics do not match failed testcase viewports; upload withheld")
+    viewport_order = {name: index for index, name in enumerate(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values())}
+    diagnostics.sort(key=lambda entry: viewport_order[entry["viewport"]])
+    return diagnostics
+
+
 def sanitize_text_reports(artifacts_root: Path, password_path: Path) -> None:
     secret = password_path.read_text(encoding="utf-8").strip().encode()
     for path in artifacts_root.rglob("*"):
@@ -180,6 +312,9 @@ def sanitize_text_reports(artifacts_root: Path, password_path: Path) -> None:
             continue
         if path.name == "junit.xml":
             _sanitize_junit(path)
+        elif path.name == "failure-diagnostics.json":
+            normalized = _validate_failure_diagnostics(json.loads(path.read_text(encoding="utf-8")))
+            path.write_text(json.dumps(normalized, indent=2) + "\n", encoding="utf-8")
         elif path.name == "local-http-request-metadata.json":
             _sanitize_request_metadata(path)
         elif path.name == "run-summary.json":
@@ -207,8 +342,7 @@ def verify_artifact_redaction(artifacts_root: Path, password_path: Path) -> None
             if not is_allowlisted_failure_screenshot(artifacts_root, path):
                 raise RuntimeError("non-allowlisted PNG artifact found; upload withheld")
             relative = path.relative_to(artifacts_root)
-            screenshot_viewports.extend(viewport for viewport in FAILURE_SCREENSHOT_VIEWPORTS
-                                        if viewport in relative.parts[1])
+            screenshot_viewports.append(FAILURE_SCREENSHOT_DIR_VIEWPORTS[relative.parts[1]])
             _verify_sanitized_png(path, secret)
             continue
         blobs = [path.read_bytes()]
@@ -230,6 +364,14 @@ def verify_artifact_redaction(artifacts_root: Path, password_path: Path) -> None
             raise RuntimeError("URL user-info found; artifacts are withheld")
     if len(screenshot_viewports) > MAX_FAILURE_SCREENSHOTS or len(set(screenshot_viewports)) != len(screenshot_viewports):
         raise RuntimeError("duplicate or excessive failure screenshots; upload withheld")
+    diagnostic_path = artifacts_root / "failure-diagnostics.json"
+    if diagnostic_path.exists() or diagnostic_path.is_symlink():
+        if diagnostic_path.is_symlink() or not diagnostic_path.is_file() or diagnostic_path.stat().st_size > MAX_FAILURE_DIAGNOSTIC_BYTES:
+            raise RuntimeError("failure diagnostics artifact rejected; upload withheld")
+        try:
+            _validate_failure_diagnostics(json.loads(diagnostic_path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
+            raise RuntimeError("failure diagnostics artifact rejected; upload withheld") from error
 
 
 def _screenshots_are_allowed_for_this_run() -> bool:
@@ -250,22 +392,18 @@ def _failure_screenshot_candidates(raw_root: Path) -> list[Path]:
         # Playwright writes a failure screenshot directly under each test's
         # generated output directory. Do not recurse into trace resources or
         # accept arbitrary attached/user-provided image paths.
+        if source.name not in FAILURE_SCREENSHOT_DIR_VIEWPORTS:
+            continue
+        viewport = FAILURE_SCREENSHOT_DIR_VIEWPORTS.get(source.name)
         if source.is_symlink() or not source.is_dir():
-            continue
-        normalized_name = re.sub(r"[^a-z0-9]+", "-", source.name.lower()).strip("-")
-        matching_viewports = [viewport for viewport in FAILURE_SCREENSHOT_VIEWPORTS if viewport in normalized_name]
-        normalized_test_slug = re.sub(r"[^a-z0-9]+", "-", FAILURE_SCREENSHOT_TEST_SLUG.lower()).strip("-")
-        if normalized_test_slug not in normalized_name:
-            continue
-        if len(matching_viewports) != 1:
-            continue
+            raise RuntimeError("allowlisted failure result directory rejected; upload withheld")
         screenshot = source / FAILURE_SCREENSHOT_NAME
         if screenshot.is_symlink():
             raise RuntimeError("symlink failure screenshot rejected; upload withheld")
         if screenshot.is_file():
-            if matching_viewports[0] in seen_viewports:
+            if viewport in seen_viewports:
                 raise RuntimeError("duplicate failure screenshot viewport rejected; upload withheld")
-            seen_viewports.add(matching_viewports[0])
+            seen_viewports.add(viewport)
             candidates.append(screenshot)
     if len(candidates) > MAX_FAILURE_SCREENSHOTS:
         raise RuntimeError("failure screenshot count exceeded the fixed synthetic test matrix")
@@ -281,13 +419,9 @@ def is_allowlisted_failure_screenshot(artifacts_root: Path, path: Path) -> bool:
         relative = path.relative_to(artifacts_root)
     except ValueError:
         return False
-    normalized_name = re.sub(r"[^a-z0-9]+", "-", relative.parts[1].lower()).strip("-") if len(relative.parts) == 3 else ""
-    normalized_test_slug = re.sub(r"[^a-z0-9]+", "-", FAILURE_SCREENSHOT_TEST_SLUG.lower()).strip("-")
-    matching_viewports = [viewport for viewport in FAILURE_SCREENSHOT_VIEWPORTS
-                          if len(relative.parts) == 3 and viewport in normalized_name]
     return (len(relative.parts) == 3 and relative.parts[0] == "test-results"
-            and relative.parts[2] == FAILURE_SCREENSHOT_NAME and normalized_test_slug in normalized_name
-            and len(matching_viewports) == 1)
+            and relative.parts[1] in FAILURE_SCREENSHOT_DIR_VIEWPORTS
+            and relative.parts[2] == FAILURE_SCREENSHOT_NAME)
 
 
 def _copy_publishable_files(raw_root: Path, staging_root: Path) -> int:
@@ -311,13 +445,22 @@ def _copy_publishable_files(raw_root: Path, staging_root: Path) -> int:
         for source in results.rglob("trace.zip"):
             target = staging_root / source.relative_to(raw_root)
             copy_regular(source, target)
+    diagnostics = _collect_failure_diagnostics(raw_root)
+    diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
     screenshots = _failure_screenshot_candidates(raw_root)
     for source in screenshots:
+        viewport = FAILURE_SCREENSHOT_DIR_VIEWPORTS[source.parent.name]
+        if viewport not in diagnostic_viewports:
+            raise RuntimeError("failure screenshot has no matching fixed diagnostic; upload withheld")
         if not source.resolve().is_relative_to(raw_root.resolve()):
             raise RuntimeError("failure screenshot escaped the current raw run")
         target = staging_root / source.relative_to(raw_root)
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+    if diagnostics:
+        diagnostic_path = staging_root / "failure-diagnostics.json"
+        diagnostic_path.write_text(json.dumps(diagnostics, indent=2) + "\n", encoding="utf-8")
+        os.chmod(diagnostic_path, 0o600)
     return len(screenshots)
 
 

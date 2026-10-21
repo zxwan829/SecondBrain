@@ -12,6 +12,8 @@ const viewports = [
 ] as const;
 
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
+type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
+  | 'ordinary_chat' | 'source_protection' | 'viewport_layout';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function safePath(value: string): string {
@@ -29,6 +31,7 @@ async function configurePage(page: Page) {
   let createdInboxId = '';
   let firstInboxResponse = true;
   let lastInboxBody: Record<string, unknown> | null = null;
+  let failureStage: FailureStage = 'login';
 
   page.on('request', (request) => {
     pending.set(request, Date.now());
@@ -113,6 +116,8 @@ async function configurePage(page: Page) {
 
   return {
     requestRecords, blockedOrigins,
+    setFailureStage(stage: FailureStage) { failureStage = stage; },
+    get failureStage() { return failureStage; },
     get inboxPostCount() { return inboxPostCount; },
     get lastInboxBody() { return lastInboxBody; },
     get inboxId() { return createdInboxId; },
@@ -120,6 +125,7 @@ async function configurePage(page: Page) {
 }
 
 async function signInAndCreateBlankSession(page: Page, viewport: { width: number; height: number }, observed: Awaited<ReturnType<typeof configurePage>>) {
+  observed.setFailureStage('login');
   await page.setViewportSize(viewport);
   await page.goto('/chat/blank');
   const passwordInput = page.getByLabel('SecondBrain 登录口令');
@@ -133,6 +139,7 @@ async function signInAndCreateBlankSession(page: Page, viewport: { width: number
     && request.path === '/api/auth/login' && request.status === 200)).toBe(true);
   expect(observed.requestRecords.some((request) => request.path.startsWith('/api/chat/'))).toBe(false);
   expect(observed.inboxPostCount).toBe(0);
+  observed.setFailureStage('session');
   await page.getByRole('button', { name: '创建合成会话' }).click();
   await expect(page.getByRole('heading', { name: '合成会话 1' })).toBeVisible();
 }
@@ -154,6 +161,7 @@ for (const viewport of viewports) {
     await signInAndCreateBlankSession(page, viewport, observed);
     const composer = page.getByPlaceholder('发送消息给 Hermes…');
     await composer.fill(original);
+    observed.setFailureStage('first_submit');
     await page.getByRole('button', { name: '发送' }).click();
 
     await expect(page.getByRole('button', { name: '使用同一请求重试' })).toBeVisible();
@@ -162,6 +170,7 @@ for (const viewport of viewports) {
     expect(firstBody).toMatchObject({ original_text: original, source_channel: 'web', intent: 'journal_intent' });
     expect(firstBody?.source_event_id).toEqual(expect.any(String));
     expect(firstBody?.occurred_at).toEqual(expect.any(String));
+    observed.setFailureStage('retry');
     await page.getByRole('button', { name: '使用同一请求重试' }).click();
 
     await expect(page.getByRole('heading', { name: '原文已保存到 Inbox' })).toBeVisible();
@@ -173,6 +182,7 @@ for (const viewport of viewports) {
 
     const changedText = `记一下：冲突保护合成测试 ${randomUUID()}`;
     await composer.fill(changedText);
+    observed.setFailureStage('conflict');
     await page.evaluate((eventId) => {
       Object.defineProperty(crypto, 'randomUUID', { configurable: true, value: () => eventId });
     }, firstBody!.source_event_id as string);
@@ -184,6 +194,7 @@ for (const viewport of viewports) {
       && request.path === '/api/inbox/entries' && request.status === 409)).toBe(true);
     expect(observed.inboxPostCount).toBe(3);
 
+    observed.setFailureStage('source_protection');
     const inboxGet = observed.requestRecords.filter((request) => request.method === 'GET' && request.path === '/api/inbox/entries/<opaque-id>');
     expect(inboxGet.length).toBeGreaterThanOrEqual(1);
     expect(inboxGet.some((request) => request.status === 200)).toBe(true);
@@ -198,6 +209,7 @@ for (const viewport of viewports) {
 
     // Plain conversation stays on the fixture Hermes route and never creates
     // an Inbox entry.
+    observed.setFailureStage('ordinary_chat');
     await page.getByRole('button', { name: '创建合成会话' }).click();
     await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
     const postsBeforeOrdinaryChat = observed.inboxPostCount;
@@ -208,6 +220,7 @@ for (const viewport of viewports) {
     expect(observed.blockedOrigins.size).toBe(0);
 
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+    observed.setFailureStage('viewport_layout');
     expect(scrollWidth).toBeLessThanOrEqual(viewport.width);
   });
 }
@@ -215,8 +228,16 @@ for (const viewport of viewports) {
 test.afterEach(async ({ page }, testInfo) => {
   // Playwright's own trace is post-processed by the runner before artifact upload.
   if (testInfo.status !== testInfo.expectedStatus) {
+    const observed = observations.get(testInfo);
+    const viewport = viewports.find(({ name }) => testInfo.title.includes(name));
+    const errors = testInfo.errors;
+    const isTimeout = errors.some((error) => error.name === 'TimeoutError' || /timeout/i.test(error.message));
+    const isAssertion = errors.some((error) => /\bexpect(?:\(|\.)|\bExpected:|\bReceived:/i.test(error.message));
     await writeFile(join(testInfo.outputDir, 'failure-summary.json'), JSON.stringify({
-      test: testInfo.titlePath().join(' / '), status: testInfo.status, expected: testInfo.expectedStatus,
+      schema_version: 1,
+      viewport: viewport?.name ?? 'unknown',
+      stage: observed?.failureStage ?? 'login',
+      code: isTimeout ? 'timeout' : isAssertion ? 'assertion_failed' : 'test_error',
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);

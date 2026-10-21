@@ -19,21 +19,51 @@ assert SPEC and SPEC.loader
 SPEC.loader.exec_module(module)
 
 
+def _screenshot_dir(viewport: str) -> str:
+    return next(name for name, value in module.FAILURE_SCREENSHOT_DIR_VIEWPORTS.items() if value == viewport)
+
+
 def _write_secret(path: Path, value: str = "synthetic-only-passphrase") -> Path:
     path.write_text(value + "\n")
     return path
 
 
-def _seed_raw_reports(raw: Path, secret: str = "synthetic-only-passphrase") -> None:
-    (raw / "test-results" / "capture").mkdir(parents=True)
+def _write_junit(raw: Path, failed_viewports: set[str], *, cases=None, secret=None) -> None:
+    if cases is None:
+        cases = [
+            (classname, name, viewport in failed_viewports)
+            for (classname, name), viewport in module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.items()
+        ]
+    testcase_xml = []
+    for classname, name, failed in cases:
+        if failed and secret:
+            status = (
+                f'<failure message="{secret}">Authorization: Bearer SYNTHETIC_AUTH_SECRET; '
+                'Cookie: sb_app_session=SYNTHETIC_COOKIE_HEADER_VALUE; '
+                'SYNTHETIC_REQUEST_BODY SYNTHETIC_RESPONSE_BODY</failure>'
+                '<system-out>Cookie: sb_app_session=SYNTHETIC_COOKIE_VALUE</system-out>'
+            )
+            url = ' url="http://127.0.0.1:4173/?token=SYNTHETIC_QUERY_SECRET"'
+        else:
+            status = '<failure message="withheld" />' if failed else ""
+            url = ""
+        testcase_xml.append(f'<testcase classname="{classname}" name="{name}"{url}>{status}</testcase>')
+    failures = sum(1 for _, _, failed in cases if failed)
     (raw / "junit.xml").write_text(
-        '<testsuites><testsuite tests="1"><testcase classname="Inbox" name="safe" '
-        'url="http://127.0.0.1:4173/?token=SYNTHETIC_QUERY_SECRET"><failure '
-        f'message="{secret}">Authorization: Bearer SYNTHETIC_AUTH_SECRET; '
-        'Cookie: sb_app_session=SYNTHETIC_COOKIE_HEADER_VALUE; '
-        'SYNTHETIC_REQUEST_BODY SYNTHETIC_RESPONSE_BODY</failure><system-out>'
-        'Cookie: sb_app_session=SYNTHETIC_COOKIE_VALUE</system-out></testcase></testsuite></testsuites>'
+        f'<testsuites><testsuite tests="{len(cases)}" failures="{failures}">'
+        + "".join(testcase_xml) + "</testsuite></testsuites>"
     )
+
+
+def _seed_raw_reports(raw: Path, secret: str = "synthetic-only-passphrase", *, diagnostic_viewport: str = "desktop-1440x1000") -> None:
+    (raw / "test-results" / "capture").mkdir(parents=True)
+    diagnostic_dir = raw / "test-results" / _screenshot_dir(diagnostic_viewport)
+    diagnostic_dir.mkdir(parents=True)
+    (diagnostic_dir / "failure-summary.json").write_text(json.dumps({
+        "schema_version": 1, "viewport": diagnostic_viewport,
+        "stage": "viewport_layout", "code": "assertion_failed",
+    }))
+    _write_junit(raw, {diagnostic_viewport}, secret=secret)
     (raw / "local-http-request-metadata.json").write_text(json.dumps([{
         "method": "POST", "path": "/api/inbox/entries?token=SYNTHETIC_QUERY_SECRET",
         "status": 202, "elapsed_ms": 4, "headers": {"Cookie": "SYNTHETIC_COOKIE_VALUE"},
@@ -129,7 +159,214 @@ def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
     assert "synthetic-" in browser_spec and "randomUUID()" in browser_spec
     assert "Synthetic completion" in browser_spec
     assert "toHaveAttribute('type', 'password')" in browser_spec
-    assert "FAILURE_SCREENSHOT_TEST_SLUG" in runner
+    assert "inbox-browser-explicit-Inb-3c225-ection-at-desktop-1440x1000" in runner
+    assert "inbox-browser-explicit-Inb-33ff6-otection-at-tablet-820x1180" in runner
+    assert "inbox-browser-explicit-Inb-7095f-rotection-at-mobile-390x844" in runner
+
+
+def test_junit_identity_allowlist_tracks_only_the_three_fixed_browser_cases():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    expected = {
+        ("inbox-browser.spec.ts", f"explicit Inbox capture, retry, conflict and source protection at {viewport}"): viewport
+        for viewport in ("desktop-1440x1000", "tablet-820x1180", "mobile-390x844")
+    }
+    assert module.FAILURE_JUNIT_TESTCASE_VIEWPORTS == expected
+    assert "test(`explicit Inbox capture, retry, conflict and source protection at ${viewport.name}`" in browser_spec
+    for viewport in expected.values():
+        assert f"name: '{viewport}'" in browser_spec
+
+
+@pytest.mark.parametrize("viewport", [
+    "desktop-1440x1000", "tablet-820x1180", "mobile-390x844",
+])
+def test_exact_playwright_truncated_output_directory_is_allowlisted(viewport, tmp_path, monkeypatch):
+    _enable_current_linux_browser_run(monkeypatch)
+    raw = tmp_path / "raw"
+    screenshot = raw / "test-results" / _screenshot_dir(viewport) / "test-failed-1.png"
+    _write_png(screenshot)
+    assert module.count_allowlisted_failure_screenshots(raw) == 1
+
+
+@pytest.mark.parametrize("entry", [
+    {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "details": "secret"},
+    {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error"},
+    {"viewport": "desktop-1440x1000", "stage": "login", "code": "raw exception: token=secret"},
+    {"viewport": "not-a-viewport", "stage": "login", "code": "timeout"},
+])
+def test_failure_diagnostic_unknown_or_sensitive_values_fail_closed(entry):
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([entry])
+
+
+def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():
+    entry = {"viewport": "desktop-1440x1000", "stage": "login", "code": "timeout"}
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([entry, entry.copy()])
+    with pytest.raises(RuntimeError, match="schema rejected"):
+        module._validate_failure_diagnostics([entry, entry, entry, entry])
+
+
+def test_failure_diagnostics_require_one_fixed_enum_record_per_failed_testcase(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_junit(raw, {"desktop-1440x1000", "tablet-820x1180"})
+    result_dir = raw / "test-results" / _screenshot_dir("desktop-1440x1000")
+    result_dir.mkdir(parents=True)
+    (result_dir / "failure-summary.json").write_text(json.dumps({
+        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
+    }))
+    with pytest.raises(RuntimeError, match="do not match failed testcase viewports"):
+        module._collect_failure_diagnostics(raw)
+
+
+def _write_failure_diagnostic(raw: Path, viewport: str) -> None:
+    result_dir = raw / "test-results" / _screenshot_dir(viewport)
+    result_dir.mkdir(parents=True, exist_ok=True)
+    (result_dir / "failure-summary.json").write_text(json.dumps({
+        "schema_version": 1, "viewport": viewport, "stage": "viewport_layout", "code": "assertion_failed",
+    }))
+
+
+def test_junit_failure_viewport_must_match_diagnostic_even_when_counts_match(tmp_path):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    _write_junit(raw, {"desktop-1440x1000"})
+    _write_failure_diagnostic(raw, "tablet-820x1180")
+    with pytest.raises(RuntimeError, match="report validation failed; artifact upload withheld"):
+        module.publish_verified_reports(raw, published, _write_secret(tmp_path / "password"))
+    assert not published.exists() or list(published.iterdir()) == []
+
+
+def test_unrelated_failed_junit_testcase_is_rejected(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    cases = [
+        (classname, name, viewport == "desktop-1440x1000")
+        for (classname, name), viewport in module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.items()
+    ]
+    cases.append(("tests/other.spec.ts", "desktop failure", True))
+    _write_junit(raw, {"desktop-1440x1000"}, cases=cases)
+    _write_failure_diagnostic(raw, "desktop-1440x1000")
+    with pytest.raises(RuntimeError, match="testcase identity rejected"):
+        module._collect_failure_diagnostics(raw)
+
+
+def test_junit_classname_must_match_actual_playwright_filename_not_tests_path(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    cases = [
+        ("tests/inbox-browser.spec.ts", name, viewport == "desktop-1440x1000")
+        for (_, name), viewport in module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.items()
+    ]
+    _write_junit(raw, {"desktop-1440x1000"}, cases=cases)
+    with pytest.raises(RuntimeError, match="testcase identity rejected"):
+        module._collect_failure_diagnostics(raw)
+
+
+@pytest.mark.parametrize("bad_identity", [
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000"),
+    ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000 (retry #1)"),
+])
+def test_duplicate_or_ambiguous_failed_junit_identity_is_rejected(tmp_path, bad_identity):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    desktop_identity = next(identity for identity, viewport in module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.items()
+                            if viewport == "desktop-1440x1000")
+    cases = [
+        (classname, name, viewport == "desktop-1440x1000")
+        for (classname, name), viewport in module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.items()
+        if viewport != "tablet-820x1180"
+    ]
+    # The first case duplicates an approved identity; the second adds a
+    # near-match title that cannot be mapped to a viewport.
+    cases.append((*bad_identity, True))
+    if bad_identity == desktop_identity:
+        with pytest.raises(RuntimeError, match="testcase set rejected"):
+            _write_junit_and_collect(raw, cases)
+    else:
+        _write_junit_and_collect(raw, cases, expected_error="testcase identity rejected")
+
+
+def _write_junit_and_collect(raw: Path, cases, expected_error=None):
+    _write_junit(raw, set(), cases=cases)
+    if expected_error:
+        with pytest.raises(RuntimeError, match=expected_error):
+            module._collect_failure_diagnostics(raw)
+        return
+    module._collect_failure_diagnostics(raw)
+
+
+def test_exact_desktop_and_tablet_failures_accept_matching_diagnostics(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    failures = {"desktop-1440x1000", "tablet-820x1180"}
+    _write_junit(raw, failures)
+    for viewport in failures:
+        _write_failure_diagnostic(raw, viewport)
+    assert module._collect_failure_diagnostics(raw) == [
+        {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed"},
+        {"viewport": "tablet-820x1180", "stage": "viewport_layout", "code": "assertion_failed"},
+    ]
+
+
+def test_failed_run_without_junit_or_failed_testcase_diagnostics_is_withheld(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    raw.mkdir(exist_ok=True)
+    _write_junit(raw, set())
+    (raw / "run-summary.json").write_text(json.dumps({"result": "FAIL"}))
+    with pytest.raises(RuntimeError, match="failed browser run has no failed testcase diagnostics"):
+        module._collect_failure_diagnostics(raw)
+
+    (raw / "junit.xml").unlink()
+    with pytest.raises(RuntimeError, match="no JUnit diagnostics"):
+        module._collect_failure_diagnostics(raw)
+
+
+def test_failure_diagnostic_malicious_source_payload_is_withheld(tmp_path):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    _seed_raw_reports(raw)
+    summary = raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "failure-summary.json"
+    summary.write_text(json.dumps({
+        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "login",
+        "code": "test_error", "message": "SYNTHETIC_AUTH_SECRET",
+    }))
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+
+def test_failure_diagnostic_symlink_is_withheld(tmp_path, monkeypatch):
+    _enable_current_linux_browser_run(monkeypatch)
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir()
+    secret = _write_secret(tmp_path / "password")
+    _seed_raw_reports(raw)
+    diagnostics = raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "failure-summary.json"
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({
+        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+    }))
+    diagnostics.unlink()
+    diagnostics.symlink_to(outside)
+    with pytest.raises(RuntimeError, match="upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+    assert list(published.iterdir()) == []
+
+
+def test_failure_diagnostic_boolean_schema_version_is_rejected(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_junit(raw, {"desktop-1440x1000"})
+    result_dir = raw / "test-results" / _screenshot_dir("desktop-1440x1000")
+    result_dir.mkdir(parents=True)
+    (result_dir / "failure-summary.json").write_text(json.dumps({
+        "schema_version": True, "viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+    }))
+    with pytest.raises(RuntimeError, match="source schema rejected"):
+        module._collect_failure_diagnostics(raw)
 
 
 def test_allowlisted_publish_redacts_reports_and_omits_html_unknown_images_and_files(tmp_path):
@@ -142,9 +379,12 @@ def test_allowlisted_publish_redacts_reports_and_omits_html_unknown_images_and_f
 
     published_files = {path.relative_to(published).as_posix() for path in published.rglob("*") if path.is_file()}
     assert published_files == {
-        "junit.xml", "local-http-request-metadata.json", "run-summary.json",
+        "junit.xml", "local-http-request-metadata.json", "run-summary.json", "failure-diagnostics.json",
         "test-results/capture/trace.zip",
     }
+    assert json.loads((published / "failure-diagnostics.json").read_text()) == [{
+        "viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed",
+    }]
     content = "\n".join(path.read_text(errors="ignore") for path in published.rglob("*") if path.is_file() and not zipfile.is_zipfile(path))
     with zipfile.ZipFile(published / "test-results/capture/trace.zip") as archive:
         content += "\n" + "\n".join(archive.read(name).decode("utf-8", "replace") for name in archive.namelist())
@@ -192,7 +432,7 @@ def test_current_linux_fixture_failure_png_is_allowlisted_and_metadata_is_remove
     raw.mkdir(mode=0o700)
     secret = _write_secret(tmp_path / "password")
     _seed_raw_reports(raw)
-    screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-desktop-1440x1000-chromium" / "test-failed-1.png"
+    screenshot = raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "test-failed-1.png"
     _write_png(screenshot, metadata={
         "Comment": "synthetic-query-secret SYNTHETIC_RESPONSE_BODY",
         "Description": "synthetic-only-passphrase SYNTHETIC_COOKIE_VALUE",
@@ -223,11 +463,11 @@ def test_pngs_outside_failure_name_viewport_or_current_run_are_never_published(t
     raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
     raw.mkdir()
     secret = _write_secret(tmp_path / "password")
-    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-desktop-1440x1000-chromium" / "test-failed-2.png")
+    _write_png(raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "test-failed-2.png")
     _write_png(raw / "test-results" / "unrelated-test-desktop-1440x1000" / "test-failed-1.png")
-    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-unknown-viewport" / "test-failed-1.png")
-    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "attachment.png")
-    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "resources" / "failure.png")
+    _write_png(raw / "test-results" / "inbox-browser-explicit-Inb-3c225-ection-at-desktop-1440x1000-spoof" / "test-failed-1.png")
+    _write_png(raw / "test-results" / _screenshot_dir("mobile-390x844") / "attachment.png")
+    _write_png(raw / "test-results" / _screenshot_dir("mobile-390x844") / "resources" / "failure.png")
 
     assert module.count_allowlisted_failure_screenshots(raw) == 0
     assert module.publish_verified_reports(raw, published, secret) == 0
@@ -241,7 +481,7 @@ def test_failure_screenshot_is_not_published_outside_github_linux_browser_contex
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
     raw.mkdir()
-    _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-tablet-820x1180-chromium" / "test-failed-1.png")
+    _write_png(raw / "test-results" / _screenshot_dir("tablet-820x1180") / "test-failed-1.png")
     secret = _write_secret(tmp_path / "password")
 
     assert module.count_allowlisted_failure_screenshots(raw) == 0
@@ -254,7 +494,8 @@ def test_final_gate_detects_unsanitized_png_metadata_and_withholds_entire_upload
     raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
     raw.mkdir()
     secret = _write_secret(tmp_path / "password")
-    screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-desktop-1440x1000-chromium" / "test-failed-1.png"
+    _seed_raw_reports(raw)
+    screenshot = raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "test-failed-1.png"
     _write_png(screenshot, metadata={"Comment": "SYNTHETIC_QUERY_SECRET SYNTHETIC_RESPONSE_BODY"})
     monkeypatch.setattr(module, "_sanitize_failure_screenshots", lambda _root: None)
 
@@ -263,25 +504,23 @@ def test_final_gate_detects_unsanitized_png_metadata_and_withholds_entire_upload
     assert list(published.iterdir()) == []
 
 
-def test_duplicate_screenshots_for_same_viewport_fail_closed(tmp_path, monkeypatch):
+def test_near_match_screenshot_directory_is_ignored_and_exact_directory_remains_eligible(tmp_path, monkeypatch):
     _enable_current_linux_browser_run(monkeypatch)
     raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
     raw.mkdir()
     secret = _write_secret(tmp_path / "password")
-    for suffix in ("-one", "-two"):
-        _write_png(raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-tablet-820x1180-chromium{suffix}" / "test-failed-1.png")
+    _write_png(raw / "test-results" / _screenshot_dir("tablet-820x1180") / "test-failed-1.png")
+    _write_png(raw / "test-results" / (_screenshot_dir("tablet-820x1180") + "-spoof") / "test-failed-1.png")
 
-    with pytest.raises(RuntimeError, match="upload withheld"):
-        module.publish_verified_reports(raw, published, secret)
-    assert list(published.iterdir()) == []
+    assert module.count_allowlisted_failure_screenshots(raw) == 1
 
 
 def test_malformed_or_oversized_allowlisted_png_fails_closed(tmp_path, monkeypatch):
     _enable_current_linux_browser_run(monkeypatch)
     for payload in (b"not a PNG",):
         raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
-        screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-tablet-820x1180-chromium" / "test-failed-1.png"
-        screenshot.parent.mkdir(parents=True)
+        _seed_raw_reports(raw, diagnostic_viewport="tablet-820x1180")
+        screenshot = raw / "test-results" / _screenshot_dir("tablet-820x1180") / "test-failed-1.png"
         screenshot.write_bytes(payload)
         secret = _write_secret(tmp_path / "password")
         with pytest.raises(RuntimeError, match="upload withheld"):
@@ -291,7 +530,8 @@ def test_malformed_or_oversized_allowlisted_png_fails_closed(tmp_path, monkeypat
         shutil.rmtree(published)
 
     raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
-    screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "test-failed-1.png"
+    _seed_raw_reports(raw, diagnostic_viewport="mobile-390x844")
+    screenshot = raw / "test-results" / _screenshot_dir("mobile-390x844") / "test-failed-1.png"
     _write_png(screenshot)
     screenshot.write_bytes(b"x" * (module.MAX_SCREENSHOT_BYTES + 1))
     secret = _write_secret(tmp_path / "password")
@@ -300,7 +540,8 @@ def test_malformed_or_oversized_allowlisted_png_fails_closed(tmp_path, monkeypat
     assert list(published.iterdir()) == []
 
     raw, published = tmp_path / "raw-dimensions", tmp_path / "published-dimensions"
-    screenshot = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "test-failed-1.png"
+    _seed_raw_reports(raw, diagnostic_viewport="mobile-390x844")
+    screenshot = raw / "test-results" / _screenshot_dir("mobile-390x844") / "test-failed-1.png"
     _write_png(screenshot)
     Image.new("RGB", (module.MAX_SCREENSHOT_WIDTH + 1, 1)).save(screenshot, format="PNG")
     with pytest.raises(RuntimeError, match="upload withheld"):
@@ -319,10 +560,10 @@ def test_nonallowlisted_png_in_staging_is_rejected_by_final_leak_gate(tmp_path):
 def test_allowlisted_screenshot_symlink_fails_closed(tmp_path, monkeypatch):
     _enable_current_linux_browser_run(monkeypatch)
     raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    _seed_raw_reports(raw, diagnostic_viewport="mobile-390x844")
     outside = tmp_path / "outside.png"
     _write_png(outside)
-    target = raw / "test-results" / f"{module.FAILURE_SCREENSHOT_TEST_SLUG}-mobile-390x844-chromium" / "test-failed-1.png"
-    target.parent.mkdir(parents=True)
+    target = raw / "test-results" / _screenshot_dir("mobile-390x844") / "test-failed-1.png"
     target.symlink_to(outside)
     secret = _write_secret(tmp_path / "password")
 
