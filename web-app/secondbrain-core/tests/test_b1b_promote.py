@@ -768,6 +768,115 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
         self.assertEqual(operation.status_code, 200, operation.text)
         self.assertEqual(operation.json()["status"], "promoted")
 
+    def test_explicit_test_only_review_to_restricted_writer_to_knowledge_readback(self):
+        """Compose the Core approval flow with Writer; fake peer is not OS evidence."""
+        import fcntl
+        import threading
+
+        from secondbrain_core.modules.restricted_knowledge_writer import (
+            RestrictedKnowledgeWriter, RestrictedWriterIPCClient, serve_unix_socket,
+        )
+        from secondbrain_core.modules.review_promote.worker import (
+            PromoteWorker, _append_audit, render_promoted_markdown,
+        )
+        from secondbrain_core.modules.review_promote.approval import _read_review
+
+        candidate_temp = tempfile.TemporaryDirectory(prefix="sbw-", dir="/tmp")
+        candidate_root = Path(candidate_temp.name).resolve()
+        receipts = candidate_root / "receipts"
+        socket_parent = self.root / "writer-ipc"
+        receipts.mkdir(mode=0o700)
+        socket_parent.mkdir(mode=0o700)
+        os.chmod(receipts, 0o700)
+        os.chmod(socket_parent, 0o710)
+        os.chmod(self.knowledge, 0o750)
+        expected_peer_uid = os.getuid() + 10000
+        if expected_peer_uid == os.geteuid():
+            expected_peer_uid += 1
+        expected_group = os.getegid()
+        writer = RestrictedKnowledgeWriter(
+            str(self.knowledge), str(receipts), expected_peer_uid,
+            expected_core_gid=expected_group,
+            peer_uid_reader=lambda _sock: expected_peer_uid,
+        )
+        socket_path = str(socket_parent / "writer.sock")
+        stop = threading.Event()
+        server = threading.Thread(target=serve_unix_socket,
+                                  args=(writer, socket_path, stop), daemon=True)
+        server.start()
+        deadline = time.monotonic() + 5
+        while not os.path.exists(socket_path) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(os.path.exists(socket_path), "synthetic Writer socket did not start")
+
+        ipc = RestrictedWriterIPCClient(socket_path)
+        written_outputs = []
+
+        def writer_backed_promote(worker, request_id, review_path, review_sha256):
+            approval = worker.approval_source.get_approved(request_id)
+            self.assertIsNotNone(approval)
+            review = _read_review(worker.review_root, review_path)
+            self.assertEqual(hashlib.sha256(review).hexdigest(), review_sha256)
+            output = render_promoted_markdown(
+                request_id, review_sha256, approval.approved_at, review,
+            )
+            result = ipc.write_approved(
+                request_id, approval.target_filename, review_sha256, output,
+            )
+            if result["status"] == "written":
+                audit_fd = os.open(worker.audit_path,
+                                   os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+                try:
+                    fcntl.flock(audit_fd, fcntl.LOCK_EX)
+                    _append_audit(audit_fd, worker._audit_record(
+                        approval, review_sha256, hashlib.sha256(output).hexdigest(), "promoted",
+                    ))
+                    os.fsync(audit_fd)
+                finally:
+                    os.close(audit_fd)
+                written_outputs.append(output)
+            return {
+                "status": "promoted" if result["status"] == "written" else "already_promoted",
+                "request_id": request_id,
+                "target_filename": approval.target_filename,
+            }
+
+        self.env["SB_PROMOTE_ENABLED"] = "true"
+        self.client.close()
+        try:
+            with patch.object(PromoteWorker, "promote", writer_backed_promote):
+                self.app = self._create_app()  # explicit test-only router assembly
+                self.client = TestClient(self.app, base_url="https://testserver")
+                self.login()
+                self.assertEqual(self.unlock().status_code, 200)
+                preview = self.preview()
+                self.assertEqual(preview.status_code, 200, preview.text)
+                confirmed = self.confirm(preview.json()["preview_id"])
+                self.assertEqual(confirmed.status_code, 200, confirmed.text)
+                target = self.knowledge / "synthetic-approved.md"
+                self.assertEqual(target.read_bytes(), written_outputs[0])
+
+                search = self.client.get("/api/knowledge/search?q=Synthetic%20approved",
+                                         headers=self.headers)
+                self.assertEqual(search.status_code, 200, search.text)
+                item = next(row for row in search.json()["items"]
+                            if row["title"] == "Synthetic approved note")
+                detail = self.client.get(f"/api/knowledge/items/{item['id']}", headers=self.headers)
+                self.assertEqual(detail.status_code, 200, detail.text)
+                self.assertEqual(detail.json()["content"].encode("utf-8"), written_outputs[0])
+                source = self.client.get(f"/api/knowledge/items/{item['id']}/source",
+                                         headers=self.headers)
+                self.assertEqual(source.status_code, 200, source.text)
+                self.assertEqual(source.json()["provenance_status"], "verified")
+                self.assertEqual(source.json()["status"], "available")
+                self.assertEqual(len(written_outputs), 1)
+        finally:
+            self.client.close()
+            stop.set()
+            server.join(timeout=2)
+            writer.close()
+            candidate_temp.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()
