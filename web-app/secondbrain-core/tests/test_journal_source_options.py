@@ -377,20 +377,24 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
                 before = read_calls
                 denied = client.get(f"{base_url}?date={DAY}", headers=rejected_headers)
                 assert denied.status_code == expected_status, (rejected_headers, denied.status_code)
+                assert denied.headers["cache-control"] == "private, no-store"
                 assert read_calls == before, rejected_headers
 
             anonymous = httpx.get(f"{origin}{base_url}", headers={"Origin": origin},
                                   trust_env=False)
             assert anonymous.status_code == 401
+            assert anonymous.headers["cache-control"] == "private, no-store"
             anonymous_bad_origin = httpx.get(
                 f"{origin}{base_url}?date={DAY}", headers={"Origin": "http://attacker.invalid"},
                 trust_env=False,
             )
             assert anonymous_bad_origin.status_code == 403
+            assert anonymous_bad_origin.headers["cache-control"] == "private, no-store"
             assert read_calls == 0
 
             denied = client.get(f"{base_url}?date={DAY}", headers={"Origin": "http://attacker.invalid"})
             assert denied.status_code == 403 and read_calls == 0
+            assert denied.headers["cache-control"] == "private, no-store"
             auth = service.auth
             original_action = auth.require_action
             for action in ("daily_brief.read", "journal.read"):
@@ -472,7 +476,7 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
 
             empty = client.get(f"{base_url}?date=2026-10-21", headers={"Origin": origin})
             assert empty.status_code == 200 and empty.json()["status"] == "empty"
-        assert empty.headers["cache-control"] == "private, no-store"
+            assert empty.headers["cache-control"] == "private, no-store"
             assert empty.json()["items"] == []
 
             # A missing store and a filesystem permission failure both map to
