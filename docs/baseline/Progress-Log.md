@@ -5,6 +5,15 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-22 — 阶段一六部分收口，进入 P2-1 Web（Issue #96/#97）
+
+- 按 Issue #96 V2 的明确授权，以 GitHub 普通 merge 顺序合并阶段一第 6 部分：Core PR #171 固定 HEAD `dcb252060d1067ad322837085648942097c4b1a5` → main merge `2abdf4b25420a2efea3088448238cfc4d48af9d8`；Web PR #170 固定 HEAD `c778ae6932ae8ccb091afeb6e82aa2d065aa6855` → main merge `b590c15d81a3a1822304c955c788bfa4c912fea1`。#170 更新前的 A Web 审阅 HEAD 为 `ad54e081d4865307e7d6c9ef2ad08f903d8e6949`；Core merge 是历史父提交。两次 merge 均以 GitHub expected head SHA 锁定，未 force。PR #171 首次请求因 Draft 返回 405；转 Ready 后使用同一 SHA 合并。#170 在 main 前进后 mergeability 短暂为 false，重新读取为 true，且本地 merge-tree 无冲突后按固定 HEAD 合并。GitHub 私有仓库 branch-protection 查询返回套餐限制 403；未绕过规则，最终 GitHub merge API 正常接受两项合并。
+- 阶段一六部分盘点见 `00-CURRENT.md` 顶部。现有 #96/#97 阶段账本没有找到第 1–2 部分独立编号 Gate，因此没有追认通过；第 3 部分为 `STAGE1_PART3_SYNTHETIC_GATE=PASS_WITH_LIMITS` 且无新增源码 PR；第 4 部分 #165/#166 已合并，语义仅为可信 Knowledge“检索参考”，不证明模型 grounding；第 5 部分 #167/#168 已合并，Brief 仍是手工内容闭环；第 6 部分 #171/#170 合成 Gate `PASS_WITH_LIMITS`。
+- 阶段六固定版本合成证据记录于 [#96 #6323445544](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323445544)，独立源码复审见 [#96 #6323490860](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323490860)。候选运行：Core+Vite localhost HTTP PASS；Core 定向 28 passed、4 subtests；Web 定向 10 passed；Web typecheck/build/diff-check PASS。未变化的全量套件未重跑；真实浏览器仍 `BROWSER_BLOCKED_ENV/NOT RUN`。
+- 实际开放缺口：V1 与 D077 Companion MVP 仍 `NOT DONE`；#130 D086 Chat→Inbox 已 merged（`1954f88d1546c3c802c82a97a708aff7c32461f7`）；#164 Today Task 创建仍 Draft/Open。#106 Restricted Writer 的生产独立 OS UID/GID/ACL/mount/peer 准入保持 BLOCKED；#151 Raw 合成 admission 的同 UID namespace/commit 时间窗风险使生产信任边界仍 BLOCKED。真实 Hermes 低信任上下文/grounding、真实数据、浏览器/设备用户验收、部署均未完成。
+- 更新 CURRENT 与本条 Progress Log 的治理文档 PR 单独提交；仅修改以上两个基线文档，不混入应用源码或长期治理规则。纯文档改动运行 `git diff --check`，不重跑应用测试。文档 PR merge 后的实际 merge commit 和最终 main 记在 Issue #96 本任务结论。
+- **NEXT：阶段二 P2-1 Web。** B 已在 [#97 #6323865325](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6323865325) 冻结 Context v1，并在 [#96 #6323867891](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323867891) 同步。A 可立即按 `POST /api/chat/sessions/{session_id}/context-preview` 开发 metadata-only UI；每次按当前 Session 重新请求，依合同处理撤权、漂移、预算与失败，不缓存、不把内容/metadata 发送给 Hermes。`MODEL_CONTEXT_ADMISSION=BLOCKED`；Web 必须区别检索到来源元数据与模型真正使用来源回答，不标 grounded。不得把源码/合成状态写成生产或真实用户验收。
+
 ## 2026-10-20 — D089 #128 合并与治理基线追平
 
 - PR #128 的固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b` 于 2026-10-20 合并至 main，merge commit `87671644356e01d58ec2780d0c45bd11f4c3edfe`。D089 的 `GET /api/daily-brief/source-options/journal` 正式 Core 路由已进入源码主线。
