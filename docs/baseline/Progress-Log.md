@@ -5,6 +5,13 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-22 — P2-1 A Web Context Preview READY
+
+- 基于文档收口后的 main `df9971bc1aeecc83ed6bd3c10aed2e1dd1eb8a0a`，A Draft PR #174 固定应用提交 `cf7f06f79d7eff409288157127649f75268cf0e9`，状态标记 `A_P2_1_WEB_READY`；结果见 [#96 #6324063852](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6324063852) / [#97 #6324066362](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6324066362)。
+- Chat 显式调用 Context v1 metadata preview；只提交 `{query}`，严格检查 session/schema、来源类型、条数与 8 KiB 上限及 `private, no-store`。仅展示 opaque ID、类型、版本、SHA、时间与状态。输入/会话切换时清除并取消旧请求，403 与无效响应 fail closed；不把来源正文或元数据送入 Hermes，也不声称 grounding。
+- Web 全量 32 files / 397 tests、定向 2 files / 25 tests、typecheck、build、diff-check 通过。合成 Mock/DOM 验证不代表 Core+Web localhost、真实浏览器、数据、Hermes/模型、生产或用户验收。Vite build 保留大 chunk 体积警告。
+- B PR #173 的固定 HEAD `f7a50fb5e70db2cc513258e3059fb726eed7ad30` 与测试数量记录在 PR 描述；截至本条更新，#97 尚无 `B_P2_1_CONTEXT_READY`，联合合成 Gate 未运行。下一步是双 READY 后由 A 做一次联合 Gate；`MODEL_CONTEXT_ADMISSION=BLOCKED`。
+
 ## 2026-10-22 — 阶段一六部分收口，进入 P2-1 Web（Issue #96/#97）
 
 - 按 Issue #96 V2 的明确授权，以 GitHub 普通 merge 顺序合并阶段一第 6 部分：Core PR #171 固定 HEAD `dcb252060d1067ad322837085648942097c4b1a5` → main merge `2abdf4b25420a2efea3088448238cfc4d48af9d8`；Web PR #170 固定 HEAD `c778ae6932ae8ccb091afeb6e82aa2d065aa6855` → main merge `b590c15d81a3a1822304c955c788bfa4c912fea1`。#170 更新前的 A Web 审阅 HEAD 为 `ad54e081d4865307e7d6c9ef2ad08f903d8e6949`；Core merge 是历史父提交。两次 merge 均以 GitHub expected head SHA 锁定，未 force。PR #171 首次请求因 Draft 返回 405；转 Ready 后使用同一 SHA 合并。#170 在 main 前进后 mergeability 短暂为 false，重新读取为 true，且本地 merge-tree 无冲突后按固定 HEAD 合并。GitHub 私有仓库 branch-protection 查询返回套餐限制 403；未绕过规则，最终 GitHub merge API 正常接受两项合并。
