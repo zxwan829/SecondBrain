@@ -607,18 +607,18 @@ export function InboxEntryStatusPage({ locale, inboxId, onBack, onReview }: {
       <h1 id="inbox-entry-title">{en ? 'Inbox entry status' : 'Inbox 条目状态'}</h1>
       <p className="workspace-subtitle">{en ? 'Only the linked entry status is requested. Original content is not loaded here.' : '仅查询此链接对应条目的状态；此页不会读取原文。'}</p></div>
       <button type="button" className="capture-secondary" onClick={onBack}>{en ? 'Back to Inbox' : '返回收件箱'}</button></header>
-    {loading && <p role="status">{en ? 'Verifying this exact Inbox entry…' : '正在核验此 Inbox 条目…'}</p>}
+    {loading && <p role="status">{en ? 'Checking status for this exact Inbox ID…' : '正在核对该 Inbox ID 对应的状态…'}</p>}
     {error && <div role="alert" className="capture-alert"><p>{error}</p>
       <button type="button" onClick={() => setRevision((value) => value + 1)}>{en ? 'Retry status check' : '重试状态核验'}</button></div>}
-    {entry && <article className="inbox-item" aria-label={en ? 'Verified Inbox entry' : '已核验 Inbox 条目'}>
-      <div className="inbox-item-main"><div><h2>{en ? 'Core verified this entry' : 'Core 已核验此条目'}</h2>
+    {entry && <article className="inbox-item" aria-label={en ? 'Inbox status' : 'Inbox 状态'}>
+      <div className="inbox-item-main"><div><h2>{en ? 'Core Inbox status checked' : 'Core Inbox 状态已核对'}</h2>
         <p>{en ? 'Intent' : '收录意图'}: {entry.intent} · {en ? 'Source' : '来源'}: {entry.sourceChannel}</p>
         <p>{en ? 'Captured' : '收录时间'}: {capturedAtLabel(entry.capturedAt, locale)}</p></div>
         <span className={`capture-status status-${entry.status}`}>{inboxEntryStatusLabel(entry.status, en)}</span></div>
       <p role="status">{en ? 'This is an Inbox state only. It does not mean a Journal, Knowledge, or Project write has completed.' : '这只表示 Inbox 状态，不代表 Journal、Knowledge 或 Project 已完成写入。'}</p>
       {entry.reviewPath && entry.reviewSha256
-        ? <button type="button" className="capture-primary" onClick={() => onReview(entry.reviewPath!, entry.reviewSha256!)}>{en ? 'Open verified Review source' : '打开已核验的 Review 来源'}</button>
-        : <p role="status">{en ? 'No verified Review source is currently linked.' : '当前没有可核验的 Review 来源链接。'}</p>}
+        ? <button type="button" className="capture-primary" onClick={() => onReview(entry.reviewPath!, entry.reviewSha256!)}>{en ? 'Open Review source with matching version' : '打开版本匹配的 Review 来源'}</button>
+        : <p role="status">{en ? 'No version-matched Review source link is available.' : '当前没有提供版本匹配的 Review 来源链接。'}</p>}
       <button type="button" className="capture-secondary" onClick={() => setRevision((value) => value + 1)}>{en ? 'Refresh status' : '刷新状态'}</button>
     </article>}
   </section>;

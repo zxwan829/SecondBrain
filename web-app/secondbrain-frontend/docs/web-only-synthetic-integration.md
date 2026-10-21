@@ -83,4 +83,6 @@ npm run build
 git diff --check
 ```
 
-The new route and source-drift tests use mocked HTTP in Vitest. This 2026-10-21 slice did not launch a Core HTTP server or browser; `CORE_HTTP=NOT RUN`, `UI_CLICK=NOT RUN`, and `VIEWPORT=NOT RUN` (browser gate remains `BLOCKED_ENV`).
+The new route and source-drift tests use mocked HTTP in Vitest. After the initial PR draft, a separate synthetic localhost Core+Vite proxy check was executed and recorded in Issue #96 comment #6307519013: Core `create_app()` ran under Uvicorn on `127.0.0.1:8000`; Vite served the frontend and proxied authenticated Inbox POST/GET requests. Shell/module, login/session and exact POST→GET returned HTTP 200/202/200 as expected; all data stayed under a fresh temporary root and Promote remained OFF. This is transport/schema evidence, not browser UI execution.
+
+For this 2026-10-21 slice the final status is `CORE_VITE_HTTP=PASS`, `UI_BROWSER=NOT RUN / BLOCKED_ENV`, `UI_CLICK=NOT RUN`, `THREE_VIEWPORT=NOT RUN`, and production Hermes S1/S2/S3 `NOT RUN`. No browser was launched; the existing Edge/Chromium stop gate remains in effect. The localhost check does not establish production provenance, consent ledger, admission, Promote, or user acceptance.

@@ -246,10 +246,14 @@ describe('A Web-only synthetic UI to HTTP integration', () => {
     render(<App />);
     expect(await screen.findByRole('heading', { name: 'Inbox 条目状态' })).toBeTruthy();
     expect(await screen.findByText('处理中')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Core Inbox 状态已核对' })).toBeTruthy();
+    expect(screen.getByLabelText('Inbox 状态')).toBeTruthy();
+    expect(screen.queryByText('Core 已核验此条目')).toBeNull();
+    expect(screen.queryByLabelText('已核验 Inbox 条目')).toBeNull();
     expect(screen.getByText(/不代表.*已完成写入/)).toBeTruthy();
     expect(screen.queryByText('Original private content')).toBeNull();
     expect(calls).toEqual(['/api/auth/session', `/api/inbox/entries/${inboxId}`]);
-    fireEvent.click(screen.getByRole('button', { name: '打开已核验的 Review 来源' }));
+    fireEvent.click(screen.getByRole('button', { name: '打开版本匹配的 Review 来源' }));
     expect(await screen.findByText('Synthetic source only')).toBeTruthy();
     expect(location.pathname).toBe('/review');
     expect(new URLSearchParams(location.search).get('review_path')).toBe(sourcePath);
@@ -287,8 +291,8 @@ describe('A Web-only synthetic UI to HTTP integration', () => {
     });
 
     render(<App />);
-    expect(await screen.findByRole('button', { name: '打开已核验的 Review 来源' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '打开已核验的 Review 来源' }));
+    expect(await screen.findByRole('button', { name: '打开版本匹配的 Review 来源' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '打开版本匹配的 Review 来源' }));
     expect(await screen.findByText('关联的 Review 来源版本已变化；未打开来源正文。')).toBeTruthy();
     expect(calls.some((url) => url.startsWith('/api/promote/review/items/10-Review/'))).toBe(false);
     expect(screen.queryByText('Original private content')).toBeNull();
