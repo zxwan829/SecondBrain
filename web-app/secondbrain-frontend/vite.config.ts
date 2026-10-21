@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const coreProxyTarget = (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+}).process?.env?.SB_CORE_PROXY_TARGET ?? 'http://127.0.0.1:8000';
+
 export default defineConfig({
     base: '/',
     plugins: [react({ jsxRuntime: 'classic' })],
@@ -8,7 +12,7 @@ export default defineConfig({
     server: {
         proxy: {
             '/api': {
-                target: 'http://127.0.0.1:8000',
+                target: coreProxyTarget,
                 changeOrigin: false,
                 configure(proxy) {
                     proxy.on('proxyReq', (proxyRequest, request) => {
