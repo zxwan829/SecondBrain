@@ -29,6 +29,7 @@ import { journalInboxAttemptKey, journalInboxFailureLabel, journalInboxReceiptKe
   makeJournalInboxAttempt, parseJournalInboxAttempt, parseJournalInboxGet,
   parseJournalInboxPostReceipt, parseJournalInboxReceipt,
   type JournalInboxAttempt, type JournalInboxReceipt } from './chat-inbox';
+import { inboxEntryErrorLabel, inboxEntryStatusLabel, parseVerifiedInboxEntry } from './inbox-entry';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -91,6 +92,11 @@ function capturedAtLabel(value: string | null | undefined, locale: Locale): stri
     }).format(new Date(time));
   }
   return new Date(time).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
+}
+
+function inboxEntryIdFromHash(hash: string): string | null {
+  const match = /^#capture-([0-9a-f]{32})$/i.exec(hash);
+  return match?.[1].toLowerCase() ?? null;
 }
 
 function isVisionDescriptionOnly(item: CaptureItem) {
@@ -548,8 +554,13 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </section>
 
-        </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
-          : page === 'inbox' ? <InboxScopePage locale={locale} scope={inboxScope} onScopeChange={setInboxScope}
+        </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')}
+          expectedReviewSha256={new URLSearchParams(location.search).get('source_sha256')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
+          : page === 'inbox' ? inboxEntryIdFromHash(location.hash)
+            ? <InboxEntryStatusPage key={inboxEntryIdFromHash(location.hash)} locale={locale} inboxId={inboxEntryIdFromHash(location.hash)!}
+              onBack={() => { history.replaceState(history.state, '', '/inbox'); setInboxScope(null); setRouteRevision((value) => value + 1); }}
+              onReview={(path, sha256) => { const query = new URLSearchParams({ review_path: path, source_sha256: sha256 }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
+            : <InboxScopePage locale={locale} scope={inboxScope} onScopeChange={setInboxScope}
             onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }}
             onOpenDraft={(path) => { const query = new URLSearchParams({ collection: 'drafts', path }); pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1); }} />
           : page === 'chat' ? <ChatPage locale={locale} blankMode={location.pathname === '/chat/blank'} onGoInbox={() => navigate('inbox')}
@@ -559,6 +570,58 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
       </section>
     </main>
   );
+}
+
+export function InboxEntryStatusPage({ locale, inboxId, onBack, onReview }: {
+  locale: Locale; inboxId: string; onBack: () => void; onReview: (path: string, sha256: string) => void;
+}) {
+  const en = locale === 'en';
+  const [entry, setEntry] = useState<ReturnType<typeof parseVerifiedInboxEntry>>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setLoading(true); setEntry(null); setError('');
+    void fetch(`/api/inbox/entries/${encodeURIComponent(inboxId)}`, { credentials: 'same-origin', signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw Object.assign(new Error('inbox_status_unavailable'), { status: response.status });
+        const payload = await response.json().catch(() => null);
+        const verified = parseVerifiedInboxEntry(payload, inboxId);
+        if (!verified) throw Object.assign(new Error('inbox_status_unverified'), { status: 0 });
+        if (active) setEntry(verified);
+      })
+      .catch((cause) => {
+        if (!active || controller.signal.aborted) return;
+        const status = typeof cause?.status === 'number' && cause.status > 0 ? cause.status : null;
+        setError(inboxEntryErrorLabel(status, en));
+      })
+      .finally(() => { if (active && !controller.signal.aborted) setLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [en, inboxId, revision]);
+
+  return <section className="capture-page" aria-labelledby="inbox-entry-title">
+    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p>
+      <h1 id="inbox-entry-title">{en ? 'Inbox entry status' : 'Inbox 条目状态'}</h1>
+      <p className="workspace-subtitle">{en ? 'Only the linked entry status is requested. Original content is not loaded here.' : '仅查询此链接对应条目的状态；此页不会读取原文。'}</p></div>
+      <button type="button" className="capture-secondary" onClick={onBack}>{en ? 'Back to Inbox' : '返回收件箱'}</button></header>
+    {loading && <p role="status">{en ? 'Checking status for this exact Inbox ID…' : '正在核对该 Inbox ID 对应的状态…'}</p>}
+    {error && <div role="alert" className="capture-alert"><p>{error}</p>
+      <button type="button" onClick={() => setRevision((value) => value + 1)}>{en ? 'Retry status check' : '重试状态核验'}</button></div>}
+    {entry && <article className="inbox-item" aria-label={en ? 'Inbox status' : 'Inbox 状态'}>
+      <div className="inbox-item-main"><div><h2>{en ? 'Core Inbox status checked' : 'Core Inbox 状态已核对'}</h2>
+        <p>{en ? 'Intent' : '收录意图'}: {entry.intent} · {en ? 'Source' : '来源'}: {entry.sourceChannel}</p>
+        <p>{en ? 'Captured' : '收录时间'}: {capturedAtLabel(entry.capturedAt, locale)}</p></div>
+        <span className={`capture-status status-${entry.status}`}>{inboxEntryStatusLabel(entry.status, en)}</span></div>
+      <p role="status">{en ? 'This is an Inbox state only. It does not mean a Journal, Knowledge, or Project write has completed.' : '这只表示 Inbox 状态，不代表 Journal、Knowledge 或 Project 已完成写入。'}</p>
+      {entry.reviewPath && entry.reviewSha256
+        ? <button type="button" className="capture-primary" onClick={() => onReview(entry.reviewPath!, entry.reviewSha256!)}>{en ? 'Open Review source with matching version' : '打开版本匹配的 Review 来源'}</button>
+        : <p role="status">{en ? 'No version-matched Review source link is available.' : '当前没有提供版本匹配的 Review 来源链接。'}</p>}
+      <button type="button" className="capture-secondary" onClick={() => setRevision((value) => value + 1)}>{en ? 'Refresh status' : '刷新状态'}</button>
+    </article>}
+  </section>;
 }
 
 function InboxScopePage({ locale, scope, onScopeChange, onReview, onOpenDraft }: { locale: Locale; scope: InboxScope; onScopeChange: (scope: InboxScope) => void; onReview: (reviewPath: string) => void; onOpenDraft: (path: string) => void }) {
@@ -936,7 +999,7 @@ function captureStatus(status: string, en: boolean) {
   return captureStatusLabel(status, en ? 'en' : 'zh-CN');
 }
 
-export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHistory = (path: string) => history.pushState({}, '', path) }: { locale: Locale; onBack: () => void; initialReviewPath?: string | null; pushHistory?: (path: string) => void }) {
+export function ReviewPage({ locale, onBack, initialReviewPath = null, expectedReviewSha256 = null, pushHistory = (path: string) => history.pushState({}, '', path) }: { locale: Locale; onBack: () => void; initialReviewPath?: string | null; expectedReviewSha256?: string | null; pushHistory?: (path: string) => void }) {
   const t = messages[locale];
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
@@ -989,7 +1052,9 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
       setStatus(t.coreConnected.replace('{count}', String(nextItems.length)));
       if (requestedReviewPath) {
         const selected = nextItems.find((item) => item.review_path === requestedReviewPath);
-        if (selected && !controller.signal.aborted) await loadDetail(selected);
+        if (selected && expectedReviewSha256 && selected.review_sha256 !== expectedReviewSha256) {
+          setDetail(null); setStatus(locale === 'en' ? 'The linked Review source has changed; no source content was opened.' : '关联的 Review 来源版本已变化；未打开来源正文。');
+        } else if (selected && !controller.signal.aborted) await loadDetail(selected);
         else { setDetail(null); setStatus(locale === 'en' ? 'The requested Review item could not be found.' : '找不到指定的 Review 条目。'); }
       } else {
         setDetail(null);
@@ -1021,6 +1086,9 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
       const safePath = item.review_path.split('/').map(encodeURIComponent).join('/');
       const result = await request<ReviewDetail>(`/review/items/${safePath}`, { signal: controller.signal });
       if (controller.signal.aborted || sequence !== detailRequestSequence.current) return;
+      if (result.review_path !== item.review_path || result.review_sha256 !== item.review_sha256) {
+        throw Object.assign(new Error(locale === 'en' ? 'Review source changed while opening; no content was shown.' : '打开时 Review 来源版本发生变化；未展示来源正文。'), { status: 409 });
+      }
       setDetail({ ...result, captured_at: result.captured_at ?? item.captured_at ?? null });
     } catch (error) {
       if (controller.signal.aborted || sequence !== detailRequestSequence.current) return;
