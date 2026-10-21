@@ -42,21 +42,25 @@ async function configurePage(page: Page) {
       catch { lastInboxBody = null; }
     }
   });
-  page.on('requestfinished', async (request) => {
+  const recordedResponses = new WeakSet<Request>();
+  page.on('response', (response) => {
+    const request = response.request();
     const started = pending.get(request) ?? Date.now();
     pending.delete(request);
-    let status: number | null = null;
-    try { status = (await request.response())?.status() ?? null; } catch { /* response may be intentionally lost */ }
+    recordedResponses.add(request);
     const path = new URL(request.url()).pathname;
-    requestRecords.push({ leg: 'browser', method: request.method(), path: safePath(request.url()), status,
+    requestRecords.push({ leg: 'browser', method: request.method(), path: safePath(request.url()), status: response.status(),
       elapsed_ms: Date.now() - started,
       exact_inbox_target: request.method() === 'GET' && Boolean(createdInboxId)
         && path === `/api/inbox/entries/${createdInboxId}` });
   });
+  page.on('requestfinished', (request) => { pending.delete(request); });
   page.on('requestfailed', (request) => {
     const started = pending.get(request) ?? Date.now();
     pending.delete(request);
-    requestRecords.push({ leg: 'browser', method: request.method(), path: safePath(request.url()), status: null, elapsed_ms: Date.now() - started });
+    if (!recordedResponses.has(request)) {
+      requestRecords.push({ leg: 'browser', method: request.method(), path: safePath(request.url()), status: null, elapsed_ms: Date.now() - started });
+    }
   });
 
   // Only the localhost Vite origin is allowed. Chat/Hermes endpoints are
