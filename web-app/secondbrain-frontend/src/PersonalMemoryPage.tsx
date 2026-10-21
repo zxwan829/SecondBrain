@@ -34,7 +34,7 @@ export function PersonalMemoryPage({ locale }: { locale: Locale }) {
         const status = (cause as Error & { status?: number }).status;
         setError(status === 401 ? (en ? 'Sign in again to manage Personal Memory.' : '请重新登录后管理个人记忆。')
           : status === 403 ? (en ? 'Personal Memory access was denied.' : '个人记忆权限不足。')
-            : en ? 'Could not safely load Personal Memory. No changes were made.' : '无法安全读取个人记忆，未执行更改。');
+            : en ? 'Could not safely load Personal Memory.' : '无法安全读取个人记忆。');
       }
     } finally { if (request === sequence.current) setLoading(false); }
   }, [en]);
@@ -57,6 +57,7 @@ export function PersonalMemoryPage({ locale }: { locale: Locale }) {
 
   const begin = (item: PersonalMemory, kind: PendingChange['kind']) => {
     const key = crypto.randomUUID();
+    setLastReceipt(null);
     setPending({ kind, text: kind === 'correct' ? (drafts[item.memory_id] ?? item.content.text) : undefined,
       attempt: { memory_id: item.memory_id, expected_revision: item.revision, idempotency_key: key,
         source_type: 'user_confirmed', source_ref: `web-personal-memory-confirmation/${key}` } });

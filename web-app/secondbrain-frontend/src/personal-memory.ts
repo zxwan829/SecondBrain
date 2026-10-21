@@ -14,6 +14,7 @@ export type PersonalMemory = {
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const categories = new Set(['preference', 'experience', 'project_context', 'fact']);
 const factKinds = new Set(['user_stated', 'user_confirmed', 'inference']);
+const memoryStatuses = new Set(['active', 'pending_verification', 'revoked', 'expired', 'superseded']);
 
 function parseMemory(value: unknown): PersonalMemory | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -25,14 +26,14 @@ function parseMemory(value: unknown): PersonalMemory | null {
     || !content || typeof content.text !== 'string' || content.text.length > 4000
     || typeof row.category !== 'string' || !categories.has(row.category)
     || typeof row.fact_kind !== 'string' || !factKinds.has(row.fact_kind)
-    || typeof row.status !== 'string' || typeof row.recorded_at !== 'string'
+    || typeof row.status !== 'string' || !memoryStatuses.has(row.status) || typeof row.recorded_at !== 'string' || row.recorded_at.length > 64
     || !Number.isFinite(Date.parse(row.recorded_at))) return null;
   const sourceValue = row.source;
   let source: PersonalMemory['source'];
   if (sourceValue !== undefined) {
     if (!sourceValue || typeof sourceValue !== 'object' || Array.isArray(sourceValue)) return null;
     const value = sourceValue as Record<string, unknown>;
-    if (typeof value.type !== 'string' || typeof value.ref !== 'string'
+    if (typeof value.type !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(value.type) || typeof value.ref !== 'string'
       || value.ref.length > 256 || value.ref.startsWith('/') || value.ref.includes('\\')
       || value.ref.split('/').includes('..') || !/^[A-Za-z0-9._:/-]+$/.test(value.ref)) return null;
     source = { type: value.type, ref: value.ref };
@@ -57,7 +58,8 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
 
 export async function fetchPersonalMemories(signal?: AbortSignal): Promise<PersonalMemory[]> {
   const body = await request('/api/personal-memory?limit=20', { signal });
-  if (!body || typeof body !== 'object' || !Array.isArray((body as Record<string, unknown>).items)) {
+  if (!body || typeof body !== 'object' || !Array.isArray((body as Record<string, unknown>).items)
+    || ((body as { items: unknown[] }).items.length > 20)) {
     throw Object.assign(new Error('Invalid personal memory response'), { status: 502 });
   }
   const rows = ((body as { items: unknown[] }).items).map(parseMemory);
@@ -69,7 +71,8 @@ export async function fetchPersonalMemoryHistory(memoryId: string, signal?: Abor
   if (!SAFE_ID.test(memoryId)) throw Object.assign(new Error('Invalid memory identifier'), { status: 400 });
   const body = await request(`/api/personal-memory/${encodeURIComponent(memoryId)}/history`, { signal });
   if (!body || typeof body !== 'object' || (body as Record<string, unknown>).memory_id !== memoryId
-    || !Array.isArray((body as Record<string, unknown>).revisions)) {
+    || !Array.isArray((body as Record<string, unknown>).revisions)
+    || ((body as { revisions: unknown[] }).revisions.length > 1000)) {
     throw Object.assign(new Error('Invalid personal memory history'), { status: 502 });
   }
   const rows = ((body as { revisions: unknown[] }).revisions).map(parseMemory);

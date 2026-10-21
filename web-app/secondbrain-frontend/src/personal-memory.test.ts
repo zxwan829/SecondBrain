@@ -22,6 +22,10 @@ describe('Personal Memory lifecycle client', () => {
     await expect(fetchPersonalMemories()).rejects.toMatchObject({ status: 502 });
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({ items: [{ ...row, memory_id: '../private' }] })));
     await expect(fetchPersonalMemories()).rejects.toMatchObject({ status: 502 });
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({
+      items: [{ ...row, source: { type: 'user_message', ref: '/private/secret.md' } }],
+    })));
+    await expect(fetchPersonalMemories()).rejects.toMatchObject({ status: 502 });
   });
 
   it('sends correction revision and key exactly, then verifies next revision receipt', async () => {
