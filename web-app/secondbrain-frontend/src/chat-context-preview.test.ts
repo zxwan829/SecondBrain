@@ -18,6 +18,14 @@ describe('Context v1 preview contract', () => {
     expect(parseContextPreview(preview(), 'session-a')?.items).toEqual([item]);
   });
 
+  it('accepts Knowledge metadata whose optional fact_kind is null', () => {
+    const knowledgeItem = { ...item, source_kind: 'knowledge', source_id: 'knowledge-ref-123', fact_kind: null };
+    const result = parseContextPreview(preview({
+      source_status: { personal_memory: 'none', knowledge: 'available' }, items: [knowledgeItem],
+    }), 'session-a');
+    expect(result?.items).toEqual([knowledgeItem]);
+  });
+
   it.each([
     preview({ session_id: 'session-b' }),
     preview({ extra: 'body must not be accepted' }),

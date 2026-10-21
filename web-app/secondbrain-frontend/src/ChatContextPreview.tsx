@@ -29,7 +29,7 @@ function Item({ item, en }: { item: ContextPreviewItem; en: boolean }) {
       <dt>{en ? 'Version' : '版本'}</dt><dd>{item.source_version}</dd>
       <dt>SHA-256</dt><dd>{item.sha256}</dd>
       <dt>{en ? 'Source time' : '来源时间'}</dt><dd><time dateTime={item.source_timestamp}>{item.source_timestamp}</time></dd>
-      <dt>{en ? 'Fact type' : '事实类型'}</dt><dd>{item.fact_kind}</dd>
+      <dt>{en ? 'Fact type' : '事实类型'}</dt><dd>{item.fact_kind ?? (en ? 'Not provided' : '未提供')}</dd>
       <dt>{en ? 'Verification' : '核验标记'}</dt><dd>{stateLabel(item.verification_status, en)}</dd>
       <dt>{en ? 'State' : '状态'}</dt><dd>{stateLabel(item.state, en)}</dd>
       {item.expires_at && <><dt>{en ? 'Expires' : '过期时间'}</dt><dd><time dateTime={item.expires_at}>{item.expires_at}</time></dd></>}

@@ -7,7 +7,7 @@ export type ContextPreviewItem = {
   source_version: string;
   sha256: string;
   source_timestamp: string;
-  fact_kind: string;
+  fact_kind: string | null;
   verification_status: string;
   state: string;
   expires_at: string | null;
@@ -54,7 +54,7 @@ function parseItem(value: unknown): ContextPreviewItem | null {
     || !boundedText(value.source_version, 128)
     || typeof value.sha256 !== 'string' || !SHA256.test(value.sha256)
     || !isoDate(value.source_timestamp)
-    || !boundedText(value.fact_kind, 64)
+    || (value.fact_kind !== null && !boundedText(value.fact_kind, 64))
     || !boundedText(value.verification_status, 64)
     || !boundedText(value.state, 64)
     || (value.expires_at !== null && !isoDate(value.expires_at))) return null;
