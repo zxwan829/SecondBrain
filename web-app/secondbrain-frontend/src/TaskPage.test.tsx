@@ -89,4 +89,38 @@ describe('TaskPage', () => {
     expect(screen.getByRole('heading', { name: '已完成的合成任务' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: '合成任务' })).toBeNull();
   });
+
+  it('creates a task from Today and safely retries an ambiguous response with the same key', async () => {
+    const created = { ...task, id: 'c'.repeat(32), title: '直接新建的任务', due_date: '2026-10-24', status: 'open' as const };
+    let posts = 0;
+    let stored: typeof created | null = null;
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/tasks?')) return ok({ tasks: stored ? [stored] : [] });
+      if (url === '/api/tasks' && init?.method === 'POST') {
+        posts += 1;
+        const body = JSON.parse(String(init.body));
+        expect(body).toEqual({ title: '直接新建的任务', due_date: '2026-10-24', original_command: '添加待办：直接新建的任务；截止：2026-10-24' });
+        stored = created;
+        if (posts === 1) return { ok: false, status: 500, json: async () => ({ detail: 'response lost after commit' }) };
+        return ok({ status: 'duplicate', task: stored });
+      }
+      return ok({});
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '直接新建的任务' } });
+    fireEvent.change(screen.getByLabelText('新待办截止日期'), { target: { value: '2026-10-24' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('response lost after commit');
+    expect((screen.getByLabelText('待办内容') as HTMLInputElement).value).toBe('直接新建的任务');
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByRole('heading', { name: '直接新建的任务' })).toBeTruthy();
+    expect(posts).toBe(2);
+    const postCalls = request.mock.calls.filter(([url, init]) => url === '/api/tasks' && init?.method === 'POST');
+    expect(new Headers(postCalls[0][1]?.headers).get('Idempotency-Key')).toBeTruthy();
+    expect(new Headers(postCalls[1][1]?.headers).get('Idempotency-Key')).toBe(new Headers(postCalls[0][1]?.headers).get('Idempotency-Key'));
+    expect(await screen.findByRole('status')).toBeTruthy();
+  });
 });
