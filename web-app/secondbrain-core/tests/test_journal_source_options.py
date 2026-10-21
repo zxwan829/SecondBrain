@@ -345,6 +345,7 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
                 "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty",
             })
             assert originless.status_code == 200
+            assert originless.headers["cache-control"] == "private, no-store"
             assert originless.json()["status"] == "real"
             assert read_calls > 0
             # An untrusted peer cannot rewrite the ASGI authority via forwarding
@@ -471,6 +472,7 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
 
             empty = client.get(f"{base_url}?date=2026-10-21", headers={"Origin": origin})
             assert empty.status_code == 200 and empty.json()["status"] == "empty"
+        assert empty.headers["cache-control"] == "private, no-store"
             assert empty.json()["items"] == []
 
             # A missing store and a filesystem permission failure both map to
@@ -478,6 +480,7 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
             monkeypatch.setattr(service, "journal_store", None)
             unavailable = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
             assert unavailable.status_code == 200 and unavailable.json()["status"] == "unavailable"
+            assert unavailable.headers["cache-control"] == "private, no-store"
             assert unavailable.json()["items"] == [] and str(root) not in unavailable.text
             monkeypatch.setattr(service, "journal_store", source_store)
             if os.geteuid() != 0:
