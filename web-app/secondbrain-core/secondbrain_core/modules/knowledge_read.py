@@ -415,29 +415,29 @@ class KnowledgeReadStore:
                           "partial" if partial else "none"}
 
     def verify_chat_reference(self, relative_path, expected_sha256):
-        """Re-read one stored internal reference without exposing its path."""
+        """Re-read one stored internal reference and classify its current state."""
         if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
-            return False
+            return "unavailable"
         root_fd = self._root_fd()
         try:
             try:
                 fd, info = _open_exact(root_fd, relative_path)
             except (OSError, ValueError, UnicodeError):
-                return False
+                return "unavailable"
             try:
                 if info.st_size > MAX_FILE_BYTES:
-                    return False
+                    return "unavailable"
                 payload = _read_bounded(fd, MAX_FILE_BYTES)
                 if len(payload) > MAX_FILE_BYTES:
-                    return False
+                    return "unavailable"
             finally:
                 os.close(fd)
         finally:
             os.close(root_fd)
         digest = hashlib.sha256(payload).hexdigest()
         if not hmac.compare_digest(digest, expected_sha256):
-            return False
-        return self._verified_source(relative_path, payload, digest) is not None
+            return "stale"
+        return "version_verified" if self._verified_source(relative_path, payload, digest) is not None else "unavailable"
 
     def _verified_source(self, relative, content, digest):
         if self.provenance_verifier is None:

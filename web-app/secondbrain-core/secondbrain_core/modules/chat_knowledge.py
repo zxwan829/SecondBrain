@@ -211,15 +211,24 @@ class ChatKnowledgeCitationStore:
         if not record["citations"]:
             return projected
         try:
-            valid = all(self.knowledge_store.verify_chat_reference(
-                citation["relative_path"], citation["sha256"]) for citation in record["citations"])
+            states = [self.knowledge_store.verify_chat_reference(
+                citation["relative_path"], citation["sha256"]) for citation in record["citations"]]
         except HTTPException:
             projected["status"] = "unavailable"
-            projected["citations"] = []
+            for citation in projected["citations"]:
+                citation["knowledge_status"] = "unavailable"
             return projected
-        if not valid:
-            projected["status"] = "stale"
-            projected["citations"] = []
+        if any(state not in {"version_verified", "stale", "unavailable"} for state in states):
+            projected["status"] = "unavailable"
+            for citation in projected["citations"]:
+                citation["knowledge_status"] = "unavailable"
+            return projected
+        for citation, state in zip(projected["citations"], states):
+            citation["knowledge_status"] = state
+        if all(state == "unavailable" for state in states):
+            projected["status"] = "unavailable"
+        elif any(state != "version_verified" for state in states):
+            projected["status"] = "partial"
         return projected
 
     def read_for_run(self, run_id):

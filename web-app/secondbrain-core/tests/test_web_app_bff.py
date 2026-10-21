@@ -259,8 +259,8 @@ class WebAppBffTests(unittest.TestCase):
         (self.knowledge / "known.md").write_text("# Existing knowledge\nChanged after the run.\n", encoding="utf-8")
         stale = self.client.get(history_url)
         self.assertEqual(stale.status_code, 200)
-        self.assertEqual(stale.json()["status"], "stale")
-        self.assertEqual(stale.json()["citations"], [])
+        self.assertEqual(stale.json()["status"], "partial")
+        self.assertEqual(stale.json()["citations"][0]["knowledge_status"], "stale")
 
     def test_chat_run_without_verified_provenance_fails_closed_and_auth_precedes_io(self):
         read_calls = []

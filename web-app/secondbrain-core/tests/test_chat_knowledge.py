@@ -62,8 +62,14 @@ class ChatKnowledgeTests(unittest.TestCase):
 
         path.write_text("# Reference\nneedle changed bytes", encoding="utf-8")
         stale = restarted.read_for_session("session-1", "run-1")
-        self.assertEqual(stale["status"], "stale")
-        self.assertEqual(stale["citations"], [])
+        self.assertEqual(stale["status"], "partial")
+        self.assertEqual(stale["citations"][0]["knowledge_status"], "stale")
+
+        path.write_text("# Reference\nneedle synthetic", encoding="utf-8")
+        restarted.knowledge_store.provenance_verifier.verify = lambda *_args: None
+        unavailable = restarted.read_for_session("session-1", "run-1")
+        self.assertEqual(unavailable["status"], "unavailable")
+        self.assertEqual(unavailable["citations"][0]["knowledge_status"], "unavailable")
 
         self.assertIsNone(restarted.bind("run-1", "session-2", "needle", recall))
         invalidated = restarted.read_for_session("session-1", "run-1")
