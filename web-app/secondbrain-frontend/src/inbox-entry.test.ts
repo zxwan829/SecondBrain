@@ -14,6 +14,7 @@ const invalidCases: Array<[unknown, string]> = [
   [{ ...base, status: 'unknown' }, 'unknown status'],
   [{ ...base, source_ref: { ...base.source_ref, capture_id: 'b'.repeat(32) } }, 'different capture binding'],
   [{ ...base, source_ref: { ...base.source_ref, review_path: '10-Review/../../private.md', review_sha256: 'b'.repeat(64) } }, 'path traversal'],
+  [{ ...base, source_ref: { ...base.source_ref, review_path: '../private.md', review_sha256: 'b'.repeat(64) } }, 'relative path traversal'],
   [{ ...base, source_ref: { ...base.source_ref, review_path: '10-Review/item.md', review_sha256: 'bad' } }, 'unpaired source hash'],
 ];
 
@@ -26,10 +27,10 @@ describe('verified Inbox entry projection', () => {
     expect(parseVerifiedInboxEntry(payload, id)).toBeNull();
   });
 
-  it('accepts only a bounded Review path paired with a SHA-256 source version', () => {
+  it('accepts the exact Core-relative Review path paired with a SHA-256 source version', () => {
     expect(parseVerifiedInboxEntry({ ...base, source_ref: {
-      capture_id: id, review_path: '10-Review/synthetic note.md', review_sha256: 'c'.repeat(64),
-    } }, id)?.reviewPath).toBe('10-Review/synthetic note.md');
+      capture_id: id, review_path: 'Inbox-synthetic note.md', review_sha256: 'c'.repeat(64),
+    } }, id)?.reviewPath).toBe('Inbox-synthetic note.md');
   });
 
   it('requires approved-suggestion consent evidence to bind the same Proposal ID, version, and source version', () => {
