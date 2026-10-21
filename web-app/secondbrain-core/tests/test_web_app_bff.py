@@ -311,6 +311,72 @@ class WebAppBffTests(unittest.TestCase):
         run_body = json.loads(next(call for call in self.calls if call.url.path == "/v1/runs").content)
         self.assertNotIn("instructions", run_body)
 
+    def test_revoked_knowledge_read_blocks_history_and_suppresses_sse_citations_without_io(self):
+        self.login()
+        (self.knowledge / "known.md").write_text("# Existing knowledge\nSynthetic source.\n", encoding="utf-8")
+        verifier = self.app.state.knowledge_read_store.provenance_verifier
+        verifier.verify = lambda relative, content, digest: {
+            "review_path": "synthetic/review.md", "review_sha256": hashlib.sha256(b"source").hexdigest(),
+        }
+        started = self.client.post("/api/chat/sessions/session-1/runs", json={"input": "Synthetic source."},
+                                   headers={"Origin": "https://testserver", "Idempotency-Key": "revocation-run"})
+        self.assertEqual(started.status_code, 200, started.text)
+        history_url = "/api/chat/sessions/session-1/runs/run-1/knowledge-citations"
+        before_revoke = self.client.get(history_url)
+        self.assertEqual(before_revoke.status_code, 200, before_revoke.text)
+        self.assertEqual(before_revoke.json()["status"], "available")
+        citation_id = before_revoke.json()["citations"][0]["citation_id"]
+
+        auth = self.app.state.app_auth
+        original_require_action = auth.require_action
+
+        def revoke_knowledge(request, action):
+            if action == "knowledge.read":
+                raise HTTPException(status_code=403, detail="Action is not enabled")
+            return original_require_action(request, action)
+
+        auth.require_action = revoke_knowledge
+        citation_store = self.app.state.chat_knowledge_citation_store
+        citation_reads = []
+        original_read_for_session = citation_store.read_for_session
+        original_read_for_run = citation_store.read_for_run
+        citation_store.read_for_session = lambda *args, **kwargs: citation_reads.append("history") or original_read_for_session(*args, **kwargs)
+        citation_store.read_for_run = lambda *args, **kwargs: citation_reads.append("sse") or original_read_for_run(*args, **kwargs)
+        knowledge_reads = []
+        original_verify = self.app.state.knowledge_read_store.verify_chat_reference
+        self.app.state.knowledge_read_store.verify_chat_reference = lambda *args, **kwargs: knowledge_reads.append("verify") or original_verify(*args, **kwargs)
+        hermes_calls = len(self.calls)
+        try:
+            denied = self.client.get(history_url)
+            self.assertEqual(denied.status_code, 403, denied.text)
+            self.assertEqual(denied.headers["cache-control"], "private, no-store")
+            self.assertNotIn(citation_id, denied.text)
+            self.assertEqual(len(self.calls), hermes_calls)
+
+            # A different session cannot use the known run id after revocation.
+            other_session = self.client.get("/api/chat/sessions/session-3/runs/run-1/knowledge-citations")
+            self.assertEqual(other_session.status_code, 403)
+            self.assertEqual(other_session.headers["cache-control"], "private, no-store")
+            self.assertNotIn(citation_id, other_session.text)
+            self.assertEqual(len(self.calls), hermes_calls)
+
+            events = self.client.get("/api/chat/runs/run-1/events")
+            self.assertEqual(events.status_code, 200, events.text)
+            self.assertEqual(events.headers["cache-control"], "private, no-store, no-transform")
+            unavailable = _sse_payload_for(events, "knowledge.citations")
+            self.assertEqual(unavailable["status"], "unavailable")
+            self.assertEqual(unavailable["citations"], [])
+            self.assertNotIn(citation_id, events.text)
+            self.assertIn('"event":"tool.started"', events.text)
+            self.assertEqual(citation_reads, [])
+            self.assertEqual(knowledge_reads, [])
+            self.assertGreater(len(self.calls), hermes_calls)  # Chat SSE still follows its own chat.read grant.
+        finally:
+            auth.require_action = original_require_action
+            citation_store.read_for_session = original_read_for_session
+            citation_store.read_for_run = original_read_for_run
+            self.app.state.knowledge_read_store.verify_chat_reference = original_verify
+
     def test_home_and_review_are_real_file_backed_data_and_defer_is_persisted(self):
         self.login()
         home = self.client.get("/api/home").json()

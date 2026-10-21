@@ -363,13 +363,34 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
     @router.get("/chat/runs/{run_id}/events")
     async def run_events(request: Request, run_id: str):
         owner = auth.require_action(request, "chat.read")
+        # Chat history remains readable after Knowledge access is revoked, but
+        # the citation ledger and source verifier must not be consulted then.
+        try:
+            auth.require_action(request, "knowledge.read")
+            knowledge_read_allowed = True
+        except HTTPException:
+            knowledge_read_allowed = False
         safe_run_id = hermes._safe_id(run_id)
         chunks = await hermes.stream_run(run_id)
 
         async def events():
             if citation_store is not None:
                 registered_session = run_approvals.session_for_run(safe_run_id, owner)
-                if citation_fallback.get(safe_run_id) == registered_session and registered_session:
+                current_knowledge_access = knowledge_read_allowed
+                if current_knowledge_access:
+                    # Recheck at the point of citation access as stream setup
+                    # may yield while a grant is being revoked.
+                    try:
+                        auth.require_action(request, "knowledge.read")
+                    except HTTPException:
+                        current_knowledge_access = False
+                if not current_knowledge_access and registered_session:
+                    # Preserve the ordinary Chat stream while returning no
+                    # previously authorized Knowledge metadata after revocation.
+                    citation_event = {"event": "knowledge.citations", "version": 1,
+                                      "run_id": safe_run_id, "session_id": registered_session,
+                                      "status": "unavailable", "citations": []}
+                elif citation_fallback.get(safe_run_id) == registered_session and registered_session:
                     citation_event = {"event": "knowledge.citations", "version": 1,
                                       "run_id": safe_run_id, "session_id": registered_session,
                                       "status": "unavailable", "citations": []}
@@ -413,6 +434,9 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
     @router.get("/chat/sessions/{session_id}/runs/{run_id}/knowledge-citations")
     async def knowledge_citations(request: Request, session_id: str, run_id: str, response: Response):
         auth.require_action(request, "chat.read")
+        # Check current Knowledge permission before any session, ledger, or
+        # source-version read. The app middleware adds no-store to errors too.
+        auth.require_action(request, "knowledge.read")
         safe_session_id = hermes._safe_id(session_id)
         safe_run_id = hermes._safe_id(run_id)
         await hermes.get_session(safe_session_id)
