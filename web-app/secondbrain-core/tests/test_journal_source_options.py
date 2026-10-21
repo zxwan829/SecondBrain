@@ -321,8 +321,11 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
     initial_root = root.stat()
     initial_file = journal_path.stat()
     initial_bytes = journal_path.read_bytes()
+    # Match the Core entrypoint's default: proxy headers are parsed, but no
+    # forwarding peer is trusted unless SB_TRUSTED_PROXY_IPS explicitly lists it.
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="critical",
-                                           lifespan="off", access_log=False))
+                                           lifespan="off", access_log=False,
+                                           proxy_headers=True, forwarded_allow_ips=""))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
     try:
@@ -344,18 +347,36 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
             assert originless.status_code == 200
             assert originless.json()["status"] == "real"
             assert read_calls > 0
+            # An untrusted peer cannot rewrite the ASGI authority via forwarding
+            # headers; the trusted Host/scheme remain authoritative.
+            before = read_calls
+            spoofed_forwarding = client.get(f"{base_url}?date={DAY}", headers={
+                "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty", "X-Forwarded-Host": "evil.invalid",
+                "X-Forwarded-Proto": "https",
+            })
+            assert spoofed_forwarding.status_code == 200
+            assert spoofed_forwarding.json()["status"] == "real"
+            assert read_calls > before
+
+            # Invalid Host is rejected before routing by TrustedHostMiddleware
+            # (400); a Host accepted by middleware but whose authority differs
+            # from the configured Origin reaches the route and is denied (403).
             read_calls = 0
-            for rejected_headers in (
-                {"Sec-Fetch-Site": "cross-site"},
-                {"Sec-Fetch-Site": "same-site"},
-                {"Sec-Fetch-Site": "same-origin", "Host": "evil.invalid"},
-                {"Sec-Fetch-Site": "same-origin", "Origin": "null"},
-                {"Sec-Fetch-Site": "same-origin", "Origin": "http://evil.invalid"},
+            for rejected_headers, expected_status in (
+                ({"Sec-Fetch-Site": "cross-site"}, 403),
+                ({"Sec-Fetch-Site": "same-site"}, 403),
+                ({"Sec-Fetch-Site": "same-origin", "Host": "evil.invalid"}, 400),
+                ({"Sec-Fetch-Site": "same-origin", "Host": f"{host}:1"}, 403),
+                ({"Sec-Fetch-Site": "same-origin", "Origin": "null"}, 403),
+                ({"Sec-Fetch-Site": "same-origin", "Origin": "http://evil.invalid"}, 403),
+                ({"Sec-Fetch-Site": "same-origin", "X-Forwarded-Host": "evil.invalid",
+                  "X-Forwarded-Proto": "https", "Host": "evil.invalid"}, 400),
             ):
-                denied_originless = client.get(f"{base_url}?date={DAY}",
-                                               headers=rejected_headers)
-                assert denied_originless.status_code in (400, 403) if rejected_headers.get("Host") == "evil.invalid" else denied_originless.status_code == 403
-                assert read_calls == 0
+                before = read_calls
+                denied = client.get(f"{base_url}?date={DAY}", headers=rejected_headers)
+                assert denied.status_code == expected_status, (rejected_headers, denied.status_code)
+                assert read_calls == before, rejected_headers
 
             anonymous = httpx.get(f"{origin}{base_url}", headers={"Origin": origin},
                                   trust_env=False)
