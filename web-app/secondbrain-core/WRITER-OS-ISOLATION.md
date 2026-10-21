@@ -37,14 +37,15 @@ on `main`):
 gh workflow run d077-core-linux-tests.yml --ref codex/knowledge-writer-minimal-20261020
 ```
 
-The root process only changes IDs and ownership below pytest's synthetic
+The root process only changes IDs and ownership below its dedicated synthetic
 temporary directory. No repository secret is read, no production path is
 mounted, and no persistent runner identity or permission is changed. The
 workflow run is the only authorized Linux OS evidence for this candidate; a
 local macOS skip remains `NOT RUN`.
 
-The test provisions only numeric identities and synthetic paths below
-pytest's temporary root. It starts the actual Writer entry point as UID 31003,
+The test provisions only numeric identities and synthetic paths below a
+randomly named `/tmp/secondbrain-writer-os-isolation-*` root (mode `0710`,
+Writer owner and Core access group). It starts the actual Writer entry point as UID 31003,
 real GID 31004, effective GID 31002; runs Core as UID/GID 31001/31002; and
 tries an unauthorized peer UID 31005. It exercises the actual AF_UNIX listener
 and default kernel peer-UID reader, checks parent/socket owner, group and mode,

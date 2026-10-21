@@ -2,18 +2,20 @@
 
 This test deliberately skips unless run as root inside a disposable Linux
 runner/container with ``SB_WRITER_OS_ISOLATION=disposable-linux``. It changes
-ownership only below pytest's temporary directory. It is not a macOS or
-same-UID substitute for the OS isolation acceptance.
+ownership only below its dedicated synthetic temporary root in ``/tmp``. It is
+not a macOS or same-UID substitute for the OS isolation acceptance.
 """
 import hashlib
 import json
 import multiprocessing
 import os
 import platform
+import shutil
 import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -34,6 +36,7 @@ def _writer_process(knowledge_root, receipt_root, socket_path, ready):
     # private real UID/GID and the explicitly shared Core access GID.
     from secondbrain_core.modules.restricted_knowledge_writer import main
 
+    os.chdir("/")
     os.setgroups([CORE_GID])
     os.setresgid(WRITER_GID, CORE_GID, CORE_GID)
     os.setresuid(WRITER_UID, WRITER_UID, WRITER_UID)
@@ -60,7 +63,7 @@ def _run_as(uid, real_gid, effective_gid, source, *, env):
 
     result = subprocess.run(
         [sys.executable, "-c", source], text=True, capture_output=True,
-        env=env, timeout=10, preexec_fn=drop_identity, check=False,
+        cwd="/", env=env, timeout=10, preexec_fn=drop_identity, check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
     return json.loads(result.stdout.strip().splitlines()[-1])
@@ -72,8 +75,10 @@ def _run_as(uid, real_gid, effective_gid, source, *, env):
     or os.environ.get("SB_WRITER_OS_ISOLATION") != "disposable-linux",
     reason="requires explicit root inside a disposable Linux runner/container with SO_PEERCRED",
 )
-def test_real_linux_uids_kernel_peer_socket_permissions_and_recovery(tmp_path):
-    root = Path(tmp_path)
+def test_real_linux_uids_kernel_peer_socket_permissions_and_recovery():
+    root = Path(tempfile.mkdtemp(prefix="secondbrain-writer-os-isolation-"))
+    os.chown(root, WRITER_UID, CORE_GID)
+    os.chmod(root, 0o710)
     knowledge = root / "knowledge"
     receipts = root / "receipts"
     socket_parent = root / "ipc"
@@ -114,9 +119,7 @@ def test_real_linux_uids_kernel_peer_socket_permissions_and_recovery(tmp_path):
 
         env = os.environ.copy()
         package_path = os.environ.get("SB_WRITER_TEST_PYTHONPATH")
-        env["PYTHONPATH"] = os.pathsep.join(
-            [package_path, *sys.path] if package_path else sys.path
-        )
+        env["PYTHONPATH"] = package_path or os.pathsep.join(sys.path)
         env["SB_WRITER_TEST_KNOWLEDGE"] = str(knowledge)
         env["SB_WRITER_TEST_SOCKET"] = socket_path
         env["SB_WRITER_TEST_OUTPUT"] = OUTPUT.hex()
@@ -209,3 +212,4 @@ else:
         if stop.is_alive():
             stop.kill()
             stop.join(timeout=2)
+        shutil.rmtree(root)
