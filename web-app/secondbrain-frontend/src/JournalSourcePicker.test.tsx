@@ -72,7 +72,7 @@ describe('Journal source picker', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 403 })));
     rerender(<JournalSourcePicker locale="zh-CN" />);
     fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
-    expect(await screen.findByText('当前账户无权读取 Journal 来源。')).toBeTruthy();
+    expect(await screen.findByText('Journal 来源请求未获授权；请检查登录状态或请求安全策略。')).toBeTruthy();
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
   });
 
