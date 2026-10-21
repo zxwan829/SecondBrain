@@ -26,6 +26,7 @@ from pydantic import BaseModel
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 SAFE_REF = re.compile(r"^[A-Za-z0-9_.:/#@+ -]{1,512}$")
 MAX_CONTENT_BYTES = 8_192
+MAX_EVENTS_FILE_BYTES = 8 * 1024 * 1024
 EVENTS_FILE = "personal-memory.jsonl"
 LOCK_FILE = "personal-memory.lock"
 
@@ -88,8 +89,15 @@ class PersonalMemoryStore:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise MemoryStoreError("Personal memory data must be a private regular file owned by Core")
+            if info.st_size > MAX_EVENTS_FILE_BYTES:
+                raise MemoryStoreError("Personal memory exceeds the read budget")
             with os.fdopen(fd, "rb", closefd=False) as stream:
-                raw = stream.read()
+                raw = stream.read(MAX_EVENTS_FILE_BYTES + 1)
+            after = os.fstat(fd)
+            if (len(raw) > MAX_EVENTS_FILE_BYTES or len(raw) != info.st_size
+                    or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    != (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)):
+                raise MemoryStoreError("Personal memory changed during the bounded read")
         finally:
             os.close(fd)
         events: list[dict[str, Any]] = []
@@ -341,6 +349,69 @@ class PersonalMemoryStore:
             result.append({**recalled, "source": {"type": row["source_type"], "ref": row["source_ref"]}})
         result.sort(key=lambda row: (row["recorded_at"], row["memory_id"]), reverse=True)
         return result[:limit]
+
+    def context_candidates(self, *, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        """Return metadata-only candidates from a stable, lock-file-free snapshot."""
+        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+            raise ValueError("Context query must contain 1-200 characters")
+        if type(limit) is not int or not 1 <= limit <= 3:
+            raise ValueError("Context limit must be from 1 to 3")
+        self._validate_root()
+
+        def select(events):
+            latest: dict[str, dict[str, Any]] = {}
+            for row in events:
+                latest[row["memory_id"]] = row
+            now = datetime.now(timezone.utc)
+            needle = query.casefold().strip()
+            selected = []
+            for row in latest.values():
+                if (row.get("status") != "active"
+                        or row.get("fact_kind") not in {"user_stated", "user_confirmed"}
+                        or row.get("verification_status") == "source_required"):
+                    continue
+                expiry = row.get("expires_at")
+                recorded_at = row.get("recorded_at")
+                text = row.get("content", {}).get("text", "")
+                if not isinstance(text, str) or not isinstance(recorded_at, str):
+                    raise MemoryStoreError("Personal memory source metadata is invalid")
+                try:
+                    recorded = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+                    if recorded.tzinfo is None:
+                        raise ValueError
+                except (ValueError, AttributeError) as exc:
+                    raise MemoryStoreError("Personal memory source timestamp is invalid") from exc
+                if expiry:
+                    try:
+                        if datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= now:
+                            continue
+                    except (ValueError, AttributeError) as exc:
+                        raise MemoryStoreError("Personal memory expiry timestamp is invalid") from exc
+                category = row.get("category")
+                if not isinstance(category, str):
+                    raise MemoryStoreError("Personal memory source metadata is invalid")
+                if needle not in text.casefold() and needle not in category.casefold():
+                    continue
+                selected.append({
+                    "source_id": row["memory_id"],
+                    "source_version": str(row["revision"]),
+                    "sha256": hashlib.sha256(_json_bytes(row)).hexdigest(),
+                    "source_timestamp": recorded.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+                    "fact_kind": row["fact_kind"],
+                    "state": "active",
+                    "expires_at": expiry,
+                })
+            selected.sort(key=lambda item: (item["source_timestamp"], item["source_id"]), reverse=True)
+            return selected[:limit]
+
+        # Reads directly from the data file without creating/locking the write
+        # lock file. A second bounded snapshot detects append, correction, or
+        # revoke races before metadata leaves Core.
+        first = select(self._read_events_unlocked())
+        second = select(self._read_events_unlocked())
+        if first != second:
+            raise MemoryStoreError("Personal memory changed during context verification")
+        return first
 
 
 class CreateMemory(BaseModel):
