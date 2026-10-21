@@ -119,7 +119,8 @@ class DailyBriefRecordReadStore:
             remaining -= len(chunk)
         return b"".join(chunks)
 
-    def read(self, day, timezone_name, source_verifier: Callable[[dict], bool] | None = None):
+    def read(self, day, timezone_name, source_verifier: Callable[[dict], bool] | None = None,
+             source_permission_preflight: Callable[[list[dict]], None] | None = None):
         if not self.configured:
             return DailyBriefRecordSnapshot(False, False, False, None, None, "unverified")
         if not self.root:
@@ -175,6 +176,10 @@ class DailyBriefRecordReadStore:
         if not _validate_record(record, day, timezone_name, zone, self.max_source_refs):
             return DailyBriefRecordSnapshot(True, False, True, None, None, "unverified", "failed")
         refs = record["source_refs"]
+        if source_permission_preflight is not None and refs:
+            # The route can authorize every referenced source kind before the
+            # first source store read, avoiding partial reads on mixed ACLs.
+            source_permission_preflight(refs)
         if source_verifier is None:
             source_status = "unverified"
         else:

@@ -208,10 +208,9 @@ def create_app():
     @app.middleware("http")
     async def security_headers(request, call_next):
         response = await call_next(request)
-        if (request.url.path in {
+        if (request.url.path.startswith("/api/daily-brief") or request.url.path in {
                 "/api/promote/auth/unlock", "/api/promote/auth/lock",
                 "/api/promote/review/preview", "/api/promote/review/confirm",
-                "/api/daily-brief/source-options/journal",
         } or request.url.path.startswith("/api/promote/operations/")):
             response.headers["Cache-Control"] = "private, no-store"
         if request.url.path.endswith("/knowledge-citations"):
