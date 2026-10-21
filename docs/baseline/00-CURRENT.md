@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-20
+updated: 2026-10-22
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -8,7 +8,15 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-20 最新阶段裁定与 NEXT（Issue #76/#96/#97）
+## 2026-10-22 当前阶段裁定与唯一 NEXT（Issue #76/#96/#97）
+
+- **GitHub 当前源码权威基线：** `main a32bf3907878f2f4f2eac5621a5e58ed6e7be25c`，是阶段一第 5 部分两条功能 PR 合并后的提交；这不是 NAS 正在运行的镜像版本。最近一次已证据化的生产运行状态仍以 `Environment-Baseline.md` 为准，本次未核验/变更生产。
+- **阶段一第 4 部分（可信 Knowledge 检索参考）已合并：** Core [PR #165](https://github.com/zxwan829/SecondBrain/pull/165) merge `b825466c2bc8068e5b014adb807a31601c0cdbba`；Web [PR #166](https://github.com/zxwan829/SecondBrain/pull/166) merge `b6cd1ffb9423b1941ea2be5cff63e846b07758f8`。[#96 合成证据](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6318462056)、[#97 Core 修复证据](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6318466092)，评审结论 `PASS_WITH_LIMITS`。交付内容为 Core 受控检索、SHA/provenance 再验证、SSE/history 参考元数据与 Web“检索参考”展示/本地刷新回读；**不证明模型使用 Knowledge 形成回答**。知识正文未注入 Hermes system-level instructions 或原始 input；低信任模型上下文角色验证、跨设备 run 索引与真实模型 grounding 均尚未完成。Core 最终 HEAD 定向 32 passed；此前全量 469 项属于前一 HEAD，最终 HEAD 全量 `NOT RUN`（明确接受限制）。
+- **阶段一第 5 部分（Journal / Projects / Daily Brief 手工业务闭环）已合并：** Core [PR #167](https://github.com/zxwan829/SecondBrain/pull/167) merge `9455a108b747a317fd37c03c3949b3b2f93761d6`；Web [PR #168](https://github.com/zxwan829/SecondBrain/pull/168) merge `a32bf3907878f2f4f2eac5621a5e58ed6e7be25c`。Core 提供 Task 的权威 `source_ref`、Task/Project/Journal 来源权限及版本校验、手工 Brief 写入/精确回读/失败恢复与 no-store；Web 完成来源选择/回跳、Projects 分页、Journal 日期与条目定位、保存回执与刷新故障区分。A 报 Core+Vite 本地合成 HTTP 主流程及定向 4 PASS、Web 定向 81/full 380 PASS；B 报 Core 全量 470 PASS + 28 subtests。[#96 A/B Gate 证据](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6319368596) 为 `PASS_WITH_LIMITS`，真实浏览器点击受环境停止门 `BLOCKED_ENV/NOT RUN`。Brief 仅用户**明确触发的手工编辑与保存**，`approved_import` 仍 501；**无 AI 自动撰写、后台定时或真实数据验收**。
+- **治理与未交付范围：** 原 V1 MUST / D077 Companion MVP 整体仍 `NOT DONE`；D086 Chat→Inbox→Review 批准写入路径、真正 Knowledge Writer 的独立 OS UID/ACL/mount/peer 安全准入、真实微信/飞书接入、真实用户来源与跨端浏览器验收不因上述合并自动完成。#106 Writer 与 #101 渠道等独立候选不在此次合并内；另有 #164 Task 创建 Web Draft，必须独立审查，不得把它当作已合入。Private 维持排除，Knowledge Writer/Promote 生产保持 OFF。没有新 NAS 部署、真实模型调用、生产数据读写或额外 CI。
+- **阶段一第 6 部分｜唯一 NEXT：** **先进行安全边界与综合验收准备**：以现行 `main` 和现有契约列出 V1 MUST/Companion MVP 未满足项、可在合成环境完成的端到端正反例、真实浏览器/跨设备阻断与需要单独授权的生产数据/OS Writer/Promote/模型验收门槛；优先独立审阅尚未合并的 D086/Task 等业务关键切片，避免虚构生产能力。A/B 可在各自源码范围内提交隔离验证方案或 Draft PR，但**不得**未经用户新授权自行合并、部署、读取真实 Vault/私人 Session、修改 NAS/Compose/UID/GID/ACL/mount/Secrets、触发付费模型/外部渠道或开启 Writer/Promote。重大新业务/安全取舍须回 Decision-Log 审批；小问题在已授权的本地合成范围内自修。阶段六的真实操作另行授权。
+
+## 2026-10-20 阶段裁定与 NEXT（历史快照，已被 2026-10-22 裁定替代；Issue #76/#96/#97）
 
 - **最新应用源码主线：** `87671644356e01d58ec2780d0c45bd11f4c3edfe`。之后 PR #131（main merge `18fac18f89ce3275d9d693bd89f57cdb83083a96`）仅合并治理文档，不改应用源码。Daily Brief 来源校验 #123、Core 测试路径可移植性 #124、人工内容持久化 #125 均已合并；D089 Journal source-options Core 路由 PR #128 亦已合并（固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b`，merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）。B 报告 Core 全量 420 tests + 28 subtests 与正式 localhost HTTP 验证通过；A 对固定 HEAD 的独立验收记录了真实 `create_app()` + Uvicorn 正式路由定向测试 1 passed，未报告 P0/P1。源码合并与本地合成证据不代表部署、真实 Journal/Vault 访问或用户业务验收。#125 保存的是用户明确提交的人工撰写内容，并在读取时重新验证 Task/Project/Journal 来源；不代表 AI 自动生成、定时调度或生产数据闭环。
 - **Projects / Activity / Daily Brief 基础接线：** #107/#108/#111/#114/#116/#119/#120 已合并。当前 Projects 的显式 registry 与状态仅有合成/受限来源证据，尚未连接真实业务项目并完成用户验收；Brief Core 来源验证与人工文本保存已合并，`approved_import` 仍返回 501；用户明确触发的 AI 编写属于批准的产品方向但尚未实现，后台自动生成/调度尚未获批。
