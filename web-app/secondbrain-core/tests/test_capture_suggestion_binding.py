@@ -14,15 +14,17 @@ from secondbrain_core.modules.capture_suggestion_binding import (
     TrustedCaptureSuggestionBindingAuthority,
     TrustedCaptureSuggestionBindingStore,
     VerifiedCaptureSuggestionSource,
+    validate_verified_capture_suggestion_source,
 )
 
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
 TEXT = "synthetic suggestion source text"
 EVENT_ID = "synthetic-hermes-event-0001"
-VERSION = "record-v1"
+VERSION = "1"
 SUBJECT = "synthetic-owner"
 CONSENT_ID = "synthetic-consent-0001"
+SOURCE_SYSTEM = "synthetic.hermes"
 DIGEST = hashlib.sha256(TEXT.encode()).hexdigest()
 
 
@@ -48,7 +50,8 @@ def source_record(**changes):
     fields = dict(source_event_id=EVENT_ID, original_text=TEXT,
                   original_text_sha256=DIGEST, source_record_version=VERSION,
                   subject=SUBJECT, received_at="2026-10-20T11:58:00Z",
-                  expires_at="2026-10-20T12:05:00Z")
+                  expires_at="2026-10-20T12:05:00Z",
+                  source_system=SOURCE_SYSTEM, lifecycle_status="active")
     fields.update(changes)
     return VerifiedCaptureSuggestionSource(**fields)
 
@@ -66,6 +69,7 @@ def authority(source=None, consent=None):
         SyntheticSourceReader(source or source_record()),
         SyntheticConsentReader(consent or consent_record()),
         clock=lambda: NOW,
+        allowed_source_systems={SOURCE_SYSTEM},
     )
 
 
@@ -138,6 +142,7 @@ def test_source_event_text_hash_version_or_subject_drift_fails_closed():
     for bad_source in (
         source_record(original_text="different text"),
         source_record(original_text_sha256="0" * 64),
+        source_record(source_record_version="2"),
         source_record(source_record_version="record-v2"),
         source_record(subject="different-owner"),
         source_record(source_event_id="different-event"),
@@ -149,6 +154,83 @@ def test_source_event_text_hash_version_or_subject_drift_fails_closed():
     assert resolve(source_event_id="web-supplied-event") is None
     assert resolve(expected_text="x" * 200_001) is None
     assert resolve(expected_version="v" * 257) is None
+
+
+def test_pure_source_verifier_requires_allowlisted_active_canonical_source():
+    valid = source_record()
+    assert validate_verified_capture_suggestion_source(
+        valid, valid, allowed_source_systems={SOURCE_SYSTEM},
+        expected_event_id=EVENT_ID, expected_text=TEXT,
+        expected_version=VERSION, expected_subject=SUBJECT, now=NOW,
+    ) == valid
+    for invalid in (
+        source_record(source_system="client.claimed-hermes"),
+        source_record(lifecycle_status="edited"),
+        source_record(lifecycle_status="deleted"),
+        source_record(lifecycle_status="unknown"),
+        source_record(source_record_version="0"),
+        source_record(source_record_version="01"),
+        source_record(source_record_version="+1"),
+        source_record(source_record_version="record-v1"),
+        source_record(subject="other-owner"),
+        source_record(original_text=""),
+        source_record(expires_at="2026-10-20T12:00:00Z"),
+    ):
+        assert validate_verified_capture_suggestion_source(
+            invalid, invalid, allowed_source_systems={SOURCE_SYSTEM},
+            expected_event_id=EVENT_ID, expected_text=TEXT,
+            expected_version=VERSION, expected_subject=SUBJECT, now=NOW,
+        ) is None
+    assert validate_verified_capture_suggestion_source(
+        valid, valid, allowed_source_systems=set(),
+        expected_event_id=EVENT_ID, expected_text=TEXT,
+        expected_version=VERSION, expected_subject=SUBJECT, now=NOW,
+    ) is None
+
+
+def test_pure_source_verifier_rejects_unstable_pair_and_aba_reuse():
+    original = source_record(source_record_version="1")
+    edited = source_record(original_text="edited", original_text_sha256=hashlib.sha256(
+        b"edited").hexdigest(), source_record_version="2")
+    restored = source_record(source_record_version="3")
+    args = dict(allowed_source_systems={SOURCE_SYSTEM}, expected_event_id=EVENT_ID,
+                expected_text=TEXT, expected_version="1", expected_subject=SUBJECT,
+                now=NOW)
+    assert validate_verified_capture_suggestion_source(original, edited, **args) is None
+    # Restoring the original bytes creates a new source revision; the prior
+    # binding's revision 1 cannot be replayed against revision 3.
+    assert restored.original_text == original.original_text
+    assert restored.original_text_sha256 == original.original_text_sha256
+    assert restored.source_record_version != original.source_record_version
+    assert validate_verified_capture_suggestion_source(restored, restored, **args) is None
+    assert validate_verified_capture_suggestion_source(
+        restored, restored, **{**args, "expected_version": "3"},
+    ) == restored
+
+
+def test_pure_source_verifier_enforces_utf8_bytes_and_has_no_reader_side_effects():
+    text = "漢" * 66_667
+    over_budget = source_record(original_text=text, original_text_sha256=hashlib.sha256(
+        text.encode("utf-8")).hexdigest())
+    args = dict(allowed_source_systems={SOURCE_SYSTEM}, expected_event_id=EVENT_ID,
+                expected_text=text, expected_version=VERSION, expected_subject=SUBJECT,
+                now=NOW)
+    assert validate_verified_capture_suggestion_source(over_budget, over_budget, **args) is None
+
+    class CountingReader:
+        def __init__(self, record):
+            self.record = record
+            self.calls = 0
+
+        def read_verified_suggestion(self, _event_id):
+            self.calls += 1
+            return self.record
+
+    reader = CountingReader(source_record())
+    assert validate_verified_capture_suggestion_source(
+        reader.record, reader.record, **{**args, "expected_text": TEXT},
+    ) == reader.record
+    assert reader.calls == 0
 
 
 def test_source_and_consent_are_rechecked_and_drift_or_revocation_fails_closed():
@@ -202,7 +284,7 @@ def test_missing_mismatched_or_unapproved_consent_fails_closed():
         consent_record(subject="other-owner"),
         consent_record(source_event_id="other-event"),
         consent_record(original_text_sha256="0" * 64),
-        consent_record(source_record_version="record-v2"),
+        consent_record(source_record_version="2"),
         consent_record(decision="rejected"),
         consent_record(consent_id="other-consent"),
     ):

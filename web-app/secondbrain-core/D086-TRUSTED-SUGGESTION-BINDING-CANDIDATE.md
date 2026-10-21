@@ -48,6 +48,20 @@ still be current, and the Core consent timestamp must fall between receipt and
 the current time. Original text is capped by UTF-8 bytes, not character count,
 and the complete source/consent projection has a bounded serialized budget.
 
+S1 adds the pure `validate_verified_capture_suggestion_source` check over two
+snapshots; it performs no reads or writes. The injected Core reader remains the
+authentication boundary and its source-system allowlist is fixed by trusted
+server configuration, never by a request field. The verifier also requires a
+server-owned subject/event, exact original-text SHA-256, an `active` lifecycle,
+and a stable source system/version/subject/lifecycle tuple across both reads.
+For compatibility with the existing metadata ledger, the version is stored as
+text but must be the canonical decimal spelling of a positive integer. The
+reader contract must guarantee monotonicity across edits and restoration of
+older bytes; the verifier cannot independently prove that an upstream version
+is monotonic. Synthetic A→B→A cases prove the old revision cannot be replayed
+when the restored bytes carry a new revision. No concrete source system has
+been selected or authenticated in production.
+
 `TrustedCaptureSuggestionBindingStore` is an unconfigured internal candidate
 ledger for synthetic/local validation. It binds one event+subject to one
 metadata tuple under an inter-process lock, replays an identical tuple, and
