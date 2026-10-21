@@ -299,7 +299,7 @@ describe('A Web-only synthetic UI to HTTP integration', () => {
   it('opens only the exact Chat Inbox receipt and exposes a Review link only for its verified source version', async () => {
     const inboxId = 'f'.repeat(32);
     const sourceSha = 'e'.repeat(64);
-    const sourcePath = '10-Review/synthetic-journal-source.md';
+    const sourcePath = 'Inbox-synthetic-journal-source.md';
     vi.stubEnv('VITE_ENABLE_NOTES', 'false');
     history.replaceState({}, '', `/inbox#capture-${inboxId}`);
     const calls: string[] = [];
