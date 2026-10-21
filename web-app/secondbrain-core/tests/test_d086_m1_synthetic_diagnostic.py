@@ -320,6 +320,38 @@ def test_root_replacement_after_fd_anchor_fails_closed_without_following_decoy(t
     moved.rename(root)
 
 
+def test_root_replaced_with_valid_directory_after_open_reads_only_pinned_root(tmp_path, monkeypatch):
+    root = tmp_path / "synthetic"
+    make_store(root)
+    moved = tmp_path / "original-root"
+    decoy = tmp_path / "decoy-root"
+    make_store(decoy)
+    decoy_db = decoy / SyntheticConsentLedger.database_name
+    decoy_identity = (decoy_db.stat().st_dev, decoy_db.stat().st_ino)
+    opened = []
+    diagnostic = SyntheticOperatorDiagnostic(root)
+    original_read = diagnostic._read_fd
+
+    def tracked_read(fd, limit):
+        st = os.fstat(fd)
+        opened.append((st.st_dev, st.st_ino))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(diagnostic, "_read_fd", tracked_read)
+
+    class ReplaceRootAfterOpen(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == "after_root_open":
+                root.rename(moved)
+                decoy.rename(root)
+
+    report = ReplaceRootAfterOpen(root).run()
+    assert report.status == "unavailable"
+    assert decoy_identity not in opened
+    root.rename(decoy)
+    moved.rename(root)
+
+
 def test_root_symlink_substitution_before_component_open_is_rejected(tmp_path, monkeypatch):
     root = tmp_path / "synthetic"
     make_store(root, admitted=False)
@@ -358,6 +390,42 @@ def test_intermediate_parent_symlink_swap_is_rejected(tmp_path):
     report = SwapIntermediateBeforeOpen(root).run()
     assert report.status == "unavailable"
     parent.unlink()
+    moved_parent.rename(parent)
+
+
+def test_valid_intermediate_directory_replacement_is_rejected_by_pinned_root_identity(tmp_path, monkeypatch):
+    parent = tmp_path
+    root = parent / "synthetic"
+    make_store(root, admitted=False)
+    moved_parent = parent.with_name(parent.name + ".saved")
+    replacement_parent = parent.with_name(parent.name + ".replacement")
+    replacement_parent.mkdir(mode=0o700)
+    os.chmod(replacement_parent, 0o700)
+    decoy_root = replacement_parent / "synthetic"
+    make_store(decoy_root, admitted=False)
+    decoy_db = decoy_root / SyntheticConsentLedger.database_name
+    decoy_identity = (decoy_db.stat().st_dev, decoy_db.stat().st_ino)
+    opened = []
+    diagnostic = SyntheticOperatorDiagnostic(root)
+    original_read = diagnostic._read_fd
+
+    def tracked_read(fd, limit):
+        st = os.fstat(fd)
+        opened.append((st.st_dev, st.st_ino))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(diagnostic, "_read_fd", tracked_read)
+
+    class ReplaceParentWithValidDirectory(SyntheticOperatorDiagnostic):
+        def _before_open_hook(self, stage):
+            if stage == f"before_root_component_{len(Path(root).parts) - 3}":
+                parent.rename(moved_parent)
+                replacement_parent.rename(parent)
+
+    report = ReplaceParentWithValidDirectory(root).run()
+    assert report.status == "unavailable"
+    assert decoy_identity not in opened
+    parent.rename(replacement_parent)
     moved_parent.rename(parent)
 
 

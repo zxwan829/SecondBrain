@@ -91,6 +91,8 @@ class SyntheticOperatorDiagnostic:
 
     def _open_canonical_root(self):
         """Walk each canonical component from / with no symlink following."""
+        expected = self.root.lstat()
+        self._require_dir(expected)
         canonical = Path(os.path.realpath(self.root))
         if canonical != self.root:
             raise ValueError("root is not canonical")
@@ -106,9 +108,7 @@ class SyntheticOperatorDiagnostic:
                 current = next_fd
             root_stat = os.fstat(current)
             self._require_dir(root_stat)
-            expected = self.root.lstat()
-            if (stat.S_ISLNK(expected.st_mode)
-                    or (root_stat.st_dev, root_stat.st_ino) != (expected.st_dev, expected.st_ino)):
+            if (root_stat.st_dev, root_stat.st_ino) != (expected.st_dev, expected.st_ino):
                 raise ValueError("root identity changed")
             return current, self._signature(root_stat)
         except BaseException:
