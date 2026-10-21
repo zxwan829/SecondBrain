@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import json
 import multiprocessing
 import os
@@ -10,10 +11,13 @@ from types import SimpleNamespace
 from secondbrain_core.modules.capture_suggestion_binding import (
     CaptureSuggestionBindingConflict,
     CaptureSuggestionBindingStoreError,
+    CaptureSuggestionConsentDecisionCandidate,
     CoreCaptureConsentRecord,
+    TrustedCaptureSuggestionActionContext,
     TrustedCaptureSuggestionBindingAuthority,
     TrustedCaptureSuggestionBindingStore,
     VerifiedCaptureSuggestionSource,
+    validate_capture_suggestion_acceptance,
     validate_verified_capture_suggestion_source,
 )
 
@@ -78,6 +82,44 @@ def resolve(service=None, **overrides):
                 authenticated_subject=SUBJECT, consent_id=CONSENT_ID)
     args.update(overrides)
     return (service or authority()).resolve(**args)
+
+
+class SyntheticAppendOnlyConsentAudit:
+    """Test-only event list; never imported by Core application code."""
+
+    def __init__(self):
+        self._events = []
+
+    @property
+    def events(self):
+        return tuple(self._events)
+
+    @staticmethod
+    def _fingerprint(event):
+        material = {name: getattr(event, name) for name in (
+            "decision", "actor_subject", "source_event_id", "source_record_version",
+            "original_text_sha256", "intent", "idempotency_key",
+        )}
+        return hashlib.sha256(json.dumps(
+            material, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+
+    def append(self, event):
+        if (type(event) is not CaptureSuggestionConsentDecisionCandidate
+                or event.decision != "accept"
+                or event.semantic_fingerprint != self._fingerprint(event)):
+            raise ValueError("invalid synthetic audit candidate")
+        slot = (event.source_event_id, event.intent)
+        for prior in self._events:
+            if (prior.source_event_id, prior.intent) == slot:
+                if prior == event:
+                    return prior, True
+                if (prior.semantic_fingerprint == event.semantic_fingerprint
+                        and self._fingerprint(prior) == self._fingerprint(event)):
+                    return prior, True
+                raise ValueError("synthetic audit conflict")
+        self._events.append(event)
+        return event, False
 
 
 def changed_binding(binding, **changes):
@@ -231,6 +273,97 @@ def test_pure_source_verifier_enforces_utf8_bytes_and_has_no_reader_side_effects
         reader.record, reader.record, **{**args, "expected_text": TEXT},
     ) == reader.record
     assert reader.calls == 0
+
+
+def accept_candidate(*, source=None, action_context=None, intent="journal_intent",
+                     idempotency_key="synthetic-decision-0001", now=NOW):
+    record = source or source_record()
+    context = action_context or TrustedCaptureSuggestionActionContext(
+        authenticated_subject=SUBJECT, session_authenticated=True,
+        origin_validated=True, permission_checked=True,
+    )
+    return validate_capture_suggestion_acceptance(
+        record, record, allowed_source_systems={SOURCE_SYSTEM},
+        action_context=context, intent=intent, idempotency_key=idempotency_key,
+        now=now,
+    )
+
+
+def test_s2_accept_validator_returns_only_non_authorizing_candidate():
+    candidate = accept_candidate()
+    assert candidate is not None
+    assert candidate.decision == "accept"
+    assert candidate.actor_subject == SUBJECT
+    assert candidate.source_event_id == EVENT_ID
+    assert candidate.source_record_version == VERSION
+    assert candidate.original_text_sha256 == DIGEST
+    assert candidate.intent == "journal_intent"
+    assert TEXT not in repr(candidate)
+    assert "session" not in repr(candidate).lower()
+    assert "run" not in repr(candidate).lower()
+    later_replay = accept_candidate(now=datetime(2026, 10, 20, 12, 0, 1,
+                                                   tzinfo=timezone.utc))
+    assert later_replay.semantic_fingerprint == candidate.semantic_fingerprint
+    assert later_replay.recorded_at != candidate.recorded_at
+
+
+def test_s2_accept_validator_rejects_untrusted_or_incomplete_action_context():
+    for context in (
+        {"authenticated_subject": SUBJECT, "session": "forged", "run": "forged"},
+        TrustedCaptureSuggestionActionContext(SUBJECT, False, True, True),
+        TrustedCaptureSuggestionActionContext(SUBJECT, True, False, True),
+        TrustedCaptureSuggestionActionContext(SUBJECT, True, True, False),
+        TrustedCaptureSuggestionActionContext("other-subject", True, True, True),
+    ):
+        assert accept_candidate(action_context=context) is None
+    assert accept_candidate(intent="") is None
+    assert accept_candidate(intent="../../write") is None
+    assert accept_candidate(idempotency_key="x" * 129) is None
+    assert accept_candidate(now=datetime(2026, 10, 20, 12, 5,
+                                           tzinfo=timezone.utc)) is None
+
+
+def test_s2_mock_append_only_audit_exact_replay_and_conflicts():
+    audit = SyntheticAppendOnlyConsentAudit()
+    first = accept_candidate()
+    assert audit.append(first) == (first, False)
+    replay = accept_candidate(now=datetime(2026, 10, 20, 12, 0, 1,
+                                           tzinfo=timezone.utc))
+    stored, was_replay = audit.append(replay)
+    assert was_replay is True
+    assert stored == first
+    assert len(audit.events) == 1
+
+    # The same event/intent cannot rotate its key or change its bound version,
+    # digest, actor, or decision to manufacture a second audit outcome.
+    conflicting_candidates = (
+        accept_candidate(idempotency_key="rotated-key"),
+        replace(first, actor_subject="other-subject"),
+        replace(first, source_record_version="2"),
+        replace(first, original_text_sha256="0" * 64),
+        replace(first, decision="revoke"),
+    )
+    for conflict in conflicting_candidates:
+        try:
+            audit.append(conflict)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("different accept tuple must conflict")
+    assert audit.events == (first,)
+
+
+def test_s2_validation_rejects_drift_without_appending_audit():
+    audit = SyntheticAppendOnlyConsentAudit()
+    changed = source_record(source_record_version="2")
+    candidate = validate_capture_suggestion_acceptance(
+        source_record(), changed, allowed_source_systems={SOURCE_SYSTEM},
+        action_context=TrustedCaptureSuggestionActionContext(
+            SUBJECT, True, True, True,
+        ), intent="journal_intent", idempotency_key="synthetic-key", now=NOW,
+    )
+    assert candidate is None
+    assert audit.events == ()
 
 
 def test_source_and_consent_are_rechecked_and_drift_or_revocation_fails_closed():

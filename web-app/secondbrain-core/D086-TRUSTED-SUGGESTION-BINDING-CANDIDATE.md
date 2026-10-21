@@ -62,6 +62,20 @@ is monotonic. Synthetic A→B→A cases prove the old revision cannot be replaye
 when the restored bytes carry a new revision. No concrete source system has
 been selected or authenticated in production.
 
+The S2 `validate_capture_suggestion_acceptance` function is also pure. It
+requires an internal typed action-context object, an accept-only action,
+server-derived actor/source subject equality, and the S1 two-snapshot result.
+Its session/Origin/permission booleans are testable attestations supplied by a
+trusted future caller; the booleans do not validate HTTP input or authenticate
+anything themselves. Its result is only a candidate audit event with a
+semantic idempotency fingerprint. It is not a consent record, binding, token,
+or Inbox authorization. A test-only in-memory append-only stream demonstrates
+exact replay and same-event/intent conflict behavior, including key rotation,
+actor, revision, digest and decision changes. No production consent store or
+write path is present. Exact intent vocabulary, permission action, consent
+expiry/revocation/one-time semantics, event-key scope and audit retention still
+need a cross-line decision.
+
 `TrustedCaptureSuggestionBindingStore` is an unconfigured internal candidate
 ledger for synthetic/local validation. It binds one event+subject to one
 metadata tuple under an inter-process lock, replays an identical tuple, and

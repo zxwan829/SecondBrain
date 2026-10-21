@@ -23,6 +23,8 @@ _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 # cannot treat labels such as "record-v1" as an anti-ABA revision.
 _POSITIVE_VERSION = re.compile(r"^[1-9][0-9]{0,63}$")
 _SOURCE_SYSTEM = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
+_DECISION_KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_INTENT = re.compile(r"^[a-z][a-z0-9._-]{0,31}$")
 MAX_SOURCE_TEXT_UTF8_BYTES = 200_000
 MAX_BINDING_STATE_BYTES = 512_000
 
@@ -58,6 +60,36 @@ class CoreCaptureConsentRecord:
     source_record_version: str
     decision: str
     recorded_at: str
+
+
+@dataclass(frozen=True)
+class TrustedCaptureSuggestionActionContext:
+    """Server-injected acceptance evidence for a pure candidate validator.
+
+    These booleans are attestations from a trusted caller, not checks of HTTP
+    input and not proof by themselves. No route or production authority builds
+    this object in the current application.
+    """
+
+    authenticated_subject: str
+    session_authenticated: bool
+    origin_validated: bool
+    permission_checked: bool
+
+
+@dataclass(frozen=True)
+class CaptureSuggestionConsentDecisionCandidate:
+    """Synthetic audit candidate only; never a bearer or Inbox credential."""
+
+    decision: str
+    actor_subject: str
+    source_event_id: str
+    source_record_version: str
+    original_text_sha256: str
+    intent: str
+    idempotency_key: str
+    recorded_at: str
+    semantic_fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -287,6 +319,68 @@ def validate_verified_capture_suggestion_source(
             or received_at > now):
         return None
     return source
+
+
+def validate_capture_suggestion_acceptance(
+    first_source_read, second_source_read, *, allowed_source_systems,
+    action_context, intent, idempotency_key, now,
+):
+    """Return a non-authorizing accept-event candidate or ``None``.
+
+    This is a pure validator. It does not create or append consent, grant a
+    binding, issue an Inbox token, or establish that the injected action-context
+    attestations are true. A future route must obtain that context from its own
+    frozen server-side session/Origin/permission checks.
+    """
+    if (type(action_context) is not TrustedCaptureSuggestionActionContext
+            or not isinstance(action_context.authenticated_subject, str)
+            or not action_context.authenticated_subject
+            or len(action_context.authenticated_subject) > 256
+            or action_context.session_authenticated is not True
+            or action_context.origin_validated is not True
+            or action_context.permission_checked is not True
+            or not isinstance(intent, str) or not _INTENT.fullmatch(intent)
+            or not isinstance(idempotency_key, str)
+            or not _DECISION_KEY.fullmatch(idempotency_key)
+            or not isinstance(now, datetime) or now.tzinfo is None):
+        return None
+    actor = action_context.authenticated_subject
+    source = validate_verified_capture_suggestion_source(
+        first_source_read, second_source_read,
+        allowed_source_systems=allowed_source_systems,
+        expected_event_id=(first_source_read.source_event_id
+                           if isinstance(first_source_read, VerifiedCaptureSuggestionSource)
+                           else ""),
+        expected_text=(first_source_read.original_text
+                       if isinstance(first_source_read, VerifiedCaptureSuggestionSource)
+                       else ""),
+        expected_version=(first_source_read.source_record_version
+                          if isinstance(first_source_read, VerifiedCaptureSuggestionSource)
+                          else ""),
+        expected_subject=actor,
+        now=now,
+    )
+    if source is None:
+        return None
+    material = {
+        "decision": "accept",
+        "actor_subject": actor,
+        "source_event_id": source.source_event_id,
+        "source_record_version": source.source_record_version,
+        "original_text_sha256": source.original_text_sha256,
+        "intent": intent,
+        "idempotency_key": idempotency_key,
+    }
+    try:
+        fingerprint = hashlib.sha256(json.dumps(
+            material, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        recorded_at = now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except (AttributeError, TypeError, ValueError, UnicodeError):
+        return None
+    return CaptureSuggestionConsentDecisionCandidate(
+        **material, recorded_at=recorded_at, semantic_fingerprint=fingerprint,
+    )
 
 
 class TrustedCaptureSuggestionBindingStore:
