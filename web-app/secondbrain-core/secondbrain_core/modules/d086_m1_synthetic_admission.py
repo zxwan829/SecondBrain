@@ -45,11 +45,18 @@ class SyntheticAdmission:
 
 
 class SyntheticInboxAdmission:
-    """Core-shaped test model over SyntheticConsentLedger's SQLite file."""
+    """Synthetic-only admission over an injected reader and signed action.
 
-    def __init__(self, ledger, *, raw_directory="Raw", clock=None,
+    Callers never supply source DTOs, text, subject or version. The reader is
+    injected at service construction and must provide a source commit guard
+    held through SQLite commit. This models a synthetic source lock only; it
+    does not prove real Hermes locking/CAS or production authentication.
+    """
+
+    def __init__(self, ledger, *, source_reader, raw_directory="Raw", clock=None,
                  max_raw_bytes=MAX_SOURCE_TEXT_UTF8_BYTES):
         self.ledger = ledger
+        self.source_reader = source_reader
         if raw_directory != "Raw":
             raise ValueError("synthetic Raw directory name is fixed")
         if type(max_raw_bytes) is not int or not 1 <= max_raw_bytes <= MAX_SOURCE_TEXT_UTF8_BYTES:
@@ -154,76 +161,107 @@ class SyntheticInboxAdmission:
         except OSError as exc:
             raise SyntheticConsentUnavailable("synthetic Raw durability check failed") from exc
 
-    def admit(self, *, first_source_read, second_source_read, expected_event_id,
-              expected_text, expected_version, expected_subject, intent,
-              action_key, consent_id, expected_consent_revision):
-        if (not isinstance(action_key, str) or not _KEY.fullmatch(action_key)
-                or type(expected_consent_revision) is not int
-                or expected_consent_revision < 1):
-            raise SyntheticConsentConflict("invalid synthetic admission request")
-        now = self.clock()
-        source = validate_verified_capture_suggestion_source(
-            first_source_read, second_source_read,
-            allowed_source_systems={"synthetic.m1"},
-            expected_event_id=expected_event_id, expected_text=expected_text,
-            expected_version=expected_version, expected_subject=expected_subject,
-            now=now,
-        )
-        if source is None:
-            raise SyntheticConsentConflict("source validation failed closed")
-        try:
-            raw_bytes = source.original_text.encode("utf-8")
-        except UnicodeError as exc:
-            raise SyntheticConsentConflict("source encoding invalid") from exc
-        if len(raw_bytes) > self.max_raw_bytes:
-            raise SyntheticConsentConflict("source exceeds synthetic Raw budget")
-        digest = hashlib.sha256(raw_bytes).hexdigest()
-        if digest != source.original_text_sha256:
-            raise SyntheticConsentConflict("source digest changed")
-        now_iso = self._now_iso(now)
+    def admit_from_reader(self, action_proof):
+        """Read source from the injected authority and admit a signed action."""
+        reader = self.source_reader
+        read_source = getattr(reader, "read_verified_suggestion", None)
+        source_guard = getattr(reader, "source_commit_guard", None)
+        if not callable(read_source) or not callable(source_guard):
+            raise SyntheticConsentUnavailable("trusted synthetic source guard unavailable")
+        if not self.ledger.proof_authority.verify_fields(action_proof):
+            raise SyntheticConsentConflict("synthetic admission action proof invalid")
+        if action_proof.action != "admit" or not self._proof_matches_request(action_proof):
+            raise SyntheticConsentConflict("synthetic admission action binding invalid")
+        action_now = datetime.fromisoformat(
+            self.ledger._verified(action_proof, "admit").replace("Z", "+00:00"))
+        action_key = action_proof.action_key
+        consent_id = action_proof.consent_id
+        expected_consent_revision = action_proof.expected_revision
+        intent = action_proof.intent
+        now_iso = self._now_iso(action_now)
 
-        with self.ledger.transaction() as conn:
-            prior = conn.execute(
-                "SELECT operation_id,inbox_id,consent_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path,raw_sha256,action_key "
-                "FROM inbox_operations WHERE subject=? AND source_system=? AND source_event_id=?",
-                (source.subject, source.source_system, source.source_event_id),
-            ).fetchone()
-            if prior:
-                exact = (prior[2], prior[3], prior[4], prior[5], prior[6], prior[7],
-                         prior[8], prior[9], prior[12]) == (
-                    consent_id, source.subject, source.source_system,
-                    source.source_event_id, source.source_record_version,
-                    source.original_text_sha256, intent, expected_consent_revision,
-                    action_key,
+        # The synthetic source lock spans actual double read, raw staging and
+        # SQLite commit. Real remote source systems need a separately proven
+        # revision CAS/lock; a last read alone cannot close that TOCTOU window.
+        with source_guard(action_proof.source_event_id):
+            with self.ledger.transaction() as conn:
+                first = read_source(action_proof.source_event_id)
+                second = read_source(action_proof.source_event_id)
+                expected_text = getattr(first, "original_text", "")
+                source = validate_verified_capture_suggestion_source(
+                    first, second, allowed_source_systems={"synthetic.m1"},
+                    expected_event_id=action_proof.source_event_id,
+                    expected_text=expected_text,
+                    expected_version=action_proof.source_version,
+                    expected_subject=action_proof.subject,
+                    now=action_now,
                 )
-                if not exact:
-                    raise SyntheticConsentConflict("source event already admitted with different intent or key")
-                path = self._raw_path(prior[10])
-                with path.open("rb") as stream:
-                    raw = stream.read(self.max_raw_bytes + 1)
-                if hashlib.sha256(raw).hexdigest() != prior[11]:
-                    raise SyntheticConsentUnavailable("synthetic Raw manifest verification failed")
-                return SyntheticAdmission(*prior[:11], replayed=True)
+                if source is None or source.original_text_sha256 != action_proof.source_sha256:
+                    raise SyntheticConsentConflict("trusted source validation failed closed")
+                try:
+                    raw_bytes = source.original_text.encode("utf-8")
+                except UnicodeError as exc:
+                    raise SyntheticConsentConflict("source encoding invalid") from exc
+                if len(raw_bytes) > self.max_raw_bytes:
+                    raise SyntheticConsentConflict("source exceeds synthetic Raw budget")
+                digest = hashlib.sha256(raw_bytes).hexdigest()
+                if digest != source.original_text_sha256:
+                    raise SyntheticConsentConflict("source digest changed")
 
-            consent = conn.execute(
-                "SELECT subject,source_system,source_event_id,source_version,source_sha256,intent,state,revision,expires_at "
-                "FROM consent_records WHERE consent_id=?",
-                (consent_id,),
-            ).fetchone()
-            expected = (source.subject, source.source_system, source.source_event_id,
-                        source.source_record_version, source.original_text_sha256,
-                        intent, "active", expected_consent_revision)
-            if not consent or consent[:8] != expected:
-                raise SyntheticConsentConflict("consent state or revision changed")
-            expires = datetime.fromisoformat(consent[8].replace("Z", "+00:00"))
-            if expires.tzinfo is None or now >= expires:
-                raise SyntheticConsentConflict("consent expired")
-            operation_id = secrets.token_hex(16)
-            inbox_id = hashlib.sha256(
-                f"{consent_id}\0{action_key}\0{source.original_text_sha256}".encode()
-            ).hexdigest()[:32]
-            relative = self._stage_raw(inbox_id=inbox_id, raw_bytes=raw_bytes, digest=digest)
-            try:
+                prior = conn.execute(
+                    "SELECT operation_id,inbox_id,consent_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path,raw_sha256,action_key "
+                    "FROM inbox_operations WHERE subject=? AND source_system=? AND source_event_id=?",
+                    (source.subject, source.source_system, source.source_event_id),
+                ).fetchone()
+                if prior:
+                    exact = (prior[2], prior[3], prior[4], prior[5], prior[6], prior[7],
+                             prior[8], prior[9], prior[12]) == (
+                        consent_id, source.subject, source.source_system,
+                        source.source_event_id, source.source_record_version,
+                        source.original_text_sha256, intent, expected_consent_revision,
+                        action_key,
+                    )
+                    if not exact:
+                        raise SyntheticConsentConflict("source event already admitted with different intent or key")
+                    path = self._raw_path(prior[10])
+                    with path.open("rb") as stream:
+                        raw = stream.read(self.max_raw_bytes + 1)
+                    if hashlib.sha256(raw).hexdigest() != prior[11]:
+                        raise SyntheticConsentUnavailable("synthetic Raw manifest verification failed")
+                    return SyntheticAdmission(*prior[:11], replayed=True)
+
+                consent = conn.execute(
+                    "SELECT subject,source_system,source_event_id,source_version,source_sha256,intent,state,revision,expires_at "
+                    "FROM consent_records WHERE consent_id=?",
+                    (consent_id,),
+                ).fetchone()
+                expected = (source.subject, source.source_system, source.source_event_id,
+                            source.source_record_version, source.original_text_sha256,
+                            intent, "active", expected_consent_revision)
+                if not consent or consent[:8] != expected or consent[8] != action_proof.expires_at:
+                    raise SyntheticConsentConflict("consent state or revision changed")
+                expires = datetime.fromisoformat(consent[8].replace("Z", "+00:00"))
+                if expires.tzinfo is None or action_now >= expires:
+                    raise SyntheticConsentConflict("consent expired")
+                operation_id = secrets.token_hex(16)
+                inbox_id = hashlib.sha256(
+                    f"{consent_id}\0{action_key}\0{source.original_text_sha256}".encode()
+                ).hexdigest()[:32]
+                relative = self._stage_raw(inbox_id=inbox_id, raw_bytes=raw_bytes, digest=digest)
+
+                # Re-read at the commit edge while both synthetic source and
+                # SQLite CAS guards remain held.
+                final_source = read_source(action_proof.source_event_id)
+                still_current = validate_verified_capture_suggestion_source(
+                    source, final_source, allowed_source_systems={"synthetic.m1"},
+                    expected_event_id=action_proof.source_event_id,
+                    expected_text=source.original_text,
+                    expected_version=action_proof.source_version,
+                    expected_subject=action_proof.subject,
+                    now=self.clock(),
+                )
+                if still_current is None or still_current.original_text_sha256 != action_proof.source_sha256:
+                    raise SyntheticConsentConflict("source changed before commit")
                 conn.execute(
                     "INSERT INTO inbox_operations(operation_id,consent_id,action_key,inbox_id,subject,source_system,source_event_id,source_version,source_sha256,intent,consent_revision,raw_relative_path,raw_sha256,raw_bytes,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (operation_id, consent_id, action_key, inbox_id, source.subject,
@@ -236,15 +274,24 @@ class SyntheticInboxAdmission:
                     "INSERT INTO inbox_raw_manifest(inbox_id,relative_path,sha256,byte_length,verified) VALUES(?,?,?,?,1)",
                     (inbox_id, relative, digest, len(raw_bytes)),
                 )
-            except Exception:
-                # Keep staged Raw. Its orphan status is observable and requires
-                # an explicitly approved operator recovery policy; no deletion.
-                raise
-            return SyntheticAdmission(operation_id, inbox_id, consent_id,
-                                      source.subject, source.source_system,
-                                      source.source_event_id, source.source_record_version,
-                                      digest, intent, expected_consent_revision,
-                                      relative)
+                return SyntheticAdmission(operation_id, inbox_id, consent_id,
+                                          source.subject, source.source_system,
+                                          source.source_event_id, source.source_record_version,
+                                          digest, intent, expected_consent_revision,
+                                          relative)
+
+    @staticmethod
+    def _proof_matches_request(action_proof):
+        return (isinstance(action_proof.source_event_id, str)
+                and isinstance(action_proof.subject, str)
+                and isinstance(action_proof.source_version, str)
+                and isinstance(action_proof.source_sha256, str)
+                and isinstance(action_proof.intent, str)
+                and isinstance(action_proof.action_key, str)
+                and _KEY.fullmatch(action_proof.action_key) is not None
+                and isinstance(action_proof.consent_id, str)
+                and type(action_proof.expected_revision) is int
+                and action_proof.expected_revision >= 1)
 
     def get_by_event(self, *, subject, source_system, source_event_id):
         with self.ledger.transaction() as conn:
