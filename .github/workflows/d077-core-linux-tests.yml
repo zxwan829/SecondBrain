@@ -26,9 +26,13 @@ jobs:
       - name: Verify restricted Writer with real Linux identities and SO_PEERCRED
         working-directory: web-app/secondbrain-core
         run: |
+          site_dir="$(mktemp -d /tmp/secondbrain-writer-os.XXXXXX)"
+          chmod 0755 "$site_dir"
+          python -m pip install --no-deps --target "$site_dir" .
           sudo env \
             PATH="$PATH" \
-            PYTHONPATH=. \
+            PYTHONPATH="$site_dir" \
+            SB_WRITER_TEST_PYTHONPATH="$site_dir" \
             SB_WRITER_OS_ISOLATION=disposable-linux \
             "$(command -v python)" -m pytest -q -p no:cacheprovider \
             tests/test_restricted_knowledge_writer_linux_os_isolation.py

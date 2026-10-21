@@ -30,8 +30,10 @@ REQUEST_ID = "linux-os-isolation-001"
 
 
 def _writer_process(knowledge_root, receipt_root, socket_path, ready):
-    # The test container starts this child as container-root, then gives the
-    # Writer a private real UID/GID and the explicitly shared Core access GID.
+    # The test runner starts this child as root, then gives the Writer a
+    # private real UID/GID and the explicitly shared Core access GID.
+    from secondbrain_core.modules.restricted_knowledge_writer import main
+
     os.setgroups([CORE_GID])
     os.setresgid(WRITER_GID, CORE_GID, CORE_GID)
     os.setresuid(WRITER_UID, WRITER_UID, WRITER_UID)
@@ -43,7 +45,6 @@ def _writer_process(knowledge_root, receipt_root, socket_path, ready):
         "SB_CORE_UID": str(CORE_UID),
         "SB_CORE_GID": str(CORE_GID),
     })
-    from secondbrain_core.modules.restricted_knowledge_writer import main
     main()
 
 
@@ -112,7 +113,10 @@ def test_real_linux_uids_kernel_peer_socket_permissions_and_recovery(tmp_path):
         )
 
         env = os.environ.copy()
-        env["PYTHONPATH"] = os.pathsep.join(sys.path)
+        package_path = os.environ.get("SB_WRITER_TEST_PYTHONPATH")
+        env["PYTHONPATH"] = os.pathsep.join(
+            [package_path, *sys.path] if package_path else sys.path
+        )
         env["SB_WRITER_TEST_KNOWLEDGE"] = str(knowledge)
         env["SB_WRITER_TEST_SOCKET"] = socket_path
         env["SB_WRITER_TEST_OUTPUT"] = OUTPUT.hex()
