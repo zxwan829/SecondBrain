@@ -49,6 +49,11 @@ FAILURE_SCREENSHOT_DIR_VIEWPORTS = {
     "inbox-browser-explicit-Inb-33ff6-otection-at-tablet-820x1180": "tablet-820x1180",
     "inbox-browser-explicit-Inb-7095f-rotection-at-mobile-390x844": "mobile-390x844",
 }
+FAILURE_JUNIT_TESTCASE_VIEWPORTS = {
+    ("tests/inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000"): "desktop-1440x1000",
+    ("tests/inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at tablet-820x1180"): "tablet-820x1180",
+    ("tests/inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at mobile-390x844"): "mobile-390x844",
+}
 FAILURE_DIAGNOSTIC_STAGES = {
     "login", "session", "first_submit", "retry", "conflict",
     "ordinary_chat", "source_protection", "viewport_layout",
@@ -232,11 +237,23 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, str]]:
         junit = ET.parse(junit_path).getroot()
     except (ET.ParseError, OSError) as error:
         raise RuntimeError("failure diagnostic JUnit rejected; upload withheld") from error
-    failed_cases = sum(
-        1 for element in junit.iter()
-        if element.tag.rsplit("}", 1)[-1] == "testcase"
-        and any(child.tag.rsplit("}", 1)[-1] in {"failure", "error"} for child in element)
-    )
+    testcase_viewports = []
+    failed_viewports = []
+    for element in junit.iter():
+        if element.tag.rsplit("}", 1)[-1] != "testcase":
+            continue
+        identity = (element.attrib.get("classname"), element.attrib.get("name"))
+        viewport = FAILURE_JUNIT_TESTCASE_VIEWPORTS.get(identity)
+        if viewport is None:
+            raise RuntimeError("failure diagnostic JUnit testcase identity rejected; upload withheld")
+        testcase_viewports.append(viewport)
+        if any(child.tag.rsplit("}", 1)[-1] in {"failure", "error"} for child in element):
+            failed_viewports.append(viewport)
+    if (len(testcase_viewports) != len(FAILURE_JUNIT_TESTCASE_VIEWPORTS)
+            or set(testcase_viewports) != set(FAILURE_JUNIT_TESTCASE_VIEWPORTS.values())
+            or len(set(testcase_viewports)) != len(testcase_viewports)):
+        raise RuntimeError("failure diagnostic JUnit testcase set rejected; upload withheld")
+    failed_viewport_set = set(failed_viewports)
     if summary_path.exists():
         if summary_path.stat().st_size > 4096 or not summary_path.is_file():
             raise RuntimeError("failure diagnostic run summary rejected; upload withheld")
@@ -246,7 +263,7 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, str]]:
             raise RuntimeError("failure diagnostic run summary rejected; upload withheld") from error
         if not isinstance(summary, dict):
             raise RuntimeError("failure diagnostic run summary rejected; upload withheld")
-        if summary.get("result") == "FAIL" and failed_cases == 0:
+        if summary.get("result") == "FAIL" and not failed_viewports:
             raise RuntimeError("failed browser run has no failed testcase diagnostics; upload withheld")
 
     results = raw_root / "test-results"
@@ -280,8 +297,9 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, str]]:
             diagnostics.append({"viewport": viewport, "stage": raw.get("stage"), "code": raw.get("code")})
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
-    if failed_cases != len(diagnostics):
-        raise RuntimeError("failure diagnostics do not match failed test cases; upload withheld")
+    diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
+    if failed_viewport_set != diagnostic_viewports:
+        raise RuntimeError("failure diagnostics do not match failed testcase viewports; upload withheld")
     viewport_order = {name: index for index, name in enumerate(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values())}
     diagnostics.sort(key=lambda entry: viewport_order[entry["viewport"]])
     return diagnostics
