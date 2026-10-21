@@ -4,7 +4,7 @@ import ipaddress
 from urllib.parse import urlsplit
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from .source_reference_authority import SourceReferenceAuthority
 
@@ -208,7 +208,8 @@ def create_journal_source_options_router(service):
     router = APIRouter(prefix="/api/daily-brief")
 
     @router.get("/source-options/journal")
-    def journal_source_options(request: Request):
+    def journal_source_options(request: Request, response: Response):
+        response.headers["Cache-Control"] = "private, no-store"
         return service.select_from_request(request)
 
     return router
