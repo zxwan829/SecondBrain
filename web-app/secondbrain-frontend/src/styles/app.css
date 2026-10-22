@@ -703,6 +703,25 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .chat-context-preview dl { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 4px 10px; margin: 8px 0 0; font-size: 11px; }
 .chat-context-preview dt { color: var(--sb-muted); }
 .chat-context-preview dd { margin: 0; color: var(--sb-text-soft); overflow-wrap: anywhere; }
+.planning-panel { max-height: 42vh; overflow: auto; }
+.planning-panel > label, .planning-source-groups label { display: flex; align-items: center; gap: 8px; color: var(--sb-text-soft); font-size: 12px; }
+.planning-panel textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--sb-border); border-radius: 8px; padding: 9px 10px; color: var(--sb-text); background: var(--sb-surface-raised, var(--sb-surface)); font: inherit; }
+.planning-panel button { border: 1px solid var(--sb-border); border-radius: 8px; padding: 7px 10px; color: var(--sb-text); background: var(--sb-surface-raised, var(--sb-surface)); cursor: pointer; }
+.planning-panel button:disabled { opacity: .55; cursor: not-allowed; }
+.planning-source-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.planning-source-groups fieldset { display: grid; align-content: start; gap: 8px; min-width: 0; max-height: 220px; overflow: auto; border: 1px solid var(--sb-border); border-radius: 9px; padding: 10px; }
+.planning-source-groups legend { color: var(--sb-text); font-size: 12px; }
+.planning-source-groups label { align-items: flex-start; overflow-wrap: anywhere; }
+.planning-source-groups label span { display: grid; gap: 3px; }
+.planning-source-groups small, .planning-step-list small { color: var(--sb-muted); font-size: 10px; }
+.planning-calendar-choice { margin: 4px 0; }
+.planning-calendar-dates { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.planning-calendar-dates label { display: grid; gap: 4px; color: var(--sb-text-soft); font-size: 11px; }
+.planning-step-list { display: grid; gap: 9px; margin: 0; padding-left: 20px; }
+.planning-step-list li { display: grid; gap: 6px; overflow-wrap: anywhere; }
+.planning-step-list li > div, .planning-workflow-controls, .planning-retrospective > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.planning-retrospective { display: grid; gap: 7px; padding: 10px; border: 1px solid var(--sb-border); border-radius: 9px; }
+.planning-retrospective h4, .planning-retrospective p { margin: 0; }
 .chat-knowledge-citation-run { display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid var(--sb-border); }
 .chat-knowledge-citation-run ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .chat-knowledge-citation-run li { display: grid; gap: 4px; min-width: 0; padding: 9px 10px; border-radius: 8px; background: var(--sb-surface-inset); overflow-wrap: anywhere; }

@@ -37,6 +37,7 @@ import { ChatContextPreview, ChatNaturalCandidates } from './ChatContextPreview'
 import { ChatGroundingCandidates } from './ChatGroundingCandidates';
 import { fetchContextCandidates, fetchContextPreview, type ContextPreview } from './chat-context-preview';
 import { PersonalMemoryPage } from './PersonalMemoryPage';
+import { PlanningPanel } from './PlanningPanel';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -2238,6 +2239,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       {!blankMode && <ChatGroundingCandidates sessionId={selected} query={input} locale={locale} disabled={!selected || busy} />}
       <ChatKnowledgeCitations bundles={citationBundles.filter((bundle) => bundle.session_id === selected)} loading={citationHistoryLoading}
         persistenceIssue={citationPersistenceIssue} locale={locale} />
+      {!blankMode && selected && <PlanningPanel key={selected} locale={locale} sessionId={selected} />}
       {journalInboxAttempt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent retry status' : '日记意图重试状态'}>
         <h3>{en ? 'Inbox save is not confirmed' : 'Inbox 保存结果尚未确认'}</h3>
         <p role="alert">{journalInboxFeedback || (en ? 'The original text and exact request are retained.' : '原文和完整请求已保留。')}</p>
