@@ -8,14 +8,17 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 阶段二收口与阶段三 P3-1～P3-5 累计 Web 联合候选（Issue #96/#97）
+## 2026-10-22 V1 可用性收口（Issue #96，PMO #6332253939）
 
-- **当前 GitHub main：** `aff7d9efdf758e0e957f30bf9749bd7b95a054fa`，已合入阶段二 #181。
-- **阶段二 #181 收口：** 固定 HEAD `7cf9ac10ce67efdcce779c71fb8c29fb81b519a4` 获 PMO 最终源码复审与 Gate `PASS_WITH_LIMITS` / `MERGE_READY_FOR_APPROVAL`（[#181 review #5608840413](https://github.com/zxwan829/SecondBrain/pull/181#pullrequestreview-5608840413)）；#181 随后由 GitHub 于 2026-10-22 03:26 UTC 合入 main，merge commit 即当前 main。此合并发生在 A 执行阶段三期间，并非 A 本轮执行；A 未执行合并。
-- **阶段三 B Core Draft 栈：** #182 `fd940daa535db0dd18935337c865e771e2d64f9c` → #183 `c02fbb5413232088a26b69cc174f2b0e09ec6145` → #184 `0e65b5c2fe278e11357586b2f387792df05629f5` → #185 `c290976762e629009ad4a3bd09ccc966b2cb308f` → #186 `d21cf6297754520ddbc10e10e08fdf4e599cff17`。A 对累计源码发现空 source_refs + Calendar 与非字符串 enum 输入问题，B 在根 PR 修复并重放堆栈；PR 均保持 Draft。A 当前集中候选已按最新 main 重放 Core 实现，候选中的 P3 Core 集成 HEAD 为 `574da42803e0681d95095f48ec97bb2ce1660fc7`。
-- **A Web 候选：** `codex/p3-consolidated-gate`，在当前 main 上集成 P3 Core 及 Chat 用户流程。普通 Chat 支持显式加载/选择 Task、Project、Journal metadata refs 与有界 Calendar window，Session-scoped 候选恢复，逐步批准、独立 `effect=none` 合成执行、暂停/恢复/取消/显式重试及只读复盘。严格校验事件/会话/版本回执、按操作保留幂等键、来源刷新时丢弃过期选项。合成 Gate 脚本：`web-app/e2e/scripts/p3_consolidated_vite_gate.py`。
-- **阶段三联合 Gate：** `P3_1_5_HTTP=PASS_WITH_LIMITS`。真实 `create_app()` + Uvicorn 经 Vite 同源代理、只用私有临时合成数据；验证 Task/Project/Journal 元数据且 Journal 正文不出 Core，跨会话 404、撤权先于来源读取、批准及 `effect=none` 执行、反馈重放/冲突、暂停/恢复/取消、注入失败后显式 retry_ready 与恢复、并发 CAS 单胜者、来源漂移拒绝、业务源字节不变、no-store 与 app 重建回读。Core 全量 510 passed、26 warnings、28 subtests；Web 全量 38 files / 417 tests、typecheck/build PASS；diff-check PASS。Build 保留既有 Canvas/Notes chunk-size 提示；`npm ci` 报告 4 项 low/moderate advisory，未改依赖。
-- **当前限制：** P3 A Draft PR 待 PMO 独立复审。真实浏览器点击、真实模型、生产、用户验收均 NOT RUN；`MODEL_CONTEXT_ADMISSION=BLOCKED`。不部署、不访问真实数据、不触发 CI/Actions、不启用 Writer/Promote。是否进入合并流程须经 PMO 独立复审及授权另行裁定；本轮不合并。
+- **源码基线：** GitHub `main` = `30976e87ca9f03940e2a4d9b13f684d7b93459f7`；阶段二 #181、阶段三 #187 已由 GitHub 合入。独立验收分支基于该固定 main；本轮不合并。
+- **验收状态词：** `IMPLEMENTED` 已有源码但本轮未验；`SYNTHETIC_PASS` 有本地合成证据；`BLOCKED_ENV` 受设备/权限/生产边界阻断；`NOT_RUN` 尚未执行；`NOT_DONE` 能力未交付。V1 MUST 及 D077 Companion 唯一追踪表见第 2.B / 2.D，按 P0→P1→P2/P3 排列。
+- **本轮 P0/P1 缺陷：** Planning 创建回执的 step DTO 缺少 `decision=pending` / `execution_status=not_started`，Web 拒绝有效 Core 回执；Companion Preferences Core 回执将设置放在 `settings`，Web 错读顶层字段并使 Today 面板崩溃；Daily Brief Journal 来源 ID 含日期前缀，Journal 页面未高亮对应条目。均已在隔离候选修复并加回归。
+- **Web / Core 验证：** Web 38 files / 419 tests PASS；Core 510 passed、26 warnings、28 subtests PASS；typecheck/build/diff-check PASS。构建仍有既有 Canvas/Notes 大 chunk 提示。Core+Vite 同源 P3 Gate `P3_1_5_HTTP=PASS_WITH_LIMITS`，覆盖权限先于源读取、session 隔离、CAS/幂等、拒绝重复执行、版本漂移、无正文/路径泄漏、来源字节不变、`no-store`、重启回读等合成断言。
+- **真实浏览器：** Edge localhost 合成流程通过：登录、Inbox/Review 中性空态、Task/Project/Calendar/Knowledge/Brief/Journal 路由、Brief 手工保存/回读及 Task/Project/Journal 回跳、Planning Task/Project/Journal 逐项批准、`effect=none` 执行、刷新恢复、不同 Session 不继承候选、Companion 显式启用/计算/反馈。Journal 命中高亮修复已在最新 Edge 页面复验。桌面 1770×1150 无横向溢出；平板/手机视口调整在当前 Edge 自动化接口中不可用，标 `BLOCKED_ENV`。
+- **门禁结论：** `V1_MUST_GATE=PASS_WITH_LIMITS`；`COMPANION_GATE=PASS_WITH_LIMITS`；`REAL_BROWSER_GATE=PASS_WITH_LIMITS`（桌面合成，不等于真实用户/跨设备）；`PRODUCTION_SECURITY_GATE=BLOCKED_ENV`。自然联想 grounding / `answer_attribution=not_established`、真实 Hermes 低信任隔离、Private、OS Writer UID/GID/ACL/mount/peer、Raw admission、正式 Promote、生产 Compose、真实 Vault、外部渠道及付费模型均未获本轮生产验证。
+- **BLOCKED_REQUIRES_AUTHORIZATION：** Hermes 真实低信任角色隔离（当前只用了本地 synthetic stub，不代表真实 Hermes）；OS Writer UID/GID/ACL/mount/peer 与生产 Compose；Raw admission 信任边界；Private 生产隔离；真实 Vault/个人 Session；真实微信/飞书；任何收费模型、用户数据出站、正式 Writer/Promote。建议最小下一包先只读核验一项明确运行边界：指定环境和路径、运行身份、配置/权限只读检查、无业务正文和无写入、回退/停止条件；模型或外部渠道验证另列成本与数据边界，需单独批准。本轮未执行这些动作。
+- **候选交付：** 本轮代码、矩阵与 Progress Log 统一提交一个 Draft PR，记录固定 HEAD 和证据；CI workflow 均为手动触发，PR 路径不会匹配受限自动 Smoke。无合并、部署、生产数据访问、真实模型/渠道、Writer 或 Promote。
+- **下一授权门：** 如需完成平板/手机实际视口，授权或提供支持视口模拟的专用浏览器；生产与真实数据/模型/OS 身份安全准入须另行明确批准。PMO 复审与合并另行裁定。
 
 ## 历史：2026-10-22 阶段一收口与阶段二 P2-1/2/3 集中合并准备（Issue #96/#97）
 
@@ -185,22 +188,22 @@ PR #63 已合并至 main，Merge Commit `d781541785bbc20c64c3f4f676a1b9d1bd431e0
 
 ### B. Web App / Personal OS（按正式 V1 Business Spec 逐项枚举）
 
-| 正式 V1 MUST | 当前状态 | 仍需交付 / 验收 |
-|---|---|---|
-| Global App Shell / 导航 / 鉴权 / 路由 | PROD-PARTIAL：FE-4 视觉接受（旧宿主） | 独立 Web App 承接既定 Shell、路由与登录；保留 FE-4 视觉 |
-| Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
-| Chat | PROD-PARTIAL：独立 SecondBrain Web App/Core BFF 已部署；D084 在前一 M1 镜像的操作卡、Session 页面隔离与刷新恢复有限合成 PASS | 最新镜像 D084 业务未重跑；真实模型跨 Session 记忆、完整 Run/SSE、长期浏览器体验仍未验收，历史异常根因 UNKNOWN |
-| Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
-| Inbox | PROD-PARTIAL：统一 Capture 已部署；`/inbox/source` 在精确 B1 Draft 下 Proposal/审批/执行/刷新有限 PASS；**旧 `/inbox` 全量读取入口 BLOCKED**（#74） | 安全的来源选择/请求隔离、正式多来源摘要契约、手机及真实资料体验仍未验收；音频与微信渠道待完成 |
-| Review / Approval | PROD-PARTIAL：历史只读已验收；B1 单来源持久审批、明确执行与刷新恢复有限生产 PASS | 完整旧 Inbox/Review 聚合入口需安全范围收敛（#74）；正式 Knowledge Promote 未启用、未验收 |
-| Projects | 源码已合并（#107/#114/#119/#120）；真实项目 registry/业务来源未验收 | 连接并核验获准真实项目来源、Task/Notes 权威关联与用户体验 |
-| Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |
-| Daily Brief | #123 来源验证及 #125 人工内容持久化已合并；#126 UI Draft，浏览器验收 BLOCKED_ENV | 完成用户明确触发的 Brief 流程与用户验收；AI 撰写、approved_import 和后台调度仍未实现，其中无用户触发调度不属于首阶段范围 |
-| Activity | 页面/API 源码已合并（#107/#114）；当前仅有合成状态证据 | 核验真实业务活动源和用户可理解的完整活动视图 |
-| Agent Health / 状态 | 页面/API 源码已合并（#108/#114）；真实运行态与用户验收未复核 | 接入可信运行状态并验收失败/不可用语义 |
-| 模块注册 / Home 与 Calendar 聚合 | UNKNOWN / 未完成验收 | 导航模块注册、页面契约、Home widget 扩展；模拟未来模块无需重构 Shell |
-| Responsive / Desktop/iPad/Mobile | PROD-PARTIAL：Mac/PC 和 iPhone 视觉接受 | iPad 基本可用、iPhone Safari 功能回归、跨设备真实操作 |
-| Private exclusion / Human Approval | PARTIAL：Private 无挂载、Knowledge 主挂载 RO 已验证；仍需真实业务权限及审批验收 | 运行时写入边界、API 拒绝、审核与失败回滚验收 |
+状态只表示本轮验收证据，不替代下方历史生产事实。按 P0、P1、P2 排列；`SYNTHETIC_PASS` 仅表示合成环境结果。
+
+| 优先级 | 正式 V1 MUST | 本轮状态 | 仍需交付 / 验收 |
+|---|---|---|---|
+| P0 | Global App Shell、导航、登录、路由 | `SYNTHETIC_PASS`：Edge 本地登录、路由、会话与 no-store 源码检查 | 生产认证、安全配置、真实用户与跨设备验收 `BLOCKED_ENV` |
+| P0 | Home / Dynamic Home | `SYNTHETIC_PASS`：桌面 Home 展示区分 REAL/DEMO/空态 | Home 简报/动态卡仍显示“即将开放”；桌面全视觉/大屏外视口已看，窄屏未验；真实聚合未验收 |
+| P0 | Chat / Agent session | `SYNTHETIC_PASS`：本地合成 Session、Planning、刷新恢复与跨 Session 隔离 | 真实 Agent Run/SSE、模型回答与跨 Session 记忆 `NOT_RUN`；来源支持不等于答案归因 |
+| P0 | Capture → Inbox → Review → 用户批准 | `SYNTHETIC_PASS`：Inbox/Review 中性空态和权限边界；先前 Core+Vite Gate 有负向/审批合成覆盖 | 本轮浏览器未造 Raw/Review 记录走完整成功链，正向 `NOT_RUN`；正式 Knowledge 写入/回滚及真实数据 `BLOCKED_ENV` |
+| P1 | Today、Task、Calendar | `SYNTHETIC_PASS`：Task/Calendar 合成读取、Task 来源回跳和 Planning 分离批准/执行 | Today Home“新建记录”仍禁用；独立 Task 新建入口、真实提醒 `NOT_DONE` |
+| P1 | Projects | `SYNTHETIC_PASS`：合成 Project 页面、Brief 引用回跳/聚焦 | 获准真实项目 registry、跨设备与用户验收 `NOT_RUN` |
+| P1 | Knowledge 查询与来源引用 | `SYNTHETIC_PASS`：无数据时可信空态；Chat 无来源时引用动作禁用 | 本轮未重复搜索功能；真实来源 / Session 权限 / 跨会话用户体验 `NOT_RUN`，答案使用来源归因 `NOT_DONE` |
+| P1 | Daily Brief | `SYNTHETIC_PASS`：手工来源选择、确认、保存、回读和 Task/Project/Journal 回跳 | AI 撰写/approved_import/后台调度 `NOT_DONE`；真实来源与用户验收 `NOT_RUN` |
+| P1 | Journal | `SYNTHETIC_PASS`：Brief 回跳加载 Journal 日期并高亮已引用条目；日期前缀 ID 已修复 | 本轮未以 Journal 写入入口新增记录；真实资料和用户验收 `NOT_RUN` |
+| P1 | Activity、Agent Health | `NOT_RUN`：本轮未单独操作页面 | 真实可信状态/完整活动源和失败语义 `NOT_RUN` |
+| P1 | 多端 Responsive / Desktop / iPad / Mobile | `SYNTHETIC_PASS`：Edge 桌面 1770×1150，DOM 无横向溢出 | iPad/iPhone视口模拟在当前 Edge API `BLOCKED_ENV`；Safari/触控验收 `NOT_RUN` |
+| P2 | Private exclusion、写入授权、Human Approval、安全恢复 | `BLOCKED_ENV`：本轮未接生产；合成 Gate 验过 session、撤权、CAS/幂等、版本漂移、重复/取消/拒绝、no-store、重启恢复 | Private/生产 OS 身份、UID/GID/ACL/mount/peer、Writer/Promote 与真实恢复须另授权；不得由合成 PASS 推断生产准入 |
 
 **Web App V1 SHOULD，单独跟踪、不自动阻断 MUST DONE：** Quick Capture、Journal quick entry、badges、notifications、session continuation、keyboard shortcuts、contextual actions、Agent 状态动画。具体完成情况需在对应业务施工时核实。
 
@@ -216,17 +219,20 @@ PR #63 已合并至 main，Merge Commit `d781541785bbc20c64c3f4f676a1b9d1bd431e0
 
 ### D. 新批准的 Personal Intelligence / Companion MVP（D077；按能力分项跟踪，整体未验收）
 
-| 新增核心能力 | 当前证据/状态 | 最小成功验收 |
-|---|---|---|
-| 无提示主动关联 | NOT VERIFIED：旧 Knowledge Retrieval V0 已 ACCEPTED，但仅证明可用搜索/读取；不能证明自动联想 | 不说“搜索知识库”，自然对话能正确使用相关长期记忆；精确事实自动回源 |
-| Personal Memory Core（Phase 1-A） | NAS-DEPLOYED；独立 `0700` 根目录、追加式 JSONL 来源/修订记录、纠正与失效过滤；真实路径权限核验通过；本次合成记录已清理 | PR #4 已合并；NAS image `secondbrain-app:d077-b6e30f3`；真实数据与用户验收仍待完成 |
-| 自主个人记忆学习（Phase 1-B） | NAS 合成闭环通过：Core 自动保存来源关联、跨 Session 召回、用户纠正和纠正后召回；Hermes v0.22.2 实际模型请求经 Stub 观测到注入上下文。Stub 不评价真实模型的自然学习/回答质量；没有付费模型或真实数据出站 | PR #6 已合并；本次运行证据见 Progress-Log；真实模型质量、用户浏览器体验及长时间使用仍待验收 |
-| 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
-| 碎碎念与 Journal 自然语言记录 | D086 已取代 D064 对话直写顺序；现有显式直写代码已合入/部署，但新入口规则 NOT IMPLEMENTED，业务浏览器验收未完成 | 明确“记一下”先经 Core Inbox 保存原话，再经用户确认由专用 Journal API 新增/按日追加；普通闲聊不意外收录或写日记 |
-| 自然语言待办/日程 | D083 Task Core/API、Today 与 Chat 显式命令已随 PR #45 集成至 main 并随 M1 部署；D084 在前一 M1 镜像的 Task 受控合成 PASS；提醒送达 **NOT IMPLEMENTED** | 最新镜像真实多端/日程聚合与长期使用未验收；提醒通知须单独实现及实际送达测试，不以 Task CRUD 冒充提醒 |
-| 文件收录→理解→记忆关联 | Capture 有 PROD-PARTIAL，OCR/STT、Review→Promote 缺口仍在 | 保留原件、正确提炼候选/关联，不擅自提升第三方断言为用户事实 |
-| 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
-| 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |
+按产品优先级追踪；合成交互可用不等于真实模型 grounding、生产用户价值或自主执行已验收。
+
+| 优先级 | 新增核心能力 | 本轮状态 | 最小成功验收 / 剩余缺口 |
+|---|---|---|---|
+| P0 | 无提示自然联想与可信知识使用 | `NOT_DONE`：Chat 有显式 Knowledge 来源核对 UI，无来源时禁用；P2-4 metadata Gate 不建立回答归因 | 日常对话可自然使用获准记忆/知识；精确事实回源；`answer_attribution=not_established` |
+| P0 | Personal Memory 跨 Session 召回、纠正 | `NOT_RUN`：既有生产/Stub 证据为历史记录，本轮未重跑真实 Hermes 或真实记忆 | 需经授权的本地非模型权限审计与独立模型质量/用户验收；不得读真实 Session |
+| P1 | Journal 自然语言/原文收录 | `IMPLEMENTED`：显式 Journal 页面与 D086 Inbox 顺序已合入；本轮只验证 Brief metadata 引用回跳 | 用户意图分类、Inbox→人工确认→专用 Journal 写入和追加恢复需独立正向浏览器 Gate |
+| P1 | Task / Calendar 用户流程 | `SYNTHETIC_PASS`：Task 元数据、Calendar 聚合、Brief 回跳、Planning 提交/恢复；提醒未实现 | 直接创建/编辑成功路径的用户浏览器验收；提醒送达 `NOT_DONE` |
+| P1 | Capture→理解→记忆关联 | `NOT_RUN`：本轮没有提交合成 Raw 或执行 OCR/STT | 原件保留、Review、人工确认、可信记忆关联需另行完整合成与生产权限验收 |
+| P1 | 主动建议与安全规划 | `SYNTHETIC_PASS`：Today Companion 手动启用来源、显式计算、反馈仅记录；Planning 逐条批准且合成执行 `effect=none` | 真实个人目标、推荐相关性、模型/真实业务数据与任何外部效果均未验；默认关闭 |
+| P2 | Session 历史恢复与来源引用 | `SYNTHETIC_PASS`：规划候选 Session 隔离/刷新恢复，Brief 保存与引用回跳；Core Gate 验来源版本变化拒绝 | Chat 的实际回答引用仍不代表模型使用来源；真实跨设备/Session 未验 |
+| P2 | Permission revoke、CAS/idempotency、版本漂移、失败恢复 | `SYNTHETIC_PASS`：Core+Vite localhost Gate 覆盖撤权、来源漂移、并发 CAS、精确重放、冲突、重启回读、no-store | 仅当前固定源码+临时合成树结果；生产 UID/ACL/mount/真实恢复 `BLOCKED_ENV` |
+| P3 | 分层记忆、时间/冲突管理 | `IMPLEMENTED`：已批准路线设计，物理存储/Provider/Adapter 仍未冻结 | 识别过期、推断、冲突并提供证据回源；未满足不变量前不得自动学习 |
+| P3 | 自主 Skills 学习 | `NOT_DONE`：技能产出和人工审核不等于反馈学习闭环 | 重复反馈形成安全、可复用经验；核心/高风险 Skill 仍需隔离和审批 |
 
 **D077 / D078 部署状态（2026-10-17）：** D077 Core 的既有 Stub 合成证据保留；本次未写记忆或创建生产 Session/Run，记忆目录仍为 `1026:100 / 0700` 且 0 文件。PR #18 已合并至 main（`84d1cbaf…80895e5`）。已在 NAS 从固定 Hermes v0.22.2 官方 digest `sha256:a11574…c1bf05` 构建并部署一文件 fail-closed overlay：`secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`，Image ID `sha256:b99b1762…5357e9a`；镜像标签记录源码 Commit `d923a5eb…1040a8` 与补丁 SHA `b5381848…55b0`。Hermes API health 200、Dashboard 9119 可达；启动早期 API 尚未监听，持续观察后恢复健康，未再次重启或回滚（RestartCount 0）。Plugin Doctor 注册 D078 guard 的 1 个 hook。API toolset `file,skills,vision`（不含 Terminal），Skills 写入审核 true、审批 manual。隔离无模型运行拒绝敏感 Session 路径、允许合成业务文件和 Skills 只读调用、dispatcher 异常 fail-closed；无模型调用、无 Session 写入。Private 无挂载、Knowledge 主目录 RO（既有 Capture 专用 Inbox RW 例外不变）、Promote false，D077 Memory 目录 0 文件且元数据未变。实际生产 Run/真实用户体验仍未验收。
 

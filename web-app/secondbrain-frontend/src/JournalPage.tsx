@@ -90,7 +90,12 @@ export function JournalPage() {
       <div className="journal-list-heading"><h2 id="journal-entries-heading">{day} 的记录</h2><button type="button" onClick={() => void load(day)} disabled={loading}>{loading ? '读取中…' : '刷新'}</button></div>
       {loading && <p role="status">正在读取…</p>}
       {!loading && entries.length === 0 && <p className="journal-hint">当天还没有记录。</p>}
-      <ol className="journal-entry-list">{entries.map((entry) => <li id={entry.id === targetEntryId ? `journal-entry-${entry.id}` : undefined} className={entry.id === targetEntryId ? 'is-brief-source' : undefined} key={entry.id}><time>{new Date(entry.created_at).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' })}</time>{entry.id === targetEntryId && <span role="status">此记录被简报引用</span>}<p>{entry.original_text}</p></li>)}</ol>
+      <ol className="journal-entry-list">{entries.map((entry) => {
+        // Daily Brief and Planning source refs use a date-qualified Journal ID
+        // (`YYYY-MM-DD:<entry ID>`); older/direct links may carry the bare ID.
+        const isRequestedSource = targetEntryId === entry.id || targetEntryId === `${day}:${entry.id}`;
+        return <li id={isRequestedSource ? `journal-entry-${entry.id}` : undefined} className={isRequestedSource ? 'is-brief-source' : undefined} key={entry.id}><time>{new Date(entry.created_at).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' })}</time>{isRequestedSource && <span role="status">此记录被简报引用</span>}<p>{entry.original_text}</p></li>;
+      })}</ol>
     </section>
   </div>;
 }

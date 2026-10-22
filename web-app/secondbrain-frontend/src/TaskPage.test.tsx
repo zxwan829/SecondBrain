@@ -60,9 +60,10 @@ describe('TaskPage', () => {
       if (url.startsWith('/api/tasks?')) return ok({ tasks: [] });
       if (url === '/api/companion/preferences' && init?.method === 'PUT') {
         const body = JSON.parse(String(init.body));
-        return ok({ revision: 1, enabled: body.enabled, categories: body.categories });
+        return ok({ event: 'companion.preferences.receipt', version: 1, status: 'saved', revision: 1,
+          settings: { enabled: body.enabled, categories: body.categories } });
       }
-      if (url === '/api/companion/preferences') return ok({ revision: 0, enabled: false, categories: [] });
+      if (url === '/api/companion/preferences') return ok({ event: 'companion.preferences', version: 1, revision: 0, enabled: false, categories: [] });
       if (url === '/api/companion/suggestions') return ok({ revision: 0, status: 'disabled', items: [] });
       if (url === '/api/companion/suggestions/evaluate') return ok({ revision: 0, status: 'disabled', items: [] });
       throw new Error(`Unexpected request ${url} ${init?.method ?? 'GET'}`);
