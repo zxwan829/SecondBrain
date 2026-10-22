@@ -1,0 +1,154 @@
+name: Runner subordinate ID read-only preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  subid-preflight:
+    if: github.repository == 'zxwan829/SecondBrain' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report caller identity, subordinate ID capacity, and helper metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          python3 - <<'PY'
+          import os
+          import pwd
+          import shutil
+          import stat
+          import subprocess
+
+
+          def identity(uid, gid):
+              try:
+                  name = pwd.getpwuid(uid).pw_name
+              except KeyError:
+                  name = "unresolved"
+              return name, uid, gid
+
+
+          caller_name, caller_uid, caller_gid = identity(os.getuid(), os.getgid())
+          print(
+              f"RUNNER_CALLER=name:{caller_name},uid:{caller_uid},gid:{caller_gid}"
+          )
+
+          sudo_identity = {}
+          for field, option in (("uid", "-u"), ("gid", "-g")):
+              try:
+                  result = subprocess.run(
+                      ["sudo", "-n", "id", option],
+                      check=True,
+                      capture_output=True,
+                      text=True,
+                      timeout=5,
+                  )
+                  sudo_identity[field] = result.stdout.strip()
+              except (OSError, subprocess.SubprocessError):
+                  sudo_identity[field] = "unavailable"
+          print(f"sudo_identity_uid={sudo_identity['uid']}")
+          print(f"sudo_identity_gid={sudo_identity['gid']}")
+          print(
+              "MAP_CALLER_SEMANTICS="
+              f"id-expansion=runner(uid:{caller_uid},gid:{caller_gid});"
+              f"sudo-exec=uid:{sudo_identity['uid']},gid:{sudo_identity['gid']};"
+              "runner-subid-allocation-does-not-transfer-to-sudo-identity"
+          )
+
+          identities = {caller_name, str(caller_uid)}
+
+          def inspect_allocations(path, label):
+              ranges = set()
+              readable = False
+              malformed_match = False
+              try:
+                  with open(path, encoding="utf-8") as stream:
+                      readable = True
+                      for raw_line in stream:
+                          parts = raw_line.rstrip("\n").split(":")
+                          if not parts or parts[0] not in identities:
+                              continue
+                          if len(parts) != 3:
+                              malformed_match = True
+                              continue
+                          try:
+                              start = int(parts[1], 10)
+                              length = int(parts[2], 10)
+                              if start < 0 or length <= 0 or start + length > 2**32:
+                                  raise ValueError("invalid subordinate range")
+                          except ValueError:
+                              malformed_match = True
+                              continue
+                          ranges.add((start, start + length))
+              except OSError:
+                  pass
+
+              ordered = sorted(ranges)
+              overlap = any(
+                  current[0] < previous[1]
+                  for previous, current in zip(ordered, ordered[1:])
+              )
+              union_size = 0
+              union_end = -1
+              for start, end in ordered:
+                  union_size += max(0, end - max(start, union_end))
+                  union_end = max(union_end, end)
+              contiguous_five = any(end - start >= 5 for start, end in ordered)
+              present = bool(ordered) and not malformed_match
+              print(f"{label}_FILE_READABLE={str(readable).lower()}")
+              print(f"{label}_PRESENT={str(present).lower()}")
+              print(f"{label}_RANGE_COUNT={len(ordered)}")
+              print(f"{label}_TOTAL_UNIQUE_IDS={union_size}")
+              print(f"{label}_OVERLAP={str(overlap).lower()}")
+              print(f"{label}_CONTIGUOUS_5_AVAILABLE={str(contiguous_five and not overlap and not malformed_match).lower()}")
+
+          inspect_allocations("/etc/subuid", "SUBUID")
+          inspect_allocations("/etc/subgid", "SUBGID")
+
+          package_version = "unavailable"
+          try:
+              result = subprocess.run(
+                  ["dpkg-query", "-W", "-f=${Version}", "uidmap"],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+                  timeout=5,
+              )
+              package_version = result.stdout.strip() or "unavailable"
+          except (OSError, subprocess.SubprocessError):
+              pass
+          print(f"uidmap_package_version={package_version}")
+
+          for name in ("newuidmap", "newgidmap"):
+              path = shutil.which(name)
+              if path is None:
+                  print(f"{name}_present=false")
+                  print(f"{name}_root_owned_suid=false")
+                  continue
+              try:
+                  metadata = os.stat(path)
+                  root_owned_suid = metadata.st_uid == 0 and bool(
+                      metadata.st_mode & stat.S_ISUID
+                  )
+                  executable = os.access(path, os.X_OK)
+              except OSError:
+                  root_owned_suid = False
+                  executable = False
+              print(f"{name}_present={str(executable).lower()}")
+              print(f"{name}_root_owned_suid={str(root_owned_suid).lower()}")
+          print(
+              "HELPER_AVAILABLE="
+              + str(
+                  all(
+                      shutil.which(name) is not None
+                      for name in ("newuidmap", "newgidmap")
+                  )
+              ).lower()
+          )
+          PY
