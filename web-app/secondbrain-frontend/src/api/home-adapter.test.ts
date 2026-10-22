@@ -37,4 +37,13 @@ describe('adaptHome trust states', () => {
     expect(view.review).toEqual([]);
     expect(view.pendingCount).toBeNull();
   });
+
+  it.each(['partial', 'unavailable', 'not_configured'])('hides Knowledge items when Home reports %s', (status) => {
+    const view = adaptHome({
+      knowledge: { status, items: [{ title: 'untrusted stale knowledge' }] },
+    });
+
+    expect(view.knowledgeSource).toBe('UNAVAILABLE');
+    expect(view.knowledgeItems).toEqual([]);
+  });
 });

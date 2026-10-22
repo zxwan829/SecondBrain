@@ -116,7 +116,7 @@ export function adaptHome(home: Home | null): HomeView {
     reviewSource,
     projectItems: verifiedProjectItems,
     projectSource: hasBusinessProjectSchema ? 'REAL' : 'UNAVAILABLE',
-    knowledgeItems,
+    knowledgeItems: knowledgeSource === 'REAL' ? knowledgeItems : [],
     knowledgeSource,
     agentStatus,
     agentSource: agentStatus ? 'REAL' : 'UNAVAILABLE',
