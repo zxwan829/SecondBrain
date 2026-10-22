@@ -1,4 +1,4 @@
-"""Authenticated read-only Projects and explicit Journal/Task Activity views."""
+"""Authenticated read-only Projects and explicit source-backed Activity views."""
 import hashlib
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -155,6 +155,37 @@ def _task_rows(store, start, end, zone):
     return rows
 
 
+def _project_rows(store, start, end, zone):
+    """Project update events derived only from the explicit, bounded index.
+
+    The source document SHA is the event revision. The route deliberately
+    returns neither project title/body nor filesystem location.
+    """
+    if store is None:
+        return [], False
+    try:
+        snapshot = store.read_snapshot()
+    except Exception:
+        return [], True
+    if not snapshot.available:
+        return [], True
+    rows = []
+    for source in snapshot.documents:
+        document = source.document
+        occurred = _occurred_at(document.get("updated_at"), zone)
+        if occurred is None or not _within_window(occurred, start, end, zone):
+            continue
+        rows.append({
+            "activity_id": _opaque_id("project", source.sha256, source.project_id),
+            "kind": "project",
+            "status": "updated",
+            "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            "project_id": source.project_id,
+            "project_status": document["status"],
+        })
+    return rows, not snapshot.complete
+
+
 def create_projects_activity_router(auth, journal_store=None, task_store=None,
                                     projects_store=None, notes_store=None):
     router = APIRouter(prefix="/api")
@@ -230,7 +261,12 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
             end = datetime.now(zone).date()
             start = end - timedelta(days=_DEFAULT_JOURNAL_LOOKBACK_DAYS - 1)
 
-        configured = [name for name, store in (("journal", journal_store), ("tasks", task_store)) if store is not None]
+        candidates = [
+            ("journal", journal_store, "journal.read"),
+            ("tasks", task_store, "task.read"),
+            ("projects", projects_store if projects_store.configured else None, "projects.read"),
+        ]
+        configured = [(name, store, action) for name, store, action in candidates if store is not None]
         if not configured:
             return {
                 "status": "unavailable", "items": [],
@@ -238,22 +274,43 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
                 "source": [], "freshness": {"checked_at": datetime.now(timezone.utc).isoformat()},
             }
 
-        rows = _journal_rows(journal_store, start, end, zone)
-        task_read_failed = False
-        try:
-            rows.extend(_task_rows(task_store, start, end, zone))
-        except HTTPException:
-            # Task projection has a fixed byte budget. Keep other available
-            # sources, but never imply a complete Activity result on overflow.
-            task_read_failed = True
+        # Authorize every configured source before its first read. A denied
+        # source is omitted and makes the response partial; it is never probed.
+        authorized, denied = [], False
+        for name, store, action in configured:
+            try:
+                auth.require_action(request, action)
+            except HTTPException as exc:
+                if exc.status_code != 403:
+                    raise
+                denied = True
+                continue
+            authorized.append((name, store))
+
+        rows = []
+        read_failed = denied
+        for name, store in authorized:
+            if name == "journal":
+                rows.extend(_journal_rows(store, start, end, zone))
+            elif name == "tasks":
+                try:
+                    rows.extend(_task_rows(store, start, end, zone))
+                except HTTPException:
+                    # Task projection has a fixed byte budget. Keep other
+                    # available sources but never imply completeness.
+                    read_failed = True
+            elif name == "projects":
+                project_rows, partial = _project_rows(store, start, end, zone)
+                rows.extend(project_rows)
+                read_failed = read_failed or partial
         rows.sort(key=lambda row: (row["occurred_at"], row["activity_id"]), reverse=True)
         page_rows = rows[offset:offset + limit]
-        missing_source = len(configured) < 2
+        missing_source = len(authorized) < len(configured) or len(authorized) < 2
         return {
-            "status": "partial" if missing_source or default_window or task_read_failed else ("ok" if rows else "empty"),
+            "status": "partial" if missing_source or default_window or read_failed else ("ok" if rows else "empty"),
             "items": page_rows,
             "pagination": {"limit": limit, "offset": offset, "has_more": offset + limit < len(rows)},
-            "source": configured,
+            "source": [name for name, _store in authorized],
             "freshness": {"checked_at": datetime.now(timezone.utc).isoformat()},
         }
 

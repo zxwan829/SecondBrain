@@ -9,10 +9,11 @@ from fastapi.testclient import TestClient
 from secondbrain_core.modules.app_auth import AppSessionAuth
 from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.projects_activity_read import create_projects_activity_router
+from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStore
 from secondbrain_core.modules.tasks import TaskStore
 
 
-def make_client(tmp_path, journal=None, tasks=None):
+def make_client(tmp_path, journal=None, tasks=None, projects=None):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-password-value\n")
     os.chmod(password_file, 0o600)
@@ -20,7 +21,8 @@ def make_client(tmp_path, journal=None, tasks=None):
     token = "synthetic-app-session"
     auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
     app = FastAPI()
-    app.include_router(create_projects_activity_router(auth, journal, tasks))
+    app.state.test_auth = auth
+    app.include_router(create_projects_activity_router(auth, journal, tasks, projects_store=projects))
     client = TestClient(app, base_url="https://app.test")
     client.cookies.set(auth.COOKIE_NAME, token)
     return client
@@ -181,3 +183,87 @@ def test_activity_task_projection_refuses_store_over_fixed_read_budget(tmp_path,
     assert body["status"] == "partial"
     assert body["source"] == ["tasks"]
     assert body["items"] == []
+
+
+def test_activity_project_source_uses_explicit_index_revision_and_minimal_fields(tmp_path):
+    root = tmp_path / "projects"
+    root.mkdir(mode=0o700)
+    os.chmod(root, 0o700)
+    day = date.today().isoformat()
+    document = {
+        "id": "synthetic-project-1", "title": "PRIVATE synthetic title",
+        "status": "active", "updated_at": f"{day}T08:00:00Z",
+        "next_step": "PRIVATE synthetic body",
+    }
+    path = root / "project.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    os.chmod(path, 0o600)
+    projects = ProjectsSourceReadStore(str(root))
+
+    response = make_client(tmp_path, projects=projects).get(
+        f"/api/activity?from={day}&to={day}&timezone=UTC")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "partial"
+    assert body["source"] == ["projects"]
+    assert len(body["items"]) == 1
+    event = body["items"][0]
+    assert event["kind"] == "project" and event["status"] == "updated"
+    assert event["project_id"] == "synthetic-project-1"
+    assert event["project_status"] == "active"
+    assert set(event) == {"activity_id", "kind", "status", "occurred_at", "project_id", "project_status"}
+    assert "PRIVATE" not in response.text
+    assert str(root) not in response.text
+
+
+def test_activity_source_actions_are_checked_before_reading_each_source(tmp_path, monkeypatch):
+    journal = make_journal(tmp_path)
+    tasks = make_tasks(tmp_path)
+    day = date.today().isoformat()
+    journal_reads, task_reads = [], []
+    monkeypatch.setattr(journal, "read", lambda value: journal_reads.append(value) or {"entries": []})
+    monkeypatch.setattr(tasks, "list_for_projection", lambda: task_reads.append(True) or {"tasks": []})
+    client = make_client(tmp_path, journal=journal, tasks=tasks)
+    auth = client.app.state.test_auth
+    original_require_action = auth.require_action
+
+    def deny_task_before_io(request, action):
+        if action == "task.read":
+            raise __import__("fastapi").HTTPException(status_code=403, detail="denied")
+        return original_require_action(request, action)
+
+    monkeypatch.setattr(auth, "require_action", deny_task_before_io)
+    response = client.get(f"/api/activity?from={day}&to={day}&timezone=UTC")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["source"] == ["journal"]
+    assert journal_reads == [day]
+    assert task_reads == []
+
+
+def test_activity_projects_denied_before_project_index_io(tmp_path, monkeypatch):
+    root = tmp_path / "projects"
+    root.mkdir(mode=0o700)
+    os.chmod(root, 0o700)
+    projects = ProjectsSourceReadStore(str(root))
+    reads = []
+    monkeypatch.setattr(projects, "read_snapshot", lambda: reads.append(True))
+    client = make_client(tmp_path, projects=projects)
+    auth = client.app.state.test_auth
+    original_require_action = auth.require_action
+
+    def deny_projects_before_io(request, action):
+        if action == "projects.read":
+            raise __import__("fastapi").HTTPException(status_code=403, detail="denied")
+        return original_require_action(request, action)
+
+    monkeypatch.setattr(auth, "require_action", deny_projects_before_io)
+    day = date.today().isoformat()
+    response = client.get(f"/api/activity?from={day}&to={day}&timezone=UTC")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["source"] == []
+    assert reads == []
