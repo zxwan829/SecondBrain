@@ -15,7 +15,7 @@ jobs:
       - name: Check out the reviewed #193 Linux test candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: 02c8ad3d8fd40f0e3752c0748d677462fb88870c3
+          ref: 02c8ad3d8fd40f0e3752c0748d677462fb88870c
           persist-credentials: false
 
       - name: Verify disposable runner and record kernel, filesystem, LSM, and capabilities
@@ -33,7 +33,7 @@ jobs:
           printf 'runner_image=%s/%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
           printf 'runner_environment=%s\n' "$RUNNER_ENVIRONMENT"
           printf 'kernel=%s\n' "$(uname -srmo)"
-          printf 'fixed_test_source=02c8ad3d8fd40f0e3752c0748d677462fb88870c3\n'
+          printf 'fixed_test_source=02c8ad3d8fd40f0e3752c0748d677462fb88870c\n'
           python3.12 --version
           printf 'runner_tmp_mount='; findmnt -n -T /tmp -o TARGET,FSTYPE,OPTIONS
           if [ -r /sys/kernel/security/lsm ]; then
