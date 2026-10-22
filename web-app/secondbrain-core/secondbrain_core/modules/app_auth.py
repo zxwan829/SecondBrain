@@ -23,7 +23,7 @@ class AppSessionAuth:
         "projects.read", "promote.read", "review.defer",
         "review.read", "task.read", "task.write", "vocabulary.read", "vocabulary.write",
         "inbox.proposals.read", "inbox.proposals.write",
-        "planning.read", "planning.write",
+        "planning.approve", "planning.execute", "planning.read", "planning.write",
     })
 
     def __init__(self, password_file, allowed_origins, session_ttl=28800):

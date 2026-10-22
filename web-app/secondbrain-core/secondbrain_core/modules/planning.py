@@ -30,6 +30,7 @@ _MAX_STEPS = 20
 _MAX_RESPONSE_BYTES = 16 * 1024
 _MAX_CANDIDATES = 64
 _MAX_LEDGER_BYTES = 2 * 1024 * 1024
+_MAX_AUDIT_EVENTS = 1000
 _MAX_CALENDAR_DAYS = 31
 _SESSION_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _TASK_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -180,10 +181,22 @@ class PlanningCandidateStore:
                     or (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
                     != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)):
                 raise HTTPException(status_code=503, detail="Planning state changed during read")
+            try:
+                current = os.stat(self.path, follow_symlinks=False)
+            except OSError as exc:
+                raise HTTPException(status_code=503, detail="Planning state changed during read") from exc
+            identity = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_nlink,
+                                     item.st_uid, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+            if identity(info) != identity(current):
+                raise HTTPException(status_code=503, detail="Planning state changed during read")
             data = json.loads(payload.decode("utf-8"), object_pairs_hook=_unique_object)
-            if (not isinstance(data, dict) or set(data) != {"candidates"}
+            if (not isinstance(data, dict) or set(data) not in ({"candidates"}, {"candidates", "audit"})
                     or not isinstance(data["candidates"], dict)):
                 raise ValueError("invalid planning state")
+            if "audit" not in data:
+                data["audit"] = []
+            if not isinstance(data["audit"], list) or len(data["audit"]) > _MAX_AUDIT_EVENTS:
+                raise ValueError("invalid planning audit")
             return data
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
             if isinstance(exc, HTTPException):
@@ -226,7 +239,7 @@ class PlanningCandidateStore:
             if fd >= 0:
                 os.close(fd)
 
-    def create(self, *, session_id, objective, source_refs, steps, status, expires_at):
+    def create(self, *, session_id, objective, source_refs, calendar_window, steps, status, expires_at):
         candidate_id = uuid.uuid4().hex
         record = {
             "candidate_id": candidate_id,
@@ -234,8 +247,13 @@ class PlanningCandidateStore:
             "revision": 0,
             "status": status,
             "objective_sha256": hashlib.sha256(objective.encode("utf-8")).hexdigest(),
+            "objective": objective,
             "source_refs": source_refs,
+            "calendar_window": calendar_window,
             "steps": steps,
+            "step_states": [{"position": step["position"], "decision": "pending",
+                             "execution_status": "not_started"} for step in steps],
+            "idempotency": {},
             "expires_at": expires_at,
             "created_at": _stamp(_now()),
         }
@@ -262,6 +280,86 @@ class PlanningCandidateStore:
             os.close(fd)
         return candidate_id
 
+    def get(self, candidate_id, session_id):
+        data = self._read_unlocked()
+        candidate = data["candidates"].get(candidate_id)
+        if not isinstance(candidate, dict) or candidate.get("session_id") != session_id:
+            raise HTTPException(status_code=404, detail="Planning candidate not found")
+        return candidate
+
+    @staticmethod
+    def key_hash(value):
+        if (not isinstance(value, str) or not 1 <= len(value) <= 255
+                or any(ord(char) < 33 or ord(char) > 126 for char in value)):
+            raise HTTPException(status_code=400, detail="A valid Idempotency-Key is required")
+        return hashlib.sha256(value.encode("ascii")).hexdigest()
+
+    def replay(self, candidate_id, session_id, key_hash, fingerprint):
+        candidate = self.get(candidate_id, session_id)
+        replay = candidate.get("idempotency", {}).get(key_hash)
+        if replay is None:
+            return None
+        if replay.get("fingerprint") != fingerprint:
+            raise HTTPException(status_code=409, detail="Idempotency-Key was already used differently")
+        return replay["response"]
+
+    def mutate(self, *, candidate_id, session_id, key_hash, fingerprint,
+               expected_revision, position, transition):
+        if (not isinstance(expected_revision, int) or isinstance(expected_revision, bool)
+                or expected_revision < 0):
+            raise HTTPException(status_code=400, detail="Invalid planning revision")
+        fd = self._lock()
+        try:
+            data = self._read_unlocked()
+            record = data["candidates"].get(candidate_id)
+            if not isinstance(record, dict) or record.get("session_id") != session_id:
+                raise HTTPException(status_code=404, detail="Planning candidate not found")
+            if datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00")) <= _now():
+                raise HTTPException(status_code=410, detail="Planning candidate expired")
+            idempotency = record.setdefault("idempotency", {})
+            prior = idempotency.get(key_hash)
+            if prior is not None:
+                if prior.get("fingerprint") != fingerprint:
+                    raise HTTPException(status_code=409, detail="Idempotency-Key was already used differently")
+                return prior["response"]
+            if record.get("revision") != expected_revision:
+                raise HTTPException(status_code=409, detail="Planning candidate revision changed")
+            if record.get("status") not in {"ready", "needs_review"}:
+                raise HTTPException(status_code=409, detail="Planning candidate is not actionable")
+            states = record.get("step_states")
+            if not isinstance(states, list) or len(states) != len(record.get("steps", [])):
+                states = [{"position": step["position"], "decision": "pending",
+                           "execution_status": "not_started"} for step in record.get("steps", [])]
+                record["step_states"] = states
+            if not isinstance(position, int) or not 1 <= position <= len(states):
+                raise HTTPException(status_code=404, detail="Planning step not found")
+            if len(data["audit"]) >= _MAX_AUDIT_EVENTS:
+                raise HTTPException(status_code=503, detail="Planning audit limit reached")
+            step = record["steps"][position - 1]
+            state = states[position - 1]
+            revision = expected_revision + 1
+            response, event_type = transition(record, step, state, revision)
+            if not isinstance(response, dict):
+                raise HTTPException(status_code=503, detail="Planning operation failed safely")
+            record["revision"] = revision
+            idempotency[key_hash] = {"fingerprint": fingerprint, "response": response}
+            data["audit"].append({
+                "candidate_id": candidate_id, "session_id": session_id,
+                "revision": revision, "position": position, "event": event_type,
+                "idempotency_key_sha256": key_hash,
+                "source_ref_sha256": hashlib.sha256(_canonical_bytes(step["source_ref"])).hexdigest(),
+                "recorded_at": _stamp(_now()),
+            })
+            self._write_unlocked(data)
+            return response
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Planning operation failed safely") from exc
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
 
 class PlanningCandidateService:
     def __init__(self, auth, hermes, task_store, projects_store, journal_store, ledger):
@@ -282,6 +380,235 @@ class PlanningCandidateService:
             self.auth.require_action(request, "calendar.read")
         for kind in sorted(kinds):
             self.auth.require_action(request, actions[kind])
+
+    @staticmethod
+    def _source_actions(refs):
+        actions = {"task": "task.read", "project": "projects.read", "journal": "journal.read"}
+        return {actions[ref["kind"]] for ref in refs}
+
+    @classmethod
+    def _candidate_actions(cls, record):
+        actions = cls._source_actions(record.get("source_refs", []))
+        if record.get("calendar_window") is not None:
+            actions.add("calendar.read")
+        return actions
+
+    async def _require_session(self, session_id):
+        if not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id) or self.hermes is None:
+            raise HTTPException(status_code=404, detail="Planning session not found")
+        try:
+            session = await self.hermes.get_session(session_id)
+        except HTTPException as exc:
+            if exc.status_code in {401, 403, 404}:
+                raise HTTPException(status_code=404, detail="Planning session not found") from exc
+            raise HTTPException(status_code=503, detail="Planning session authority is unavailable") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Planning session authority is unavailable") from exc
+        if not isinstance(session, dict) or session.get("session_id", session.get("id")) != session_id:
+            raise HTTPException(status_code=404, detail="Planning session not found")
+
+    def _verify_refs(self, request, refs):
+        if not isinstance(refs, list) or not refs:
+            raise HTTPException(status_code=409, detail="Planning candidate has no verifiable sources")
+        for action in sorted(self._source_actions(refs)):
+            self.auth.require_action(request, action)
+        authority = SourceReferenceAuthority(
+            projects_store=self.projects_store, task_store=self.task_store,
+            journal_store=self.journal_store,
+            permission_checks={
+                "project": lambda: self.auth.require_action(request, "projects.read"),
+                "task": lambda: self.auth.require_action(request, "task.read"),
+                "journal": lambda: self.auth.require_action(request, "journal.read"),
+            },
+        )
+        states = [authority.verify(ref) for ref in refs]
+        if "forbidden" in states:
+            raise HTTPException(status_code=403, detail="Planning source access denied")
+        if "unavailable" in states:
+            return "unavailable"
+        return "verified" if all(state == "verified" for state in states) else "stale"
+
+    @staticmethod
+    async def _read_body(request):
+        chunks, total = [], 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > _MAX_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="Planning request is too large")
+            chunks.append(chunk)
+        try:
+            return json.loads(b"".join(chunks).decode("utf-8"), object_pairs_hook=_unique_object)
+        except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid planning request") from exc
+
+    @staticmethod
+    def _require_revision(value):
+        if not isinstance(value, dict) or set(value) != {"expected_revision"}:
+            raise HTTPException(status_code=400, detail="Invalid planning revision")
+        revision = value["expected_revision"]
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+            raise HTTPException(status_code=400, detail="Invalid planning revision")
+        return revision
+
+    async def preview(self, request, session_id, candidate_id):
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.read")
+        if not isinstance(candidate_id, str) or not _TASK_ID.fullmatch(candidate_id):
+            raise HTTPException(status_code=404, detail="Planning candidate not found")
+        record = self.ledger.get(candidate_id, session_id)
+        if datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00")) <= _now():
+            raise HTTPException(status_code=410, detail="Planning candidate expired")
+        if not isinstance(record.get("objective"), str):
+            raise HTTPException(status_code=410, detail="Planning candidate is no longer reviewable")
+        await self._require_session(session_id)
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.read")
+        status = record.get("status")
+        steps = record.get("steps", [])
+        if status in {"ready", "needs_review"}:
+            source_status = self._verify_refs(request, record.get("source_refs"))
+            if source_status != "verified":
+                status = "unavailable" if source_status == "unavailable" else "stale"
+                steps = []
+        for action in sorted(self._candidate_actions(record)):
+            self.auth.require_action(request, action)
+        states = record.get("step_states") or [
+            {"position": step["position"], "decision": "pending", "execution_status": "not_started"}
+            for step in steps
+        ]
+        state_by_position = {item["position"]: item for item in states if isinstance(item, dict)}
+        projected_steps = []
+        if status in {"ready", "needs_review"}:
+            for step in steps:
+                state = state_by_position.get(step["position"], {})
+                projected_steps.append({
+                    **step,
+                    "decision": state.get("decision", "pending"),
+                    "execution_status": state.get("execution_status", "not_started"),
+                })
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.read")
+        return {
+            "event": "planning.preview", "version": 1, "session_id": session_id,
+            "candidate_id": candidate_id, "revision": record.get("revision", 0),
+            "expires_at": record["expires_at"], "status": status,
+            "objective": record["objective"], "steps": projected_steps,
+        }
+
+    async def decide(self, request, session_id, candidate_id, position):
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+        body = await self._read_body(request)
+        if not isinstance(body, dict) or set(body) != {"decision", "expected_revision"}:
+            raise HTTPException(status_code=400, detail="Invalid planning decision")
+        decision = body["decision"]
+        if decision not in {"approved", "rejected"}:
+            raise HTTPException(status_code=400, detail="Invalid planning decision")
+        expected_revision = self._require_revision({"expected_revision": body["expected_revision"]})
+        key_hash = self.ledger.key_hash(request.headers.get("idempotency-key", ""))
+        record = self.ledger.get(candidate_id, session_id)
+        if datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00")) <= _now():
+            raise HTTPException(status_code=410, detail="Planning candidate expired")
+        if not isinstance(record.get("objective"), str):
+            raise HTTPException(status_code=410, detail="Planning candidate is no longer reviewable")
+        fingerprint = hashlib.sha256(_canonical_bytes({
+            "operation": "decision", "session_id": session_id, "candidate_id": candidate_id,
+            "position": position, "body": body,
+        })).hexdigest()
+        await self._require_session(session_id)
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+        for action in sorted(self._candidate_actions(record)):
+            self.auth.require_action(request, action)
+        replay = self.ledger.replay(candidate_id, session_id, key_hash, fingerprint)
+        if replay is not None:
+            return replay
+        if record.get("revision") != expected_revision:
+            raise HTTPException(status_code=409, detail="Planning candidate revision changed")
+        states = record.get("step_states", [])
+        if not isinstance(position, int) or isinstance(position, bool) or not 1 <= position <= len(states):
+            raise HTTPException(status_code=404, detail="Planning step not found")
+        if states[position - 1].get("decision") != "pending":
+            raise HTTPException(status_code=409, detail="Planning step already has a decision")
+        if record.get("status") not in {"ready", "needs_review"}:
+            raise HTTPException(status_code=409, detail="Planning candidate is not actionable")
+        if self._verify_refs(request, record.get("source_refs")) != "verified":
+            raise HTTPException(status_code=409, detail="Planning sources changed or became unavailable")
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+
+        def transition(candidate, step, state, revision):
+            state["decision"] = decision
+            response = {
+                "event": "planning.step-decision", "version": 1,
+                "session_id": session_id, "candidate_id": candidate_id,
+                "revision": revision, "position": position, "decision": decision,
+                "execution_status": "not_started",
+            }
+            return response, "step_approved" if decision == "approved" else "step_rejected"
+
+        return self.ledger.mutate(
+            candidate_id=candidate_id, session_id=session_id, key_hash=key_hash,
+            fingerprint=fingerprint, expected_revision=expected_revision,
+            position=position, transition=transition,
+        )
+
+    async def execute(self, request, session_id, candidate_id, position):
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.execute")
+        body = await self._read_body(request)
+        expected_revision = self._require_revision(body)
+        key_hash = self.ledger.key_hash(request.headers.get("idempotency-key", ""))
+        record = self.ledger.get(candidate_id, session_id)
+        if datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00")) <= _now():
+            raise HTTPException(status_code=410, detail="Planning candidate expired")
+        if not isinstance(record.get("objective"), str):
+            raise HTTPException(status_code=410, detail="Planning candidate is no longer executable")
+        fingerprint = hashlib.sha256(_canonical_bytes({
+            "operation": "execute", "session_id": session_id, "candidate_id": candidate_id,
+            "position": position, "body": body,
+        })).hexdigest()
+        await self._require_session(session_id)
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.execute")
+        for action in sorted(self._candidate_actions(record)):
+            self.auth.require_action(request, action)
+        replay = self.ledger.replay(candidate_id, session_id, key_hash, fingerprint)
+        if replay is not None:
+            return replay
+        if record.get("revision") != expected_revision:
+            raise HTTPException(status_code=409, detail="Planning candidate revision changed")
+        states = record.get("step_states", [])
+        if not isinstance(position, int) or isinstance(position, bool) or not 1 <= position <= len(states):
+            raise HTTPException(status_code=404, detail="Planning step not found")
+        if states[position - 1].get("decision") != "approved":
+            raise HTTPException(status_code=409, detail="Planning step requires explicit approval")
+        if states[position - 1].get("execution_status") != "not_started":
+            raise HTTPException(status_code=409, detail="Planning step is already completed")
+        if record.get("status") not in {"ready", "needs_review"}:
+            raise HTTPException(status_code=409, detail="Planning candidate is not actionable")
+        if self._verify_refs(request, record.get("source_refs")) != "verified":
+            raise HTTPException(status_code=409, detail="Planning sources changed or became unavailable")
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.execute")
+
+        def transition(candidate, step, state, revision):
+            # This is the only executor in the Core candidate. It produces an
+            # audit receipt and has no business-system or filesystem effect.
+            state["execution_status"] = "simulated"
+            response = {
+                "event": "planning.step-execution", "version": 1,
+                "session_id": session_id, "candidate_id": candidate_id,
+                "revision": revision, "position": position,
+                "status": "simulated", "execution_mode": "synthetic", "effect": "none",
+            }
+            return response, "synthetic_step_simulated"
+
+        return self.ledger.mutate(
+            candidate_id=candidate_id, session_id=session_id, key_hash=key_hash,
+            fingerprint=fingerprint, expected_revision=expected_revision,
+            position=position, transition=transition,
+        )
 
     async def create(self, request, session_id):
         if not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id):
@@ -385,6 +712,7 @@ class PlanningCandidateService:
             session_id=session_id,
             objective=objective,
             source_refs=stored_refs,
+            calendar_window=window,
             steps=steps,
             status=status,
             expires_at=expires_at,
@@ -474,5 +802,17 @@ def create_planning_router(service):
     @router.post("/candidates")
     async def create_candidate(request: Request, session_id: str):
         return await service.create(request, session_id)
+
+    @router.get("/candidates/{candidate_id}")
+    async def preview_candidate(request: Request, session_id: str, candidate_id: str):
+        return await service.preview(request, session_id, candidate_id)
+
+    @router.post("/candidates/{candidate_id}/steps/{position}/decision")
+    async def decide_step(request: Request, session_id: str, candidate_id: str, position: int):
+        return await service.decide(request, session_id, candidate_id, position)
+
+    @router.post("/candidates/{candidate_id}/steps/{position}/execute")
+    async def execute_step(request: Request, session_id: str, candidate_id: str, position: int):
+        return await service.execute(request, session_id, candidate_id, position)
 
     return router

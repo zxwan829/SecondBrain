@@ -166,7 +166,7 @@ def test_candidate_contract_real_localhost_http_and_calendar_projection(tmp_path
             stored = app.state.planning_candidate_store._read_unlocked()["candidates"][result["candidate_id"]]
             assert stored["session_id"] == "session-A"
             assert stored["objective_sha256"] == hashlib.sha256(body["objective"].encode()).hexdigest()
-            assert body["objective"] not in json.dumps(stored)
+            assert stored["objective"] == body["objective"]
             assert "SYNTHETIC_PRIVATE_JOURNAL_BODY" not in json.dumps(stored)
             assert all(item["session_id"] == "session-A" for item in
                        app.state.planning_candidate_store._read_unlocked()["candidates"].values())
@@ -285,4 +285,146 @@ def test_inactive_source_is_retained_only_as_needs_review(tmp_path, monkeypatch)
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "needs_review"
     assert len(response.json()["steps"]) == 1
+
+
+def test_preview_per_step_decision_and_synthetic_execute_are_cas_idempotent_and_session_scoped(
+        tmp_path, monkeypatch):
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(16)
+    host, port = listener.getsockname()
+    origin = f"http://{host}:{port}"
+    app, roots = _configured_app(tmp_path, monkeypatch, origin, host)
+    task_ref, _, _ = _seed_sources(app, roots)
+
+    async def forbidden_run(self, *args, **kwargs):
+        raise AssertionError("Planning must never start a Hermes Run")
+
+    monkeypatch.setattr(HermesAPI, "start_run", forbidden_run)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="critical",
+                                           lifespan="off", access_log=False, proxy_headers=False))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    path = "/api/chat/sessions/session-A/planning"
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        with httpx.Client(base_url=origin, timeout=5, trust_env=False) as client:
+            _login(client, origin)
+            headers = {"Origin": origin}
+            task_file = roots["tasks"] / "tasks.json"
+            source_bytes_before = task_file.read_bytes()
+            base = {"objective": "Review synthetic action", "source_refs": [task_ref],
+                    "calendar_window": None}
+            created = client.post(f"{path}/candidates", headers=headers, json=base)
+            assert created.status_code == 200, created.text
+            candidate_id = created.json()["candidate_id"]
+
+            preview = client.get(f"{path}/candidates/{candidate_id}", headers=headers)
+            assert preview.status_code == 200, preview.text
+            assert preview.headers["cache-control"] == "private, no-store"
+            preview_body = preview.json()
+            assert set(preview_body) == {"event", "version", "session_id", "candidate_id", "revision",
+                                         "expires_at", "status", "objective", "steps"}
+            assert preview_body["event"] == "planning.preview"
+            assert preview_body["session_id"] == "session-A" and preview_body["revision"] == 0
+            assert preview_body["steps"][0]["decision"] == "pending"
+            assert preview_body["steps"][0]["execution_status"] == "not_started"
+            assert str(roots["tasks"]) not in preview.text
+
+            cross_session = client.get(f"/api/chat/sessions/session-B/planning/candidates/{candidate_id}",
+                                       headers=headers)
+            assert cross_session.status_code == 404
+
+            decision_body = {"decision": "approved", "expected_revision": 0}
+            decision_headers = {**headers, "Idempotency-Key": "p3-approve-1"}
+            decision = client.post(f"{path}/candidates/{candidate_id}/steps/1/decision",
+                                   headers=decision_headers, json=decision_body)
+            assert decision.status_code == 200, decision.text
+            decision_receipt = decision.json()
+            assert set(decision_receipt) == {"event", "version", "session_id", "candidate_id",
+                                             "revision", "position", "decision", "execution_status"}
+            assert decision_receipt["revision"] == 1
+            assert decision_receipt["decision"] == "approved"
+            assert decision_receipt["execution_status"] == "not_started"
+            assert client.post(f"{path}/candidates/{candidate_id}/steps/1/decision",
+                               headers=decision_headers, json=decision_body).json() == decision_receipt
+            changed_replay = client.post(f"{path}/candidates/{candidate_id}/steps/1/decision",
+                                         headers=decision_headers,
+                                         json={"decision": "rejected", "expected_revision": 0})
+            assert changed_replay.status_code == 409
+            stale_cas = client.post(f"{path}/candidates/{candidate_id}/steps/1/decision",
+                                    headers={**headers, "Idempotency-Key": "p3-approve-stale"},
+                                    json=decision_body)
+            assert stale_cas.status_code == 409
+            after_approval = client.get(f"{path}/candidates/{candidate_id}", headers=headers).json()
+            assert after_approval["steps"][0]["decision"] == "approved"
+            assert after_approval["steps"][0]["execution_status"] == "not_started"
+
+            execute_body = {"expected_revision": 1}
+            execute_headers = {**headers, "Idempotency-Key": "p3-execute-1"}
+            execution = client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
+                                    headers=execute_headers, json=execute_body)
+            assert execution.status_code == 200, execution.text
+            execution_receipt = execution.json()
+            assert set(execution_receipt) == {"event", "version", "session_id", "candidate_id",
+                                              "revision", "position", "status", "execution_mode", "effect"}
+            assert execution_receipt["status"] == "simulated"
+            assert execution_receipt["execution_mode"] == "synthetic"
+            assert execution_receipt["effect"] == "none"
+            assert execution_receipt["revision"] == 2
+            assert client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
+                               headers=execute_headers, json=execute_body).json() == execution_receipt
+            assert task_file.read_bytes() == source_bytes_before
+            ledger = app.state.planning_candidate_store._read_unlocked()
+            assert len(ledger["audit"]) == 2
+            assert all("idempotency-key" not in str(event).lower() for event in ledger["audit"])
+            assert all("p3-approve-1" not in json.dumps(event) and "p3-execute-1" not in json.dumps(event)
+                       for event in ledger["audit"])
+
+            rejected = client.post(f"{path}/candidates", headers=headers, json=base)
+            rejected_id = rejected.json()["candidate_id"]
+            reject_response = client.post(
+                f"{path}/candidates/{rejected_id}/steps/1/decision",
+                headers={**headers, "Idempotency-Key": "p3-reject-1"},
+                json={"decision": "rejected", "expected_revision": 0},
+            )
+            assert reject_response.status_code == 200
+            blocked_execution = client.post(
+                f"{path}/candidates/{rejected_id}/steps/1/execute",
+                headers={**headers, "Idempotency-Key": "p3-reject-execute"},
+                json={"expected_revision": 1},
+            )
+            assert blocked_execution.status_code == 409
+            assert task_file.read_bytes() == source_bytes_before
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+    assert not thread.is_alive()
+
+
+def test_preview_source_drift_hides_steps_and_never_approves(tmp_path, monkeypatch):
+    app, roots = _configured_app(tmp_path, monkeypatch)
+    task_ref, _, _ = _seed_sources(app, roots)
+    task_file = roots["tasks"] / "tasks.json"
+    with TestClient(app, base_url=ORIGIN) as client:
+        _login(client)
+        created = client.post("/api/chat/sessions/session-A/planning/candidates", headers={"Origin": ORIGIN},
+                             json={"objective": "Review changed source", "source_refs": [task_ref],
+                                   "calendar_window": None})
+        assert created.status_code == 200
+        candidate_id = created.json()["candidate_id"]
+        changed = json.loads(task_file.read_text(encoding="utf-8"))
+        changed["tasks"][0]["title"] = "Synthetic changed source"
+        task_file.write_text(json.dumps(changed, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.chmod(task_file, 0o600)
+        response = client.get(f"/api/chat/sessions/session-A/planning/candidates/{candidate_id}",
+                              headers={"Origin": ORIGIN})
+        assert response.status_code == 200
+        assert response.json()["status"] == "stale"
+        assert response.json()["steps"] == []
 
