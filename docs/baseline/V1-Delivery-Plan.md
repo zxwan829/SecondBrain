@@ -16,11 +16,11 @@ tracking: https://github.com/zxwan829/SecondBrain/issues/76
 
 | 对象 | 已核实状态 | 排程结论 |
 |---|---|---|
-| main | `c18b424da1b84b0071820e7c254e9aeeeb110c49`，已合并 #197 原生 UID 实验入口 | 只代表源码；不是最新生产镜像 |
+| main | `70db581f4f93087eb7ab3456bf5726317645b444`，已合并 #197 原生 UID 实验入口与文档 PR #200 | 只代表源码；不是最新生产镜像 |
 | A Linux 专项 | #199 HEAD `6d4f0b61ed7e7474122e55cba7d0a50b4a74d01c`；[Run 39802960932](https://github.com/zxwan829/SecondBrain/actions/runs/39802960932) success，原始 job 日志实际 `1 passed in 0.38s` | `LINUX_WRITER_SUBSET_TEST=PASS_WITH_LIMITS`。旧 userns/awk 环境启动问题已不再阻塞该固定候选，无变化不重跑 |
 | #199 | Draft/Open；A 报告 Ready 状态变更被自动审批拒绝，PMO 已保留限制 | 待独立处理该状态动作；不经其他工具绕过，不阻塞无关业务开发 |
 | A Activity #198 | Draft/Open，HEAD `ded3c4dc5f91fbf7ee17a058819e5f3f4fd566eb`；源码复审 PASS（Review [#5613809515](https://github.com/zxwan829/SecondBrain/pull/198#pullrequestreview-5613809515)）；分页失败不跳页、撤权清屏的定向证据已提交 | 源码复审通过，仍未合并；Activity 来源仍限 Journal/Task，不能宣布完整 Activity DONE |
-| A Web UX #202 | Draft/Open，HEAD `a27cf35ab6a769f5e98ac37460ccf9974c26447c`，仅含 9 个 Web 文件并叠加于 #198 分支；83 项定向回归、typecheck/build、diff-check PASS；Playwright 三视口用例清单解析 PASS，真实浏览器未运行 | 等待独立源码复审及隔离浏览器执行；此候选不宣称 A_NEXT_READY |
+| A Web UX #202 | Draft/Open，HEAD `6518f6cef8c201981628b0bb09718f374aea55cd`，共 11 个 Web 文件并叠加于 #198 分支；最终 HEAD 独立源码复审 PASS；新增 Notes 412 冲突和 Vocabulary 同义词映射测试；83 项跨模块回归、7 项 Home 信任状态及 23 项 Notes/Vocabulary 定向测试、typecheck/build/diff-check PASS；Playwright 三视口清单解析 PASS，真实浏览器未运行 | 继续隔离浏览器执行及集成验收；此候选不宣称 A_NEXT_READY |
 | B Writer #106 | Draft/Open，HEAD `96f6d48e223bc1386066dcb89ae3ca690247f6e6`；Core-peer 候选 | 复用其实现，不能当作 Authority-only 或严格 Writer create-only |
 | #193 | **CLOSED / NOT MERGED**，固定测试 SHA `02c8ad3d8fd40f0e3752c0748d677462fb88870c` 仍被专项使用 | 不再写“等待合并的 Open PR”；测试来源存在不代表实现已进 main。只迁移确有必要的已审增量 |
 | B 当前任务 | [#97 C0 提案](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6345462222)：三身份 Authority→Writer、SO_PEERCRED、Landlock/no-replace 与撤销/提交线性化规则 | 等待 PMO 对四项合同问题裁定；当前没有新 Core 固定 HEAD/OS 实验，不把提案当成实现或通过 |
