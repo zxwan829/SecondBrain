@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import secrets
 import time
 import uuid
 from datetime import datetime, timezone
 from json import JSONDecodeError
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from .knowledge_read import MAX_FILE_BYTES, MAX_TOTAL_BYTES
 
@@ -25,6 +26,7 @@ MAX_RESPONSE_BYTES = 8 * 1024
 MAX_REQUEST_BYTES = 4 * 1024
 MAX_CANDIDATE_REQUEST_BYTES = 16 * 1024
 MAX_TOTAL_SECONDS = 0.75
+MAX_GROUNDING_RESPONSE_BYTES = 8 * 1024
 _SESSION_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,256}$")
 _REQUIRED_ACTIONS = ("chat.run", "personal_memory.read", "knowledge.read")
 _RECALL_STOP_WORDS = {"about", "after", "also", "and", "are", "can", "could", "for", "from",
@@ -254,5 +256,94 @@ def create_context_preview_router(auth, hermes, memory_store, knowledge_store):
         # This is a read-only metadata selector for ordinary turns. It deliberately
         # does not modify the Hermes Run request or persist/cache source material.
         return await build_candidates(session_id, request, user_input, natural=True)
+
+    @router.post("/{session_id}/grounding-candidates")
+    async def grounding_candidates(session_id: str, request: Request, response: Response):
+        """Return verified source metadata without asserting model grounding.
+
+        Knowledge excerpts are processed only inside the trusted Core reader;
+        this route never changes or starts a Hermes Run and never returns text.
+        """
+        if not _SESSION_ID.fullmatch(session_id):
+            raise HTTPException(status_code=400, detail="Invalid session identifier")
+        # Permissions precede session and Knowledge IO.
+        auth.require_action(request, "chat.run")
+        auth.require_action(request, "knowledge.read")
+        query = await read_query(request, field="query", max_bytes=MAX_CANDIDATE_REQUEST_BYTES,
+                                 max_chars=MAX_CANDIDATE_INPUT_CHARS, label="grounding")
+        response.headers["Cache-Control"] = "private, no-store"
+        deadline = time.monotonic() + MAX_TOTAL_SECONDS
+        try:
+            session = await asyncio.wait_for(
+                hermes.get_session(session_id), timeout=max(0.001, deadline - time.monotonic()))
+        except Exception as exc:
+            if isinstance(exc, HTTPException) and exc.status_code == 404:
+                raise HTTPException(status_code=404, detail="Chat session not found") from exc
+            raise HTTPException(status_code=503, detail="Grounding candidates unavailable") from exc
+        if not isinstance(session, dict) or session.get("session_id") != session_id:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        # A revocation during the upstream lookup must stop before source IO.
+        auth.require_action(request, "chat.run")
+        auth.require_action(request, "knowledge.read")
+        if knowledge_store is None:
+            raise HTTPException(status_code=503, detail="Grounding candidates unavailable")
+
+        def read_candidates():
+            result = knowledge_store.chat_recall(
+                query, max_items=MAX_ITEMS_PER_SOURCE, max_item_bytes=8 * 1024,
+                max_total_bytes=16 * 1024, max_scan_bytes=MAX_TOTAL_BYTES,
+            )
+            if (not isinstance(result, dict) or not isinstance(result.get("items"), list)
+                    or result.get("status") not in {"available", "partial", "none"}):
+                raise ValueError("invalid bounded Knowledge result")
+            rows = []
+            partial = result.get("status") == "partial"
+            seen = set()
+            for item in result["items"][:MAX_ITEMS_PER_SOURCE]:
+                if (not isinstance(item, dict) or item.get("provenance_status") != "verified"
+                        or not isinstance(item.get("relative_path"), str)
+                        or not isinstance(item.get("title"), str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))
+                        or not isinstance(item.get("content"), str)):
+                    partial = True
+                    continue
+                path = item["relative_path"]
+                digest = item["sha256"]
+                if path in seen:
+                    continue
+                seen.add(path)
+                if knowledge_store.verify_chat_reference(path, digest) != "version_verified":
+                    partial = True
+                    continue
+                rows.append({
+                    "citation_id": secrets.token_urlsafe(18),
+                    "title": "".join(char for char in item["title"][:200]
+                                     if char >= " " and char not in {"\u007f", "\u2028", "\u2029"}),
+                    "sha256": digest,
+                    "knowledge_status": "version_verified",
+                    "provenance_status": "verified",
+                })
+            return rows, partial
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise HTTPException(status_code=503, detail="Grounding candidates unavailable")
+        try:
+            rows, partial = await asyncio.wait_for(asyncio.to_thread(read_candidates), timeout=remaining)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(status_code=503, detail="Grounding candidates unavailable") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Grounding candidates unavailable") from exc
+        # Recheck at the response boundary; source content is never serialized.
+        auth.require_action(request, "chat.run")
+        auth.require_action(request, "knowledge.read")
+        status = ("partial" if partial else "needs_review" if len(rows) > 1
+                  else "available" if rows else "none")
+        payload = {"event": "knowledge.grounding-candidates", "version": 1,
+                   "session_id": session_id, "status": status,
+                   "answer_attribution": "not_established", "items": rows}
+        if len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_GROUNDING_RESPONSE_BYTES:
+            payload.update(status="partial", items=[])
+        return payload
 
     return router
