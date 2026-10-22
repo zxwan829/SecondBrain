@@ -146,7 +146,7 @@ def test_candidate_contract_real_localhost_http_and_calendar_projection(tmp_path
             assert response.headers["cache-control"] == "private, no-store"
             result = response.json()
             assert set(result) == {"event", "version", "session_id", "candidate_id", "revision",
-                                   "expires_at", "status", "objective", "steps"}
+                                   "expires_at", "status", "objective", "steps", "workflow_status"}
             assert result["event"] == "planning.candidate" and result["version"] == 1
             assert result["session_id"] == "session-A" and result["revision"] == 0
             assert result["status"] == "ready"
@@ -328,7 +328,7 @@ def test_preview_per_step_decision_and_synthetic_execute_are_cas_idempotent_and_
             assert preview.headers["cache-control"] == "private, no-store"
             preview_body = preview.json()
             assert set(preview_body) == {"event", "version", "session_id", "candidate_id", "revision",
-                                         "expires_at", "status", "objective", "steps"}
+                                         "expires_at", "status", "objective", "steps", "workflow_status"}
             assert preview_body["event"] == "planning.preview"
             assert preview_body["session_id"] == "session-A" and preview_body["revision"] == 0
             assert preview_body["steps"][0]["decision"] == "pending"
@@ -427,4 +427,68 @@ def test_preview_source_drift_hides_steps_and_never_approves(tmp_path, monkeypat
         assert response.status_code == 200
         assert response.json()["status"] == "stale"
         assert response.json()["steps"] == []
+
+
+def test_workflow_pause_cancel_retry_and_partial_recovery_are_explicit_and_idempotent(tmp_path, monkeypatch):
+    app, roots = _configured_app(tmp_path, monkeypatch)
+    task_ref, _, _ = _seed_sources(app, roots)
+    service = app.state.planning_candidate_service
+    with TestClient(app, base_url=ORIGIN) as client:
+        _login(client)
+        headers = {"Origin": ORIGIN}
+        path = "/api/chat/sessions/session-A/planning"
+        created = client.post(f"{path}/candidates", headers=headers, json={
+            "objective": "Exercise synthetic workflow state", "source_refs": [task_ref],
+            "calendar_window": None,
+        })
+        candidate_id = created.json()["candidate_id"]
+        control_url = f"{path}/candidates/{candidate_id}/control"
+        paused = client.post(control_url, headers={**headers, "Idempotency-Key": "pause-1"},
+                             json={"command": "pause", "expected_revision": 0})
+        assert paused.status_code == 200 and paused.json()["workflow_status"] == "paused"
+        assert client.post(control_url, headers={**headers, "Idempotency-Key": "pause-1"},
+                           json={"command": "pause", "expected_revision": 0}).json() == paused.json()
+        assert client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
+                           headers={**headers, "Idempotency-Key": "paused-execute"},
+                           json={"expected_revision": 1}).status_code == 409
+        resumed = client.post(control_url, headers={**headers, "Idempotency-Key": "resume-1"},
+                              json={"command": "resume", "expected_revision": 1})
+        assert resumed.status_code == 200 and resumed.json()["workflow_status"] == "active"
+        approved = client.post(f"{path}/candidates/{candidate_id}/steps/1/decision",
+                               headers={**headers, "Idempotency-Key": "approve-1"},
+                               json={"decision": "approved", "expected_revision": 2})
+        assert approved.status_code == 200
+
+        def fail_once(_step):
+            raise OSError("synthetic injected failure")
+
+        monkeypatch.setattr(service, "_synthetic_execute", fail_once)
+        failed = client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
+                             headers={**headers, "Idempotency-Key": "execute-fail"},
+                             json={"expected_revision": 3})
+        assert failed.status_code == 200 and failed.json()["status"] == "failed"
+        assert failed.json()["effect"] == "none"
+        assert client.get(f"{path}/candidates/{candidate_id}", headers=headers).json()["workflow_status"] == "partial"
+        monkeypatch.setattr(service, "_synthetic_execute", lambda _step: {
+            "status": "simulated", "execution_mode": "synthetic", "effect": "none"})
+        retried = client.post(control_url, headers={**headers, "Idempotency-Key": "retry-1"},
+                              json={"command": "retry", "expected_revision": 4})
+        assert retried.status_code == 200 and retried.json()["steps"][0]["execution_status"] == "retry_ready"
+        executed = client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
+                               headers={**headers, "Idempotency-Key": "execute-retry"},
+                               json={"expected_revision": 5})
+        assert executed.status_code == 200 and executed.json()["status"] == "simulated"
+        assert client.get(f"{path}/candidates/{candidate_id}", headers=headers).json()["workflow_status"] == "completed"
+        assert len(app.state.planning_candidate_store._read_unlocked()["audit"]) == 6
+
+        other = client.post(f"{path}/candidates", headers=headers, json={
+            "objective": "Exercise cancellation", "source_refs": [task_ref], "calendar_window": None,
+        }).json()["candidate_id"]
+        cancelled = client.post(f"{path}/candidates/{other}/control",
+                                headers={**headers, "Idempotency-Key": "cancel-1"},
+                                json={"command": "cancel", "expected_revision": 0})
+        assert cancelled.status_code == 200 and cancelled.json()["workflow_status"] == "cancelled"
+        assert client.post(f"{path}/candidates/{other}/steps/1/decision",
+                           headers={**headers, "Idempotency-Key": "cancelled-approve"},
+                           json={"decision": "approved", "expected_revision": 1}).status_code == 409
 
