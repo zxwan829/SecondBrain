@@ -5,6 +5,23 @@
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
 
+## 2026-10-22 — P2-1/P2-2/P2-3 集中合并准备候选
+
+- 按 Issue #96 评论 #6330661993，在 main `df9971bc1aeecc83ed6bd3c10aed2e1dd1eb8a0a` 上汇总固定 PR 输入：Core #173 `535d8f934f7e922ada7e5542dfd84bb391f4a2c0` → Web #174 `e868c35d2196a13663969be2d32c03a7813ccb1a` → Core #177 `ce38826fd469eef11f2894f04bb4fe918797503e` → Core #175 `5c22ee664ca9573b036f30f34669d237ecebef43` → Web #176 `368f10c8e5ebd0bfcf5bfc376e747017b657a5e1`。来源 PR 全部保持 OPEN/Draft。
+- #175/#177 对 `personal_memory.py` 的重叠由单一集成结果化解：保留 8 MiB 实际读取上限和读取前后 dev/inode/size/mtime/ctime 稳定性校验，同时保留跨进程锁、revision CAS、幂等回放及冲突拒绝。联合文件测试覆盖全部对应行为；没有把局部解决方案写回 B 的原分支。
+- 固定候选上 Core `/private/tmp/secondbrain-p2-1-venv/bin/python -m pytest -q tests/test_context_preview.py tests/test_personal_memory.py tests/test_personal_learning.py`：43 passed。Web 四个 Context/Citation/Personal Memory 文件：35 passed；`npm run typecheck`、`npm run build`、`git diff --check` 通过。Build 保留既有 Canvas 大 chunk 警告。先前 B/A 独立全量测试不重复运行。
+- 本地 main+候选 merge-tree 无冲突；仅 Core `personal_learning.py` 和 `personal_memory.py` 有预期重叠，审查后共同结果通过定向套件。五个源 PR 的 Actions 查询均无 pull-request workflow run；本候选仅改应用和基线文档，工作流触发路径过滤为 workflow 文件，未手动触发 CI。GitHub branch protection/rulesets API 对私有仓库返回 403，保护规则状态 UNKNOWN。
+- 证据分类：CODE / 本机定向自动化 PASS；HTTP SYNTHETIC 沿用双 Gate #96 #6330632680 的证据；REAL_BROWSER NOT RUN；REAL_MODEL NOT RUN，`MODEL_CONTEXT_ADMISSION=BLOCKED`；PRODUCTION / USER_ACCEPTANCE NOT RUN。候选仍需独立审阅；不把源码准备写成已合并、部署或模型实际使用记忆。
+- NEXT：审查集中 Draft 候选与 #96 的 `MERGE_READY`/`MERGE_BLOCKED` 报告；保留原 PR/Draft，等 PMO 后续裁定合并拓扑与审批。不得合并 main 或部署。
+
+
+## 2026-10-22 — P2-1 A Web Context Preview READY
+
+- 基于文档收口后的 main `df9971bc1aeecc83ed6bd3c10aed2e1dd1eb8a0a`，A Draft PR #174 固定应用提交 `cf7f06f79d7eff409288157127649f75268cf0e9`，状态标记 `A_P2_1_WEB_READY`；结果见 [#96 #6324063852](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6324063852) / [#97 #6324066362](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6324066362)。
+- Chat 显式调用 Context v1 metadata preview；只提交 `{query}`，严格检查 session/schema、来源类型、条数与 8 KiB 上限及 `private, no-store`。仅展示 opaque ID、类型、版本、SHA、时间与状态。输入/会话切换时清除并取消旧请求，403 与无效响应 fail closed；不把来源正文或元数据送入 Hermes，也不声称 grounding。
+- Web 全量 32 files / 397 tests、定向 2 files / 25 tests、typecheck、build、diff-check 通过。合成 Mock/DOM 验证不代表 Core+Web localhost、真实浏览器、数据、Hermes/模型、生产或用户验收。Vite build 保留大 chunk 体积警告。
+- B PR #173 的固定 HEAD `f7a50fb5e70db2cc513258e3059fb726eed7ad30` 与测试数量记录在 PR 描述；截至本条更新，#97 尚无 `B_P2_1_CONTEXT_READY`，联合合成 Gate 未运行。下一步是双 READY 后由 A 做一次联合 Gate；`MODEL_CONTEXT_ADMISSION=BLOCKED`。
+
 ## 2026-10-22 — 阶段一六部分收口，进入 P2-1 Web（Issue #96/#97）
 
 - 按 Issue #96 V2 的明确授权，以 GitHub 普通 merge 顺序合并阶段一第 6 部分：Core PR #171 固定 HEAD `dcb252060d1067ad322837085648942097c4b1a5` → main merge `2abdf4b25420a2efea3088448238cfc4d48af9d8`；Web PR #170 固定 HEAD `c778ae6932ae8ccb091afeb6e82aa2d065aa6855` → main merge `b590c15d81a3a1822304c955c788bfa4c912fea1`。#170 更新前的 A Web 审阅 HEAD 为 `ad54e081d4865307e7d6c9ef2ad08f903d8e6949`；Core merge 是历史父提交。两次 merge 均以 GitHub expected head SHA 锁定，未 force。PR #171 首次请求因 Draft 返回 405；转 Ready 后使用同一 SHA 合并。#170 在 main 前进后 mergeability 短暂为 false，重新读取为 true，且本地 merge-tree 无冲突后按固定 HEAD 合并。GitHub 私有仓库 branch-protection 查询返回套餐限制 403；未绕过规则，最终 GitHub merge API 正常接受两项合并。

@@ -8,9 +8,9 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 阶段一收口与阶段二 P2-1 唯一 NEXT（Issue #76/#96/#97）
+## 2026-10-22 阶段一收口与阶段二 P2-1/2/3 集中合并准备（Issue #96/#97）
 
-- **GitHub 应用源码基线：** main `b590c15d81a3a1822304c955c788bfa4c912fea1`。该提交先合入 Core PR #171（merge `2abdf4b25420a2efea3088448238cfc4d48af9d8`），再合入包含 Core merge parent 的 Web PR #170（merge `b590c15d81a3a1822304c955c788bfa4c912fea1`）。两次均使用 GitHub 普通 merge，并以固定 PR HEAD `dcb252060d1067ad322837085648942097c4b1a5`、`c778ae6932ae8ccb091afeb6e82aa2d065aa6855` 锁定 expected head。PR #170/#171 已关闭并合并。main 不是 NAS 运行版本；本次未核验/改变生产。
+- **GitHub 应用源码基线：** 当前 main `df9971bc1aeecc83ed6bd3c10aed2e1dd1eb8a0a`，已包含阶段一 #170/#171。main 不是 NAS 运行版本；本轮未核验/改变生产。
 - **阶段一六部分状态盘点：**
 
   | 部分 | 源码/实现状态 | 合成证据与限制 |
@@ -22,7 +22,7 @@ source: GitHub SecondBrain Monorepo
   | 6 V1 综合验收与安全一致性 | Core #171 / Web #170 已合并；PR #170 内含 Review-root-relative path 修复与 Inbox→Review 版本绑定 UI 测试。 | `STAGE1_PART6_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`；Core+Vite HTTP、Core 定向 28 passed/4 subtests、Web 定向 10 passed、typecheck/build/diff-check 通过。[Gate](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323445544)、[独立复审](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323490860)。真实浏览器未启动。 |
 
 - **V1 MUST / Companion MVP 未完成项：** V1 与 D077 Companion MVP 整体仍 `NOT DONE`。#130 D086 Chat→Inbox 已 `MERGED`（merge `1954f88d1546c3c802c82a97a708aff7c32461f7`）；不等于 Journal/Knowledge 已获人工批准写入。#164 Today Task 创建仍为 Draft/Open，不是已合入功能。#106 Restricted Writer 仍 Draft；生产 OS UID/GID、ACL、mount、peer 隔离与安全准入 `BLOCKED`。#151 合成 Raw admission 仍有同 UID namespace/commit 时间窗风险，生产信任边界 `BLOCKED`。真实浏览器 `BROWSER_BLOCKED_ENV/NOT RUN`；真实 Hermes 低信任上下文与模型 grounding、真实业务数据及用户体验均 `NOT RUN`。Private 继续排除，Writer/Promote 生产保持 OFF；没有部署、真实数据或模型调用。
-- **阶段二 P2-1 Web｜当前唯一 NEXT：** B 已在 [#97 #6323865325](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6323865325) 冻结 Context v1，并在 [#96 #6323867891](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323867891) 同步。A 立即按 `POST /api/chat/sessions/{session_id}/context-preview` 接入 metadata-only UI；三项 Core action 先于 Hermes/source IO 校验、逐 Session 精确绑定、每次新请求、no-store、source drift/撤权/预算失败语义按合同执行。Web 不缓存、不发送任何来源内容或元数据给 Hermes。`MODEL_CONTEXT_ADMISSION=BLOCKED`；没有经验证低信任角色时不得标注 grounded。交付一个 Web Draft PR、固定 HEAD 与 `A_P2_1_WEB_READY`，之后等待 B READY 做一次合成 Gate。
+- **阶段二 P2-1/P2-2/P2-3 集中合并准备：** 输入固定为 Core #173 `535d8f934f7e922ada7e5542dfd84bb391f4a2c0`、Web #174 `e868c35d2196a13663969be2d32c03a7813ccb1a`、Core #177 `ce38826fd469eef11f2894f04bb4fe918797503e`、Core #175 `5c22ee664ca9573b036f30f34669d237ecebef43`（叠加 #173）、Web #176 `368f10c8e5ebd0bfcf5bfc376e747017b657a5e1`（叠加 #174）。#173/#174/#175/#176/#177 均仍 OPEN/Draft。集中候选按 #173→#174→#177→#175→#176 构建；#175/#177 的 `personal_memory.py` 重叠保留两侧 bounded stable read 与 CAS/idempotency。当前候选尚待独立复审和 PMO 决定后续合并授权。`MODEL_CONTEXT_ADMISSION=BLOCKED`；真实浏览器、模型、生产及用户验收均 NOT RUN。
 - 最近的生产快照仍以 `Environment-Baseline.md` 为准；本轮未核验或操作 NAS/生产、未读写真实 Vault/Private、未触发 CI/Actions、未调用收费或真实模型、未开启 Writer/Promote。
 
 ## 2026-10-22 前一阶段裁定（已被上方收口状态替代；Issue #76/#96/#97）
