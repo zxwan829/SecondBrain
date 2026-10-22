@@ -8,6 +8,12 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
+## 2026-10-23 D090：Authority-only IPC / Strict create-only 已完成一次性架构裁定
+
+源提案 #97 #6345462222 已获本次用户明确授权，由PMO作 D090 一次性裁定；详细合同唯一维护于 Decision-Log D090，Architecture第7节引用。三角色独立UID、Authority-only peer IPC获准；Landlock ABI>=3 + 最小seccomp/FD隔离 + 无capability/no-replace为首选非生产候选。撤销与发布须同串行域，不能把分离CAS当成文件原子提交；人工proof缺失仍拒发真实grant。目标/字节/第二次发布限制及Writer恶意修改负例均须证明，未成立则对应Gate BLOCKED，不能弱化标准。
+
+**本次唯一接续：** B按D090边界自主开发/调试/必要定向测试并交A常规审查、集成及收口；A/B自行处理Daily Brief approved_import接口、PR #201独立复审和跨层协调。上述普通事项不再等待本聊天PMO；仅正式规格冲突、新增写权信任主体或重大安全架构变化升级。生产Writer/Promote保持OFF，无新增生产/真实数据/费用授权；未运行新OS实验，不宣称实现或Gate通过。文档分支上的本节和D090须由A常规复审合入，Issue #97的本次裁定立即作为已授权任务依据。
+
 ## 2026-10-22 最新状态与唯一 NEXT：完整 V1 六阶段交付
 
 详细工作分解、A/B 所有权、依赖、验收、纸面推演与范围覆盖见 [V1-Delivery-Plan.md](V1-Delivery-Plan.md)。总控 [#76](https://github.com/zxwan829/SecondBrain/issues/76)，A [#96](https://github.com/zxwan829/SecondBrain/issues/96)，B [#97](https://github.com/zxwan829/SecondBrain/issues/97)。本节替代下方历史快照的阶段指令；历史证据保留，不作为第二份 NEXT。完整 V1 仍 **NOT DONE**。
@@ -17,7 +23,7 @@ source: GitHub SecondBrain Monorepo
 | 核验 main | `70db581f4f93087eb7ab3456bf5726317645b444`，#197 与文档 PR #200 已合并 | 此 SHA 为本规划检查时快照，不代表生产 |
 | Linux Writer 子集 | #199 `6d4f0b61ed7e7474122e55cba7d0a50b4a74d01c`，[Run 39802960932](https://github.com/zxwan829/SecondBrain/actions/runs/39802960932) success，原始日志 `1 passed in 0.38s`；PMO `PASS_WITH_LIMITS` | 不重复旧环境排查；Authority-only、Writer 自身严格 create-only、生产 OS Gate 仍未通过 |
 | A | #198 Activity HEAD `ded3c4dc5f91fbf7ee17a058819e5f3f4fd566eb` 源码复审 PASS（[Review #5613809515](https://github.com/zxwan829/SecondBrain/pull/198#pullrequestreview-5613809515)），仍 Draft/未合并；Web UX Draft [#202](https://github.com/zxwan829/SecondBrain/pull/202) HEAD `6518f6cef8c201981628b0bb09718f374aea55cd` 叠加在 #198 分支，共 11 个 Web 文件；最终 HEAD 独立源码复审 PASS，新增 Notes 412 冲突与 Vocabulary 同义词映射回归；83 项跨模块、7 项 Home 信任状态和 23 项 Notes/Vocabulary 定向测试、typecheck/build/diff-check PASS；三视口 Playwright 仅完成清单解析，浏览器执行 NOT RUN；#199 仍 Draft/Open，Ready 动作被平台自动审批拒绝 | 继续隔离浏览器执行与跨层集成验收；A_NEXT_READY 仍未达成；按有效授权协调 #198 状态，不绕过 #199 拒绝 |
-| B | #106 Draft/Open；#193 CLOSED/NOT MERGED；#97 最新 C0 提案为 [评论 #6345462222](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6345462222) | 等待 PMO 对 Authority→Writer/create-only 合同作四项裁定；继续不依赖 Writer 的 Core 缺口；不把提案写成已实现或 OS 通过 |
+| B | #106 Draft/Open；#193 CLOSED/NOT MERGED；#97 最新 C0 提案为 [评论 #6345462222](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6345462222) | D090四项裁定已给出，B按冻结边界自主实现并交A审查；继续Core缺口，不把架构批准写成OS通过 |
 | 实际业务缺口 | main Planning 执行仍 `effect=none`；Brief `approved_import` 仍 501；Activity 尚不覆盖全部正式来源 | 补真实专用 API 接线，不把模拟/存储模块存在视为完整能力 |
 | 生产/模型/用户 | 本轮未操作 NAS、真实模型、真实渠道或个人数据 | 不推断现网正常，不借本计划启用 Writer/Promote |
 
