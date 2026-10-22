@@ -8,7 +8,16 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 P0/P1 回归与 Companion/响应式复核（Issue #96，PMO #6333339018）
+## 2026-10-22 Hermes 离线合成角色隔离与生产只读审计授权包（Issue #96，PMO #6333466319 / 精简原则 #6333522455）
+
+- **固定基线与范围：** 从 `main` `140bf90620a922ec6e855e3fae8853952fd65019` 建隔离分支。本轮改动为 D078 Guard 离线日志/拒绝回执回归测试，以及生产只读安全审计计划的静态复核/可执行授权清单；未改 Core 运行逻辑。未发现测试路径中的新 P0/P1 缺陷；未发现需转交 B 的 Core 缺陷。
+- **离线合成 Gate：** `HERMES_OFFLINE_ROLE_ISOLATION_GATE=PASS_WITH_LIMITS`。使用 Fake Hermes `httpx.MockTransport` + 临时 synthetic roots 的 BFF 定向测试 3 passed；`test_capture_suggestion_binding.py` 29 passed；D078 插件单测 23 passed（含新增跨 Chat Session 私有路径拒绝且拒绝回执/日志不含合成 marker 测试）。覆盖 Session A/B citation 绑定、未授权/撤权后来源及 citation I/O 为零、来源未许可时不回传引用、D078 对 Hermes Session/credential 私有路径 fail closed 和敏感 marker 不进拒绝输出/日志。未运行真实 Hermes/model/network；不证明多真实用户、进程或 OS UID 隔离。
+- **P0/P1 既有证据：** 本次没有改 Web/Core 业务运行逻辑；引用 #190 已合并前固定 HEAD `849ab4199affa2b2b4dcf88bec4e1efd47769b86` 的既有 6 files / 102 tests 与 typecheck/build/diff-check 结果（PR #190；PMO #6333466319），未重复执行。
+- **生产审计计划：** 静态复核发现上一版 checklist 没有精确命令/字段 allowlist、审批字段和安全输出留存方式；已补强 [Production-Readonly-Security-Audit-Plan.md](Production-Readonly-Security-Audit-Plan.md)，明确逐容器 inspect 格式、逐路径 stat/ACL、单一 secret target 的 stat 模板、Docker socket 风险、Secrets/环境变量值排除、`Private` 内容排除、主机/容器/UID/路径均 UNKNOWN 时停止、脱敏证据位置和无写入回退边界。`PRODUCTION_READONLY_AUDIT_PLAN=READY_PLAN_ONLY`；所有现场授权字段未填，实际生产审计 `NOT_RUN`。
+- **安全边界：** 没有 NAS/生产连接、容器操作、目录或 Secrets 访问；没有 Writer/Promote、真实数据、真实模型或外网调用；无部署、合并或 CI。生产 host、operator、当前容器/身份/mount/ACL/Secrets 均保留 `UNKNOWN`。
+- **验证分层：** Guard 定向 23 tests、Core BFF 定向 3 tests、Consent/source-binding 29 tests PASS。依 #6333522455 未跑 Core/Web 全量、UI 浏览器、Vite/HTTP、typecheck/build，因为本轮无运行代码/依赖/业务契约变更；文档和测试 diff 以 `git diff --check` 审核。
+
+## 历史：2026-10-22 P0/P1 回归与 Companion/响应式复核（Issue #96，PMO #6333339018）
 
 - **固定基线与改动：** 从指定 main `4e51fd23d830db3b263271e7a61acda8433cd074` 创建隔离分支。只修改 Web Task 创建列表核对和回归测试，并新增生产只读安全审计计划；不改 Core。Task 成功回执后若当前已完成/日期筛选隐藏新建的 open Task，会清除筛选并读回；若 Core 已确认创建但 GET 失败，会分别呈现创建成功、列表读取错误和刷新指引。失败的 POST 仍保留同一请求幂等键语义。
 - **P0/P1 回归 Gate：** `P0_P1_REGRESSION_GATE=PASS_WITH_LIMITS`。纯合成 Web 定向回归 6 files / 102 tests passed，包含 Capture→Inbox→Review 保存失败保留原件、重试和精确 Review；Journal 用户显式追加原话与 GET 失败状态；Task 创建/过滤器隐藏和成功后读回失败区分；Review 选择；Planning 跨会话隔离。没有在本轮重复已通过的 Core 全量测试。
