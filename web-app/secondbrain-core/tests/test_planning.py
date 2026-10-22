@@ -492,3 +492,48 @@ def test_workflow_pause_cancel_retry_and_partial_recovery_are_explicit_and_idemp
                            headers={**headers, "Idempotency-Key": "cancelled-approve"},
                            json={"decision": "approved", "expected_revision": 1}).status_code == 409
 
+
+def test_retrospective_revalidates_sources_and_feedback_is_explicit_audited_and_idempotent(tmp_path, monkeypatch):
+    app, roots = _configured_app(tmp_path, monkeypatch)
+    task_ref, _, _ = _seed_sources(app, roots)
+    memory_before = sorted(path.name for path in roots["memory"].iterdir())
+    with TestClient(app, base_url=ORIGIN) as client:
+        _login(client)
+        headers = {"Origin": ORIGIN}
+        path = "/api/chat/sessions/session-A/planning"
+        candidate = client.post(f"{path}/candidates", headers=headers, json={
+            "objective": "Review synthetic outcome", "source_refs": [task_ref], "calendar_window": None,
+        }).json()
+        candidate_id = candidate["candidate_id"]
+        review_url = f"{path}/candidates/{candidate_id}/retrospective"
+        report = client.get(review_url, headers=headers)
+        assert report.status_code == 200, report.text
+        body = report.json()
+        assert set(body) == {"event", "version", "session_id", "candidate_id", "revision",
+                             "workflow_status", "counts", "steps", "feedback"}
+        assert body["event"] == "planning.retrospective"
+        assert body["counts"] == {"planned": 1, "approved": 0, "rejected": 0,
+                                   "completed": 0, "failed": 0, "stale_sources": 0}
+        assert body["steps"][0]["source_state"] == "verified"
+        assert "SYNTHETIC_PRIVATE_JOURNAL_BODY" not in report.text
+        assert str(roots["tasks"]) not in report.text
+        feedback_url = f"{review_url}/feedback"
+        feedback_headers = {**headers, "Idempotency-Key": "retrospective-rating-1"}
+        feedback_body = {"rating": "useful", "expected_revision": 0}
+        feedback = client.post(feedback_url, headers=feedback_headers, json=feedback_body)
+        assert feedback.status_code == 200 and feedback.json()["rating"] == "useful"
+        replay = client.post(feedback_url, headers=feedback_headers, json=feedback_body)
+        assert replay.json() == feedback.json()
+        rated = client.get(review_url, headers=headers).json()
+        assert rated["revision"] == 1 and rated["feedback"] == "useful"
+        assert len(app.state.planning_candidate_store._read_unlocked()["audit"]) == 1
+        task_file = roots["tasks"] / "tasks.json"
+        changed = json.loads(task_file.read_text(encoding="utf-8"))
+        changed["tasks"][0]["title"] = "Changed after plan"
+        task_file.write_text(json.dumps(changed, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.chmod(task_file, 0o600)
+        stale = client.get(review_url, headers=headers).json()
+        assert stale["counts"]["stale_sources"] == 1
+        assert stale["steps"][0]["source_state"] == "stale"
+    assert sorted(path.name for path in roots["memory"].iterdir()) == memory_before
+

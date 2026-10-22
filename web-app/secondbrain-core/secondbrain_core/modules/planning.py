@@ -431,6 +431,52 @@ class PlanningCandidateStore:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
+    def record_feedback(self, *, candidate_id, session_id, key_hash, fingerprint,
+                        expected_revision, rating):
+        fd = self._lock()
+        try:
+            data = self._read_unlocked()
+            record = data["candidates"].get(candidate_id)
+            if not isinstance(record, dict) or record.get("session_id") != session_id:
+                raise HTTPException(status_code=404, detail="Planning candidate not found")
+            idempotency = record.setdefault("idempotency", {})
+            prior = idempotency.get(key_hash)
+            if prior is not None:
+                if prior.get("fingerprint") != fingerprint:
+                    raise HTTPException(status_code=409, detail="Idempotency-Key was already used differently")
+                return prior["response"]
+            if record.get("revision") != expected_revision:
+                raise HTTPException(status_code=409, detail="Planning candidate revision changed")
+            if datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00")) <= _now():
+                raise HTTPException(status_code=410, detail="Planning candidate expired")
+            if record.get("feedback") is not None:
+                raise HTTPException(status_code=409, detail="Planning feedback is already recorded")
+            if len(data["audit"]) >= _MAX_AUDIT_EVENTS:
+                raise HTTPException(status_code=503, detail="Planning audit limit reached")
+            revision = expected_revision + 1
+            record["revision"] = revision
+            record["feedback"] = {"rating": rating, "recorded_at": _stamp(_now())}
+            response = {"event": "planning.feedback", "version": 1,
+                        "session_id": session_id, "candidate_id": candidate_id,
+                        "revision": revision, "rating": rating}
+            idempotency[key_hash] = {"fingerprint": fingerprint, "response": response}
+            data["audit"].append({
+                "candidate_id": candidate_id, "session_id": session_id, "revision": revision,
+                "position": 0, "event": "retrospective_feedback",
+                "idempotency_key_sha256": key_hash,
+                "source_ref_sha256": hashlib.sha256(_canonical_bytes(record["source_refs"])).hexdigest(),
+                "recorded_at": _stamp(_now()),
+            })
+            self._write_unlocked(data)
+            return response
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Planning operation failed safely") from exc
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
 
 class PlanningCandidateService:
     def __init__(self, auth, hermes, task_store, projects_store, journal_store, ledger):
@@ -735,6 +781,100 @@ class PlanningCandidateService:
                                    key_hash=key_hash, fingerprint=fingerprint,
                                    expected_revision=revision, command=command)
 
+    async def retrospective(self, request, session_id, candidate_id):
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.read")
+        record = self.ledger.get(candidate_id, session_id)
+        if datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00")) <= _now():
+            raise HTTPException(status_code=410, detail="Planning candidate expired")
+        if not isinstance(record.get("objective"), str):
+            raise HTTPException(status_code=410, detail="Planning candidate is no longer reviewable")
+        await self._require_session(session_id)
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.read")
+        refs = record.get("source_refs", [])
+        for action in sorted(self._candidate_actions(record)):
+            self.auth.require_action(request, action)
+        source_states = {}
+        if refs:
+            authority = SourceReferenceAuthority(
+                projects_store=self.projects_store, task_store=self.task_store,
+                journal_store=self.journal_store,
+                permission_checks={
+                    "project": lambda: self.auth.require_action(request, "projects.read"),
+                    "task": lambda: self.auth.require_action(request, "task.read"),
+                    "journal": lambda: self.auth.require_action(request, "journal.read"),
+                },
+            )
+            for ref in refs:
+                result = authority.verify(ref)
+                if result == "forbidden":
+                    raise HTTPException(status_code=403, detail="Planning source access denied")
+                source_states[(ref["kind"], ref["id"], ref["version"])] = (
+                    result if result in {"verified", "stale"} else "unavailable")
+        states = record.get("step_states", [])
+        state_by_position = {item["position"]: item for item in states if isinstance(item, dict)}
+        steps = []
+        for step in record.get("steps", []):
+            ref = step["source_ref"]
+            state = state_by_position.get(step["position"], {})
+            key = (ref["kind"], ref["id"], ref["version"])
+            steps.append({
+                "position": step["position"], "kind": step["kind"], "source_ref": ref,
+                "decision": state.get("decision", "pending"),
+                "execution_status": state.get("execution_status", "not_started"),
+                "source_state": source_states.get(key, "unavailable"),
+            })
+        decisions = [item["decision"] for item in steps]
+        executions = [item["execution_status"] for item in steps]
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.read")
+        return {
+            "event": "planning.retrospective", "version": 1,
+            "session_id": session_id, "candidate_id": candidate_id,
+            "revision": record.get("revision", 0),
+            "workflow_status": record.get("workflow_status", "active"),
+            "counts": {
+                "planned": len(steps), "approved": decisions.count("approved"),
+                "rejected": decisions.count("rejected"), "completed": executions.count("simulated"),
+                "failed": executions.count("failed"),
+                "stale_sources": sum(1 for item in steps if item["source_state"] != "verified"),
+            },
+            "steps": steps,
+            "feedback": record.get("feedback", {}).get("rating") if record.get("feedback") else None,
+        }
+
+    async def submit_feedback(self, request, session_id, candidate_id):
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+        body = await self._read_body(request)
+        if not isinstance(body, dict) or set(body) != {"rating", "expected_revision"}:
+            raise HTTPException(status_code=400, detail="Invalid planning feedback")
+        rating = body["rating"]
+        if rating not in {"useful", "not_useful"}:
+            raise HTTPException(status_code=400, detail="Invalid planning feedback")
+        revision = self._require_revision({"expected_revision": body["expected_revision"]})
+        key_hash = self.ledger.key_hash(request.headers.get("idempotency-key", ""))
+        record = self.ledger.get(candidate_id, session_id)
+        fingerprint = hashlib.sha256(_canonical_bytes({
+            "operation": "feedback", "session_id": session_id, "candidate_id": candidate_id, "body": body,
+        })).hexdigest()
+        await self._require_session(session_id)
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+        for action in sorted(self._candidate_actions(record)):
+            self.auth.require_action(request, action)
+        replay = self.ledger.replay(candidate_id, session_id, key_hash, fingerprint)
+        if replay is not None:
+            return replay
+        if self._verify_refs(request, record.get("source_refs", [])) != "verified":
+            raise HTTPException(status_code=409, detail="Planning sources changed or became unavailable")
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+        return self.ledger.record_feedback(candidate_id=candidate_id, session_id=session_id,
+                                           key_hash=key_hash, fingerprint=fingerprint,
+                                           expected_revision=revision, rating=rating)
+
     async def create(self, request, session_id):
         if not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id):
             raise HTTPException(status_code=404, detail="Planning session not found")
@@ -944,5 +1084,13 @@ def create_planning_router(service):
     @router.post("/candidates/{candidate_id}/control")
     async def control_candidate(request: Request, session_id: str, candidate_id: str):
         return await service.control(request, session_id, candidate_id)
+
+    @router.get("/candidates/{candidate_id}/retrospective")
+    async def retrospective_candidate(request: Request, session_id: str, candidate_id: str):
+        return await service.retrospective(request, session_id, candidate_id)
+
+    @router.post("/candidates/{candidate_id}/retrospective/feedback")
+    async def feedback_candidate(request: Request, session_id: str, candidate_id: str):
+        return await service.submit_feedback(request, session_id, candidate_id)
 
     return router
