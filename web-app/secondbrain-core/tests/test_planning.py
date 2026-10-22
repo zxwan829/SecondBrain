@@ -668,4 +668,3 @@ def test_stage3_end_to_end_real_localhost_auth_cas_stale_and_restart(tmp_path, m
         thread2.join(timeout=10)
         listener2.close()
     assert not thread2.is_alive()
-
