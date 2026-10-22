@@ -6,6 +6,8 @@ import os
 import socket
 import threading
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -305,7 +307,7 @@ def test_inactive_source_is_retained_only_as_needs_review(tmp_path, monkeypatch)
     assert len(response.json()["steps"]) == 1
 
 
-def test_preview_per_step_decision_and_synthetic_execute_are_cas_idempotent_and_session_scoped(
+def test_preview_per_step_decision_and_review_execute_are_cas_idempotent_and_session_scoped(
         tmp_path, monkeypatch):
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -390,9 +392,9 @@ def test_preview_per_step_decision_and_synthetic_execute_are_cas_idempotent_and_
             execution_receipt = execution.json()
             assert set(execution_receipt) == {"event", "version", "session_id", "candidate_id",
                                               "revision", "position", "status", "execution_mode", "effect"}
-            assert execution_receipt["status"] == "simulated"
-            assert execution_receipt["execution_mode"] == "synthetic"
-            assert execution_receipt["effect"] == "none"
+            assert execution_receipt["status"] == "completed"
+            assert execution_receipt["execution_mode"] == "core"
+            assert execution_receipt["effect"] == "planning_ledger"
             assert execution_receipt["revision"] == 2
             assert client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
                                headers=execute_headers, json=execute_body).json() == execution_receipt
@@ -477,25 +479,26 @@ def test_workflow_pause_cancel_retry_and_partial_recovery_are_explicit_and_idemp
                                json={"decision": "approved", "expected_revision": 2})
         assert approved.status_code == 200
 
-        def fail_once(_step):
+        original_execute_step = service._execute_step
+
+        def fail_once(_step, **_kwargs):
             raise OSError("synthetic injected failure")
 
-        monkeypatch.setattr(service, "_synthetic_execute", fail_once)
+        monkeypatch.setattr(service, "_execute_step", fail_once)
         failed = client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
                              headers={**headers, "Idempotency-Key": "execute-fail"},
                              json={"expected_revision": 3})
         assert failed.status_code == 200 and failed.json()["status"] == "failed"
-        assert failed.json()["effect"] == "none"
+        assert failed.json()["effect"] == "planning_ledger"
         assert client.get(f"{path}/candidates/{candidate_id}", headers=headers).json()["workflow_status"] == "partial"
-        monkeypatch.setattr(service, "_synthetic_execute", lambda _step: {
-            "status": "simulated", "execution_mode": "synthetic", "effect": "none"})
+        monkeypatch.setattr(service, "_execute_step", original_execute_step)
         retried = client.post(control_url, headers={**headers, "Idempotency-Key": "retry-1"},
                               json={"command": "retry", "expected_revision": 4})
         assert retried.status_code == 200 and retried.json()["steps"][0]["execution_status"] == "retry_ready"
         executed = client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
                                headers={**headers, "Idempotency-Key": "execute-retry"},
                                json={"expected_revision": 5})
-        assert executed.status_code == 200 and executed.json()["status"] == "simulated"
+        assert executed.status_code == 200 and executed.json()["status"] == "completed"
         assert client.get(f"{path}/candidates/{candidate_id}", headers=headers).json()["workflow_status"] == "completed"
         assert len(app.state.planning_candidate_store._read_unlocked()["audit"]) == 6
 
@@ -633,7 +636,7 @@ def test_stage3_end_to_end_real_localhost_auth_cas_stale_and_restart(tmp_path, m
             executed = client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
                                    headers={**headers, "Idempotency-Key": "integrated-execute"},
                                    json={"expected_revision": 1})
-            assert executed.status_code == 200 and executed.json()["effect"] == "none"
+            assert executed.status_code == 200 and executed.json()["effect"] == "planning_ledger"
             retrospective = client.get(f"{path}/candidates/{candidate_id}/retrospective", headers=headers)
             assert retrospective.status_code == 200
             assert retrospective.json()["counts"]["completed"] == 1
@@ -686,3 +689,134 @@ def test_stage3_end_to_end_real_localhost_auth_cas_stale_and_restart(tmp_path, m
         thread2.join(timeout=10)
         listener2.close()
     assert not thread2.is_alive()
+
+
+def test_real_localhost_approved_task_action_is_idempotent_across_planning_commit_failure(
+        tmp_path, monkeypatch):
+    from secondbrain_core.modules.source_reference_authority import SourceReferenceAuthority
+    from fastapi import HTTPException
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(16)
+    host, port = listener.getsockname()
+    origin = f"http://{host}:{port}"
+    app, roots = _configured_app(tmp_path, monkeypatch, origin, host)
+    task_ref, _, _ = _seed_sources(app, roots)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="critical",
+                                           lifespan="off", access_log=False, proxy_headers=False))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        with httpx.Client(base_url=origin, timeout=5, trust_env=False) as client:
+            _login(client, origin)
+            headers = {"Origin": origin}
+            path = "/api/chat/sessions/session-A/planning"
+            body = {
+                "objective": "Create one explicitly approved synthetic Task",
+                "source_refs": [task_ref], "calendar_window": None,
+                "proposed_tasks": [{"title": "Synthetic follow-up", "due_date": "2026-10-24"}],
+            }
+
+            # task.write is checked before any source-store read during candidate creation.
+            verify_calls = []
+            original_verify = SourceReferenceAuthority.verify
+            monkeypatch.setattr(SourceReferenceAuthority, "verify",
+                                lambda self, ref: (verify_calls.append(ref), original_verify(self, ref))[1])
+            original_require = app.state.app_auth.require_action
+
+            def deny_task_write(request, action):
+                if action == "task.write":
+                    raise HTTPException(status_code=403, detail="denied")
+                return original_require(request, action)
+
+            app.state.app_auth.require_action = deny_task_write
+            denied_create = client.post(f"{path}/candidates", headers=headers, json=body)
+            assert denied_create.status_code == 403
+            assert verify_calls == []
+            assert app.state.planning_candidate_store._read_unlocked()["candidates"] == {}
+            app.state.app_auth.require_action = original_require
+
+            created = client.post(f"{path}/candidates", headers=headers, json=body)
+            assert created.status_code == 200, created.text
+            candidate = created.json()
+            candidate_id = candidate["candidate_id"]
+            action_step = candidate["steps"][-1]
+            assert action_step["kind"] == "create_task"
+            assert action_step["task"] == {"title": "Synthetic follow-up", "due_date": "2026-10-24"}
+            assert not (roots["tasks"] / "tasks.json").read_text(encoding="utf-8").count("Synthetic follow-up")
+
+            decision = client.post(
+                f"{path}/candidates/{candidate_id}/steps/{action_step['position']}/decision",
+                headers={**headers, "Idempotency-Key": "task-action-approve"},
+                json={"decision": "approved", "expected_revision": 0},
+            )
+            assert decision.status_code == 200
+
+            # Revoking task.write blocks before source verification and mutation.
+            verify_calls.clear()
+            app.state.app_auth.require_action = deny_task_write
+            denied_execute = client.post(
+                f"{path}/candidates/{candidate_id}/steps/{action_step['position']}/execute",
+                headers={**headers, "Idempotency-Key": "task-action-denied"},
+                json={"expected_revision": 1},
+            )
+            assert denied_execute.status_code == 403 and verify_calls == []
+            app.state.app_auth.require_action = original_require
+
+            planning_store = app.state.planning_candidate_store
+            original_write = planning_store._write_unlocked
+            planning_store._write_unlocked = lambda _data: (_ for _ in ()).throw(
+                OSError("synthetic crash after Task commit"))
+            failed_receipt = client.post(
+                f"{path}/candidates/{candidate_id}/steps/{action_step['position']}/execute",
+                headers={**headers, "Idempotency-Key": "task-action-first-attempt"},
+                json={"expected_revision": 1},
+            )
+            planning_store._write_unlocked = original_write
+            assert failed_receipt.status_code == 503
+            task_store = app.state.task_store
+            tasks_after_failure = task_store.list_for_projection()["tasks"]
+            assert [row["title"] for row in tasks_after_failure].count("Synthetic follow-up") == 1
+
+            # Retry with a fresh HTTP key recovers the same deterministic TaskStore operation.
+            recovered = client.post(
+                f"{path}/candidates/{candidate_id}/steps/{action_step['position']}/execute",
+                headers={**headers, "Idempotency-Key": "task-action-recovery"},
+                json={"expected_revision": 1},
+            )
+            assert recovered.status_code == 200, recovered.text
+            receipt = recovered.json()
+            assert receipt["status"] == "completed" and receipt["execution_mode"] == "core"
+            assert receipt["effect"] == "task_created"
+            assert receipt["task_version"] == task_source_version(next(
+                row for row in task_store.list_for_projection()["tasks"]
+                if row["id"] == receipt["task_id"]))
+            assert "Synthetic follow-up" not in recovered.text
+            assert [row["title"] for row in task_store.list_for_projection()["tasks"]].count(
+                "Synthetic follow-up") == 1
+            activity_day = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+            activity = client.get(
+                f"/api/activity?from={activity_day}&to={activity_day}&timezone=Asia%2FShanghai",
+                headers=headers,
+            )
+            assert activity.status_code == 200
+            assert activity.json()["source"] == ["journal", "tasks", "projects"]
+            assert any(row["kind"] == "task" for row in activity.json()["items"])
+            assert "Synthetic follow-up" not in activity.text
+            replay = client.post(
+                f"{path}/candidates/{candidate_id}/steps/{action_step['position']}/execute",
+                headers={**headers, "Idempotency-Key": "task-action-recovery"},
+                json={"expected_revision": 1},
+            )
+            assert replay.status_code == 200 and replay.json() == receipt
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+    assert not thread.is_alive()
