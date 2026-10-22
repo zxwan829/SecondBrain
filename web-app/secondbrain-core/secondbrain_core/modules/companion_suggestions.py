@@ -295,7 +295,7 @@ class CompanionSuggestionStore:
             if prior:
                 if prior["fingerprint"] != fingerprint:
                     raise HTTPException(status_code=409, detail="Idempotency-Key conflict")
-                return {**prior["receipt"], "status": "duplicate"}
+                return prior["receipt"]
             result, _changed = operation(state)
             state["idempotency"][key] = {"fingerprint": fingerprint, "receipt": result}
             if len(state["idempotency"]) > _MAX_IDEMPOTENCY:
@@ -370,7 +370,7 @@ class CompanionSuggestionStore:
             return None
         if prior["fingerprint"] != fingerprint:
             raise HTTPException(status_code=409, detail="Idempotency-Key conflict")
-        return {**prior["receipt"], "status": "duplicate"}
+        return prior["receipt"]
 
     @staticmethod
     def _public(row):
@@ -502,7 +502,7 @@ def create_companion_suggestions_router(auth, store, task_store, projects_store)
                 auth.require_action(request, "task.read")
                 if task_store is None:
                     raise ValueError("Task source unavailable")
-                data = task_store.list_for_projection()["tasks"]
+                data = task_store.list_for_projection_read_only()["tasks"]
                 if len(data) > _MAX_TASKS:
                     failed = True
                 for task in data[:_MAX_TASKS]:
@@ -562,7 +562,7 @@ def create_companion_suggestions_router(auth, store, task_store, projects_store)
             if any(row["category"] == category for row in rows):
                 auth.require_action(request, action)
         try:
-            task_rows = task_store.list_for_projection()["tasks"] if "task_due" in categories and task_store else []
+            task_rows = task_store.list_for_projection_read_only()["tasks"] if "task_due" in categories and task_store else []
             project_snapshot = projects_store.read_snapshot() if "project_next_step" in categories and projects_store else None
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Companion sources unavailable") from exc

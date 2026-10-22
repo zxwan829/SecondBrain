@@ -315,14 +315,14 @@ def create_context_preview_router(auth, hermes, memory_store, knowledge_store):
                 if knowledge_store.verify_chat_reference(path, digest) != "version_verified":
                     partial = True
                     continue
-                rows.append({
+                rows.append(({
                     "citation_id": secrets.token_urlsafe(18),
                     "title": "".join(char for char in item["title"][:200]
                                      if char >= " " and char not in {"\u007f", "\u2028", "\u2029"}),
                     "sha256": digest,
                     "knowledge_status": "version_verified",
                     "provenance_status": "verified",
-                })
+                }, path, digest))
             return rows, partial
 
         remaining = deadline - time.monotonic()
@@ -334,14 +334,37 @@ def create_context_preview_router(auth, hermes, memory_store, knowledge_store):
             raise HTTPException(status_code=503, detail="Grounding candidates unavailable") from exc
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Grounding candidates unavailable") from exc
-        # Recheck at the response boundary; source content is never serialized.
+        # Recheck authorization and source versions at the response boundary;
+        # the first version check alone leaves a drift window during candidate assembly.
         auth.require_action(request, "chat.run")
         auth.require_action(request, "knowledge.read")
-        status = ("partial" if partial else "needs_review" if len(rows) > 1
-                  else "available" if rows else "none")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise HTTPException(status_code=503, detail="Grounding candidates unavailable")
+        def recheck_versions():
+            current = []
+            stale = False
+            for row, path, digest in rows:
+                if knowledge_store.verify_chat_reference(path, digest) == "version_verified":
+                    current.append((row, path, digest))
+                else:
+                    stale = True
+            return current, stale
+        try:
+            current_rows, stale = await asyncio.wait_for(asyncio.to_thread(recheck_versions), timeout=remaining)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(status_code=503, detail="Grounding candidates unavailable") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Grounding candidates unavailable") from exc
+        partial = partial or stale
+        auth.require_action(request, "chat.run")
+        auth.require_action(request, "knowledge.read")
+        items = [row for row, _path, _digest in current_rows]
+        status = ("partial" if partial else "needs_review" if len(items) > 1
+                  else "available" if items else "none")
         payload = {"event": "knowledge.grounding-candidates", "version": 1,
                    "session_id": session_id, "status": status,
-                   "answer_attribution": "not_established", "items": rows}
+                   "answer_attribution": "not_established", "items": items}
         if len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_GROUNDING_RESPONSE_BYTES:
             payload.update(status="partial", items=[])
         return payload

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { CompanionSuggestionsPanel } from './CompanionSuggestionsPanel';
 
 type Task = {
   id: string; title: string; due_date: string | null; status: 'open' | 'completed';
@@ -19,6 +20,7 @@ export function TaskPage({ locale }: { locale: Locale }) {
   const [editing, setEditing] = useState<{ id: string; title: string; due_date: string } | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const activeLoad = useRef<AbortController | null>(null);
   const loadSequence = useRef(0);
 
@@ -82,6 +84,8 @@ export function TaskPage({ locale }: { locale: Locale }) {
   };
 
   return <div className="task-page">
+    <button type="button" className="capture-secondary" onClick={() => setShowSuggestions((value) => !value)}>{en ? 'Suggestions' : '主动建议'}</button>
+    {showSuggestions && <CompanionSuggestionsPanel locale={locale} />}
     <header className="module-header"><div><p className="eyebrow">SECONDBRAIN / TODAY</p><h1>{en ? 'Today & Tasks' : '今日与待办'}</h1><p className="workspace-subtitle">{en ? 'Create a task in Chat with “Add task: …”. Add a due date with “due: YYYY-MM-DD”. Reminders are not enabled.' : '在 Chat 输入“添加待办：……”即可创建；可用“截止：YYYY-MM-DD”指定截止日。提醒通知尚未实现。'}</p></div>
       <button type="button" className="capture-secondary" disabled={loading} onClick={() => void load()}>{loading ? (en ? 'Loading…' : '读取中…') : (en ? 'Refresh' : '刷新')}</button></header>
     <section className="task-panel" aria-labelledby="task-list-heading">

@@ -126,7 +126,7 @@ def test_companion_real_localhost_http_preferences_evaluate_feedback_and_source_
             assert saved.json()["revision"] == 1 and saved.json()["settings"]["enabled"]
             replay = client.put("/api/companion/preferences", headers={**headers, "Idempotency-Key": "prefs-1"},
                                 json=set_body)
-            assert replay.status_code == 200 and replay.json()["status"] == "duplicate"
+            assert replay.status_code == 200 and replay.json() == saved.json()
             conflict = client.put("/api/companion/preferences", headers={**headers, "Idempotency-Key": "prefs-1"},
                                   json={**set_body, "enabled": False})
             assert conflict.status_code == 409
@@ -157,16 +157,20 @@ def test_companion_real_localhost_http_preferences_evaluate_feedback_and_source_
             assert {item["id"] for item in repeated.json()["items"]} == {item["id"] for item in body["items"]}
             assert len(app.state.companion_suggestion_store.read()["suggestions"]) == 2
 
+            task_lock = roots["tasks"] / ".tasks.lock"
+            assert task_lock.exists()
+            task_lock.unlink()
             listed = client.get("/api/companion/suggestions", headers=headers)
             assert listed.status_code == 200 and len(listed.json()["items"]) == 2
             assert listed.headers["cache-control"] == "private, no-store"
+            assert not task_lock.exists()
             receipt_url = f"/api/companion/suggestions/{task_item['id']}/feedback"
             feedback_headers = {**headers, "Idempotency-Key": "feedback-task-1"}
             feedback_body = {"decision": "accepted", "expected_revision": 1}
             accepted = client.post(receipt_url, headers=feedback_headers, json=feedback_body)
             assert accepted.status_code == 200 and accepted.json()["status"] == "accepted"
             replay = client.post(receipt_url, headers=feedback_headers, json=feedback_body)
-            assert replay.status_code == 200 and replay.json()["status"] == "duplicate"
+            assert replay.status_code == 200 and replay.json() == accepted.json()
             changed_replay = client.post(receipt_url, headers=feedback_headers,
                                          json={"decision": "dismissed", "expected_revision": 1})
             assert changed_replay.status_code == 409
@@ -197,8 +201,8 @@ def test_companion_permission_denial_precedes_source_io_and_reads_are_side_effec
     assert store.read()["settings"] == {"enabled": False, "categories": []}
     assert not (roots["state"] / "companion-suggestions").exists()
     reads = []
-    original = app.state.task_store.list_for_projection
-    monkeypatch.setattr(app.state.task_store, "list_for_projection",
+    original = app.state.task_store.list_for_projection_read_only
+    monkeypatch.setattr(app.state.task_store, "list_for_projection_read_only",
                         lambda: reads.append("task") or original())
     denied_action = {"action": "task.read"}
     original_auth = app.state.app_auth.require_action

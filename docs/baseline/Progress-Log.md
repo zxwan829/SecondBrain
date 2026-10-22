@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-10-22 — P2-4/P2-5 集成复审候选（Issue #96/#97）
+
+- 从 main `57d0d3d94f92d235dd8c0c088bb1561cde76f3ae`（#178 merge）建立隔离分支。核对 #179 `ecb4b18b26e467643b7f0b2ef0d69e036796c5ff` 的历史累计依赖后，只移植净 P2-4；核对 #180 `d16773d61edbbc41a115f2c826eee84ee3832902` 后移植到当前 main，`app.py` 路由注册冲突同时保留 Context Preview 与 Companion Suggestions。未改写 #175/#179/#180 原分支。
+- 独立审查发现并修复：相同幂等请求应回放完全一致的原回执；Companion Suggestions 读取 Task 投影不得创建 `.tasks.lock`；P2-4 Grounding Candidates 在响应前二次校验 source version 并剔除漂移项。Today 增加用户显式展开的 Companion 设置/立即计算/反馈入口；未自动读取建议、未触发 Run 或副作用写入。
+- 验证：Core `/private/tmp/secondbrain-p2-1-venv/bin/python -m pytest -q` → 501 passed、28 subtests passed（26 个 Starlette deprecation warnings）；Web `npm test` → 34 files / 407 tests passed；`npm run typecheck`、`npm run build`、`git diff --check` PASS。Build 保留既有 Notes/Canvas 大 chunk 警告。
+- **Gate 限制：** 本轮尚未跑 Core+Vite 同源 localhost HTTP 联合 Gate。`P2_4_AB_SYNTHETIC_GATE=NOT_RUN`、`P2_5_AB_SYNTHETIC_GATE=NOT_RUN`；Core 全量测试与 Web 单元测试不是联合 HTTP 证据。真实浏览器、模型、生产与用户验收均 NOT RUN；`MODEL_CONTEXT_ADMISSION=BLOCKED`。未合并、部署、访问真实数据或触发 CI。
+- 候选从 #178 main 开始；PR/Draft URL 与最终固定 HEAD 待本记录修订。结果需要继续补足联合 HTTP Gate 并接受独立审阅后再讨论合并；本轮不合并、不部署。
+
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。

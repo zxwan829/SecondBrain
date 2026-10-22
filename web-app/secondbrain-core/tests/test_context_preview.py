@@ -548,6 +548,18 @@ def test_grounding_candidates_real_localhost_http_are_verified_metadata_only(tmp
             assert reads[0][1]["max_item_bytes"] == 8 * 1024
             assert reads[0][1]["max_total_bytes"] == 16 * 1024
             assert reads[0][1]["max_scan_bytes"] == 16 * 1024 * 1024
+            verification_counts = {}
+            def drift_after_initial_verification(path, digest):
+                key = (path, digest)
+                verification_counts[key] = verification_counts.get(key, 0) + 1
+                return "version_verified" if verification_counts[key] == 1 else "stale"
+            monkeypatch.setattr(app.state.knowledge_read_store, "verify_chat_reference",
+                                drift_after_initial_verification)
+            raced = client.post("/api/chat/sessions/session-A/grounding-candidates",
+                                headers=headers, json={"query": "drift during response"})
+            assert raced.status_code == 200
+            assert raced.json()["status"] == "partial" and raced.json()["items"] == []
+            assert set(verification_counts.values()) == {2}
             monkeypatch.setattr(app.state.knowledge_read_store, "verify_chat_reference",
                                 lambda *_args: "stale")
             stale = client.post("/api/chat/sessions/session-A/grounding-candidates",
