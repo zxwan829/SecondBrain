@@ -116,3 +116,7 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 - 真实渠道认证、附件绑定、平台规则与端到端接入仍需独立验证；合成适配器不代表已接入。D087 是架构方向，不授予真实渠道连接或数据出站许可。
 - Daily Brief 限于用户个人 Task、Project 与 Journal 回顾。首阶段由用户明确触发生成，或由用户明确批准导入已有记录后整理；不扩展为新闻摘要，不使用无用户触发的后台生成/调度或外部来源（D088）。显式触发的模型调用仍受数据范围与费用门禁约束。
 - Journal source-options 的精确只读 API 合同见 D089。接口冻结不能替代实现、合并、生产连接或用户验收。
+
+## 7. D090 受控知识写入安全拓扑（非生产实现已批准）
+
+Authority-only IPC 与 strict create-only 的唯一详细安全合同见 `Decision-Log.md` D090，源提案 #97 #6345462222。Core、Authority、Writer 分别为独立身份；仅 Authority 可通过受保护 Unix socket/真实 peer 凭据请求 Writer，普通 Core 不持批准密钥或 Knowledge 写权。Landlock ABI>=3、最小 seccomp、零 capabilities、FD/进程隔离与 no-replace 发布为获准实验路线，精确目标/字节/单次发布必须单独证明；撤销与发布须共享串行提交域。人工证明来源缺失仍 fail closed。B在冻结边界内自主实现/测试，A常规审查/集成；新增写权主体、权限扩大或安全模型变化才上报PMO。此架构批准不代表OS/生产验收，生产Writer/Promote仍OFF；不改变当前两个核心服务的部署定义，不由本文自动启用新进程/容器。
