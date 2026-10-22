@@ -41,6 +41,7 @@ from .modules.review_promote.provenance import PromoteProvenanceVerifier
 from .modules.review_promote.subprocess_worker_client import SubprocessPromoteWorker
 from .modules.web_app import create_web_app_router
 from .modules.context_preview import create_context_preview_router
+from .modules.companion_suggestions import CompanionSuggestionStore, create_companion_suggestions_router
 
 
 def create_app():
@@ -145,6 +146,11 @@ def create_app():
     task_store = TaskStore(task_root) if task_root else None
     projects_root = os.environ.get("SB_PROJECTS_INDEX_ROOT", "").strip()
     projects_store = ProjectsSourceReadStore(projects_root or None)
+    companion_projects_store = ProjectsSourceReadStore(
+        projects_root or None, max_entries=50, max_file_bytes=64 * 1024,
+        max_total_bytes=2 * 1024 * 1024,
+    )
+    companion_store = CompanionSuggestionStore(Path(approval_root) / "companion-suggestions")
     daily_brief_root = os.environ.get("SB_DAILY_BRIEF_STORE_ROOT", "").strip()
     daily_brief_store = DailyBriefRecordReadStore(daily_brief_root or None)
     daily_brief_import_store = DailyBriefImportStore(daily_brief_root or None)
@@ -155,6 +161,9 @@ def create_app():
     app.state.app_auth = auth
     app.state.personal_memory_store = memory_store
     app.state.knowledge_read_store = knowledge_read_store
+    app.state.task_store = task_store
+    app.state.projects_source_store = projects_store
+    app.state.companion_suggestion_store = companion_store
     app.state.chat_knowledge_citation_store = chat_knowledge_citation_store
     # No trusted Hermes source adapter or Core consent ledger is configured.
     # Keep the internal candidate fail-closed and expose no HTTP route.
@@ -169,6 +178,9 @@ def create_app():
     ))
     app.include_router(create_context_preview_router(
         auth, hermes, memory_store, knowledge_read_store,
+    ))
+    app.include_router(create_companion_suggestions_router(
+        auth, companion_store, task_store, companion_projects_store,
     ))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
