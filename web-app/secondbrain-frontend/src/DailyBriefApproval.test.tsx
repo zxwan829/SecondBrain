@@ -70,7 +70,8 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(await screen.findByText(/DAILY_BRIEF_NOT_CONFIGURED/)).toBeTruthy();
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
     expect(calls.some((call) => call.path.startsWith('/api/tasks') || call.path.startsWith('/api/projects'))).toBe(false);
-    expect(screen.queryByText(/approved_import|导入已批准简报/i)).toBeNull();
+    expect(screen.getByRole('note').textContent).toContain('暂不支持导入已批准的简报');
+    expect(screen.queryByText(/approved_import/i)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
     expect(await screen.findByRole('checkbox', { name: /Synthetic task source/ })).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: /Synthetic project source/ })).toBeTruthy();

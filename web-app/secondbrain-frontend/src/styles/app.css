@@ -85,6 +85,10 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .task-page .module-header, .task-toolbar, .task-main, .task-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .task-page .module-header { margin: 12px 0 20px; }
 .task-page .module-header h1 { margin: 0; font-size: clamp(27px, 2vw, 34px); letter-spacing: -.04em; }
+.task-create-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(170px, 240px) auto; align-items: end; gap: 10px; margin: 0 0 16px; padding: 14px; background: linear-gradient(145deg, rgb(13 20 36 / 96%), rgb(11 17 31 / 98%)); border: 1px solid var(--sb-border); border-radius: 14px; }
+.task-create-form label { display: grid; gap: 5px; min-width: 0; color: var(--sb-muted); font-size: 12px; }
+.task-create-form input { width: 100%; min-width: 0; min-height: 40px; padding: 7px 10px; color: var(--sb-text); background: var(--sb-surface-inset); border: 1px solid var(--sb-border-strong); border-radius: 8px; font: inherit; }
+.task-create-form button { min-height: 40px; }
 .task-panel { padding: 17px; background: linear-gradient(145deg, rgb(13 20 36 / 96%), rgb(11 17 31 / 98%)); border: 1px solid var(--sb-border); border-radius: 14px; box-shadow: var(--sb-shadow); }
 .task-toolbar { margin-bottom: 12px; }
 .task-toolbar h2 { margin: 0; font-size: 16px; }
@@ -999,6 +1003,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
   .sidebar-profile { margin-top: 8px; }
   .mobile-scrim { position: fixed; z-index: 49; inset: 0; display: block; width: 100%; height: 100%; padding: 0; background: rgb(2 7 14 / 62%); border: 0; backdrop-filter: blur(3px); }
   .dashboard { width: 100%; padding: 0 14px max(26px, env(safe-area-inset-bottom)); }
+  .task-create-form { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .dashboard > :not(.mobile-topbar) { width: auto; max-width: none; margin-right: 0; margin-left: 0; }
   .mobile-topbar { position: relative; display: flex; align-items: center; gap: 8px; min-height: 47px; padding-top: env(safe-area-inset-top); border-bottom: 1px solid rgb(39 58 83 / 54%); }
   .mobile-menu-button { display: grid; place-items: center; width: 35px; height: 35px; padding: 0; color: #dce8f8; background: transparent; border: 0; border-radius: 8px; }
