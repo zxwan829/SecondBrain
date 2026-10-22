@@ -8,7 +8,17 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 V1 P0/P1 连续任务（Issue #96，PMO #6332771271）
+## 2026-10-22 P0/P1 回归与 Companion/响应式复核（Issue #96，PMO #6333339018）
+
+- **固定基线与改动：** 从指定 main `4e51fd23d830db3b263271e7a61acda8433cd074` 创建隔离分支。只修改 Web Task 创建列表核对和回归测试，并新增生产只读安全审计计划；不改 Core。Task 成功回执后若当前已完成/日期筛选隐藏新建的 open Task，会清除筛选并读回；若 Core 已确认创建但 GET 失败，会分别呈现创建成功、列表读取错误和刷新指引。失败的 POST 仍保留同一请求幂等键语义。
+- **P0/P1 回归 Gate：** `P0_P1_REGRESSION_GATE=PASS_WITH_LIMITS`。纯合成 Web 定向回归 6 files / 102 tests passed，包含 Capture→Inbox→Review 保存失败保留原件、重试和精确 Review；Journal 用户显式追加原话与 GET 失败状态；Task 创建/过滤器隐藏和成功后读回失败区分；Review 选择；Planning 跨会话隔离。没有在本轮重复已通过的 Core 全量测试。
+- **Companion Gate：** `COMPANION_REGRESSION_GATE=PASS_WITH_LIMITS`。Companion 面板的合成回执、同键模糊失败重试、过期 revision 冲突由定向测试覆盖；Planning 的不同 Chat Session 恢复隔离由同批测试覆盖。没有真实 Hermes、模型、个人 Session、知识库内容或生产会话验证。
+- **响应式 Gate：** `MOBILE_RESPONSIVE_GATE=PASS_WITH_LIMITS`（源码/CSS/DOM 测试）；`MOBILE_BROWSER=NOT_RUN`。当前环境没有可安全切换视口的独立浏览器测试会话，未安装浏览器。现有 CSS 在 760px 下将 Review 切为纵向单栏、Task 创建表单切为单列；DOM 回归覆盖移动 Review 内部滚动与避免整页误滚。未作设备截图或真实手机验收。
+- **验证：** Task/Capture/Journal/Companion/Planning/Review 定向 Web 6 files / 102 tests PASS；`npm run typecheck` PASS；`npm run build` PASS（保留已有 Canvas 大 chunk 提示）；`git diff --check` PASS。仅在本候选变更范围重跑，不重复基于未变源码的 Core 测试。
+- **生产只读审计方案：** 新增 [Production-Readonly-Security-Audit-Plan.md](Production-Readonly-Security-Audit-Plan.md)，仅计划/授权清单，规定主机、容器、UID:GID、挂载、POSIX/ACL、Secrets 名称/存在性/模式等元数据字段；禁止业务正文、Private、凭据值、递归遍历、写入和提权绕过，列明停止与无写入回退边界。Hermes 角色隔离单独设计为本地 synthetic/offline 假 Provider 测试。`PRODUCTION_READONLY_AUDIT_PLAN=READY_PLAN_ONLY`；生产审计和 Hermes 测试均 `NOT_RUN`，等待各自明确授权。
+- **分层与交付：** 源码/API/真实浏览器/真实数据/生产/用户接受分层报告。未访问生产/NAS/真实数据，未改 UID/GID、ACL、mount、Secrets、Compose，未运行真实 Hermes/模型、Writer/Promote，未部署、未合并、未触发 CI。当前 PR 与最终 SHA 以本节收尾时的 GitHub/Issue #96 回填为准。
+
+## 历史：2026-10-22 V1 P0/P1 连续任务（Issue #96，PMO #6332771271）
 
 - **源码基线与候选：** 从指定 GitHub `main` 固定 HEAD `3efef1939011fd755842602ef85b79d516dd7e48` 建立隔离分支 `codex/v1-p0-p1-closeout-20261022`。本候选只做 Web 用户入口、合成验收与基线同步；无 Core 改动。
 - **Capture→Inbox→Review 正向 Gate：** `CAPTURE_REVIEW_POSITIVE_GATE=PASS_WITH_LIMITS`。Edge 在 Core Uvicorn + Vite 同源 localhost 中登录，提交合成 Capture，确认 Raw 保存后在 Inbox 读回原文并打开对应 Review；Review 显示待审核原文及来源元数据。Review 当前只有暂缓动作，Promote 为关闭态；最终用户批准写入知识库及知识回读未通过，状态 `PROMOTE_BLOCKED_BY_DESIGN`，不得将其宣传为已完成批准/知识写入闭环。

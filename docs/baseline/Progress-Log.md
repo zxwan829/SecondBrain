@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-10-22 — P0/P1 回归、Companion 与响应式检查（Issue #96 PMO #6333339018）
+
+- **固定输入与实现：** 从 main `4e51fd23d830db3b263271e7a61acda8433cd074` 创建隔离候选。Task 创建成功后按 open 状态显式读回；若旧筛选隐藏刚创建的 Task，则清除筛选并展示。Core 回执有效但列表 GET 失败时单独显示“创建已确认”和读回错误，避免将创建误报为失败。为这两个场景补回归测试。
+- **P0/P1 回归 Gate：** 六个 Web 定向测试文件（Task、Capture/Inbox/Review、Journal、Companion、Planning、Review）共 **102 passed**。覆盖 Capture 保存失败保留 Raw、重试后关联正确 Review；Journal 人工追加与读回失败；Task 过滤器隐藏、成功回执/失败读回拆分；Companion revision/retry 与跨 Chat Session 隔离。`P0_P1_REGRESSION_GATE=PASS_WITH_LIMITS`。没有修改 Core，未重跑未变化 Core 套件。
+- **响应式检查：** `MOBILE_RESPONSIVE_GATE=PASS_WITH_LIMITS`，依据现有 760px CSS 断点、Review 单栏布局/Task 单列布局及 jsdom 移动内部滚动回归。没有独立可切换视口的浏览器会话，Edge mobile screenshot/browser `MOBILE_BROWSER=NOT_RUN`；未安装浏览器，未声称设备验收。
+- **其他验证：** `npm run typecheck` PASS；`npm run build` PASS（现有 Canvas 大 chunk 警告）；`git diff --check` PASS。未触发 CI。
+- **生产只读审计准备：** 新增 `Production-Readonly-Security-Audit-Plan.md`，定义只读取经单独 allowlist 批准的主机/容器/UID:GID/挂载/目录 POSIX 与 ACL 元数据、Secrets 名称/存在性/权限，不读取值或业务内容、不递归、不写入、不提权绕过；含停止条件与零写入恢复说明。区分仓库历史记录和 UNKNOWN 的当前运行状态。单独提出离线 synthetic Hermes 角色隔离验证。`PRODUCTION_READONLY_AUDIT_PLAN=READY_PLAN_ONLY`；生产审计与 Hermes 测试 `NOT_RUN`，没有生产连接。
+- **安全与交付：** 未触碰真实 Task/Journal/Knowledge/Private/Session；未操作 NAS、Compose、UID/GID、ACL、mount、Secrets、Writer/Promote；未部署、合并或触发 CI。Draft PR 和固定 HEAD 在候选最终推送后回填；生产授权仍需另行明确。
+
 ## 2026-10-22 — V1 P0/P1 连续任务 Capture→Inbox→Review 与关键入口（Issue #96 PMO #6332771271）
 
 - **固定输入与范围：** 从 main `3efef1939011fd755842602ef85b79d516dd7e48` 建隔离分支 `codex/v1-p0-p1-closeout-20261022`。仅 Web + 基线文档有改动；未改 Core。只用私有临时目录、合成账户/Task/Journal/Capture 内容与 Core Uvicorn + Vite 同源 localhost。
