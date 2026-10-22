@@ -17,7 +17,7 @@ const PENDING_STORAGE_KEY = 'secondbrain.dailyBrief.pending.v1';
 
 const text = {
   'zh-CN': {
-    start: '手动准备简报', cancel: '取消', loading: '正在读取可核验的任务与项目…',
+    start: '手动准备简报', importUnavailable: '暂不支持导入已批准的简报；目前只能手动编写、选择来源并确认保存。', cancel: '取消', loading: '正在读取可核验的任务与项目…',
     title: '手动创建每日简报', sourceHeading: '选择本次简报来源', journalNote: 'Journal 仅返回 Core 核验过的来源元数据，不读取正文。点击“加载 Journal 来源”后才会发起只读请求。',
     summary: '简报正文（由你编写并确认）', summaryPlaceholder: '仅填写基于下方已选来源的内容；不会调用模型。',
     categories: '分类（逗号分隔）', categoriesPlaceholder: '今日任务', prepare: '预览并确认',
@@ -38,7 +38,7 @@ const text = {
     storageUnavailable: '浏览器当前标签页不能安全暂存未知请求，因此未发送任何保存请求。',
   },
   en: {
-    start: 'Prepare a brief manually', cancel: 'Cancel', loading: 'Loading verifiable Tasks and Projects…',
+    start: 'Prepare a brief manually', importUnavailable: 'Importing an approved brief is not supported yet. You can write a brief manually, select sources, and confirm its save.', cancel: 'Cancel', loading: 'Loading verifiable Tasks and Projects…',
     title: 'Create a daily brief manually', sourceHeading: 'Select sources for this brief', journalNote: 'Journal returns only Core-verified source metadata, not entry text. The read-only request runs only when you select “Load Journal sources.”',
     summary: 'Brief text (written and confirmed by you)', summaryPlaceholder: 'Use only the selected sources. No model is called.',
     categories: 'Categories (comma-separated)', categoriesPlaceholder: 'Today’s tasks', prepare: 'Review and confirm',
@@ -365,6 +365,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
 
   return <section className="daily-brief-approval" aria-label={copy.title}>
     {phase === 'idle' && <button type="button" onClick={() => void begin()}>{copy.start}</button>}
+    {phase === 'idle' && <p role="note">{copy.importUnavailable}</p>}
     {phase === 'loading-sources' && <p role="status">{copy.loading}</p>}
     {phase !== 'idle' && phase !== 'loading-sources' && phase !== 'done' && <>
       <h2>{copy.title}</h2>

@@ -163,7 +163,7 @@ const messages = {
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
-    emptyTitle: '暂无今日记录', emptyDescription: '你可以记录日程，想法或待办事项', create: '新建记录',
+    emptyTitle: '暂无今日记录', emptyDescription: '可以先添加待办，日程功能尚未接入。', create: '新建待办',
     empty: '暂无内容', notConnected: '功能即将上线', notConnectedTitle: '功能即将上线',
     notConnectedDescription: '接入后将为你提供每日重点和重要更新', waiting: '待我处理',
     recentKnowledge: '最近知识', quick: '快捷操作', quickDescription: '常用能力，一键直达',
@@ -195,7 +195,7 @@ const messages = {
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
     returnedItems: 'API entries', agentSupport: 'SecondBrain V1', source: 'Data source',
-    emptyTitle: 'Nothing planned today', emptyDescription: 'Capture a schedule, idea, or task when you are ready', create: 'New entry',
+    emptyTitle: 'Nothing planned today', emptyDescription: 'Add a task here; calendar event creation is not connected yet.', create: 'New task',
     empty: 'Nothing here yet', notConnected: 'Coming soon', notConnectedTitle: 'Coming soon',
     notConnectedDescription: 'Daily highlights and important updates will appear here once connected', waiting: 'Waiting for me',
     recentKnowledge: 'Recent knowledge', quick: 'Quick actions', quickDescription: 'Your most-used destinations',
@@ -538,7 +538,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         <section className="primary-grid" aria-label={t.today}>
-          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} />
+          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} onCreateTask={() => navigate('today')} />
           <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} />
         </section>
 
@@ -2503,24 +2503,24 @@ function ModuleTitle({ title, icon, trailing }: { title: string; icon: string; t
   return <div className="module-title"><span className={`module-icon ${icon}`}><Icon name={icon} size={17} /></span><h2>{title}</h2>{trailing ?? <span className="module-menu" aria-hidden="true">•••</span>}</div>;
 }
 
-function TodayCard({ state, locale, onViewCalendar }: { state: ReturnType<typeof adaptHome>['today']; locale: Locale; onViewCalendar: () => void }) {
+function TodayCard({ state, locale, onViewCalendar, onCreateTask }: { state: ReturnType<typeof adaptHome>['today']; locale: Locale; onViewCalendar: () => void; onCreateTask: () => void }) {
   const t = messages[locale];
   return <article className="dashboard-card today-card" id="today">
     <img className="today-background" src={todayLandscapeUrl} alt="" aria-hidden="true" />
     <ModuleTitle title={t.today} icon="calendar" trailing={<button type="button" className="card-link" onClick={onViewCalendar} aria-label={t.viewCalendar}>{t.viewAll}<Icon name="chevron" size={14} /></button>} />
     <p className="today-description">{t.todayDescription}</p>
     {state.kind === 'content' ? <div className="today-items">{state.items.map((item, index) => <div className="today-item" key={`${item.title}-${index}`}><span className="timeline-dot"/><strong>{item.title}</strong></div>)}</div>
-      : state.kind === 'empty' ? <IllustratedEmpty locale={locale} />
+      : state.kind === 'empty' ? <IllustratedEmpty locale={locale} onCreateTask={onCreateTask} />
       : <div className="unknown-state"><span className="unknown-icon">?</span><strong>{t.noTodayData}</strong><small>UNAVAILABLE</small></div>}
   </article>;
 }
 
-function IllustratedEmpty({ locale }: { locale: Locale }) {
+function IllustratedEmpty({ locale, onCreateTask }: { locale: Locale; onCreateTask: () => void }) {
   const t = messages[locale];
   return <div className="illustrated-empty">
     <div className="empty-calendar"><Icon name="calendar" size={37} /></div>
     <strong>{t.emptyTitle}</strong><p>{t.emptyDescription}</p>
-    <button type="button" className="coming-button" disabled><Icon name="capture" size={15} />{t.create}<small>{t.soon}</small></button>
+    <button type="button" className="coming-button" onClick={onCreateTask}><Icon name="capture" size={15} />{t.create}</button>
   </div>;
 }
 

@@ -17,13 +17,13 @@ const secondDraftId = 'acf4e33a-349f-4d8f-84a5-cec5304ae100';
 const captureId = '1234567890abcdef1234567890abcdef';
 const secondCaptureId = 'abcdef1234567890abcdef1234567890';
 
-function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, summaryStatus = 200) {
+function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, summaryStatus = 200, homeBody: unknown = {}) {
   const calls: string[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input);
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
-    if (url === '/api/home') return new Response('{}', { status: 200 });
+    if (url === '/api/home') return new Response(JSON.stringify(homeBody), { status: 200 });
     if (url === '/api/projects?limit=50&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 50, offset: 0, has_more: false }, source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url.startsWith('/api/daily-brief?')) return new Response(JSON.stringify({ status: 'not_configured', items: [], source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
@@ -116,6 +116,16 @@ describe('Notes application navigation gate', () => {
     expect(await screen.findByRole('heading', { name: '日历' })).toBeTruthy();
     expect(calls.filter((url) => url === '/api/home')).toHaveLength(1);
     expect(calls.filter((url) => url.startsWith('/api/calendar?'))).toHaveLength(1);
+  });
+
+  it('routes the Home task action to the usable Task creation page', async () => {
+    mockAppFetch(200, undefined, 200, { today: { items: [] } });
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+    fireEvent.click(await screen.findByRole('button', { name: '新建待办' }));
+    expect(await screen.findByRole('heading', { name: '今日与待办' })).toBeTruthy();
+    expect(screen.getByRole('form', { name: '新建待办' })).toBeTruthy();
+    expect(location.pathname).toBe('/today');
   });
 
   it('loads Calendar only for a bounded Shanghai month and never requests bodies or Home', async () => {
