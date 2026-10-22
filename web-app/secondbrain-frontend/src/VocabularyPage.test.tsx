@@ -85,4 +85,33 @@ describe('VocabularyPage', () => {
     expect(await screen.findByText('CRM · 已停用')).toBeTruthy();
     expect(confirm).toHaveBeenCalledWith('确认停用“CRM”？历史笔记中的引用会保留。');
   });
+
+  it('requires explicit confirmation and saves a manual alias to an active canonical tag', async () => {
+    const tagged = { ...initial, revision: 4, tags: [{ id: 'tag-crm', name: 'CRM', enabled: true }] };
+    const request = vi.mocked(fetch);
+    request.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/vocabulary') return json(tagged, 200, '"4"');
+      if (String(input) === '/api/vocabulary/synonyms') {
+        expect(init?.method).toBe('POST');
+        expect(init?.headers).toMatchObject({ 'If-Match': '"4"' });
+        expect(JSON.parse(String(init?.body))).toEqual({ alias: '客户关系', tag_id: 'tag-crm', confirmed: true });
+        return json({ ...tagged, revision: 5, synonyms: [{ id: 'syn-1', alias: '客户关系', tag_id: 'tag-crm', enabled: true }] }, 200, '"5"');
+      }
+      return json({ detail: 'unexpected request' }, 404);
+    });
+
+    render(<VocabularyPage locale="zh-CN" />);
+    await screen.findByText('版本 4 · 类型 5/10');
+    const synonyms = screen.getByRole('region', { name: '同义词' });
+    fireEvent.change(within(synonyms).getByLabelText('同义词'), { target: { value: '客户关系' } });
+    fireEvent.change(within(synonyms).getByLabelText('规范标签'), { target: { value: 'tag-crm' } });
+    const submit = within(synonyms).getByRole('button', { name: '确认映射' }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.click(within(synonyms).getByLabelText('我确认保存此持久映射。'));
+    expect(submit.disabled).toBe(false);
+    fireEvent.click(submit);
+
+    expect(await screen.findByText('已保存至 Core 词库并记录审计版本。')).toBeTruthy();
+    expect(within(synonyms).getByText('客户关系 → CRM')).toBeTruthy();
+  });
 });
