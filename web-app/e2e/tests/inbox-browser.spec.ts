@@ -254,6 +254,16 @@ async function signInAndCreateBlankSession(page: Page, viewport: { width: number
   await expect(page.getByRole('heading', { name: '合成会话 1' })).toBeVisible();
 }
 
+async function returnHomeFromNavigation(page: Page, viewport: { width: number }) {
+  if (viewport.width <= 760) {
+    const menu = page.locator('.mobile-menu-button');
+    await menu.click();
+    await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  }
+  await page.getByRole('button', { name: '首页' }).first().click();
+  await expect(page.getByRole('heading', { name: '你的工作台' })).toBeVisible();
+}
+
 let cachedPassword: string | undefined;
 async function readSyntheticPassword(): Promise<string> {
   if (!cachedPassword) {
@@ -336,19 +346,19 @@ for (const viewport of viewports) {
     await expect(page.getByRole('heading', { name: '你的工作台' })).toBeVisible();
     await page.getByRole('button', { name: '打开项目' }).first().click();
     await expect(page.getByRole('heading', { name: '项目' })).toBeVisible();
-    await page.getByRole('button', { name: '首页' }).first().click();
+    await returnHomeFromNavigation(page, viewport);
     await page.getByRole('button', { name: '打开动态' }).first().click();
     await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
-    await page.getByRole('button', { name: '首页' }).first().click();
+    await returnHomeFromNavigation(page, viewport);
     await page.getByRole('button', { name: '查看 Agent 状态' }).first().click();
     await expect(page.getByRole('heading', { name: 'Agent 状态' })).toBeVisible();
-    await page.getByRole('button', { name: '首页' }).first().click();
+    await returnHomeFromNavigation(page, viewport);
     await page.getByRole('button', { name: '今日' }).first().click();
     await expect(page.getByRole('heading', { name: '今日与待办' })).toBeVisible();
-    await page.getByRole('button', { name: '首页' }).first().click();
+    await returnHomeFromNavigation(page, viewport);
     await page.getByRole('button', { name: '新建日记' }).click();
     await expect(page.getByRole('heading', { name: '日记' })).toBeVisible();
-    await page.getByRole('button', { name: '首页' }).first().click();
+    await returnHomeFromNavigation(page, viewport);
     await page.getByRole('button', { name: '查看完整日历' }).click();
     await expect(page.getByRole('heading', { name: '日历' })).toBeVisible();
     expect(observed.blockedOrigins.size).toBe(0);

@@ -240,6 +240,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .nav-item.is-soon .icon { color: #687c9f; }
 .journal-page { display: grid; gap: 18px; max-width: 980px; margin: 14px auto 0; }
 .v1-readonly-page { display: grid; gap: 18px; width: min(100%, 1180px); margin: 14px auto 0; color: #dce7f7; }
+.calendar-page { min-width: 0; }
 .v1-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 10px 2px 4px; }
 .v1-brief-date-filter { display: flex; align-items: center; gap: 10px; margin: 8px 2px 12px; color: #aebed3; font-size: 13px; }
 .v1-brief-date-filter input { min-height: 36px; padding: 6px 10px; color: #e8eff9; background: #151d2c; border: 1px solid rgb(139 167 205 / 30%); border-radius: 8px; }
