@@ -1,5 +1,5 @@
 ---
-updated: 2026-10-22
+updated: 2026-10-23
 status: pmo-delivery-plan
 owner: PMO
 tracking: https://github.com/zxwan829/SecondBrain/issues/76
@@ -19,10 +19,11 @@ tracking: https://github.com/zxwan829/SecondBrain/issues/76
 | main | `c18b424da1b84b0071820e7c254e9aeeeb110c49`，已合并 #197 原生 UID 实验入口 | 只代表源码；不是最新生产镜像 |
 | A Linux 专项 | #199 HEAD `6d4f0b61ed7e7474122e55cba7d0a50b4a74d01c`；[Run 39802960932](https://github.com/zxwan829/SecondBrain/actions/runs/39802960932) success，原始 job 日志实际 `1 passed in 0.38s` | `LINUX_WRITER_SUBSET_TEST=PASS_WITH_LIMITS`。旧 userns/awk 环境启动问题已不再阻塞该固定候选，无变化不重跑 |
 | #199 | Draft/Open；A 报告 Ready 状态变更被自动审批拒绝，PMO 已保留限制 | 待独立处理该状态动作；不经其他工具绕过，不阻塞无关业务开发 |
-| A Activity #198 | Draft/Open，HEAD `ded3c4dc5f91fbf7ee17a058819e5f3f4fd566eb`；分页失败不跳页、撤权清屏的定向证据已提交 | 待固定 HEAD 复审；目前 Activity 来源仍限 Journal/Task，不能宣布完整 Activity DONE |
+| A Activity #198 | Draft/Open，HEAD `ded3c4dc5f91fbf7ee17a058819e5f3f4fd566eb`；源码复审 PASS（Review [#5613809515](https://github.com/zxwan829/SecondBrain/pull/198#pullrequestreview-5613809515)）；分页失败不跳页、撤权清屏的定向证据已提交 | 源码复审通过，仍未合并；Activity 来源仍限 Journal/Task，不能宣布完整 Activity DONE |
+| A Web UX #202 | Draft/Open，HEAD `a27cf35ab6a769f5e98ac37460ccf9974c26447c`，仅含 9 个 Web 文件并叠加于 #198 分支；83 项定向回归、typecheck/build、diff-check PASS；Playwright 三视口用例清单解析 PASS，真实浏览器未运行 | 等待独立源码复审及隔离浏览器执行；此候选不宣称 A_NEXT_READY |
 | B Writer #106 | Draft/Open，HEAD `96f6d48e223bc1386066dcb89ae3ca690247f6e6`；Core-peer 候选 | 复用其实现，不能当作 Authority-only 或严格 Writer create-only |
 | #193 | **CLOSED / NOT MERGED**，固定测试 SHA `02c8ad3d8fd40f0e3752c0748d677462fb88870c` 仍被专项使用 | 不再写“等待合并的 Open PR”；测试来源存在不代表实现已进 main。只迁移确有必要的已审增量 |
-| B 当前任务 | [#97 最新裁定](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6344525941)：Authority→Writer 合同与严格 create-only 方案 | B 有明确待交付，尚未见该新任务完成报告；不能断言仍空闲或已经开始运行 |
+| B 当前任务 | [#97 C0 提案](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6345462222)：三身份 Authority→Writer、SO_PEERCRED、Landlock/no-replace 与撤销/提交线性化规则 | 等待 PMO 对四项合同问题裁定；当前没有新 Core 固定 HEAD/OS 实验，不把提案当成实现或通过 |
 | Planning | main `planning.py` 的执行器仍返回 `status=simulated, execution_mode=synthetic, effect=none` | 阶段三已有状态机骨架，实际业务执行仍欠交付 |
 | Daily Brief | main `daily_brief_agent_health.py` 的 `approved_import` 路径仍返回 501；已有 import store 不等于该路由可用 | 补受控导入和用户触发的 AI 撰写，不重复写存储库 |
 | Notes / 词库 | main 已有 Notes、MindMapEditor、CanvasEditor、vocabulary 代码；CURRENT 有合并及有限部署记录 | 先查实际缺口，禁止从头再集成一套编辑器/词库 |
@@ -150,14 +151,14 @@ P4-2 的账号、官方平台接口权限、首次登录或密钥只能在实际
 **A 长任务 A-NEXT：交付可集成的真实业务 Web 包。**
 
 1. 将 Linux 子集 PASS、#193 CLOSED、#199 Draft 平台限制与 #198 最新状态登记到当前阶段；不重复已过实验，不动 #199 被拒的 Ready/merge 动作。
-2. 推进 #198 固定 HEAD 独立复审与修复，随后在同一工作包完成 Home 已有数据卡、Activity/Agent Health 的可信状态与来源覆盖、Projects/Today/Journal/Brief 回跳、Notes 保存/冲突和词库纠正的实际缺口。已有组件正常则复用，不为了“长任务”重写。
+2. #198 已在固定 HEAD 完成源码复审 PASS；A 继续核实合并授权与分支门禁，在等待期间于集成候选接续真实业务 Web。随后在同一工作包完成 Home 已有数据卡、Activity/Agent Health 的可信状态与来源覆盖、Projects/Today/Journal/Brief 回跳、Notes 保存/冲突和词库纠正的实际缺口。已有组件正常则复用，不为了“长任务”重写。
 3. 先用现有真实 Core API + 合成数据实现能用的路径。依赖 B 新合同的部分建立最小 client/fixture，明确尚未接线；不能只交一批 Mock 页面充完成度。
 4. 并行准备真实浏览器/移动视口及生产只读审计的具体授权包；复用已证实可用环境，不继续重复旧 macOS 崩溃实验，不自行更改系统权限。
 5. 输出 A_NEXT_READY：一个可审主 PR/明确的必要独立 PR、定向交互证据、三视口可用范围、未接 Core/真实数据项与集成清单。此时可在授权内接 P4 Notes/附件兼容，不等 Writer 合并才开工。
 
 **B 长任务 B-NEXT：打通真实能力的 Core 缺口，先解决关键安全合同。**
 
-1. 承接 #97 #6344525941，核对 #106 和已有 source/consent 候选，提交最小 Authority→Writer/严格 create-only 合同、可实现原语与负例，区分已通过子集和新安全命题。此设计检查点不要求 A Web 完成。
+1. 承接 #97 #6345462222，等待 PMO 对 Authority→Writer/strict create-only C0 四项合同裁定；#106 与已有 source/consent 候选不能替代新协议/OS 证据。此设计检查点不要求 A Web 完成。
 2. 重大信任/IPC/权限选型只向 PMO 提交一次具体差异与推荐；冻结后连续完成非生产合成实现、失败恢复及定向验证。没有等效安全边界则保持该门禁 BLOCKED，不能删除要求。
 3. 等待该重大合同裁定时，按既有架构接续**不依赖 Writer 的** P3-4 approved_import 501、P3-5 Activity 事件来源、P3-1 Task/Project 业务缺口。优先前两项；只开一个活动实现包，不并行堆三个 Core 分支。
 4. 再按 P2-1 固定 Hermes 的低信任上下文接口与费用前置门禁，给 A 一份稳定请求/响应/错误/版本/fixture 合同。角色边界不成立就交明确最小适配选择，不能无限提交 metadata-only 假完成。

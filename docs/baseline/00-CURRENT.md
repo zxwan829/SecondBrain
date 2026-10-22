@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-22
+updated: 2026-10-23
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -16,8 +16,8 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|
 | 核验 main | `c18b424da1b84b0071820e7c254e9aeeeb110c49`，#197 已合并 | 此 SHA 为本规划检查时快照，不代表生产 |
 | Linux Writer 子集 | #199 `6d4f0b61ed7e7474122e55cba7d0a50b4a74d01c`，[Run 39802960932](https://github.com/zxwan829/SecondBrain/actions/runs/39802960932) success，原始日志 `1 passed in 0.38s`；PMO `PASS_WITH_LIMITS` | 不重复旧环境排查；Authority-only、Writer 自身严格 create-only、生产 OS Gate 仍未通过 |
-| A | #198 Activity 最新 HEAD `ded3c4dc5f91fbf7ee17a058819e5f3f4fd566eb` 待复审；#199 仍 Draft/Open，Ready 动作被平台自动审批拒绝 | 继续真实业务 Web 包、必要复审/修复、Home/Activity/跨模块体验与集成准备；不绕过 #199 拒绝 |
-| B | #106 Draft/Open；#193 CLOSED/NOT MERGED，固定源码仍被已完成实验引用 | 承接 #97 #6344525941，交 Authority→Writer 与 create-only 最小合同；等待重大裁定时接 Brief 导入/Activity 等不依赖 Writer 的 Core 缺口 |
+| A | #198 Activity HEAD `ded3c4dc5f91fbf7ee17a058819e5f3f4fd566eb` 源码复审 PASS（[Review #5613809515](https://github.com/zxwan829/SecondBrain/pull/198#pullrequestreview-5613809515)），仍 Draft/未合并；Web UX Draft [#202](https://github.com/zxwan829/SecondBrain/pull/202) HEAD `a27cf35ab6a769f5e98ac37460ccf9974c26447c` 叠加在 #198 分支，83 项定向回归、typecheck/build PASS；三视口 Playwright 仅完成清单解析，浏览器执行 NOT RUN；#199 仍 Draft/Open，Ready 动作被平台自动审批拒绝 | 继续真实浏览器/多视口验收和跨层集成准备；#202 尚非 A_NEXT_READY；按有效授权协调 #198/#200 状态，不绕过 #199 拒绝 |
+| B | #106 Draft/Open；#193 CLOSED/NOT MERGED；#97 最新 C0 提案为 [评论 #6345462222](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6345462222) | 等待 PMO 对 Authority→Writer/create-only 合同作四项裁定；继续不依赖 Writer 的 Core 缺口；不把提案写成已实现或 OS 通过 |
 | 实际业务缺口 | main Planning 执行仍 `effect=none`；Brief `approved_import` 仍 501；Activity 尚不覆盖全部正式来源 | 补真实专用 API 接线，不把模拟/存储模块存在视为完整能力 |
 | 生产/模型/用户 | 本轮未操作 NAS、真实模型、真实渠道或个人数据 | 不推断现网正常，不借本计划启用 Writer/Promote |
 
