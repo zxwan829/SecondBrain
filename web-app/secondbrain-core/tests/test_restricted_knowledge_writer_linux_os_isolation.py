@@ -127,7 +127,7 @@ def test_real_linux_uids_kernel_peer_socket_permissions_and_recovery():
         valid_core = r'''
 import hashlib, json, os, stat
 from pathlib import Path
-from secondbrain_core.modules.restricted_knowledge_writer import RestrictedWriterIPCClient
+from secondbrain_core.modules.restricted_knowledge_writer import RestrictedWriterIPCClient, WriterRejected
 root = Path(os.environ["SB_WRITER_TEST_KNOWLEDGE"])
 target = root / "synthetic-approved.md"
 try:
@@ -141,20 +141,49 @@ output = bytes.fromhex(os.environ["SB_WRITER_TEST_OUTPUT"])
 client = RestrictedWriterIPCClient(os.environ["SB_WRITER_TEST_SOCKET"])
 result = client.write_approved(os.environ["SB_WRITER_TEST_REQUEST"], target.name,
                                hashlib.sha256(b"approved synthetic review").hexdigest(), output)
+replay = client.write_approved(os.environ["SB_WRITER_TEST_REQUEST"], target.name,
+                               hashlib.sha256(b"approved synthetic review").hexdigest(), output)
 try:
-    fd = os.open(target, os.O_WRONLY)
+    client.write_approved("linux-os-isolation-conflicting-request", target.name,
+                          hashlib.sha256(b"different approved review").hexdigest(),
+                          b"different synthetic bytes")
+except WriterRejected:
+    target_conflict = "denied"
+else:
+    raise AssertionError("Writer accepted a different request for an existing target")
+try:
+    fd = os.open(target, os.O_WRONLY | os.O_TRUNC)
 except PermissionError:
-    direct_overwrite = "denied"
+    direct_truncate = "denied"
 else:
     os.close(fd)
-    raise AssertionError("Core directly opened the Writer-owned Knowledge file for writing")
-print(json.dumps({"status": result["status"], "direct_create": direct_create,
-                  "direct_overwrite": direct_overwrite, "uid": os.getuid(),
+    raise AssertionError("Core directly truncated the Writer-owned Knowledge file")
+try:
+    os.unlink(target)
+except PermissionError:
+    direct_unlink = "denied"
+else:
+    raise AssertionError("Core directly unlinked the Writer-owned Knowledge file")
+moved = target.with_name(target.name + ".core-renamed")
+try:
+    os.rename(target, moved)
+except PermissionError:
+    direct_rename = "denied"
+else:
+    raise AssertionError("Core directly renamed the Writer-owned Knowledge file")
+print(json.dumps({"status": result["status"], "replay_status": replay["status"],
+                  "target_conflict": target_conflict,
+                  "direct_create": direct_create, "direct_truncate": direct_truncate,
+                  "direct_unlink": direct_unlink, "direct_rename": direct_rename,
+                  "uid": os.getuid(),
                   "gid": os.getgid(), "euid": os.geteuid(), "egid": os.getegid()}))
 '''
         first = _run_as(CORE_UID, CORE_GID, CORE_GID, valid_core, env=env)
-        assert first == {"status": "written", "direct_create": "denied",
-                         "direct_overwrite": "denied", "uid": CORE_UID,
+        assert first == {"status": "written", "replay_status": "already_written",
+                         "target_conflict": "denied",
+                         "direct_create": "denied", "direct_truncate": "denied",
+                         "direct_unlink": "denied", "direct_rename": "denied",
+                         "uid": CORE_UID,
                          "gid": CORE_GID, "euid": CORE_UID, "egid": CORE_GID}
 
         target = knowledge / "synthetic-approved.md"
@@ -162,6 +191,7 @@ print(json.dumps({"status": result["status"], "direct_create": direct_create,
         assert (target_info.st_uid, target_info.st_gid, stat.S_IMODE(target_info.st_mode),
                 target_info.st_nlink) == (WRITER_UID, CORE_GID, 0o640, 1)
         assert target.read_bytes() == OUTPUT
+        assert not (knowledge / "synthetic-approved.md.core-renamed").exists()
         assert (receipts / f"{REQUEST_ID}.json").stat().st_uid == WRITER_UID
         assert stat.S_IMODE((receipts / f"{REQUEST_ID}.json").stat().st_mode) == 0o600
 
