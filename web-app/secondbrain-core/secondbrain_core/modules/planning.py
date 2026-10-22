@@ -624,7 +624,7 @@ class PlanningCandidateService:
         if not isinstance(body, dict) or set(body) != {"decision", "expected_revision"}:
             raise HTTPException(status_code=400, detail="Invalid planning decision")
         decision = body["decision"]
-        if decision not in {"approved", "rejected"}:
+        if not isinstance(decision, str) or decision not in {"approved", "rejected"}:
             raise HTTPException(status_code=400, detail="Invalid planning decision")
         expected_revision = self._require_revision({"expected_revision": body["expected_revision"]})
         key_hash = self.ledger.key_hash(request.headers.get("idempotency-key", ""))
@@ -751,7 +751,7 @@ class PlanningCandidateService:
         if not isinstance(body, dict) or set(body) != {"command", "expected_revision"}:
             raise HTTPException(status_code=400, detail="Invalid planning workflow command")
         command = body["command"]
-        if command not in {"pause", "resume", "cancel", "retry"}:
+        if not isinstance(command, str) or command not in {"pause", "resume", "cancel", "retry"}:
             raise HTTPException(status_code=400, detail="Invalid planning workflow command")
         revision = self._require_revision({"expected_revision": body["expected_revision"]})
         key_hash = self.ledger.key_hash(request.headers.get("idempotency-key", ""))
@@ -851,7 +851,7 @@ class PlanningCandidateService:
         if not isinstance(body, dict) or set(body) != {"rating", "expected_revision"}:
             raise HTTPException(status_code=400, detail="Invalid planning feedback")
         rating = body["rating"]
-        if rating not in {"useful", "not_useful"}:
+        if not isinstance(rating, str) or rating not in {"useful", "not_useful"}:
             raise HTTPException(status_code=400, detail="Invalid planning feedback")
         revision = self._require_revision({"expected_revision": body["expected_revision"]})
         key_hash = self.ledger.key_hash(request.headers.get("idempotency-key", ""))

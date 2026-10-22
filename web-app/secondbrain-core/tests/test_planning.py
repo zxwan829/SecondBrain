@@ -163,6 +163,22 @@ def test_candidate_contract_real_localhost_http_and_calendar_projection(tmp_path
             assert str(roots["journal"]) not in response.text
             assert "next_step" not in response.text and "Review synthetic plan" not in response.text
             assert len(response.content) <= 16 * 1024
+            candidate_id = result["candidate_id"]
+            invalid_decision = client.post(
+                f"/api/chat/sessions/session-A/planning/candidates/{candidate_id}/steps/1/decision",
+                headers={"Origin": origin, "Idempotency-Key": "bad-decision-type"},
+                json={"decision": [], "expected_revision": 0})
+            assert invalid_decision.status_code == 400, invalid_decision.text
+            invalid_command = client.post(
+                f"/api/chat/sessions/session-A/planning/candidates/{candidate_id}/control",
+                headers={"Origin": origin, "Idempotency-Key": "bad-command-type"},
+                json={"command": [], "expected_revision": 0})
+            assert invalid_command.status_code == 400, invalid_command.text
+            invalid_rating = client.post(
+                f"/api/chat/sessions/session-A/planning/candidates/{candidate_id}/retrospective/feedback",
+                headers={"Origin": origin, "Idempotency-Key": "bad-rating-type"},
+                json={"rating": [], "expected_revision": 0})
+            assert invalid_rating.status_code == 400, invalid_rating.text
             stored = app.state.planning_candidate_store._read_unlocked()["candidates"][result["candidate_id"]]
             assert stored["session_id"] == "session-A"
             assert stored["objective_sha256"] == hashlib.sha256(body["objective"].encode()).hexdigest()
