@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-10-22 — Hermes 离线合成角色隔离与生产审计授权包（Issue #96 PMO #6333466319）
+
+- **基线/范围：** 从 GitHub main `140bf90620a922ec6e855e3fae8853952fd65019` 创建隔离分支。只新增 D078 Guard 安全回归和审计计划文档修订，无 Core/运行逻辑变化。
+- **离线 Gate：** `HERMES_OFFLINE_ROLE_ISOLATION_GATE=PASS_WITH_LIMITS`。Fake Hermes `httpx.MockTransport` BFF 用例 3 passed：Session A/B citation 绑定、Knowledge 未授权与撤权先于引用/来源 I/O、无授权来源不生成引用；来源/consent binding 测试 29 passed；D078 Guard 单测 23 passed，新增两合成 Session 私有路径均 fail-closed 且拒绝 receipt/log 不含源 marker。全程临时 synthetic roots；未启动 Hermes 或使用网络、真实模型、凭据、业务数据。此证据只覆盖现有代码 seam，不证明生产 hook/容器 UID/真实 ACL。
+- **生产计划独立复核：** 发现前版授权表缺少精确命令、Docker 权限影响、输出留存和容器身份/target 未知时的明确停止规则；已补入 `Production-Readonly-Security-Audit-Plan.md`。命令限定 exact-container `docker inspect --format`、单路径 `stat`/可选 Synology ACL、逐个 exact secret target 的 `docker exec stat`；排除 `Config.Env`/env values、广泛 discovery、shell/wildcard/递归/读取 Secrets 正文。指出 Docker socket 风险、Private 内容边界、脱敏/本地安全存档和无写入回退。
+- **授权状态：** `PRODUCTION_READONLY_AUDIT_PLAN=READY_PLAN_ONLY`。host/IP、operator/权限、时间窗、当前 container ID/UID:GID、精确路径和 secret targets、证据位置均仍 `UNKNOWN`；未连接生产/NAS，未运行命令。实际审计需另行明确批准完整 allowlist。
+- **P0/P1 与最小测试：** 未发现新 P0/P1 或可复现 Core 缺陷；没有底层缺陷交 B。引用 PR #190 固定 HEAD `849ab4199affa2b2b4dcf88bec4e1efd47769b86` 上既有 Web 6 files/102 tests + typecheck/build/diff-check（PMO #6333466319），按 #6333522455 未重跑。仅跑本轮必要测试：Guard 23、BFF 3、source/consent binding 29；未跑 Core/Web 全量、浏览器、Vite/HTTP、build/typecheck（无相关运行代码/依赖修改）。
+- **安全与交付：** 没有真实数据、Writer/Promote、model、外网、NAS/Container/Secrets/ACL/mount 操作；无部署/合并/CI。Issue #96 为执行结果主记录；本候选含安全回归测试和计划实质修订，开 Draft PR 供独立复审。
+
 ## 2026-10-22 — P0/P1 回归、Companion 与响应式检查（Issue #96 PMO #6333339018）
 
 - **固定输入与实现：** 从 main `4e51fd23d830db3b263271e7a61acda8433cd074` 创建隔离候选。Task 创建成功后按 open 状态显式读回；若旧筛选隐藏刚创建的 Task，则清除筛选并展示。Core 回执有效但列表 GET 失败时单独显示“创建已确认”和读回错误，避免将创建误报为失败。为这两个场景补回归测试。
