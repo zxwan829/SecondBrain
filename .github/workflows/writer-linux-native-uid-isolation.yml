@@ -129,6 +129,16 @@ jobs:
               umount -l /oldroot
               rmdir /oldroot
               cd "$GITHUB_WORKSPACE/web-app/secondbrain-core"
+              for required_command in findmnt find cat grep setpriv; do
+                if ! command -v "$required_command" >/dev/null; then
+                  printf "isolated_command_missing=%s\\n" "$required_command" >&2
+                  exit 127
+                fi
+              done
+              if [[ ! -x "$PYTHON_BIN" || ! -x "$PYTHON_RUNTIME/bin/python3.12" || ! -r "$RUNNER_TEMP/writer-linux-venv/pyvenv.cfg" ]]; then
+                printf "isolated_python_runtime_incomplete\\n" >&2
+                exit 127
+              fi
               test "$(id -u)" -eq 0
               test "$(findmnt -n -T / -o FSTYPE)" = tmpfs
               test ! -e /oldroot
@@ -144,8 +154,23 @@ jobs:
               test -z "$(find /run /dev -type s -print -quit 2>/dev/null)"
               printf "native_uid_map\\n"; cat /proc/self/uid_map
               printf "native_gid_map\\n"; cat /proc/self/gid_map
-              awk "NR==1 { if (\$1 != 0 || \$2 != 0 || \$3 < 31007) exit 1; good=1 } END { if (!good) exit 1 }" /proc/self/uid_map
-              awk "NR==1 { if (\$1 != 0 || \$2 != 0 || \$3 < 31007) exit 1; good=1 } END { if (!good) exit 1 }" /proc/self/gid_map
+              validate_native_id_map() {
+                local map_path="$1" map_line="" map_inside="" map_outside="" map_count="" map_extra="" map_lines=0
+                while IFS= read -r map_line || [[ -n "$map_line" ]]; do
+                  ((map_lines += 1))
+                  ((map_lines == 1)) || return 1
+                  map_inside="" map_outside="" map_count="" map_extra=""
+                  read -r map_inside map_outside map_count map_extra <<< "$map_line"
+                  [[ -n "$map_inside" && -n "$map_outside" && -n "$map_count" && -z "$map_extra" ]] || return 1
+                  [[ "$map_inside" =~ ^[0-9]+$ && "$map_outside" =~ ^[0-9]+$ && "$map_count" =~ ^[0-9]+$ ]] || return 1
+                  [[ "$map_inside" == 0 && "$map_outside" == 0 ]] || return 1
+                  (( ${#map_count} <= 10 )) || return 1
+                  (( 10#$map_count >= 31007 )) || return 1
+                done < "$map_path"
+                ((map_lines == 1))
+              }
+              validate_native_id_map /proc/self/uid_map || { printf "invalid_uid_map\\n" >&2; exit 1; }
+              validate_native_id_map /proc/self/gid_map || { printf "invalid_gid_map\\n" >&2; exit 1; }
               grep -E "^Cap(Prm|Eff|Bnd):" /proc/self/status
               test ! -e /run/host
               test ! -e /var/run/docker.sock
