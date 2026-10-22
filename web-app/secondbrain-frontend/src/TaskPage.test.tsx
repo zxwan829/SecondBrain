@@ -55,6 +55,34 @@ describe('TaskPage', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('当前环境未启用 Task 存储。');
   });
 
+  it('reads Companion only after explicit expand and evaluates only after explicit click', async () => {
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/tasks?')) return ok({ tasks: [] });
+      if (url === '/api/companion/preferences' && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body));
+        return ok({ revision: 1, enabled: body.enabled, categories: body.categories });
+      }
+      if (url === '/api/companion/preferences') return ok({ revision: 0, enabled: false, categories: [] });
+      if (url === '/api/companion/suggestions') return ok({ revision: 0, status: 'disabled', items: [] });
+      if (url === '/api/companion/suggestions/evaluate') return ok({ revision: 0, status: 'disabled', items: [] });
+      throw new Error(`Unexpected request ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByRole('heading', { name: '待办' });
+    expect(request.mock.calls.some(([url]) => String(url).startsWith('/api/companion/'))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '主动建议' }));
+    await screen.findByRole('group', { name: '建议来源' });
+    expect(request.mock.calls.some(([url]) => url === '/api/companion/preferences')).toBe(true);
+    expect(request.mock.calls.some(([url]) => url === '/api/companion/suggestions/evaluate')).toBe(false);
+    fireEvent.click(screen.getByLabelText('启用建议'));
+    await waitFor(() => expect(request.mock.calls.some(([url, init]) => url === '/api/companion/preferences' && init?.method === 'PUT')).toBe(true));
+    await waitFor(() => expect((screen.getByRole('button', { name: '立即计算' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: '立即计算' }));
+    await waitFor(() => expect(request.mock.calls.some(([url]) => url === '/api/companion/suggestions/evaluate')).toBe(true));
+    expect(request.mock.calls.find(([url]) => url === '/api/companion/suggestions/evaluate')?.[1]?.body).toBe('{}');
+  });
+
   it('clears the previous filter results when the next Task read fails', async () => {
     const request = vi.fn(async (url: string) => url.endsWith('status=open')
       ? ok({ tasks: [task] })

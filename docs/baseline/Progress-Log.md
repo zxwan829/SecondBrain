@@ -1,5 +1,24 @@
 # Progress Log
 
+## 2026-10-22 — PR #181 Companion Feedback revision 合同修复
+
+- 按 Issue #96 PMO 评论 #6331548178 修复跨层缺陷：Core 的 suggestion 公共 DTO 现返回每条建议的正整数 `revision`；重复 evaluate 再次发布仍有效候选时递增该候选 revision，使旧 UI 的反馈 CAS 明确得到 409。Web 严格校验候选 revision、用服务端 revision 提交反馈、校验回执，并在 revision 冲突后重读当前列表并显示提示。
+- Web 反馈在网络/服务端模糊失败后保留同一 payload 的幂等键，重试原操作使用相同 key；成功回执校验通过后才从 UI 移除候选。
+- 回归证据：`PYTHONPATH=web-app/secondbrain-core /private/tmp/secondbrain-p2-1-venv/bin/python -m pytest -q web-app/secondbrain-core/tests/test_companion_suggestions.py` → 5 passed；覆盖真实 localhost Uvicorn HTTP、首发 revision=1、再 evaluate revision=2、revision=1 stale 409、revision=2 成功、原回执精确重放、改 payload 冲突以及来源漂移失效。Web 组件定向 `npm test -- --run src/CompanionSuggestionsPanel.test.tsx` → 2 passed，覆盖 revision=3 提交、503 后相同幂等键/请求体重试、409 刷新。
+- 完整同源 HTTP 合成 Gate：`PYTHONPATH=/private/tmp/p2-2-3-ab-gate-20261022/web-app/secondbrain-core /private/tmp/secondbrain-p2-1-venv/bin/python /private/tmp/p2-2-3-ab-gate-20261022/web-app/e2e/scripts/p2_4_5_vite_gate.py` → P2-4 既有检查通过；P2-5 observed re-evaluate revision=2、stale feedback=409、当前 revision feedback=200、exact replay=True、changed replay=409、来源完成后隐藏、disable 后 empty、no-store 且 GET 未创建 `.tasks.lock`。纯合成临时根，无真实数据/模型/Writer/Promote。
+- `npm run typecheck` PASS；`npm run build` PASS（保留既有 Canvas/Notes 大 chunk 提示）；`git diff --check` PASS。仅运行受影响 Core/Web 定向测试与完整既有 localhost 集成 Gate，未重跑无关全量套件。
+- 当前候选 PR #181 保持 Draft；本条记录中的新固定 HEAD 以修复提交为准，等待 PMO 对新 SHA 独立复审。未合并、未部署、未访问真实数据、未触发 CI。
+
+## 2026-10-22 — P2-4/P2-5 最终联合 Gate（Issue #96/#97）
+
+- 从 main `57d0d3d94f92d235dd8c0c088bb1561cde76f3ae`（#178 merge）建立隔离分支。核对 #179 `ecb4b18b26e467643b7f0b2ef0d69e036796c5ff` 的历史累计依赖后，只移植净 P2-4；核对 #180 `d16773d61edbbc41a115f2c826eee84ee3832902` 后移植到当前 main，`app.py` 路由注册冲突同时保留 Context Preview 与 Companion Suggestions。未改写 #175/#179/#180 原分支。
+- 独立审查发现并修复：相同幂等请求应回放完全一致的原回执；Companion Suggestions 读取 Task 投影不得创建 `.tasks.lock`；P2-4 Grounding Candidates 在响应前二次校验 source version 并剔除漂移项。Today 增加用户显式展开的 Companion 设置/立即计算/反馈入口；未自动读取建议、未触发 Run 或副作用写入。
+- 本轮发现的额外 Web 缺口：P2-4 的 Grounding Candidates API 原先没有交互 UI；已在 Chat 增加用户点击触发的只读面板，严格验证 event/session/schema/SHA/no-store，并明确 `answer_attribution=not_established`。P2-5 的 Today 建议面板仅在用户展开时读取，只在点击“立即计算”时 evaluate；反馈使用正确的建议 revision，失败时清掉旧建议，设置重试只对相同 payload 复用幂等键。
+- 联合 HTTP 命令（cwd Core）：`PYTHONPATH=/private/tmp/p2-2-3-ab-gate-20261022/web-app/secondbrain-core /private/tmp/secondbrain-p2-1-venv/bin/python /private/tmp/p2-2-3-ab-gate-20261022/web-app/e2e/scripts/p2_4_5_vite_gate.py`。真实 `create_app()` + Uvicorn，经 Vite 同源 `/api` 代理，纯合成临时根；P2-4 observed: login 200、unauth 401、available 200/no-store、no match 200、source drift 200/partial、session mismatch 404、permission revoke 403；响应不含 source text/path。P2-5 observed: default off、evaluate disabled、preference save 200、GET 200 且无 `.tasks.lock`、explicit evaluate 200、feedback 200 + exact replay equality、changed replay 409、Task completion 后建议隐藏、disable 200 后 GET empty 200。Hermes Run 未调用。
+- **Gate：** `P2_4_CORE_HTTP_GATE=PASS_WITH_LIMITS`、`P2_4_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`；`P2_5_CORE_HTTP_GATE=PASS_WITH_LIMITS`、`P2_5_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`。Web DOM/contract 定向 4 files / 23 tests passed，覆盖显式展开/计算、准确请求体、会话/查询变化清除及严格响应验证；typecheck/build/diff-check PASS。Core 全量 501 passed + 28 subtests 为无变化 Core HEAD 的既有验证；Web 全量 34 files / 407 tests 是改动前基线，不重复运行。Build 保留既有 Notes/Canvas 大 chunk 警告。
+- 分层结论：CODE、Uvicorn+Vite 同源合成 HTTP、Web DOM 测试 PASS_WITH_LIMITS；真实浏览器点击 `NOT RUN`（DOM 并非真实浏览器）、模型 `NOT RUN`、生产与用户验收 `NOT RUN`；`MODEL_CONTEXT_ADMISSION=BLOCKED`。未合并、部署、访问真实数据或触发 CI。
+- 候选 PR [#181](https://github.com/zxwan829/SecondBrain/pull/181) 保持 Draft；从 #178 main 开始。最终固定 HEAD 以本条后续 docs-only 修订提交为准。联合 Gate 已完成，净新增代码等待 PMO 对最终 SHA 独立复审和合并裁定；不转 Ready、不合并、不部署。
+
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
