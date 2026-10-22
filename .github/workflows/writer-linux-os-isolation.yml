@@ -66,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           python3.12 -m venv "$RUNNER_TEMP/writer-linux-venv"
-          PIP_NO_INPUT=1 "$RUNNER_TEMP/writer-linux-venv/bin/python" -m pip install --disable-pip-version-check --only-binary=:all: 'pytest>=7'
+          PIP_NO_INPUT=1 "$RUNNER_TEMP/writer-linux-venv/bin/python" -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --only-binary=:all: 'pytest==9.1.1'
 
       - name: Run only the Writer Linux OS isolation test
         working-directory: web-app/secondbrain-core
