@@ -17,7 +17,7 @@ source: GitHub SecondBrain Monorepo
 - **测试：** Task/App 定向 Web 2 files / 54 passed；Daily Brief 定向 1 file / 16 passed；Brief 改动后再次 Web 全量 38 files / 422 passed；`npm run typecheck`、`npm run build`、`git diff --check` PASS。Core 定向 Task/Capture/Inbox+Review：44 passed、4 subtests；Web BFF/Auth/Origin：32 passed。Build 存在既有 Notes/Canvas 大 chunk 提示。未重跑未变化的 Core 全量套件。
 - **HTTP / 浏览器证据：** 本地 Core 未认证 `/api/tasks` 返回 401 且 `Cache-Control: private, no-store`。Edge 桌面视口 1770px，当前 Journal 页面 DOM 无横向溢出；Task/Review 业务交互在同源合成栈完成。无真实模型、Hermes、外部渠道或真实业务数据。移动视口未验证（`BLOCKED_ENV`）。
 - **汇总 Gate：** `CAPTURE_REVIEW_POSITIVE_GATE=PASS_WITH_LIMITS`；`P0_P1_ENTRY_GATE=PASS_WITH_LIMITS`；`V1_MUST_GATE=PASS_WITH_LIMITS`；`COMPANION_GATE=NOT_RUN`（本轮未复验 Companion）；`REAL_BROWSER_GATE=PASS_WITH_LIMITS`（仅 Edge 桌面合成）；`PRODUCTION_SECURITY_GATE=BLOCKED_ENV`。代码、Core localhost HTTP、Edge localhost synthetic、真实模型、生产及用户接受分层汇报；生产/真实数据/真实用户验收均未执行。
-- **安全与交付：** 临时合成 roots、合成账户及 `SB_PROMOTE_ENABLED=false`；无生产/NAS/Compose/权限/凭据操作，无真实 Vault/Private/Session，未调用付费模型/外部渠道，未触发 CI。仓库 pull_request 工作流的 paths 仅匹配其自身 workflow 文件，本 PR 不匹配。代码、当前矩阵及 Progress Log 集中提交一个 Draft PR；不合并、不部署。
+- **安全与交付：** 临时合成 roots、合成账户及 `SB_PROMOTE_ENABLED=false`；无生产/NAS/Compose/权限/凭据操作，无真实 Vault/Private/Session，未调用付费模型/外部渠道，未触发 CI。仓库 pull_request 工作流的 paths 仅匹配其自身 workflow 文件，本 PR 不匹配。代码、矩阵及 Progress Log 已集中提交 Draft PR [#189](https://github.com/zxwan829/SecondBrain/pull/189)；最终固定 HEAD 以 PR head 和 Issue #96 最终回填为准。不合并、不部署。
 
 ## 历史：2026-10-22 阶段一收口与阶段二 P2-1/2/3 集中合并准备（Issue #96/#97）
 

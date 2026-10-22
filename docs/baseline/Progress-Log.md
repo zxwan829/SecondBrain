@@ -7,7 +7,7 @@
 - **用户入口与合成业务：** Today 首页禁用“新建记录”改为“新建待办”导航到 Task 表单；创建前后 Core 回执核验 Task ID/title/due/status/source/timestamps，创建后分别读取 Task 列表，区分写成功和列表刷新失败。相同内容的模糊失败重试沿用同一 Idempotency-Key，内容变化生成新键。Edge 完成 Home→Task 创建→列表读回。Journal 页面用合成原文点击“追加原话”并读回成功；既有显式入口没有源码变更。Daily Brief `approved_import` 仍 501，手动入口已显示不支持说明。
 - **回归与测试：** 新增 Task 创建成功/读回、网络结果不确定时复用幂等键、首页入口导航测试；Daily Brief 增加 `approved_import` 未实现说明测试。Task/App 定向 Web 2 files/54 passed；Brief 定向 1 file/16 passed；Brief 改动后再次 Web 全量 38 files/422 passed；typecheck、build、diff-check PASS。Core Task/Capture/Inbox+Review 定向 44 passed、4 subtests；Core BFF/Auth 定向 32 passed。没有 Core 源码变化，未重跑未变化的 Core 全量。Build 保留现有 Canvas/Notes 大 chunk 提示。
 - **安全与 Gate：** 未认证 Core `/api/tasks` 返回 401，带 `Cache-Control: private, no-store`。桌面 Edge 1770px Journal DOM 无横向溢出；移动视口 `BLOCKED_ENV`。`P0_P1_ENTRY_GATE=PASS_WITH_LIMITS`；`V1_MUST_GATE=PASS_WITH_LIMITS`；`COMPANION_GATE=NOT_RUN`；`REAL_BROWSER_GATE=PASS_WITH_LIMITS`（桌面合成）；`PRODUCTION_SECURITY_GATE=BLOCKED_ENV`。真实模型、生产/NAS、真实 Vault/Private/用户内容、外部渠道、正式 Writer/Promote、用户验收均未执行。
-- **交付：** `00-CURRENT.md` 已更新 P0/P1 状态及旧 Capture 正向“NOT_RUN”缺口。本轮不触发 CI；唯一 PR workflow 的 paths 只匹配该 workflow 文件。候选待以单一 Draft PR 提交，固定 HEAD 及完整报告回填 Issue #96；不合并、不部署。
+- **交付：** `00-CURRENT.md` 已更新 P0/P1 状态及旧 Capture 正向“NOT_RUN”缺口。Draft PR #189 已打开，最终固定 HEAD 以 PR head 和 Issue #96 最终回填为准。本轮不触发 CI；唯一 PR workflow 的 paths 只匹配该 workflow 文件；不合并、不部署。
 
 ## 2026-10-22 — V1 可用性收口与 P0/P1 浏览器修复（Issue #96 PMO #6332253939）
 
