@@ -25,33 +25,39 @@ export function TaskPage({ locale }: { locale: Locale }) {
   const [notice, setNotice] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const createAttempt = useRef<{ fingerprint: string; key: string } | null>(null);
+  const skipNextFilterLoad = useRef(false);
   const activeLoad = useRef<AbortController | null>(null);
   const loadSequence = useRef(0);
 
-  const load = useCallback(async (showLoading = true) => {
+  const load = useCallback(async (showLoading = true, filterOverride?: { status: 'open' | 'completed' | 'all'; dueDate: string }): Promise<Task[] | null> => {
     activeLoad.current?.abort();
     const controller = new AbortController();
     activeLoad.current = controller;
     const sequence = ++loadSequence.current;
+    const requestedStatus = filterOverride?.status ?? status;
+    const requestedDueDate = filterOverride?.dueDate ?? dueDate;
     if (showLoading) setLoading(true);
     setError('');
     if (showLoading) setTasks([]);
     try {
-      const dateFilter = dueDate ? `&due_date=${encodeURIComponent(dueDate)}` : '';
-      const response = await fetch(`/api/tasks?status=${status}${dateFilter}`, { credentials: 'same-origin', signal: controller.signal });
+      const dateFilter = requestedDueDate ? `&due_date=${encodeURIComponent(requestedDueDate)}` : '';
+      const response = await fetch(`/api/tasks?status=${requestedStatus}${dateFilter}`, { credentials: 'same-origin', signal: controller.signal });
       const body = await response.json().catch(() => ({})) as { detail?: string; tasks?: Task[] };
-      if (controller.signal.aborted || sequence !== loadSequence.current) return;
+      if (controller.signal.aborted || sequence !== loadSequence.current) return null;
       if (!response.ok) {
         if (response.status === 401) window.location.reload();
         throw new Error(response.status === 503 && body.detail === 'Task is not enabled'
           ? (en ? 'Task storage is not enabled in this environment.' : '当前环境未启用 Task 存储。')
           : String(body.detail ?? `HTTP ${response.status}`));
       }
-      setTasks(Array.isArray(body.tasks) ? body.tasks : []);
+      const loadedTasks = Array.isArray(body.tasks) ? body.tasks : [];
+      setTasks(loadedTasks);
+      return loadedTasks;
     } catch (cause) {
-      if (controller.signal.aborted || sequence !== loadSequence.current) return;
+      if (controller.signal.aborted || sequence !== loadSequence.current) return null;
       setTasks([]);
       setError(cause instanceof Error ? cause.message : (en ? 'Tasks could not be loaded.' : '待办暂时无法读取。'));
+      return null;
     } finally {
       if (sequence === loadSequence.current) {
         setLoading(false);
@@ -61,6 +67,7 @@ export function TaskPage({ locale }: { locale: Locale }) {
   }, [dueDate, en, status]);
 
   useEffect(() => {
+    if (skipNextFilterLoad.current) { skipNextFilterLoad.current = false; return; }
     void load();
     return () => {
       activeLoad.current?.abort();
@@ -119,10 +126,24 @@ export function TaskPage({ locale }: { locale: Locale }) {
       }
       createAttempt.current = null;
       setNewTitle(''); setNewDueDate('');
-      setNotice(body.status === 'duplicate'
-        ? (en ? 'This Task was already created; checking the saved list.' : '该待办此前已创建，正在核对已保存列表。')
-        : (en ? 'Task created; checking the saved list.' : '待办已创建，正在核对已保存列表。'));
-      await load(false);
+      const filtersHideCreatedTask = status === 'completed' || Boolean(dueDate && dueDate !== (task.due_date ?? ''));
+      const readbackFilters = filtersHideCreatedTask ? { status: 'open' as const, dueDate: '' } : { status, dueDate };
+      const refreshedTasks = await load(false, readbackFilters);
+      if (filtersHideCreatedTask) {
+        skipNextFilterLoad.current = true;
+        setStatus('open'); setDueDate('');
+      }
+      if (!refreshedTasks) {
+        setNotice(en ? 'Core confirmed the Task, but the saved list could not be checked. Refresh the list to verify it.' : 'Core 已确认创建成功，但列表暂时无法核对；请刷新列表查看。');
+      } else if (!refreshedTasks.some((item) => item.id === task.id)) {
+        setNotice(en ? 'Core confirmed the Task, but it is not visible in the current list. Refresh to check the saved state.' : 'Core 已确认创建成功，但当前列表尚未显示；请刷新核对保存状态。');
+      } else if (filtersHideCreatedTask) {
+        setNotice(en ? 'Task created and verified. Filters were cleared to show it.' : '待办已创建并核对成功；已清除筛选条件以显示这条记录。');
+      } else {
+        setNotice(body.status === 'duplicate'
+          ? (en ? 'This Task was already created and is visible in the saved list.' : '该待办此前已创建，现已在已保存列表中核对。')
+          : (en ? 'Task created and verified in the saved list.' : '待办已创建并在已保存列表中核对。'));
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : (en ? 'Task creation failed. Your title is still here.' : '待办创建失败，标题已保留，可使用同一请求重试。'));
     } finally { setCreating(false); }

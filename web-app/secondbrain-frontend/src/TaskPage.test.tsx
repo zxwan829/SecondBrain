@@ -147,11 +147,54 @@ describe('TaskPage', () => {
     fireEvent.change(screen.getByLabelText('新待办截止日期'), { target: { value: '2026-10-25' } });
     fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
     expect(await screen.findByRole('heading', { name: '新建的合成待办' })).toBeTruthy();
-    expect(await screen.findByText('待办已创建，正在核对已保存列表。')).toBeTruthy();
+    expect(await screen.findByText('待办已创建并在已保存列表中核对。')).toBeTruthy();
     const post = calls.find((call) => call.url === '/api/tasks' && call.init?.method === 'POST');
     expect(JSON.parse(String(post?.init?.body))).toEqual({ title: '新建的合成待办', due_date: '2026-10-25', original_command: 'Task page explicit create' });
     expect(new Headers(post?.init?.headers).get('Idempotency-Key')).toBe('task-create-key-1');
     expect(calls.filter((call) => call.url.startsWith('/api/tasks?'))).toHaveLength(2);
+  });
+
+  it('clears a filter that would hide a newly created open Task and verifies it in the visible list', async () => {
+    const created = { ...task, id: 'e'.repeat(32), title: '筛选后仍可见的合成待办', original_command: 'Task page explicit create' };
+    let posts = 0;
+    const reads: string[] = [];
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'task-filter-key') });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); reads.push(url);
+      if (url.startsWith('/api/tasks?')) return ok({ tasks: posts && url.endsWith('status=open') ? [created] : [] });
+      if (url === '/api/tasks' && init?.method === 'POST') { posts += 1; return ok({ status: 'created', task: created }); }
+      return ok({});
+    }));
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByRole('heading', { name: '待办' });
+    fireEvent.change(screen.getByLabelText('状态'), { target: { value: 'completed' } });
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: created.title } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByRole('heading', { name: created.title })).toBeTruthy();
+    expect(await screen.findByText('待办已创建并核对成功；已清除筛选条件以显示这条记录。')).toBeTruthy();
+    expect((screen.getByLabelText('状态') as HTMLSelectElement).value).toBe('open');
+    expect(reads).toContain('/api/tasks?status=open');
+  });
+
+  it('reports list-readback failure separately after Core has confirmed Task creation', async () => {
+    let created = false;
+    vi.stubGlobal('crypto', { randomUUID: vi.fn(() => 'task-readback-key') });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('/api/tasks?')) {
+        return created ? { ok: false, status: 503, json: async () => ({ detail: 'Synthetic list unavailable' }) } : ok({ tasks: [] });
+      }
+      if (url === '/api/tasks' && init?.method === 'POST') { created = true; return ok({ status: 'created', task: { ...task, id: 'f'.repeat(32), title: 'Core 已创建但暂不可回读' } }); }
+      return ok({});
+    }));
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByRole('heading', { name: '待办' });
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: 'Core 已创建但暂不可回读' } });
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    expect(await screen.findByText('Core 已确认创建成功，但列表暂时无法核对；请刷新列表查看。')).toBeTruthy();
+    expect((await screen.findByRole('alert')).textContent).toContain('Synthetic list unavailable');
+    expect((screen.getByLabelText('待办内容') as HTMLInputElement).value).toBe('');
   });
 
   it('reuses the exact idempotency key after a lost Task creation response', async () => {
