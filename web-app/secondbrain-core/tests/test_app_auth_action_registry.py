@@ -49,6 +49,7 @@ def test_supported_action_registry_covers_existing_literal_and_dynamic_families(
         "projects.read", "promote.read", "review.defer",
         "review.read", "task.read", "task.write", "vocabulary.read", "vocabulary.write",
         "inbox.proposals.read", "inbox.proposals.write",
-        "companion.read", "companion.write", "planning.read", "planning.write",
+        "companion.read", "companion.write", "planning.approve", "planning.execute",
+        "planning.read", "planning.write",
     }
     assert AppSessionAuth.SUPPORTED_ACTIONS == expected
