@@ -75,8 +75,71 @@ jobs:
           set -euo pipefail
           PYTHON_RUNTIME="$(python3.12 -c 'import sys; print(sys.prefix)')"
           SANDBOX_ROOT="$RUNNER_TEMP/writer-linux-sandbox-root"
+          RUNNER_USERNAME="$(id -un)"
+          RUNNER_UID="$(id -u)"
+          RUNNER_GID="$(id -g)"
+          SUBID_MAP="$(python3.12 - "$RUNNER_USERNAME" "$RUNNER_UID" "$RUNNER_GID" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          MAX_ID = (1 << 32) - 1
+          REQUIRED_COUNT = 5
+
+          def parse_subid_allocation(contents, username, numeric_id, primary_id, required_count):
+              records = []
+              for line_number, raw_line in enumerate(contents.splitlines(), start=1):
+                  line = raw_line.strip()
+                  if not line or line.startswith("#"):
+                      continue
+                  fields = line.split(":")
+                  subject = fields[0] if fields else ""
+                  if len(fields) != 3:
+                      if subject in {username, numeric_id}:
+                          raise ValueError(f"malformed matching allocation at line {line_number}")
+                      continue
+                  name, start_text, count_text = fields
+                  if name not in {username, numeric_id}:
+                      continue
+                  if not re.fullmatch(r"[0-9]+", start_text) or not re.fullmatch(r"[0-9]+", count_text):
+                      raise ValueError(f"malformed matching allocation at line {line_number}")
+                  start, count = int(start_text), int(count_text)
+                  end = start + count
+                  if count <= 0 or start >= MAX_ID or end > MAX_ID:
+                      raise ValueError(f"invalid allocation bounds at line {line_number}")
+                  records.append((name, start, end))
+
+              ordered = sorted(records, key=lambda record: (record[1], record[2]))
+              for previous, current in zip(ordered, ordered[1:]):
+                  if current[1] < previous[2]:
+                      raise ValueError("overlapping subordinate allocations")
+
+              matching = [
+                  (start, end) for name, start, end in records
+                  if name == username or name == numeric_id
+              ]
+              if not matching:
+                  raise ValueError("no allocation for runner identity")
+              usable = [
+                  start for start, end in matching
+                  if end - start >= required_count and not (start <= primary_id < end)
+              ]
+              if not usable:
+                  raise ValueError("no non-overlapping allocation of required length")
+              return min(usable)
+
+          username, uid_text, gid_text = sys.argv[1:4]
+          uid_start = parse_subid_allocation(Path("/etc/subuid").read_text(), username, uid_text, int(uid_text), REQUIRED_COUNT)
+          gid_start = parse_subid_allocation(Path("/etc/subgid").read_text(), username, gid_text, int(gid_text), REQUIRED_COUNT)
+          print(f"{uid_start}:{gid_start}")
+          PY
+          )"
+          IFS=: read -r SUBUID_START SUBGID_START <<<"$SUBID_MAP"
+          test -n "$SUBUID_START" && test -n "$SUBGID_START"
+          SANDBOX_ROOT="$RUNNER_TEMP/writer-linux-sandbox-root"
           mkdir -p "$SANDBOX_ROOT"
-          sudo --non-interactive env \
+          # Keep unshare and its subordinate-ID helpers under the runner identity.
+          env \
             SB_WRITER_OS_ISOLATION=disposable-linux \
             SB_WRITER_TEST_PYTHONPATH="$GITHUB_WORKSPACE/web-app/secondbrain-core" \
             PYTHONPATH="$GITHUB_WORKSPACE/web-app/secondbrain-core" \
@@ -88,8 +151,8 @@ jobs:
             PYTHON_BIN="$RUNNER_TEMP/writer-linux-venv/bin/python" \
             unshare --user --mount --net --ipc --uts --pid --fork --mount-proc --kill-child \
             --setgroups=allow \
-            --map-users="0:$(id -u):1" --map-users=31001:31001:5 \
-            --map-groups="0:$(id -g):1" --map-groups=31002:31002:5 \
+            --map-users="0:${RUNNER_UID}:1" --map-users="31001:${SUBUID_START}:5" \
+            --map-groups="0:${RUNNER_GID}:1" --map-groups="31002:${SUBGID_START}:5" \
             bash -euo pipefail -c '
               mount --make-rprivate /
               mount -t tmpfs -o size=256m,mode=0755,nodev,nosuid tmpfs "$SANDBOX_ROOT"
