@@ -8,6 +8,10 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
+## 2026-10-23 协作职责澄清
+
+用户明确：本聊天 PMO 仅负责此次任务框架规划及上报重大事项裁定；日常开发管理、常规独立代码审核、验收、合并协调和进度/Issue 收口均由 A 线负责，B 向 A 交付。具体规则以 Agent-Rules 为准。下方及历史记录中的“PMO复审/收口”不再构成常规任务等待条件；重大安全/授权边界仍须按规则上报。
+
 ## 2026-10-22 最新状态与唯一 NEXT：完整 V1 六阶段交付
 
 详细工作分解、A/B 所有权、依赖、验收、纸面推演与范围覆盖见 [V1-Delivery-Plan.md](V1-Delivery-Plan.md)。总控 [#76](https://github.com/zxwan829/SecondBrain/issues/76)，A [#96](https://github.com/zxwan829/SecondBrain/issues/96)，B [#97](https://github.com/zxwan829/SecondBrain/issues/97)。本节替代下方历史快照的阶段指令；历史证据保留，不作为第二份 NEXT。完整 V1 仍 **NOT DONE**。
@@ -25,7 +29,7 @@ source: GitHub SecondBrain Monorepo
 
 **六阶段：** P1 业务底座与知识闭环；P2 个人智能伙伴（保留 P2-1～5）；P3 计划与受控行动（保留 P3-1～5）；P4 多渠道、多格式与笔记工作台；P5 安全上线与实际环境集成；P6 完整业务验收与交付。当前 P1/P2/P3 均有已实现或合成通过部分，仍有关键欠项；P4/P5 准备可并行。历史 M1/M2 的限定验收不是六阶段全部完成。
 
-**唯一 NEXT：** A 按计划 A-NEXT 完成真实 Web/集成包；B 按 B-NEXT 先交剩余安全合同，并连续推进不依赖该裁定的 Core 业务缺口。普通问题在授权范围自主修复/定向测试/提交；A 统筹集成，B 修自己的 Core，PMO 独立复审重大合同与阶段。两线在“同一业务能力 + 固定 HEAD + 合同/证据”到齐后汇合，未到齐的能力不能借其他能力通过而跳 Gate，也不阻断无依赖工作。
+**唯一 NEXT：** A 按计划 A-NEXT 完成真实 Web/集成包；B 按 B-NEXT 先交剩余安全合同，并连续推进不依赖该裁定的 Core 业务缺口。普通问题在授权范围自主修复/定向测试/提交；A 统筹集成，B 修自己的 Core，本聊天 PMO 仅裁定 A 上报的重大范围、架构、信任/权限边界及授权事项；常规代码审查、阶段汇合验收、合并协调、CURRENT/Issue 收口均由 A 线组织，无须等待本聊天 PMO。两线在“同一业务能力 + 固定 HEAD + 合同/证据”到齐后汇合，未到齐的能力不能借其他能力通过而跳 Gate，也不阻断无依赖工作。
 
 **范围与授权：** 原 V1 MUST、D077 Companion MVP、D086 预算/主动协作、Notes/标签等已批准目标完整保留。微信为正式 MUST；飞书同渠道包按 D087 核实首版范围，不将架构偏好冒充上线证据。Notes/图形/词库已有实现优先复用。生产、真实个人数据/模型/渠道、费用、权限拓扑及新的特权实验仍各遵既有授权；本次计划不新增通用许可。已有 #199 状态拒绝单列处理，不重启已过子集实验，不引入第二位人类审查人。
 
