@@ -29,6 +29,7 @@ from .modules.projects_source_read import ProjectsSourceReadStore
 from .modules.daily_brief_store import DailyBriefRecordReadStore
 from .modules.daily_brief_import import DailyBriefAuditStore, DailyBriefImportStore
 from .modules.calendar_read import create_calendar_read_router
+from .modules.planning import PlanningCandidateService, PlanningCandidateStore, create_planning_router
 from .modules.notes import configured_notes_store, create_notes_router
 from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
 from .modules.vocabulary import VocabularyStore, create_vocabulary_router
@@ -155,6 +156,10 @@ def create_app():
     daily_brief_store = DailyBriefRecordReadStore(daily_brief_root or None)
     daily_brief_import_store = DailyBriefImportStore(daily_brief_root or None)
     daily_brief_audit_store = DailyBriefAuditStore(os.path.join(approval_root, "daily-brief-audit.jsonl"))
+    planning_candidate_store = PlanningCandidateStore(approval_root)
+    planning_candidate_service = PlanningCandidateService(
+        auth, hermes, task_store, projects_store, journal_store, planning_candidate_store,
+    )
 
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
@@ -165,6 +170,8 @@ def create_app():
     app.state.projects_source_store = projects_store
     app.state.companion_suggestion_store = companion_store
     app.state.chat_knowledge_citation_store = chat_knowledge_citation_store
+    app.state.planning_candidate_store = planning_candidate_store
+    app.state.planning_candidate_service = planning_candidate_service
     # No trusted Hermes source adapter or Core consent ledger is configured.
     # Keep the internal candidate fail-closed and expose no HTTP route.
     app.state.capture_suggestion_binding_authority = TrustedCaptureSuggestionBindingAuthority()
@@ -203,6 +210,7 @@ def create_app():
     ))
     app.include_router(create_journal_source_options_router(journal_source_options))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
+    app.include_router(create_planning_router(planning_candidate_service))
     app.include_router(create_notes_router(auth, notes_store))
     app.include_router(create_knowledge_read_router(
         auth, knowledge_read_store))
