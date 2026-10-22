@@ -246,6 +246,7 @@ class PlanningCandidateStore:
             "session_id": session_id,
             "revision": 0,
             "status": status,
+            "workflow_status": "active",
             "objective_sha256": hashlib.sha256(objective.encode("utf-8")).hexdigest(),
             "objective": objective,
             "source_refs": source_refs,
@@ -326,6 +327,8 @@ class PlanningCandidateStore:
                 raise HTTPException(status_code=409, detail="Planning candidate revision changed")
             if record.get("status") not in {"ready", "needs_review"}:
                 raise HTTPException(status_code=409, detail="Planning candidate is not actionable")
+            if record.get("workflow_status", "active") != "active":
+                raise HTTPException(status_code=409, detail="Planning workflow is not active")
             states = record.get("step_states")
             if not isinstance(states, list) or len(states) != len(record.get("steps", [])):
                 states = [{"position": step["position"], "decision": "pending",
@@ -348,6 +351,74 @@ class PlanningCandidateStore:
                 "revision": revision, "position": position, "event": event_type,
                 "idempotency_key_sha256": key_hash,
                 "source_ref_sha256": hashlib.sha256(_canonical_bytes(step["source_ref"])).hexdigest(),
+                "recorded_at": _stamp(_now()),
+            })
+            self._write_unlocked(data)
+            return response
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Planning operation failed safely") from exc
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def control(self, *, candidate_id, session_id, key_hash, fingerprint, expected_revision, command):
+        if (not isinstance(expected_revision, int) or isinstance(expected_revision, bool)
+                or expected_revision < 0):
+            raise HTTPException(status_code=400, detail="Invalid planning revision")
+        fd = self._lock()
+        try:
+            data = self._read_unlocked()
+            record = data["candidates"].get(candidate_id)
+            if not isinstance(record, dict) or record.get("session_id") != session_id:
+                raise HTTPException(status_code=404, detail="Planning candidate not found")
+            if datetime.fromisoformat(record["expires_at"].replace("Z", "+00:00")) <= _now():
+                raise HTTPException(status_code=410, detail="Planning candidate expired")
+            idempotency = record.setdefault("idempotency", {})
+            prior = idempotency.get(key_hash)
+            if prior is not None:
+                if prior.get("fingerprint") != fingerprint:
+                    raise HTTPException(status_code=409, detail="Idempotency-Key was already used differently")
+                return prior["response"]
+            if record.get("revision") != expected_revision:
+                raise HTTPException(status_code=409, detail="Planning candidate revision changed")
+            if record.get("status") not in {"ready", "needs_review"}:
+                raise HTTPException(status_code=409, detail="Planning candidate is not actionable")
+            states = record.get("step_states", [])
+            workflow = record.get("workflow_status", "active")
+            if command == "pause" and workflow == "active":
+                workflow = "paused"
+            elif command == "resume" and workflow == "paused":
+                workflow = "active"
+            elif command == "cancel" and workflow in {"active", "paused", "partial"}:
+                workflow = "cancelled"
+            elif command == "retry":
+                failed = next((state for state in states if state.get("execution_status") == "failed"), None)
+                if workflow != "partial" or failed is None:
+                    raise HTTPException(status_code=409, detail="No failed planning step can be retried")
+                failed["execution_status"] = "retry_ready"
+                workflow = "active"
+            else:
+                raise HTTPException(status_code=409, detail="Planning workflow transition is invalid")
+            revision = expected_revision + 1
+            record["revision"] = revision
+            record["workflow_status"] = workflow
+            response = {
+                "event": "planning.workflow-control", "version": 1,
+                "session_id": session_id, "candidate_id": candidate_id,
+                "revision": revision, "command": command, "workflow_status": workflow,
+                "steps": [{"position": state["position"], "decision": state["decision"],
+                           "execution_status": state["execution_status"]} for state in states],
+            }
+            if len(data["audit"]) >= _MAX_AUDIT_EVENTS:
+                raise HTTPException(status_code=503, detail="Planning audit limit reached")
+            idempotency[key_hash] = {"fingerprint": fingerprint, "response": response}
+            data["audit"].append({
+                "candidate_id": candidate_id, "session_id": session_id, "revision": revision,
+                "position": 0, "event": f"workflow_{command}",
+                "idempotency_key_sha256": key_hash,
+                "source_ref_sha256": hashlib.sha256(_canonical_bytes(record["source_refs"])).hexdigest(),
                 "recorded_at": _stamp(_now()),
             })
             self._write_unlocked(data)
@@ -428,6 +499,10 @@ class PlanningCandidateService:
             return "unavailable"
         return "verified" if all(state == "verified" for state in states) else "stale"
 
+    def _synthetic_execute(self, step):
+        """Synthetic no-op executor; tests may replace it with a failing function."""
+        return {"status": "simulated", "execution_mode": "synthetic", "effect": "none"}
+
     @staticmethod
     async def _read_body(request):
         chunks, total = [], 0
@@ -492,6 +567,7 @@ class PlanningCandidateService:
             "event": "planning.preview", "version": 1, "session_id": session_id,
             "candidate_id": candidate_id, "revision": record.get("revision", 0),
             "expires_at": record["expires_at"], "status": status,
+            "workflow_status": record.get("workflow_status", "active"),
             "objective": record["objective"], "steps": projected_steps,
         }
 
@@ -583,7 +659,7 @@ class PlanningCandidateService:
             raise HTTPException(status_code=404, detail="Planning step not found")
         if states[position - 1].get("decision") != "approved":
             raise HTTPException(status_code=409, detail="Planning step requires explicit approval")
-        if states[position - 1].get("execution_status") != "not_started":
+        if states[position - 1].get("execution_status") not in {"not_started", "retry_ready"}:
             raise HTTPException(status_code=409, detail="Planning step is already completed")
         if record.get("status") not in {"ready", "needs_review"}:
             raise HTTPException(status_code=409, detail="Planning candidate is not actionable")
@@ -593,22 +669,71 @@ class PlanningCandidateService:
         self.auth.require_action(request, "planning.execute")
 
         def transition(candidate, step, state, revision):
-            # This is the only executor in the Core candidate. It produces an
-            # audit receipt and has no business-system or filesystem effect.
-            state["execution_status"] = "simulated"
+            try:
+                result = self._synthetic_execute(step)
+                state["execution_status"] = result["status"]
+            except Exception:
+                result = {"status": "failed", "execution_mode": "synthetic", "effect": "none"}
+                state["execution_status"] = "failed"
+                candidate["workflow_status"] = "partial"
+            else:
+                states_now = candidate.get("step_states", [])
+                if states_now and all(item.get("execution_status") == "simulated" for item in states_now):
+                    candidate["workflow_status"] = "completed"
+                elif any(item.get("execution_status") == "failed" for item in states_now):
+                    candidate["workflow_status"] = "partial"
+                else:
+                    candidate["workflow_status"] = "active"
             response = {
                 "event": "planning.step-execution", "version": 1,
                 "session_id": session_id, "candidate_id": candidate_id,
                 "revision": revision, "position": position,
-                "status": "simulated", "execution_mode": "synthetic", "effect": "none",
+                **result,
             }
-            return response, "synthetic_step_simulated"
+            return response, "synthetic_step_failed" if result["status"] == "failed" else "synthetic_step_simulated"
 
         return self.ledger.mutate(
             candidate_id=candidate_id, session_id=session_id, key_hash=key_hash,
             fingerprint=fingerprint, expected_revision=expected_revision,
             position=position, transition=transition,
         )
+
+    async def control(self, request, session_id, candidate_id):
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+        body = await self._read_body(request)
+        if not isinstance(body, dict) or set(body) != {"command", "expected_revision"}:
+            raise HTTPException(status_code=400, detail="Invalid planning workflow command")
+        command = body["command"]
+        if command not in {"pause", "resume", "cancel", "retry"}:
+            raise HTTPException(status_code=400, detail="Invalid planning workflow command")
+        revision = self._require_revision({"expected_revision": body["expected_revision"]})
+        key_hash = self.ledger.key_hash(request.headers.get("idempotency-key", ""))
+        record = self.ledger.get(candidate_id, session_id)
+        if not isinstance(record.get("objective"), str):
+            raise HTTPException(status_code=410, detail="Planning candidate is no longer reviewable")
+        fingerprint = hashlib.sha256(_canonical_bytes({
+            "operation": "control", "session_id": session_id, "candidate_id": candidate_id, "body": body,
+        })).hexdigest()
+        await self._require_session(session_id)
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+        for action in sorted(self._candidate_actions(record)):
+            self.auth.require_action(request, action)
+        replay = self.ledger.replay(candidate_id, session_id, key_hash, fingerprint)
+        if replay is not None:
+            return replay
+        if record.get("revision") != revision:
+            raise HTTPException(status_code=409, detail="Planning candidate revision changed")
+        if record.get("status") not in {"ready", "needs_review"}:
+            raise HTTPException(status_code=409, detail="Planning candidate is not actionable")
+        if self._verify_refs(request, record.get("source_refs")) != "verified":
+            raise HTTPException(status_code=409, detail="Planning sources changed or became unavailable")
+        self.auth.require_action(request, "chat.read")
+        self.auth.require_action(request, "planning.approve")
+        return self.ledger.control(candidate_id=candidate_id, session_id=session_id,
+                                   key_hash=key_hash, fingerprint=fingerprint,
+                                   expected_revision=revision, command=command)
 
     async def create(self, request, session_id):
         if not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id):
@@ -722,6 +847,7 @@ class PlanningCandidateService:
             "session_id": session_id, "candidate_id": candidate_id,
             "revision": 0, "expires_at": expires_at,
             "status": status, "objective": objective, "steps": steps,
+            "workflow_status": "active",
         }
         if len(_canonical_bytes(response)) > _MAX_RESPONSE_BYTES:
             raise HTTPException(status_code=413, detail="Planning response is too large")
@@ -814,5 +940,9 @@ def create_planning_router(service):
     @router.post("/candidates/{candidate_id}/steps/{position}/execute")
     async def execute_step(request: Request, session_id: str, candidate_id: str, position: int):
         return await service.execute(request, session_id, candidate_id, position)
+
+    @router.post("/candidates/{candidate_id}/control")
+    async def control_candidate(request: Request, session_id: str, candidate_id: str):
+        return await service.control(request, session_id, candidate_id)
 
     return router
