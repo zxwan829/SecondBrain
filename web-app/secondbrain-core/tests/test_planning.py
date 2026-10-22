@@ -120,6 +120,21 @@ def test_candidate_contract_real_localhost_http_and_calendar_projection(tmp_path
             assert anonymous.status_code == 401
             assert not (roots["state"] / ".planning-candidates.lock").exists()
             _login(client, origin)
+            empty_calendar = client.post(
+                "/api/chat/sessions/session-A/planning/candidates", headers={"Origin": origin}, json={
+                    "objective": "Review empty sources", "source_refs": [],
+                    "calendar_window": {"from": "2026-10-22", "to": "2026-10-22",
+                                        "timezone": "Asia/Shanghai"},
+                })
+            assert empty_calendar.status_code == 400, empty_calendar.text
+            malformed_kind = client.post(
+                "/api/chat/sessions/session-A/planning/candidates", headers={"Origin": origin}, json={
+                    "objective": "Review malformed kind", "source_refs": [
+                        {"kind": [], "id": "a" * 32, "version": "b" * 64}],
+                    "calendar_window": {"from": "2026-10-22", "to": "2026-10-22",
+                                        "timezone": "Asia/Shanghai"},
+                })
+            assert malformed_kind.status_code == 400, malformed_kind.text
             body = {
                 "objective": "Review this synthetic week",
                 "source_refs": [task_ref, project_ref, journal_ref],

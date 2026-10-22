@@ -77,6 +77,8 @@ def _validate_ref(reference):
     if not isinstance(reference, dict) or set(reference) != {"kind", "id", "version"}:
         raise HTTPException(status_code=400, detail="Invalid planning source reference")
     kind, source_id, version = reference["kind"], reference["id"], reference["version"]
+    if not isinstance(kind, str):
+        raise HTTPException(status_code=400, detail="Unsupported planning source kind")
     if kind not in {"task", "project", "journal"}:
         raise HTTPException(status_code=400, detail="Unsupported planning source kind")
     if not isinstance(source_id, str) or len(source_id) > 160 or not isinstance(version, str):
@@ -100,7 +102,7 @@ def _validate_request(value):
     if not isinstance(objective, str) or not objective.strip() or len(objective.encode("utf-8")) > _MAX_OBJECTIVE_BYTES:
         raise HTTPException(status_code=400, detail="Invalid planning objective")
     refs = value["source_refs"]
-    if not isinstance(refs, list) or len(refs) > _MAX_SOURCE_REFS:
+    if not isinstance(refs, list) or not 1 <= len(refs) <= _MAX_SOURCE_REFS:
         raise HTTPException(status_code=400, detail="Invalid planning source selection")
     normalized = [_validate_ref(item) for item in refs]
     keys = [(item["kind"], item["id"]) for item in normalized]
@@ -124,8 +126,6 @@ def _validate_request(value):
         window = {"from": start.isoformat(), "to": end.isoformat(), "timezone": zone_name}
     else:
         zone = None
-    if not normalized and window is None:
-        raise HTTPException(status_code=400, detail="At least one verified source is required")
     return objective.strip(), normalized, window, zone
 
 
