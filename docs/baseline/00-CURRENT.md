@@ -8,12 +8,14 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 阶段二 P2-4/P2-5 联合 Gate 与 Companion revision 合同修复（Issue #96/#97）
+## 2026-10-22 阶段二收口与阶段三 P3-1～P3-5 累计 Web 联合候选（Issue #96/#97）
 
-- **当前 GitHub 源码基线：** main `57d0d3d94f92d235dd8c0c088bb1561cde76f3ae`（#178 已合并）。隔离候选从该提交出发，仅移植 #179 净 P2-4 与 #180 P2-5，不复制其过时依赖；#175/#179/#180 均未改写。候选及此处结果以最新进度记录中的固定 HEAD 为准。
-- **独立复审发现并修复：** Companion 幂等回放必须返回原始回执；Suggestions 只读 Task 读取不可创建 `.tasks.lock`；Grounding candidates 在响应边界再次核验来源版本。Today 增加显式展开的 Companion 用户入口；Chat 增加只读 Knowledge Grounding Candidates 面板，并严格显示 `answer_attribution=not_established`。
-- **联合 Gate 与反馈合同：** `P2_4_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`、`P2_5_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`。按 PMO 评论 #6331548178 修复 per-suggestion revision：重复 evaluate 递增再发布候选 revision，Core GET/evaluate 输出 revision，Web 反馈使用实际 revision、检查回执并在 409 刷新列表；跨层覆盖 revision>1 成功和 stale revision 409。实际 create_app()+Uvicorn 经 Vite 同源 `/api` 代理及定向测试见最新 Progress Log。真实浏览器、真实模型、生产及用户验收 NOT RUN；`MODEL_CONTEXT_ADMISSION=BLOCKED`。未合并、未部署、未访问真实数据、未触发 CI。
-- **候选与边界：** PR [#181](https://github.com/zxwan829/SecondBrain/pull/181) 保持 Draft，最新固定 HEAD 见本条 Progress Log 与 PR；本次不转 Ready、不合并、不部署。
+- **当前 GitHub main：** `aff7d9efdf758e0e957f30bf9749bd7b95a054fa`，已合入阶段二 #181。
+- **阶段二 #181 收口：** 固定 HEAD `7cf9ac10ce67efdcce779c71fb8c29fb81b519a4` 获 PMO 最终源码复审与 Gate `PASS_WITH_LIMITS` / `MERGE_READY_FOR_APPROVAL`（[#181 review #5608840413](https://github.com/zxwan829/SecondBrain/pull/181#pullrequestreview-5608840413)）；#181 随后由 GitHub 于 2026-10-22 03:26 UTC 合入 main，merge commit 即当前 main。此合并发生在 A 执行阶段三期间，并非 A 本轮执行；A 未执行合并。
+- **阶段三 B Core Draft 栈：** #182 `fd940daa535db0dd18935337c865e771e2d64f9c` → #183 `c02fbb5413232088a26b69cc174f2b0e09ec6145` → #184 `0e65b5c2fe278e11357586b2f387792df05629f5` → #185 `c290976762e629009ad4a3bd09ccc966b2cb308f` → #186 `d21cf6297754520ddbc10e10e08fdf4e599cff17`。A 对累计源码发现空 source_refs + Calendar 与非字符串 enum 输入问题，B 在根 PR 修复并重放堆栈；PR 均保持 Draft。A 当前集中候选已按最新 main 重放 Core 实现，候选中的 P3 Core 集成 HEAD 为 `574da42803e0681d95095f48ec97bb2ce1660fc7`。
+- **A Web 候选：** `codex/p3-consolidated-gate`，在当前 main 上集成 P3 Core 及 Chat 用户流程。普通 Chat 支持显式加载/选择 Task、Project、Journal metadata refs 与有界 Calendar window，Session-scoped 候选恢复，逐步批准、独立 `effect=none` 合成执行、暂停/恢复/取消/显式重试及只读复盘。严格校验事件/会话/版本回执、按操作保留幂等键、来源刷新时丢弃过期选项。合成 Gate 脚本：`web-app/e2e/scripts/p3_consolidated_vite_gate.py`。
+- **阶段三联合 Gate：** `P3_1_5_HTTP=PASS_WITH_LIMITS`。真实 `create_app()` + Uvicorn 经 Vite 同源代理、只用私有临时合成数据；验证 Task/Project/Journal 元数据且 Journal 正文不出 Core，跨会话 404、撤权先于来源读取、批准及 `effect=none` 执行、反馈重放/冲突、暂停/恢复/取消、注入失败后显式 retry_ready 与恢复、并发 CAS 单胜者、来源漂移拒绝、业务源字节不变、no-store 与 app 重建回读。Core 全量 510 passed、26 warnings、28 subtests；Web 全量 38 files / 417 tests、typecheck/build PASS；diff-check PASS。Build 保留既有 Canvas/Notes chunk-size 提示；`npm ci` 报告 4 项 low/moderate advisory，未改依赖。
+- **当前限制：** P3 A Draft PR 待 PMO 独立复审。真实浏览器点击、真实模型、生产、用户验收均 NOT RUN；`MODEL_CONTEXT_ADMISSION=BLOCKED`。不部署、不访问真实数据、不触发 CI/Actions、不启用 Writer/Promote。是否进入合并流程须经 PMO 独立复审及授权另行裁定；本轮不合并。
 
 ## 历史：2026-10-22 阶段一收口与阶段二 P2-1/2/3 集中合并准备（Issue #96/#97）
 
