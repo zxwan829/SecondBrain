@@ -121,6 +121,61 @@ def test_activity_projects_only_minimal_journal_and_task_metadata(tmp_path):
     assert next_page.json()["items"][0]["activity_id"] != body["items"][0]["activity_id"]
 
 
+def test_activity_projects_task_updates_from_authoritative_history_without_private_fields(tmp_path):
+    tasks = make_tasks(tmp_path)
+    due_day = date.today().isoformat()
+    created = tasks.create("Synthetic task title", due_day, "synthetic-task-operation",
+                           original_command="PRIVATE task command", session_id="private-session-id")
+    task = created["task"]
+    tasks.update(task["id"], {"expected_updated_at": task["updated_at"], "status": "completed"})
+    activity_day = datetime.fromisoformat(task["created_at"]).date().isoformat()
+
+    response = make_client(tmp_path, tasks=tasks).get(
+        f"/api/activity?from={activity_day}&to={activity_day}&timezone=UTC&limit=10")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "partial"  # only one of the required minimum sources is configured
+    assert body["source"] == ["tasks"]
+    assert [item["status"] for item in body["items"]] == ["updated", "succeeded"]
+    assert body["items"][0]["occurred_at"] > body["items"][1]["occurred_at"]
+    assert body["items"][0]["activity_id"] != body["items"][1]["activity_id"]
+    assert all(set(item) <= {"activity_id", "kind", "status", "occurred_at",
+                             "task_due_date", "task_status"} for item in body["items"])
+    assert "PRIVATE" not in response.text
+    assert "private-session-id" not in response.text
+    assert "synthetic-task-operation" not in response.text
+
+
+def test_activity_task_snapshot_is_read_only_and_does_not_create_lock_file(tmp_path):
+    tasks = make_tasks(tmp_path)
+    assert not tasks.lock_path.exists()
+
+    response = make_client(tmp_path, tasks=tasks).get("/api/activity")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == ["tasks"]
+    assert response.json()["items"] == []
+    assert not tasks.lock_path.exists()
+
+
+def test_activity_includes_explicit_tasks_without_chat_session_id(tmp_path):
+    tasks = make_tasks(tmp_path)
+    created = tasks.create("Synthetic standalone task", None, "synthetic-task-no-session",
+                           original_command="PRIVATE standalone command")
+    day = datetime.fromisoformat(created["task"]["created_at"]).date().isoformat()
+
+    response = make_client(tmp_path, tasks=tasks).get(
+        f"/api/activity?from={day}&to={day}&timezone=UTC")
+
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 1
+    assert response.json()["items"][0]["kind"] == "task"
+    assert response.json()["items"][0]["status"] == "succeeded"
+    assert "PRIVATE" not in response.text
+    assert "synthetic-task-no-session" not in response.text
+
+
 def test_activity_window_timezone_and_query_errors(tmp_path):
     client = make_client(tmp_path, journal=make_journal(tmp_path))
     assert client.get("/api/activity?from=2026-10-01").status_code == 400
@@ -228,7 +283,8 @@ def test_activity_source_actions_are_checked_before_reading_each_source(tmp_path
     day = date.today().isoformat()
     journal_reads, task_reads = [], []
     monkeypatch.setattr(journal, "read", lambda value: journal_reads.append(value) or {"entries": []})
-    monkeypatch.setattr(tasks, "list_for_projection", lambda: task_reads.append(True) or {"tasks": []})
+    monkeypatch.setattr(tasks, "list_for_projection_read_only",
+                        lambda: task_reads.append(True) or {"tasks": []})
     client = make_client(tmp_path, journal=journal, tasks=tasks)
     auth = client.app.state.test_auth
     original_require_action = auth.require_action

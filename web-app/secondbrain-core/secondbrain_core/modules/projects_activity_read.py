@@ -129,30 +129,76 @@ def _journal_rows(store, start, end, zone):
 
 def _task_rows(store, start, end, zone):
     if store is None:
-        return []
+        return [], False
     rows = []
-    for task in store.list_for_projection()["tasks"]:
+    complete = True
+    # Activity is a read-only projection. Do not create the TaskStore lock
+    # file merely to read its bounded, race-checked snapshot.
+    for task in store.list_for_projection_read_only()["tasks"]:
+        if not isinstance(task, dict):
+            complete = False
+            continue
         operation_id = task.get("operation_id")
-        session_id = task.get("session_id")
-        if not isinstance(operation_id, str) or not operation_id or not isinstance(session_id, str) or not session_id:
+        task_id = task.get("id")
+        if (not isinstance(operation_id, str) or not operation_id
+                or not isinstance(task_id, str) or not re.fullmatch(r"[0-9a-f]{32}", task_id)):
+            complete = False
             continue
         occurred = _occurred_at(task.get("created_at"), zone)
-        if occurred is None or not _within_window(occurred, start, end, zone):
+        if occurred is not None and _within_window(occurred, start, end, zone):
+            row = {
+                "activity_id": _opaque_id("task", operation_id, task_id),
+                "kind": "task",
+                "status": "succeeded",
+                "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            }
+            due_date = task.get("due_date")
+            if isinstance(due_date, str) and _DATE.fullmatch(due_date):
+                row["task_due_date"] = due_date
+            task_status = task.get("status")
+            if task_status in {"open", "completed"}:
+                row["task_status"] = task_status
+            rows.append(row)
+
+        history = task.get("history")
+        if not isinstance(history, list) or not history:
+            complete = False
             continue
-        row = {
-            "activity_id": _opaque_id("task", operation_id, task.get("id") or operation_id),
-            "kind": "task",
-            "status": "succeeded",
-            "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
-        }
-        due_date = task.get("due_date")
-        if isinstance(due_date, str) and _DATE.fullmatch(due_date):
-            row["task_due_date"] = due_date
-        task_status = task.get("status")
-        if task_status in {"open", "completed"}:
-            row["task_status"] = task_status
-        rows.append(row)
-    return rows
+        created_event = history[0]
+        created_at = _occurred_at(task.get("created_at"), zone)
+        created_history_at = (_occurred_at(created_event.get("at"), zone)
+                              if isinstance(created_event, dict) else None)
+        if (not isinstance(created_event, dict) or created_event.get("event") != "created"
+                or created_at is None or created_history_at != created_at):
+            complete = False
+            continue
+        previous_at = created_history_at
+        for index, event in enumerate(history[1:], start=1):
+            changes = event.get("changes") if isinstance(event, dict) else None
+            valid_changes = (isinstance(changes, dict) and bool(changes)
+                             and set(changes) <= {"title", "due_date", "status"}
+                             and all(isinstance(change, dict) and set(change) == {"from", "to"}
+                                     and change["from"] != change["to"]
+                                     for change in changes.values()))
+            if (not isinstance(event, dict) or event.get("event") != "updated" or not valid_changes):
+                complete = False
+                continue
+            updated_at = _occurred_at(event.get("at"), zone)
+            if updated_at is None or updated_at <= previous_at:
+                complete = False
+                continue
+            previous_at = updated_at
+            if _within_window(updated_at, start, end, zone):
+                rows.append({
+                    "activity_id": _opaque_id("task_update", task_id, f"{index}:{event['at']}"),
+                    "kind": "task",
+                    "status": "updated",
+                    "occurred_at": updated_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                })
+        current_updated_at = _occurred_at(task.get("updated_at"), zone)
+        if current_updated_at is None or current_updated_at != previous_at:
+            complete = False
+    return rows, complete
 
 
 def _project_rows(store, start, end, zone):
@@ -321,7 +367,9 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
                 rows.extend(_journal_rows(store, start, end, zone))
             elif name == "tasks":
                 try:
-                    rows.extend(_task_rows(store, start, end, zone))
+                    task_rows, complete = _task_rows(store, start, end, zone)
+                    rows.extend(task_rows)
+                    read_failed = read_failed or not complete
                 except HTTPException:
                     # Task projection has a fixed byte budget. Keep other
                     # available sources but never imply completeness.
