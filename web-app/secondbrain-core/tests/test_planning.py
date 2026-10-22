@@ -537,3 +537,135 @@ def test_retrospective_revalidates_sources_and_feedback_is_explicit_audited_and_
         assert stale["steps"][0]["source_state"] == "stale"
     assert sorted(path.name for path in roots["memory"].iterdir()) == memory_before
 
+
+def test_stage3_end_to_end_real_localhost_auth_cas_stale_and_restart(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from secondbrain_core.modules.source_reference_authority import SourceReferenceAuthority
+
+    def listener_for(host="127.0.0.1", port=0):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((host, port))
+        listener.listen(32)
+        return listener
+
+    listener = listener_for()
+    host, port = listener.getsockname()
+    origin = f"http://{host}:{port}"
+    app, roots = _configured_app(tmp_path, monkeypatch, origin, host)
+    task_ref, _, _ = _seed_sources(app, roots)
+    task_file = roots["tasks"] / "tasks.json"
+    source_bytes = task_file.read_bytes()
+
+    async def forbidden_run(self, *args, **kwargs):
+        raise AssertionError("Stage 3 must never invoke a Hermes model/run")
+
+    monkeypatch.setattr(HermesAPI, "start_run", forbidden_run)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="critical",
+                                           lifespan="off", access_log=False, proxy_headers=False))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    candidate_id = None
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        with httpx.Client(base_url=origin, timeout=5, trust_env=False) as client:
+            _login(client, origin)
+            headers = {"Origin": origin}
+            path = "/api/chat/sessions/session-A/planning"
+
+            verify_calls = []
+            original_verify = SourceReferenceAuthority.verify
+            monkeypatch.setattr(SourceReferenceAuthority, "verify",
+                                lambda self, ref: (verify_calls.append(ref), original_verify(self, ref))[1])
+            original_require = app.state.app_auth.require_action
+
+            def deny_planning_read(request, action):
+                if action == "planning.read":
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=403, detail="Action is not enabled")
+                return original_require(request, action)
+
+            app.state.app_auth.require_action = deny_planning_read
+            denied = client.get(f"{path}/candidates/not-a-real-id/retrospective", headers=headers)
+            assert denied.status_code == 403
+            assert verify_calls == []
+            app.state.app_auth.require_action = original_require
+            monkeypatch.setattr(SourceReferenceAuthority, "verify", original_verify)
+
+            created = client.post(f"{path}/candidates", headers=headers, json={
+                "objective": "End-to-end synthetic planning", "source_refs": [task_ref],
+                "calendar_window": None,
+            })
+            assert created.status_code == 200, created.text
+            candidate_id = created.json()["candidate_id"]
+            decision_url = f"{path}/candidates/{candidate_id}/steps/1/decision"
+
+            def approve(key):
+                with httpx.Client(base_url=origin, timeout=5, trust_env=False,
+                                  cookies=client.cookies) as concurrent_client:
+                    return concurrent_client.post(decision_url, headers={**headers, "Idempotency-Key": key},
+                                                  json={"decision": "approved", "expected_revision": 0})
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                responses = list(pool.map(approve, ("concurrent-approve-a", "concurrent-approve-b")))
+            assert sorted(response.status_code for response in responses) == [200, 409]
+            executed = client.post(f"{path}/candidates/{candidate_id}/steps/1/execute",
+                                   headers={**headers, "Idempotency-Key": "integrated-execute"},
+                                   json={"expected_revision": 1})
+            assert executed.status_code == 200 and executed.json()["effect"] == "none"
+            retrospective = client.get(f"{path}/candidates/{candidate_id}/retrospective", headers=headers)
+            assert retrospective.status_code == 200
+            assert retrospective.json()["counts"]["completed"] == 1
+            assert task_file.read_bytes() == source_bytes
+
+            stale = client.post(f"{path}/candidates", headers=headers, json={
+                "objective": "Stale source must stop", "source_refs": [task_ref], "calendar_window": None,
+            }).json()["candidate_id"]
+            changed = json.loads(task_file.read_text(encoding="utf-8"))
+            changed["tasks"][0]["title"] = "Drift after capture"
+            task_file.write_text(json.dumps(changed, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            os.chmod(task_file, 0o600)
+            denied_decision = client.post(f"{path}/candidates/{stale}/steps/1/decision",
+                                          headers={**headers, "Idempotency-Key": "stale-approve"},
+                                          json={"decision": "approved", "expected_revision": 0})
+            assert denied_decision.status_code == 409
+            assert client.get(f"{path}/candidates/{stale}/retrospective", headers=headers).json()[
+                "counts"]["stale_sources"] == 1
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+    assert not thread.is_alive()
+
+    # Reconstruct the real Core app over the same synthetic roots and read back durable state.
+    listener2 = listener_for(host, port)
+    app2, _ = _configured_app(tmp_path, monkeypatch, origin, host)
+    server2 = uvicorn.Server(uvicorn.Config(app2, host=host, port=port, log_level="critical",
+                                            lifespan="off", access_log=False, proxy_headers=False))
+    thread2 = threading.Thread(target=server2.run, kwargs={"sockets": [listener2]}, daemon=True)
+    thread2.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server2.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server2.started
+        with httpx.Client(base_url=origin, timeout=5, trust_env=False) as client:
+            _login(client, origin)
+            headers = {"Origin": origin}
+            readback = client.get(
+                f"/api/chat/sessions/session-A/planning/candidates/{candidate_id}", headers=headers)
+            assert readback.status_code == 200
+            assert readback.json()["workflow_status"] == "completed"
+            report = client.get(
+                f"/api/chat/sessions/session-A/planning/candidates/{candidate_id}/retrospective",
+                headers=headers)
+            assert report.status_code == 200 and report.json()["counts"]["completed"] == 1
+    finally:
+        server2.should_exit = True
+        thread2.join(timeout=10)
+        listener2.close()
+    assert not thread2.is_alive()
+
