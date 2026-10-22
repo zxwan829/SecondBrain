@@ -61,7 +61,16 @@ export function CompanionSuggestionsPanel({ locale }: { locale: Locale }) {
     setPending({ key: idempotency, intent });
     try {
       const result = await request('/api/companion/preferences', { method: 'PUT', headers: { 'Idempotency-Key': idempotency }, body: JSON.stringify({ enabled, categories, expected_revision: preferences.revision }) });
-      setPreferences({ revision: result.revision, enabled: result.enabled, categories: result.categories }); setPending(null);
+      const saved = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+      const settings = saved.settings && typeof saved.settings === 'object' ? saved.settings as Record<string, unknown> : {};
+      if (saved.event !== 'companion.preferences.receipt' || saved.version !== 1 || saved.status !== 'saved'
+        || !Number.isSafeInteger(saved.revision) || saved.revision !== preferences.revision + 1
+        || typeof settings.enabled !== 'boolean' || !Array.isArray(settings.categories)
+        || !settings.categories.every((item) => item === 'task_due' || item === 'project_next_step')
+        || settings.enabled !== enabled || JSON.stringify(settings.categories) !== JSON.stringify(categories)) {
+        throw new Error(en ? 'Core returned an invalid Companion preferences receipt.' : 'Core 返回的主动建议设置回执无法核验。');
+      }
+      setPreferences({ revision: saved.revision as number, enabled: settings.enabled, categories: settings.categories as string[] }); setPending(null);
       if (!enabled) { setItems([]); setStatus(en ? 'Disabled' : '已关闭'); }
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Save failed'); }
     finally { setBusy(false); }

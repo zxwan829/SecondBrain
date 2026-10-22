@@ -155,10 +155,12 @@ def test_candidate_contract_real_localhost_http_and_calendar_projection(tmp_path
             assert {item["reason"] for item in result["steps"]} == {
                 "review_task", "review_project", "review_journal",
             }
-            assert all(set(item) == {"position", "kind", "source_ref", "reason", "priority", "depends_on"}
+            assert all(set(item) == {"position", "kind", "source_ref", "reason", "priority", "depends_on",
+                                     "decision", "execution_status"}
                        for item in result["steps"])
             assert all(item["kind"] == "review_source" and item["priority"] == "unspecified"
-                       and item["depends_on"] == [] for item in result["steps"])
+                       and item["depends_on"] == [] and item["decision"] == "pending"
+                       and item["execution_status"] == "not_started" for item in result["steps"])
             assert "SYNTHETIC_PRIVATE_JOURNAL_BODY" not in response.text
             assert str(roots["journal"]) not in response.text
             assert "next_step" not in response.text and "Review synthetic plan" not in response.text

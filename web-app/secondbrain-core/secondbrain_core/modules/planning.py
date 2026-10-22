@@ -982,11 +982,16 @@ class PlanningCandidateService:
             status=status,
             expires_at=expires_at,
         )
+        # The creation receipt and subsequent preview share the same step DTO.
+        # Keep workflow state explicit so clients can verify the receipt before
+        # storing its session-scoped locator or refreshing the full preview.
+        response_steps = [{**step, "decision": "pending", "execution_status": "not_started"}
+                          for step in steps]
         response = {
             "event": "planning.candidate", "version": 1,
             "session_id": session_id, "candidate_id": candidate_id,
             "revision": 0, "expires_at": expires_at,
-            "status": status, "objective": objective, "steps": steps,
+            "status": status, "objective": objective, "steps": response_steps,
             "workflow_status": "active",
         }
         if len(_canonical_bytes(response)) > _MAX_RESPONSE_BYTES:

@@ -56,6 +56,16 @@ describe('JournalPage', () => {
     expect(document.getElementById('journal-entry-entry-synth')).toBeTruthy();
   });
 
+  it('highlights a Journal entry from the date-qualified Daily Brief source ref', async () => {
+    window.history.replaceState({}, '', `/journal?date=2026-10-22&entry_id=${encodeURIComponent(`2026-10-22:${'b'.repeat(64)}`)}`);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ entries: [
+      { id: 'b'.repeat(64), created_at: '2026-10-22T01:00:00Z', source: 'manual', original_text: '合成简报来源日记' },
+    ] }));
+    render(<JournalPage />);
+    expect(await screen.findByText('此记录被简报引用')).toBeTruthy();
+    expect(document.getElementById(`journal-entry-${'b'.repeat(64)}`)).toBeTruthy();
+  });
+
   it('ignores a late Journal response after the user changes the business date', async () => {
     let finishFirst!: (response: Response) => void;
     const first = new Promise<Response>((resolve) => { finishFirst = resolve; });
