@@ -34,6 +34,7 @@ import { journalInboxAttemptKey, journalInboxFailureLabel, journalInboxReceiptKe
 import { inboxEntryErrorLabel, inboxEntryStatusLabel, parseVerifiedInboxEntry } from './inbox-entry';
 import { ChatKnowledgeCitations } from './ChatKnowledgeCitations';
 import { ChatContextPreview, ChatNaturalCandidates } from './ChatContextPreview';
+import { ChatGroundingCandidates } from './ChatGroundingCandidates';
 import { fetchContextCandidates, fetchContextPreview, type ContextPreview } from './chat-context-preview';
 import { PersonalMemoryPage } from './PersonalMemoryPage';
 
@@ -2234,6 +2235,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       {!blankMode && <ChatContextPreview preview={contextPreview} loading={contextPreviewLoading} error={contextPreviewError}
         onRefresh={() => void previewContext()} disabled={!selected || busy || input.trim().length === 0 || [...input.trim()].length > 200} locale={locale} />}
       {!blankMode && <ChatNaturalCandidates preview={naturalContext} loading={naturalContextLoading} error={naturalContextError} locale={locale} />}
+      {!blankMode && <ChatGroundingCandidates sessionId={selected} query={input} locale={locale} disabled={!selected || busy} />}
       <ChatKnowledgeCitations bundles={citationBundles.filter((bundle) => bundle.session_id === selected)} loading={citationHistoryLoading}
         persistenceIssue={citationPersistenceIssue} locale={locale} />
       {journalInboxAttempt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent retry status' : '日记意图重试状态'}>

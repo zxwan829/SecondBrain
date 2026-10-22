@@ -20,12 +20,11 @@ export function CompanionSuggestionsPanel({ locale }: { locale: Locale }) {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [key, setKey] = useState('');
-  const [revision, setRevision] = useState(0);
+  const [pending, setPending] = useState<{ key: string; intent: string } | null>(null);
   const label = (value: string) => en ? value : value === 'disabled' ? '已关闭' : value === 'none' ? '暂无建议' : value === 'partial' ? '部分建议不可用' : '建议已更新';
 
   const load = async () => {
-    setError('');
+    setError(''); setItems([]);
     try {
       const [prefs, suggestions] = await Promise.all([
         request('/api/companion/preferences'), request('/api/companion/suggestions'),
@@ -35,33 +34,35 @@ export function CompanionSuggestionsPanel({ locale }: { locale: Locale }) {
         throw new Error(en ? 'Companion preferences are unavailable.' : '主动建议设置不可用。');
       }
       setPreferences({ revision: prefs.revision, enabled: prefs.enabled, categories: prefs.categories });
-      setRevision(suggestions.revision); setItems(Array.isArray(suggestions.items) ? suggestions.items : []); setStatus(label(suggestions.status));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Companion unavailable'); }
+      setItems(Array.isArray(suggestions.items) ? suggestions.items : []); setStatus(label(suggestions.status));
+    } catch (cause) { setItems([]); setError(cause instanceof Error ? cause.message : 'Companion unavailable'); }
   };
   useEffect(() => { void load(); }, []);
 
   const save = async (enabled: boolean, categories: string[]) => {
     if (!preferences || busy) return;
     setBusy(true); setError('');
-    const idempotency = key || crypto.randomUUID().replaceAll('-', ''); setKey(idempotency);
+    const intent = JSON.stringify({ enabled, categories, expected_revision: preferences.revision });
+    const idempotency = pending?.intent === intent ? pending.key : crypto.randomUUID().replaceAll('-', '');
+    setPending({ key: idempotency, intent });
     try {
       const result = await request('/api/companion/preferences', { method: 'PUT', headers: { 'Idempotency-Key': idempotency }, body: JSON.stringify({ enabled, categories, expected_revision: preferences.revision }) });
-      setPreferences({ revision: result.revision, enabled: result.enabled, categories: result.categories }); setKey('');
+      setPreferences({ revision: result.revision, enabled: result.enabled, categories: result.categories }); setPending(null);
       if (!enabled) { setItems([]); setStatus(en ? 'Disabled' : '已关闭'); }
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Save failed'); }
     finally { setBusy(false); }
   };
 
   const evaluate = async () => {
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setItems([]);
     try { const result = await request('/api/companion/suggestions/evaluate', { method: 'POST', body: '{}' });
-      setItems(Array.isArray(result.items) ? result.items : []); setRevision(result.revision); setStatus(label(result.status));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Evaluation failed'); }
+      setItems(Array.isArray(result.items) ? result.items : []); setStatus(label(result.status));
+    } catch (cause) { setItems([]); setError(cause instanceof Error ? cause.message : 'Evaluation failed'); }
     finally { setBusy(false); }
   };
   const feedback = async (item: Suggestion, decision: 'accepted' | 'dismissed') => {
     setBusy(true); setError(''); const idem = crypto.randomUUID().replaceAll('-', '');
-    try { await request(`/api/companion/suggestions/${encodeURIComponent(item.id)}/feedback`, { method: 'POST', headers: { 'Idempotency-Key': idem }, body: JSON.stringify({ decision, expected_revision: revision }) });
+    try { await request(`/api/companion/suggestions/${encodeURIComponent(item.id)}/feedback`, { method: 'POST', headers: { 'Idempotency-Key': idem }, body: JSON.stringify({ decision, expected_revision: 1 }) });
       setItems((current) => current.filter((candidate) => candidate.id !== item.id));
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Feedback failed'); }
     finally { setBusy(false); }
