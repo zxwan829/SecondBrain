@@ -40,6 +40,7 @@ from .modules.review_promote.core_auth import CorePromoteAuth
 from .modules.review_promote.provenance import PromoteProvenanceVerifier
 from .modules.review_promote.subprocess_worker_client import SubprocessPromoteWorker
 from .modules.web_app import create_web_app_router
+from .modules.context_preview import create_context_preview_router
 
 
 def create_app():
@@ -152,6 +153,7 @@ def create_app():
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
     app.state.app_auth = auth
+    app.state.personal_memory_store = memory_store
     app.state.knowledge_read_store = knowledge_read_store
     app.state.chat_knowledge_citation_store = chat_knowledge_citation_store
     # No trusted Hermes source adapter or Core consent ledger is configured.
@@ -164,6 +166,9 @@ def create_app():
         auth, hermes, service, review_root, knowledge_root, organizer,
         personal_learning=learning, knowledge_store=knowledge_read_store,
         citation_store=chat_knowledge_citation_store,
+    ))
+    app.include_router(create_context_preview_router(
+        auth, hermes, memory_store, knowledge_read_store,
     ))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))

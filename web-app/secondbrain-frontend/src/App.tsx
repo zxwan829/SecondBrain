@@ -33,6 +33,9 @@ import { journalInboxAttemptKey, journalInboxFailureLabel, journalInboxReceiptKe
   type JournalInboxAttempt, type JournalInboxReceipt } from './chat-inbox';
 import { inboxEntryErrorLabel, inboxEntryStatusLabel, parseVerifiedInboxEntry } from './inbox-entry';
 import { ChatKnowledgeCitations } from './ChatKnowledgeCitations';
+import { ChatContextPreview, ChatNaturalCandidates } from './ChatContextPreview';
+import { fetchContextCandidates, fetchContextPreview, type ContextPreview } from './chat-context-preview';
+import { PersonalMemoryPage } from './PersonalMemoryPage';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -154,7 +157,7 @@ const messages = {
   'zh-CN': {
     brand: 'SecondBrain', workspace: '你的工作台', subtitle: '一眼掌握当前状态，专注今日最重要的事情',
     home: '首页', chat: '对话', today: '今日', calendar: '日历', inbox: '收件箱', review: '待审核', projects: '项目',
-    knowledge: '知识库', brief: '简报', agentHealth: 'Agent 状态', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', settings: '设置',
+    knowledge: '知识库', brief: '简报', agentHealth: 'Agent 状态', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', memory: '个人记忆', settings: '设置',
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
@@ -186,7 +189,7 @@ const messages = {
   en: {
     brand: 'SecondBrain', workspace: 'Your workspace', subtitle: 'See your current state and focus on what matters today',
     home: 'Home', chat: 'Chat', today: 'Today', calendar: 'Calendar', inbox: 'Inbox', review: 'Review', projects: 'Projects',
-    knowledge: 'Knowledge', brief: 'Brief', agentHealth: 'Agent Health', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', settings: 'Settings',
+    knowledge: 'Knowledge', brief: 'Brief', agentHealth: 'Agent Health', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', memory: 'Personal Memory', settings: 'Settings',
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
     returnedItems: 'API entries', agentSupport: 'SecondBrain V1', source: 'Data source',
@@ -233,6 +236,7 @@ const navItems = [
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
   { id: 'notes', key: 'notes', icon: 'notes', section: 'library', route: '/notes' },
   { id: 'vocabulary', key: 'vocabulary', icon: 'check', section: 'library', route: '/vocabulary' },
+  { id: 'memory', key: 'memory', icon: 'brain', section: 'library', route: '/memory' },
   { id: 'settings', key: 'settings', icon: 'settings', section: 'bottom', route: '/settings' },
 ] as const;
 
@@ -569,6 +573,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           : page === 'chat' ? <ChatPage locale={locale} blankMode={location.pathname === '/chat/blank'} onGoInbox={() => navigate('inbox')}
             onGoJournal={() => navigate('journal')} onGoToday={() => navigate('today')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
+            : page === 'memory' ? <PersonalMemoryPage key={routeRevision} locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
     </main>
@@ -1260,6 +1265,12 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const [citationBundles, setCitationBundles] = useState<KnowledgeCitationBundle[]>([]);
   const [citationHistoryLoading, setCitationHistoryLoading] = useState(false);
   const [citationPersistenceIssue, setCitationPersistenceIssue] = useState(false);
+  const [contextPreview, setContextPreview] = useState<ContextPreview | null>(null);
+  const [contextPreviewLoading, setContextPreviewLoading] = useState(false);
+  const [contextPreviewError, setContextPreviewError] = useState('');
+  const [naturalContext, setNaturalContext] = useState<ContextPreview | null>(null);
+  const [naturalContextLoading, setNaturalContextLoading] = useState(false);
+  const [naturalContextError, setNaturalContextError] = useState('');
   const timeline = mergeChatTimeline(messages, activities);
   const [input, setInput] = useState('');
   const [progress, setProgress] = useState('');
@@ -1294,11 +1305,27 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const selectionIntentRef = useRef(0);
   const contentLoadRef = useRef(0);
   const citationHistoryAbortRef = useRef<AbortController | null>(null);
+  const contextPreviewAbortRef = useRef<AbortController | null>(null);
+  const contextPreviewSequenceRef = useRef(0);
+  const naturalContextAbortRef = useRef<AbortController | null>(null);
+  const naturalContextSequenceRef = useRef(0);
   const citationFrameByRunRef = useRef(new Map<string, string>());
   const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
   const captureRequestSequence = useRef(0);
 
-  useEffect(() => () => citationHistoryAbortRef.current?.abort(), []);
+  useEffect(() => () => {
+    citationHistoryAbortRef.current?.abort();
+    contextPreviewSequenceRef.current += 1;
+    contextPreviewAbortRef.current?.abort();
+    naturalContextSequenceRef.current += 1;
+    naturalContextAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    contextPreviewSequenceRef.current += 1;
+    contextPreviewAbortRef.current?.abort();
+    setContextPreview(null); setContextPreviewLoading(false); setContextPreviewError('');
+  }, [input]);
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -1549,12 +1576,62 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     abortRef.current?.abort(); abortRef.current = null;
     resetCaptureState(); resetJournalInboxView(); setBusy(false); setRunId(''); setProgress('');
     citationHistoryAbortRef.current?.abort(); setCitationBundles([]); setCitationHistoryLoading(false); setCitationPersistenceIssue(false);
+    contextPreviewSequenceRef.current += 1; contextPreviewAbortRef.current?.abort();
+    setContextPreview(null); setContextPreviewLoading(false); setContextPreviewError('');
+    naturalContextSequenceRef.current += 1; naturalContextAbortRef.current?.abort();
+    setNaturalContext(null); setNaturalContextLoading(false); setNaturalContextError('');
     selectedSessionRef.current = sessionId;
     setSelected(sessionId);
     if (blankMode) persistBlankChatState([...blankSessionIdsRef.current], sessionId);
     else localStorage.setItem('secondbrain.chat.session', sessionId);
     setError(''); setMessages([]); setActivities([]); setInput('');
     try { await loadSessionContent(sessionId); } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not load session history', locale)); }
+  };
+
+  const previewContext = async () => {
+    const sessionId = selectedSessionRef.current;
+    if (!sessionId || blankMode || busy) return;
+    contextPreviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    contextPreviewAbortRef.current = controller;
+    const sequence = ++contextPreviewSequenceRef.current;
+    setContextPreview(null); setContextPreviewError(''); setContextPreviewLoading(true);
+    try {
+      const result = await fetchContextPreview(sessionId, input, controller.signal);
+      if (controller.signal.aborted || sequence !== contextPreviewSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      setContextPreview(result);
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== contextPreviewSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      const status = (cause as Error & { status?: number }).status;
+      setContextPreviewError(status === 401
+        ? (en ? 'Sign in again to check authorized context.' : '请重新登录后再核验获准的上下文。')
+        : status === 403 ? (en ? 'Context access was denied. Refresh to check current permissions.' : '上下文访问已被拒绝；权限变化后请重新核验。')
+          : status === 400 ? (en ? 'Enter a query between 1 and 200 characters.' : '请输入 1 到 200 个字符的查询内容。')
+            : status === 404 ? (en ? 'This session is unavailable.' : '此会话不可用。')
+              : status === 503 ? (en ? 'Authorized sources are temporarily unavailable.' : '获准来源暂时不可用。')
+                : (en ? 'Context could not be verified. No metadata is shown.' : '上下文未能核验，未展示任何元数据。'));
+    } finally {
+      if (sequence === contextPreviewSequenceRef.current) setContextPreviewLoading(false);
+    }
+  };
+
+  const checkNaturalContext = async (sessionId: string, userInput: string) => {
+    if (blankMode || !userInput.trim() || [...userInput.trim()].length > 2000) return;
+    naturalContextAbortRef.current?.abort();
+    const controller = new AbortController(); naturalContextAbortRef.current = controller;
+    const sequence = ++naturalContextSequenceRef.current;
+    setNaturalContext(null); setNaturalContextError(''); setNaturalContextLoading(true);
+    try {
+      const result = await fetchContextCandidates(sessionId, userInput, controller.signal);
+      if (!controller.signal.aborted && sequence === naturalContextSequenceRef.current && selectedSessionRef.current === sessionId) setNaturalContext(result);
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== naturalContextSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      const status = (cause as Error & { status?: number }).status;
+      setNaturalContextError(status === 401 ? (en ? 'Sign in again to check related sources.' : '请重新登录后查看相关来源。')
+        : status === 403 ? (en ? 'Source access was denied; no candidates are shown.' : '来源访问被拒绝，未展示候选。')
+          : status === 404 ? (en ? 'This session is unavailable.' : '此会话不可用。')
+            : en ? 'Related sources could not be verified. Chat continued without them.' : '无法核验相关来源；对话已继续，未展示候选。');
+    } finally { if (sequence === naturalContextSequenceRef.current) setNaturalContextLoading(false); }
   };
 
   const pollRun = async (activeRun: string, sessionId: string) => {
@@ -1888,6 +1965,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       });
       const activeRun = String(started.run_id ?? '');
       if (!activeRun) throw new Error('Hermes did not return a run identifier');
+      if (!blankMode && !pendingAttachment) void checkNaturalContext(sessionId, prompt);
       startedRunId = activeRun;
       if (!blankMode && !rememberCitationRun({ session_id: sessionId, run_id: activeRun })) setCitationPersistenceIssue(true);
       setInput('');
@@ -2153,6 +2231,9 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
           </div>
           {item.activity.detail && <small>{item.activity.detail}</small>}
         </article>)}{!timeline.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      {!blankMode && <ChatContextPreview preview={contextPreview} loading={contextPreviewLoading} error={contextPreviewError}
+        onRefresh={() => void previewContext()} disabled={!selected || busy || input.trim().length === 0 || [...input.trim()].length > 200} locale={locale} />}
+      {!blankMode && <ChatNaturalCandidates preview={naturalContext} loading={naturalContextLoading} error={naturalContextError} locale={locale} />}
       <ChatKnowledgeCitations bundles={citationBundles.filter((bundle) => bundle.session_id === selected)} loading={citationHistoryLoading}
         persistenceIssue={citationPersistenceIssue} locale={locale} />
       {journalInboxAttempt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent retry status' : '日记意图重试状态'}>
