@@ -1,4 +1,3 @@
-import base64
 import hashlib
 import os
 import socket
@@ -20,7 +19,7 @@ class SyntheticProof:
     test_only = True
 
     def verify(self, _proof, binding):
-        return binding["approval_id"] == "approval-1" and binding["target_id"] == "target-1"
+        return _proof == binding
 
 
 def authority(tmp_path, publish, *, proof=True, allow_synthetic=True):
@@ -39,11 +38,17 @@ def authority(tmp_path, publish, *, proof=True, allow_synthetic=True):
     return core, signer
 
 
-def issue(core, content=CONTENT, operation="operation-1"):
+def issue(core, content=CONTENT, operation="operation-1", expires_at=None):
+    expires_at = expires_at or int(time.time()) + 120
+    proof = {
+        "approval_id": "approval-1", "operation_id": operation, "source_revision": "rev-7",
+        "source_sha256": SOURCE_SHA, "target_id": "target-1",
+        "content_sha256": hashlib.sha256(content).hexdigest(), "content_length": len(content),
+    }
     return core.issue_grant(
-        proof={"test_only": True}, approval_id="approval-1", operation_id=operation,
+        proof=proof, approval_id="approval-1", operation_id=operation,
         source_revision="rev-7", source_sha256=SOURCE_SHA, approved_bytes=content,
-        target_id="target-1", expires_at=int(time.time()) + 120, nonce="nonce-1",
+        target_id="target-1", expires_at=expires_at, nonce="nonce-1",
     )
 
 
@@ -113,7 +118,7 @@ def test_signed_grant_binds_source_content_target_expiry_and_exact_replay(tmp_pa
 
     core, _ = authority(tmp_path, publish)
     grant = issue(core)
-    assert issue(core) == grant
+    assert issue(core, expires_at=grant["expires_at"]) == grant
     assert core.commit(grant, CONTENT)["status"] == "published"
     assert core.commit(grant, CONTENT)["status"] == "published"
     assert calls == [("operation-1", CONTENT)]
