@@ -15,7 +15,7 @@ type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: s
 type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
-  | 'daily_brief_readback' | 'viewport_layout';
+  | 'daily_brief_readback' | 'permission_revocation' | 'viewport_layout';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function safePath(value: string): string {
@@ -35,6 +35,7 @@ async function configurePage(page: Page) {
   let lastInboxBody: Record<string, unknown> | null = null;
   let dailyBriefPostCount = 0;
   let lastDailyBriefBody: Record<string, unknown> | null = null;
+  let activityReadRevoked = false;
   let failureStage: FailureStage = 'login';
 
   page.on('request', (request) => {
@@ -137,6 +138,13 @@ async function configurePage(page: Page) {
       await route.abort('blockedbyclient');
       return;
     }
+    if (activityReadRevoked && activityPath) {
+      // The current Core contract has one owner action and no action-level
+      // revoke API. This same-origin synthetic denial verifies the Web's
+      // fail-closed response to a revoked activity.read capability.
+      await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ detail: 'activity.read revoked in synthetic fixture' }) });
+      return;
+    }
     if (url.pathname === '/api/inbox/entries' && route.request().method() === 'POST' && firstInboxResponse) {
       firstInboxResponse = false;
       // Let the real Core commit the exact request, then simulate a lost HTTP
@@ -165,6 +173,7 @@ async function configurePage(page: Page) {
     get dailyBriefPostCount() { return dailyBriefPostCount; },
     get lastDailyBriefBody() { return lastDailyBriefBody; },
     get inboxId() { return createdInboxId; },
+    revokeActivityRead() { activityReadRevoked = true; },
   };
 }
 
@@ -349,6 +358,18 @@ for (const viewport of viewports) {
     await returnHomeFromNavigation(page, viewport);
     await page.getByRole('button', { name: '打开动态' }).first().click();
     await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
+    expect(observed.requestRecords.some((request) => request.method === 'GET'
+      && request.path === '/api/activity' && request.status === 200)).toBe(true);
+    await returnHomeFromNavigation(page, viewport);
+    observed.setFailureStage('permission_revocation');
+    observed.revokeActivityRead();
+    await page.getByRole('button', { name: '打开动态' }).first().click();
+    await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveText('当前账户无权读取此页面数据。');
+    expect(await page.locator('.v1-activity-card').count()).toBe(0);
+    expect(observed.requestRecords.some((request) => request.method === 'GET'
+      && request.path === '/api/activity' && request.status === 403)).toBe(true);
+    observed.revokeActivityRead();
     await returnHomeFromNavigation(page, viewport);
     await page.getByRole('button', { name: '查看 Agent 状态' }).first().click();
     await expect(page.getByRole('heading', { name: 'Agent 状态' })).toBeVisible();

@@ -164,6 +164,37 @@ describe('Notes application navigation gate', () => {
     expect(location.pathname).toBe('/journal');
   });
 
+  it('renders the expanded Activity source and status contract from Core', async () => {
+    mockAppFetch();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const fallback = fetchMock.getMockImplementation()!;
+    const base = '2026-10-23T08:00:00Z';
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === '/api/activity?limit=50&offset=0') {
+        return new Response(JSON.stringify({
+          status: 'partial',
+          items: [
+            { activity_id: 'activity-project', kind: 'project', status: 'updated', occurred_at: base, project_id: 'SYNTH-PROJECT-1', project_status: 'active' },
+            { activity_id: 'activity-brief', kind: 'daily_brief', status: 'created', occurred_at: base, daily_brief_date: '2026-10-23' },
+            { activity_id: 'activity-memory', kind: 'personal_memory', status: 'revoked', occurred_at: base },
+          ],
+          pagination: { limit: 50, offset: 0, has_more: false },
+          source: ['projects', 'daily_brief', 'personal_memory'],
+          freshness: { checked_at: base },
+        }), { status: 200 });
+      }
+      return fallback(input, init);
+    });
+    startAt('/activity');
+
+    expect(await screen.findByRole('heading', { name: '项目更新' })).toBeTruthy();
+    expect(screen.getByText('已更新')).toBeTruthy();
+    expect(screen.getAllByText('每日简报').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2026-10-23').length).toBeGreaterThan(0);
+    expect(screen.getByText('个人记忆操作')).toBeTruthy();
+    expect(screen.getByText('已撤销')).toBeTruthy();
+  });
+
   it('does not style an unavailable Home Agent as online', async () => {
     mockAppFetch(200, undefined, 200, { agent: { status: 'unavailable', source: 'hermes-runtime' } });
     startAt('/');

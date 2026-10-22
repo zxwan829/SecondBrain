@@ -60,7 +60,7 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "login", "session", "first_submit", "retry", "conflict",
     "ordinary_chat", "source_protection", "daily_brief_read", "daily_brief_sources",
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
-    "daily_brief_readback", "viewport_layout",
+    "daily_brief_readback", "permission_revocation", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 MAX_FAILURE_DIAGNOSTIC_BYTES = 512

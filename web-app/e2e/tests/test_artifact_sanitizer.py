@@ -198,6 +198,11 @@ def test_failure_diagnostic_unknown_or_sensitive_values_fail_closed(entry):
         module._validate_failure_diagnostics([entry])
 
 
+def test_failure_diagnostic_accepts_action_revocation_stage():
+    diagnostic = {"viewport": "mobile-390x844", "stage": "permission_revocation", "code": "assertion_failed"}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+
+
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():
     entry = {"viewport": "desktop-1440x1000", "stage": "login", "code": "timeout"}
     with pytest.raises(RuntimeError, match="value rejected"):
