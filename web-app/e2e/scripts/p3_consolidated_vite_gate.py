@@ -159,6 +159,8 @@ try:
         assert created.status_code == 200, created.text
         candidate_id = created.json()["candidate_id"]
         assert "no-store" in created.headers.get("cache-control", "")
+        assert "SYNTHETIC_P3_PRIVATE_JOURNAL_BODY" not in created.text
+        assert str(ROOT) not in created.text
         assert len(created.content) <= 16 * 1024 and created.json()["steps"]
         wrong_session = client.get(f"/api/chat/sessions/session-B/planning/candidates/{candidate_id}")
         assert wrong_session.status_code == 404
@@ -202,6 +204,36 @@ try:
                                 json={"command": "cancel", "expected_revision": resumed.json()["revision"]})
         assert [paused.status_code, resumed.status_code, cancelled.status_code] == [200, 200, 200]
         assert cancelled.json()["workflow_status"] == "cancelled"
+
+        recoverable = client.post(path + "/candidates", headers=headers(), json={
+            "objective": "Synthetic failure and recovery", "source_refs": [task_ref], "calendar_window": None}).json()
+        recoverable_path = f"{path}/candidates/{recoverable['candidate_id']}"
+        approved = client.post(recoverable_path + "/steps/1/decision",
+            headers=headers(**{"Idempotency-Key": "p3-gate-recovery-approve"}),
+            json={"decision": "approved", "expected_revision": recoverable["revision"]})
+        assert approved.status_code == 200
+        service = app.state.planning_candidate_service
+        original_execute = service._synthetic_execute
+        execution_attempts = [0]
+        def fail_once(step):
+            execution_attempts[0] += 1
+            if execution_attempts[0] == 1:
+                raise OSError("synthetic injected executor failure")
+            return original_execute(step)
+        service._synthetic_execute = fail_once
+        failed = client.post(recoverable_path + "/steps/1/execute",
+            headers=headers(**{"Idempotency-Key": "p3-gate-failure"}),
+            json={"expected_revision": approved.json()["revision"]})
+        assert failed.status_code == 200 and failed.json()["status"] == "failed" and failed.json()["effect"] == "none"
+        retry_ready = client.post(recoverable_path + "/control",
+            headers=headers(**{"Idempotency-Key": "p3-gate-retry-ready"}),
+            json={"command": "retry", "expected_revision": failed.json()["revision"]})
+        assert retry_ready.status_code == 200
+        service._synthetic_execute = original_execute
+        recovered = client.post(recoverable_path + "/steps/1/execute",
+            headers=headers(**{"Idempotency-Key": "p3-gate-recovered-execute"}),
+            json={"expected_revision": retry_ready.json()["revision"]})
+        assert recovered.status_code == 200 and recovered.json()["status"] == "simulated"
 
         concurrent_candidate = client.post(path + "/candidates", headers=headers(), json={
             "objective": "Synthetic concurrent CAS", "source_refs": [task_ref], "calendar_window": None}).json()
@@ -253,7 +285,7 @@ try:
         restored_recap = client.get(candidate_path + "/retrospective")
         assert restored.status_code == 200 and restored.json()["workflow_status"] == "completed", (restored.status_code, restored.text)
         assert restored_recap.status_code == 200 and restored_recap.json()["feedback"] == "useful"
-        print("P3_1_5_HTTP: PASS_WITH_LIMITS; Vite same-origin proxy -> real create_app/Uvicorn; synthetic login, no-store, Task/Project/Journal metadata projections, no Journal body, candidate create/preview, cross-session 404, approve/execute effect=none, retrospective/feedback replay and conflict, pause/resume/cancel, concurrent CAS single winner, stale source rejection, permission denied before source verify, all selected business-source bytes stable, app-restart readback.")
+        print("P3_1_5_HTTP: PASS_WITH_LIMITS; Vite same-origin proxy -> real create_app/Uvicorn; synthetic login, no-store, Task/Project/Journal metadata projections, no Journal body, candidate create/preview, cross-session 404, approve/execute effect=none, retrospective/feedback replay and conflict, pause/resume/cancel, injected failure -> explicit retry-ready -> recovered synthetic execution, concurrent CAS single winner, stale source rejection, permission denied before source verify, all selected business-source bytes stable, app-restart readback.")
         print(f"P3_SYNTHETIC_ROOT={ROOT}; browser/model/production/user acceptance not implied")
 finally:
     vite.terminate()

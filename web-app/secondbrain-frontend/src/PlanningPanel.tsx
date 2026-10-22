@@ -168,7 +168,8 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
 
   const loadSources = async () => {
     if (loadingSources || !sessionId) return;
-    setLoadingSources(true); setSourceError(''); setError('');
+    setLoadingSources(true); setSourceError(''); setSourcesLoaded(false); setTasks([]); setProjects([]);
+    setSelectedRefs((current) => current.filter((ref) => ref.kind === 'journal'));
     try {
       const [taskValue, projectValue] = await Promise.all([
         api('/api/tasks?status=all'), api('/api/projects?limit=50&offset=0'),
@@ -183,7 +184,8 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
 
   const loadJournals = async () => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(journalDay)) { setSourceError(en ? 'Choose a valid Journal date.' : '请选择有效的 Journal 日期。'); return; }
-    setLoadingSources(true); setSourceError('');
+    setLoadingSources(true); setSourceError(''); setJournals([]);
+    setSelectedRefs((current) => current.filter((ref) => ref.kind !== 'journal'));
     try {
       const params = new URLSearchParams({ date: journalDay, limit: '50' });
       const value = await api(`/api/daily-brief/source-options/journal?${params}`);
@@ -309,7 +311,7 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
       {!candidate && <>
         <label htmlFor="planning-objective">{en ? 'Objective' : '计划目标'}</label>
         <textarea id="planning-objective" value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={500} placeholder={en ? 'Describe what you want to review' : '描述你希望规划或复盘的目标'} />
-        <button type="button" disabled={loadingSources || sourcesLoaded} onClick={() => void loadSources()}>{loadingSources ? (en ? 'Loading…' : '正在读取…') : (en ? 'Load Task and Project choices' : '读取待办和项目候选')}</button>
+        <button type="button" disabled={loadingSources} onClick={() => void loadSources()}>{loadingSources ? (en ? 'Loading…' : '正在读取…') : (sourcesLoaded ? (en ? 'Refresh Task and Project choices' : '刷新待办和项目候选') : (en ? 'Load Task and Project choices' : '读取待办和项目候选'))}</button>
         {sourcesLoaded && <div className="planning-source-groups">
           {([["task", tasks], ["project", projects]] as Array<[RefKind, SourceChoice[]]>).map(([kind, choices]) => <fieldset key={kind} disabled={busy}>
             <legend>{kind === 'task' ? (en ? 'Tasks' : '待办') : (en ? 'Projects' : '项目')}</legend>
@@ -322,7 +324,7 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
           <fieldset disabled={busy || loadingSources}>
             <legend>{en ? 'Journal' : '日记'}</legend>
             <label>{en ? 'Date' : '日期'}<input type="date" value={journalDay} onChange={(event) => setJournalDay(event.target.value)} /></label>
-            <button type="button" onClick={() => void loadJournals()}>{en ? 'Load approved Journal source refs' : '读取获准 Journal 来源'}</button>
+            <button type="button" disabled={loadingSources} onClick={() => void loadJournals()}>{journals.length ? (en ? 'Refresh approved Journal source refs' : '刷新获准 Journal 来源') : (en ? 'Load approved Journal source refs' : '读取获准 Journal 来源')}</button>
             {!journals.length && <p>{en ? 'Journal choices are not loaded.' : '尚未读取 Journal 候选。'}</p>}
             {journals.map((choice) => { const key = `${choice.ref.kind}:${choice.ref.id}`; return <label key={key}>
               <input type="checkbox" checked={selectedKeys.has(key)} onChange={() => toggleRef(choice.ref)} />
