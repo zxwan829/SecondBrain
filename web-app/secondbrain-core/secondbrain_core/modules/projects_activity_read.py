@@ -186,8 +186,32 @@ def _project_rows(store, start, end, zone):
     return rows, not snapshot.complete
 
 
+def _daily_brief_rows(store, start, end, zone):
+    """Project only verified successful Brief audit receipts into Activity."""
+    if store is None:
+        return [], False
+    try:
+        events, complete = store.read_activity_events()
+    except Exception:
+        return [], True
+    rows = []
+    for event in events:
+        occurred = _occurred_at(event.get("recorded_at"), zone)
+        if occurred is None or not _within_window(occurred, start, end, zone):
+            continue
+        rows.append({
+            "activity_id": _opaque_id("daily_brief", event["request_id"], event["brief_id"]),
+            "kind": "daily_brief",
+            "status": "created",
+            "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            "daily_brief_date": event["date"],
+        })
+    return rows, not complete
+
+
 def create_projects_activity_router(auth, journal_store=None, task_store=None,
-                                    projects_store=None, notes_store=None):
+                                    projects_store=None, notes_store=None,
+                                    daily_brief_audit_store=None):
     router = APIRouter(prefix="/api")
     projects_store = projects_store or ProjectsSourceReadStore(None)
 
@@ -265,6 +289,9 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
             ("journal", journal_store, "journal.read"),
             ("tasks", task_store, "task.read"),
             ("projects", projects_store if projects_store.configured else None, "projects.read"),
+            ("daily_brief", daily_brief_audit_store if daily_brief_audit_store is not None
+             and daily_brief_audit_store.configured else None,
+             "daily_brief.read"),
         ]
         configured = [(name, store, action) for name, store, action in candidates if store is not None]
         if not configured:
@@ -302,6 +329,10 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
             elif name == "projects":
                 project_rows, partial = _project_rows(store, start, end, zone)
                 rows.extend(project_rows)
+                read_failed = read_failed or partial
+            elif name == "daily_brief":
+                brief_rows, partial = _daily_brief_rows(store, start, end, zone)
+                rows.extend(brief_rows)
                 read_failed = read_failed or partial
         rows.sort(key=lambda row: (row["occurred_at"], row["activity_id"]), reverse=True)
         page_rows = rows[offset:offset + limit]

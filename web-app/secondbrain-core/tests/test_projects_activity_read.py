@@ -3,17 +3,19 @@ import json
 import os
 import time
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.app_auth import AppSessionAuth
+from secondbrain_core.modules.daily_brief_import import DailyBriefAuditStore
 from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.projects_activity_read import create_projects_activity_router
 from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStore
 from secondbrain_core.modules.tasks import TaskStore
 
 
-def make_client(tmp_path, journal=None, tasks=None, projects=None):
+def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_audit=None):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-password-value\n")
     os.chmod(password_file, 0o600)
@@ -22,7 +24,10 @@ def make_client(tmp_path, journal=None, tasks=None, projects=None):
     auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
     app = FastAPI()
     app.state.test_auth = auth
-    app.include_router(create_projects_activity_router(auth, journal, tasks, projects_store=projects))
+    app.include_router(create_projects_activity_router(
+        auth, journal, tasks, projects_store=projects,
+        daily_brief_audit_store=daily_brief_audit,
+    ))
     client = TestClient(app, base_url="https://app.test")
     client.cookies.set(auth.COOKIE_NAME, token)
     return client
@@ -267,3 +272,115 @@ def test_activity_projects_denied_before_project_index_io(tmp_path, monkeypatch)
     assert response.json()["status"] == "partial"
     assert response.json()["source"] == []
     assert reads == []
+
+
+def test_activity_reads_only_minimal_successful_daily_brief_audit_events(tmp_path):
+    audit_root = tmp_path / "approval"
+    audit_root.mkdir(mode=0o700)
+    os.chmod(audit_root, 0o700)
+    audit_path = audit_root / "daily-brief-audit.jsonl"
+    fixture = json.loads((Path(__file__).parent / "fixtures" /
+                          "activity_daily_brief_created.json").read_text(encoding="utf-8"))
+    day = fixture["audit_event"]["date"]
+    event = fixture["audit_event"]
+    audit_path.write_bytes(json.dumps(event, separators=(",", ":")).encode() + b"\n")
+    os.chmod(audit_path, 0o600)
+    store = DailyBriefAuditStore(str(audit_path))
+
+    response = make_client(tmp_path, daily_brief_audit=store).get(
+        f"/api/activity?from={day}&to={day}&timezone=UTC")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == ["daily_brief"]
+    assert body["status"] == "partial"
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["kind"] == "daily_brief" and item["status"] == "created"
+    assert item["daily_brief_date"] == day
+    assert item == fixture["activity_item"]
+    assert "synthetic-request-id" not in response.text
+    assert "synthetic-brief-id" not in response.text
+    assert "synthetic-actor-hash" not in response.text
+    assert "source_kind_counts" not in response.text
+    assert not (audit_root / ".daily-brief-audit.lock").exists()
+
+
+def test_activity_daily_brief_permission_is_preflighted_before_audit_read(tmp_path, monkeypatch):
+    audit_root = tmp_path / "approval"
+    audit_root.mkdir(mode=0o700)
+    os.chmod(audit_root, 0o700)
+    store = DailyBriefAuditStore(str(audit_root / "daily-brief-audit.jsonl"))
+    reads = []
+    monkeypatch.setattr(store, "read_activity_events", lambda: reads.append(True))
+    client = make_client(tmp_path, daily_brief_audit=store)
+    auth = client.app.state.test_auth
+    original_require_action = auth.require_action
+
+    def deny_brief_before_io(request, action):
+        if action == "daily_brief.read":
+            raise __import__("fastapi").HTTPException(status_code=403, detail="denied")
+        return original_require_action(request, action)
+
+    monkeypatch.setattr(auth, "require_action", deny_brief_before_io)
+    response = client.get("/api/activity")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == []
+    assert response.json()["status"] == "partial"
+    assert reads == []
+
+
+def test_activity_daily_brief_audit_budget_exhaustion_is_partial_and_redacted(tmp_path):
+    audit_root = tmp_path / "approval"
+    audit_root.mkdir(mode=0o700)
+    os.chmod(audit_root, 0o700)
+    audit_path = audit_root / "daily-brief-audit.jsonl"
+    audit_path.write_bytes(b"SYNTHETIC-PRIVATE\n" * (DailyBriefAuditStore.MAX_ACTIVITY_BYTES // 17 + 1))
+    os.chmod(audit_path, 0o600)
+    store = DailyBriefAuditStore(str(audit_path))
+
+    response = make_client(tmp_path, daily_brief_audit=store).get("/api/activity")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["items"] == []
+    assert "SYNTHETIC-PRIVATE" not in response.text
+
+
+def test_daily_brief_activity_rejects_audit_replacement_during_snapshot_read(tmp_path, monkeypatch):
+    import secondbrain_core.modules.daily_brief_import as brief_import
+
+    audit_root = tmp_path / "approval"
+    audit_root.mkdir(mode=0o700)
+    os.chmod(audit_root, 0o700)
+    audit_path = audit_root / "daily-brief-audit.jsonl"
+    event = {
+        "event_type": "daily_brief_import", "request_id": "synthetic-request-id",
+        "brief_id": "synthetic-brief-id", "date": date.today().isoformat(),
+        "timezone": "Asia/Shanghai", "source_kind_counts": {}, "outcome": "created",
+        "recorded_at": f"{date.today().isoformat()}T08:00:00Z", "actor": "synthetic-actor-hash",
+    }
+    audit_path.write_bytes(json.dumps(event, separators=(",", ":")).encode() + b"\n")
+    os.chmod(audit_path, 0o600)
+    replacement = audit_root / "replacement.tmp"
+    replacement.write_bytes(audit_path.read_bytes())
+    os.chmod(replacement, 0o600)
+    store = DailyBriefAuditStore(str(audit_path))
+    original_read = os.read
+    replaced = False
+
+    def replace_after_first_read(fd, size):
+        nonlocal replaced
+        payload = original_read(fd, size)
+        if not replaced:
+            replaced = True
+            os.replace(replacement, audit_path)
+        return payload
+
+    monkeypatch.setattr(brief_import.os, "read", replace_after_first_read)
+    events, complete = store.read_activity_events()
+
+    assert replaced is True
+    assert events == []
+    assert complete is False

@@ -6,7 +6,7 @@ import os
 import socket
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -801,14 +801,23 @@ def test_real_localhost_approved_task_action_is_idempotent_across_planning_commi
             assert [row["title"] for row in task_store.list_for_projection()["tasks"]].count(
                 "Synthetic follow-up") == 1
             activity_day = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+            app.state.daily_brief_audit_store.append({
+                "event_type": "daily_brief_import", "request_id": "synthetic-brief-request",
+                "brief_id": "brief-synthetic-activity", "date": activity_day,
+                "timezone": "Asia/Shanghai", "source_kind_counts": {"task": 1},
+                "outcome": "created", "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "actor": "synthetic-actor-hash",
+            })
             activity = client.get(
                 f"/api/activity?from={activity_day}&to={activity_day}&timezone=Asia%2FShanghai",
                 headers=headers,
             )
             assert activity.status_code == 200
-            assert activity.json()["source"] == ["journal", "tasks", "projects"]
+            assert activity.json()["source"] == ["journal", "tasks", "projects", "daily_brief"]
             assert any(row["kind"] == "task" for row in activity.json()["items"])
+            assert any(row["kind"] == "daily_brief" for row in activity.json()["items"])
             assert "Synthetic follow-up" not in activity.text
+            assert "synthetic-brief-request" not in activity.text
             replay = client.post(
                 f"{path}/candidates/{candidate_id}/steps/{action_step['position']}/execute",
                 headers={**headers, "Idempotency-Key": "task-action-recovery"},
