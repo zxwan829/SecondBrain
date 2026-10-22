@@ -29,20 +29,31 @@ function parseMemory(value: unknown): PersonalMemory | null {
     || typeof row.status !== 'string' || !memoryStatuses.has(row.status) || typeof row.recorded_at !== 'string' || row.recorded_at.length > 64
     || !Number.isFinite(Date.parse(row.recorded_at))) return null;
   const sourceValue = row.source;
+  const sourceType = sourceValue === undefined ? row.source_type : undefined;
+  const sourceRef = sourceValue === undefined ? row.source_ref : undefined;
   let source: PersonalMemory['source'];
   if (sourceValue !== undefined) {
     if (!sourceValue || typeof sourceValue !== 'object' || Array.isArray(sourceValue)) return null;
     const value = sourceValue as Record<string, unknown>;
-    if (typeof value.type !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(value.type) || typeof value.ref !== 'string'
-      || value.ref.length > 256 || value.ref.startsWith('/') || value.ref.includes('\\')
-      || value.ref.split('/').includes('..') || !/^[A-Za-z0-9._:/-]+$/.test(value.ref)) return null;
-    source = { type: value.type, ref: value.ref };
+    if (!isSafeSource(value.type, value.ref)) return null;
+    source = { type: value.type as string, ref: value.ref as string };
+  } else if (sourceType !== undefined || sourceRef !== undefined) {
+    // Core's stable Personal Memory event response uses flat source_type/source_ref
+    // fields; accept that authoritative wire shape as well as the legacy Web mock.
+    if (!isSafeSource(sourceType, sourceRef)) return null;
+    source = { type: sourceType as string, ref: sourceRef as string };
   }
   return { memory_id: row.memory_id, revision: row.revision as number,
     content: { text: content.text }, category: row.category, fact_kind: row.fact_kind,
     status: row.status, recorded_at: row.recorded_at,
     revision_status: typeof row.revision_status === 'string' ? row.revision_status : undefined,
     expires_at: typeof row.expires_at === 'string' || row.expires_at === null ? row.expires_at : undefined, source };
+}
+
+function isSafeSource(type: unknown, ref: unknown): type is string {
+  return typeof type === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(type)
+    && typeof ref === 'string' && ref.length <= 512 && !ref.startsWith('/') && !ref.includes('\\')
+    && !ref.split('/').includes('..') && /^[A-Za-z0-9_.:/#@+ -]+$/.test(ref);
 }
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {

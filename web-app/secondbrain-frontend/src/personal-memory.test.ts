@@ -17,6 +17,15 @@ describe('Personal Memory lifecycle client', () => {
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store', credentials: 'same-origin' });
   });
 
+  it('preserves provenance from Core event source_type/source_ref fields', async () => {
+    const { source: _legacySource, ...event } = row;
+    vi.stubGlobal('fetch', vi.fn(async () => response({ items: [{ ...event,
+      source_type: 'user_confirmed', source_ref: 'web-personal-memory-confirmation/key-1' }] })));
+    await expect(fetchPersonalMemories()).resolves.toMatchObject([{ source: {
+      type: 'user_confirmed', ref: 'web-personal-memory-confirmation/key-1',
+    } }]);
+  });
+
   it('fails closed when cache policy or record shape is invalid', async () => {
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({ items: [row] }, 200, {})));
     await expect(fetchPersonalMemories()).rejects.toMatchObject({ status: 502 });

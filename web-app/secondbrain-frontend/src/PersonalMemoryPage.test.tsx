@@ -12,6 +12,15 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   headers: { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' } });
 
 describe('Personal Memory page', () => {
+  it('renders provenance from Core event source_type/source_ref fields', async () => {
+    const { source: _source, ...coreEvent } = row;
+    vi.stubGlobal('fetch', vi.fn(async () => json({ items: [{ ...coreEvent,
+      source_type: 'user_confirmed', source_ref: 'web-personal-memory-confirmation/key-1' }] })));
+    render(<PersonalMemoryPage locale="en" />);
+    await screen.findByText('synthetic preference');
+    expect(screen.getByText('Source: user_confirmed · web-personal-memory-confirmation/key-1')).toBeTruthy();
+  });
+
   it('does not write on load and retries an explicit correction with the same idempotency key', async () => {
     const posts: string[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
