@@ -261,7 +261,7 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
                       {activityMoreFailed && <p className="v1-page-state is-unavailable" role="alert">{t.moreFailed} <button type="button" onClick={() => setRevision((value) => value + 1)} disabled={activityLoadingMore}>{t.retryMore}</button></p>}
                       {activity?.pagination.has_more && <nav className="v1-pagination" aria-label={locale === 'en' ? 'Activity pages' : '动态分页'}>
                         <span>{locale === 'en' ? `${activity.items.length} events loaded` : `已显示 ${activity.items.length} 条动态`}</span>
-                        <button type="button" disabled={activityLoadingMore} onClick={() => {
+                        <button type="button" disabled={activityLoadingMore || activityMoreFailed} onClick={() => {
                           setActivityMoreFailed(false);
                           setActivityOffset(activity.pagination.offset + activity.pagination.limit);
                         }}>{activityLoadingMore ? t.loadingMore : t.loadMore}</button>

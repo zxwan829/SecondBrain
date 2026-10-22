@@ -227,9 +227,13 @@ describe('Notes application navigation gate', () => {
         if (laterPageAttempts === 1) return new Response('{}', { status: 503 });
         return new Response(JSON.stringify({
           status: 'ok', items: [{ activity_id: 'activity-page-2', kind: 'task', status: 'failed', occurred_at: '2026-10-19T16:00:00+08:00', task_status: 'open' }],
-          pagination: { limit: 50, offset: 50, has_more: false }, source: ['journal', 'tasks'], freshness: { checked_at: '2026-10-20T01:30:01Z' },
+          pagination: { limit: 50, offset: 50, has_more: true }, source: ['journal', 'tasks'], freshness: { checked_at: '2026-10-20T01:30:01Z' },
         }), { status: 200 });
       }
+      if (url === '/api/activity?limit=50&offset=100') return new Response(JSON.stringify({
+        status: 'ok', items: [{ activity_id: 'activity-page-3', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-18T09:30:00+08:00', journal_date: '2026-10-18' }],
+        pagination: { limit: 50, offset: 100, has_more: false }, source: ['journal', 'tasks'], freshness: { checked_at: '2026-10-20T01:30:02Z' },
+      }), { status: 200 });
       return new Response('{}', { status: 404 });
     });
     startAt('/activity');
@@ -240,12 +244,22 @@ describe('Notes application navigation gate', () => {
     fireEvent.click(screen.getByRole('button', { name: '加载更多动态' }));
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.getAllByText('日记操作').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '加载更多动态' }).hasAttribute('disabled')).toBe(true);
     expect(calls.filter((url) => url === '/api/activity?limit=50&offset=50')).toHaveLength(1);
 
     fireEvent.click(screen.getByRole('button', { name: '重试加载' }));
     expect((await screen.findAllByText('待办操作')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('日记操作').length).toBeGreaterThan(0);
     expect(calls.filter((url) => url === '/api/activity?limit=50&offset=50')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: '加载更多动态' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '加载更多动态' }));
+    expect(await screen.findByText('2026-10-18')).toBeTruthy();
+    expect(calls.filter((url) => url.startsWith('/api/activity?'))).toEqual([
+      '/api/activity?limit=50&offset=0',
+      '/api/activity?limit=50&offset=50',
+      '/api/activity?limit=50&offset=50',
+      '/api/activity?limit=50&offset=100',
+    ]);
     expect(screen.queryByRole('button', { name: '加载更多动态' })).toBeNull();
     expect(calls.some((url) => /sessions|messages|journal\/|tasks/.test(url))).toBe(false);
   });
