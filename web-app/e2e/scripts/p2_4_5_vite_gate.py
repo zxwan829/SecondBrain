@@ -154,13 +154,21 @@ try:
         evaluated = post("/api/companion/suggestions/evaluate", json={})
         assert evaluated.status_code == 200 and evaluated.json()["items"]
         assert "no-store" in evaluated.headers["cache-control"]
-        item = evaluated.json()["items"][0]
+        first_item = evaluated.json()["items"][0]
+        assert first_item["revision"] == 1
+        reevaluated = post("/api/companion/suggestions/evaluate", json={})
+        assert reevaluated.status_code == 200
+        item = next(row for row in reevaluated.json()["items"] if row["id"] == first_item["id"])
+        assert item["revision"] == 2
         fb_path = f"/api/companion/suggestions/{item['id']}/feedback"
         fb_headers = {"Origin": vite_origin, "Idempotency-Key": "feedback-01"}
-        first = client.post(fb_path, headers=fb_headers, json={"decision": "accepted", "expected_revision": 1})
-        replay = client.post(fb_path, headers=fb_headers, json={"decision": "accepted", "expected_revision": 1})
+        stale = client.post(fb_path, headers={"Origin": vite_origin, "Idempotency-Key": "feedback-stale"},
+            json={"decision": "accepted", "expected_revision": 1})
+        assert stale.status_code == 409
+        first = client.post(fb_path, headers=fb_headers, json={"decision": "accepted", "expected_revision": item["revision"]})
+        replay = client.post(fb_path, headers=fb_headers, json={"decision": "accepted", "expected_revision": item["revision"]})
         assert first.status_code == replay.status_code == 200 and first.json() == replay.json(), (first.status_code, first.text, replay.status_code, replay.text)
-        changed = client.post(fb_path, headers=fb_headers, json={"decision": "dismissed", "expected_revision": 1})
+        changed = client.post(fb_path, headers=fb_headers, json={"decision": "dismissed", "expected_revision": item["revision"]})
         assert changed.status_code == 409
         stale_task = app.state.task_store.create("Synthetic drift task", due, "synthetic-task-create-2")["task"]
         second_eval = post("/api/companion/suggestions/evaluate", json={})
@@ -175,9 +183,9 @@ try:
         hidden = client.get("/api/companion/suggestions", headers={"Origin": vite_origin})
         assert hidden.status_code == 200 and hidden.json()["items"] == []
         print(f"P2_4_HTTP: login={login.status_code}; candidates unauth={unauth.status_code}, available={p24.status_code}/{body['status']}, none={none.status_code}/{none.json()['status']}, drift={drifted.status_code}/{drifted.json()['status']}, session-mismatch={mismatch.status_code}, permission-denied={denied.status_code}; cache={p24.headers['cache-control']}")
-        print(f"P2_5_HTTP: prefs-default={pref.status_code}/off, evaluate-off={off.status_code}/{off.json()['status']}, save={saved.status_code}, get-no-lock={get_rows.status_code}/{not lock.exists()}, evaluate={evaluated.status_code}, feedback={first.status_code}, replay-equal={first.json() == replay.json()}, changed-replay={changed.status_code}, source-complete-hides={after_drift.status_code}, disable={disabled_save.status_code}, hidden={hidden.status_code}/{len(hidden.json()['items'])}")
+        print(f"P2_5_HTTP: prefs-default={pref.status_code}/off, evaluate-off={off.status_code}/{off.json()['status']}, save={saved.status_code}, get-no-lock={get_rows.status_code}/{not lock.exists()}, evaluate={evaluated.status_code}, re-evaluate-revision={item['revision']}, stale-feedback={stale.status_code}, feedback={first.status_code}, replay-equal={first.json() == replay.json()}, changed-replay={changed.status_code}, source-complete-hides={after_drift.status_code}, disable={disabled_save.status_code}, hidden={hidden.status_code}/{len(hidden.json()['items'])}")
         print("P2_4_CORE_HTTP_GATE=PASS_WITH_LIMITS: Vite same-origin proxy -> create_app/Uvicorn; 401/403/404/200; verified metadata, no-match, source drift, no-store, no source text/path, permission/session before Knowledge IO")
-        print("P2_5_CORE_HTTP_GATE=PASS_WITH_LIMITS: default-off -> explicit preferences/evaluate -> feedback exact replay/409 -> source completion invalidates -> disable hides; no-store; GET projection did not create .tasks.lock")
+        print("P2_5_CORE_HTTP_GATE=PASS_WITH_LIMITS: default-off -> explicit preferences/evaluate -> per-item revision increments on re-evaluation -> stale CAS 409/current CAS succeeds/exact replay -> source completion invalidates -> disable hides; no-store; GET projection did not create .tasks.lock")
         print(f"SYNTHETIC_ROOT={ROOT}; no real data, model, writer or Promote")
 finally:
     vite.terminate()

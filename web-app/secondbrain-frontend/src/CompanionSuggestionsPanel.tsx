@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 
 type Locale = 'zh-CN' | 'en';
-type Suggestion = { id: string; category: 'task_due' | 'project_next_step'; title: string; reason: string };
+type Suggestion = { id: string; category: 'task_due' | 'project_next_step'; title: string; reason: string; revision: number };
 type Preferences = { revision: number; enabled: boolean; categories: string[] };
 
 async function request(path: string, init?: RequestInit) {
@@ -9,8 +9,22 @@ async function request(path: string, init?: RequestInit) {
     ...(init?.headers ?? {}), ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
   } });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(String(body.detail ?? `HTTP ${response.status}`));
+  if (!response.ok) { const error = new Error(String(body.detail ?? `HTTP ${response.status}`)) as Error & { status?: number }; error.status = response.status; throw error; }
   return body;
+}
+
+function parseSuggestions(value: unknown): Suggestion[] {
+  if (!Array.isArray(value)) throw new Error('Companion suggestions are unavailable.');
+  return value.map((entry): Suggestion => {
+    if (!entry || typeof entry !== 'object') throw new Error('Companion suggestions are unavailable.');
+    const item = entry as Record<string, unknown>;
+    if (typeof item.id !== 'string' || !/^[a-f0-9]{32}$/.test(item.id)
+      || (item.category !== 'task_due' && item.category !== 'project_next_step')
+      || typeof item.title !== 'string' || typeof item.reason !== 'string'
+      || item.state !== 'shown' || !Number.isSafeInteger(item.revision) || (item.revision as number) < 1
+      || !item.source_ref || typeof item.source_ref !== 'object') throw new Error('Companion suggestions are unavailable.');
+    return { id: item.id, category: item.category, title: item.title, reason: item.reason, revision: item.revision as number };
+  });
 }
 
 export function CompanionSuggestionsPanel({ locale }: { locale: Locale }) {
@@ -34,7 +48,7 @@ export function CompanionSuggestionsPanel({ locale }: { locale: Locale }) {
         throw new Error(en ? 'Companion preferences are unavailable.' : '主动建议设置不可用。');
       }
       setPreferences({ revision: prefs.revision, enabled: prefs.enabled, categories: prefs.categories });
-      setItems(Array.isArray(suggestions.items) ? suggestions.items : []); setStatus(label(suggestions.status));
+      setItems(parseSuggestions(suggestions.items)); setStatus(label(suggestions.status));
     } catch (cause) { setItems([]); setError(cause instanceof Error ? cause.message : 'Companion unavailable'); }
   };
   useEffect(() => { void load(); }, []);
@@ -56,15 +70,25 @@ export function CompanionSuggestionsPanel({ locale }: { locale: Locale }) {
   const evaluate = async () => {
     setBusy(true); setError(''); setItems([]);
     try { const result = await request('/api/companion/suggestions/evaluate', { method: 'POST', body: '{}' });
-      setItems(Array.isArray(result.items) ? result.items : []); setStatus(label(result.status));
+      setItems(parseSuggestions(result.items)); setStatus(label(result.status));
     } catch (cause) { setItems([]); setError(cause instanceof Error ? cause.message : 'Evaluation failed'); }
     finally { setBusy(false); }
   };
   const feedback = async (item: Suggestion, decision: 'accepted' | 'dismissed') => {
-    setBusy(true); setError(''); const idem = crypto.randomUUID().replaceAll('-', '');
-    try { await request(`/api/companion/suggestions/${encodeURIComponent(item.id)}/feedback`, { method: 'POST', headers: { 'Idempotency-Key': idem }, body: JSON.stringify({ decision, expected_revision: 1 }) });
+    setBusy(true); setError(''); const intent = JSON.stringify({ id: item.id, decision, expected_revision: item.revision });
+    const idem = pending?.intent === intent ? pending.key : crypto.randomUUID().replaceAll('-', '');
+    setPending({ key: idem, intent });
+    try {
+      const receipt = await request(`/api/companion/suggestions/${encodeURIComponent(item.id)}/feedback`, { method: 'POST', headers: { 'Idempotency-Key': idem }, body: JSON.stringify({ decision, expected_revision: item.revision }) });
+      if (receipt.event !== 'companion.suggestion.feedback' || receipt.version !== 1 || receipt.id !== item.id
+        || receipt.revision !== item.revision + 1 || receipt.state !== decision) throw new Error('Companion feedback receipt is invalid.');
       setItems((current) => current.filter((candidate) => candidate.id !== item.id));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Feedback failed'); }
+      setPending(null);
+    } catch (cause) {
+      if ((cause as Error & { status?: number })?.status === 409) {
+        await load(); setError(en ? 'This suggestion changed. The list has been refreshed; review it and try again.' : '建议已变化，列表已刷新；请检查后重试。');
+      } else setError(cause instanceof Error ? cause.message : 'Feedback failed');
+    }
     finally { setBusy(false); }
   };
 

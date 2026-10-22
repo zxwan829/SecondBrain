@@ -143,8 +143,9 @@ def test_companion_real_localhost_http_preferences_evaluate_feedback_and_source_
             task_item = next(item for item in body["items"] if item["category"] == "task_due")
             project_item = next(item for item in body["items"] if item["category"] == "project_next_step")
             for item in body["items"]:
-                assert set(item) == {"id", "category", "title", "reason", "source_ref", "state", "expires_at"}
+                assert set(item) == {"id", "category", "title", "reason", "source_ref", "state", "expires_at", "revision"}
                 assert item["state"] == "shown"
+                assert item["revision"] == 1
                 assert set(item["source_ref"]) == {"kind", "id", "version"}
                 assert len(item["source_ref"]["version"]) == 64
             assert task_item["title"] == "Synthetic due task"
@@ -155,6 +156,7 @@ def test_companion_real_localhost_http_preferences_evaluate_feedback_and_source_
             repeated = client.post("/api/companion/suggestions/evaluate", headers=headers, json={})
             assert repeated.status_code == 200
             assert {item["id"] for item in repeated.json()["items"]} == {item["id"] for item in body["items"]}
+            assert all(item["revision"] == 2 for item in repeated.json()["items"])
             assert len(app.state.companion_suggestion_store.read()["suggestions"]) == 2
 
             task_lock = roots["tasks"] / ".tasks.lock"
@@ -162,17 +164,23 @@ def test_companion_real_localhost_http_preferences_evaluate_feedback_and_source_
             task_lock.unlink()
             listed = client.get("/api/companion/suggestions", headers=headers)
             assert listed.status_code == 200 and len(listed.json()["items"]) == 2
+            listed_task = next(item for item in listed.json()["items"] if item["category"] == "task_due")
+            assert listed_task["revision"] == 2
             assert listed.headers["cache-control"] == "private, no-store"
             assert not task_lock.exists()
             receipt_url = f"/api/companion/suggestions/{task_item['id']}/feedback"
             feedback_headers = {**headers, "Idempotency-Key": "feedback-task-1"}
-            feedback_body = {"decision": "accepted", "expected_revision": 1}
+            stale_feedback = client.post(receipt_url,
+                headers={**headers, "Idempotency-Key": "feedback-task-stale"},
+                json={"decision": "accepted", "expected_revision": 1})
+            assert stale_feedback.status_code == 409
+            feedback_body = {"decision": "accepted", "expected_revision": listed_task["revision"]}
             accepted = client.post(receipt_url, headers=feedback_headers, json=feedback_body)
             assert accepted.status_code == 200 and accepted.json()["status"] == "accepted"
             replay = client.post(receipt_url, headers=feedback_headers, json=feedback_body)
             assert replay.status_code == 200 and replay.json() == accepted.json()
             changed_replay = client.post(receipt_url, headers=feedback_headers,
-                                         json={"decision": "dismissed", "expected_revision": 1})
+                                         json={"decision": "dismissed", "expected_revision": listed_task["revision"]})
             assert changed_replay.status_code == 409
 
             _project_file(roots["projects"], next_step="Changed source version")

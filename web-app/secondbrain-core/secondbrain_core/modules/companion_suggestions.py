@@ -346,6 +346,9 @@ class CompanionSuggestionStore:
                                and now - (_parse_stamp(row["created_at"]) or now) < _TTL), None)
                 if recent is not None:
                     if recent["state"] == "shown" and _parse_stamp(recent["expires_at"]) > now:
+                        # Publishing the candidate again invalidates any UI that
+                        # was rendered from the previous evaluation.
+                        recent["revision"] += 1
                         visible.append(recent)
                     continue
                 created = _stamp(now)
@@ -374,7 +377,7 @@ class CompanionSuggestionStore:
 
     @staticmethod
     def _public(row):
-        return {key: row[key] for key in ("id", "category", "title", "reason", "source_ref", "state", "expires_at")}
+        return {key: row[key] for key in ("id", "category", "title", "reason", "source_ref", "state", "expires_at", "revision")}
 
     def feedback(self, suggestion_id, *, decision, expected_revision, idempotency_key, now=None):
         now = now or _utc_now()

@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-10-22 — PR #181 Companion Feedback revision 合同修复
+
+- 按 Issue #96 PMO 评论 #6331548178 修复跨层缺陷：Core 的 suggestion 公共 DTO 现返回每条建议的正整数 `revision`；重复 evaluate 再次发布仍有效候选时递增该候选 revision，使旧 UI 的反馈 CAS 明确得到 409。Web 严格校验候选 revision、用服务端 revision 提交反馈、校验回执，并在 revision 冲突后重读当前列表并显示提示。
+- Web 反馈在网络/服务端模糊失败后保留同一 payload 的幂等键，重试原操作使用相同 key；成功回执校验通过后才从 UI 移除候选。
+- 回归证据：`PYTHONPATH=web-app/secondbrain-core /private/tmp/secondbrain-p2-1-venv/bin/python -m pytest -q web-app/secondbrain-core/tests/test_companion_suggestions.py` → 5 passed；覆盖真实 localhost Uvicorn HTTP、首发 revision=1、再 evaluate revision=2、revision=1 stale 409、revision=2 成功、原回执精确重放、改 payload 冲突以及来源漂移失效。Web 组件定向 `npm test -- --run src/CompanionSuggestionsPanel.test.tsx` → 2 passed，覆盖 revision=3 提交、503 后相同幂等键/请求体重试、409 刷新。
+- 完整同源 HTTP 合成 Gate：`PYTHONPATH=/private/tmp/p2-2-3-ab-gate-20261022/web-app/secondbrain-core /private/tmp/secondbrain-p2-1-venv/bin/python /private/tmp/p2-2-3-ab-gate-20261022/web-app/e2e/scripts/p2_4_5_vite_gate.py` → P2-4 既有检查通过；P2-5 observed re-evaluate revision=2、stale feedback=409、当前 revision feedback=200、exact replay=True、changed replay=409、来源完成后隐藏、disable 后 empty、no-store 且 GET 未创建 `.tasks.lock`。纯合成临时根，无真实数据/模型/Writer/Promote。
+- `npm run typecheck` PASS；`npm run build` PASS（保留既有 Canvas/Notes 大 chunk 提示）；`git diff --check` PASS。仅运行受影响 Core/Web 定向测试与完整既有 localhost 集成 Gate，未重跑无关全量套件。
+- 当前候选 PR #181 保持 Draft；本条记录中的新固定 HEAD 以修复提交为准，等待 PMO 对新 SHA 独立复审。未合并、未部署、未访问真实数据、未触发 CI。
+
 ## 2026-10-22 — P2-4/P2-5 最终联合 Gate（Issue #96/#97）
 
 - 从 main `57d0d3d94f92d235dd8c0c088bb1561cde76f3ae`（#178 merge）建立隔离分支。核对 #179 `ecb4b18b26e467643b7f0b2ef0d69e036796c5ff` 的历史累计依赖后，只移植净 P2-4；核对 #180 `d16773d61edbbc41a115f2c826eee84ee3832902` 后移植到当前 main，`app.py` 路由注册冲突同时保留 Context Preview 与 Companion Suggestions。未改写 #175/#179/#180 原分支。

@@ -8,11 +8,11 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 阶段二 P2-4/P2-5 集成复审与联合 Gate（Issue #96/#97）
+## 2026-10-22 阶段二 P2-4/P2-5 联合 Gate 与 Companion revision 合同修复（Issue #96/#97）
 
 - **当前 GitHub 源码基线：** main `57d0d3d94f92d235dd8c0c088bb1561cde76f3ae`（#178 已合并）。隔离候选从该提交出发，仅移植 #179 净 P2-4 与 #180 P2-5，不复制其过时依赖；#175/#179/#180 均未改写。候选及此处结果以最新进度记录中的固定 HEAD 为准。
 - **独立复审发现并修复：** Companion 幂等回放必须返回原始回执；Suggestions 只读 Task 读取不可创建 `.tasks.lock`；Grounding candidates 在响应边界再次核验来源版本。Today 增加显式展开的 Companion 用户入口；Chat 增加只读 Knowledge Grounding Candidates 面板，并严格显示 `answer_attribution=not_established`。
-- **联合 Gate：** `P2_4_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`、`P2_5_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`。实际 create_app()+Uvicorn 经 Vite 同源 `/api` 代理的请求证据见最新 Progress Log；另有 DOM/组件回归验证明确展开/点击才请求。Core 全量 501 passed + 28 subtests 是不变 Core HEAD 的既有证据；本轮 Web 受影响定向 4 files / 23 tests、typecheck、build、diff-check PASS。真实浏览器、真实模型、生产及用户验收 NOT RUN；`MODEL_CONTEXT_ADMISSION=BLOCKED`。未合并、未部署、未访问真实数据、未触发 CI。
+- **联合 Gate 与反馈合同：** `P2_4_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`、`P2_5_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`。按 PMO 评论 #6331548178 修复 per-suggestion revision：重复 evaluate 递增再发布候选 revision，Core GET/evaluate 输出 revision，Web 反馈使用实际 revision、检查回执并在 409 刷新列表；跨层覆盖 revision>1 成功和 stale revision 409。实际 create_app()+Uvicorn 经 Vite 同源 `/api` 代理及定向测试见最新 Progress Log。真实浏览器、真实模型、生产及用户验收 NOT RUN；`MODEL_CONTEXT_ADMISSION=BLOCKED`。未合并、未部署、未访问真实数据、未触发 CI。
 - **候选与边界：** PR [#181](https://github.com/zxwan829/SecondBrain/pull/181) 保持 Draft，最新固定 HEAD 见本条 Progress Log 与 PR；本次不转 Ready、不合并、不部署。
 
 ## 历史：2026-10-22 阶段一收口与阶段二 P2-1/2/3 集中合并准备（Issue #96/#97）
