@@ -10,12 +10,13 @@ from fastapi.testclient import TestClient
 from secondbrain_core.modules.app_auth import AppSessionAuth
 from secondbrain_core.modules.daily_brief_import import DailyBriefAuditStore
 from secondbrain_core.modules.journal import JournalStore
+from secondbrain_core.modules.personal_memory import PersonalMemoryStore
 from secondbrain_core.modules.projects_activity_read import create_projects_activity_router
 from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStore
 from secondbrain_core.modules.tasks import TaskStore
 
 
-def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_audit=None):
+def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_audit=None, memory=None):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-password-value\n")
     os.chmod(password_file, 0o600)
@@ -27,6 +28,7 @@ def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_a
     app.include_router(create_projects_activity_router(
         auth, journal, tasks, projects_store=projects,
         daily_brief_audit_store=daily_brief_audit,
+        memory_store=memory,
     ))
     client = TestClient(app, base_url="https://app.test")
     client.cookies.set(auth.COOKIE_NAME, token)
@@ -45,6 +47,13 @@ def make_tasks(tmp_path):
     root.mkdir(mode=0o700)
     os.chmod(root, 0o700)
     return TaskStore(str(root))
+
+
+def make_memory(tmp_path):
+    root = tmp_path / "memory"
+    root.mkdir(mode=0o700)
+    os.chmod(root, 0o700)
+    return PersonalMemoryStore(root)
 
 
 def test_projects_is_authenticated_truthful_empty_contract(tmp_path):
@@ -174,6 +183,53 @@ def test_activity_includes_explicit_tasks_without_chat_session_id(tmp_path):
     assert response.json()["items"][0]["status"] == "succeeded"
     assert "PRIVATE" not in response.text
     assert "synthetic-task-no-session" not in response.text
+
+
+def test_activity_projects_personal_memory_operation_metadata_only_without_creating_lock(tmp_path):
+    memory = make_memory(tmp_path)
+    created = memory.create(content={"text": "PRIVATE synthetic memory content"},
+                            category="preference", fact_kind="user_stated",
+                            source_type="user_message", source_ref="session/synthetic",
+                            idempotency_key="synthetic-memory-create")
+    memory.correct(created["memory_id"], content={"text": "PRIVATE corrected memory"},
+                   source_type="user_confirmed", source_ref="session/synthetic",
+                   expected_revision=1, idempotency_key="synthetic-memory-correct")
+    memory.lock_path.unlink()
+
+    response = make_client(tmp_path, memory=memory).get("/api/activity")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == ["personal_memory"]
+    assert {item["status"] for item in body["items"]} == {"created", "corrected"}
+    assert all(set(item) == {"activity_id", "kind", "status", "occurred_at"}
+               and item["kind"] == "personal_memory" for item in body["items"])
+    assert "PRIVATE" not in response.text
+    assert "synthetic-memory" not in response.text
+    assert created["memory_id"] not in response.text
+    assert not memory.lock_path.exists()
+
+
+def test_activity_personal_memory_permission_is_preflighted_before_read(tmp_path, monkeypatch):
+    memory = make_memory(tmp_path)
+    reads = []
+    monkeypatch.setattr(memory, "read_activity_events", lambda: reads.append(True) or [])
+    client = make_client(tmp_path, memory=memory)
+    auth = client.app.state.test_auth
+    original_require_action = auth.require_action
+
+    def deny_memory_before_io(request, action):
+        if action == "personal_memory.read":
+            raise __import__("fastapi").HTTPException(status_code=403, detail="denied")
+        return original_require_action(request, action)
+
+    monkeypatch.setattr(auth, "require_action", deny_memory_before_io)
+    response = client.get("/api/activity")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["source"] == []
+    assert reads == []
 
 
 def test_activity_window_timezone_and_query_errors(tmp_path):

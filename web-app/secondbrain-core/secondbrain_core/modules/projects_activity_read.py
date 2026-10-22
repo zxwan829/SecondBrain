@@ -255,9 +255,45 @@ def _daily_brief_rows(store, start, end, zone):
     return rows, not complete
 
 
+def _personal_memory_rows(store, start, end, zone):
+    """Project only operation type/time from the bounded Personal Memory log."""
+    if store is None:
+        return [], False
+    try:
+        events = store.read_activity_events()
+    except Exception:
+        return [], True
+    rows = []
+    complete = isinstance(events, list)
+    if not complete:
+        return [], True
+    status_by_operation = {
+        "create": "created", "correct": "corrected",
+        "revoked": "revoked", "expired": "expired",
+    }
+    for event in events:
+        if not isinstance(event, dict):
+            complete = False
+            continue
+        event_id, operation = event.get("event_id"), event.get("operation")
+        occurred = _occurred_at(event.get("recorded_at"), zone)
+        if (not isinstance(event_id, str) or not event_id or len(event_id) > 128
+                or operation not in status_by_operation or occurred is None):
+            complete = False
+            continue
+        if _within_window(occurred, start, end, zone):
+            rows.append({
+                "activity_id": _opaque_id("personal_memory", event_id, event_id),
+                "kind": "personal_memory",
+                "status": status_by_operation[operation],
+                "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            })
+    return rows, not complete
+
+
 def create_projects_activity_router(auth, journal_store=None, task_store=None,
                                     projects_store=None, notes_store=None,
-                                    daily_brief_audit_store=None):
+                                    daily_brief_audit_store=None, memory_store=None):
     router = APIRouter(prefix="/api")
     projects_store = projects_store or ProjectsSourceReadStore(None)
 
@@ -338,6 +374,7 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
             ("daily_brief", daily_brief_audit_store if daily_brief_audit_store is not None
              and daily_brief_audit_store.configured else None,
              "daily_brief.read"),
+            ("personal_memory", memory_store, "personal_memory.read"),
         ]
         configured = [(name, store, action) for name, store, action in candidates if store is not None]
         if not configured:
@@ -381,6 +418,10 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
             elif name == "daily_brief":
                 brief_rows, partial = _daily_brief_rows(store, start, end, zone)
                 rows.extend(brief_rows)
+                read_failed = read_failed or partial
+            elif name == "personal_memory":
+                memory_rows, partial = _personal_memory_rows(store, start, end, zone)
+                rows.extend(memory_rows)
                 read_failed = read_failed or partial
         rows.sort(key=lambda row: (row["occurred_at"], row["activity_id"]), reverse=True)
         page_rows = rows[offset:offset + limit]
