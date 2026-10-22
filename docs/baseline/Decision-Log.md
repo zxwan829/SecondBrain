@@ -457,3 +457,58 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 **冻结范围：** `GET /api/daily-brief/source-options/journal?date=YYYY-MM-DD&limit=N`。要求规范日期、limit 默认 20 且范围 1–50；校验可信 Origin、App Session、`daily_brief.read` 与 `journal.read`。响应仅包含 `status/items/freshness`，每项仅含 `kind/id/date/version`；不得返回正文、路径、Session、异常细节。只读同日记录，按稳定行 ID 排序并执行 1 MiB 单日字节、5000 行/日及 2 MiB 请求预算，超限 fail closed。
 
 **状态：** D089 合同已由 PR #128 固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b` 合并至 main（merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）；Core 正式只读路由已注册。B 报告 Core 全量和 localhost HTTP 验证通过，A 留有对最终 HEAD 的独立验收记录。该状态仅代表源码合并及本地合成证据，不代表部署、真实 Journal/Vault 访问或用户验收；实施状态见 `00-CURRENT.md`，证据见 `Progress-Log.md`。此 ID 取代 #97/#128 历史评论中误用的 D087 标签，不影响 D087 渠道架构决定。
+
+## D090 — 2026-10-23 Authority-only IPC / Strict create-only 一次性安全架构裁定（APPROVED FOR NON-PRODUCTION IMPLEMENTATION）
+
+**依据与范围：** 用户要求仅裁定 [Issue #97 C0 #6345462222](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6345462222)，裁定后授权 B 在边界内自主开发/调试/测试；Daily Brief approved_import、PR #201 常规复审及 A/B 集成交回负责人。本决定批准目标架构与非生产实现，不代表现有代码、OS Gate 或生产准入通过。旧 #106 Core-peer 协议及 #193 固定测试不得冒充新协议证据。
+
+### 四项直接裁定
+1. **YES：** 三个独立服务身份 Core / Approval Authority / Writer，采用 Authority-only 的 pathname Unix socket + 真实 SO_PEERCRED。审批人仍为项目所有者，不需要第二人或第二 GitHub 账号。
+2. **YES，附下述必要约束：** Landlock **ABI >= 3**、no_new_privs、零 capabilities 的单次 Writer + 同文件系统 no-replace 原子发布，是首选非生产实现/实验路线；同时允许最小 seccomp syscall allowlist 和现有 namespace 隔离补足 Landlock 未覆盖动作。不是“只装 Landlock 即严格 create-only”；不满足完整不变量就 fail closed/BLOCKED，不退化为普通 rename 或 exists 检查。
+3. **原提案方向 YES，但单纯 CAS 方案 NO：** 批准“发布前撤销胜出，发布后不自动删除”；必须按下述同一提交串行域落地，不能以分离的 CAS 和 link 声称已线性化。
+4. **YES：** 人工证明来源未成立时 Authority 拒发真实 grant。Core Session、裸 UI approved=true、Passkey UV 单独均不足以证明用户批准了这份具体字节/目标。允许合成 proof provider 用于隔离测试，必须明确 test-only，生产不能注册；不因此强制引入 Passkey 或另一个审批人。
+
+### 允许的信任主体与权限拓扑
+- **Core UID**：已有受限 Raw/Capture/业务状态权限；Knowledge RO；无 Authority 私钥/账本写权限，无 Writer socket/其FD访问，不得以 Agent 或 HTTP 身份字段冒充批准。Hermes 继续独立、无批准密钥/Writer IPC/Knowledge RW/Private。
+- **Authority UID**：唯一批准证明验证、grant签名/消费/撤销与账本权威；只读必要 Review/来源，不挂 Knowledge RW，不向 Core/Writer泄露私钥，不接收其自报“人工已批准”作为证明。用户确认必须绑定由可信方核验的单一操作、目标和精确内容；真实 proof 的具体来源仍是独立缺口，本决定不假装已解决。
+- **Writer UID**：与 Core/Authority 均不同；不持签名私钥，不读 Raw/Private/其他会话，不调用模型/外网；只接有界批准字节及必要验证材料。验证公钥可以只读。Knowledge 只暴露精确目标所需视图，绝不把整棵 Vault/宿主 RW 暴露给它。
+- **受信启动器**：仅负责已审固定代码的进程/namespace/FD/身份与沙箱初始化；在不处理不可信正文前完成降权和收窄。不得作为沙箱外长期同 Writer UID 的写入旁路、root代写助手、通用命令入口。可复用既有临时 Linux 实验编排，不新增业务服务、微服务或通用权限系统。
+- 无共享身份/补充组放宽上述边界。宿主 root/内核/可信启动器不被宣称为沙箱可抵御的对手；不同角色必须隔离 ptrace、/proc/FD、可写代码/配置、环境与密钥。没有同 UID 沙箱外可写进程或可被重新取得的权限。
+
+### Authority-only IPC 与 grant 合同
+- 采用受保护目录内 pathname AF_UNIX socket；父目录/套接字 DAC 和只含 Authority 的连接组阻止 Core/Hermes/其他UID正常connect。Writer 对每个连接在读取正文前验证真实 SO_PEERCRED 的精确 Authority UID 及约定有效GID，不以组成员/PID/请求字段代替。无peer能力则拒绝。
+- socket创建/连接时身份及namespace映射必须一致可核验；不把不同user namespace中的相同数字视为同一身份。禁止跨域传递已认证socket/可写FD，禁止其他UID通过继承的Authority连接代发；验证公钥和协议版本由受保护配置固定。
+- grant 至少绑定 protocol/key ID、approval/operation ID、来源revision/hash、**最终将发布的精确字节**hash/长度、服务端唯一target ID、create_only、有效期/nonce及受众。规范化必须在人工预览/证明绑定前完成；批准后不再静默改正文或frontmatter。Writer不得接受任意路径、shell参数或caller root。
+- Authority持久预留/单次消费，不等于调用前先“花掉一次”后凭异常自动新发。相同operation精确重放只读回既有状态；变字节/目标/意图/nonce/撤销revision/旧key/过期拒绝且不写Knowledge。已撤销/轮换key不使旧grant复活。
+
+### Strict create-only 的实现边界
+必须区分两项保证：**内核/隔离保护已有文件与元数据**，以及**整个受控提交路径只发布一个批准目标和批准字节**。协议验证不能冒充前者；通用目录的 MAKE_REG 权限不能冒充按文件名的一次授权。
+
+- 强制处理目标内核所需 filesystem rights，至少覆盖 WRITE_FILE/TRUNCATE/REMOVE/REFER 和各 MAKE_*；只允许实验已证明必需的create/link路径。READ/WRITE/TRUNCATE分开验证，不能靠禁TRUNCATE而放任write/fallocate/mmap等改内容。
+- **Landlock不覆盖chmod/chown/xattr等全部元数据动作，也不撤销既有FD权限。** 允许最小seccomp allowlist封禁相关改权限/元数据、删除/重命名、重新挂载/namespace、ptrace/进程控制等不需要的syscall，并按实际语言runtime验证。seccomp不能解引用路径字符串，不能用字符串指针/路径前缀伪造精确目标隔离。
+- 一次性Writer受限进程/子进程全程受同等或更严策略。清除 permitted/effective/inheritable/ambient/bounding capabilities，no_new_privs；继承FD为明确allowlist，无宿主socket、外部可写FD、长期批准连接或TTY。禁止CAP_DAC_READ_SEARCH、CAP_SYS_ADMIN、privileged容器、Docker socket或宿主保护降级。
+- 可在受控staging阶段准备本次临时inode；**发布阶段及发布后不得留下任何可改最终inode的FD、映射、链接别名或可接收FD的旁路**。必须验证创建→hash/fsync→发布→退出间的攻击窗口；不能只在进程退出后检查一次权限。
+- 首选同一固定目标目录/文件系统的O_TMPFILE与no-replace link；linkat(AT_EMPTY_PATH)所需特权不得默认授予，可验证/proc/self/fd替代，但只暴露本次受限进程的必要视图且不能借magic link逃逸。无需增加capability且所有边界成立才可接受。no-replace成功是可见发布点，持久成功还需文件及父目录fsync/回执一致。
+- **精确目标/第二次发布必须单独证明。** 对父目录放行MAKE_REG或LINK不天然限制basename、次数、hardlink别名或任意内容；“只执行一次函数”不是对恶意Writer的隔离证明。必须有等效的受控提交边界和故障/绕过负例，不能只给整个Knowledge目录普通RW。
+- 若现有三角色内无法实现目标/字节绑定或已有文件保护，则对应子门禁BLOCKED_PRIMITIVE；B继续协议和不依赖项，不伪称strict通过。**若需新增具备Knowledge写权的信任主体/提交broker、扩大Authority权限、特权helper或放松上述威胁模型，属于新的重大架构变化，才需再次上报PMO。** 不为满足实验偷偷引入第四写权主体。
+
+### 撤销/提交/崩溃的冻结语义
+- Authority对同一operation建立持久的预留、撤销与提交状态。最终验证、commit许可和Writer no-replace发布必须处于**同一串行化的提交临界区**；可用既有单体中的最小协调协议/持久状态完成，不预建分布式事务框架。
+- **撤销成功已持久化并确认 → 该operation之后绝不能发布。** 已进入临界区而尚未确认结果时，撤销应返回pending/in_progress或等待，不能先回“已撤销”再容许Writer继续link。
+- Authority在最终检查后至link结果确定前保持提交互斥；Writer不得脱离该域延迟发布。Authority崩溃/连接丢失时，in-flight状态不得因锁释放、超时或重启而当成可撤销/可重试；先fence并确认旧Writer不可能再发布，或只读对账，歧义进入recovery_required。仅“提交前再读一次revision”不足。
+- no-replace link先成功，则之后的撤销只禁止新动作；不自动unlink/覆盖既有目标。claim/CAS不能被称为文件可见提交点；hash、目录元数据或审计不同步时不报durable success。
+- Raw、批准账本、Knowledge和审计无跨文件系统全局原子承诺。异常/目标不匹配保留原样、只读诊断、人工恢复；精确重放可查询原状态，不能绕过过期/撤销重新执行发布。所有自动清理/恢复写另行限定。
+
+### B 自主实施与 A 线日常审核授权
+本用户请求明确授权：B按上述冻结边界复用现有代码、在独立Core分支自主开发、调试、必要定向测试、修复及Draft PR交付，不再逐字段/函数/普通bug请示PMO。Landlock/seccomp/FD卫生、同串行域协调、协议错误码/数据结构等在上述边界内由B决定，A常规复审和集成。
+
+可复用**已获准的一次性、无Secrets/真实数据/宿主业务目录的Linux合成环境**做本架构必需的三身份与内核专项；A核对固定代码、隔离初始化和现有资源/费用授权后组织执行/复测，无须逐次上报PMO。root仅可用于该一次性环境已审的初始化与降权；产品角色为独立非root、零caps。此处不授权新建付费/持久runner、改开发宿主安全设置、生产/NAS/真实数据、特权容器或突破工具自动审批。环境启动失败与产品断言失败分层记录；最小相关回归即可，不每轮全量。
+
+**最小交付：** 固定HEAD与协议/状态机；Authority-only正常/错误UID（含继承FD尝试）；伪grant/撤回/过期/漂移/重放；恶意Writer改已有文件/元数据、第二目标/第二link、发布后FD写；撤销与提交强制交错、Authority/Writer崩溃/重启/歧义。每项标CODE/SYNTHETIC/OS实际结果，skip不是PASS；不把旧Core-peer测试重新包装。审查/合并/阶段收口由A负责，用户最终体验由用户确认。
+
+**明确下放：** Daily Brief approved_import常规接口设计、PR #201独立复审、A/B合同兼容及集成协调由A/B按D088/D089现有规格处理，不列为PMO前置签字。只有正式规格冲突或新增重大安全架构变化升级PMO。
+
+**生产硬边界：** Writer/Promote保持OFF、Core Knowledge RO、Private排除；本决定不扩大既有生产、真实数据、外发、模型费用或部署授权。目标拓扑获批不等于OS/生产Gate通过；真实人工proof缺失仍fail closed。
+
+**技术依据（仅支持具体限制，不代替本项目实验）：** [Linux Landlock文档](https://docs.kernel.org/userspace-api/landlock.html)（ABI/TRUNCATE、未覆盖的元数据动作及FD语义）；[linkat(2)](https://man7.org/linux/man-pages/man2/linkat.2.html)（no-replace、AT_EMPTY_PATH capability与proc FD替代）；[Linux seccomp文档](https://www.kernel.org/doc/html/latest/userspace-api/seccomp_filter.html)（syscall参数过滤不读取路径指针）；[unix(7)](https://man7.org/linux/man-pages/man7/unix.7.html)（peer凭据与FD传递边界）。
+
