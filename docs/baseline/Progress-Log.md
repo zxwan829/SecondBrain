@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-10-22 — Writer/Promote OS 安全准入与 Linux 隔离实验方案（Issue #96 PMO #6333663799）
+
+- **固定基线与审查输入：** 从 main `563a6fa8e4d6032a34536d879321738c20cf3c24` 的隔离 clone/branch 开始。读取项目 AGENTS、Agent-Rules、CURRENT、审计计划、Environment-Baseline 与 D067/D072/D073/D078/D086 相关边界，并引用 B #97 #6333624251。Environment-Baseline 最近记录为 2026-10-15；只作历史快照，不能当作当前运行事实。
+- **设计修订：** 更新 `Production-Readonly-Security-Audit-Plan.md`，提出独立 Core/Raw、Approval Authority、Writer identities；Authority-only Unix socket + `SO_PEERCRED`；Core/Hermes 无 Knowledge 写权限、Private 不挂载；单次授权 capability 与 exact-target create-only；禁止覆盖/删除/重命名；显式指出普通 POSIX 目录写权限不能单独实现 create-only，要求验证 Landlock 或等价内核策略，不支持即阻断；补充源版本竞态、幂等恢复、损坏状态保留及补偿回滚要求。
+- **授权包及 Linux 矩阵：** 生产审计要求精确 host/operator/window/container/path/commands/evidence allowlist，字段仍 UNKNOWN。Linux 后续实验只计划在全新 disposable、断网 VM + 临时盘 + synthetic roots 执行，覆盖 UID:GID/peer credentials/socket ACL、Core 直写拒绝、Writer create-only、撤权/版本竞态、崩溃恢复、日志与副作用；不挂载主机/生产数据，不使用容器 socket、Secret 或模型。`OS_ISOLATION_DESIGN=READY_FOR_REVIEW`，`PRODUCTION_READONLY_AUDIT=READY_FOR_TARGETED_AUTHORIZATION`，`LINUX_ISOLATION_TEST=PLAN_ONLY`。
+- **最小验证及边界：** 文档/引用/状态静态核对、`git diff --check`；无代码运行测试。未创建 VM/系统用户，不实际测 Linux 身份/socket/mount/ACL，不连接 NAS/生产，不读 Secrets/Private/业务数据，不修改 B 线文件或权限，不启用 Writer/Promote。
+- **未决项：** Authority 如何独立证明已认证用户确认需契约复审；真实生产目标/身份/挂载/ACL 与实验 runner/kernel/filesystem 都 UNKNOWN。该方案不能证明生产安全、也不授权生产审计或 Linux 实验。
+
 ## 2026-10-22 — Hermes 离线合成角色隔离与生产审计授权包（Issue #96 PMO #6333466319）
 
 - **基线/范围：** 从 GitHub main `140bf90620a922ec6e855e3fae8853952fd65019` 创建隔离分支。只新增 D078 Guard 安全回归和审计计划文档修订，无 Core/运行逻辑变化。

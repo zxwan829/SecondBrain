@@ -8,7 +8,15 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 Hermes 离线合成角色隔离与生产只读审计授权包（Issue #96，PMO #6333466319 / 精简原则 #6333522455）
+## 2026-10-22 Writer/Promote OS 安全准入准备（Issue #96，PMO #6333663799）
+
+- **固定源码基线：** `main` `563a6fa8e4d6032a34536d879321738c20cf3c24`。B #97 审计 #6333624251 报告 main 无独立受限 Writer、Promote 同 UID、生产 `SB_PROMOTE_ENABLED` 保持 fail closed；其 43 定向测试与 4 subtests 是 Core 合成证据，不能证明 OS 隔离。#106 历史 Linux 证据不代表当前 main/生产。
+- **文档交付：** 在现有 [Production-Readonly-Security-Audit-Plan.md](Production-Readonly-Security-Audit-Plan.md) 补入最小 Core/Raw、Approval Authority、Writer UID:GID 与 `SO_PEERCRED` 信任拓扑，Knowledge/Private 挂载和目录动作边界，单次 create-only capability、崩溃恢复/人工回滚，以及无真实数据挂载的 disposable Linux VM 验收矩阵与清理边界。未改 B 线代码或文档。
+- **Gate：** `OS_ISOLATION_DESIGN=READY_FOR_REVIEW`；`PRODUCTION_READONLY_AUDIT=READY_FOR_TARGETED_AUTHORIZATION`；`LINUX_ISOLATION_TEST=PLAN_ONLY`。主机、操作者、容器、当前 UID:GID/组、精确挂载/ACL、Secrets 目标、VM runner/kernel/filesystem 全部保持 `UNKNOWN`，须由用户另行指定/授权。该计划不是生产审计或最终架构批准。
+- **最小验证：** 仅检查基线/引用准确性、文档一致性及 `git diff --check`；未跑代码测试（纯文档改动）。未创建 Linux VM/用户或 mount，未运行 UID/GID、peer credential、ACL 或写探针。
+- **安全边界与 NEXT：** 未连接生产/NAS，未访问真实数据/Secrets，未改 UID/GID/ACL/mount/Compose，未启用 Writer/Promote，未触发生产动作。下一步由 PMO/用户复审设计并补齐实验 runner 与目标授权；在单独授权前保持生产 gate BLOCKED。
+
+## 历史：2026-10-22 Hermes 离线合成角色隔离与生产只读审计授权包（Issue #96，PMO #6333466319 / 精简原则 #6333522455）
 
 - **固定基线与范围：** 从 `main` `140bf90620a922ec6e855e3fae8853952fd65019` 建隔离分支。本轮改动为 D078 Guard 离线日志/拒绝回执回归测试，以及生产只读安全审计计划的静态复核/可执行授权清单；未改 Core 运行逻辑。未发现测试路径中的新 P0/P1 缺陷；未发现需转交 B 的 Core 缺陷。
 - **离线合成 Gate：** `HERMES_OFFLINE_ROLE_ISOLATION_GATE=PASS_WITH_LIMITS`。使用 Fake Hermes `httpx.MockTransport` + 临时 synthetic roots 的 BFF 定向测试 3 passed；`test_capture_suggestion_binding.py` 29 passed；D078 插件单测 23 passed（含新增跨 Chat Session 私有路径拒绝且拒绝回执/日志不含合成 marker 测试）。覆盖 Session A/B citation 绑定、未授权/撤权后来源及 citation I/O 为零、来源未许可时不回传引用、D078 对 Hermes Session/credential 私有路径 fail closed 和敏感 marker 不进拒绝输出/日志。未运行真实 Hermes/model/network；不证明多真实用户、进程或 OS UID 隔离。
@@ -61,7 +69,7 @@ source: GitHub SecondBrain Monorepo
 - **阶段一第 4 部分（可信 Knowledge 检索参考）已合并：** Core [PR #165](https://github.com/zxwan829/SecondBrain/pull/165) merge `b825466c2bc8068e5b014adb807a31601c0cdbba`；Web [PR #166](https://github.com/zxwan829/SecondBrain/pull/166) merge `b6cd1ffb9423b1941ea2be5cff63e846b07758f8`。[#96 合成证据](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6318462056)、[#97 Core 修复证据](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6318466092)，评审结论 `PASS_WITH_LIMITS`。交付内容为 Core 受控检索、SHA/provenance 再验证、SSE/history 参考元数据与 Web“检索参考”展示/本地刷新回读；**不证明模型使用 Knowledge 形成回答**。知识正文未注入 Hermes system-level instructions 或原始 input；低信任模型上下文角色验证、跨设备 run 索引与真实模型 grounding 均尚未完成。Core 最终 HEAD 定向 32 passed；此前全量 469 项属于前一 HEAD，最终 HEAD 全量 `NOT RUN`（明确接受限制）。
 - **阶段一第 5 部分（Journal / Projects / Daily Brief 手工业务闭环）已合并：** Core [PR #167](https://github.com/zxwan829/SecondBrain/pull/167) merge `9455a108b747a317fd37c03c3949b3b2f93761d6`；Web [PR #168](https://github.com/zxwan829/SecondBrain/pull/168) merge `a32bf3907878f2f4f2eac5621a5e58ed6e7be25c`。Core 提供 Task 的权威 `source_ref`、Task/Project/Journal 来源权限及版本校验、手工 Brief 写入/精确回读/失败恢复与 no-store；Web 完成来源选择/回跳、Projects 分页、Journal 日期与条目定位、保存回执与刷新故障区分。A 报 Core+Vite 本地合成 HTTP 主流程及定向 4 PASS、Web 定向 81/full 380 PASS；B 报 Core 全量 470 PASS + 28 subtests。[#96 A/B Gate 证据](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6319368596) 为 `PASS_WITH_LIMITS`，真实浏览器点击受环境停止门 `BLOCKED_ENV/NOT RUN`。Brief 仅用户**明确触发的手工编辑与保存**，`approved_import` 仍 501；**无 AI 自动撰写、后台定时或真实数据验收**。
 - **治理与未交付范围：** 原 V1 MUST / D077 Companion MVP 整体仍 `NOT DONE`；D086 Chat→Inbox→Review 批准写入路径、真正 Knowledge Writer 的独立 OS UID/ACL/mount/peer 安全准入、真实微信/飞书接入、真实用户来源与跨端浏览器验收不因上述合并自动完成。#106 Writer 与 #101 渠道等独立候选不在此次合并内；另有 #164 Task 创建 Web Draft，必须独立审查，不得把它当作已合入。Private 维持排除，Knowledge Writer/Promote 生产保持 OFF。没有新 NAS 部署、真实模型调用、生产数据读写或额外 CI。
-- **阶段一第 6 部分｜唯一 NEXT：** **先进行安全边界与综合验收准备**：以现行 `main` 和现有契约列出 V1 MUST/Companion MVP 未满足项、可在合成环境完成的端到端正反例、真实浏览器/跨设备阻断与需要单独授权的生产数据/OS Writer/Promote/模型验收门槛；优先独立审阅尚未合并的 D086/Task 等业务关键切片，避免虚构生产能力。A/B 可在各自源码范围内提交隔离验证方案或 Draft PR，但**不得**未经用户新授权自行合并、部署、读取真实 Vault/私人 Session、修改 NAS/Compose/UID/GID/ACL/mount/Secrets、触发付费模型/外部渠道或开启 Writer/Promote。重大新业务/安全取舍须回 Decision-Log 审批；小问题在已授权的本地合成范围内自修。阶段六的真实操作另行授权。
+- **历史 NEXT（已由顶部 2026-10-22 Writer/Promote OS 安全准入准备取代）：** **先进行安全边界与综合验收准备**：以现行 `main` 和现有契约列出 V1 MUST/Companion MVP 未满足项、可在合成环境完成的端到端正反例、真实浏览器/跨设备阻断与需要单独授权的生产数据/OS Writer/Promote/模型验收门槛；优先独立审阅尚未合并的 D086/Task 等业务关键切片，避免虚构生产能力。A/B 可在各自源码范围内提交隔离验证方案或 Draft PR，但**不得**未经用户新授权自行合并、部署、读取真实 Vault/私人 Session、修改 NAS/Compose/UID/GID/ACL/mount/Secrets、触发付费模型/外部渠道或开启 Writer/Promote。重大新业务/安全取舍须回 Decision-Log 审批；小问题在已授权的本地合成范围内自修。阶段六的真实操作另行授权。
 
 ## 2026-10-20 阶段裁定与 NEXT（历史快照，已被 2026-10-22 裁定替代；Issue #76/#96/#97）
 
