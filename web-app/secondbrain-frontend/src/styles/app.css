@@ -241,6 +241,9 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .journal-page { display: grid; gap: 18px; max-width: 980px; margin: 14px auto 0; }
 .v1-readonly-page { display: grid; gap: 18px; width: min(100%, 1180px); margin: 14px auto 0; color: #dce7f7; }
 .v1-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 10px 2px 4px; }
+.v1-brief-date-filter { display: flex; align-items: center; gap: 10px; margin: 8px 2px 12px; color: #aebed3; font-size: 13px; }
+.v1-brief-date-filter input { min-height: 36px; padding: 6px 10px; color: #e8eff9; background: #151d2c; border: 1px solid rgb(139 167 205 / 30%); border-radius: 8px; }
+.v1-brief-date-filter input:focus-visible { outline: 2px solid #78aef5; outline-offset: 2px; }
 .v1-page-header h1 { margin: 8px 0 6px; color: #f1f5fc; font-size: clamp(25px, 3vw, 34px); letter-spacing: -.035em; }
 .v1-page-source-badge { flex: 0 0 auto; padding: 6px 9px; color: #b8c9e2; background: rgb(48 75 112 / 28%); border: 1px solid rgb(151 177 215 / 20%); border-radius: 999px; font-size: 11px; }
 .v1-contract-notice { padding: 14px 16px; color: #dce7f7; background: rgb(30 44 68 / 72%); border: 1px solid rgb(139 167 205 / 24%); border-left: 3px solid #78aef5; border-radius: 10px; }

@@ -118,8 +118,21 @@ async function configurePage(page: Page) {
     const sourceListPath = route.request().method() === 'GET'
       && ((url.pathname === '/api/tasks' && exactParams({ status: 'all' }))
         || (url.pathname === '/api/projects' && exactParams({ limit: '50', offset: '0' })));
+    const homePath = route.request().method() === 'GET' && url.pathname === '/api/home' && params.size === 0;
+    const healthPath = route.request().method() === 'GET' && url.pathname === '/api/agent/health' && params.size === 0;
+    const activityPath = route.request().method() === 'GET' && url.pathname === '/api/activity'
+      && exactParams({ limit: '50', offset: '0' });
+    const calendarPath = route.request().method() === 'GET' && url.pathname === '/api/calendar'
+      && exactParams({ from: params.get('from') ?? '', to: params.get('to') ?? '', timezone: 'Asia/Shanghai' })
+      && /^\d{4}-\d{2}-\d{2}$/.test(params.get('from') ?? '')
+      && /^\d{4}-\d{2}-\d{2}$/.test(params.get('to') ?? '');
+    const journalPath = route.request().method() === 'GET' && /^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(url.pathname)
+      && params.size === 0;
+    const taskListPath = route.request().method() === 'GET' && url.pathname === '/api/tasks'
+      && exactParams({ status: 'open' });
     if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
-      && !briefPath && !journalSourcePath && !sourceListPath) {
+      && !briefPath && !journalSourcePath && !sourceListPath && !homePath && !healthPath
+      && !activityPath && !calendarPath && !journalPath && !taskListPath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
       return;
@@ -318,8 +331,32 @@ for (const viewport of viewports) {
     await inspectOrCreateDailyBrief(page, viewport, observed);
     expect(observed.blockedOrigins.size).toBe(0);
 
-    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     observed.setFailureStage('viewport_layout');
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '你的工作台' })).toBeVisible();
+    await page.getByRole('button', { name: '打开项目' }).first().click();
+    await expect(page.getByRole('heading', { name: '项目' })).toBeVisible();
+    await page.getByRole('button', { name: '首页' }).first().click();
+    await page.getByRole('button', { name: '打开动态' }).first().click();
+    await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
+    await page.getByRole('button', { name: '首页' }).first().click();
+    await page.getByRole('button', { name: '查看 Agent 状态' }).first().click();
+    await expect(page.getByRole('heading', { name: 'Agent 状态' })).toBeVisible();
+    await page.getByRole('button', { name: '首页' }).first().click();
+    await page.getByRole('button', { name: '今日' }).first().click();
+    await expect(page.getByRole('heading', { name: '今日与待办' })).toBeVisible();
+    await page.getByRole('button', { name: '首页' }).first().click();
+    await page.getByRole('button', { name: '新建日记' }).click();
+    await expect(page.getByRole('heading', { name: '日记' })).toBeVisible();
+    await page.getByRole('button', { name: '首页' }).first().click();
+    await page.getByRole('button', { name: '查看完整日历' }).click();
+    await expect(page.getByRole('heading', { name: '日历' })).toBeVisible();
+    expect(observed.blockedOrigins.size).toBe(0);
+    for (const path of ['/api/home', '/api/projects', '/api/activity', '/api/agent/health', '/api/tasks', '/api/journal/', '/api/calendar']) {
+      expect(observed.requestRecords.some((request) => request.method === 'GET' && request.path.startsWith(path))).toBe(true);
+    }
+
+    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(scrollWidth).toBeLessThanOrEqual(viewport.width);
   });
 }

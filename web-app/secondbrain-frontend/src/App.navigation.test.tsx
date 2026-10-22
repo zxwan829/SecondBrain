@@ -24,6 +24,7 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, sum
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
     if (url === '/api/home') return new Response(JSON.stringify(homeBody), { status: 200 });
+    if (/^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(url)) return new Response(JSON.stringify({ date: url.slice(-10), entries: [] }), { status: 200 });
     if (url === '/api/projects?limit=50&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 50, offset: 0, has_more: false }, source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url.startsWith('/api/daily-brief?')) return new Response(JSON.stringify({ status: 'not_configured', items: [], source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
@@ -126,6 +127,79 @@ describe('Notes application navigation gate', () => {
     expect(await screen.findByRole('heading', { name: '今日与待办' })).toBeTruthy();
     expect(screen.getByRole('form', { name: '新建待办' })).toBeTruthy();
     expect(location.pathname).toBe('/today');
+  });
+
+  it('opens the existing real Projects, Daily Brief, Activity, Agent Health, and Journal destinations from Home', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    const calls = mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: '打开项目' })[0]);
+    expect(await screen.findByRole('heading', { name: '项目' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((url) => url.startsWith('/api/projects?'))).toBe(true));
+    fireEvent.click(screen.getAllByRole('button', { name: '首页' })[0]);
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: '打开每日简报' })[0]);
+    expect(await screen.findByRole('heading', { name: '每日简报' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((url) => url.startsWith('/api/daily-brief?'))).toBe(true));
+    fireEvent.click(screen.getAllByRole('button', { name: '首页' })[0]);
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: '打开动态' })[0]);
+    expect(await screen.findByRole('heading', { name: '动态' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((url) => url.startsWith('/api/activity?'))).toBe(true));
+    fireEvent.click(screen.getAllByRole('button', { name: '首页' })[0]);
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: '查看 Agent 状态' })[0]);
+    expect(await screen.findByRole('heading', { name: 'Agent 状态' })).toBeTruthy();
+    await waitFor(() => expect(calls).toContain('/api/agent/health'));
+    fireEvent.click(screen.getAllByRole('button', { name: '首页' })[0]);
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getByRole('button', { name: /新建日记/ }));
+    expect(await screen.findByRole('heading', { name: '日记' })).toBeTruthy();
+    expect(location.pathname).toBe('/journal');
+  });
+
+  it('does not style an unavailable Home Agent as online', async () => {
+    mockAppFetch(200, undefined, 200, { agent: { status: 'unavailable', source: 'hermes-runtime' } });
+    startAt('/');
+
+    await screen.findByRole('heading', { name: '你的工作台' });
+    const statusBadge = document.querySelector('.header-agent') as HTMLElement | null;
+    expect(statusBadge).not.toBeNull();
+    expect(statusBadge!.textContent).toBe('尚未统计');
+    expect(statusBadge!.className).toContain('is-unavailable');
+    expect(statusBadge!.className).not.toContain('is-real');
+  });
+
+  it('reads a selected historical Daily Brief date without exposing the current-date save form', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    const calls = mockAppFetch();
+    startAt('/brief');
+    expect(await screen.findByRole('heading', { name: '每日简报' })).toBeTruthy();
+    const date = screen.getByLabelText('选择日期') as HTMLInputElement;
+    fireEvent.change(date, { target: { value: '2020-01-02' } });
+    await waitFor(() => expect(calls.some((url) => url.includes('date=2020-01-02'))).toBe(true));
+    expect(date.value).toBe('2020-01-02');
+    expect(screen.getByRole('note').textContent).toContain('历史日期为只读');
+    expect(screen.queryByRole('button', { name: '手动准备简报' })).toBeNull();
+  });
+
+  it('keeps Journal in an explicit error state when the Core response has no entries array', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input) === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (/^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(String(input))) return new Response(JSON.stringify({ date: '2026-10-23', entries: null }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/journal');
+    expect(await screen.findByRole('heading', { name: '日记' })).toBeTruthy();
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.queryByText('当天还没有记录。')).toBeNull();
   });
 
   it('loads Calendar only for a bounded Shanghai month and never requests bodies or Home', async () => {
@@ -359,6 +433,19 @@ describe('Notes application navigation gate', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
     expect(screen.queryByText('private-session')).toBeNull();
+    expect(calls).toEqual(['/api/auth/session', '/api/agent/health']);
+  });
+
+  it('rejects an Agent Health status whose source does not match configuration state', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/agent/health') return new Response(JSON.stringify({ status: 'online', source: null, checked_at: '2026-10-20T01:30:00Z' }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/agent-health');
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
     expect(calls).toEqual(['/api/auth/session', '/api/agent/health']);
   });
 

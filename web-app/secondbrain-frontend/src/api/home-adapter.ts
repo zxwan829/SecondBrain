@@ -44,11 +44,10 @@ function todayState(value: unknown): TodayState {
   if (value === null || value === undefined) return { kind: 'unknown', source: 'UNAVAILABLE' };
   const section = record(value);
   const items = listItems(value);
-  if (items.length) return { kind: 'content', items, source: 'REAL' };
-  if (Array.isArray(value)) return { kind: 'empty', source: 'REAL' };
   const status = typeof section.status === 'string' ? section.status.toLowerCase() : '';
-  const hasItemsField = Object.prototype.hasOwnProperty.call(section, 'items');
-  if (status === 'empty' || status === 'none' || status === 'no items' || (hasItemsField && Array.isArray(section.items) && section.items.length === 0)) {
+  if (status !== 'real' && status !== 'empty') return { kind: 'unknown', source: 'UNAVAILABLE' };
+  if (items.length) return { kind: 'content', items, source: 'REAL' };
+  if (status === 'empty' && Array.isArray(section.items) && section.items.length === 0) {
     return { kind: 'empty', source: 'REAL' };
   }
   if (typeof section.title === 'string' || typeof section.content === 'string' || typeof section.summary === 'string') {
@@ -106,14 +105,14 @@ export function adaptHome(home: Home | null): HomeView {
   // The current plugin API returns a fixed `{status:"online"}` value, rather
   // than reading Hermes runtime health. Require explicit runtime provenance.
   const hasRuntimeProvenance = agentSection.source === 'hermes-runtime' || agentSection.source_type === 'hermes-runtime';
-  const agentStatus = hasRuntimeProvenance && typeof rawAgentStatus === 'string' && rawAgentStatus.trim()
-    ? rawAgentStatus.trim()
+  const agentStatus = hasRuntimeProvenance && ['online', 'unavailable', 'not_configured'].includes(String(rawAgentStatus))
+    ? String(rawAgentStatus)
     : null;
 
   const homeSource: DataKind = sections.status === 'ok' ? 'REAL' : 'UNAVAILABLE';
   return {
     pendingCount: reviewSource === 'REAL' ? pending as number : null,
-    review,
+    review: reviewSource === 'REAL' ? review : [],
     reviewSource,
     projectItems: verifiedProjectItems,
     projectSource: hasBusinessProjectSchema ? 'REAL' : 'UNAVAILABLE',
