@@ -70,7 +70,7 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(await screen.findByText(/DAILY_BRIEF_NOT_CONFIGURED/)).toBeTruthy();
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
     expect(calls.some((call) => call.path.startsWith('/api/tasks') || call.path.startsWith('/api/projects'))).toBe(false);
-    expect(screen.getByRole('note').textContent).toContain('暂不支持导入已批准的简报');
+    expect(screen.getByRole('note').textContent).toContain('已批准简报导入暂不可用');
     expect(screen.queryByText(/approved_import/i)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '手动准备简报' }));
     expect(await screen.findByRole('checkbox', { name: /Synthetic task source/ })).toBeTruthy();
@@ -103,6 +103,82 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(new Set((posts[0].body?.source_refs as Array<{kind:string}>).map((ref) => ref.kind))).toEqual(new Set(['task', 'project']));
     expect(Object.keys(posts[0].body ?? {}).sort()).toEqual(['approved', 'categories', 'date', 'idempotency_key', 'mode', 'source_refs', 'summary', 'timezone'].sort());
     expect(await screen.findByText('SYNTHETIC APPROVED BRIEF')).toBeTruthy();
+  });
+
+  it('reads one explicitly selected historical brief, previews an exact copy, and handles current Core 501 without claiming success', async () => {
+    vi.stubGlobal('crypto', cryptoFor());
+    const targetDate = '2026-10-23';
+    const sourceDate = '2026-10-22';
+    const sourceId = 'brief_history_synthetic';
+    const sourceVersion = 'c'.repeat(64);
+    const calls: Array<{ path: string; method: string; body?: Record<string, unknown>; headers?: Headers }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input); const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as Record<string, unknown> : undefined;
+      calls.push({ path, method, body, headers: new Headers(init?.headers) });
+      if (path === '/api/daily-brief/source-options/brief?date=' + sourceDate + '&limit=1') return Response.json({
+        status: 'real', items: [{ kind: 'existing_brief', id: sourceDate + ':' + sourceId, date: sourceDate,
+          timezone: 'Asia/Shanghai', version: sourceVersion }], freshness: { checked_at: checkedAt },
+      });
+      if (path === '/api/daily-brief?date=' + sourceDate + '&timezone=Asia%2FShanghai') return Response.json({
+        status: 'real', items: [{ brief_id: sourceId, date: sourceDate, timezone: 'Asia/Shanghai', generated_at: checkedAt,
+          generation_status: 'generated', categories: ['旧分类'], summary: 'Exact synthetic historical summary',
+          source_refs: [{ kind: 'task', id: 'a'.repeat(32), version: 'a'.repeat(64) }] }],
+        source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt },
+      });
+      if (path === '/api/daily-brief' && method === 'POST') return Response.json({ detail: 'approved import unavailable' }, { status: 501 });
+      throw new Error('Unexpected request: ' + method + ' ' + path);
+    }));
+
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} dateNow={() => new Date(targetDate + 'T02:00:00Z')} />);
+    expect(calls).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText('来源简报日期'), { target: { value: sourceDate } });
+    fireEvent.click(screen.getByRole('button', { name: '读取该日简报' }));
+    expect(await screen.findByText('Exact synthetic historical summary')).toBeTruthy();
+    expect(calls).toHaveLength(2);
+    expect(calls[0].path).toBe('/api/daily-brief/source-options/brief?date=' + sourceDate + '&limit=1');
+    expect(calls[0].headers?.get('cache')).toBeNull();
+    expect(calls[1].path).toBe('/api/daily-brief?date=' + sourceDate + '&timezone=Asia%2FShanghai');
+    expect(screen.getByText(/将原样复制到今天的新简报/)).toBeTruthy();
+    expect(screen.getByText('旧分类')).toBeTruthy();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '确认导入并创建' }));
+    expect(screen.getByText('Exact synthetic historical summary')).toBeTruthy();
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '确认导入并创建' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Core 尚未启用'));
+    const post = calls.find((call) => call.method === 'POST');
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
+    expect(post?.path).toBe('/api/daily-brief');
+    expect(post?.body).toEqual({
+      mode: 'approved_import', date: targetDate, timezone: 'Asia/Shanghai',
+      idempotency_key: 'ui-11111111-1111-4111-8111-111111111111',
+      categories: ['旧分类'], summary: 'Exact synthetic historical summary',
+      source_refs: [{ kind: 'task', id: 'a'.repeat(32), version: 'a'.repeat(64) }], approved: true,
+      import_ref: { kind: 'existing_brief', id: sourceDate + ':' + sourceId, version: sourceVersion },
+    });
+    expect(post?.headers?.has('Idempotency-Key')).toBe(false);
+    expect(screen.queryByText(/写入已确认/)).toBeNull();
+  });
+
+  it('rejects selector responses that exceed the one-item contract or disclose paths', async () => {
+    const sourceDate = '2026-10-22';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes('/source-options/brief?')) return Response.json({
+        status: 'real', items: [{ kind: 'existing_brief', id: sourceDate + ':one', date: sourceDate,
+          timezone: 'Asia/Shanghai', version: 'a'.repeat(64), path: '/must-not-be-returned' }],
+        freshness: { checked_at: checkedAt },
+      });
+      throw new Error('Unexpected request: ' + path);
+    }));
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} dateNow={() => new Date('2026-10-23T02:00:00Z')} />);
+    fireEvent.change(screen.getByLabelText('来源简报日期'), { target: { value: sourceDate } });
+    fireEvent.click(screen.getByRole('button', { name: '读取该日简报' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('无法安全核验');
+    expect(screen.queryByText(/将原样复制到今天的新简报/)).toBeNull();
   });
 
   it('loads Journal only on click, submits the exact Core ref after confirmation, then verifies by GET', async () => {
