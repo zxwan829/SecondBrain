@@ -10,6 +10,8 @@ source: GitHub SecondBrain Monorepo
 
 ## 2026-10-24 当前状态与唯一 NEXT：V1 集成收口
 
+**现行协作基线（2026-10-24）：** 单一 Codex 主 Agent 是 V1 开发/集成/合并的唯一调度负责人；Web/Core 为子任务角色（支持时子 Agent + 独立 worktree，否则顺序执行），不再由用户在旧 A/B 窗口间转发指令。主 Agent 自主领取已授权工作、协调独立复审、满足门禁后合并普通 PR、继续下一项；实际任务持续性受 Codex 会话与运行器约束，跨会话无人值守尚未建设。具体唯一规则见 [Agent-Rules.md](Agent-Rules.md)，历史 A/B 分工表只作为技术工作包划分。安全敏感、生产、真实数据及费用门禁维持原样。
+
 详细六阶段分解、A/B 所有权、依赖与验收见 [V1-Delivery-Plan.md](V1-Delivery-Plan.md)。总控 [#76](https://github.com/zxwan829/SecondBrain/issues/76)，A [#96](https://github.com/zxwan829/SecondBrain/issues/96)，B [#97](https://github.com/zxwan829/SecondBrain/issues/97)。完整 V1 仍 **NOT DONE**。
 
 | 当前对象 | 核验结果 | 下一步 |
