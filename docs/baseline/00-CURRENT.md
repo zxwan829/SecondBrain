@@ -19,12 +19,13 @@ source: GitHub SecondBrain Monorepo
 | #201 Core 撤权 | 固定 PR HEAD `ea70fca9dde78793b05d5aaed7523f26bf432a72` 已获本次单独安全敏感合并授权并合入 main `e611ecc4`。fail-closed 修复 `ac1c171d` 与后续 fixture-only 增量独立复审为 `PASS_WITH_LIMITS`；相关 Core 组合回归 158 passed。 | 只关闭已识别的进程内 missing-grant fail-open；跨进程持久撤权、OS 隔离、生产安全仍未验收 |
 | #207/#202 集成 | #207 固定 HEAD `aff4171f86b00bb8420e0cfe2af8a0978fdb2f37` 同步 main 时无 Core 文件变化，已合入 `6c372ff6`。#202 固定 HEAD `69f39cccfbae56c66a4db6f483e8dc75aee0cf7b` 已合入 `5fd9df3c`。新 main tree 与先前 82 Web / 158 Core / Vite→Uvicorn `PASS_WITH_LIMITS` 的固定组合 tree 相同，三次合并后 diff-check 通过。 | Linux Chromium Run #39984102838 在 #202 精确 HEAD 上三视口 PASS，合成 Web `A_NEXT_READY=READY_WITH_LIMITS`；它不证明真实 Core 跨进程撤权、生产部署或完整 V1 验收 |
 | #216/#213 Trash | #216 `96d36dcf` 源码层原子 no-replace 与恢复复审 `PASS_WITH_LIMITS`；Linux `renameat2`、生产挂载/ACL/Synology Drive 未验证。#213 仍为设计候选 | 先冻结首发 DTO/action/排除与恢复合同；未完成相应验证前不启用可操作 Trash UI，不含 purge |
-| P4 Notes | localhost HTTP Gate 为 `PASS_WITH_LIMITS`；移动浏览器与 Obsidian 双向同步 `NOT RUN` | 复用现有 Linux 合成环境准备独立移动交互验收；不得连接真实 Vault/NAS |
+| P4 Notes | localhost HTTP Gate 为 `PASS_WITH_LIMITS`。#220 HEAD `3f1d52e9268cf981e8b17c8dfd3dd1a68966fb39` 修复窄屏图形对话框边距，并校准 Daily Brief 合成文件集合合同；Run #39986122069 精确 checkout，Linux Chromium 三视口旅程、横向溢出及图形对话框边界均 PASS。完整 Notes 页面移动编辑/保存/重开及 Obsidian 双向同步仍 `NOT RUN` | #220 Draft/Open，待最新增量独立复审；继续 Notes 实际移动交互验收，不连接真实 Vault/NAS |
+| #164 Today→Task | 原 HEAD `a8cd447f` 的既有 PASS_WITH_LIMITS 复审发现遗漏：已核验创建回执后 busy 状态未清除，按钮持续禁用。新修复 HEAD `96b56be80c1eac0c99547a3f11b4571eccc8b7db`，29 项 TaskPage、typecheck/build/diff-check 通过；最新 main 组合树无冲突 | Draft/Open，等待该增量独立复审；此前复审不能自动延伸到新代码 |
 | Writer/Promote 与生产 | OFF；D090/OS Gate 与生产安全门禁保持原状 | 不从普通 PR 合入推导部署或生产授权 |
 
 本批分支保护规则与 ruleset 的可读 GraphQL 查询均未返回配置项；REST 查询受私有仓库功能限制返回 403，不能以此绕过平台门禁。#201/#207/#202 均通过正常 GitHub Ready/Merge 路径处理；没有管理员绕过、强推或 main reset。Run #39984102838 使用既有手动工作流、合成数据和脱敏 artifact。完整 V1 及真实生产/用户体验验收仍未完成。
 
-**当前 NEXT：** 按正式计划推进 P4 Notes 移动交互及其余已冻结的 V1 能力；P4-5 Trash 在 Linux 原语与生产挂载/ACL 等安全门禁完成前不开放可操作 UI。Obsidian 双向同步、真实渠道/模型、生产安全和用户业务验收仍单列待验；不重跑已通过的集成与三视口 Gate。
+**当前 NEXT：** 完成 #164、#220 的增量独立复审后按平台门禁收口；继续 P4 Notes 实际移动编辑交互及其余已冻结的 V1 能力。P4-5 Trash 在 Linux 原语与生产挂载/ACL 等安全门禁完成前不开放可操作 UI。Obsidian 双向同步、真实渠道/模型、生产安全和用户业务验收仍单列待验；不重跑已通过的集成与三视口 Gate。
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 
