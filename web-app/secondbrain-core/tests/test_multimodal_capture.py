@@ -234,6 +234,7 @@ class MultimodalCaptureTests(unittest.TestCase):
         result = service.get(item["capture_id"])
         self.assertEqual(result["status"], "partial_success")
         self.assertEqual(result["error"]["code"], "processing_failed")
+        self.assertEqual(result["error"]["message"], "Hermes transcription response exceeded the size limit")
         self.assertIsNone(result["review_path"])
         self.assertEqual(hashlib.sha256((self.raw / result["raw_path"]).read_bytes()).hexdigest(), original_digest)
         self.assertEqual(len(list(self.review.glob("*.md"))), 0)

@@ -976,7 +976,8 @@ class CaptureService:
             state.update(status="partial_success", error={"code": "processor_unavailable", "message": str(exc)}, updated_at=_now())
         except Exception as exc:
             state.pop("partial_error", None)
-            state.update(status="partial_success", error={"code": "processing_failed", "message": str(exc)[:500]}, updated_at=_now())
+            message = exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, str) else str(exc)
+            state.update(status="partial_success", error={"code": "processing_failed", "message": message[:500]}, updated_at=_now())
         self._write_state(state)
 
     def _verify_artifacts(self, state):
