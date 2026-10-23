@@ -891,10 +891,19 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   };
   useEffect(() => {
     void load(true);
-    void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => response.json()).then((value) => {
+    void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }).then((value) => {
       if (value && typeof value.blocked_reason === 'string') setOrganizeReason(value.blocked_reason);
       setOrganizeAvailable(value?.execution_available === true);
-    }).catch(() => setOrganizeReason(locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+    }).catch((cause) => {
+      setOrganizeAvailable(false);
+      const status = cause instanceof Error ? /^HTTP (\d{3})$/.exec(cause.message)?.[1] : undefined;
+      setOrganizeReason(status
+        ? (locale === 'en' ? `Organizer status could not be verified (HTTP ${status}); action remains disabled.` : `自动整理状态无法验证（HTTP ${status}），操作保持禁用。`)
+        : (locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+    });
     const refresh = () => void load();
     window.addEventListener('sb-inbox-refresh', refresh);
     const timer = window.setInterval(refresh, 5000);

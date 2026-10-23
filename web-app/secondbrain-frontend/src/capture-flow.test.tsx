@@ -1357,6 +1357,19 @@ describe('D075.1 capture interactions', () => {
     expect(request.mock.calls.some(([url, init]) => String(url) === '/api/automation/organize/run' && init?.method === 'POST')).toBe(true);
   });
 
+  it('keeps Organizer disabled and reports authorization status when its status API returns 403', async () => {
+    const request = vi.fn((input: RequestInfo | URL) => {
+      if (String(input) === '/api/automation/organize/status') return Promise.resolve({ ok: false, status: 403, json: async () => ({ detail: 'synthetic private detail' }) });
+      return Promise.resolve(ok({ items: [] }));
+    });
+    vi.stubGlobal('fetch', request);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+    const run = await screen.findByRole('button', { name: '立即整理' }) as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    expect(await screen.findByText('自动整理状态无法验证（HTTP 403），操作保持禁用。')).toBeTruthy();
+    expect(screen.queryByText('synthetic private detail')).toBeNull();
+  });
+
   it('shows the validated upload filename instead of PDF metadata and falls back to the legacy Raw filename', async () => {
     const newer = { capture_id: 'f'.repeat(32), source_type: 'pdf', input_type: 'pdf', captured_at: '2026-10-14T00:00:00Z', original_asset: '/raw/safe.pdf', raw_path: 'safe.pdf', status: 'completed', title: 'safe', display_filename: '会议纪要.pdf', document_title: '(anonymous)' };
     const legacy = { ...newer, capture_id: 'e'.repeat(32), display_filename: undefined, raw_path: '旧版计划.pdf', title: '(anonymous)' };
