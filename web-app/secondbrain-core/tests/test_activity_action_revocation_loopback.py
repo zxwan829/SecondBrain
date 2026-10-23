@@ -1,4 +1,5 @@
 """Real Core app/Uvicorn source-action grant and revocation regression."""
+import hashlib
 import json
 import os
 import socket
@@ -157,6 +158,32 @@ def test_real_core_source_action_grant_revoke_precedes_io_and_recovers(tmp_path,
                                         headers={"Origin": "http://attacker.invalid"},
                                         json={"action": "journal.read", "granted": False})
             assert wrong_origin.status_code == 403
+
+            # A valid session whose grant record disappears is inconsistent
+            # authorization state. It must not silently recover the broad defaults.
+            token = client.cookies.get(app.state.app_auth.COOKIE_NAME)
+            session_id = hashlib.sha256(token.encode()).hexdigest()
+            app.state.app_auth._session_actions.pop(session_id)
+            before_missing_record = dict(read_calls)
+            missing_record = client.get(activity_url, headers={"Origin": origin})
+            assert missing_record.status_code == 403
+            assert missing_record.json() == {"detail": "Action is not enabled"}
+            assert read_calls == before_missing_record
+
+            # Recovery requires a new authenticated login, which initializes the
+            # exact documented login-time grant set; a PATCH cannot repair absence.
+            cannot_regrant = client.patch("/api/auth/session/actions", headers={"Origin": origin},
+                                          json={"action": "journal.read", "granted": True})
+            assert cannot_regrant.status_code == 403
+            assert read_calls == before_missing_record
+            relogin = client.post("/api/auth/login", headers={"Origin": origin},
+                                  json={"password": "synthetic-action-revocation-password"})
+            assert relogin.status_code == 200
+            recovered = client.get(activity_url, headers={"Origin": origin})
+            assert recovered.status_code == 200
+            assert recovered.json()["status"] == "ok"
+            for name in read_calls:
+                assert read_calls[name] == before_missing_record[name] + 1
     finally:
         server.should_exit = True
         thread.join(timeout=10)
