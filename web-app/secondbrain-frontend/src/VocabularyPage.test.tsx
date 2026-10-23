@@ -66,6 +66,49 @@ describe('VocabularyPage', () => {
     expect(request.mock.calls.filter(([url]) => String(url) === '/api/vocabulary')).toHaveLength(2);
   });
 
+  it('offers a retry after the initial vocabulary read fails', async () => {
+    const request = vi.mocked(fetch);
+    let reads = 0;
+    request.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) !== '/api/vocabulary') return json({ detail: 'unexpected request' }, 404);
+      reads += 1;
+      if (reads === 1) throw new Error('temporary read failure');
+      return json(initial);
+    });
+
+    render(<VocabularyPage locale="zh-CN" />);
+    expect((await screen.findByRole('alert')).textContent).toContain('temporary read failure');
+    fireEvent.click(screen.getByRole('button', { name: '重试读取词库' }));
+    expect(await screen.findByText('版本 0 · 类型 5/10')).toBeTruthy();
+    expect(reads).toBe(2);
+  });
+
+  it('does not claim a stale-write refresh succeeded when that read fails, and retries safely', async () => {
+    const request = vi.mocked(fetch);
+    let reads = 0;
+    request.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) === '/api/vocabulary') {
+        reads += 1;
+        if (reads === 1) return json({ ...initial, revision: 3 });
+        if (reads === 2) throw new Error('temporary refresh failure');
+        return json({ ...initial, revision: 4 });
+      }
+      return json({ detail: 'Vocabulary revision changed' }, 412);
+    });
+
+    render(<VocabularyPage locale="zh-CN" />);
+    await screen.findByText('版本 3 · 类型 5/10');
+    fireEvent.change(screen.getByLabelText('新增标签'), { target: { value: 'CRM' } });
+    fireEvent.click(screen.getByLabelText('我确认将此标签加入 Core 词库。'));
+    fireEvent.click(screen.getByRole('button', { name: '确认新增标签' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('词库版本已变化，但最新版本读取失败');
+    expect(screen.queryByRole('button', { name: '确认新增标签' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '重试读取词库' }));
+    expect(await screen.findByText('版本 4 · 类型 5/10')).toBeTruthy();
+    expect(reads).toBe(3);
+  });
+
   it('confirms tag deactivation and leaves the term visible as disabled', async () => {
     const request = vi.mocked(fetch);
     const withTag = { ...initial, revision: 1, tags: [{ id: 'tag-1', name: 'CRM', enabled: true }] };
