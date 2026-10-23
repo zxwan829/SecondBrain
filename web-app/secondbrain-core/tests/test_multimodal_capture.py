@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -217,6 +218,26 @@ class MultimodalCaptureTests(unittest.TestCase):
         self.assertIn("测试音频中的真实转写内容", (self.review / result["review_path"]).read_text())
         self.assertEqual((self.raw / result["raw_path"]).read_bytes(), raw)
 
+    def test_audio_response_limit_failure_keeps_raw_and_does_not_create_review(self):
+        from fastapi import HTTPException
+
+        processors = Mock()
+        processors.transcribe_audio.side_effect = HTTPException(
+            status_code=502, detail="Hermes transcription response exceeded the size limit")
+        service = CaptureService(self.raw, self.review, self.state, processors)
+        raw = b"RIFFxxxxWAVE" + b"synthetic-audio"
+        item = service.accept_file("voice.wav", raw)
+        original_digest = hashlib.sha256((self.raw / item["raw_path"]).read_bytes()).hexdigest()
+
+        service.process(item, raw)
+
+        result = service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        self.assertIsNone(result["review_path"])
+        self.assertEqual(hashlib.sha256((self.raw / result["raw_path"]).read_bytes()).hexdigest(), original_digest)
+        self.assertEqual(len(list(self.review.glob("*.md"))), 0)
+
     def test_pdf_ocr_page_limit_fails_without_creating_review(self):
         processors = MultimodalCaptureProcessors(tesseract="/usr/bin/tesseract",
                                                  pdftoppm="/usr/bin/pdftoppm")
@@ -267,13 +288,65 @@ class MultimodalCaptureTests(unittest.TestCase):
             seen["path"] = request.url.path
             seen["auth"] = request.headers.get("authorization")
             seen["payload"] = request.read().decode("utf-8")
-            return httpx.Response(200, json={"ok": True, "transcript": " 转写结果 ", "provider": "local"})
+            return httpx.Response(200, stream=httpx.ByteStream(json.dumps(
+                {"ok": True, "transcript": " 转写结果 ", "provider": "local"}).encode("utf-8")))
         api = HermesAPI("http://hermes.internal", "server-only-test-key", httpx.MockTransport(respond))
         result = api.transcribe_audio(b"RIFF-audio", "audio/wav")
         self.assertEqual(result, {"transcript": "转写结果", "provider": "local"})
         self.assertEqual(seen["path"], "/api/audio/transcribe")
         self.assertEqual(seen["auth"], "Bearer server-only-test-key")
         self.assertIn("data:audio/wav;base64,", seen["payload"])
+
+    def test_hermes_stt_stream_rejects_oversized_response_without_reading_the_rest(self):
+        from fastapi import HTTPException
+        from secondbrain_core.modules.hermes_api import MAX_AUDIO_TRANSCRIPTION_RESPONSE_BYTES
+
+        class CountingStream(httpx.SyncByteStream):
+            def __init__(self):
+                self.yielded = 0
+
+            def __iter__(self):
+                for _ in range(32):
+                    self.yielded += 1
+                    yield b"x" * 65_536
+
+            def close(self):
+                pass
+
+        stream = CountingStream()
+        api = HermesAPI("http://hermes.internal", "synthetic-key",
+                        httpx.MockTransport(lambda _request: httpx.Response(200, stream=stream)))
+        with self.assertRaises(HTTPException) as raised:
+            api.transcribe_audio(b"synthetic audio", "audio/wav")
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(raised.exception.detail, "Hermes transcription response exceeded the size limit")
+        self.assertEqual(stream.yielded, MAX_AUDIO_TRANSCRIPTION_RESPONSE_BYTES // 65_536 + 1)
+
+    def test_hermes_stt_rejects_transcript_over_character_limit(self):
+        from fastapi import HTTPException
+        from secondbrain_core.modules.hermes_api import MAX_AUDIO_TRANSCRIPT_CHARS
+
+        response = httpx.Response(200, stream=httpx.ByteStream(json.dumps(
+            {"ok": True, "transcript": "x" * (MAX_AUDIO_TRANSCRIPT_CHARS + 1),
+             "provider": "synthetic"}).encode("utf-8")))
+        api = HermesAPI("http://hermes.internal", "synthetic-key",
+                        httpx.MockTransport(lambda _request: response))
+        with self.assertRaises(HTTPException) as raised:
+            api.transcribe_audio(b"synthetic audio", "audio/wav")
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(raised.exception.detail, "Hermes transcription exceeded the text limit")
+
+    def test_hermes_stt_rejects_compressed_response_before_decoding(self):
+        from fastapi import HTTPException
+
+        response = httpx.Response(200, stream=httpx.ByteStream(b"compressed-synthetic-body"),
+                                  headers={"Content-Encoding": "gzip"})
+        api = HermesAPI("http://hermes.internal", "synthetic-key",
+                        httpx.MockTransport(lambda _request: response))
+        with self.assertRaises(HTTPException) as raised:
+            api.transcribe_audio(b"synthetic audio", "audio/wav")
+        self.assertEqual(raised.exception.status_code, 502)
+        self.assertEqual(raised.exception.detail, "Hermes transcription returned an unsupported encoding")
 
     def test_image_ocr_applies_chinese_language_and_timeout(self):
         image = io.BytesIO()
