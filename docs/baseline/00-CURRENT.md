@@ -8,14 +8,30 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-23 A-NEXT 三视口 Gate 环境裁定（Issue #96）
+## 2026-10-23 最新状态与唯一 NEXT：A-NEXT 集成收口、P4-3 准备
+
+以 GitHub 为准；本轮核验 main 为 `e28db843df53c2ac48c71abbedeb3713c77d338b`。完整 V1 仍 **NOT DONE**，`READY_WITH_LIMITS` 仅代表 A-NEXT 本阶段限定验收，不代表 V1、生产或真实数据验收完成。
+
+| 当前对象 | 核验结果 | 下一步 |
+|---|---|---|
+| A Activity PR #198 | Draft/Open，HEAD `b9bb97dace8f67d74b29177da644dbe092b954ab`；最新独立审查 #5625412036 为 `PASS_WITH_LIMITS`，未见 P0/P1；GitHub 报 `MERGEABLE/CLEAN`，没有显示状态检查 | 尚无本次合并授权；待明确批准后依序合入 main。Activity 当前来源边界和真实 Core 单项撤权仍未验收 |
+| A Web PR #202 | Draft/Open，固定浏览器验收源 HEAD `289fec56afe7baa49f69e77bd6ca2657a3af1ce6`；审查 #5627693807 为 `PASS_WITH_LIMITS`。Run [#39947619906](https://github.com/zxwan829/SecondBrain/actions/runs/39947619906) 在该 SHA 完成 Ubuntu 24.04 Chromium Desktop 1440×1000、Tablet 820×1180、Mobile 390×844，三视口及横向溢出均 PASS | 当前 PR 依赖 #198；已准备的 stacked 更新需以 GitHub 当前 PR ref 重新核对审查和最小集成证据，不能把旧 Run 当成新组合 HEAD 的浏览器 Gate |
+| 合并与检查门禁 | #198 GitHub mergeable；更新 #202 stack 前 GitHub 曾报告 conflict，merge-tree 确认为唯一冲突 `00-CURRENT.md`，现由本集成候选解决。两 PR checks 状态均为空；分支保护/ruleset API 因 GitHub 403（套餐/权限限制）不可读取 | 推送后回读 #202 的 merge 状态；不因空检查列表自行新增 CI 门禁。用户尚未明确批准 main merge，故不执行 |
+| Browser 验收范围 | Run #39947619906 artifact ID `12498324276`，SHA-256 `42490de67d3ba8ee46a7151d114e5f3725a6b658c2da5897739aa7f28dc88193`；JUnit 3/3，无失败/跳过；Promote=false，合成数据，未触及真实数据 | 保留证据，不重跑。403 权限撤销是合成浏览器 seam，不证明真实 Core 对单项来源撤权 |
+| 后续 V1 缺口 | Core 单项撤权及实时来源访问边界仍缺真实 Core 证明；P2 的真实模型/回源/学习与 D086 预算验收、P3 真实计划执行、P4 多格式/渠道/Notes 工作台、P5 Writer OS/生产准入、P6 完整用户验收仍按六阶段计划跟踪 | 普通 Web 工作可继续；不得将合成浏览器通过推断成 Core/生产/真实模型通过 |
+
+**唯一 NEXT：** 按 `V1-Delivery-Plan.md` 推进 P4-3 缺口盘点与验收。源码已有 Markdown 自动保存/ETag 冲突保留、历史版本预览、图片粘贴上传及 MindMap/Canvas 源文件与相对引用编辑；先为这些现存能力核实正式 API 合同、Markdown 往返、移动交互和失败/重开路径的覆盖证据，再只修有证据的缺口。不另造编辑器或未批准写路径；任何真实 Core 写入及 Obsidian 双向同步仍需既有授权。P4-2 渠道支持矩阵按计划冻结；P5 Writer OS Gate 维持既有阻断。
+
+**授权边界：** 本轮仅准备集成和同步基线；没有合并到 main、部署、生产访问、真实数据或 Writer/Promote 操作。主分支保护细节当前无法从 GitHub API 读取，不能将“没有显示 required checks”解释成“没有门禁”。
+
+## 历史：2026-10-23 A-NEXT 三视口 Gate 环境裁定（Issue #96）
 
 - **环境决策：** macOS 只运行组件/DOM 测试、Core + Vite localhost HTTP 合成联调、typecheck/build；不再启动或排查 macOS Edge/Chromium 自动化。正式三视口浏览器 Gate 使用 GitHub-hosted Ubuntu 24.04 + Playwright Chromium，具体规则已写入 `Agent-Rules.md`。
 - **固定候选：** 保留 PR #202 原验收基线 `63896b79566ad47cad1b46471abf8a5f033e5abd` 与既有修复。为精确报告启动失败增加的诊断兜底及 workflow SHA checkout 校验后，当前固定候选以本节提交后的 GitHub PR #202 HEAD 为准。`a-web-playwright-synthetic.yml` 手动触发并固定 checkout 到事件 SHA，另验证实际 `HEAD` 相同；本轮未触发。
 - **脚本复核与修复：** Activity 请求等待、Calendar API 断言、Agent Health H1 精确定位、Mobile Today 菜单展开/收起及逐页 overflow 检查仍保留。PR #202 Review #5627423096 指出 JUnit 只证明某视口失败，不能证明 setup 根因。最新修复要求每个失败视口都存在完整且经 allowlist/schema 校验的显式 `failure-summary.json`；没有诊断时 fail closed，不推断 `test_setup`。精确 JUnit allowlist、敏感信息过滤和业务断言保留，回归证据见 `Progress-Log.md` 最新条目。
 - **Gate 状态：** Linux Chromium 三视口尚未执行，Desktop/Tablet/Mobile 均 `NOT RUN`；`A_NEXT_READY=NOT_READY`。本候选准备好后仍需针对精确 SHA 的单次 workflow_dispatch 授权；没有合并、部署或生产访问。
 
-## 2026-10-23 A-NEXT 本地浏览器启动阻断（Issue #96）
+## 历史：2026-10-23 A-NEXT 本地浏览器启动阻断（Issue #96）
 
 - **固定输入与源码复审：** PR #202 远端基线 `cf317fecae86a0624affb1ec618e63731dfcac25`；本地 E2E 修复提交 `21034fa2c304a3af737c44662cd9195a777dce94` 相对基线只改浏览器测试、诊断脱敏回归和导航 DOM 测试，源码复审 `PASS_WITH_LIMITS`。新增本地 Playwright `msedge` channel 选择配置；未修改业务/Core 代码。
 - **本地浏览器尝试：** 合成 Core Uvicorn + Vite harness 启动成功，`SB_PROMOTE_ENABLED=false`、Hermes 未配置。Playwright 1.56.1 启动 Microsoft Edge `155.0.4283.62` 时三个视口均在浏览器启动阶段 `SIGABRT`；日志确认每次使用 Playwright 临时 Profile。页面导航、Calendar、Agent Health、Today、横向溢出和权限旅程全部 `NOT RUN`，没有功能断言结论。首轮脱敏报告因启动失败时缺少视口诊断而被 fail-closed 拒绝；保留临时输出复核后，根因为浏览器进程启动失败，不是业务断言。

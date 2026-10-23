@@ -1,3 +1,12 @@
+## 2026-10-23 — A-NEXT 集成收口与 READY_WITH_LIMITS（Issue #96）
+
+- **GitHub 状态：** main `e28db843df53c2ac48c71abbedeb3713c77d338b`。PR #198 Draft/Open，HEAD `b9bb97dace8f67d74b29177da644dbe092b954ab`，最新独立源码复审 #5625412036 `PASS_WITH_LIMITS`，GitHub 显示 `MERGEABLE/CLEAN`。PR #202 Draft/Open，测试固定 HEAD `289fec56afe7baa49f69e77bd6ca2657a3af1ce6`，最新独立复审 #5627693807 `PASS_WITH_LIMITS`；仍依赖 #198。没有执行 main merge。
+- **浏览器证据保留：** 唯一授权 Run [#39947619906](https://github.com/zxwan829/SecondBrain/actions/runs/39947619906) 的事件 SHA 与 `CHECKOUT_SHA` 均为 `289fec56afe7baa49f69e77bd6ca2657a3af1ce6`。GitHub-hosted Ubuntu 24.04/Linux Chromium 下 Desktop 1440×1000、Tablet 820×1180、Mobile 390×844 均 PASS；JUnit 3/3，横向溢出断言均 PASS。脱敏 artifact ID `12498324276`，SHA-256 `42490de67d3ba8ee46a7151d114e5f3725a6b658c2da5897739aa7f28dc88193`。不重跑该 Gate。
+- **能力边界：** 页面中的权限拒绝路径由合成 403 seam 覆盖，不等于真实 Core 对单项来源撤权通过；Activity 来源仍有限。完整 V1 继续 NOT DONE，P2 真实模型与预算、P3 真实执行、P4 扩展能力、P5 Writer OS/生产准入和 P6 用户验收按 `V1-Delivery-Plan.md` 跟踪。Writer/Promote 保持 OFF；未触及生产、真实数据或模型。
+- **集成准备：** 对 #198 当前 HEAD 与 #202 固定 HEAD 执行只读依赖核对。#202 GitHub base 指向 #198 分支的较早版本；merge-tree 只发现 `00-CURRENT.md` 一处文本冲突。GitHub 的 branch protection/ruleset 查询返回 403，当前 API 无法核实 required checks；两 PR 的 status checks 列表为空，不能据此推断无保护/门禁。
+- **本次文档候选：** 在隔离 stacked worktree 中将最新 #198 分支接入 #202，解决仅 `00-CURRENT.md` 的冲突，更新 CURRENT 和本日志。此为功能分支集成准备，不是合入 main；Run #39947619906 仍只证明其精确 checkout SHA，不覆盖此后组合变化。未运行测试或 Actions；仅需文档/diff 核验。
+- **NEXT：** 用户确认/授权后按 #198→#202 顺序处理 main 合并；随后按 P4-3 先审计现有 Notes/Tiptap/MindMap/Canvas 和附件/移动交互缺口，复用现有合同，分别交 Web/Core 所有者处理。真实 Core 撤权和 Writer OS Gate 不得用浏览器模拟替代。
+
 # Progress Log
 
 ## 2026-10-23 — PR #202 failure-summary 根因分类修复（Review #5627423096）
