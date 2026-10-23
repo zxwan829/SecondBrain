@@ -122,17 +122,80 @@ class ChatCostGateTests(unittest.TestCase):
         self.assertEqual(row["accounted_microcny"], reservation["reserved_microcny"])
         self.assertFalse(restarted.settle_completed("run-1", {
             "event": "run.completed", "runtime": {"provider": "unknown", "model": "route"},
-            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "usage": {"input_tokens": 1, "output_tokens": 1, "model_calls": 1},
         }))
         self.assertEqual(restarted.rows()[0]["status"], "unknown")
         self.assertTrue(restarted.settle_completed("run-1", {
             "event": "run.completed", "runtime": {"provider": "synthetic", "model": "bounded/model"},
-            "usage": {"input_tokens": 20, "output_tokens": 10},
+            "usage": {"input_tokens": 20, "output_tokens": 10, "model_calls": 1},
         }))
         settled = restarted.rows()[0]
         self.assertEqual(settled["status"], "settled")
         self.assertEqual(settled["actual_microcny"], 40)
         self.assertFalse(settled["over_reservation"])
+
+    def test_unmatched_run_never_reports_settlement(self):
+        reserved = self.reserve("unmatched")
+        event = {"event": "run.completed", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+                 "usage": {"input_tokens": 2, "output_tokens": 2, "model_calls": 1}}
+        self.assertFalse(self.gate.settle_completed("different-run", event))
+        self.assertFalse(self.gate.settle_completed("", event))
+        row = self.gate.rows()[0]
+        self.assertEqual(row["status"], "reserved")
+        self.assertEqual(row["accounted_microcny"], reserved["reserved_microcny"])
+
+    def test_incomplete_invalid_and_over_envelope_receipts_hold_reservation(self):
+        reserved = self.reserve("bad-receipts")
+        self.gate.attach_run(reserved["reservation_id"], "run-invalid")
+        valid_usage = {"input_tokens": 20, "output_tokens": 10, "model_calls": 1}
+        for event in (
+            {"event": "run.failed", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+             "usage": valid_usage},
+            {"event": "run.cancelled", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+             "usage": valid_usage},
+            {"event": "run.interrupted", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+             "usage": valid_usage},
+            {"event": "run.completed", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+             "usage": {"input_tokens": 20, "output_tokens": 10}},
+            {"event": "run.completed", "runtime": {"provider": "unknown-fallback", "model": "bounded/model"},
+             "usage": valid_usage},
+            {"event": "run.completed", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+             "usage": {"input_tokens": 201, "output_tokens": 10, "model_calls": 2}},
+            {"event": "run.completed", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+             "usage": {"input_tokens": 20, "output_tokens": 101, "model_calls": 2}},
+            {"event": "run.completed", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+             "usage": {"input_tokens": 20, "output_tokens": 10, "model_calls": 3}},
+            {"event": "run.completed", "run_id": "wrong-run",
+             "runtime": {"provider": "synthetic", "model": "bounded/model"}, "usage": valid_usage},
+        ):
+            with self.subTest(event=event):
+                self.assertFalse(self.gate.settle_completed("run-invalid", event))
+                row = self.gate.rows()[0]
+                self.assertEqual(row["status"], "unknown")
+                self.assertEqual(row["accounted_microcny"], reserved["reserved_microcny"])
+                self.assertIsNone(row["actual_microcny"])
+
+    def test_price_policy_mismatch_and_concurrent_terminal_are_fail_closed(self):
+        reserved = self.reserve("policy-drift")
+        self.gate.attach_run(reserved["reservation_id"], "run-price")
+        event = {"event": "run.completed", "runtime": {"provider": "synthetic", "model": "bounded/model"},
+                 "usage": {"input_tokens": 20, "output_tokens": 10, "model_calls": 1}}
+        changed = ChatCostGate(self.state, policy(price_version="new-price-version"))
+        self.assertFalse(changed.settle_completed("run-price", event))
+        self.assertEqual(self.gate.rows()[0]["status"], "unknown")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: self.gate.settle_completed("run-price", event), range(2)))
+        self.assertEqual(sorted(results), [False, True])
+        self.assertEqual(self.gate.rows()[0]["status"], "settled")
+        self.assertFalse(self.gate.settle_completed("run-price", event))
+
+    def test_disconnected_stream_retains_reserved_amount(self):
+        reserved = self.reserve("stream-gap")
+        self.gate.attach_run(reserved["reservation_id"], "run-gap")
+        self.gate.finish_stream("run-gap", terminal_seen=False)
+        row = self.gate.rows()[0]
+        self.assertEqual(row["status"], "unknown")
+        self.assertEqual(row["accounted_microcny"], reserved["reserved_microcny"])
 
     def test_expired_price_policy_is_rejected_before_reservation(self):
         expired = ChatCostGate(self.state, policy(price_valid_until="2020-01-01T00:00:00Z"))
