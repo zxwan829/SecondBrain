@@ -183,6 +183,25 @@ describe('Notes application navigation gate', () => {
     expect(screen.getByRole('button', { name: '打开导航菜单' }).getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('opens Today from the mobile navigation and closes the menu after routing', async () => {
+    const calls = mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
+    const sidebar = document.querySelector('aside.sidebar') as HTMLElement;
+    const menu = document.querySelector('.mobile-menu-button') as HTMLButtonElement;
+    expect(sidebar.classList.contains('is-open')).toBe(true);
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(sidebar).getByRole('button', { name: /^今日$/ }));
+
+    expect(await screen.findByRole('heading', { name: '今日与待办' })).toBeTruthy();
+    expect(location.pathname).toBe('/today');
+    await waitFor(() => expect(calls).toContain('/api/tasks?status=open'));
+    expect(menu.getAttribute('aria-expanded')).toBe('false');
+    expect(sidebar.classList.contains('is-open')).toBe(false);
+  });
+
   it('renders the expanded Activity source and status contract from Core', async () => {
     mockAppFetch();
     const fetchMock = vi.mocked(globalThis.fetch);

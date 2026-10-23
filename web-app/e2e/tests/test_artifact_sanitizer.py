@@ -217,6 +217,24 @@ def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
         ("permission_revocation", "activity_revocation_status_403"),
         ("calendar", "calendar_api_requests"),
         ("viewport_layout", "layout_no_horizontal_overflow"),
+        ("viewport_layout", "home_api_response"),
+        ("viewport_layout", "projects_navigation"),
+        ("viewport_layout", "projects_api_response"),
+        ("agent_health", "agent_health_navigation"),
+        ("agent_health", "agent_health_api_response"),
+        ("today", "today_navigation"),
+        ("today", "today_api_response"),
+        ("journal", "journal_navigation"),
+        ("journal", "journal_api_response"),
+        ("calendar", "calendar_navigation"),
+        ("calendar", "calendar_api_response"),
+        ("viewport_layout", "layout_home"),
+        ("viewport_layout", "layout_projects"),
+        ("viewport_layout", "layout_activity"),
+        ("agent_health", "layout_agent_health"),
+        ("today", "layout_today"),
+        ("journal", "layout_journal"),
+        ("calendar", "layout_calendar"),
     ]
     for stage, assertion_id in stages_and_assertions:
         diagnostic = {"viewport": "mobile-390x844", "stage": stage, "code": "assertion_failed",
@@ -243,6 +261,22 @@ def test_browser_activity_assertion_waits_for_core_response_and_uses_fixed_diagn
     assert "layout_no_horizontal_overflow" in browser_spec
     assert "setActivityReadRevoked(false)" in browser_spec
     assert "activity_revocation_status_403" in browser_spec
+
+
+def test_browser_navigation_waits_for_page_apis_and_uses_unambiguous_mobile_safe_locators():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "await expectSuccessfulGet(homeResponsePromise, observed, 'home_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(projectsResponsePromise, observed, 'projects_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(agentHealthResponsePromise, observed, 'agent_health_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(todayResponsePromise, observed, 'today_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(journalResponsePromise, observed, 'journal_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(calendarResponsePromise, observed, 'calendar_api_response')" in browser_spec
+    assert "getByRole('heading', { level: 1, name: 'Agent 状态', exact: true })" in browser_spec
+    assert "await expect(menu).toHaveAttribute('aria-expanded', 'true')" in browser_spec
+    assert "page.locator('.sidebar nav').getByRole('button', { name: '今日', exact: true })" in browser_spec
+    assert "document.documentElement.scrollWidth" in browser_spec
+    assert "document.body.scrollWidth" in browser_spec
+    assert "expectNoHorizontalOverflow(page, observed, viewport, 'layout_calendar')" in browser_spec
 
 
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():

@@ -70,6 +70,12 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "activity_get_status_200", "home_after_activity", "home_after_revocation",
     "agent_health_heading", "home_after_agent_health", "today_heading", "home_after_today",
     "journal_heading", "home_after_journal", "calendar_heading", "layout_no_horizontal_overflow",
+    "projects_navigation", "projects_api_response", "activity_navigation",
+    "agent_health_navigation", "agent_health_api_response", "today_navigation",
+    "today_api_response", "journal_navigation", "journal_api_response",
+    "calendar_navigation", "calendar_api_response", "home_api_response",
+    "layout_home", "layout_projects", "layout_activity", "layout_agent_health",
+    "layout_today", "layout_journal", "layout_calendar",
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
     "calendar_api_requests",
 }

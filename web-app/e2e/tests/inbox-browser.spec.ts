@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from '@playwright/test';
+import { expect, test, type Page, type Request, type Response } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,8 +23,48 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'home_after_revocation' | 'agent_health_heading' | 'home_after_agent_health'
   | 'today_heading' | 'home_after_today' | 'journal_heading' | 'home_after_journal'
   | 'activity_revocation_denial' | 'activity_revocation_empty' | 'activity_revocation_status_403'
-  | 'calendar_heading' | 'calendar_api_requests' | 'layout_no_horizontal_overflow';
+  | 'calendar_heading' | 'calendar_api_requests' | 'projects_navigation' | 'projects_api_response'
+  | 'activity_navigation' | 'agent_health_navigation' | 'agent_health_api_response'
+  | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
+  | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
+  | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
+
+function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
+  return page.waitForResponse((response) => {
+    const request = response.request();
+    const url = new URL(response.url());
+    return request.method() === 'GET' && url.pathname === path && matchesQuery(url.searchParams);
+  }, { timeout: 5000 }).catch(() => null);
+}
+
+async function expectSuccessfulGet(
+  responsePromise: Promise<Response | null>,
+  observed: Awaited<ReturnType<typeof configurePage>>,
+  assertion: DiagnosticAssertion,
+) {
+  observed.setDiagnosticAssertion(assertion);
+  const response = await responsePromise;
+  expect(response, `${assertion}_observed`).not.toBeNull();
+  expect(response?.status(), assertion).toBe(200);
+}
+
+async function expectNoHorizontalOverflow(
+  page: Page,
+  observed: Awaited<ReturnType<typeof configurePage>>,
+  viewport: { width: number },
+  assertion: Extract<DiagnosticAssertion, `layout_${string}`>,
+) {
+  observed.setDiagnosticAssertion(assertion);
+  const widths = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    document: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+  }));
+  expect(widths.viewport).toBe(viewport.width);
+  expect(Math.max(widths.document, widths.body), assertion).toBeLessThanOrEqual(widths.viewport);
+}
 
 function safePath(value: string): string {
   const url = new URL(value, baseUrl);
@@ -373,12 +413,21 @@ for (const viewport of viewports) {
     expect(observed.blockedOrigins.size).toBe(0);
 
     observed.setFailureStage('viewport_layout');
+    const homeResponsePromise = waitForGetResponse(page, '/api/home');
     await page.goto('/');
     await expect(page.getByRole('heading', { name: '你的工作台' })).toBeVisible();
+    await expectSuccessfulGet(homeResponsePromise, observed, 'home_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_home');
     observed.setDiagnosticAssertion('home_to_projects');
+    const projectsResponsePromise = waitForGetResponse(page, '/api/projects', (params) =>
+      params.get('limit') === '50' && params.get('offset') === '0' && Array.from(params.keys()).length === 2);
     await page.getByRole('button', { name: '打开项目' }).first().click();
+    observed.setDiagnosticAssertion('projects_navigation');
+    await expect(page).toHaveURL(/\/projects(?:\?.*)?$/);
     observed.setDiagnosticAssertion('projects_heading');
     await expect(page.getByRole('heading', { name: '项目' })).toBeVisible();
+    await expectSuccessfulGet(projectsResponsePromise, observed, 'projects_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_projects');
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_projects');
     observed.setDiagnosticAssertion('home_to_activity');
     const activityResponsePromise = page.waitForResponse((response) => {
@@ -389,6 +438,8 @@ for (const viewport of viewports) {
         && Array.from(url.searchParams.keys()).length === 2;
     }, { timeout: 5000 }).catch(() => null);
     await page.getByRole('button', { name: '打开动态' }).first().click();
+    observed.setDiagnosticAssertion('activity_navigation');
+    await expect(page).toHaveURL(/\/activity(?:\?.*)?$/);
     observed.setDiagnosticAssertion('activity_heading');
     await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
     observed.setDiagnosticAssertion('activity_get_response');
@@ -396,6 +447,7 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('activity_get_status_200');
     expect(activityResponse, 'activity_get_response_observed').not.toBeNull();
     expect(activityResponse?.status(), 'activity_get_http_200').toBe(200);
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_activity');
     observed.setDiagnosticAssertion('home_after_activity');
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_activity');
     observed.setFailureStage('permission_revocation');
@@ -415,34 +467,65 @@ for (const viewport of viewports) {
     observed.setFailureStage('post_revocation_navigation');
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_revocation');
     observed.setFailureStage('agent_health');
-    observed.setDiagnosticAssertion('agent_health_heading');
+    const agentHealthResponsePromise = waitForGetResponse(page, '/api/agent/health');
+    observed.setDiagnosticAssertion('agent_health_navigation');
     await page.getByRole('button', { name: '查看 Agent 状态' }).first().click();
-    await expect(page.getByRole('heading', { name: 'Agent 状态' })).toBeVisible();
+    await expect(page).toHaveURL(/\/agent-health(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('agent_health_heading');
+    await expect(page.getByRole('heading', { level: 1, name: 'Agent 状态', exact: true })).toBeVisible();
+    await expectSuccessfulGet(agentHealthResponsePromise, observed, 'agent_health_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_agent_health');
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_agent_health');
     observed.setFailureStage('today');
+    const todayResponsePromise = waitForGetResponse(page, '/api/tasks', (params) =>
+      params.get('status') === 'open' && Array.from(params.keys()).length === 1);
+    if (viewport.width <= 760) {
+      const menu = page.locator('.mobile-menu-button');
+      await expect(menu).toHaveAttribute('aria-expanded', 'false');
+      await menu.click();
+      await expect(menu).toHaveAttribute('aria-expanded', 'true');
+    }
+    observed.setDiagnosticAssertion('today_navigation');
+    await page.locator('.sidebar nav').getByRole('button', { name: '今日', exact: true }).click();
+    await expect(page).toHaveURL(/\/today(?:\?.*)?$/);
     observed.setDiagnosticAssertion('today_heading');
-    await page.getByRole('button', { name: '今日' }).first().click();
     await expect(page.getByRole('heading', { name: '今日与待办' })).toBeVisible();
+    await expectSuccessfulGet(todayResponsePromise, observed, 'today_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_today');
+    if (viewport.width <= 760) await expect(page.locator('.mobile-menu-button')).toHaveAttribute('aria-expanded', 'false');
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_today');
     observed.setFailureStage('journal');
-    observed.setDiagnosticAssertion('journal_heading');
+    const journalResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      const url = new URL(response.url());
+      return request.method() === 'GET' && /^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(url.pathname) && url.search === '';
+    }, { timeout: 5000 }).catch(() => null);
+    observed.setDiagnosticAssertion('journal_navigation');
     await page.getByRole('button', { name: '新建日记' }).click();
+    await expect(page).toHaveURL(/\/journal(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('journal_heading');
     await expect(page.getByRole('heading', { name: '日记' })).toBeVisible();
+    await expectSuccessfulGet(journalResponsePromise, observed, 'journal_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_journal');
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_journal');
     observed.setFailureStage('calendar');
-    observed.setDiagnosticAssertion('calendar_heading');
+    const calendarResponsePromise = waitForGetResponse(page, '/api/calendar', (params) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(params.get('from') ?? '')
+      && /^\d{4}-\d{2}-\d{2}$/.test(params.get('to') ?? '')
+      && params.get('timezone') === 'Asia/Shanghai' && Array.from(params.keys()).length === 3);
+    observed.setDiagnosticAssertion('calendar_navigation');
     await page.getByRole('button', { name: '查看完整日历' }).click();
+    await expect(page).toHaveURL(/\/calendar(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('calendar_heading');
     await expect(page.getByRole('heading', { name: '日历' })).toBeVisible();
+    await expectSuccessfulGet(calendarResponsePromise, observed, 'calendar_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_calendar');
     observed.setDiagnosticAssertion('calendar_api_requests');
     expect(observed.blockedOrigins.size).toBe(0);
     for (const path of ['/api/home', '/api/projects', '/api/activity', '/api/agent/health', '/api/tasks', '/api/journal/', '/api/calendar']) {
       expect(observed.requestRecords.some((request) => request.method === 'GET' && request.path.startsWith(path))).toBe(true);
     }
 
-    observed.setFailureStage('viewport_layout');
-    observed.setDiagnosticAssertion('layout_no_horizontal_overflow');
-    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
-    expect(scrollWidth).toBeLessThanOrEqual(viewport.width);
   });
 }
 
