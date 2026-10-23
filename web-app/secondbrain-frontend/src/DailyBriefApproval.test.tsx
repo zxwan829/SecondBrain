@@ -182,6 +182,34 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(screen.queryByText(/将原样复制到今天的新简报/)).toBeNull();
   });
 
+  it('does not submit an approved import for a target date the fixed Core contract rejects', async () => {
+    const sourceDate = '2026-10-22';
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      calls.push(path);
+      if (path.includes('/source-options/brief?')) return Response.json({
+        status: 'real', items: [{ kind: 'existing_brief', id: sourceDate + ':brief_old', date: sourceDate,
+          timezone: 'Asia/Shanghai', version: 'a'.repeat(64) }], freshness: { checked_at: checkedAt },
+      });
+      if (path === '/api/daily-brief?date=' + sourceDate + '&timezone=Asia%2FShanghai') return Response.json({
+        status: 'real', items: [{ brief_id: 'brief_old', date: sourceDate, timezone: 'Asia/Shanghai', generated_at: checkedAt,
+          generation_status: 'generated', categories: ['synthetic'], summary: 'Synthetic old brief',
+          source_refs: [{ kind: 'task', id: 'a'.repeat(32), version: 'a'.repeat(64) }] }],
+        source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt },
+      });
+      throw new Error('Unexpected request: ' + path);
+    }));
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} dateNow={() => new Date('2026-10-23T02:00:00Z')} />);
+    fireEvent.change(screen.getByLabelText('来源简报日期'), { target: { value: sourceDate } });
+    fireEvent.change(screen.getByLabelText('目标简报日期'), { target: { value: '2026-10-24' } });
+    fireEvent.click(screen.getByRole('button', { name: '读取该日简报' }));
+    expect(await screen.findByText('Synthetic old brief')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '确认导入并创建' }));
+    expect(screen.getByRole('alert').textContent).toContain('当前 Core 仅接受今天');
+    expect(calls.filter((path) => path === '/api/daily-brief')).toHaveLength(0);
+  });
+
   it('loads Journal only on click, submits the exact Core ref after confirmation, then verifies by GET', async () => {
     vi.stubGlobal('crypto', cryptoFor());
     const sourceDate = currentShanghaiDate();
