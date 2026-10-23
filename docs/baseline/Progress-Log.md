@@ -3,8 +3,8 @@
 ## 2026-10-24 — Capture Activity Web 复审与 Organizer status 竞态修复
 
 - **固定基线：** GitHub main `2782f73fa44a21549f7758c4e449076304875917`。#221 Core `41e9729d693e80f4f37c1a5543dc8fb1e1411124`、#222 Web `438a7e2b570370d1c742bc8b9f50caa9941fdc76` 的既有隔离 Vite→Uvicorn HTTP 组合 `edb17ec78eeedb96b5015dc5fcc7429bf27472d2` 保留为 `PASS_WITH_LIMITS`，未重复运行。#222 A 线增量源码复审 Review #5633533074 为 `PASS_WITH_LIMITS`：Capture Activity 六种状态本地化、Capture DTO 字段收窄、未知状态/多余字段 fail-closed；不代表 Core #221 准入或浏览器覆盖 Capture 专项。
-- **P4-6 Web 缺陷：** 在独立 main clone 的 `ScopedCaptureInbox` 复现 Organizer 状态请求竞态：较新的 403 已撤销可用状态后，旧 200 `execution_available=true` 仍可迟到并重开操作 UI。#223 `19d974318ded3d2b779e2a3ffc76e3d1a3bda3e4` 为 Organizer status 请求增加 latest-request revision guard，并在离开 Capture scope 时使未完成响应失效；Core 服务端授权未改。
-- **验证：** 新回归在修复前失败、修复后通过；`App.navigation.test.tsx -t 'Inbox explicit source scopes'` 18 passed；`npm run typecheck`、`npm run build`、`git diff --check` PASS。Build 保留既有 Canvas chunk 大小提示。完整 `App.navigation.test.tsx` 在 main 基线上 56 passed、1 failed；失败是 #220 已定位并修复的 Home→Task 表单入口，不归因于 #223。未触发手动 Actions。#223 Draft/Open，等待独立复审。
+- **P4-6 Web 缺陷：** 在独立 main clone 的 `ScopedCaptureInbox` 复现 Organizer 状态请求竞态：较新的 403 已撤销可用状态后，旧 200 `execution_available=true` 仍可迟到并重开操作 UI。#223 `f0c1fc8f4c02dbcd2da4fa441dcfb21a10748c7a` 为 Organizer status 请求增加 latest-request revision guard，并在离开 Capture scope 时使未完成响应失效；Core 服务端授权未改。另依据 Core 回执合同明确显示 `no_candidates`，对未知/畸形 HTTP 200 不再伪报 0/NaN 成功结果，而提示检查状态。
+- **验证：** 状态竞态回归在修复前失败、修复后通过；最终 HEAD 的 `App.navigation.test.tsx -t 'Inbox explicit source scopes'` 20 passed；`npm run typecheck`、`npm run build`、`git diff --check` PASS。Build 保留既有 Canvas chunk 大小提示。更早在 main 基线上执行的完整 `App.navigation.test.tsx` 为 56 passed、1 failed；失败是 #220 已定位并修复的 Home→Task 表单入口，不归因于 #223，最终 HEAD 未重跑整文件。未触发手动 Actions。#223 Draft/Open，等待独立复审。
 - **剩余项与边界：** #221 Core 仍待 B 同步 main 并复核净差异；#220 最新 HEAD `d3e6d253...` 三视口已 PASS，但独立复审未完成。P4-1 的逐格式 OCR/STT 内容质量及手机文件选择、Obsidian 双向同步仍未验收。没有合并、部署、真实数据/模型或生产操作；Writer/Promote、费用门禁 OFF，D090 不变。
 
 ## 2026-10-24 — #164 合入与最新 Capture/Notes 合成验收推进
