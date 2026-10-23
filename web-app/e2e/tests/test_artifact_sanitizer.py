@@ -130,6 +130,10 @@ def test_workflow_uploads_only_exact_sanitized_directory_and_is_manual_read_only
     assert "permissions:\n  contents: read" in workflow
     assert "contents: write" not in workflow and "secrets." not in workflow
     assert "runs-on: ubuntu-24.04" in workflow and "persist-credentials: false" in workflow
+    assert "ref: ${{ github.sha }}" in workflow
+    assert "EXPECTED_SHA: ${{ github.sha }}" in workflow
+    assert 'actual_sha="$(git rev-parse HEAD)"' in workflow
+    assert 'test "$actual_sha" = "$EXPECTED_SHA"' in workflow
     assert "path: web-app/e2e/artifacts-sanitized/" in workflow
     assert "path: web-app/e2e/artifacts-sanitized/${{ github.run_id }}-${{ github.run_attempt }}/" in workflow
     assert "path: web-app/e2e/artifacts/" not in workflow
@@ -288,7 +292,7 @@ def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():
         module._validate_failure_diagnostics([entry, entry, entry, entry])
 
 
-def test_failure_diagnostics_require_one_fixed_enum_record_per_failed_testcase(tmp_path):
+def test_missing_fixed_viewport_diagnostic_gets_safe_setup_fallback(tmp_path):
     raw = tmp_path / "raw"
     raw.mkdir()
     _write_junit(raw, {"desktop-1440x1000", "tablet-820x1180"})
@@ -298,8 +302,42 @@ def test_failure_diagnostics_require_one_fixed_enum_record_per_failed_testcase(t
         "schema_version": 2, "viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
         "assertion_id": "test_setup", "activity_get_statuses": [],
     }))
-    with pytest.raises(RuntimeError, match="do not match failed testcase viewports"):
-        module._collect_failure_diagnostics(raw)
+    assert module._collect_failure_diagnostics(raw) == [
+        {"viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
+         "assertion_id": "test_setup", "activity_get_statuses": []},
+        {"viewport": "tablet-820x1180", "stage": "test_setup", "code": "test_error",
+         "assertion_id": "test_setup", "activity_get_statuses": []},
+    ]
+
+
+def test_browser_launch_failures_without_page_hooks_emit_only_fixed_junit_viewports(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_junit(raw, set(module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.values()))
+    diagnostics = module._collect_failure_diagnostics(raw)
+    assert diagnostics == [
+        {"viewport": viewport, "stage": "test_setup", "code": "test_error",
+         "assertion_id": "test_setup", "activity_get_statuses": []}
+        for viewport in module.FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
+    ]
+
+
+def test_browser_setup_failures_publish_allowlisted_reports_without_raw_error_text(tmp_path):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir(mode=0o700)
+    _write_junit(raw, set(module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.values()))
+    (raw / "run-summary.json").write_text(json.dumps({"result": "FAIL", "exit_code": 1}))
+    secret = _write_secret(tmp_path / "password")
+
+    module.publish_verified_reports(raw, published, secret)
+
+    published_files = {path.name for path in published.rglob("*") if path.is_file()}
+    assert published_files == {"junit.xml", "run-summary.json", "failure-diagnostics.json"}
+    assert json.loads((published / "failure-diagnostics.json").read_text()) == [
+        {"viewport": viewport, "stage": "test_setup", "code": "test_error",
+         "assertion_id": "test_setup", "activity_get_statuses": []}
+        for viewport in module.FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
+    ]
 
 
 def _write_failure_diagnostic(raw: Path, viewport: str) -> None:

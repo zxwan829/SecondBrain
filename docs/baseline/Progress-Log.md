@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-10-23 — A-NEXT Linux Chromium Gate 准备与脱敏报告修复
+
+- **固定基线：** PR #202 已核实原固定 HEAD `63896b79566ad47cad1b46471abf8a5f033e5abd`，Draft/Open；本候选保留该提交及 `21034fa2` 的既有 Web 测试修复。PR 最新 HEAD 以本条最终提交并 GitHub readback 为准。
+- **环境裁定：** 正式三视口 E2E 固定使用 GitHub-hosted Ubuntu 24.04 + Playwright Chromium。macOS 仅运行组件/DOM、Core+Vite 合成 HTTP、typecheck/build；停止重复排查 Edge SIGABRT/Chromium SIGTRAP。已更新 `Agent-Rules.md` 长期规则与 CURRENT。
+- **脚本审查：** 原 Activity waiter 在点击前注册并严格核对响应；Calendar 请求参数/响应、Agent Health 精确 H1、Mobile Today 菜单状态，以及每页 document/body 横向溢出检查均保留。未发现有证据支持删除或放宽这些断言。
+- **已复现的报告缺陷：** Edge 启动失败时 Playwright 的 `page` fixture 尚未创建，`test.afterEach` 不会写逐视口摘要；JUnit 仍能精确列出三个固定测试用例，旧 sanitizer 因视口诊断集合不完整拒绝整份报告。本候选只为缺失的失败视口生成固定 `test_setup/test_error` 记录，来源为严格 allowlist JUnit identity；不读取/输出自由文本异常、header、cookie、正文或截图，不接受额外/错配诊断。新增回归分别覆盖部分缺摘要及三个浏览器 setup 失败。
+- **Gate 准备：** `a-web-playwright-synthetic.yml` 明确 checkout 事件 SHA，并在测试前比对 `git rev-parse HEAD`，输出固定 `CHECKOUT_SHA`；Ubuntu 24.04、Chromium、合成环境和脱敏流程不变。实际 GitHub Actions `workflow_dispatch` 未运行；Linux 三视口仍 `NOT RUN`，`A_NEXT_READY=NOT_READY`。
+- **验证边界：** 本轮只运行 E2E sanitizer 定向 Python 测试、workflow YAML/shell 静态检查和 diff-check；没有 Mac 浏览器、无关 Web 全量、Core 全量、Actions、生产/NAS/真实数据、合并或部署。实施者二次差异复核不冒充独立复审；独立复审保持待办，Linux Gate 须针对复审后的固定 SHA 另行授权。
+
 ## 2026-10-23 — A-NEXT Edge 配置复核与本地三视口环境阻断
 
 - **PR #202 修复复审：** 审阅本地提交 `21034fa2c304a3af737c44662cd9195a777dce94` 相对固定基线 `cf317fecae86a0624affb1ec618e63731dfcac25` 的完整差异。变更限于 Playwright 断言/导航定位、允许的脱敏诊断 ID 和移动导航 DOM 回归；未删除 Calendar 请求断言、未放宽响应状态、未改 Core/产品代码。`SOURCE_REVIEW=PASS_WITH_LIMITS`。

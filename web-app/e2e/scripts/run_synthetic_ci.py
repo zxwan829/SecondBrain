@@ -57,7 +57,7 @@ FAILURE_JUNIT_TESTCASE_VIEWPORTS = {
     ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at mobile-390x844"): "mobile-390x844",
 }
 FAILURE_DIAGNOSTIC_STAGES = {
-    "login", "session", "first_submit", "retry", "conflict",
+    "test_setup", "login", "session", "first_submit", "retry", "conflict",
     "ordinary_chat", "source_protection", "daily_brief_read", "daily_brief_sources",
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
     "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
@@ -333,8 +333,19 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
-    if failed_viewport_set != diagnostic_viewports:
+    if not diagnostic_viewports.issubset(failed_viewport_set):
         raise RuntimeError("failure diagnostics do not match failed testcase viewports; upload withheld")
+    # Playwright cannot invoke a test hook that requires `page` when browser
+    # launch fails during fixture setup. Derive only the viewport from the
+    # exact JUnit allowlist above; do not copy free-form runner error text.
+    for viewport in failed_viewport_set - diagnostic_viewports:
+        diagnostics.append({
+            "viewport": viewport,
+            "stage": "test_setup",
+            "code": "test_error",
+            "assertion_id": "test_setup",
+            "activity_get_statuses": [],
+        })
     viewport_order = {name: index for index, name in enumerate(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values())}
     diagnostics.sort(key=lambda entry: viewport_order[entry["viewport"]])
     return diagnostics
