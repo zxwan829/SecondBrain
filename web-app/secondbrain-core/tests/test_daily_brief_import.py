@@ -4,7 +4,7 @@ import json
 import multiprocessing
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -610,7 +610,7 @@ def test_http_brief_source_options_exact_date_and_approved_import_is_create_only
     assert "Synthetic historical Brief summary" not in selected.text
     assert str(root) not in selected.text
 
-    target_day = manual["date"]
+    target_day = (datetime.now(ZoneInfo(ZONE)).date() - timedelta(days=2)).isoformat()
     body = _approved_import_body(target_day, source_day, brief_id, version, copied)
     post_headers = {**headers, "Idempotency-Key": "brief-import-synthetic-key-0001"}
     created = client.post("/api/daily-brief", json=body, headers=post_headers)
@@ -626,6 +626,19 @@ def test_http_brief_source_options_exact_date_and_approved_import_is_create_only
     assert target_record["categories"] == copied["categories"]
     assert target_record["summary"] == copied["summary"]
     assert target_record["source_refs"] == copied["source_refs"]
+    assert datetime.fromisoformat(target_record["generated_at"]).date().isoformat() != target_day
+
+    # The new target-date allowance is specific to approved_import.
+    manual_old_date = {**manual, "date": target_day}
+    manual_rejected = client.post("/api/daily-brief", json=manual_old_date, headers=headers)
+    assert manual_rejected.status_code == 422
+    invalid_target = {**body, "date": "2026-02-30"}
+    invalid_target_response = client.post(
+        "/api/daily-brief", json=invalid_target,
+        headers={**headers, "Idempotency-Key": "brief-import-invalid-date-0001"},
+    )
+    assert invalid_target_response.status_code == 422
+    assert not (root / "2026-02-30.json").exists()
 
     replay = client.post("/api/daily-brief", json=body, headers=post_headers)
     assert replay.status_code == 200 and replay.json()["status"] == "duplicate"

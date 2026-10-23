@@ -351,8 +351,13 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
         if set(body) != expected or body.get("approved") is not True:
             raise HTTPException(status_code=422, detail="invalid request")
         day, timezone_name = body.get("date"), body.get("timezone")
-        if (timezone_name != "Asia/Shanghai" or not isinstance(day, str)
-                or day != datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()):
+        try:
+            valid_day = isinstance(day, str) and date.fromisoformat(day).isoformat() == day
+        except ValueError:
+            valid_day = False
+        if (timezone_name != "Asia/Shanghai" or not valid_day
+                or (mode == "manual_generate"
+                    and day != datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat())):
             raise HTTPException(status_code=422, detail="invalid request")
         header_keys = request.headers.getlist("idempotency-key")
         if len(header_keys) > 1:
