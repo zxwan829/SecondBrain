@@ -461,7 +461,7 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 
 ## D091 — 2026-10-24 统一 Codex 主 Agent 协作（APPROVED GOVERNANCE DECISION）
 
-**决定：** SecondBrain 从原先需要用户在 A/B 两个 Codex 会话间人工转发任务的双线协作，调整为**一个 Codex 主 Agent 统一调度**。Web 与 Core 保留为专业工作角色，不再是需要用户分别启动的固定会话；主 Agent 在现有执行环境允许时委派隔离子 Agent，无法委派时由主 Agent 在隔离 worktree 中按依赖顺序执行。主 Agent 持续读取 GitHub 既有 Issue/PR 与 CURRENT、自主分配/联调/协调复审/验证/满足门禁后合并已授权的普通 PR，并领取下一工作包。ChatGPT 负责重大架构、独立复审与阶段验收，不再逐项充当 A/B 消息中转；用户负责最终目标和需专门授权的行动。
+**决定：** SecondBrain 从原先需要用户在 A/B 两个 Codex 会话间人工转发任务的双线协作，调整为**一个 Codex 主 Agent 统一调度**。Web 与 Core 保留为专业工作角色，不再是需要用户分别启动的固定会话；主 Agent 在现有执行环境允许时委派隔离子 Agent，无法委派时由主 Agent 在隔离 worktree 中按依赖顺序执行。主 Agent 持续读取 GitHub 既有 Issue/PR 与 CURRENT、自主分配/联调/协调复审/验证/满足门禁后合并已授权的普通 PR，并领取下一工作包。ChatGPT 负责重大架构、安全合同与阶段验收，不再逐项充当普通 PR 的复审依赖或 A/B 消息中转；未参与实现的 Review 子 Agent 可独立审查普通 PR，但不能替代 GitHub 必需审批；用户负责最终目标和需专门授权的行动。
 
 **替代范围：** 本决定取代旧治理描述中的“两条聊天线人工协调、各自等待用户重新发令”流程。V1-Delivery-Plan 的 A/B 分工表和历史 Issue 记录保留用于技术所有权、任务依赖和审计，不代表仍需要两个独立 Codex 对话。现行执行规则以 `AGENTS.md` → `Agent-Rules.md` 为准，阶段状态以 `00-CURRENT.md` 为准。
 
