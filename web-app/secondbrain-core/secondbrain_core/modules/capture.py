@@ -32,6 +32,8 @@ MAX_ACTIVITY_CAPTURE_STATE_FILES = 500
 MAX_ACTIVITY_CAPTURE_BYTES = 2 * 1024 * 1024
 MAX_DISPLAY_FILENAME_CHARS = 255
 MAX_WEB_BYTES = 5 * 1024 * 1024
+MAX_WEB_EXTRACT_CHARS = 500_000
+MAX_WEB_EXTRACT_PARTS = 20_000
 MAX_PDF_EXTRACTED_TEXT_CHARS = 1_000_000
 MAX_REDIRECTS = 4
 ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg",
@@ -126,9 +128,31 @@ class _TextExtractor(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts = []
+        self.part_chars = 0
+        self.truncated = False
         self.skip = 0
         self.title = []
+        self.title_chars = 0
         self.in_title = False
+
+    def _append(self, text):
+        if not text or self.truncated:
+            return
+        if len(self.parts) >= MAX_WEB_EXTRACT_PARTS:
+            self.truncated = True
+            return
+        remaining = MAX_WEB_EXTRACT_CHARS - self.part_chars
+        if remaining <= 0:
+            self.truncated = True
+            return
+        if len(text) > remaining:
+            text = text[:remaining]
+            self.truncated = True
+        self.parts.append(text)
+        self.part_chars += len(text)
+
+    def extracted_text(self):
+        return "\n".join(line.strip() for line in "".join(self.parts).splitlines() if line.strip())
 
     def handle_starttag(self, tag, attrs):
         if tag in self.BLOCKED:
@@ -136,7 +160,7 @@ class _TextExtractor(HTMLParser):
         if tag == "title":
             self.in_title = True
         if tag in {"p", "div", "br", "li", "h1", "h2", "h3", "article", "section"}:
-            self.parts.append("\n")
+            self._append("\n")
 
     def handle_endtag(self, tag):
         if tag in self.BLOCKED and self.skip:
@@ -145,10 +169,13 @@ class _TextExtractor(HTMLParser):
             self.in_title = False
 
     def handle_data(self, data):
-        if self.in_title:
-            self.title.append(data.strip())
+        if self.in_title and self.title_chars < 300:
+            part = data.strip()[:300 - self.title_chars]
+            if part:
+                self.title.append(part)
+                self.title_chars += len(part)
         if not self.skip and data.strip():
-            self.parts.append(data.strip())
+            self._append(data.strip())
 
 
 def _resolve_public_url(url):
@@ -907,13 +934,21 @@ class CaptureService:
                     parser = _TextExtractor()
                     parser.feed(body)
                     title = " ".join(" ".join(parser.title).split()) or final_url
-                    extracted = "\n".join(line.strip() for line in "".join(parser.parts).splitlines() if line.strip())
+                    extracted = parser.extracted_text()
+                    truncated = parser.truncated
                 else:
                     title, extracted = final_url, body
+                    truncated = len(extracted) > MAX_WEB_EXTRACT_CHARS
                 if not extracted.strip():
                     raise ValueError("No readable page text was extracted")
                 state["title"] = title[:300]
-                content = extracted[:500_000]
+                content = extracted[:MAX_WEB_EXTRACT_CHARS]
+                if truncated or len(extracted) > MAX_WEB_EXTRACT_CHARS:
+                    content += "\n\n[Content truncated at the safe extraction limit.]"
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "Web content exceeded the safe extraction limit; the original URL was retained.",
+                    }
                 state["derived_source_url"] = final_url
             elif input_type == "pdf":
                 reader = PdfReader(__import__("io").BytesIO(raw), strict=True)

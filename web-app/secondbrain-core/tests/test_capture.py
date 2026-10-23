@@ -15,7 +15,9 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
 from secondbrain_core.app import create_app
-from secondbrain_core.modules.capture import CaptureService, create_capture_router, _public_http_url, _resolve_public_url, _fetch_url
+from secondbrain_core.modules.capture import (CaptureService, create_capture_router, _public_http_url,
+                                              _resolve_public_url, _fetch_url, _TextExtractor,
+                                              MAX_WEB_EXTRACT_CHARS, MAX_WEB_EXTRACT_PARTS)
 
 
 class CaptureServiceTests(unittest.TestCase):
@@ -277,6 +279,49 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertNotIn("Readable body", raw)
         self.assertIn("Readable body", review)
         self.assertNotIn("ignored", review)
+
+    def test_url_html_extraction_is_bounded_and_reports_partial_with_raw_preserved(self):
+        url = "https://capture.example/large-html"
+        page = "<html><title>" + ("T" * 5000) + "</title><p>" + \
+               ("Readable " * (MAX_WEB_EXTRACT_CHARS // 5 + 200)) + "</p></html>"
+        with patch("secondbrain_core.modules.capture._public_http_url", return_value=urlsplit(url)), \
+             patch("secondbrain_core.modules.capture._fetch_url",
+                   return_value=(url, page, "text/html; charset=utf-8")):
+            item = self.service.accept_url(url)
+            raw_path = self.raw / item["raw_path"]
+            original_raw = raw_path.read_bytes()
+            original_sha = hashlib.sha256(original_raw).hexdigest()
+            self.service.process(item, original_raw)
+        result = self.service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        self.assertEqual(hashlib.sha256(raw_path.read_bytes()).hexdigest(), original_sha)
+        review = (self.review / result["review_path"]).read_text(encoding="utf-8")
+        self.assertIn("[Content truncated at the safe extraction limit.]", review)
+        self.assertIn("original URL was retained", result["error"]["message"])
+
+    def test_url_text_plain_truncation_is_not_reported_as_complete(self):
+        url = "https://capture.example/large-text"
+        text = "x" * (MAX_WEB_EXTRACT_CHARS + 17)
+        with patch("secondbrain_core.modules.capture._public_http_url", return_value=urlsplit(url)), \
+             patch("secondbrain_core.modules.capture._fetch_url",
+                   return_value=(url, text, "text/plain; charset=utf-8")):
+            item = self.service.accept_url(url)
+            self.service.process(item, (self.raw / item["raw_path"]).read_bytes())
+        result = self.service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        review = (self.review / result["review_path"]).read_text(encoding="utf-8")
+        self.assertIn("[Content truncated at the safe extraction limit.]", review)
+
+    def test_html_extractor_bounds_many_tiny_nodes_and_title(self):
+        parser = _TextExtractor()
+        parser.feed("<html><title>" + ("T" * 5000) + "</title>" + "<p>x</p>" * 25_000 + "</html>")
+        parser.close()
+        self.assertTrue(parser.truncated)
+        self.assertLessEqual(len(parser.parts), MAX_WEB_EXTRACT_PARTS)
+        self.assertLessEqual(parser.part_chars, MAX_WEB_EXTRACT_CHARS)
+        self.assertLessEqual(parser.title_chars, 300)
 
     def test_url_extraction_failure_preserves_initial_raw_hash(self):
         url = "https://capture.example/empty"
