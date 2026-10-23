@@ -1,5 +1,12 @@
 # Progress Log
 
+## 2026-10-24 — #201/#207/#202 固定组合合入与 Linux 三视口 Gate
+
+- **源码与合并：** 从 main `d8e58585dcb2e6b03707861b1a3233c666c466fa` 出发，按 #201 固定 HEAD `ea70fca9dde78793b05d5aaed7523f26bf432a72` → merge `e611ecc46354eec0c28ffe1bc573cf218f12ee30`，#207 `aff4171f86b00bb8420e0cfe2af8a0978fdb2f37` → `6c372ff609a5f9252c0c2197cdbf240190827bea`，#202 `69f39cccfbae56c66a4db6f483e8dc75aee0cf7b` → `5fd9df3cd05981a89a495b748bcc5bf541ab7788` 正常 Ready/Merge。每次指定精确 HEAD；GitHub 返回 MERGED、main 前进。无管理员绕过、强推、reset 或回滚。
+- **增量与复审：** #201 原功能、缺 grant fail-closed 修复、后续 fixture-only 增量分别获独立 `PASS_WITH_LIMITS` 源码复审（#5628071244、#5629186192、#5629351990）；本次安全敏感合并有用户单独授权。#207 从已复审实现到旧 HEAD 仅测试 fixture，随后同步 main 的新 HEAD 无 Core 文件变化；两份既有复审 #5628070590/#5629352916 继续适用。#202 当前 HEAD 增量复审 #5630364588 为 `PASS_WITH_LIMITS`。三次合并的 main tree 均与预先无冲突的候选 tree 相同，diff-check PASS。最终 tree `f1b012cd160788a9c965d001065f253a59d59084` 与上一固定 #201/#207/#202 本地组合完全一致；复用 82 Web、158 Core 和 `P3_1_5_HTTP=PASS_WITH_LIMITS`，没有重跑无变化测试。
+- **真实 Linux 合成浏览器：** 对 #202 精确 HEAD 触发一次既有 `a-web-playwright-synthetic.yml`，Run [#39984102838](https://github.com/zxwan829/SecondBrain/actions/runs/39984102838) `workflow_dispatch`，实际 head SHA 与固定 HEAD 相同，全部步骤成功。脱敏 JUnit 3 tests / 0 failures / 0 errors：Desktop 1440×1000、Tablet 820×1180、Mobile 390×844 均 PASS；现有业务旅程与横向溢出断言随同一用例通过。脱敏 artifact #12514632289，digest `sha256:3584c0b4c6f55c70546e32f688594cdbf80957ca14b7076a4ed820659b993812`，只有 JUnit 与 run-summary，无失败截图。摘要为 `result=PASS`、`brief_file_set_verified=true`、Journal fixture 1 / mutation 0、Knowledge files 0、Promote=false、Hermes fixture-only。该工作流在 #202 分支快照上运行；与 Core 合并后的 main tree 等效性由上述 tree 核对及既有 HTTP Gate 支撑，不把它误称为生产浏览器验收。
+- **边界：** 合成 Web `A_NEXT_READY=READY_WITH_LIMITS`；#201 已知的进程内缺 grant fail-open 修复通过范围内验收。跨进程持久撤权、Writer/Promote OS Gate、真实模型/渠道、生产部署、真实 Vault/NAS、Notes 移动交互和 Obsidian 双向同步均未由本次验证。V1 整体仍 NOT DONE，生产 Writer/Promote 与费用门禁保持 OFF。
+
 ## 2026-10-23 — #201/#207/#202 fail-closed 与合成集成收口
 
 - **基线与固定 PR 版本：** GitHub main `d8e58585dcb2e6b03707861b1a3233c666c466fa`（新增 #217 docs-only；运行代码基线 `e33b836c`）。#201 当前 `ea70fca9dde78793b05d5aaed7523f26bf432a72`，#207 当前 `a5560d90cf138847558395af8eab7a2d7a077465`，#202 当前 `6c650c9518870f69f830afe5c0945f871d2e1e42`，base 为 main。
