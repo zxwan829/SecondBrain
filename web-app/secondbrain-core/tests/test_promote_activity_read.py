@@ -56,6 +56,12 @@ class PromoteAuditActivityReadTests(unittest.TestCase):
         self.assertNotIn("approver_subject", rows[0])
         self.assertNotIn("output_sha256", rows[0])
 
+    def test_missing_configured_parent_is_incomplete_not_empty_ledger(self):
+        missing_parent = self.root / "missing" / "nested"
+        store = activity_read.PromoteAuditActivityReadStore(str(missing_parent / "audit.jsonl"))
+
+        self.assertEqual(store.read(), ([], False))
+
     def test_malformed_duplicate_keys_and_incomplete_tail_are_partial(self):
         good = json.dumps(_record(), separators=(",", ":")).encode() + b"\n"
         self.path.write_bytes(good + b'{"event":"promoted","event":"promoted"}\n' + b'{"event":')

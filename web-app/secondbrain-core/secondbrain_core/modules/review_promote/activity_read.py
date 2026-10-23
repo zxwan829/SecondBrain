@@ -95,8 +95,31 @@ class PromoteAuditActivityReadStore:
             basename = os.path.basename(self.audit_path)
             directory_fd = _open_dir_chain(directory)
             directory_before = os.fstat(directory_fd)
-            fd = os.open(basename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
-                          getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
+            try:
+                fd = os.open(basename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                             getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
+            except FileNotFoundError:
+                # A configured parent that disappeared is an incomplete source,
+                # not an empty audit ledger. Only an absent leaf in the same
+                # still-present directory represents the known empty state.
+                try:
+                    current_directory_fd = _open_dir_chain(directory)
+                    try:
+                        current_directory = os.fstat(current_directory_fd)
+                        try:
+                            os.stat(basename, dir_fd=directory_fd, follow_symlinks=False)
+                            leaf_still_missing = False
+                        except FileNotFoundError:
+                            leaf_still_missing = True
+                        same_directory = (directory_before.st_dev, directory_before.st_ino) == \
+                                         (current_directory.st_dev, current_directory.st_ino)
+                        if same_directory and leaf_still_missing:
+                            return [], True
+                    finally:
+                        os.close(current_directory_fd)
+                except OSError:
+                    pass
+                return [], False
             before = os.fstat(fd)
             if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid() or
                     stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1):
@@ -174,8 +197,6 @@ class PromoteAuditActivityReadStore:
             finally:
                 os.close(final_directory_fd)
             return rows, complete
-        except FileNotFoundError:
-            return [], True
         except (OSError, ValueError, TypeError):
             return [], False
         finally:
