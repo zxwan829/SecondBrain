@@ -1034,6 +1034,29 @@ describe('Inbox explicit source scopes', () => {
     expect(calls).toContain('POST /api/automation/organize/run');
   });
 
+  it.each([
+    ['no_candidates', '整理完成，没有可生成的 Review 草稿。'],
+    ['unexpected_status', '整理结果暂无法核验。请先查看 Organizer 状态，不要立即重复执行。'],
+  ])('reports Organizer result %s accurately without inventing a draft count', async (status, message) => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/automation/organize/status') return new Response(JSON.stringify({ execution_available: true, blocked_reason: '' }), { status: 200 });
+      if (url === '/api/automation/organize/run' && init?.method === 'POST') return new Response(JSON.stringify({ status }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    await screen.findByText('没有 Capture 条目。');
+    fireEvent.click(screen.getByRole('button', { name: '查看自动整理状态' }));
+    fireEvent.click(await screen.findByRole('button', { name: '立即整理' }));
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.queryByText(/新增 NaN 条 Review 草稿/)).toBeNull();
+    expect(screen.queryByText('整理完成，新增 0 条 Review 草稿。')).toBeNull();
+  });
+
   it('loads only Draft metadata after explicit selection and reads one exact Draft after click', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'true');
     const calls = mockAppFetch();
