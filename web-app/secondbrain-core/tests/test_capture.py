@@ -12,12 +12,14 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from PIL import Image
 from pypdf import PdfWriter
 
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.capture import (CaptureService, create_capture_router, _public_http_url,
                                               _resolve_public_url, _fetch_url, _TextExtractor,
                                               MAX_WEB_EXTRACT_CHARS, MAX_WEB_EXTRACT_PARTS)
+from secondbrain_core.modules.multimodal_capture import MultimodalCaptureProcessors
 
 
 class CaptureServiceTests(unittest.TestCase):
@@ -322,6 +324,23 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertLessEqual(len(parser.parts), MAX_WEB_EXTRACT_PARTS)
         self.assertLessEqual(parser.part_chars, MAX_WEB_EXTRACT_CHARS)
         self.assertLessEqual(parser.title_chars, 300)
+
+    def test_animated_image_is_explicitly_partial_and_preserves_raw_without_review(self):
+        frame_one = Image.new("RGB", (12, 12), "white")
+        frame_two = Image.new("RGB", (12, 12), "black")
+        image = io.BytesIO()
+        frame_one.save(image, format="GIF", save_all=True, append_images=[frame_two], duration=100, loop=0)
+        original = image.getvalue()
+        service = CaptureService(self.raw, self.review, self.state,
+                                 processors=MultimodalCaptureProcessors(tesseract="synthetic-tesseract"))
+        item = service.accept_file("animated.gif", original)
+        service.process(item, original)
+        result = service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        self.assertIn("Animated image OCR is unsupported", result["error"]["message"])
+        self.assertIsNone(result["review_path"])
+        self.assertEqual((self.raw / result["raw_path"]).read_bytes(), original)
 
     def test_url_extraction_failure_preserves_initial_raw_hash(self):
         url = "https://capture.example/empty"
