@@ -1,11 +1,19 @@
 # Progress Log
 
+## 2026-10-24 — #164 合入与最新 Capture/Notes 合成验收推进
+
+- **main 与 Today→Task：** main `2782f73fa44a21549f7758c4e449076304875917` 已包含 PR #164 固定 HEAD `f020d303a38153c7a8a0bb06c7609a4228b5770a`。其成功创建回执后恢复按钮可用的修复，TaskPage post-merge 定向回归 29/29，typecheck/build/diff-check 通过；独立增量复审记录 PASS_WITH_LIMITS。该状态不表示生产部署。
+- **Capture Activity 固定组合：** 以 main `2782f73f` 为基线，与 Core #221 `41e9729d693e80f4f37c1a5543dc8fb1e1411124`、Web #222 `438a7e2b570370d1c742bc8b9f50caa9941fdc76` 在隔离 worktree 形成组合 HEAD `edb17ec78eeedb96b5015dc5fcc7429bf27472d2`；组合无 Git 冲突，`git diff --check` 通过。复用现有 `p3_consolidated_vite_gate.py` 的真实本地 Vite→Uvicorn HTTP 路径，结果 `P3_1_5_HTTP=PASS_WITH_LIMITS`：覆盖 Capture 四字段 Activity DTO、撤销 `inbox.read` 后来源移除/恢复后返回，以及既有 Home、Projects、Today/Task 创建重放与更新 CAS、Journal、Calendar、Brief approved_import、Planning 审批/执行/task_created 回执重放、权限拒绝、失败恢复、并发 CAS、会话隔离和 Core 重建后读回。所有数据在脚本创建的私有 `/private/tmp/sb-p3-gate-d07cbm6q` 合成根中；该 Gate 不是浏览器、PR 独立复审或 Core 生产/OS 验收。
+- **PR #221/#222 状态：** 两项仍 Draft/Open，固定 HEAD 未变，均基于 main 但其分支代码早于 `2782f73f`；本地组合验证不能代替 B 对 Core #221 净差异的复核，尤其 `app.py` 曾在两侧同时修改。#222 还等待独立 Web 复审。浏览器未覆盖 Capture 专项。
+- **Notes 浏览器：** PR #220 Draft/Open，固定 HEAD `44af77ee508faa401b4c17202a7fb196479f5214`。Run [#40009881231](https://github.com/zxwan829/SecondBrain/actions/runs/40009881231) 对该精确 SHA 已通过 checkout SHA 校验，目前停留在 `Install Linux Chromium`，后续 Web/typecheck/build/脱敏/browser 步骤均尚未执行；因此此 SHA 的三视口结果暂为 `NOT RUN`。此前 HEAD `27bc4711` 的三视口 PASS 保留为旧固定版本证据，不能替代新 Run。
+- **安全与剩余状态：** 未修改 B 所有权代码、未合并 #221/#222/#220/#219；未部署、未连接真实 Vault/NAS、未访问真实数据或付费模型。Writer/Promote、Chat cost gate 保持 OFF，D090 OS Gate 不变。完整 V1 仍 `NOT DONE`。
+
 ## 2026-10-24 — P4 Notes 移动三视口与 P3-5 Activity Web 接口适配
 
 - **最新基线：** main `22b536e79e67cb746f8ea4039686ca8b5031b84e`。#220 分支从 `5fd9df3c` 普通同步到该 main，净 PR 差异仍限于 E2E harness、Playwright 用例、sanitizer 与既有 Notes 图形对话框 CSS；合并无冲突，`git diff --check` 通过。
 - **故障证据与修复：** #220 Run [#40006256529](https://github.com/zxwan829/SecondBrain/actions/runs/40006256529) checkout `40bfc828`。Tablet/Mobile 在 `notes_readback` 失败，脱敏记录显示 Notes collection/detail GET 均 200；截图显示多个相同可访问名称的合成笔记按钮。分类为 **TEST_BUG**（跨视口复用标题造成 locator 歧义），无 API 故障证据。提交 `ab0f7939f0f34fcb87ba18df5ff4877f057561b4` 为各视口使用独立合成笔记标题，保留保存、精确 GET 200 与正文读回断言。Playwright discovery 3/3、diff-check 通过。
 - **固定基线复验：** Run [#40007875993](https://github.com/zxwan829/SecondBrain/actions/runs/40007875993) 在修复 HEAD `ab0f7939` 上三视口均 PASS。同步 main `22b536e` 后最终 #220 HEAD `27bc4711ccd1d0ff6a91777b32723beba0899b64`；Run [#40008488314](https://github.com/zxwan829/SecondBrain/actions/runs/40008488314) checkout SHA 完全匹配，workflow PASS，脱敏 JUnit 为 3 tests / 0 failures / 0 skipped：Desktop 1440×1000、Tablet 820×1180、Mobile 390×844 全 PASS。实际步骤含 Web 回归/typecheck、build、artifact sanitizer、Vite→真实 localhost Core HTTP 与三视口浏览器旅程。summary：`result=PASS`、Brief file set verified、Notes files 9、Journal mutation 0、Knowledge files 0、Promote=false、Hermes fixture-only；无失败截图上传。
-- **P3-5 Capture Activity：** Web PR #222 `438a7e2b570370d1c742bc8b9f50caa9941fdc76` 严格接入已接受的四字段 Capture DTO，未知状态/额外字段 fail-closed；3 项定向组件合同测试、typecheck、build、diff-check 通过。与 Core PR #221 `41e9729d693e80f4f37c1a5543dc8fb1e1411124` 的既有临时合成 HTTP Gate 在 main `2fe5be1` 上 PASS（Vite→Uvicorn、Capture DTO、撤权移除/恢复重现）；**该组合不是 latest main `22b536e`，也不是浏览器验收**。PR #221/#222 仍 Draft，#222 等独立 Web 复审。
+- **P3-5 Capture Activity：** Web PR #222 `438a7e2b570370d1c742bc8b9f50caa9941fdc76` 严格接入已接受的四字段 Capture DTO，未知状态/额外字段 fail-closed；3 项定向组件合同测试、typecheck、build、diff-check 通过。与 Core PR #221 `41e9729d693e80f4f37c1a5543dc8fb1e1411124` 的既有临时合成 HTTP Gate 在 main `2fe5be1` 上 PASS（Vite→Uvicorn、Capture DTO、撤权移除/恢复重现）；**该组合不是 latest main `22b536e`，也不是浏览器验收**。GitHub 显示 #221 base `5fd9df3c`、当前 main `22b536e` ahead 1 / behind 17，merge state clean，且两边均修改 `app.py`；需 B 同步后再核对实际集成。#222 base 为 `2fe5be1`，仍 Draft，独立 Web 复审未记录。
 - **边界与状态：** #220 保持 Draft/Open，等待对 HEAD `27bc4711` 的独立增量复审；#221/#222 未合并。Obsidian 双向同步、真实 Vault/NAS、生产 Writer/Promote、付费模型及用户生产验收均未运行。当前 Notes 浏览器子 Gate PASS_WITH_LIMITS；V1 overall 仍 NOT DONE。
 
 ## 2026-10-24 — #201/#207/#202 固定组合合入与 Linux 三视口 Gate

@@ -14,19 +14,19 @@ source: GitHub SecondBrain Monorepo
 
 | 当前对象 | 核验结果 | 下一步 |
 |---|---|---|
-| main | `22b536e79e67cb746f8ea4039686ca8b5031b84e`。#201/#207/#202 已按序合入；随后 #208 默认关闭 Chat cost gate、#218 Daily Brief 生成候选进入 main | 本状态记录对应 GitHub main 源码快照；Chat cost gate 与 Writer/Promote 仍 OFF，不代表部署或生产状态 |
+| main | `2782f73fa44a21549f7758c4e449076304875917`。在 `22b536e` 后普通 Web PR #164 已合入；Task 创建回执后 busy 状态可恢复，TaskPage 29/29 定向回归通过 | 本状态记录对应 GitHub main 源码快照；Chat cost gate 与 Writer/Promote 仍 OFF，不代表部署或生产状态 |
 | A 普通 Web 批次 | #198 `b9bb97da`→`5fff974b`；#212 `3cf044cf`→`f58ecfd2`；#214 `36c67fd1`→`db810654`；#215 `9d35dc70`→`e33b836c`。各项 post-merge 定向回归分别 48、5、1、2 项通过；#214/#215 相邻 Inbox 修改的组合回归通过 | 保留 PR 各自已有 typecheck/build/diff-check 证据；本批未运行 Actions。细节见 Progress-Log 2026-10-23 集成收口记录 |
 | #201 Core 撤权 | 固定 PR HEAD `ea70fca9dde78793b05d5aaed7523f26bf432a72` 已获本次单独安全敏感合并授权并合入 main `e611ecc4`。fail-closed 修复 `ac1c171d` 与后续 fixture-only 增量独立复审为 `PASS_WITH_LIMITS`；相关 Core 组合回归 158 passed。 | 只关闭已识别的进程内 missing-grant fail-open；跨进程持久撤权、OS 隔离、生产安全仍未验收 |
 | #207/#202 集成 | #207 固定 HEAD `aff4171f86b00bb8420e0cfe2af8a0978fdb2f37` 同步 main 时无 Core 文件变化，已合入 `6c372ff6`。#202 固定 HEAD `69f39cccfbae56c66a4db6f483e8dc75aee0cf7b` 已合入 `5fd9df3c`。新 main tree 与先前 82 Web / 158 Core / Vite→Uvicorn `PASS_WITH_LIMITS` 的固定组合 tree 相同，三次合并后 diff-check 通过。 | Linux Chromium Run #39984102838 在 #202 精确 HEAD 上三视口 PASS，合成 Web `A_NEXT_READY=READY_WITH_LIMITS`；它不证明真实 Core 跨进程撤权、生产部署或完整 V1 验收 |
-| P3-5 Activity Capture | Core #221 HEAD `41e9729d` 与 Web #222 HEAD `438a7e2b` 仍 Draft。既有临时组合在 main `2fe5be1` + 固定两 PR HEAD 上通过真实 Vite→Uvicorn 合成 HTTP：Capture 四字段 DTO、撤销 `inbox.read` 后来源移除/恢复后重现；不是当前 main `22b536e` 上的浏览器验收 | #222 等独立 Web 复审；#221 按 B 线职责及 Core 门禁处理，未合并 |
+| P3-5 Activity Capture | Core #221 HEAD `41e9729d693e80f4f37c1a5543dc8fb1e1411124`、Web #222 HEAD `438a7e2b570370d1c742bc8b9f50caa9941fdc76` 仍 Draft。最新 main `2782f73f` + 两固定 PR HEAD 的隔离组合 `edb17ec78eeedb96b5015dc5fcc7429bf27472d2` 无冲突，既有 Vite→Uvicorn 合成 HTTP Gate 再次 `PASS_WITH_LIMITS`，覆盖 Capture DTO 与 `inbox.read` 撤权移除/恢复重现，以及 Planning/Task/Brief/Journal/Calendar 等既有流程 | #221 仍需 B 按 Core 所有权同步/复核对 main 的净差异；本地组合不等同于 B 的 Core 复审或 PR 准入。#222 等独立 Web 复审；浏览器未覆盖 Capture 专项 |
 | #216/#213 Trash | #216 `96d36dcf` 源码层原子 no-replace 与恢复复审 `PASS_WITH_LIMITS`；Linux `renameat2`、生产挂载/ACL/Synology Drive 未验证。#213 仍为设计候选 | 先冻结首发 DTO/action/排除与恢复合同；未完成相应验证前不启用可操作 Trash UI，不含 purge |
-| P4 Notes | PR #220 Draft/Open，最新 HEAD `27bc4711ccd1d0ff6a91777b32723beba0899b64` 已同步 main `22b536e`。Run [#40008488314](https://github.com/zxwan829/SecondBrain/actions/runs/40008488314) checkout 精确匹配；Notes 创建、保存、刷新重开、读回和溢出断言的 Desktop 1440×1000、Tablet 820×1180、Mobile 390×844 均 PASS。此前 #400062 的 Tablet/Mobile 同名按钮失败为 E2E fixture 冲突，已按视口区分合成标题修复。Obsidian 双向同步仍 `NOT RUN` | 等待 #220 最新增量独立复审；继续 P4 Notes 实际移动交互，不连接真实 Vault/NAS |
-| #164 Today→Task | 原 HEAD `a8cd447f` 的既有 PASS_WITH_LIMITS 复审发现遗漏：已核验创建回执后 busy 状态未清除，按钮持续禁用。新修复 HEAD `96b56be80c1eac0c99547a3f11b4571eccc8b7db`，29 项 TaskPage、typecheck/build/diff-check 通过；最新 main 组合树无冲突 | Draft/Open，等待该增量独立复审；此前复审不能自动延伸到新代码 |
+| P4 Notes | PR #220 Draft/Open，最新 HEAD `44af77ee508faa401b4c17202a7fb196479f5214`，已包含 main `2782f73f`。Linux Chromium Run [#40009881231](https://github.com/zxwan829/SecondBrain/actions/runs/40009881231) checkout SHA 已核对完全一致；目前仍在 `Install Linux Chromium`，尚无浏览器结论。前一 HEAD `27bc4711` 的三视口创建/保存/刷新重开/读回及溢出 PASS 证据仍有效于该未改 E2E 功能的增量，但新 HEAD Run 正在确认最新 main 组合。Obsidian 双向同步仍 `NOT RUN` | 等待当前 Run 完成并解析脱敏 artifact；独立复审及完整 Obsidian 同步仍未完成 |
+| #164 Today→Task | PR #164 原 HEAD `a8cd447f` 复审发现成功回执后 busy 状态未清除；修复 HEAD `f020d303a38153c7a8a0bb06c7609a4228b5770a` 已于 main merge commit `2782f73fa44a21549f7758c4e449076304875917` 合入。独立增量源码复审记录为 PASS_WITH_LIMITS；TaskPage 29/29 post-merge 定向回归通过，typecheck/build/diff-check 均在相同代码树通过 | 普通 Web 修复已收口；没有由此推导生产部署或完整 V1 验收 |
 | Writer/Promote 与生产 | OFF；D090/OS Gate 与生产安全门禁保持原状 | 不从普通 PR 合入推导部署或生产授权 |
 
 本批分支保护规则与 ruleset 的可读 GraphQL 查询均未返回配置项；REST 查询受私有仓库功能限制返回 403，不能以此绕过平台门禁。#201/#207/#202 均通过正常 GitHub Ready/Merge 路径处理；没有管理员绕过、强推或 main reset。Notes Run #40008488314 使用既有手动工作流、合成数据和脱敏 artifact。完整 V1 及真实生产/用户体验验收仍未完成。
 
-**当前 NEXT：** 对 #164 `96b56be8`、#220 `27bc4711`、#222 `438a7e2b` 取得最新增量独立复审后，按各自依赖与平台门禁收口；不把 #221 Core 的合并条件套到无依赖 PR。继续 P4 Notes 的真实移动编辑工作。P4-5 Trash 在 Linux 原语与生产挂载/ACL 等安全门禁关闭前不开放可操作 UI。Obsidian 双向同步、真实渠道/模型、生产安全和完整用户业务验收仍待验证；V1 为 NOT DONE。
+**当前 NEXT：** #220 `44af77ee` 等待当前精确 HEAD 浏览器 Run 和增量复审；#221 `41e9729d` 需 B 同步至 main `2782f73f` 并复核 `app.py` 净差异，#222 `438a7e2b` 等独立 Web 复审。最新固定组合 HTTP `PASS_WITH_LIMITS` 仅为本地合成结果，不改变两个 Draft PR 的独立准入。P4-5 Trash 在 Linux 原语与生产挂载/ACL 等安全门禁关闭前不开放可操作 UI。Obsidian 双向同步、真实渠道/模型、生产安全和完整用户业务验收仍待验证；V1 为 NOT DONE。
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 
