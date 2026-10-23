@@ -16,6 +16,9 @@ type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
   | 'daily_brief_readback' | 'permission_revocation' | 'viewport_layout';
+type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
+  | 'home_after_projects' | 'home_to_activity' | 'activity_heading'
+  | 'activity_get_response' | 'activity_get_status_200' | 'home_after_activity';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function safePath(value: string): string {
@@ -37,6 +40,7 @@ async function configurePage(page: Page) {
   let lastDailyBriefBody: Record<string, unknown> | null = null;
   let activityReadRevoked = false;
   let failureStage: FailureStage = 'login';
+  let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
   page.on('request', (request) => {
     pending.set(request, Date.now());
@@ -172,7 +176,11 @@ async function configurePage(page: Page) {
     get lastInboxBody() { return lastInboxBody; },
     get dailyBriefPostCount() { return dailyBriefPostCount; },
     get lastDailyBriefBody() { return lastDailyBriefBody; },
+    get diagnosticAssertion() { return diagnosticAssertion; },
+    get activityReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && request.path === '/api/activity').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
+    setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
     revokeActivityRead() { activityReadRevoked = true; },
   };
 }
@@ -353,13 +361,29 @@ for (const viewport of viewports) {
     observed.setFailureStage('viewport_layout');
     await page.goto('/');
     await expect(page.getByRole('heading', { name: '你的工作台' })).toBeVisible();
+    observed.setDiagnosticAssertion('home_to_projects');
     await page.getByRole('button', { name: '打开项目' }).first().click();
+    observed.setDiagnosticAssertion('projects_heading');
     await expect(page.getByRole('heading', { name: '项目' })).toBeVisible();
+    observed.setDiagnosticAssertion('home_after_projects');
     await returnHomeFromNavigation(page, viewport);
+    observed.setDiagnosticAssertion('home_to_activity');
+    const activityResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      const url = new URL(response.url());
+      return request.method() === 'GET' && url.pathname === '/api/activity'
+        && url.searchParams.get('limit') === '50' && url.searchParams.get('offset') === '0'
+        && Array.from(url.searchParams.keys()).length === 2;
+    }, { timeout: 5000 }).catch(() => null);
     await page.getByRole('button', { name: '打开动态' }).first().click();
+    observed.setDiagnosticAssertion('activity_heading');
     await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
-    expect(observed.requestRecords.some((request) => request.method === 'GET'
-      && request.path === '/api/activity' && request.status === 200)).toBe(true);
+    observed.setDiagnosticAssertion('activity_get_response');
+    const activityResponse = await activityResponsePromise;
+    observed.setDiagnosticAssertion('activity_get_status_200');
+    expect(activityResponse, 'activity_get_response_observed').not.toBeNull();
+    expect(activityResponse?.status(), 'activity_get_http_200').toBe(200);
+    observed.setDiagnosticAssertion('home_after_activity');
     await returnHomeFromNavigation(page, viewport);
     observed.setFailureStage('permission_revocation');
     observed.revokeActivityRead();
@@ -401,10 +425,12 @@ test.afterEach(async ({ page }, testInfo) => {
     const isTimeout = errors.some((error) => error.name === 'TimeoutError' || /timeout/i.test(error.message));
     const isAssertion = errors.some((error) => /\bexpect(?:\(|\.)|\bExpected:|\bReceived:/i.test(error.message));
     await writeFile(join(testInfo.outputDir, 'failure-summary.json'), JSON.stringify({
-      schema_version: 1,
+      schema_version: 2,
       viewport: viewport?.name ?? 'unknown',
       stage: observed?.failureStage ?? 'login',
       code: isTimeout ? 'timeout' : isAssertion ? 'assertion_failed' : 'test_error',
+      assertion_id: observed?.diagnosticAssertion ?? 'test_setup',
+      activity_get_statuses: observed?.activityReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);

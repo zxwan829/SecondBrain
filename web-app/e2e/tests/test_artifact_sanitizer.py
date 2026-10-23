@@ -60,8 +60,9 @@ def _seed_raw_reports(raw: Path, secret: str = "synthetic-only-passphrase", *, d
     diagnostic_dir = raw / "test-results" / _screenshot_dir(diagnostic_viewport)
     diagnostic_dir.mkdir(parents=True)
     (diagnostic_dir / "failure-summary.json").write_text(json.dumps({
-        "schema_version": 1, "viewport": diagnostic_viewport,
+        "schema_version": 2, "viewport": diagnostic_viewport,
         "stage": "viewport_layout", "code": "assertion_failed",
+        "assertion_id": "activity_get_status_200", "activity_get_statuses": [200],
     }))
     _write_junit(raw, {diagnostic_viewport}, secret=secret)
     (raw / "local-http-request-metadata.json").write_text(json.dumps([{
@@ -188,10 +189,10 @@ def test_exact_playwright_truncated_output_directory_is_allowlisted(viewport, tm
 
 
 @pytest.mark.parametrize("entry", [
-    {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "details": "secret"},
-    {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error"},
-    {"viewport": "desktop-1440x1000", "stage": "login", "code": "raw exception: token=secret"},
-    {"viewport": "not-a-viewport", "stage": "login", "code": "timeout"},
+    {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret"},
+    {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
+    {"viewport": "desktop-1440x1000", "stage": "login", "code": "raw exception: token=secret", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
+    {"viewport": "not-a-viewport", "stage": "login", "code": "timeout", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
 ])
 def test_failure_diagnostic_unknown_or_sensitive_values_fail_closed(entry):
     with pytest.raises(RuntimeError):
@@ -199,12 +200,31 @@ def test_failure_diagnostic_unknown_or_sensitive_values_fail_closed(entry):
 
 
 def test_failure_diagnostic_accepts_action_revocation_stage():
-    diagnostic = {"viewport": "mobile-390x844", "stage": "permission_revocation", "code": "assertion_failed"}
+    diagnostic = {"viewport": "mobile-390x844", "stage": "permission_revocation", "code": "assertion_failed",
+                  "assertion_id": "activity_get_status_200", "activity_get_statuses": [200, 403]}
     assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
 
 
+@pytest.mark.parametrize("statuses", [[True], ["200"], [99], [600], [200, 200, 200, 200, 200]])
+def test_failure_diagnostic_rejects_non_http_or_unbounded_activity_statuses(statuses):
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "viewport_layout",
+                  "code": "assertion_failed", "assertion_id": "activity_get_status_200",
+                  "activity_get_statuses": statuses}
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_browser_activity_assertion_waits_for_core_response_and_uses_fixed_diagnostic_ids():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "page.waitForResponse((response) =>" in browser_spec
+    assert "expect(activityResponse?.status(), 'activity_get_http_200').toBe(200)" in browser_spec
+    assert "&& request.path === '/api/activity' && request.status === 200)).toBe(true);" not in browser_spec
+    assert "activity_get_statuses: observed?.activityReadStatuses ?? []" in browser_spec
+
+
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():
-    entry = {"viewport": "desktop-1440x1000", "stage": "login", "code": "timeout"}
+    entry = {"viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+             "assertion_id": "test_setup", "activity_get_statuses": []}
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([entry, entry.copy()])
     with pytest.raises(RuntimeError, match="schema rejected"):
@@ -218,7 +238,8 @@ def test_failure_diagnostics_require_one_fixed_enum_record_per_failed_testcase(t
     result_dir = raw / "test-results" / _screenshot_dir("desktop-1440x1000")
     result_dir.mkdir(parents=True)
     (result_dir / "failure-summary.json").write_text(json.dumps({
-        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
+        "schema_version": 2, "viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
     }))
     with pytest.raises(RuntimeError, match="do not match failed testcase viewports"):
         module._collect_failure_diagnostics(raw)
@@ -228,7 +249,8 @@ def _write_failure_diagnostic(raw: Path, viewport: str) -> None:
     result_dir = raw / "test-results" / _screenshot_dir(viewport)
     result_dir.mkdir(parents=True, exist_ok=True)
     (result_dir / "failure-summary.json").write_text(json.dumps({
-        "schema_version": 1, "viewport": viewport, "stage": "viewport_layout", "code": "assertion_failed",
+        "schema_version": 2, "viewport": viewport, "stage": "viewport_layout", "code": "assertion_failed",
+        "assertion_id": "activity_get_status_200", "activity_get_statuses": [200],
     }))
 
 
@@ -309,8 +331,10 @@ def test_exact_desktop_and_tablet_failures_accept_matching_diagnostics(tmp_path)
     for viewport in failures:
         _write_failure_diagnostic(raw, viewport)
     assert module._collect_failure_diagnostics(raw) == [
-        {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed"},
-        {"viewport": "tablet-820x1180", "stage": "viewport_layout", "code": "assertion_failed"},
+        {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed",
+         "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
+        {"viewport": "tablet-820x1180", "stage": "viewport_layout", "code": "assertion_failed",
+         "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
     ]
 
 
@@ -335,8 +359,9 @@ def test_failure_diagnostic_malicious_source_payload_is_withheld(tmp_path):
     _seed_raw_reports(raw)
     summary = raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "failure-summary.json"
     summary.write_text(json.dumps({
-        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "login",
-        "code": "test_error", "message": "SYNTHETIC_AUTH_SECRET",
+        "schema_version": 2, "viewport": "desktop-1440x1000", "stage": "login",
+        "code": "test_error", "assertion_id": "test_setup", "activity_get_statuses": [],
+        "message": "SYNTHETIC_AUTH_SECRET",
     }))
     with pytest.raises(RuntimeError, match="upload withheld"):
         module.publish_verified_reports(raw, published, secret)
@@ -352,7 +377,8 @@ def test_failure_diagnostic_symlink_is_withheld(tmp_path, monkeypatch):
     diagnostics = raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "failure-summary.json"
     outside = tmp_path / "outside.json"
     outside.write_text(json.dumps({
-        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+        "schema_version": 2, "viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
     }))
     diagnostics.unlink()
     diagnostics.symlink_to(outside)
@@ -369,6 +395,7 @@ def test_failure_diagnostic_boolean_schema_version_is_rejected(tmp_path):
     result_dir.mkdir(parents=True)
     (result_dir / "failure-summary.json").write_text(json.dumps({
         "schema_version": True, "viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
     }))
     with pytest.raises(RuntimeError, match="source schema rejected"):
         module._collect_failure_diagnostics(raw)
@@ -389,6 +416,7 @@ def test_allowlisted_publish_redacts_reports_and_omits_html_unknown_images_and_f
     }
     assert json.loads((published / "failure-diagnostics.json").read_text()) == [{
         "viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed",
+        "assertion_id": "activity_get_status_200", "activity_get_statuses": [200],
     }]
     content = "\n".join(path.read_text(errors="ignore") for path in published.rglob("*") if path.is_file() and not zipfile.is_zipfile(path))
     with zipfile.ZipFile(published / "test-results/capture/trace.zip") as archive:
