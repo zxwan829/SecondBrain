@@ -12,7 +12,7 @@ source: GitHub SecondBrain Monorepo
 
 - **环境决策：** macOS 只运行组件/DOM 测试、Core + Vite localhost HTTP 合成联调、typecheck/build；不再启动或排查 macOS Edge/Chromium 自动化。正式三视口浏览器 Gate 使用 GitHub-hosted Ubuntu 24.04 + Playwright Chromium，具体规则已写入 `Agent-Rules.md`。
 - **固定候选：** 保留 PR #202 原验收基线 `63896b79566ad47cad1b46471abf8a5f033e5abd` 与既有修复。为精确报告启动失败增加的诊断兜底及 workflow SHA checkout 校验后，当前固定候选以本节提交后的 GitHub PR #202 HEAD 为准。`a-web-playwright-synthetic.yml` 手动触发并固定 checkout 到事件 SHA，另验证实际 `HEAD` 相同；本轮未触发。
-- **脚本复核与修复：** Activity 请求等待、Calendar API 断言、Agent Health H1 精确定位、Mobile Today 菜单展开/收起及逐页 overflow 检查仍保留。修复浏览器 fixture 启动阶段没有 `failure-summary.json` 导致整份 artifact 被拒绝的问题；仅由固定 JUnit 用例映射补出 `test_setup/test_error` 枚举诊断，不携带异常文本或请求数据，未知用例、非失败视口诊断和敏感字段仍 fail closed。定向 sanitizer 回归证据见 `Progress-Log.md` 最新条目。
+- **脚本复核与修复：** Activity 请求等待、Calendar API 断言、Agent Health H1 精确定位、Mobile Today 菜单展开/收起及逐页 overflow 检查仍保留。PR #202 Review #5627423096 指出 JUnit 只证明某视口失败，不能证明 setup 根因。最新修复要求每个失败视口都存在完整且经 allowlist/schema 校验的显式 `failure-summary.json`；没有诊断时 fail closed，不推断 `test_setup`。精确 JUnit allowlist、敏感信息过滤和业务断言保留，回归证据见 `Progress-Log.md` 最新条目。
 - **Gate 状态：** Linux Chromium 三视口尚未执行，Desktop/Tablet/Mobile 均 `NOT RUN`；`A_NEXT_READY=NOT_READY`。本候选准备好后仍需针对精确 SHA 的单次 workflow_dispatch 授权；没有合并、部署或生产访问。
 
 ## 2026-10-23 A-NEXT 本地浏览器启动阻断（Issue #96）

@@ -292,7 +292,7 @@ def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():
         module._validate_failure_diagnostics([entry, entry, entry, entry])
 
 
-def test_missing_fixed_viewport_diagnostic_gets_safe_setup_fallback(tmp_path):
+def test_missing_fixed_viewport_diagnostic_fails_closed(tmp_path):
     raw = tmp_path / "raw"
     raw.mkdir()
     _write_junit(raw, {"desktop-1440x1000", "tablet-820x1180"})
@@ -302,42 +302,45 @@ def test_missing_fixed_viewport_diagnostic_gets_safe_setup_fallback(tmp_path):
         "schema_version": 2, "viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
         "assertion_id": "test_setup", "activity_get_statuses": [],
     }))
-    assert module._collect_failure_diagnostics(raw) == [
-        {"viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
-         "assertion_id": "test_setup", "activity_get_statuses": []},
-        {"viewport": "tablet-820x1180", "stage": "test_setup", "code": "test_error",
-         "assertion_id": "test_setup", "activity_get_statuses": []},
-    ]
+    with pytest.raises(RuntimeError, match="do not cover every failed testcase viewport"):
+        module._collect_failure_diagnostics(raw)
 
 
-def test_browser_launch_failures_without_page_hooks_emit_only_fixed_junit_viewports(tmp_path):
+def test_normal_failed_testcase_without_diagnostic_is_not_misclassified_as_setup(tmp_path):
     raw = tmp_path / "raw"
     raw.mkdir()
-    _write_junit(raw, set(module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.values()))
-    diagnostics = module._collect_failure_diagnostics(raw)
-    assert diagnostics == [
-        {"viewport": viewport, "stage": "test_setup", "code": "test_error",
-         "assertion_id": "test_setup", "activity_get_statuses": []}
-        for viewport in module.FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
-    ]
+    _write_junit(raw, {"tablet-820x1180"})
+    with pytest.raises(RuntimeError, match="do not cover every failed testcase viewport"):
+        module._collect_failure_diagnostics(raw)
 
 
-def test_browser_setup_failures_publish_allowlisted_reports_without_raw_error_text(tmp_path):
+def test_explicit_setup_diagnostic_is_retained_for_its_failed_viewport(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_junit(raw, {"mobile-390x844"})
+    result_dir = raw / "test-results" / _screenshot_dir("mobile-390x844")
+    result_dir.mkdir(parents=True)
+    (result_dir / "failure-summary.json").write_text(json.dumps({
+        "schema_version": 2, "viewport": "mobile-390x844", "stage": "test_setup", "code": "test_error",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
+    }))
+    assert module._collect_failure_diagnostics(raw) == [{
+        "viewport": "mobile-390x844", "stage": "test_setup", "code": "test_error",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
+    }]
+
+
+def test_failed_run_without_explicit_viewport_diagnostic_withholds_report(tmp_path):
     raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
     raw.mkdir(mode=0o700)
     _write_junit(raw, set(module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.values()))
     (raw / "run-summary.json").write_text(json.dumps({"result": "FAIL", "exit_code": 1}))
     secret = _write_secret(tmp_path / "password")
 
-    module.publish_verified_reports(raw, published, secret)
+    with pytest.raises(RuntimeError, match="report validation failed; artifact upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
 
-    published_files = {path.name for path in published.rglob("*") if path.is_file()}
-    assert published_files == {"junit.xml", "run-summary.json", "failure-diagnostics.json"}
-    assert json.loads((published / "failure-diagnostics.json").read_text()) == [
-        {"viewport": viewport, "stage": "test_setup", "code": "test_error",
-         "assertion_id": "test_setup", "activity_get_statuses": []}
-        for viewport in module.FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
-    ]
+    assert not any(published.rglob("*"))
 
 
 def _write_failure_diagnostic(raw: Path, viewport: str) -> None:

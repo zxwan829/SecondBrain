@@ -335,17 +335,12 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
     if not diagnostic_viewports.issubset(failed_viewport_set):
         raise RuntimeError("failure diagnostics do not match failed testcase viewports; upload withheld")
-    # Playwright cannot invoke a test hook that requires `page` when browser
-    # launch fails during fixture setup. Derive only the viewport from the
-    # exact JUnit allowlist above; do not copy free-form runner error text.
-    for viewport in failed_viewport_set - diagnostic_viewports:
-        diagnostics.append({
-            "viewport": viewport,
-            "stage": "test_setup",
-            "code": "test_error",
-            "assertion_id": "test_setup",
-            "activity_get_statuses": [],
-        })
+    # JUnit identifies which allowlisted viewport failed, but not why. A
+    # missing per-viewport summary is not evidence of browser/test setup
+    # failure; withhold the report unless every failed viewport has an
+    # explicit, validated diagnostic rather than inventing a stage.
+    if diagnostic_viewports != failed_viewport_set:
+        raise RuntimeError("failure diagnostics do not cover every failed testcase viewport; upload withheld")
     viewport_order = {name: index for index, name in enumerate(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values())}
     diagnostics.sort(key=lambda entry: viewport_order[entry["viewport"]])
     return diagnostics

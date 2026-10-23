@@ -1,5 +1,12 @@
 # Progress Log
 
+## 2026-10-23 — PR #202 failure-summary 根因分类修复（Review #5627423096）
+
+- **复审问题：** PR #202 固定 HEAD `205f84fd9adc6b853083c461920a6044c174d331` 的独立复审指出，sanitizer 将所有缺少 `failure-summary.json` 的失败视口自动标为 `test_setup/test_error`，JUnit 视口身份并不能证明初始化失败。
+- **最小修复：** `_collect_failure_diagnostics` 不再从 JUnit 失败状态合成 `test_setup`。只有精确路径下存在完整、通过固定 schema/枚举校验且与失败用例视口一一匹配的 `failure-summary.json` 才保留诊断；多余或缺失诊断均拒绝发布报告。JUnit 精确用例 allowlist、自由文本/敏感字段过滤、截图 allowlist 和业务断言未改。
+- **回归与验证：** sanitizer 新增/更新负例，覆盖普通失败测试缺少诊断、部分失败视口缺摘要以及全部失败视口无显式诊断时 artifact 不发布；另验证显式 `test_setup` 摘要仍保留。定向 `test_artifact_sanitizer.py` **55 passed**；`git diff --check` PASS。
+- **固定版本与边界：** 修复由 PR #202 新 Draft HEAD 承载，SHA 以 push 后 GitHub readback 为准。未运行 Actions、浏览器或无关测试；未合并、部署或访问真实数据。Linux 三视口浏览器 Gate 仍 NOT RUN，`A_NEXT_READY=NOT_READY`。
+
 ## 2026-10-23 — A-NEXT Linux Chromium Gate 准备与脱敏报告修复
 
 - **固定基线：** PR #202 已核实原固定 HEAD `63896b79566ad47cad1b46471abf8a5f033e5abd`，Draft/Open；本候选保留该提交及 `21034fa2` 的既有 Web 测试修复。PR 最新 HEAD 以本条最终提交并 GitHub readback 为准。
