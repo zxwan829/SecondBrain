@@ -162,6 +162,7 @@ describe('TaskPage', () => {
     expect(new Headers(postCalls[0][1]?.headers).get('Idempotency-Key')).toBeTruthy();
     expect(new Headers(postCalls[1][1]?.headers).get('Idempotency-Key')).toBe(new Headers(postCalls[0][1]?.headers).get('Idempotency-Key'));
     expect(await screen.findByRole('status')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '新建待办' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('uses a new key after cancelling an ambiguous create and reopening with identical content', async () => {

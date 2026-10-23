@@ -202,7 +202,10 @@ export function TaskPage({ locale }: { locale: Locale }) {
       if (isCurrent()) setError(cause instanceof Error ? cause.message : (en ? 'Task creation failed. Your task is still here.' : '待办创建失败，内容仍保留。'));
     } finally {
       createInFlight.current = false;
-      if (isCurrent()) setCreating(false);
+      // A verified receipt clears createAttempt before finally runs. Clear the
+      // UI busy state for this mounted page even after that successful reset,
+      // while still preventing an unmounted request from touching a new page.
+      if (mounted.current && lifecycle.current === requestLifecycle) setCreating(false);
     }
   };
 
