@@ -84,6 +84,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .task-page { min-height: calc(100vh - 40px); padding: 14px 0 36px; color: var(--sb-text); }
 .task-page .module-header, .task-toolbar, .task-main, .task-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .task-page .module-header { margin: 12px 0 20px; }
+.task-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .task-page .module-header h1 { margin: 0; font-size: clamp(27px, 2vw, 34px); letter-spacing: -.04em; }
 .task-create-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(170px, 240px) auto; align-items: end; gap: 10px; margin: 0 0 16px; padding: 14px; background: linear-gradient(145deg, rgb(13 20 36 / 96%), rgb(11 17 31 / 98%)); border: 1px solid var(--sb-border); border-radius: 14px; }
 .task-create-form label { display: grid; gap: 5px; min-width: 0; color: var(--sb-muted); font-size: 12px; }
@@ -94,6 +95,10 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .task-toolbar h2 { margin: 0; font-size: 16px; }
 .task-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .task-toolbar label, .task-edit-form label { display: grid; gap: 5px; color: var(--sb-muted); font-size: 12px; }
+.task-create-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr); gap: 10px; margin: 12px 0 16px; padding: 14px; background: rgb(8 15 29 / 75%); border: 1px solid var(--sb-border); border-radius: 11px; }
+.task-create-form label { display: grid; gap: 5px; color: var(--sb-muted); font-size: 12px; }
+.task-create-form input { width: 100%; min-height: 38px; padding: 7px 9px; color: var(--sb-text); background: var(--sb-surface-inset); border: 1px solid var(--sb-border-strong); border-radius: 8px; font: inherit; }
+.task-create-form .task-actions { grid-column: 1 / -1; margin-top: 0; }
 .task-toolbar select, .task-toolbar input, .task-edit-form input { min-height: 36px; padding: 6px 9px; color: var(--sb-text); background: var(--sb-surface-inset); border: 1px solid var(--sb-border-strong); border-radius: 8px; font: inherit; }
 .task-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .task-item { padding: 14px; background: rgb(8 15 29 / 75%); border: 1px solid var(--sb-border); border-radius: 11px; }
@@ -108,6 +113,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .task-history summary { cursor: pointer; }
 .task-history ol { display: grid; gap: 5px; padding-left: 20px; }
 .task-empty { padding: 28px 10px; color: var(--sb-muted); text-align: center; }
+@media (max-width: 640px) { .task-page .module-header, .task-toolbar { align-items: stretch; flex-direction: column; } .task-header-actions { width: 100%; } .task-header-actions button { flex: 1; } .task-create-form { grid-template-columns: 1fr; } .task-create-form .task-actions { grid-column: auto; } }
 .task-alert, .task-notice { margin: 10px 0; padding: 10px 12px; border-radius: 9px; font-size: 12px; }
 .task-alert { color: #ffc4cc; background: rgb(160 37 58 / 17%); border: 1px solid rgb(240 91 112 / 25%); }
 .task-notice { color: #8af0c4; background: rgb(34 211 154 / 12%); }
@@ -240,7 +246,11 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .nav-item.is-soon .icon { color: #687c9f; }
 .journal-page { display: grid; gap: 18px; max-width: 980px; margin: 14px auto 0; }
 .v1-readonly-page { display: grid; gap: 18px; width: min(100%, 1180px); margin: 14px auto 0; color: #dce7f7; }
+.calendar-page { min-width: 0; }
 .v1-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 10px 2px 4px; }
+.v1-brief-date-filter { display: flex; align-items: center; gap: 10px; margin: 8px 2px 12px; color: #aebed3; font-size: 13px; }
+.v1-brief-date-filter input { min-height: 36px; padding: 6px 10px; color: #e8eff9; background: #151d2c; border: 1px solid rgb(139 167 205 / 30%); border-radius: 8px; }
+.v1-brief-date-filter input:focus-visible { outline: 2px solid #78aef5; outline-offset: 2px; }
 .v1-page-header h1 { margin: 8px 0 6px; color: #f1f5fc; font-size: clamp(25px, 3vw, 34px); letter-spacing: -.035em; }
 .v1-page-source-badge { flex: 0 0 auto; padding: 6px 9px; color: #b8c9e2; background: rgb(48 75 112 / 28%); border: 1px solid rgb(151 177 215 / 20%); border-radius: 999px; font-size: 11px; }
 .v1-contract-notice { padding: 14px 16px; color: #dce7f7; background: rgb(30 44 68 / 72%); border: 1px solid rgb(139 167 205 / 24%); border-left: 3px solid #78aef5; border-radius: 10px; }

@@ -22,8 +22,16 @@ export function VocabularyPage({ locale }: { locale: Locale }) {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    try { setSnapshot(await vocabularyApi.read()); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : (en ? 'Vocabulary could not be loaded.' : '词库读取失败。')); }
+    try {
+      setSnapshot(await vocabularyApi.read());
+      return true;
+    }
+    catch (cause) {
+      // Never leave an outdated snapshot actionable after a failed refresh.
+      setSnapshot(null);
+      setError(cause instanceof Error ? cause.message : (en ? 'Vocabulary could not be loaded.' : '词库读取失败。'));
+      return false;
+    }
     finally { setLoading(false); }
   }, [en]);
 
@@ -39,8 +47,10 @@ export function VocabularyPage({ locale }: { locale: Locale }) {
     } catch (cause) {
       const status = (cause as Error & { status?: number }).status;
       if (status === 412) {
-        await load();
-        setError(en ? 'The vocabulary changed elsewhere. Reloaded the latest revision; review and retry.' : '词库已被其他操作更新，已重新加载最新版本；请检查后重试。');
+        const reloaded = await load();
+        setError(reloaded
+          ? (en ? 'The vocabulary changed elsewhere. Reloaded the latest revision; review and retry.' : '词库已被其他操作更新，已重新加载最新版本；请检查后重试。')
+          : (en ? 'The vocabulary changed elsewhere, but the latest revision could not be loaded. Retry loading before updating.' : '词库版本已变化，但最新版本读取失败。请先重试读取，再进行修改。'));
       } else setError(cause instanceof Error ? cause.message : (en ? 'Vocabulary update failed.' : '词库更新失败。'));
       return false;
     } finally { setBusy(false); }
@@ -81,7 +91,10 @@ export function VocabularyPage({ locale }: { locale: Locale }) {
     <p className="capture-processing-note">{en ? 'Source of truth: private Core state. This page never scans or edits Markdown/frontmatter. A future Vault inventory must be separately authorized and read-only.' : '权威来源：Core 私有状态。本页不扫描或改写 Markdown/frontmatter。未来 Vault 盘点须另行授权且仅只读。'}</p>
     {message && <p className="capture-processing-note" role="status">{message}</p>}
     {error && <p className="capture-alert" role="alert">{error}</p>}
-    {loading || !snapshot ? <p role="status">{loading ? (en ? 'Loading…' : '正在加载…') : (en ? 'Vocabulary unavailable.' : '词库当前不可用。')}</p> : <>
+    {loading || !snapshot ? <div>
+      <p role="status">{loading ? (en ? 'Loading…' : '正在加载…') : (en ? 'Vocabulary unavailable.' : '词库当前不可用。')}</p>
+      {!loading && <button type="button" onClick={() => void load()}>{en ? 'Retry loading vocabulary' : '重试读取词库'}</button>}
+    </div> : <>
       <p>{en ? `Revision ${snapshot.revision} · ${snapshot.types.length}/10 types` : `版本 ${snapshot.revision} · 类型 ${snapshot.types.length}/10`}</p>
       <div className="organizer-settings-grid">
         <section className="organizer-settings-card" aria-labelledby="vocabulary-types-title">

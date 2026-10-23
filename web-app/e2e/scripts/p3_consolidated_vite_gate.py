@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -80,7 +80,7 @@ project_snapshot = next(row for row in ProjectsSourceReadStore(str(ROOT / "proje
 project_ref = {"kind": "project", "id": project_doc["id"], "version": project_snapshot.sha256}
 journal_day = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
 journal_store = JournalStore(ROOT / "journal")
-journal_store.append(journal_day, "记一下：SYNTHETIC_P3_PRIVATE_JOURNAL_BODY", "p3-gate-journal")
+journal_store.append(journal_day, "记一下：SYNTHETIC_P3_PRIVATE_JOURNAL_BODY", "p3-gate-journal", session_id="session-A")
 journal_row = next(iter(journal_store.read_source_day(journal_day)["entries"].values()))
 journal_ref = {"kind": "journal", "id": f"{journal_day}:{journal_row['record']['id']}",
                "version": journal_row["version"]}
@@ -142,6 +142,10 @@ try:
         login = client.post("/api/auth/login", headers=headers(), json={"password": "synthetic-only-password"})
         assert login.status_code == 200, login.text
 
+        home = client.get("/api/home")
+        assert home.status_code == 200 and home.json().get("status") == "ok"
+        assert "no-store" in home.headers.get("cache-control", "")
+
         # The client source-choice projections and the planning candidate share this origin.
         task_choices = client.get("/api/tasks?status=all")
         project_choices = client.get("/api/projects?limit=50&offset=0")
@@ -153,6 +157,115 @@ try:
         assert journal_choices.status_code == 200 and journal_choices.json()["items"]
         assert "SYNTHETIC_P3_PRIVATE_JOURNAL_BODY" not in journal_choices.text
         assert "no-store" in task_choices.headers.get("cache-control", "")
+
+        # Exercise the real Today/Task API over Vite -> Core, including exact
+        # create replay, CAS update replay, and authoritative list readback.
+        today_tasks = client.get(f"/api/tasks?status=open&due_date={journal_day}")
+        assert today_tasks.status_code == 200 and isinstance(today_tasks.json().get("tasks"), list)
+        create_task_body = {"title": "Synthetic Today task", "due_date": journal_day,
+                            "original_command": "synthetic explicit Task action", "session_id": "session-A"}
+        create_task_headers = headers(**{"Idempotency-Key": "p3-gate-task-create-001"})
+        created_task_response = client.post("/api/tasks", headers=create_task_headers, json=create_task_body)
+        replay_task_response = client.post("/api/tasks", headers=create_task_headers, json=create_task_body)
+        assert created_task_response.status_code == replay_task_response.status_code == 200
+        created_task = created_task_response.json()["task"]
+        replayed_task = replay_task_response.json()["task"]
+        assert created_task_response.json()["status"] == "created"
+        assert replay_task_response.json()["status"] == "duplicate"
+        assert created_task["id"] == replayed_task["id"]
+        update_task_body = {"title": "Synthetic Today task updated", "expected_updated_at": created_task["updated_at"]}
+        # Task updates use an expected_updated_at compare-and-swap contract,
+        # not an Idempotency-Key replay contract. The first update succeeds;
+        # replaying its stale version must fail with 409 without overwriting.
+        updated_task_response = client.patch(f"/api/tasks/{created_task['id']}",
+                                             headers=headers(), json=update_task_body)
+        replay_update_response = client.patch(f"/api/tasks/{created_task['id']}",
+                                              headers=headers(), json=update_task_body)
+        assert updated_task_response.status_code == 200
+        assert replay_update_response.status_code == 409
+        assert replay_update_response.json() == {
+            "detail": "Task changed since it was loaded; reload before editing"
+        }
+        updated_task = updated_task_response.json()["task"]
+        assert updated_task["title"] == "Synthetic Today task updated"
+        task_readback = client.get("/api/tasks?status=all")
+        assert task_readback.status_code == 200
+        assert any(row.get("id") == created_task["id"] and row.get("title") == updated_task["title"]
+                   for row in task_readback.json()["tasks"])
+        task_ref = {"kind": "task", "id": updated_task["id"], "version": task_source_version(updated_task)}
+        assert len(task_ref["version"]) == 64
+        source_snapshots[task_file] = task_file.read_bytes()
+
+        journal_readback = client.get(f"/api/journal/{journal_day}")
+        assert journal_readback.status_code == 200
+        assert any(row.get("id") == journal_row["record"]["id"]
+                   for row in journal_readback.json().get("entries", []))
+
+        calendar = client.get(f"/api/calendar?from={journal_day}&to={journal_day}&timezone=Asia%2FShanghai")
+        assert calendar.status_code == 200 and calendar.json().get("status") == "ok"
+        assert {item.get("kind") for item in calendar.json().get("items", [])} >= {"journal", "task"}
+
+        # Seed one exact, private synthetic historical Brief record, then use
+        # the same approved_import selector/header contract as the Web UI.
+        business_day = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        brief_source_day = (business_day - timedelta(days=1)).isoformat()
+        brief_target_day = (business_day - timedelta(days=2)).isoformat()
+        brief_source_record = {
+            "brief_id": "p3-source-brief", "date": brief_source_day,
+            "timezone": "Asia/Shanghai",
+            "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "generation_status": "generated", "categories": ["synthetic"],
+            "summary": "SYNTHETIC_P3_APPROVED_IMPORT_SOURCE",
+            "source_refs": [task_ref],
+        }
+        brief_source_file = ROOT / "briefs" / f"{brief_source_day}.json"
+        brief_source_file.write_text(json.dumps(brief_source_record, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        brief_source_file.chmod(0o600)
+        same_origin_get_headers = headers(**{"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors",
+                                             "Sec-Fetch-Dest": "empty"})
+        brief_options = client.get(
+            f"/api/daily-brief/source-options/brief?date={brief_source_day}&limit=1",
+            headers=same_origin_get_headers,
+        )
+        assert brief_options.status_code == 200 and brief_options.json().get("status") == "real"
+        brief_option = brief_options.json()["items"][0]
+        brief_detail = client.get(
+            f"/api/daily-brief?date={brief_source_day}&timezone=Asia%2FShanghai",
+            headers=same_origin_get_headers,
+        )
+        assert brief_detail.status_code == 200 and brief_detail.json().get("status") == "real"
+        detail_record = brief_detail.json()["items"][0]
+        assert detail_record["brief_id"] == brief_source_record["brief_id"]
+        assert "no-store" in brief_detail.headers.get("cache-control", "")
+        approved_import_body = {
+            "mode": "approved_import", "date": brief_target_day, "timezone": "Asia/Shanghai",
+            "categories": detail_record["categories"], "summary": detail_record["summary"],
+            "source_refs": detail_record["source_refs"], "approved": True,
+            "import_ref": {"kind": "existing_brief", "id": brief_option["id"], "version": brief_option["version"]},
+        }
+        approved_import_headers = headers(**{"Idempotency-Key": "p3-gate-brief-import-001"})
+        imported = client.post("/api/daily-brief", headers=approved_import_headers, json=approved_import_body)
+        imported_replay = client.post("/api/daily-brief", headers=approved_import_headers, json=approved_import_body)
+        assert imported.status_code == 201 and imported.json().get("status") == "created"
+        assert imported_replay.status_code == 200 and imported_replay.json().get("status") == "duplicate"
+        assert imported_replay.json().get("brief_id") == imported.json().get("brief_id")
+        imported_readback = client.get(
+            f"/api/daily-brief?date={brief_target_day}&timezone=Asia%2FShanghai",
+            headers=same_origin_get_headers,
+        )
+        assert imported_readback.status_code == 200 and imported_readback.json().get("status") == "real"
+        assert imported_readback.json()["items"][0]["brief_id"] == imported.json()["brief_id"]
+        assert imported_readback.json()["items"][0]["summary"] == brief_source_record["summary"]
+        assert "no-store" in imported_readback.headers.get("cache-control", "")
+        conflict = client.post("/api/daily-brief",
+            headers=headers(**{"Idempotency-Key": "p3-gate-brief-import-002"}), json=approved_import_body)
+        assert conflict.status_code == 409
+
+        activity = client.get(f"/api/activity?from={brief_target_day}&to={journal_day}&limit=50&offset=0")
+        assert activity.status_code == 200 and isinstance(activity.json().get("items"), list)
+        assert "no-store" in activity.headers.get("cache-control", "")
+        activity_kinds = {item.get("kind") for item in activity.json()["items"]}
+        assert {"task", "journal", "daily_brief"} <= activity_kinds
 
         created = client.post(path + "/candidates", headers=headers(), json={
             "objective": "Synthetic end-to-end review", "source_refs": [task_ref, project_ref, journal_ref], "calendar_window": None})
@@ -178,7 +291,9 @@ try:
             execute = client.post(candidate_path + f"/steps/{position}/execute",
                 headers=headers(**{"Idempotency-Key": f"p3-gate-execute-{position}"}),
                 json={"expected_revision": revision})
-            assert execute.status_code == 200 and execute.json()["effect"] == "none"
+            step_kind = preview.json()["steps"][position - 1]["kind"]
+            expected_effect = "planning_ledger" if step_kind == "review_source" else "task_created" if step_kind == "create_task" else "none"
+            assert execute.status_code == 200 and execute.json()["effect"] == expected_effect
             revision = execute.json()["revision"]
         recap = client.get(candidate_path + "/retrospective")
         assert recap.status_code == 200 and recap.json()["counts"]["completed"] == len(preview.json()["steps"])
@@ -192,6 +307,56 @@ try:
         assert changed_replay.status_code == 409
         assert all(file.read_bytes() == snapshot for file, snapshot in source_snapshots.items()), (
             "Planning workflow changed a business source")
+
+        # The frozen Planning contract supports an explicit proposed_tasks
+        # action. Approve and execute each returned step, then prove the
+        # task_created receipt is durable and does not create a duplicate on
+        # an exact replay.
+        task_action_candidate = client.post(path + "/candidates", headers=headers(), json={
+            "objective": "Synthetic approved Task action", "source_refs": [task_ref],
+            "calendar_window": None,
+            "proposed_tasks": [{"title": "Synthetic Planning Task", "due_date": journal_day}],
+        })
+        assert task_action_candidate.status_code == 200
+        task_action_id = task_action_candidate.json()["candidate_id"]
+        task_action_path = f"{path}/candidates/{task_action_id}"
+        task_action_preview = client.get(task_action_path)
+        assert task_action_preview.status_code == 200
+        task_action_steps = task_action_preview.json()["steps"]
+        assert [item["kind"] for item in task_action_steps] == ["review_source", "create_task"]
+        revision = task_action_preview.json()["revision"]
+        task_created_receipt = None
+        task_execute_headers = None
+        task_execute_body = None
+        for position, step in enumerate(task_action_steps, 1):
+            decision = client.post(task_action_path + f"/steps/{position}/decision",
+                headers=headers(**{"Idempotency-Key": f"p3-gate-task-action-approve-{position}"}),
+                json={"decision": "approved", "expected_revision": revision})
+            assert decision.status_code == 200 and decision.json()["execution_status"] == "not_started"
+            revision = decision.json()["revision"]
+            execute_key = f"p3-gate-task-action-execute-{position}"
+            execute_headers = headers(**{"Idempotency-Key": execute_key})
+            execute_body = {"expected_revision": revision}
+            executed = client.post(task_action_path + f"/steps/{position}/execute",
+                                   headers=execute_headers, json=execute_body)
+            expected_effect = "task_created" if step["kind"] == "create_task" else "planning_ledger"
+            assert executed.status_code == 200 and executed.json().get("effect") == expected_effect
+            assert executed.json().get("status") == "completed"
+            if step["kind"] == "create_task":
+                task_created_receipt = executed.json()
+                task_execute_headers = execute_headers
+                task_execute_body = execute_body
+            revision = executed.json()["revision"]
+        assert task_created_receipt is not None and task_execute_headers is not None
+        task_action_replay = client.post(task_action_path + "/steps/2/execute",
+                                         headers=task_execute_headers, json=task_execute_body)
+        assert task_action_replay.status_code == 200
+        assert task_action_replay.json() == task_created_receipt
+        task_action_readback = client.get("/api/tasks?status=all")
+        assert task_action_readback.status_code == 200
+        assert any(row.get("id") == task_created_receipt["task_id"]
+                   and row.get("title") == "Synthetic Planning Task"
+                   for row in task_action_readback.json()["tasks"])
 
         controlled = client.post(path + "/candidates", headers=headers(), json={
             "objective": "Synthetic workflow controls", "source_refs": [task_ref], "calendar_window": None}).json()
@@ -213,27 +378,28 @@ try:
             json={"decision": "approved", "expected_revision": recoverable["revision"]})
         assert approved.status_code == 200
         service = app.state.planning_candidate_service
-        original_execute = service._synthetic_execute
+        original_execute = service._execute_step
         execution_attempts = [0]
-        def fail_once(step):
+        def fail_once(step, **kwargs):
             execution_attempts[0] += 1
             if execution_attempts[0] == 1:
                 raise OSError("synthetic injected executor failure")
-            return original_execute(step)
-        service._synthetic_execute = fail_once
+            return original_execute(step, **kwargs)
+        service._execute_step = fail_once
         failed = client.post(recoverable_path + "/steps/1/execute",
             headers=headers(**{"Idempotency-Key": "p3-gate-failure"}),
             json={"expected_revision": approved.json()["revision"]})
-        assert failed.status_code == 200 and failed.json()["status"] == "failed" and failed.json()["effect"] == "none"
+        assert failed.status_code == 200 and failed.json()["status"] == "failed" and failed.json()["effect"] == "planning_ledger"
         retry_ready = client.post(recoverable_path + "/control",
             headers=headers(**{"Idempotency-Key": "p3-gate-retry-ready"}),
             json={"command": "retry", "expected_revision": failed.json()["revision"]})
         assert retry_ready.status_code == 200
-        service._synthetic_execute = original_execute
+        service._execute_step = original_execute
         recovered = client.post(recoverable_path + "/steps/1/execute",
             headers=headers(**{"Idempotency-Key": "p3-gate-recovered-execute"}),
             json={"expected_revision": retry_ready.json()["revision"]})
-        assert recovered.status_code == 200 and recovered.json()["status"] == "simulated"
+        assert recovered.status_code == 200 and recovered.json()["status"] == "completed"
+        assert recovered.json()["effect"] == "planning_ledger"
 
         concurrent_candidate = client.post(path + "/candidates", headers=headers(), json={
             "objective": "Synthetic concurrent CAS", "source_refs": [task_ref], "calendar_window": None}).json()
@@ -248,7 +414,8 @@ try:
 
         stale_candidate = client.post(path + "/candidates", headers=headers(), json={
             "objective": "Synthetic stale source", "source_refs": [task_ref], "calendar_window": None}).json()
-        source_task = task_store.list_for_projection()["tasks"][0]
+        source_task = next(item for item in task_store.list_for_projection()["tasks"]
+                           if item["id"] == task_ref["id"])
         task_store.update(source_task["id"], {"title": "Synthetic source drift", "expected_updated_at": source_task["updated_at"]})
         stale_decision = client.post(
             f"{path}/candidates/{stale_candidate['candidate_id']}/steps/1/decision",
@@ -285,7 +452,7 @@ try:
         restored_recap = client.get(candidate_path + "/retrospective")
         assert restored.status_code == 200 and restored.json()["workflow_status"] == "completed", (restored.status_code, restored.text)
         assert restored_recap.status_code == 200 and restored_recap.json()["feedback"] == "useful"
-        print("P3_1_5_HTTP: PASS_WITH_LIMITS; Vite same-origin proxy -> real create_app/Uvicorn; synthetic login, no-store, Task/Project/Journal metadata projections, no Journal body, candidate create/preview, cross-session 404, approve/execute effect=none, retrospective/feedback replay and conflict, pause/resume/cancel, injected failure -> explicit retry-ready -> recovered synthetic execution, concurrent CAS single winner, stale source rejection, permission denied before source verify, all selected business-source bytes stable, app-restart readback.")
+        print("P3_1_5_HTTP: PASS_WITH_LIMITS; fixed Web -> same-origin Vite proxy -> fixed Core create_app/Uvicorn; Home, Activity, Projects, Today/Task create replay/update-CAS conflict/readback, Journal read, Calendar projection, Brief exact-date approved_import/create/replay/readback/409, Planning review plus approved create_task/receipt/replay/readback, session isolation, feedback replay/conflict, pause/resume/cancel, injected failure/retry, concurrent CAS, stale source rejection, permission denied before source verify, and persistence after app restart.")
         print(f"P3_SYNTHETIC_ROOT={ROOT}; browser/model/production/user acceptance not implied")
 finally:
     vite.terminate()

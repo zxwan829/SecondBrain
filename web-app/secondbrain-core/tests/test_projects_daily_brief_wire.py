@@ -77,7 +77,9 @@ def make_client(tmp_path, *, projects_store=None, brief_store=None, task_store=N
 
         auth.require_action = guarded_require_action
     token = "synthetic-app-session"
-    auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
+    session_id = hashlib.sha256(token.encode()).hexdigest()
+    auth._sessions[session_id] = time.time() + 600
+    auth._session_actions[session_id] = set(auth.SUPPORTED_ACTIONS)
     app = FastAPI()
     @app.middleware("http")
     async def daily_brief_no_store(request, call_next):
