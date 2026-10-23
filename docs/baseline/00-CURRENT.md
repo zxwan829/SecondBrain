@@ -16,15 +16,15 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|
 | main | `e33b836c67095df1537ac4fb3da76adc236f4a96`。#198、#212、#214、#215 已按顺序正常合入 | 本状态记录对应 GitHub main 快照；不代表部署或生产状态 |
 | A 普通 Web 批次 | #198 `b9bb97da`→`5fff974b`；#212 `3cf044cf`→`f58ecfd2`；#214 `36c67fd1`→`db810654`；#215 `9d35dc70`→`e33b836c`。各项 post-merge 定向回归分别 48、5、1、2 项通过；#214/#215 相邻 Inbox 修改的组合回归通过 | 保留 PR 各自已有 typecheck/build/diff-check 证据；本批未运行 Actions。细节见 Progress-Log 2026-10-23 集成收口记录 |
-| #201 Core 撤权 | HEAD `353fc9614c77a5e7a9f5d3549f602bb394afd4d2` 仍因有效 session 的 grant 记录缺失时默认恢复全部 action 而 `BLOCKED_PENDING_FIX` | 等 B 修复同一 PR、补缺失 grant 记录 fail-closed 回归；再独立复审新 SHA |
-| #207/#202 集成 | #207 `d1cd0904` 保留 `PASS_WITH_LIMITS`；#202 `62c97ff0` 仍依赖 #201/#207。#202 曾在较早固定 Web SHA 通过 Linux Chromium 三视口，证据不自动延续到当前 HEAD | #201 修复后重查 #202 base/净差异，固定 Core+Web 组合做必要 HTTP 验证；仅对当前固定 SHA 声明浏览器状态 |
+| #201 Core 撤权 | PR HEAD `0267a2ce01be0f7898ca6dd7b54a21edd339e8ec`，包含修复提交 `ac1c171d3c5efd3e89fbcc6b578ac354a3d145d1`：缺失 grant 记录现返回 403；A 对该安全增量复审 `PASS_WITH_LIMITS`（#201 review #5629186192）。B 报告 4 个定向文件 55 passed；未重复执行。 | 此结论只关闭已识别的进程内 fail-open 路径，不是整个 Core PR、安全架构或生产验收。继续核对 #201/#207/#202 固定组合及各自剩余 Gate |
+| #207/#202 集成 | #207 `d1cd0904` 保留既有 `PASS_WITH_LIMITS`；#202 `62c97ff0` 仍依赖 #201/#207。#202 较早固定 Web SHA 的 Linux Chromium 三视口证据只适用于对应浏览器/测试代码，不自动等于当前组合 Gate | #201 已识别 fail-open 增量现已修复并完成有限复审；下一步核对 #201/#207/#202 当前固定 SHA、stacked base 与净差异，再做缺失的跨层 HTTP 验证。安全敏感 Core PR 不据普通 PR 授权自动合并 |
 | #216/#213 Trash | #216 `96d36dcf` 源码层原子 no-replace 与恢复复审 `PASS_WITH_LIMITS`；Linux `renameat2`、生产挂载/ACL/Synology Drive 未验证。#213 仍为设计候选 | 先冻结首发 DTO/action/排除与恢复合同；未完成相应验证前不启用可操作 Trash UI，不含 purge |
 | P4 Notes | localhost HTTP Gate 为 `PASS_WITH_LIMITS`；移动浏览器与 Obsidian 双向同步 `NOT RUN` | 有单次浏览器授权时再做合成移动验收；不得连接真实 Vault/NAS |
 | Writer/Promote 与生产 | OFF；D090/OS Gate 与生产安全门禁保持原状 | 不从普通 PR 合入推导部署或生产授权 |
 
 本批分支保护规则与 ruleset 的可读 GraphQL 查询均未返回配置项；普通 PR workflow 没有匹配本批文件的自动触发。所有 PR 均通过正常 GitHub Ready/Merge 路径处理；没有绕过检查、管理员合并、强推或新增 workflow。完整 V1 及真实生产/用户体验验收仍未完成。
 
-**唯一 NEXT：** B 修复 #201 fail-open；A 在新固定 Core SHA 到位后复审并完成 #201/#207/#202 组合收口，同时继续不依赖该 Core 修复的 V1 验收工作。不要重复本批已通过的四个 Web 定向回归。
+**唯一 NEXT：** A/B 以 #201 `0267a2ce`、#207 最新固定 SHA 与 #202 最新 Web SHA 对齐依赖，完成必要的 Core+Web localhost HTTP 组合验收；不得把本次有限的 #201 安全增量复审写成整项 Core/生产 Gate 通过。普通 Web 合并批已结束，不重复四项已通过回归。
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 
