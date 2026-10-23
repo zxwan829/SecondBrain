@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-10-23 — 普通 Web PR 批量集成收口（Issue #96 授权）
+
+- **固定基线与合并顺序：** 从 main `e28db843df53c2ac48c71abbedeb3713c77d338b` 起，按 #198 → #212 → #214 → #215 使用 GitHub 正常 Ready/Merge 流程，未绕过保护或检查。对应 main merge commit：#198 `5fff974bae9f31f6149fabc7fd087b7374507489`；#212 `f58ecfd28c5fbe4c4bae37aaf94433830689daef`；#214 `db81065413e71d832f2cf6c88f9995b105dc1757`；#215 `e33b836c67095df1537ac4fb3da76adc236f4a96`。最终 main 为 `e33b836c67095df1537ac4fb3da76adc236f4a96`。
+- **合并前准入：** 四个固定 HEAD 均有此前记录的独立源码 `PASS_WITH_LIMITS`、相关定向回归及 typecheck/build/diff-check 证据；#214/#215 还复用本地组合 HEAD `84b29ad5f306bdee0706db61b63548f72ffa951a` 的 2 项回归。最新 main 上对 #212/#214/#215 的三方树检查均无冲突；#214/#215 仍仅改相邻 Inbox 页面与测试。GraphQL 对 main 返回 `branchProtectionRules=[]`、`rulesets=[]`；REST 保护/rules 查询受私有仓库套餐限制返回 403，不能将 REST 错误解释为绕过许可。仓库现有 pull_request workflow 仅对 `d077-hermes-smoke.yml` 文件路径触发，与本批文件不匹配；其余浏览器/Linux 工作流为手动触发。本批没有触发 Actions。
+- **逐项合并后验证：** #198 在 main `5fff974b` 运行 `npm test -- src/App.navigation.test.tsx` → **48 passed**；#212 在 main `f58ecfd2` 运行 `npm test -- src/VocabularyPage.test.tsx` → **5 passed**；#214 在 main `db810654` 运行其 stale Inbox poll 测试 → **1 passed, 74 skipped**；#215 在 main `e33b836c` 运行 Inbox stale poll + Organizer 403 组合回归 → **2 passed, 74 skipped**。测试依赖首次尝试使用用户 npm 缓存时因现有权限错误失败；未更改缓存/系统权限，改在隔离临时仓库和 `/private/tmp` cache 安装锁定依赖后测试通过。没有因该环境错误重复无关测试。
+- **审查与边界：** 所有合并均指定并校验预期 PR HEAD；无 force push、admin bypass 或 main reset。没有发生回滚。未触发 Actions、未部署、未访问真实数据，Writer/Promote 与费用门禁保持 OFF。
+- **剩余集成阻断：** #201 `353fc9614c77a5e7a9f5d3549f602bb394afd4d2` 缺失有效 session grant 记录时 fail-open 授予全量 action，保持 `BLOCKED_PENDING_FIX` 并等待 B 更新；#207 `d1cd0904c85e606d03ff4479d181dc0164cfc560` 原 review 保持 `PASS_WITH_LIMITS`；#202 `62c97ff0c66bee6ec8a673790f14098ecb94b898` 仍依赖 #201/#207，须在修复后重核 base、净差异和固定跨层合同。#216 `96d36dcf5248195178f5e86ad132893590987efb` 的 source-level no-replace/recovery 修复复审 `PASS_WITH_LIMITS`；Linux `renameat2`、生产同卷挂载/ACL 与 Synology Drive 未运行。Notes 移动浏览器和 Obsidian 双向同步仍 `NOT RUN`。
+
 ## 2026-10-22 — Writer/Promote OS 安全准入与 Linux 隔离实验方案（Issue #96 PMO #6333663799）
 
 - **固定基线与审查输入：** 从 main `563a6fa8e4d6032a34536d879321738c20cf3c24` 的隔离 clone/branch 开始。读取项目 AGENTS、Agent-Rules、CURRENT、审计计划、Environment-Baseline 与 D067/D072/D073/D078/D086 相关边界，并引用 B #97 #6333624251。Environment-Baseline 最近记录为 2026-10-15；只作历史快照，不能当作当前运行事实。
