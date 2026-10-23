@@ -2,6 +2,21 @@ import React, { useEffect, useRef, useState } from 'react';
 
 type Entry = { id: string; created_at: string; source: string; original_text: string };
 
+function parseEntries(value: unknown): Entry[] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entries = (value as { entries?: unknown }).entries;
+  if (!Array.isArray(entries)) return null;
+  const parsed: Entry[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const row = entry as Record<string, unknown>;
+    if (typeof row.id !== 'string' || !row.id || typeof row.created_at !== 'string' || !Number.isFinite(Date.parse(row.created_at))
+      || typeof row.source !== 'string' || typeof row.original_text !== 'string') return null;
+    parsed.push({ id: row.id, created_at: row.created_at, source: row.source, original_text: row.original_text });
+  }
+  return parsed;
+}
+
 function todayInShanghai() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
@@ -35,8 +50,9 @@ export function JournalPage() {
     try {
       const response = await fetch(`/api/journal/${date}`, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json() as { entries: Entry[] };
-      if (loadRevision.current === revision && currentDay.current === date) setEntries(data.entries);
+      const data = parseEntries(await response.json());
+      if (!data) throw new Error('invalid Journal response');
+      if (loadRevision.current === revision && currentDay.current === date) setEntries(data);
     } catch {
       if (!controller.signal.aborted && loadRevision.current === revision && currentDay.current === date) setRefreshError('无法刷新 Journal 列表；已保存的记录不会因此撤销。');
     } finally {
@@ -89,7 +105,7 @@ export function JournalPage() {
     <section className="journal-panel" aria-labelledby="journal-entries-heading">
       <div className="journal-list-heading"><h2 id="journal-entries-heading">{day} 的记录</h2><button type="button" onClick={() => void load(day)} disabled={loading}>{loading ? '读取中…' : '刷新'}</button></div>
       {loading && <p role="status">正在读取…</p>}
-      {!loading && entries.length === 0 && <p className="journal-hint">当天还没有记录。</p>}
+      {!loading && !refreshError && entries.length === 0 && <p className="journal-hint">当天还没有记录。</p>}
       <ol className="journal-entry-list">{entries.map((entry) => {
         // Daily Brief and Planning source refs use a date-qualified Journal ID
         // (`YYYY-MM-DD:<entry ID>`); older/direct links may carry the bare ID.

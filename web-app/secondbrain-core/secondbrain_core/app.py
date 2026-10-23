@@ -35,6 +35,7 @@ from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_ro
 from .modules.vocabulary import VocabularyStore, create_vocabulary_router
 from .modules.inbox_proposals import InboxProposalStore, InboxProposalSources, create_inbox_proposal_router
 from .modules.organizer_engine import OrganizerRunner
+from .modules.chat_cost_gate import ChatCostGate
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
 from .modules.review_promote.core_auth import CorePromoteAuth
@@ -108,6 +109,7 @@ def create_app():
     organizer = OrganizerRunner(approval_root, review_root, hermes,
                                 model=organizer_controls.load_model(),
                                 scheduler_enabled=organizer_options["scheduler_enabled"])
+    chat_cost_gate = ChatCostGate.from_environment(organizer.state)
     capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root,
                              processors=MultimodalCaptureProcessors(hermes))
     notes_store = configured_notes_store(
@@ -169,6 +171,7 @@ def create_app():
     app.state.task_store = task_store
     app.state.projects_source_store = projects_store
     app.state.companion_suggestion_store = companion_store
+    app.state.daily_brief_audit_store = daily_brief_audit_store
     app.state.chat_knowledge_citation_store = chat_knowledge_citation_store
     app.state.planning_candidate_store = planning_candidate_store
     app.state.planning_candidate_service = planning_candidate_service
@@ -181,7 +184,7 @@ def create_app():
     app.include_router(create_web_app_router(
         auth, hermes, service, review_root, knowledge_root, organizer,
         personal_learning=learning, knowledge_store=knowledge_read_store,
-        citation_store=chat_knowledge_citation_store,
+        citation_store=chat_knowledge_citation_store, chat_cost_gate=chat_cost_gate,
     ))
     app.include_router(create_context_preview_router(
         auth, hermes, memory_store, knowledge_read_store,
@@ -202,6 +205,7 @@ def create_app():
     app.include_router(create_task_router(auth, task_store, hermes, chat_activity_store))
     app.include_router(create_projects_activity_router(
         auth, journal_store, task_store, projects_store=projects_store, notes_store=notes_store,
+        daily_brief_audit_store=daily_brief_audit_store, memory_store=memory_store,
     ))
     app.include_router(create_daily_brief_agent_health_router(
         auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,
