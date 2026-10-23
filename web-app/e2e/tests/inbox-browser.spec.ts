@@ -28,6 +28,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'activity_navigation' | 'agent_health_navigation' | 'agent_health_api_response'
   | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
+  | 'notes_navigation_link' | 'notes_collections'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
   | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
@@ -181,9 +182,15 @@ async function configurePage(page: Page) {
       && params.size === 0;
     const taskListPath = route.request().method() === 'GET' && url.pathname === '/api/tasks'
       && exactParams({ status: 'open' });
+    const notesPath = params.size === 0 && (
+      (url.pathname === '/api/notes' && ['GET', 'POST'].includes(route.request().method()))
+      || (route.request().method() === 'GET' && url.pathname === '/api/notes/drafts')
+      || (['GET', 'PUT'].includes(route.request().method())
+        && /^\/api\/notes\/drafts\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(url.pathname))
+    );
     if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
       && !briefPath && !journalSourcePath && !sourceListPath && !homePath && !healthPath
-      && !activityPath && !calendarPath && !journalPath && !taskListPath) {
+      && !activityPath && !calendarPath && !journalPath && !taskListPath && !notesPath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
       return;
@@ -225,6 +232,8 @@ async function configurePage(page: Page) {
     get diagnosticAssertion() { return diagnosticAssertion; },
     get activityReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/activity').map((request) => request.status).slice(-4); },
+    get notesCollectionReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && request.path === '/api/notes').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
     setActivityReadRevoked(revoked: boolean) { activityReadRevoked = revoked; },
@@ -534,12 +543,15 @@ for (const viewport of viewports) {
       await expect(menu).toHaveAttribute('aria-expanded', 'true');
     }
     const collectionsResponsePromise = waitForGetResponse(page, '/api/notes');
+    const notesNavigationButton = page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true });
+    observed.setDiagnosticAssertion('notes_navigation_link');
+    await expect(notesNavigationButton).toBeVisible();
     observed.setDiagnosticAssertion('notes_navigation');
-    await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
-    await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+    await notesNavigationButton.click();
     observed.setDiagnosticAssertion('notes_collections');
-    await expect(page.getByRole('heading', { name: '笔记', exact: true })).toBeVisible();
     await expectSuccessfulGet(collectionsResponsePromise, observed, 'notes_collections');
+    await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+    await expect(page.getByRole('heading', { name: '笔记', exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
 
     observed.setFailureStage('notes_create');
@@ -613,6 +625,7 @@ test.afterEach(async ({ page }, testInfo) => {
       code: isTimeout ? 'timeout' : isAssertion ? 'assertion_failed' : 'test_error',
       assertion_id: observed?.diagnosticAssertion ?? 'test_setup',
       activity_get_statuses: observed?.activityReadStatuses ?? [],
+      notes_collection_statuses: observed?.notesCollectionReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);
