@@ -61,7 +61,8 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "ordinary_chat", "source_protection", "daily_brief_read", "daily_brief_sources",
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
     "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
-    "agent_health", "today", "journal", "calendar", "viewport_layout",
+    "agent_health", "today", "journal", "calendar", "notes_navigation",
+    "notes_create", "notes_edit_save", "notes_reopen", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 FAILURE_DIAGNOSTIC_ASSERTIONS = {
@@ -76,6 +77,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "calendar_navigation", "calendar_api_response", "home_api_response",
     "layout_home", "layout_projects", "layout_activity", "layout_agent_health",
     "layout_today", "layout_journal", "layout_calendar",
+    "notes_navigation", "notes_collections", "notes_create", "notes_save",
+    "notes_readback", "layout_notes",
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
     "calendar_api_requests",
 }
@@ -207,7 +210,7 @@ def _sanitize_run_summary(path: Path) -> None:
     allowed = {"result", "core", "web", "browser", "promote_enabled", "hermes",
                "raw_record_count", "journal_files", "knowledge_files", "exit_code",
                "journal_source_fixture_files", "journal_mutated_files", "brief_files",
-               "brief_file_set_verified", "python", "node",
+               "brief_file_set_verified", "notes_files", "python", "node",
                "html_report_uploaded", "screenshots_uploaded"}
     path.write_text(json.dumps({key: summary[key] for key in allowed if key in summary}, indent=2) + "\n",
                     encoding="utf-8")
@@ -981,7 +984,7 @@ def main() -> int:
     log_files = []
     result = 1
     try:
-        dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs")}
+        dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs", "notes")}
         for path in dirs.values():
             path.mkdir(mode=0o700)
         journal_fixture = seed_daily_brief_sources(dirs)
@@ -999,6 +1002,7 @@ def main() -> int:
             "SB_TASK_ROOT": str(dirs["task"]),
             "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
+            "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
             "SB_DASHBOARD_ORIGINS": WEB_URL,
             "SB_CORE_ALLOWED_HOSTS": "127.0.0.1,localhost",
@@ -1006,6 +1010,7 @@ def main() -> int:
             "SB_HERMES_API_URL": "",
             "SB_PERSONAL_MEMORY_ENABLED": "false",
             "SB_PERSONAL_LEARNING_ENABLED": "false",
+            "VITE_ENABLE_NOTES": "true",
             "SB_E2E_BASE_URL": WEB_URL,
             "SB_CORE_PROXY_TARGET": CORE_URL,
             "SB_E2E_PASSWORD_FILE": str(password_path),
@@ -1087,6 +1092,7 @@ def main() -> int:
             "journal_mutated_files": journal_mutated_files,
             "brief_files": brief_directory_files,
             "brief_file_set_verified": brief_file_set_verified,
+            "notes_files": sum(1 for path in dirs["notes"].rglob("*") if path.is_file() and not path.is_symlink()),
             "knowledge_files": sum(path.is_file() for path in dirs["knowledge"].rglob("*")),
             "exit_code": test_returncode,
             "python": python,

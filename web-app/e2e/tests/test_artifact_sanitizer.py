@@ -565,6 +565,7 @@ def test_run_summary_reports_journal_sources_separately_from_mutations(tmp_path)
         "journal_mutated_files": 0,
         "brief_files": 0,
         "brief_file_set_verified": False,
+        "notes_files": 1,
         "authorization_header": "SYNTHETIC_SECRET",
     }))
 
@@ -577,6 +578,7 @@ def test_run_summary_reports_journal_sources_separately_from_mutations(tmp_path)
         "journal_mutated_files": 0,
         "brief_files": 0,
         "brief_file_set_verified": False,
+        "notes_files": 1,
     }
 
 

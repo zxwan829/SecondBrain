@@ -16,6 +16,7 @@ type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
   | 'daily_brief_readback' | 'permission_revocation' | 'post_revocation_navigation'
+  | 'notes_navigation' | 'notes_create' | 'notes_edit_save' | 'notes_reopen'
   | 'agent_health' | 'today' | 'journal' | 'calendar' | 'viewport_layout';
 type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
   | 'home_after_projects' | 'home_to_activity' | 'activity_heading'
@@ -28,7 +29,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
-  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_no_horizontal_overflow';
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -68,7 +69,7 @@ async function expectNoHorizontalOverflow(
 
 function safePath(value: string): string {
   const url = new URL(value, baseUrl);
-  return url.pathname.replace(/[0-9a-f]{32}/g, '<opaque-id>');
+  return url.pathname.replace(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{32}/gi, '<opaque-id>');
 }
 
 async function configurePage(page: Page) {
@@ -525,6 +526,58 @@ for (const viewport of viewports) {
     for (const path of ['/api/home', '/api/projects', '/api/activity', '/api/agent/health', '/api/tasks', '/api/journal/', '/api/calendar']) {
       expect(observed.requestRecords.some((request) => request.method === 'GET' && request.path.startsWith(path))).toBe(true);
     }
+
+    observed.setFailureStage('notes_navigation');
+    if (viewport.width <= 760) {
+      const menu = page.locator('.mobile-menu-button');
+      if (await menu.getAttribute('aria-expanded') === 'false') await menu.click();
+      await expect(menu).toHaveAttribute('aria-expanded', 'true');
+    }
+    const collectionsResponsePromise = waitForGetResponse(page, '/api/notes');
+    observed.setDiagnosticAssertion('notes_navigation');
+    await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
+    await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('notes_collections');
+    await expect(page.getByRole('heading', { name: '笔记', exact: true })).toBeVisible();
+    await expectSuccessfulGet(collectionsResponsePromise, observed, 'notes_collections');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
+
+    observed.setFailureStage('notes_create');
+    const createNoteResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/notes', { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_create');
+    await page.getByRole('button', { name: '新建 Draft', exact: true }).click();
+    const createNoteResponse = await createNoteResponsePromise;
+    expect(createNoteResponse.status(), 'notes_create').toBe(200);
+    const createdNote = await createNoteResponse.json() as { collection: string; path: string };
+    expect(createdNote.collection).toBe('drafts');
+    expect(createdNote.path).toMatch(/^[0-9a-f-]{36}$/i);
+    const editor = page.locator('.ProseMirror');
+    await expect(editor).toBeVisible();
+
+    observed.setFailureStage('notes_edit_save');
+    const saveNoteResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === 'PUT' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
+    }, { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_save');
+    await editor.fill('Synthetic mobile note round trip');
+    const saveNoteResponse = await saveNoteResponsePromise;
+    expect(saveNoteResponse.status(), 'notes_save').toBe(200);
+    await expect(page.getByRole('status').filter({ hasText: '已保存' }).first()).toBeVisible();
+
+    observed.setFailureStage('notes_reopen');
+    await page.reload();
+    const readNoteResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === 'GET' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
+    }, { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_readback');
+    await page.getByRole('button', { name: createdNote.path, exact: true }).click();
+    const readNoteResponse = await readNoteResponsePromise;
+    expect(readNoteResponse.status(), 'notes_readback').toBe(200);
+    await expect(page.locator('.ProseMirror')).toContainText('Synthetic mobile note round trip');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
 
     // Exercise the real Notes dialog layout CSS against each accepted viewport.
     // This uses only static synthetic markup; Notes save/reopen is covered by
