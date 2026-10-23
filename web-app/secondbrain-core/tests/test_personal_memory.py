@@ -306,7 +306,9 @@ class PersonalMemoryApiTests(unittest.TestCase):
         app.include_router(create_personal_memory_router(self.auth, self.store))
         self.client = TestClient(app, base_url="https://testserver")
         token = "synthetic-auth-session"
-        self.auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 60
+        session_id = hashlib.sha256(token.encode()).hexdigest()
+        self.auth._sessions[session_id] = time.time() + 60
+        self.auth._session_actions[session_id] = set(self.auth.SUPPORTED_ACTIONS)
         self.client.cookies.set(self.auth.COOKIE_NAME, token)
         self.headers = {"Origin": "https://testserver"}
 

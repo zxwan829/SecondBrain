@@ -4,9 +4,11 @@ type Locale = 'zh-CN' | 'en';
 type RefKind = 'task' | 'project' | 'journal';
 type SourceRef = { kind: RefKind; id: string; version: string };
 type SourceChoice = { ref: SourceRef; label: string; detail: string };
-type Step = { position: number; kind: 'review_source'; source_ref: SourceRef; reason: string; priority: 'unspecified'; depends_on: []; decision: 'pending' | 'approved' | 'rejected'; execution_status: 'not_started' | 'simulated' | 'failed' | 'retry_ready' };
+type StepStatus = 'not_started' | 'simulated' | 'completed' | 'failed' | 'retry_ready';
+type Step = { position: number; kind: 'review_source'; source_ref: SourceRef; reason: string; priority: 'unspecified'; depends_on: []; decision: 'pending' | 'approved' | 'rejected'; execution_status: StepStatus }
+  | { position: number; kind: 'create_task'; task: { title: string; due_date: string | null }; reason: 'user_submitted_task_action'; priority: 'user_selected'; depends_on: []; decision: 'pending' | 'approved' | 'rejected'; execution_status: StepStatus };
 type Candidate = { session_id: string; candidate_id: string; revision: number; expires_at: string; status: 'ready' | 'needs_review' | 'stale' | 'unavailable'; workflow_status: 'active' | 'paused' | 'cancelled' | 'partial' | 'completed'; objective: string; steps: Step[] };
-type Retrospective = { revision: number; workflow_status: Candidate['workflow_status']; counts: { planned: number; approved: number; rejected: number; completed: number; failed: number; stale_sources: number }; steps: Array<{ position: number; source_state: 'verified' | 'stale' | 'unavailable'; decision: string; execution_status: string }>; feedback: 'useful' | 'not_useful' | null };
+type Retrospective = { revision: number; workflow_status: Candidate['workflow_status']; counts: { planned: number; approved: number; rejected: number; completed: number; failed: number; stale_sources: number }; steps: Array<{ position: number; source_state: 'verified' | 'stale' | 'unavailable' | 'not_applicable'; decision: string; execution_status: string }>; feedback: 'useful' | 'not_useful' | null };
 type CalendarWindow = { from: string; to: string; timezone: string };
 
 const candidatePattern = /^[a-f0-9]{32}$/;
@@ -14,6 +16,11 @@ const shaPattern = /^[a-f0-9]{64}$/;
 
 function record(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
 function integer(value: unknown, min = 0): value is number { return Number.isSafeInteger(value) && (value as number) >= min; }
+function validDateOnly(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
 function validRef(value: unknown): value is SourceRef {
   if (!record(value) || Object.keys(value).sort().join(',') !== 'id,kind,version'
     || (value.kind !== 'task' && value.kind !== 'project' && value.kind !== 'journal')
@@ -34,11 +41,22 @@ function parseCandidate(value: unknown, sessionId: string, candidateId?: string)
     || typeof value.objective !== 'string' || !Array.isArray(value.steps) || value.steps.length > 20) return null;
   const steps: Step[] = [];
   for (const raw of value.steps) {
-    if (!record(raw) || !integer(raw.position, 1) || raw.kind !== 'review_source' || !validRef(raw.source_ref)
-      || typeof raw.reason !== 'string' || raw.priority !== 'unspecified' || !Array.isArray(raw.depends_on)
+    if (!record(raw) || !integer(raw.position, 1) || !Array.isArray(raw.depends_on)
       || raw.depends_on.length !== 0 || !['pending', 'approved', 'rejected'].includes(String(raw.decision))
-      || !['not_started', 'simulated', 'failed', 'retry_ready'].includes(String(raw.execution_status))) return null;
-    steps.push(raw as unknown as Step);
+      || !['not_started', 'simulated', 'completed', 'failed', 'retry_ready'].includes(String(raw.execution_status))) return null;
+    if (raw.kind === 'review_source' && validRef(raw.source_ref) && typeof raw.reason === 'string' && raw.priority === 'unspecified') {
+      steps.push(raw as unknown as Step);
+      continue;
+    }
+    if (raw.kind === 'create_task' && raw.reason === 'user_submitted_task_action' && raw.priority === 'user_selected'
+      && record(raw.task) && Object.keys(raw.task).sort().join(',') === 'due_date,title'
+      && typeof raw.task.title === 'string' && raw.task.title.trim().length > 0
+      && new TextEncoder().encode(raw.task.title).length <= 200
+      && (raw.task.due_date === null || validDateOnly(raw.task.due_date))) {
+      steps.push(raw as unknown as Step);
+      continue;
+    }
+    return null;
   }
   if (steps.some((step, index) => step.position !== index + 1)) return null;
   return { session_id: sessionId, candidate_id: value.candidate_id, revision: value.revision,
@@ -56,7 +74,7 @@ function parseRetrospective(value: unknown, sessionId: string, candidateId: stri
   const countKeys = ['planned', 'approved', 'rejected', 'completed', 'failed', 'stale_sources'] as const;
   if (countKeys.some((key) => !integer(counts[key]))) return null;
   if (value.steps.some((step) => !record(step) || !integer(step.position, 1)
-    || !['verified', 'stale', 'unavailable'].includes(String(step.source_state)))) return null;
+    || !['verified', 'stale', 'unavailable', 'not_applicable'].includes(String(step.source_state)))) return null;
   return value as unknown as Retrospective;
 }
 
@@ -110,6 +128,7 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
   const [sourcesLoaded, setSourcesLoaded] = useState(false);
   const [sourceError, setSourceError] = useState('');
   const [objective, setObjective] = useState('');
+  const [proposedTasks, setProposedTasks] = useState<Array<{ title: string; due_date: string }>>([]);
   const [tasks, setTasks] = useState<SourceChoice[]>([]);
   const [projects, setProjects] = useState<SourceChoice[]>([]);
   const [journals, setJournals] = useState<SourceChoice[]>([]);
@@ -123,6 +142,7 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [taskReceipt, setTaskReceipt] = useState<{ id: string; version: string } | null>(null);
   const [storageWarning, setStorageWarning] = useState(false);
   const sequence = useRef(0);
   const sessionRef = useRef(sessionId);
@@ -205,16 +225,23 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
   const createCandidate = async () => {
     if (busy || !objective.trim() || selectedRefs.length < 1 || selectedRefs.length > 20) return;
     if (new TextEncoder().encode(objective.trim()).length > 500) { setError(en ? 'Objective must be at most 500 UTF-8 bytes.' : '计划目标不能超过 500 个 UTF-8 字节。'); return; }
+    if (proposedTasks.length > 10 || proposedTasks.some((task) => !task.title.trim() || new TextEncoder().encode(task.title.trim()).length > 200
+      || (task.due_date && (!/^\d{4}-\d{2}-\d{2}$/.test(task.due_date) || !Number.isFinite(Date.parse(`${task.due_date}T00:00:00Z`))
+        || new Date(`${task.due_date}T00:00:00Z`).toISOString().slice(0, 10) !== task.due_date)))) {
+      setError(en ? 'Each proposed Task needs a title up to 200 UTF-8 bytes and an optional valid date; at most 10 are allowed.' : '每个待办需填写不超过 200 个 UTF-8 字节的标题及有效可选日期，最多 10 项。'); return;
+    }
     if (includeCalendar && !validCalendarWindow(windowFrom, windowTo)) {
       setError(en ? 'Choose valid dates in one month, with at most 31 days.' : '日期必须有效、属于同一月份且不超过 31 天。'); return;
     }
     setBusy(true); setError(''); setNotice(''); setCandidate(null); setRetrospective(null);
+    setTaskReceipt(null);
     const currentSequence = ++sequence.current;
     try {
       const calendarWindow: CalendarWindow | null = includeCalendar
         ? { from: windowFrom, to: windowTo, timezone: 'Asia/Shanghai' } : null;
       const value = await api(`/api/chat/sessions/${encodeURIComponent(sessionId)}/planning/candidates`, {
-        method: 'POST', body: JSON.stringify({ objective: objective.trim(), source_refs: selectedRefs, calendar_window: calendarWindow }),
+        method: 'POST', body: JSON.stringify({ objective: objective.trim(), source_refs: selectedRefs, calendar_window: calendarWindow,
+          ...(proposedTasks.length ? { proposed_tasks: proposedTasks.map((task) => ({ title: task.title.trim(), due_date: task.due_date || null })) } : {}) }),
       });
       if (currentSequence !== sequence.current || sessionRef.current !== sessionId) return;
       const parsed = parseCandidate(value, sessionId);
@@ -250,7 +277,7 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
       if (currentSequence !== sequence.current || sessionRef.current !== sessionId) return;
       if (!validate(value)) throw new Error(en ? 'Core returned an invalid planning receipt.' : 'Core 返回的计划回执无法核验。');
       try { sessionStorage.removeItem(pendingKey); } catch { /* Saved key remains harmless; exact replay is safe. */ }
-      setNotice(en ? 'Core recorded the exact synthetic workflow action.' : 'Core 已记录该合成工作流操作。');
+      setNotice(en ? 'Core recorded the explicitly approved planning action.' : 'Core 已记录这项经你批准的计划操作。');
       try { await refreshCandidate(current.candidate_id, currentSequence); }
       catch { setNotice(en ? 'Core confirmed the action. The latest preview could not be refreshed; refresh it before continuing.' : 'Core 已确认该操作，但最新预览刷新失败；请先手动刷新预览再继续。'); }
     } catch (cause) {
@@ -275,12 +302,23 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
 
   const execute = (step: Step) => {
     if (!candidate) return;
+    setTaskReceipt(null);
     const body = { expected_revision: candidate.revision };
-    void mutate('execute', step.position, `/steps/${step.position}/execute`, body, (value) => record(value)
-      && value.event === 'planning.step-execution' && value.version === 1 && value.session_id === sessionId
-      && value.candidate_id === candidate.candidate_id && value.revision === candidate.revision + 1
-      && value.position === step.position && value.execution_mode === 'synthetic' && value.effect === 'none'
-      && ['simulated', 'failed'].includes(String(value.status)));
+    void mutate('execute', step.position, `/steps/${step.position}/execute`, body, (value) => {
+      const common = record(value) && value.event === 'planning.step-execution' && value.version === 1 && value.session_id === sessionId
+        && value.candidate_id === candidate.candidate_id && value.revision === candidate.revision + 1 && value.position === step.position;
+      if (!common || !record(value)) return false;
+      if (step.kind === 'create_task') {
+        const valid = value.status === 'completed' && value.execution_mode === 'core' && value.effect === 'task_created'
+          && typeof value.task_id === 'string' && /^[a-f0-9]{32}$/.test(value.task_id)
+          && typeof value.task_version === 'string' && shaPattern.test(value.task_version);
+        if (valid) setTaskReceipt({ id: value.task_id as string, version: value.task_version as string });
+        return valid;
+      }
+      // Retain compatibility with the earlier no-op contract while consuming the Core ledger contract.
+      return (value.execution_mode === 'synthetic' && value.effect === 'none' && ['simulated', 'failed'].includes(String(value.status)))
+        || (value.execution_mode === 'core' && value.effect === 'planning_ledger' && ['completed', 'failed'].includes(String(value.status)));
+    });
   };
 
   const control = (command: 'pause' | 'resume' | 'cancel' | 'retry') => {
@@ -306,11 +344,21 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
       <button type="button" onClick={() => { if (open) { setOpen(false); return; } void openPanel(); }} disabled={busy}>{open ? (en ? 'Hide planning' : '收起计划') : (en ? 'Open planning' : '开始规划')}</button></div>
     {!open && <p>{en ? 'No sources are read until you open this panel and explicitly load choices.' : '只有展开面板并显式加载候选来源后才读取来源列表。'}</p>}
     {open && <>
-      <p className="chat-context-preview-note">{en ? 'Sources are rechecked by Core. Approval and synthetic execution are separate explicit actions. Synthetic execution has effect=none and never writes business records.' : 'Core 会重新核验来源。逐项批准与合成执行是分开的显式操作；合成执行 effect=none，不写入业务记录。'}</p>
+      <p className="chat-context-preview-note">{en ? 'Core rechecks sources. Each action requires your explicit approval. User-submitted Task actions create a real Task only after approval.' : 'Core 会重新核验来源。每项操作都需你明确批准；用户主动提交的待办仅在批准后创建真实 Task。'}</p>
       {storageWarning && <p role="alert">{en ? 'This tab cannot retain the candidate locator. Keep this tab open to review it.' : '当前标签页无法保存候选定位符，请保持本标签页打开。'}</p>}
       {!candidate && <>
         <label htmlFor="planning-objective">{en ? 'Objective' : '计划目标'}</label>
         <textarea id="planning-objective" value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={500} placeholder={en ? 'Describe what you want to review' : '描述你希望规划或复盘的目标'} />
+        <fieldset className="planning-proposed-tasks" disabled={busy}>
+          <legend>{en ? 'Optional Tasks you want to create' : '可选：你希望创建的待办'}</legend>
+          <p>{en ? 'Only titles and dates you enter are sent. No Task is created until you approve its step.' : '只会提交你填写的标题和日期；逐项批准前不会创建待办。'}</p>
+          {proposedTasks.map((task, index) => <div key={index}>
+            <label>{en ? `Task ${index + 1} title` : `待办 ${index + 1} 标题`}<input aria-label={en ? `Task ${index + 1} title` : `待办 ${index + 1} 标题`} value={task.title} maxLength={200} onChange={(event) => setProposedTasks((items) => items.map((item, current) => current === index ? { ...item, title: event.target.value } : item))} /></label>
+            <label>{en ? 'Due date (optional)' : '截止日期（可选）'}<input aria-label={en ? `Task ${index + 1} due date` : `待办 ${index + 1} 截止日期`} type="date" value={task.due_date} onChange={(event) => setProposedTasks((items) => items.map((item, current) => current === index ? { ...item, due_date: event.target.value } : item))} /></label>
+            <button type="button" onClick={() => setProposedTasks((items) => items.filter((_, current) => current !== index))}>{en ? 'Remove Task proposal' : '移除待办'}</button>
+          </div>)}
+          {proposedTasks.length < 10 && <button type="button" onClick={() => setProposedTasks((items) => [...items, { title: '', due_date: '' }])}>{en ? 'Add Task proposal' : '添加待办'}</button>}
+        </fieldset>
         <button type="button" disabled={loadingSources} onClick={() => void loadSources()}>{loadingSources ? (en ? 'Loading…' : '正在读取…') : (sourcesLoaded ? (en ? 'Refresh Task and Project choices' : '刷新待办和项目候选') : (en ? 'Load Task and Project choices' : '读取待办和项目候选'))}</button>
         {sourcesLoaded && <div className="planning-source-groups">
           {([["task", tasks], ["project", projects]] as Array<[RefKind, SourceChoice[]]>).map(([kind, choices]) => <fieldset key={kind} disabled={busy}>
@@ -340,19 +388,22 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
       </>}
       {candidate && <>
         <p role="status">{statusText(candidate.status, en)} · {candidate.workflow_status} · revision {candidate.revision}</p>
+        {taskReceipt && <p role="status">{en ? `Core created Task ${taskReceipt.id} (version ${taskReceipt.version.slice(0, 12)}…).` : `Core 已创建待办 ${taskReceipt.id}（版本 ${taskReceipt.version.slice(0, 12)}…）。`}</p>}
         <p>{candidate.objective}</p>
         <p>{en ? 'Expires' : '过期时间'}: {candidate.expires_at}</p>
         {!candidate.steps.length && <p>{en ? 'Core returned no actionable steps.' : 'Core 未返回可操作步骤。'}</p>}
         <ol className="planning-step-list">{candidate.steps.map((step) => <li key={step.position}>
           <strong>{step.reason.replaceAll('_', ' ')}</strong>
-          <small>{step.source_ref.kind} · {step.source_ref.id} · v{step.source_ref.version.slice(0, 12)}…</small>
+          {step.kind === 'review_source' ? <small>{step.source_ref.kind} · {step.source_ref.id} · v{step.source_ref.version.slice(0, 12)}…</small>
+            : <small>{en ? 'User-proposed Task' : '用户提交的待办'} · {step.task.title}{step.task.due_date ? ` · ${step.task.due_date}` : ''}</small>}
           <span>{step.decision} · {step.execution_status}</span>
           {step.decision === 'pending' && candidate.status !== 'stale' && candidate.status !== 'unavailable' && candidate.workflow_status === 'active' && <div>
             <button type="button" disabled={busy} onClick={() => decide(step, 'approved')}>{en ? 'Approve this step' : '批准此步骤'}</button>
             <button type="button" disabled={busy} onClick={() => decide(step, 'rejected')}>{en ? 'Reject this step' : '拒绝此步骤'}</button>
           </div>}
           {step.decision === 'approved' && ['not_started', 'retry_ready'].includes(step.execution_status)
-            && candidate.workflow_status === 'active' && <button type="button" disabled={busy} onClick={() => execute(step)}>{en ? 'Run synthetic check (effect=none)' : '执行合成检查（effect=none）'}</button>}
+            && candidate.workflow_status === 'active' && <button type="button" disabled={busy} onClick={() => execute(step)}>{step.kind === 'create_task'
+              ? (en ? 'Create this approved Task' : '创建已批准的待办') : (en ? 'Run synthetic check (effect=none)' : '执行合成检查（effect=none）')}</button>}
         </li>)}</ol>
         <div className="planning-workflow-controls">
           {candidate.workflow_status === 'active' && <button type="button" disabled={busy} onClick={() => control('pause')}>{en ? 'Pause' : '暂停'}</button>}
@@ -368,7 +419,7 @@ export function PlanningPanel({ locale, sessionId }: { locale: Locale; sessionId
           {retrospective.feedback && <p>{en ? 'Your feedback' : '你的反馈'}: {retrospective.feedback}</p>}
           {!retrospective.feedback && <div><button type="button" disabled={busy} onClick={() => submitFeedback('useful')}>{en ? 'Useful' : '有帮助'}</button><button type="button" disabled={busy} onClick={() => submitFeedback('not_useful')}>{en ? 'Not useful' : '帮助不大'}</button></div>}
         </section>}
-        <button type="button" disabled={busy} onClick={() => { setCandidate(null); setRetrospective(null); setError(''); }}>{en ? 'Start a different plan' : '新建另一计划'}</button>
+        <button type="button" disabled={busy} onClick={() => { setCandidate(null); setRetrospective(null); setTaskReceipt(null); setError(''); }}>{en ? 'Start a different plan' : '新建另一计划'}</button>
       </>}
       {notice && <p role="status">{notice}</p>}{error && <p role="alert">{error}</p>}{busy && <p role="status">{en ? 'Checking with Core…' : '正在与 Core 核验…'}</p>}
     </>}
