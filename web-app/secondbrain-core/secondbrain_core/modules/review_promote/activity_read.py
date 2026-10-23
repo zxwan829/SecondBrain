@@ -1,0 +1,185 @@
+"""Bounded, read-only projection of the existing Promote audit ledger.
+
+This is an internal source adapter only. It intentionally does not register an
+HTTP route or define an Activity response contract.
+"""
+import hashlib
+import json
+import os
+import re
+import stat
+from datetime import datetime
+
+from .worker import _open_dir_chain, _REQUEST_ID, _SAFE_NAME, _SHA256
+
+
+MAX_AUDIT_BYTES = 1024 * 1024
+MAX_AUDIT_ROWS = 5000
+_MAX_FIELD = 2048
+_FIELDS = frozenset({
+    "event", "request_id", "approver_subject", "approved_at", "recorded_at",
+    "review_path", "review_sha256", "target_filename", "output_sha256",
+})
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _timestamp(value):
+    if not isinstance(value, str) or not value or len(value) > 64:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _record(value):
+    if not isinstance(value, dict) or set(value) != _FIELDS or value.get("event") != "promoted":
+        return None
+    if not isinstance(value.get("request_id"), str) or not _REQUEST_ID.fullmatch(value["request_id"]):
+        return None
+    if not isinstance(value.get("approver_subject"), str) or not value["approver_subject"] or \
+            len(value["approver_subject"]) > _MAX_FIELD:
+        return None
+    if not _timestamp(value.get("approved_at")) or not _timestamp(value.get("recorded_at")):
+        return None
+    if not isinstance(value.get("review_path"), str) or not value["review_path"] or \
+            len(value["review_path"]) > _MAX_FIELD:
+        return None
+    if not isinstance(value.get("target_filename"), str) or not _SAFE_NAME.fullmatch(value["target_filename"]):
+        return None
+    if not isinstance(value.get("review_sha256"), str) or not _SHA256.fullmatch(value["review_sha256"]):
+        return None
+    if not isinstance(value.get("output_sha256"), str) or not _SHA256.fullmatch(value["output_sha256"]):
+        return None
+    # Never pass paths, target names, approver identity or content digests to
+    # Activity consumers. The opaque ID binds the existing immutable event.
+    identity = "\0".join((value["request_id"], value["recorded_at"], value["output_sha256"]))
+    return {
+        "activity_id": hashlib.sha256(("promote\0" + identity).encode("utf-8")).hexdigest()[:32],
+        "kind": "promote",
+        "status": "promoted",
+        "occurred_at": value["recorded_at"],
+    }
+
+
+class PromoteAuditActivityReadStore:
+    """Read at most the newest 1 MiB / 5000 rows without creating files."""
+
+    def __init__(self, audit_path):
+        if audit_path:
+            absolute = os.path.abspath(audit_path)
+            # Resolve directory aliases such as macOS /private -> /var while
+            # preserving the final component for O_NOFOLLOW validation.
+            self.audit_path = os.path.join(os.path.realpath(os.path.dirname(absolute)),
+                                           os.path.basename(absolute))
+        else:
+            self.audit_path = None
+
+    def read(self):
+        """Return ``(safe_rows, complete)``; uncertainty never claims complete."""
+        if not self.audit_path:
+            return [], False
+        directory_fd = None
+        fd = None
+        try:
+            directory = os.path.dirname(self.audit_path)
+            basename = os.path.basename(self.audit_path)
+            directory_fd = _open_dir_chain(directory)
+            directory_before = os.fstat(directory_fd)
+            fd = os.open(basename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                          getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid() or
+                    stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1):
+                return [], False
+            offset = max(0, before.st_size - MAX_AUDIT_BYTES)
+            os.lseek(fd, offset, os.SEEK_SET)
+            chunks = []
+            remaining = min(before.st_size, MAX_AUDIT_BYTES)
+            while remaining:
+                chunk = os.read(fd, min(65536, remaining))
+                if not chunk:
+                    return [], False
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+            after = os.fstat(fd)
+            try:
+                entry = os.stat(basename, dir_fd=directory_fd, follow_symlinks=False)
+                directory_after = os.fstat(directory_fd)
+            except OSError:
+                return [], False
+            same_file = (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino) == \
+                        (entry.st_dev, entry.st_ino)
+            same_directory = (directory_before.st_dev, directory_before.st_ino) == \
+                             (directory_after.st_dev, directory_after.st_ino)
+            stable_metadata = before.st_size == after.st_size and before.st_mtime_ns == after.st_mtime_ns
+            if not same_file or not same_directory or not stable_metadata or not stat.S_ISREG(entry.st_mode):
+                return [], False
+
+            complete = offset == 0
+            if payload and offset:
+                first_newline = payload.find(b"\n")
+                if first_newline < 0:
+                    return [], False
+                payload = payload[first_newline + 1:]
+                complete = False
+            if payload and not payload.endswith(b"\n"):
+                payload = payload[:payload.rfind(b"\n") + 1] if b"\n" in payload else b""
+                complete = False
+            lines = payload.splitlines()
+            if len(lines) > MAX_AUDIT_ROWS:
+                lines = lines[-MAX_AUDIT_ROWS:]
+                complete = False
+            rows = []
+            for line in lines:
+                try:
+                    value = json.loads(line.decode("utf-8"), object_pairs_hook=_unique_object)
+                    row = _record(value)
+                except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+                    complete = False
+                    continue
+                if row is None:
+                    complete = False
+                    continue
+                rows.append(row)
+            # Parsing may take time. Recheck the pathname and opened inode
+            # after parsing so replacement or in-place mutation during that
+            # interval cannot be reported as a stable snapshot.
+            final_fd = os.fstat(fd)
+            try:
+                final_entry = os.stat(basename, dir_fd=directory_fd, follow_symlinks=False)
+                final_directory_fd = _open_dir_chain(directory)
+            except OSError:
+                return [], False
+            try:
+                final_directory = os.fstat(final_directory_fd)
+                stable_parent = (directory_before.st_dev, directory_before.st_ino) == \
+                                (final_directory.st_dev, final_directory.st_ino)
+                stable_file = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) == \
+                              (final_fd.st_dev, final_fd.st_ino, final_fd.st_size, final_fd.st_mtime_ns)
+                same_entry = (before.st_dev, before.st_ino) == (final_entry.st_dev, final_entry.st_ino)
+                if (not stable_parent or not stable_file or not same_entry or
+                        not stat.S_ISREG(final_entry.st_mode)):
+                    return [], False
+            finally:
+                os.close(final_directory_fd)
+            return rows, complete
+        except FileNotFoundError:
+            return [], True
+        except (OSError, ValueError, TypeError):
+            return [], False
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if directory_fd is not None:
+                os.close(directory_fd)
