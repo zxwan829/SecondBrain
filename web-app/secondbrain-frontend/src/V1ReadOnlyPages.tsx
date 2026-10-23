@@ -4,11 +4,13 @@ import { parseProjectsResponse, type ProjectRecord, type ProjectsResponse } from
 type Locale = 'zh-CN' | 'en';
 type PageId = 'projects' | 'activity';
 type PageLoadState = 'loading' | 'loaded' | 'backend-not-implemented' | 'unauthorized' | 'unavailable';
-type ActivityKind = 'journal' | 'task' | 'project' | 'daily_brief' | 'personal_memory';
+type ActivityKind = 'journal' | 'task' | 'project' | 'daily_brief' | 'personal_memory' | 'capture';
+type ActivityActionStatus = 'succeeded' | 'failed' | 'updated' | 'created' | 'corrected' | 'revoked' | 'expired';
+type CaptureLifecycleStatus = 'pending' | 'prepared' | 'processing' | 'completed' | 'partial_success' | 'failed';
 type ActivityEvent = {
   activity_id: string;
   kind: ActivityKind;
-  status: 'succeeded' | 'failed' | 'updated' | 'created' | 'corrected' | 'revoked' | 'expired';
+  status: ActivityActionStatus | CaptureLifecycleStatus;
   occurred_at: string;
   journal_date?: string;
   task_due_date?: string | null;
@@ -21,11 +23,13 @@ type ActivityResponse = {
   status: 'ok' | 'empty' | 'partial' | 'unavailable';
   items: ActivityEvent[];
   pagination: { limit: number; offset: number; has_more: boolean };
-  source: Array<'journal' | 'tasks' | 'projects' | 'daily_brief' | 'personal_memory'>;
+  source: Array<'journal' | 'tasks' | 'projects' | 'daily_brief' | 'personal_memory' | 'capture'>;
   freshness: { checked_at: string };
 };
 
 const forbiddenActivityFields = ['original_text', 'original_command', 'session_id', 'operation_id'];
+const activityActionStatuses: ActivityActionStatus[] = ['succeeded', 'failed', 'updated', 'created', 'corrected', 'revoked', 'expired'];
+const captureLifecycleStatuses: CaptureLifecycleStatus[] = ['pending', 'prepared', 'processing', 'completed', 'partial_success', 'failed'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -46,12 +50,18 @@ function parseActivityResponse(value: unknown): ActivityResponse | null {
     || typeof pagination.has_more !== 'boolean') return null;
   const items: ActivityEvent[] = [];
   const allowedEventFields = new Set(['activity_id', 'kind', 'status', 'occurred_at', 'journal_date', 'task_due_date', 'task_status', 'daily_brief_date', 'project_id', 'project_status']);
+  const allowedCaptureFields = new Set(['activity_id', 'kind', 'status', 'occurred_at']);
   for (const raw of value.items) {
     if (!isRecord(raw) || Object.keys(raw).some((field) => !allowedEventFields.has(field))
       || forbiddenActivityFields.some((field) => Object.hasOwn(raw, field))) return null;
+    const kind = String(raw.kind);
+    if (kind === 'capture' && Object.keys(raw).some((field) => !allowedCaptureFields.has(field))) return null;
+    const validStatus = kind === 'capture'
+      ? captureLifecycleStatuses.includes(String(raw.status) as CaptureLifecycleStatus)
+      : activityActionStatuses.includes(String(raw.status) as ActivityActionStatus);
     if (typeof raw.activity_id !== 'string' || !raw.activity_id.trim()
-      || !['journal', 'task', 'project', 'daily_brief', 'personal_memory'].includes(String(raw.kind))
-      || !['succeeded', 'failed', 'updated', 'created', 'corrected', 'revoked', 'expired'].includes(String(raw.status))
+      || !['journal', 'task', 'project', 'daily_brief', 'personal_memory', 'capture'].includes(kind)
+      || !validStatus
       || !isIsoDateTime(raw.occurred_at)) return null;
     if (raw.journal_date !== undefined && (typeof raw.journal_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.journal_date))) return null;
     if (raw.task_due_date !== undefined && raw.task_due_date !== null
@@ -63,7 +73,7 @@ function parseActivityResponse(value: unknown): ActivityResponse | null {
     if (raw.project_status !== undefined && !['active', 'paused', 'completed', 'archived', 'unknown'].includes(String(raw.project_status))) return null;
     items.push(raw as unknown as ActivityEvent);
   }
-  if (!value.source.every((item) => ['journal', 'tasks', 'projects', 'daily_brief', 'personal_memory'].includes(String(item)))) return null;
+  if (!value.source.every((item) => ['journal', 'tasks', 'projects', 'daily_brief', 'personal_memory', 'capture'].includes(String(item)))) return null;
   return {
     status: value.status as ActivityResponse['status'], items,
     pagination: { limit: pagination.limit as number, offset: pagination.offset as number, has_more: pagination.has_more },
@@ -95,7 +105,7 @@ const activityPreview: ActivityEvent[] = [
 const copy = {
   'zh-CN': {
     projects: { eyebrow: 'WORKSPACE / PROJECTS', title: '项目', description: '查看项目状态、下一步行动与关联资料。' },
-    activity: { eyebrow: 'WORKSPACE / ACTIVITY', title: '动态', description: '按时间查看已核实的日记与待办操作。' },
+    activity: { eyebrow: 'WORKSPACE / ACTIVITY', title: '动态', description: '按时间查看经过核验的业务活动。' },
     unavailable: '该页面数据暂不可用。请稍后重试。', unauthorized: '当前账户无权读取此页面数据。',
     notImplemented: 'BACKEND_NOT_IMPLEMENTED · 只读接口尚未进入 main。',
     projectsUnconfigured: 'NOT BUSINESS CLOSED · 尚未配置可信项目数据源。当前不会扫描文件目录或从收件箱推断项目。',
@@ -112,13 +122,14 @@ const copy = {
     projectStatus: '状态', next: '下一步', notes: '关联资料', journal: '日记操作', task: '待办操作',
     succeeded: '已完成', failed: '未完成', dueDate: '到期日期', taskStatus: '待办状态',
     happenedAt: '时间', checkedAt: '数据检查时间', source: '数据来源', briefDate: '简报日期',
-    activityKinds: { journal: '日记操作', task: '待办操作', project: '项目更新', daily_brief: '每日简报', personal_memory: '个人记忆操作' },
+    activityKinds: { journal: '日记操作', task: '待办操作', project: '项目更新', daily_brief: '每日简报', personal_memory: '个人记忆操作', capture: '采集状态' },
     activityStatuses: { succeeded: '已完成', failed: '未完成', updated: '已更新', created: '已创建', corrected: '已更正', revoked: '已撤销', expired: '已过期' },
-    sources: { journal: '日记', tasks: '待办', projects: '项目', daily_brief: '每日简报', personal_memory: '个人记忆' },
+    captureStatuses: { pending: '待处理', prepared: '已准备', processing: '处理中', completed: '已完成', partial_success: '部分完成', failed: '失败' },
+    sources: { journal: '日记', tasks: '待办', projects: '项目', daily_brief: '每日简报', personal_memory: '个人记忆', capture: '采集' },
   },
   en: {
     projects: { eyebrow: 'WORKSPACE / PROJECTS', title: 'Projects', description: 'Review project status, next actions, and related notes.' },
-    activity: { eyebrow: 'WORKSPACE / ACTIVITY', title: 'Activity', description: 'Review verified Journal and Task activity.' },
+    activity: { eyebrow: 'WORKSPACE / ACTIVITY', title: 'Activity', description: 'Review verified business activity over time.' },
     unavailable: 'This page data is unavailable. Try again later.', unauthorized: 'This account cannot read this page.',
     notImplemented: 'BACKEND_NOT_IMPLEMENTED · The read-only API is not on main yet.',
     projectsUnconfigured: 'NOT BUSINESS CLOSED · No trusted project source is configured. Files are not scanned and projects are not inferred from Inbox.',
@@ -135,9 +146,10 @@ const copy = {
     projectStatus: 'Status', next: 'Next action', notes: 'Related notes', journal: 'Journal operation', task: 'Task operation',
     succeeded: 'Succeeded', failed: 'Failed', dueDate: 'Due date', taskStatus: 'Task status',
     happenedAt: 'Time', checkedAt: 'Data checked', source: 'Sources', briefDate: 'Brief date',
-    activityKinds: { journal: 'Journal operation', task: 'Task operation', project: 'Project update', daily_brief: 'Daily Brief', personal_memory: 'Personal Memory operation' },
+    activityKinds: { journal: 'Journal operation', task: 'Task operation', project: 'Project update', daily_brief: 'Daily Brief', personal_memory: 'Personal Memory operation', capture: 'Capture status' },
     activityStatuses: { succeeded: 'Succeeded', failed: 'Failed', updated: 'Updated', created: 'Created', corrected: 'Corrected', revoked: 'Revoked', expired: 'Expired' },
-    sources: { journal: 'Journal', tasks: 'Tasks', projects: 'Projects', daily_brief: 'Daily Brief', personal_memory: 'Personal Memory' },
+    captureStatuses: { pending: 'Pending', prepared: 'Prepared', processing: 'Processing', completed: 'Completed', partial_success: 'Partial success', failed: 'Failed' },
+    sources: { journal: 'Journal', tasks: 'Tasks', projects: 'Projects', daily_brief: 'Daily Brief', personal_memory: 'Personal Memory', capture: 'Capture' },
   },
 } as const;
 
@@ -215,6 +227,9 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
   }, [load, revision]);
 
   const eventTitle = (event: ActivityEvent) => t.activityKinds[event.kind];
+  const eventStatus = (event: ActivityEvent) => event.kind === 'capture'
+    ? t.captureStatuses[event.status as CaptureLifecycleStatus]
+    : t.activityStatuses[event.status as ActivityActionStatus];
   const formatTime = (value: string) => new Date(value).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
 
   return (
@@ -258,7 +273,7 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
                           <li className="v1-data-card v1-activity-card" key={event.activity_id}>
                             <span className="v1-activity-marker" aria-hidden="true" />
                             <div className="v1-activity-copy">
-                              <div className="v1-data-card-heading"><h2>{eventTitle(event)}</h2><span className="v1-status-pill">{t.activityStatuses[event.status]}</span></div>
+                              <div className="v1-data-card-heading"><h2>{eventTitle(event)}</h2><span className="v1-status-pill">{eventStatus(event)}</span></div>
                               <dl className="v1-activity-meta">
                                 <div><dt>{t.source}</dt><dd>{t.sources[event.kind === 'task' ? 'tasks' : event.kind === 'project' ? 'projects' : event.kind]}</dd></div>
                                 <div><dt>{t.happenedAt}</dt><dd><time>{formatTime(event.occurred_at)}</time></dd></div>
@@ -291,7 +306,7 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
             <dl className="v1-data-fields"><div><dt>{t.next}</dt><dd>{project.next}</dd></div></dl>
             <div className="v1-related-notes"><h3>{t.notes}</h3><ul>{project.notes.map((note) => <li key={note}>{note}</li>)}</ul></div>
           </article>)}</div> : <ol className="v1-activity-list">{activityPreview.map((event) => <li className="v1-data-card v1-activity-card" key={event.activity_id} data-fixture-id={event.activity_id}>
-            <span className="v1-activity-marker" aria-hidden="true" /><div className="v1-activity-copy"><div className="v1-data-card-heading"><h2>{eventTitle(event)}</h2><span className="v1-status-pill">{t.activityStatuses[event.status]}</span></div>
+            <span className="v1-activity-marker" aria-hidden="true" /><div className="v1-activity-copy"><div className="v1-data-card-heading"><h2>{eventTitle(event)}</h2><span className="v1-status-pill">{eventStatus(event)}</span></div>
               <dl className="v1-activity-meta"><div><dt>{t.happenedAt}</dt><dd><time>{formatTime(event.occurred_at)}</time></dd></div></dl></div>
           </li>)}</ol>}
         </div>}

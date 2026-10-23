@@ -215,9 +215,12 @@ describe('Notes application navigation gate', () => {
             { activity_id: 'activity-project', kind: 'project', status: 'updated', occurred_at: base, project_id: 'SYNTH-PROJECT-1', project_status: 'active' },
             { activity_id: 'activity-brief', kind: 'daily_brief', status: 'created', occurred_at: base, daily_brief_date: '2026-10-23' },
             { activity_id: 'activity-memory', kind: 'personal_memory', status: 'revoked', occurred_at: base },
+            ...(['pending', 'prepared', 'processing', 'completed', 'partial_success', 'failed'] as const).map((status, index) => ({
+              activity_id: `activity-capture-${index}`, kind: 'capture' as const, status, occurred_at: base,
+            })),
           ],
           pagination: { limit: 50, offset: 0, has_more: false },
-          source: ['projects', 'daily_brief', 'personal_memory'],
+          source: ['projects', 'daily_brief', 'personal_memory', 'capture'],
           freshness: { checked_at: base },
         }), { status: 200 });
       }
@@ -231,6 +234,49 @@ describe('Notes application navigation gate', () => {
     expect(screen.getAllByText('2026-10-23').length).toBeGreaterThan(0);
     expect(screen.getByText('个人记忆操作')).toBeTruthy();
     expect(screen.getByText('已撤销')).toBeTruthy();
+    expect(screen.getAllByText('采集状态')).toHaveLength(6);
+    expect(screen.getByText('待处理')).toBeTruthy();
+    expect(screen.getByText('已准备')).toBeTruthy();
+    expect(screen.getByText('处理中')).toBeTruthy();
+    expect(screen.getAllByText('已完成').length).toBeGreaterThan(0);
+    expect(screen.getByText('部分完成')).toBeTruthy();
+    expect(screen.getByText('失败')).toBeTruthy();
+    expect(screen.getAllByText('采集')).toHaveLength(6);
+  });
+
+  it('fails closed on an unknown Capture Activity lifecycle status', async () => {
+    mockAppFetch();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const fallback = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({
+        status: 'ok', items: [{ activity_id: 'opaque-synth-capture', kind: 'capture', status: 'deleted', occurred_at: '2026-10-23T08:00:00Z' }],
+        pagination: { limit: 50, offset: 0, has_more: false }, source: ['capture'], freshness: { checked_at: '2026-10-23T08:00:00Z' },
+      }), { status: 200 });
+      return fallback(input, init);
+    });
+    startAt('/activity');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
+    expect(screen.queryByText('opaque-synth-capture')).toBeNull();
+  });
+
+  it('fails closed when a Capture Activity event includes fields outside its frozen DTO', async () => {
+    mockAppFetch();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const fallback = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({
+        status: 'ok', items: [{ activity_id: 'opaque-synth-capture', kind: 'capture', status: 'completed',
+          occurred_at: '2026-10-23T08:00:00Z', project_id: 'synthetic-project' }],
+        pagination: { limit: 50, offset: 0, has_more: false }, source: ['capture'], freshness: { checked_at: '2026-10-23T08:00:00Z' },
+      }), { status: 200 });
+      return fallback(input, init);
+    });
+    startAt('/activity');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
+    expect(screen.queryByText('opaque-synth-capture')).toBeNull();
   });
 
   it('does not style an unavailable Home Agent as online', async () => {
