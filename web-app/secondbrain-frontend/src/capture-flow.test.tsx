@@ -1310,6 +1310,38 @@ describe('D075.1 capture interactions', () => {
     expect(await screen.findByText('已完成')).toBeTruthy();
   });
 
+  it('does not let an older Inbox poll overwrite the newer retry result', async () => {
+    const capture = { capture_id: '9'.repeat(32), source_type: 'pdf', input_type: 'pdf', captured_at: '2026-10-14T00:00:00Z', raw_path: 'raw/race.pdf', review_path: null, status: 'partial_success', display_filename: 'race.pdf', error: { code: 'processing_failed', message: 'Retry this synthetic PDF.' } };
+    let inboxRead = 0;
+    let resolveStaleRead!: (response: ReturnType<typeof ok>) => void;
+    const request = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/inbox') {
+        inboxRead += 1;
+        if (inboxRead === 1) return Promise.resolve(ok({ items: [capture] }));
+        if (inboxRead === 2) return new Promise<ReturnType<typeof ok>>((resolve) => { resolveStaleRead = resolve; });
+        return Promise.resolve(ok({ items: [{ ...capture, status: 'completed', error: null }] }));
+      }
+      if (url === '/api/automation/organize/status') return Promise.resolve(ok({ execution_available: false, blocked_reason: 'Synthetic test: disabled' }));
+      if (url.endsWith('/retry') && init?.method === 'POST') return Promise.resolve(ok({ status: 'accepted' }));
+      return Promise.resolve(ok({}));
+    });
+    vi.stubGlobal('fetch', request);
+    render(<InboxPage locale="zh-CN" onReview={vi.fn()} />);
+    const heading = await screen.findByRole('heading', { name: 'race.pdf' });
+    const item = heading.closest('article')!;
+
+    window.dispatchEvent(new Event('sb-inbox-refresh'));
+    await waitFor(() => expect(resolveStaleRead).toBeTypeOf('function'));
+    fireEvent.click(within(item).getByRole('button', { name: '重试处理' }));
+    await waitFor(() => expect(item.querySelector('.capture-status')?.textContent).toBe('已完成'));
+
+    await act(async () => {
+      resolveStaleRead(ok({ items: [capture] }));
+    });
+    await waitFor(() => expect(item.querySelector('.capture-status')?.textContent).toBe('已完成'));
+  });
+
   it('loads Organizer status and exposes its controlled action only when available', async () => {
     const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === '/api/automation/organize/status') return ok({ execution_available: true, blocked_reason: '' });

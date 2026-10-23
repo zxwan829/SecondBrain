@@ -875,16 +875,19 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   const [organizeBusy, setOrganizeBusy] = useState(false);
   const [organizeMessage, setOrganizeMessage] = useState('');
   const [anchorFeedback, setAnchorFeedback] = useState('');
+  const inboxLoadRevision = useRef(0);
   const load = async (showLoading = false) => {
+    const revision = ++inboxLoadRevision.current;
     if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/inbox', { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const value = await response.json();
+      if (revision !== inboxLoadRevision.current) return;
       setItems(sortByCapturedAt(Array.isArray(value.items) ? value.items : [], (item: CaptureItem) => item.capture_id));
-    } catch { setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
-    finally { setLoading(false); }
+    } catch { if (revision === inboxLoadRevision.current) setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
+    finally { if (revision === inboxLoadRevision.current) setLoading(false); }
   };
   useEffect(() => {
     void load(true);
@@ -895,7 +898,7 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
     const refresh = () => void load();
     window.addEventListener('sb-inbox-refresh', refresh);
     const timer = window.setInterval(refresh, 5000);
-    return () => { window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
+    return () => { inboxLoadRevision.current += 1; window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
   }, []);
   useEffect(() => {
     const match = window.location.hash.match(/^#capture-([a-f\d]{32})$/i);
