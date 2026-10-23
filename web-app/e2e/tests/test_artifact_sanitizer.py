@@ -212,6 +212,10 @@ def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
         ("today", "today_heading"),
         ("journal", "home_after_journal"),
         ("calendar", "calendar_heading"),
+        ("permission_revocation", "activity_revocation_denial"),
+        ("permission_revocation", "activity_revocation_empty"),
+        ("permission_revocation", "activity_revocation_status_403"),
+        ("calendar", "calendar_api_requests"),
         ("viewport_layout", "layout_no_horizontal_overflow"),
     ]
     for stage, assertion_id in stages_and_assertions:
@@ -237,6 +241,8 @@ def test_browser_activity_assertion_waits_for_core_response_and_uses_fixed_diagn
     assert "activity_get_statuses: observed?.activityReadStatuses ?? []" in browser_spec
     assert "home_after_revocation" in browser_spec
     assert "layout_no_horizontal_overflow" in browser_spec
+    assert "setActivityReadRevoked(false)" in browser_spec
+    assert "activity_revocation_status_403" in browser_spec
 
 
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():

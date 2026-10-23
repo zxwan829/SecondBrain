@@ -488,10 +488,10 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     {phase === 'idle' && <p role="note">{copy.importUnavailable}</p>}
     {phase === 'idle' && <div>
       <h3>{copy.importStart}</h3>
-      <label>{copy.sourceDate}<input type="date" value={importDate} max={getBusinessDate()} onChange={(event) => {
+      <label>{copy.sourceDate}<input type="date" value={importDate} max={getBusinessDate()} disabled={importLoading} onChange={(event) => {
         setImportDate(event.target.value); setImportOption(null); setImportRecord(null); setImportError('');
       }} /></label>
-      <label>{copy.targetDate}<input type="date" value={targetDate} onChange={(event) => {
+      <label>{copy.targetDate}<input type="date" value={targetDate} disabled={importLoading} onChange={(event) => {
         setTargetDate(event.target.value); setImportOption(null); setImportRecord(null); setImportError('');
       }} /></label>
       <button type="button" onClick={() => void loadApprovedImport()} disabled={importLoading || !importDate}>{importLoading ? copy.importing : copy.loadImport}</button>

@@ -70,6 +70,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "activity_get_status_200", "home_after_activity", "home_after_revocation",
     "agent_health_heading", "home_after_agent_health", "today_heading", "home_after_today",
     "journal_heading", "home_after_journal", "calendar_heading", "layout_no_horizontal_overflow",
+    "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
+    "calendar_api_requests",
 }
 MAX_FAILURE_DIAGNOSTIC_BYTES = 1024
 MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)

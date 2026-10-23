@@ -161,6 +161,57 @@ describe('Chat planning panel', () => {
     expect(executions[0]?.init?.headers).toMatchObject({ 'Idempotency-Key': expect.any(String) });
   });
 
+  it('refreshes a conflicted Task execution and uses a new key for the new revision', async () => {
+    sessionStorage.setItem(`secondbrain.planning.candidate:${sessionId}`, candidateId);
+    const taskStep = { position: 1, kind: 'create_task', task: { title: 'Synthetic approved task', due_date: null },
+      reason: 'user_submitted_task_action', priority: 'user_selected', depends_on: [], decision: 'pending', execution_status: 'not_started' };
+    const candidate = (revision: number, decision: 'pending' | 'approved', execution_status: 'not_started' | 'completed') => ({
+      event: 'planning.preview', version: 1, session_id: sessionId, candidate_id: candidateId, revision,
+      expires_at: '2026-10-22T08:00:00Z', status: 'ready', workflow_status: execution_status === 'completed' ? 'completed' : 'active',
+      objective: 'Explicit Task action', steps: [{ ...taskStep, decision, execution_status }],
+    });
+    let current = candidate(1, 'pending', 'not_started');
+    let executionAttempts = 0;
+    const executionRequests: Array<{ body: string; key: string }> = [];
+    const taskId = 'd'.repeat(32);
+    const receipt = { event: 'planning.step-execution', version: 1, session_id: sessionId, candidate_id: candidateId,
+      revision: 4, position: 1, status: 'completed', execution_mode: 'core', effect: 'task_created', task_id: taskId, task_version: 'e'.repeat(64) };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/planning/candidates/${candidateId}/steps/1/decision`)) {
+        current = candidate(2, 'approved', 'not_started');
+        return Response.json({ event: 'planning.step-decision', version: 1, session_id: sessionId, candidate_id: candidateId,
+          revision: 2, position: 1, decision: 'approved', execution_status: 'not_started' });
+      }
+      if (url.endsWith(`/planning/candidates/${candidateId}/steps/1/execute`)) {
+        executionAttempts += 1;
+        executionRequests.push({ body: String(init?.body), key: new Headers(init?.headers).get('Idempotency-Key') ?? '' });
+        if (executionAttempts === 1) {
+          current = candidate(3, 'approved', 'not_started');
+          return Response.json({ detail: 'Candidate revision changed' }, { status: 409 });
+        }
+        current = candidate(4, 'approved', 'completed');
+        return Response.json(receipt);
+      }
+      if (url.endsWith(`/planning/candidates/${candidateId}/retrospective`)) return Response.json({ ...retrospective(), revision: current.revision,
+        workflow_status: current.workflow_status, steps: [{ position: 1, source_state: 'not_applicable', decision: 'approved', execution_status: current.steps[0]!.execution_status }] });
+      if (url.endsWith(`/planning/candidates/${candidateId}`)) return Response.json(current);
+      throw new Error(`Unexpected request ${url}`);
+    }));
+
+    render(<PlanningPanel locale="en" sessionId={sessionId} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open planning' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve this step' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Create this approved Task' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('candidate changed');
+    expect(await screen.findByText(/revision 3/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Create this approved Task' }));
+    expect(await screen.findByText(new RegExp(`Core created Task ${taskId}`))).toBeTruthy();
+    expect(JSON.parse(executionRequests[0]!.body)).toEqual({ expected_revision: 2 });
+    expect(JSON.parse(executionRequests[1]!.body)).toEqual({ expected_revision: 3 });
+    expect(executionRequests[0]!.key).not.toBe(executionRequests[1]!.key);
+  });
+
   it('sends proposed Task actions only when explicitly entered', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

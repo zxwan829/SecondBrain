@@ -276,6 +276,47 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(screen.queryByText(/将原样复制到今天的新简报/)).toBeNull();
   });
 
+  it('keeps the explicit import dates stable while source verification is in flight', async () => {
+    const sourceDate = '2026-10-22';
+    const targetDate = '2026-10-24';
+    let resolveSelector: ((response: Response) => void) | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === `/api/daily-brief/source-options/brief?date=${sourceDate}&limit=1`) {
+        return await new Promise<Response>((resolve) => { resolveSelector = resolve; });
+      }
+      if (path === `/api/daily-brief?date=${sourceDate}&timezone=Asia%2FShanghai`) return Response.json({
+        status: 'real', items: [{ brief_id: 'brief_inflight_synthetic', date: sourceDate, timezone: 'Asia/Shanghai',
+          generated_at: checkedAt, generation_status: 'generated', categories: ['synthetic'],
+          summary: 'Synthetic verified import', source_refs: [{ kind: 'task', id: 'a'.repeat(32), version: 'a'.repeat(64) }] }],
+        source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt },
+      });
+      throw new Error('Unexpected request: ' + path);
+    }));
+    render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} dateNow={() => new Date('2026-10-23T02:00:00Z')} />);
+    const sourceDateInput = screen.getByLabelText('来源简报日期') as HTMLInputElement;
+    const targetDateInput = screen.getByLabelText('目标简报日期') as HTMLInputElement;
+    fireEvent.change(sourceDateInput, { target: { value: sourceDate } });
+    fireEvent.change(targetDateInput, { target: { value: targetDate } });
+    fireEvent.click(screen.getByRole('button', { name: '读取该日简报' }));
+
+    await waitFor(() => expect(sourceDateInput.disabled).toBe(true));
+    expect(targetDateInput.disabled).toBe(true);
+    expect(sourceDateInput.value).toBe(sourceDate);
+    expect(targetDateInput.value).toBe(targetDate);
+
+    resolveSelector?.(Response.json({ status: 'real', items: [{ kind: 'existing_brief',
+      id: `${sourceDate}:brief_inflight_synthetic`, date: sourceDate, timezone: 'Asia/Shanghai', version: 'b'.repeat(64) }],
+      freshness: { checked_at: checkedAt } }));
+    expect(await screen.findByText('Synthetic verified import')).toBeTruthy();
+    await waitFor(() => expect(sourceDateInput.disabled).toBe(false));
+    expect(targetDateInput.value).toBe(targetDate);
+
+    fireEvent.change(targetDateInput, { target: { value: '2026-10-25' } });
+    expect(screen.queryByText('Synthetic verified import')).toBeNull();
+    expect(screen.queryByRole('button', { name: '确认导入并创建' })).toBeNull();
+  });
+
   it('allows an explicitly approved non-today import target supported by Core', async () => {
     const sourceDate = '2026-10-22';
     const targetDate = '2026-10-24';

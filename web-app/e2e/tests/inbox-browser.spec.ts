@@ -22,7 +22,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'activity_get_response' | 'activity_get_status_200' | 'home_after_activity'
   | 'home_after_revocation' | 'agent_health_heading' | 'home_after_agent_health'
   | 'today_heading' | 'home_after_today' | 'journal_heading' | 'home_after_journal'
-  | 'calendar_heading' | 'layout_no_horizontal_overflow';
+  | 'activity_revocation_denial' | 'activity_revocation_empty' | 'activity_revocation_status_403'
+  | 'calendar_heading' | 'calendar_api_requests' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function safePath(value: string): string {
@@ -185,7 +186,7 @@ async function configurePage(page: Page) {
       && request.path === '/api/activity').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
-    revokeActivityRead() { activityReadRevoked = true; },
+    setActivityReadRevoked(revoked: boolean) { activityReadRevoked = revoked; },
   };
 }
 
@@ -399,14 +400,18 @@ for (const viewport of viewports) {
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_activity');
     observed.setFailureStage('permission_revocation');
     observed.setDiagnosticAssertion('activity_heading');
-    observed.revokeActivityRead();
+    observed.setActivityReadRevoked(true);
     await page.getByRole('button', { name: '打开动态' }).first().click();
+    observed.setDiagnosticAssertion('activity_heading');
     await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
+    observed.setDiagnosticAssertion('activity_revocation_denial');
     await expect(page.getByRole('alert')).toHaveText('当前账户无权读取此页面数据。');
+    observed.setDiagnosticAssertion('activity_revocation_empty');
     expect(await page.locator('.v1-activity-card').count()).toBe(0);
+    observed.setDiagnosticAssertion('activity_revocation_status_403');
     expect(observed.requestRecords.some((request) => request.method === 'GET'
       && request.path === '/api/activity' && request.status === 403)).toBe(true);
-    observed.revokeActivityRead();
+    observed.setActivityReadRevoked(false);
     observed.setFailureStage('post_revocation_navigation');
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_revocation');
     observed.setFailureStage('agent_health');
@@ -428,6 +433,7 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('calendar_heading');
     await page.getByRole('button', { name: '查看完整日历' }).click();
     await expect(page.getByRole('heading', { name: '日历' })).toBeVisible();
+    observed.setDiagnosticAssertion('calendar_api_requests');
     expect(observed.blockedOrigins.size).toBe(0);
     for (const path of ['/api/home', '/api/projects', '/api/activity', '/api/agent/health', '/api/tasks', '/api/journal/', '/api/calendar']) {
       expect(observed.requestRecords.some((request) => request.method === 'GET' && request.path.startsWith(path))).toBe(true);
