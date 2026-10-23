@@ -405,7 +405,9 @@ def make_http_client(tmp_path, *, audit_store=None, deny_actions=()):
 
         auth.require_action = guarded_require_action
     token = "synthetic-app-session"
-    auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
+    session_id = hashlib.sha256(token.encode()).hexdigest()
+    auth._sessions[session_id] = time.time() + 600
+    auth._session_actions[session_id] = set(auth.SUPPORTED_ACTIONS)
 
     task_root = tmp_path / "tasks"
     task_root.mkdir(mode=0o700)
