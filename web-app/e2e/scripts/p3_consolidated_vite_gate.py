@@ -174,15 +174,20 @@ try:
         assert replay_task_response.json()["status"] == "duplicate"
         assert created_task["id"] == replayed_task["id"]
         update_task_body = {"title": "Synthetic Today task updated", "expected_updated_at": created_task["updated_at"]}
-        update_task_headers = headers(**{"Idempotency-Key": "p3-gate-task-update-001"})
+        # Task updates use an expected_updated_at compare-and-swap contract,
+        # not an Idempotency-Key replay contract. The first update succeeds;
+        # replaying its stale version must fail with 409 without overwriting.
         updated_task_response = client.patch(f"/api/tasks/{created_task['id']}",
-                                             headers=update_task_headers, json=update_task_body)
+                                             headers=headers(), json=update_task_body)
         replay_update_response = client.patch(f"/api/tasks/{created_task['id']}",
-                                              headers=update_task_headers, json=update_task_body)
-        assert updated_task_response.status_code == replay_update_response.status_code == 200
+                                              headers=headers(), json=update_task_body)
+        assert updated_task_response.status_code == 200
+        assert replay_update_response.status_code == 409
+        assert replay_update_response.json() == {
+            "detail": "Task changed since it was loaded; reload before editing"
+        }
         updated_task = updated_task_response.json()["task"]
         assert updated_task["title"] == "Synthetic Today task updated"
-        assert replay_update_response.json()["task"] == updated_task
         task_readback = client.get("/api/tasks?status=all")
         assert task_readback.status_code == 200
         assert any(row.get("id") == created_task["id"] and row.get("title") == updated_task["title"]
@@ -447,7 +452,7 @@ try:
         restored_recap = client.get(candidate_path + "/retrospective")
         assert restored.status_code == 200 and restored.json()["workflow_status"] == "completed", (restored.status_code, restored.text)
         assert restored_recap.status_code == 200 and restored_recap.json()["feedback"] == "useful"
-        print("P3_1_5_HTTP: PASS_WITH_LIMITS; fixed Web -> same-origin Vite proxy -> fixed Core create_app/Uvicorn; Home, Activity, Projects, Today/Task create/update/replay/readback, Journal read, Calendar projection, Brief exact-date approved_import/create/replay/readback/409, Planning review plus approved create_task/receipt/replay/readback, session isolation, feedback replay/conflict, pause/resume/cancel, injected failure/retry, concurrent CAS, stale source rejection, permission denied before source verify, and persistence after app restart.")
+        print("P3_1_5_HTTP: PASS_WITH_LIMITS; fixed Web -> same-origin Vite proxy -> fixed Core create_app/Uvicorn; Home, Activity, Projects, Today/Task create replay/update-CAS conflict/readback, Journal read, Calendar projection, Brief exact-date approved_import/create/replay/readback/409, Planning review plus approved create_task/receipt/replay/readback, session isolation, feedback replay/conflict, pause/resume/cancel, injected failure/retry, concurrent CAS, stale source rejection, permission denied before source verify, and persistence after app restart.")
         print(f"P3_SYNTHETIC_ROOT={ROOT}; browser/model/production/user acceptance not implied")
 finally:
     vite.terminate()
