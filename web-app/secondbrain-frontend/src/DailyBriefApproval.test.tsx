@@ -276,12 +276,15 @@ describe('Daily Brief explicit approval UI draft', () => {
     expect(screen.queryByText(/将原样复制到今天的新简报/)).toBeNull();
   });
 
-  it('does not submit an approved import for a target date the fixed Core contract rejects', async () => {
+  it('allows an explicitly approved non-today import target supported by Core', async () => {
     const sourceDate = '2026-10-22';
-    const calls: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input);
-      calls.push(path);
+    const targetDate = '2026-10-24';
+    const calls: Array<{ path: string; method: string; body?: Record<string, unknown>; headers: Headers }> = [];
+    vi.stubGlobal('crypto', cryptoFor());
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input); const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as Record<string, unknown> : undefined;
+      calls.push({ path, method, body, headers: new Headers(init?.headers) });
       if (path.includes('/source-options/brief?')) return Response.json({
         status: 'real', items: [{ kind: 'existing_brief', id: sourceDate + ':brief_old', date: sourceDate,
           timezone: 'Asia/Shanghai', version: 'a'.repeat(64) }], freshness: { checked_at: checkedAt },
@@ -292,16 +295,30 @@ describe('Daily Brief explicit approval UI draft', () => {
           source_refs: [{ kind: 'task', id: 'a'.repeat(32), version: 'a'.repeat(64) }] }],
         source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt },
       });
+      if (path === '/api/daily-brief' && method === 'POST') return Response.json({ status: 'created', brief_id: 'brief_target_synthetic',
+        date: targetDate, timezone: 'Asia/Shanghai', record_version: 'b'.repeat(64), operation_id: `dbi-${'c'.repeat(64)}` }, { status: 201 });
+      if (path === '/api/daily-brief?date=' + targetDate + '&timezone=Asia%2FShanghai') return Response.json({
+        status: 'real', items: [{ brief_id: 'brief_target_synthetic', date: targetDate, timezone: 'Asia/Shanghai',
+          generated_at: checkedAt, generation_status: 'generated', categories: ['synthetic'], summary: 'Synthetic old brief',
+          source_refs: [{ kind: 'task', id: 'a'.repeat(32), version: 'a'.repeat(64) }] }],
+        source: { kind: 'core-daily-brief-store' }, freshness: { checked_at: checkedAt },
+      });
       throw new Error('Unexpected request: ' + path);
     }));
     render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} dateNow={() => new Date('2026-10-23T02:00:00Z')} />);
     fireEvent.change(screen.getByLabelText('来源简报日期'), { target: { value: sourceDate } });
-    fireEvent.change(screen.getByLabelText('目标简报日期'), { target: { value: '2026-10-24' } });
+    fireEvent.change(screen.getByLabelText('目标简报日期'), { target: { value: targetDate } });
     fireEvent.click(screen.getByRole('button', { name: '读取该日简报' }));
     expect(await screen.findByText('Synthetic old brief')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '确认导入并创建' }));
-    expect(screen.getByRole('alert').textContent).toContain('当前 Core 仅接受今天');
-    expect(calls.filter((path) => path === '/api/daily-brief')).toHaveLength(0);
+    expect(screen.getByText(/业务日期：2026-10-24/)).toBeTruthy();
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '确认导入并创建' }));
+    await screen.findByText('当前简报已核验：Brief 和来源版本与本次提交一致。');
+    const post = calls.find((call) => call.method === 'POST');
+    expect(post?.body?.date).toBe(targetDate);
+    expect(post?.body).not.toHaveProperty('idempotency_key');
+    expect(post?.headers.get('Idempotency-Key')).toBe('ui-11111111-1111-4111-8111-111111111111');
   });
 
   it('loads Journal only on click, submits the exact Core ref after confirmation, then verifies by GET', async () => {
