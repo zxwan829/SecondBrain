@@ -1,5 +1,11 @@
 # Progress Log
 
+## 2026-10-24 — 统一主 Agent 集成复核更新
+
+- GitHub main 已推进至 `ce6478897318846234793195de66a3c838d4a220`；#221 Core 与 #222 Web 分别以 merge commits `0f31b84655f18ee307f210afa9feda9e9f4026a5`、`ce6478897318846234793195de66a3c838d4a220` 合入。下方同日较早记录保留当时快照，不再代表当前 PR 状态。
+- #220 `d3e6d253` 与 #223 `f0c1fc8f` 均已独立源码复审 `PASS_WITH_LIMITS`，仍为 Draft/Open。将两者依赖顺序组合到最新 main 后，`App.navigation.test.tsx` 61/61、typecheck、build、`git diff --check` 均通过。只组合 #223 时 60/61，唯一失败正是 #220 的 Home→Task 入口修复，确认依赖关系。未启动新 Actions。
+- #219 文档复审发现并修正 #221/#222 过期状态及 Progress-Log 末尾重复旧记录；当前 V1 仍 NOT DONE。无生产部署、真实数据/模型访问或 Writer/Promote/费用门禁变更。
+
 ## 2026-10-24 — Capture Activity Web 复审与 Organizer status 竞态修复
 
 - **固定基线：** GitHub main `2782f73fa44a21549f7758c4e449076304875917`。#221 Core `41e9729d693e80f4f37c1a5543dc8fb1e1411124`、#222 Web `438a7e2b570370d1c742bc8b9f50caa9941fdc76` 的既有隔离 Vite→Uvicorn HTTP 组合 `edb17ec78eeedb96b5015dc5fcc7429bf27472d2` 保留为 `PASS_WITH_LIMITS`，未重复运行。#222 A 线增量源码复审 Review #5633533074 为 `PASS_WITH_LIMITS`：Capture Activity 六种状态本地化、Capture DTO 字段收窄、未知状态/多余字段 fail-closed；不代表 Core #221 准入或浏览器覆盖 Capture 专项。
