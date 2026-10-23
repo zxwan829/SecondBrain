@@ -814,7 +814,7 @@ def test_real_localhost_approved_task_action_is_idempotent_across_planning_commi
             )
             assert activity.status_code == 200
             assert activity.json()["source"] == [
-                "journal", "tasks", "projects", "daily_brief", "personal_memory",
+                "journal", "tasks", "projects", "daily_brief", "personal_memory", "capture",
             ]
             assert any(row["kind"] == "task" for row in activity.json()["items"])
             assert any(row["kind"] == "daily_brief" for row in activity.json()["items"])
