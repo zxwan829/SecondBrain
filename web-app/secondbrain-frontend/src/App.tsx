@@ -678,6 +678,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
   const detailRevision = useRef(0);
   const selectedCaptureId = useRef<string | null>(null);
   const summaryRevision = useRef(0);
+  const organizerStatusRevision = useRef(0);
   const organizerController = useRef<AbortController | null>(null);
 
   const loadSummary = useCallback(async (signal?: AbortSignal) => {
@@ -715,6 +716,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
       selectedCaptureId.current = null;
       detailController.current?.abort();
       organizerController.current?.abort();
+      organizerStatusRevision.current += 1;
       window.clearInterval(timer);
       window.removeEventListener('sb-inbox-refresh', refresh);
     };
@@ -723,15 +725,16 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
   const refreshOrganizerStatus = useCallback(async () => {
     const signal = organizerController.current?.signal;
     if (!signal || signal.aborted) return;
+    const revision = ++organizerStatusRevision.current;
     try {
       const response = await fetch('/api/automation/organize/status', { credentials: 'same-origin', signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const value = await response.json() as { blocked_reason?: unknown; execution_available?: unknown };
-      if (signal.aborted) return;
+      if (signal.aborted || revision !== organizerStatusRevision.current) return;
       setOrganizeReason(typeof value.blocked_reason === 'string' ? value.blocked_reason : '');
       setOrganizeAvailable(value.execution_available === true);
     } catch (cause) {
-      if (!signal.aborted) {
+      if (!signal.aborted && revision === organizerStatusRevision.current) {
         setOrganizeAvailable(false);
         setOrganizeReason(cause instanceof Error ? cause.message : (en ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
       }

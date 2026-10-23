@@ -976,6 +976,40 @@ describe('Inbox explicit source scopes', () => {
     expect(organizerRequests).toBe(1);
   });
 
+  it('keeps Organizer disabled when an older available response arrives after a newer 403', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    let resolveInitial!: (response: Response) => void;
+    const initialStatus = new Promise<Response>((resolve) => { resolveInitial = resolve; });
+    let statusRequests = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/automation/organize/status') {
+        statusRequests += 1;
+        if (statusRequests === 1) return initialStatus;
+        return new Response(JSON.stringify({ detail: 'synthetic authorization revoked' }), { status: 403 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    await screen.findByText('没有 Capture 条目。');
+    fireEvent.click(screen.getByRole('button', { name: '查看自动整理状态' }));
+    await waitFor(() => expect(statusRequests).toBe(1));
+
+    await act(async () => { window.dispatchEvent(new Event('sb-inbox-refresh')); });
+    await waitFor(() => expect(statusRequests).toBe(2));
+    const run = screen.getByRole('button', { name: '立即整理' }) as HTMLButtonElement;
+    await waitFor(() => expect(run.disabled).toBe(true));
+
+    await act(async () => { resolveInitial(new Response(JSON.stringify({ execution_available: true, blocked_reason: '' }), { status: 200 })); });
+    await waitFor(() => expect(run.disabled).toBe(true));
+    expect(screen.getByText('HTTP 403')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '立即整理' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => String(input) === '/api/automation/organize/run')).toBe(false);
+  });
+
   it('runs Organizer only after its explicit action is enabled and clicked', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'true');
     const calls: string[] = [];
