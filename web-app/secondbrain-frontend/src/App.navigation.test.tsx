@@ -127,6 +127,7 @@ describe('Notes application navigation gate', () => {
     expect(await screen.findByRole('heading', { name: '今日与待办' })).toBeTruthy();
     expect(screen.getByRole('form', { name: '新建待办' })).toBeTruthy();
     expect(location.pathname).toBe('/today');
+    expect(location.search).toBe('');
   });
 
   it('opens the existing real Projects, Daily Brief, Activity, Agent Health, and Journal destinations from Home', async () => {
@@ -215,9 +216,12 @@ describe('Notes application navigation gate', () => {
             { activity_id: 'activity-project', kind: 'project', status: 'updated', occurred_at: base, project_id: 'SYNTH-PROJECT-1', project_status: 'active' },
             { activity_id: 'activity-brief', kind: 'daily_brief', status: 'created', occurred_at: base, daily_brief_date: '2026-10-23' },
             { activity_id: 'activity-memory', kind: 'personal_memory', status: 'revoked', occurred_at: base },
+            ...(['pending', 'prepared', 'processing', 'completed', 'partial_success', 'failed'] as const).map((status, index) => ({
+              activity_id: `activity-capture-${index}`, kind: 'capture' as const, status, occurred_at: base,
+            })),
           ],
           pagination: { limit: 50, offset: 0, has_more: false },
-          source: ['projects', 'daily_brief', 'personal_memory'],
+          source: ['projects', 'daily_brief', 'personal_memory', 'capture'],
           freshness: { checked_at: base },
         }), { status: 200 });
       }
@@ -231,6 +235,49 @@ describe('Notes application navigation gate', () => {
     expect(screen.getAllByText('2026-10-23').length).toBeGreaterThan(0);
     expect(screen.getByText('个人记忆操作')).toBeTruthy();
     expect(screen.getByText('已撤销')).toBeTruthy();
+    expect(screen.getAllByText('采集状态')).toHaveLength(6);
+    expect(screen.getByText('待处理')).toBeTruthy();
+    expect(screen.getByText('已准备')).toBeTruthy();
+    expect(screen.getByText('处理中')).toBeTruthy();
+    expect(screen.getAllByText('已完成').length).toBeGreaterThan(0);
+    expect(screen.getByText('部分完成')).toBeTruthy();
+    expect(screen.getByText('失败')).toBeTruthy();
+    expect(screen.getAllByText('采集')).toHaveLength(6);
+  });
+
+  it('fails closed on an unknown Capture Activity lifecycle status', async () => {
+    mockAppFetch();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const fallback = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({
+        status: 'ok', items: [{ activity_id: 'opaque-synth-capture', kind: 'capture', status: 'deleted', occurred_at: '2026-10-23T08:00:00Z' }],
+        pagination: { limit: 50, offset: 0, has_more: false }, source: ['capture'], freshness: { checked_at: '2026-10-23T08:00:00Z' },
+      }), { status: 200 });
+      return fallback(input, init);
+    });
+    startAt('/activity');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
+    expect(screen.queryByText('opaque-synth-capture')).toBeNull();
+  });
+
+  it('fails closed when a Capture Activity event includes fields outside its frozen DTO', async () => {
+    mockAppFetch();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const fallback = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({
+        status: 'ok', items: [{ activity_id: 'opaque-synth-capture', kind: 'capture', status: 'completed',
+          occurred_at: '2026-10-23T08:00:00Z', project_id: 'synthetic-project' }],
+        pagination: { limit: 50, offset: 0, has_more: false }, source: ['capture'], freshness: { checked_at: '2026-10-23T08:00:00Z' },
+      }), { status: 200 });
+      return fallback(input, init);
+    });
+    startAt('/activity');
+
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
+    expect(screen.queryByText('opaque-synth-capture')).toBeNull();
   });
 
   it('does not style an unavailable Home Agent as online', async () => {
@@ -976,6 +1023,40 @@ describe('Inbox explicit source scopes', () => {
     expect(organizerRequests).toBe(1);
   });
 
+  it('keeps Organizer disabled when an older available response arrives after a newer 403', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    let resolveInitial!: (response: Response) => void;
+    const initialStatus = new Promise<Response>((resolve) => { resolveInitial = resolve; });
+    let statusRequests = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/automation/organize/status') {
+        statusRequests += 1;
+        if (statusRequests === 1) return initialStatus;
+        return new Response(JSON.stringify({ detail: 'synthetic authorization revoked' }), { status: 403 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    await screen.findByText('没有 Capture 条目。');
+    fireEvent.click(screen.getByRole('button', { name: '查看自动整理状态' }));
+    await waitFor(() => expect(statusRequests).toBe(1));
+
+    await act(async () => { window.dispatchEvent(new Event('sb-inbox-refresh')); });
+    await waitFor(() => expect(statusRequests).toBe(2));
+    const run = screen.getByRole('button', { name: '立即整理' }) as HTMLButtonElement;
+    await waitFor(() => expect(run.disabled).toBe(true));
+
+    await act(async () => { resolveInitial(new Response(JSON.stringify({ execution_available: true, blocked_reason: '' }), { status: 200 })); });
+    await waitFor(() => expect(run.disabled).toBe(true));
+    expect(screen.getByText('HTTP 403')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '立即整理' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => String(input) === '/api/automation/organize/run')).toBe(false);
+  });
+
   it('runs Organizer only after its explicit action is enabled and clicked', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'true');
     const calls: string[] = [];
@@ -998,6 +1079,29 @@ describe('Inbox explicit source scopes', () => {
     fireEvent.click(await screen.findByRole('button', { name: '立即整理' }));
     await screen.findByText('没有新增对话，无需整理。');
     expect(calls).toContain('POST /api/automation/organize/run');
+  });
+
+  it.each([
+    ['no_candidates', '整理完成，没有可生成的 Review 草稿。'],
+    ['unexpected_status', '整理结果暂无法核验。请先查看 Organizer 状态，不要立即重复执行。'],
+  ])('reports Organizer result %s accurately without inventing a draft count', async (status, message) => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'true');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/inbox/summary?limit=100') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/automation/organize/status') return new Response(JSON.stringify({ execution_available: true, blocked_reason: '' }), { status: 200 });
+      if (url === '/api/automation/organize/run' && init?.method === 'POST') return new Response(JSON.stringify({ status }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: /Capture 待处理/ }));
+    await screen.findByText('没有 Capture 条目。');
+    fireEvent.click(screen.getByRole('button', { name: '查看自动整理状态' }));
+    fireEvent.click(await screen.findByRole('button', { name: '立即整理' }));
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.queryByText(/新增 NaN 条 Review 草稿/)).toBeNull();
+    expect(screen.queryByText('整理完成，新增 0 条 Review 草稿。')).toBeNull();
   });
 
   it('loads only Draft metadata after explicit selection and reads one exact Draft after click', async () => {

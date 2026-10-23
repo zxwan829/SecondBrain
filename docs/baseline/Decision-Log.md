@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-20
+updated: 2026-10-24
 status: current
 type: decision-log
 ---
@@ -457,3 +457,12 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 **冻结范围：** `GET /api/daily-brief/source-options/journal?date=YYYY-MM-DD&limit=N`。要求规范日期、limit 默认 20 且范围 1–50；校验可信 Origin、App Session、`daily_brief.read` 与 `journal.read`。响应仅包含 `status/items/freshness`，每项仅含 `kind/id/date/version`；不得返回正文、路径、Session、异常细节。只读同日记录，按稳定行 ID 排序并执行 1 MiB 单日字节、5000 行/日及 2 MiB 请求预算，超限 fail closed。
 
 **状态：** D089 合同已由 PR #128 固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b` 合并至 main（merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）；Core 正式只读路由已注册。B 报告 Core 全量和 localhost HTTP 验证通过，A 留有对最终 HEAD 的独立验收记录。该状态仅代表源码合并及本地合成证据，不代表部署、真实 Journal/Vault 访问或用户验收；实施状态见 `00-CURRENT.md`，证据见 `Progress-Log.md`。此 ID 取代 #97/#128 历史评论中误用的 D087 标签，不影响 D087 渠道架构决定。
+
+
+## D091 — 2026-10-24 统一 Codex 主 Agent 协作（APPROVED GOVERNANCE DECISION）
+
+**决定：** SecondBrain 从原先需要用户在 A/B 两个 Codex 会话间人工转发任务的双线协作，调整为**一个 Codex 主 Agent 统一调度**。Web 与 Core 保留为专业工作角色，不再是需要用户分别启动的固定会话；主 Agent 在现有执行环境允许时委派隔离子 Agent，无法委派时由主 Agent 在隔离 worktree 中按依赖顺序执行。主 Agent 持续读取 GitHub 既有 Issue/PR 与 CURRENT、自主分配/联调/协调复审/验证/满足门禁后合并已授权的普通 PR，并领取下一工作包。ChatGPT 负责重大架构、安全合同与阶段验收，不再逐项充当普通 PR 的复审依赖或 A/B 消息中转；未参与实现的 Review 子 Agent 可独立审查普通 PR，但不能替代 GitHub 必需审批；用户负责最终目标和需专门授权的行动。
+
+**替代范围：** 本决定取代旧治理描述中的“两条聊天线人工协调、各自等待用户重新发令”流程。V1-Delivery-Plan 的 A/B 分工表和历史 Issue 记录保留用于技术所有权、任务依赖和审计，不代表仍需要两个独立 Codex 对话。现行执行规则以 `AGENTS.md` → `Agent-Rules.md` 为准，阶段状态以 `00-CURRENT.md` 为准。
+
+**安全与能力边界：** 一个主 Agent 不构成独立复审：实现者不能自证独立审查；普通 PR 仍需既有复审、测试和 GitHub 门禁，敏感安全变更仍需专门授权。NAS/真实 Vault、生产部署、Private、外部渠道、付费调用、不可逆删除、Writer/Promote 和 D090/OS Gate 沿用现有禁止/审批边界。**单会话内部连续执行不等于跨会话无人值守**；持久调度器及长期凭据、预算、停止机制需以后单独设计授权，不得把本决定写成已部署自动调度服务。

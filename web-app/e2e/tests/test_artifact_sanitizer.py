@@ -193,10 +193,10 @@ def test_exact_playwright_truncated_output_directory_is_allowlisted(viewport, tm
 
 
 @pytest.mark.parametrize("entry", [
-    {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret"},
-    {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
-    {"viewport": "desktop-1440x1000", "stage": "login", "code": "raw exception: token=secret", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
-    {"viewport": "not-a-viewport", "stage": "login", "code": "timeout", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
+    {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret", "notes_collection_statuses": []},
+    {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
+    {"viewport": "desktop-1440x1000", "stage": "login", "code": "raw exception: token=secret", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
+    {"viewport": "not-a-viewport", "stage": "login", "code": "timeout", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
 ])
 def test_failure_diagnostic_unknown_or_sensitive_values_fail_closed(entry):
     with pytest.raises(RuntimeError):
@@ -205,8 +205,28 @@ def test_failure_diagnostic_unknown_or_sensitive_values_fail_closed(entry):
 
 def test_failure_diagnostic_accepts_action_revocation_stage():
     diagnostic = {"viewport": "mobile-390x844", "stage": "permission_revocation", "code": "assertion_failed",
-                  "assertion_id": "activity_get_status_200", "activity_get_statuses": [200, 403]}
+                  "assertion_id": "activity_get_status_200", "activity_get_statuses": [200, 403], "notes_collection_statuses": []}
     assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+
+
+def test_failure_diagnostic_can_include_bounded_notes_collection_statuses():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_navigation", "code": "assertion_failed",
+                  "assertion_id": "notes_collections", "activity_get_statuses": [200, 403],
+                  "notes_collection_statuses": [403]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_collection_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_daily_brief_get_statuses():
+    diagnostic = {"viewport": "mobile-390x844", "stage": "daily_brief_read", "code": "timeout",
+                  "assertion_id": "daily_brief_saved_readback", "activity_get_statuses": [200, 403],
+                  "daily_brief_get_statuses": [200, 200]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["daily_brief_get_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
 
 
 def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
@@ -242,7 +262,7 @@ def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
     ]
     for stage, assertion_id in stages_and_assertions:
         diagnostic = {"viewport": "mobile-390x844", "stage": stage, "code": "assertion_failed",
-                      "assertion_id": assertion_id, "activity_get_statuses": [200, 403]}
+                      "assertion_id": assertion_id, "activity_get_statuses": [200, 403], "notes_collection_statuses": []}
         assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
 
 
@@ -250,7 +270,7 @@ def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
 def test_failure_diagnostic_rejects_non_http_or_unbounded_activity_statuses(statuses):
     diagnostic = {"viewport": "desktop-1440x1000", "stage": "viewport_layout",
                   "code": "assertion_failed", "assertion_id": "activity_get_status_200",
-                  "activity_get_statuses": statuses}
+                  "activity_get_statuses": statuses, "notes_collection_statuses": []}
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([diagnostic])
 
@@ -275,6 +295,10 @@ def test_browser_navigation_waits_for_page_apis_and_uses_unambiguous_mobile_safe
     assert "await expectSuccessfulGet(todayResponsePromise, observed, 'today_api_response')" in browser_spec
     assert "await expectSuccessfulGet(journalResponsePromise, observed, 'journal_api_response')" in browser_spec
     assert "await expectSuccessfulGet(calendarResponsePromise, observed, 'calendar_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(collectionsResponsePromise, observed, 'notes_collections')" in browser_spec
+    assert "notes_collection_statuses: observed?.notesCollectionReadStatuses ?? []" in browser_spec
+    assert "daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? []" in browser_spec
+    assert "daily_brief_saved_readback" in browser_spec
     assert "getByRole('heading', { level: 1, name: 'Agent 状态', exact: true })" in browser_spec
     assert "await expect(menu).toHaveAttribute('aria-expanded', 'true')" in browser_spec
     assert "page.locator('.sidebar nav').getByRole('button', { name: '今日', exact: true })" in browser_spec
@@ -283,9 +307,18 @@ def test_browser_navigation_waits_for_page_apis_and_uses_unambiguous_mobile_safe
     assert "expectNoHorizontalOverflow(page, observed, viewport, 'layout_calendar')" in browser_spec
 
 
+def test_browser_fixture_allowlists_only_exact_synthetic_notes_routes():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "const notesPath = params.size === 0" in browser_spec
+    assert "url.pathname === '/api/notes'" in browser_spec
+    assert "url.pathname === '/api/notes/drafts'" in browser_spec
+    assert "^\\/api\\/notes\\/drafts\\/[0-9a-f]{8}" in browser_spec
+    assert "url.pathname.startsWith('/api/notes')" not in browser_spec
+
+
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():
     entry = {"viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
-             "assertion_id": "test_setup", "activity_get_statuses": []}
+             "assertion_id": "test_setup", "activity_get_statuses": [], "notes_collection_statuses": []}
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([entry, entry.copy()])
     with pytest.raises(RuntimeError, match="schema rejected"):
@@ -565,6 +598,7 @@ def test_run_summary_reports_journal_sources_separately_from_mutations(tmp_path)
         "journal_mutated_files": 0,
         "brief_files": 0,
         "brief_file_set_verified": False,
+        "notes_files": 1,
         "authorization_header": "SYNTHETIC_SECRET",
     }))
 
@@ -577,6 +611,7 @@ def test_run_summary_reports_journal_sources_separately_from_mutations(tmp_path)
         "journal_mutated_files": 0,
         "brief_files": 0,
         "brief_file_set_verified": False,
+        "notes_files": 1,
     }
 
 
@@ -587,7 +622,18 @@ def test_daily_brief_file_set_assertion_rejects_unexpected_files_and_symlinks(tm
     (brief_root / "2026-10-21.json").write_text("synthetic")
     (brief_root / f".op-{operation_hash}.json").write_text("synthetic")
     (brief_root / f".op-lock-{operation_hash}").touch()
-    assert module._assert_exact_brief_file_set(brief_root, "2026-10-21.json") == 3
+    (brief_root / ".date-lock-2026-10-21").touch()
+    assert module._assert_exact_brief_file_set(brief_root, "2026-10-21.json") == 4
+
+    (brief_root / ".date-lock-2026-10-21").unlink()
+    with pytest.raises(RuntimeError, match="file set mismatch"):
+        module._assert_exact_brief_file_set(brief_root, "2026-10-21.json")
+    (brief_root / ".date-lock-2026-10-21").touch()
+
+    (brief_root / ".pending-2026-10-21.json").write_text("synthetic")
+    with pytest.raises(RuntimeError, match="file set mismatch"):
+        module._assert_exact_brief_file_set(brief_root, "2026-10-21.json")
+    (brief_root / ".pending-2026-10-21.json").unlink()
 
     (brief_root / "unexpected.json").write_text("synthetic")
     with pytest.raises(RuntimeError, match="file set mismatch"):

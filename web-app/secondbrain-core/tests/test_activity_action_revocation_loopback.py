@@ -5,7 +5,7 @@ import os
 import socket
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 import uvicorn
@@ -52,8 +52,8 @@ def test_real_core_source_action_grant_revoke_precedes_io_and_recovers(tmp_path,
         monkeypatch.setenv(key, value)
     app = create_app()
 
-    day = date.today().isoformat()
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    day = stamp[:10]
     journal_store = app.state.journal_source_options_service.journal_store
     journal_store.append(day, "记一下 synthetic journal event", "synthetic-journal-op",
                          session_id="synthetic-session")
@@ -74,14 +74,28 @@ def test_real_core_source_action_grant_revoke_precedes_io_and_recovers(tmp_path,
         content={"text": "Synthetic memory event"}, category="preference", fact_kind="user_stated",
         source_type="user_message", source_ref="synthetic-session:memory",
     )
+    capture_id = "c" * 32
+    capture_root = roots["state"] / "captures"
+    capture_path = capture_root / (capture_id + ".json")
+    capture_path.write_text(json.dumps({
+        "capture_id": capture_id, "source_type": "text", "input_type": "txt",
+        "captured_at": stamp, "updated_at": stamp, "status": "partial_success",
+        "raw_path": "PRIVATE-raw.txt", "raw_sha256": "a" * 64,
+        "review_path": "PRIVATE-review.md", "review_sha256": "b" * 64,
+        "content_preview": "PRIVATE capture content", "capture_context": "PRIVATE context",
+    }), encoding="utf-8")
+    os.chmod(capture_path, 0o600)
 
-    read_calls = {name: 0 for name in ("journal", "tasks", "projects", "daily_brief", "personal_memory")}
+    read_calls = {name: 0 for name in (
+        "journal", "tasks", "projects", "daily_brief", "personal_memory", "capture",
+    )}
     readers = {
         "journal": (journal_store, "read"),
         "tasks": (app.state.task_store, "list_for_projection_read_only"),
         "projects": (app.state.projects_source_store, "read_snapshot"),
         "daily_brief": (app.state.daily_brief_audit_store, "read_activity_events"),
         "personal_memory": (app.state.personal_memory_store, "read_activity_events"),
+        "capture": (app.state.capture_service, "read_activity_events"),
     }
     for name, (store, method_name) in readers.items():
         original = getattr(store, method_name)
@@ -106,17 +120,18 @@ def test_real_core_source_action_grant_revoke_precedes_io_and_recovers(tmp_path,
                                 json={"password": "synthetic-action-revocation-password"})
             assert login.status_code == 200
             activity_url = f"/api/activity?from={day}&to={day}&timezone=UTC"
-            expected_sources = {"journal", "tasks", "projects", "daily_brief", "personal_memory"}
-            expected_kinds = {"journal", "task", "project", "daily_brief", "personal_memory"}
+            expected_sources = {"journal", "tasks", "projects", "daily_brief", "personal_memory", "capture"}
+            expected_kinds = {"journal", "task", "project", "daily_brief", "personal_memory", "capture"}
             baseline = client.get(activity_url, headers={"Origin": origin})
             assert baseline.status_code == 200, baseline.text
-            assert baseline.json()["status"] == "ok"
+            assert baseline.json()["status"] == "ok", baseline.json()
             assert set(baseline.json()["source"]) == expected_sources
             assert {row["kind"] for row in baseline.json()["items"]} == expected_kinds
 
             for source, action in {
                 "journal": "journal.read", "tasks": "task.read", "projects": "projects.read",
                 "daily_brief": "daily_brief.read", "personal_memory": "personal_memory.read",
+                "capture": "inbox.read",
             }.items():
                 before = dict(read_calls)
                 changed = client.patch("/api/auth/session/actions", headers={"Origin": origin},
