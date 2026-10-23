@@ -184,6 +184,15 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
         auth.require_action(request, "auth.session")
         return {"status": "authenticated", "subject": "owner"}
 
+    @router.patch("/auth/session/actions")
+    def set_session_action(request: Request, body: dict):
+        auth.require_action(request, "auth.session")
+        if not isinstance(body, dict) or set(body) != {"action", "granted"}:
+            raise HTTPException(status_code=400, detail="Invalid session action request")
+        granted = auth.set_session_action(request, body["action"], body["granted"])
+        return {"status": "updated", "action": body["action"], "granted": granted,
+                "scope": "current_session"}
+
     @router.post("/auth/logout")
     def logout(request: Request, response: Response):
         auth.require_action(request, "auth.logout")
