@@ -258,6 +258,28 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), original)
         self.assertIn("hello PDF capture", (self.review / complete["review_path"]).read_text())
 
+    def test_oversize_pdf_ocr_is_truncated_and_reported_partial(self):
+        original = b"%PDF-1.4\nsynthetic scan"
+        worker_result = {
+            "status": "ok", "page_count": 1, "text": "", "truncated": False,
+            "page_sizes": [[612.0, 792.0]], "metadata_title": None,
+        }
+        with patch("secondbrain_core.modules.capture._extract_pdf_text_in_limited_worker",
+                   return_value=worker_result), \
+             patch.object(self.service.processors, "ocr_pdf", return_value="x" * 1_500_000):
+            item = self.service.accept_file("oversize-scan.pdf", original)
+            self.service.process(item, original)
+        result = self.service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        review_text = (self.review / result["review_path"]).read_text(encoding="utf-8")
+        self.assertIn("PDF OCR text was truncated", review_text)
+        self.assertIn("x" * 1_000_000, review_text)
+        self.assertNotIn("x" * 1_000_001, review_text)
+        raw_path = self.raw / result["raw_path"]
+        self.assertEqual(raw_path.read_bytes(), original)
+        self.assertEqual(result["raw_sha256"], hashlib.sha256(original).hexdigest())
+
     def test_pdf_metadata_title_does_not_replace_unicode_upload_filename(self):
         data = b"%PDF-1.4\nfixture"
         with patch("secondbrain_core.modules.capture._extract_pdf_text_in_limited_worker", return_value={

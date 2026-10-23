@@ -1016,11 +1016,20 @@ class CaptureService:
                     if document_title:
                         state["document_title"] = document_title[:300]
                 if truncated:
-                    content += ("\n\n[PDF text extraction stopped at the 1,000,000-character "
-                                "safety limit. The original PDF is retained; extracted text is incomplete.]\n")
+                    content = content[:MAX_PDF_EXTRACTED_TEXT_CHARS] + (
+                        "\n\n[PDF text extraction stopped at the 1,000,000-character "
+                        "safety limit. The original PDF is retained; extracted text is incomplete.]\n")
                     state["partial_error"] = {
                         "code": "processing_failed",
                         "message": "PDF text extraction reached the 1,000,000-character limit; extracted text is incomplete.",
+                    }
+                elif len(content) > MAX_PDF_EXTRACTED_TEXT_CHARS:
+                    content = content[:MAX_PDF_EXTRACTED_TEXT_CHARS] + (
+                        "\n\n[PDF OCR text was truncated at the 1,000,000-character "
+                        "safety limit. The original PDF is retained; extracted text is incomplete.]\n")
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "PDF OCR reached the 1,000,000-character limit; extracted text is incomplete.",
                     }
             elif input_type in {"png", "jpg", "jpeg", "webp", "gif"}:
                 recognized = self.processors.ocr_image(raw)
