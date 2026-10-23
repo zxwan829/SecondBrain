@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-10-24 — P4 Notes 移动三视口与 P3-5 Activity Web 接口适配
+
+- **最新基线：** main `22b536e79e67cb746f8ea4039686ca8b5031b84e`。#220 分支从 `5fd9df3c` 普通同步到该 main，净 PR 差异仍限于 E2E harness、Playwright 用例、sanitizer 与既有 Notes 图形对话框 CSS；合并无冲突，`git diff --check` 通过。
+- **故障证据与修复：** #220 Run [#40006256529](https://github.com/zxwan829/SecondBrain/actions/runs/40006256529) checkout `40bfc828`。Tablet/Mobile 在 `notes_readback` 失败，脱敏记录显示 Notes collection/detail GET 均 200；截图显示多个相同可访问名称的合成笔记按钮。分类为 **TEST_BUG**（跨视口复用标题造成 locator 歧义），无 API 故障证据。提交 `ab0f7939f0f34fcb87ba18df5ff4877f057561b4` 为各视口使用独立合成笔记标题，保留保存、精确 GET 200 与正文读回断言。Playwright discovery 3/3、diff-check 通过。
+- **固定基线复验：** Run [#40007875993](https://github.com/zxwan829/SecondBrain/actions/runs/40007875993) 在修复 HEAD `ab0f7939` 上三视口均 PASS。同步 main `22b536e` 后最终 #220 HEAD `27bc4711ccd1d0ff6a91777b32723beba0899b64`；Run [#40008488314](https://github.com/zxwan829/SecondBrain/actions/runs/40008488314) checkout SHA 完全匹配，workflow PASS，脱敏 JUnit 为 3 tests / 0 failures / 0 skipped：Desktop 1440×1000、Tablet 820×1180、Mobile 390×844 全 PASS。实际步骤含 Web 回归/typecheck、build、artifact sanitizer、Vite→真实 localhost Core HTTP 与三视口浏览器旅程。summary：`result=PASS`、Brief file set verified、Notes files 9、Journal mutation 0、Knowledge files 0、Promote=false、Hermes fixture-only；无失败截图上传。
+- **P3-5 Capture Activity：** Web PR #222 `438a7e2b570370d1c742bc8b9f50caa9941fdc76` 严格接入已接受的四字段 Capture DTO，未知状态/额外字段 fail-closed；3 项定向组件合同测试、typecheck、build、diff-check 通过。与 Core PR #221 `41e9729d693e80f4f37c1a5543dc8fb1e1411124` 的既有临时合成 HTTP Gate 在 main `2fe5be1` 上 PASS（Vite→Uvicorn、Capture DTO、撤权移除/恢复重现）；**该组合不是 latest main `22b536e`，也不是浏览器验收**。PR #221/#222 仍 Draft，#222 等独立 Web 复审。
+- **边界与状态：** #220 保持 Draft/Open，等待对 HEAD `27bc4711` 的独立增量复审；#221/#222 未合并。Obsidian 双向同步、真实 Vault/NAS、生产 Writer/Promote、付费模型及用户生产验收均未运行。当前 Notes 浏览器子 Gate PASS_WITH_LIMITS；V1 overall 仍 NOT DONE。
+
 ## 2026-10-24 — #201/#207/#202 固定组合合入与 Linux 三视口 Gate
 
 - **源码与合并：** 从 main `d8e58585dcb2e6b03707861b1a3233c666c466fa` 出发，按 #201 固定 HEAD `ea70fca9dde78793b05d5aaed7523f26bf432a72` → merge `e611ecc46354eec0c28ffe1bc573cf218f12ee30`，#207 `aff4171f86b00bb8420e0cfe2af8a0978fdb2f37` → `6c372ff609a5f9252c0c2197cdbf240190827bea`，#202 `69f39cccfbae56c66a4db6f483e8dc75aee0cf7b` → `5fd9df3cd05981a89a495b748bcc5bf541ab7788` 正常 Ready/Merge。每次指定精确 HEAD；GitHub 返回 MERGED、main 前进。无管理员绕过、强推、reset 或回滚。
