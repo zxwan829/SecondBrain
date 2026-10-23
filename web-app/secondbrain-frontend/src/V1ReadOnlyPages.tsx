@@ -66,9 +66,9 @@ function parseActivityResponse(value: unknown): ActivityResponse | null {
   };
 }
 
-async function loadPage(page: PageId, signal: AbortSignal): Promise<unknown> {
+async function loadPage(page: PageId, signal: AbortSignal, projectLimit = 50, projectOffset = 0): Promise<unknown> {
   const path = page === 'projects'
-    ? '/api/projects?limit=1&offset=0'
+    ? `/api/projects?limit=${projectLimit}&offset=${projectOffset}`
     : '/api/activity?limit=50&offset=0';
   const response = await fetch(path, { credentials: 'same-origin', signal, headers: { Accept: 'application/json' } });
   if (response.status === 401 || response.status === 403) throw new Error('unauthorized');
@@ -135,13 +135,17 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
   const [projects, setProjects] = useState<ProjectsResponse | null>(null);
   const [preview, setPreview] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [projectOffset, setProjectOffset] = useState(0);
+  const requestedProjectId = page === 'projects' ? new URLSearchParams(window.location.search).get('project_id') : null;
+  const targetProjectId = requestedProjectId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(requestedProjectId) ? requestedProjectId : null;
+  const projectLimit = 50;
   const load = useCallback(async (signal: AbortSignal) => {
     setState('loading');
     try {
-      const payload = await loadPage(page, signal);
+      const payload = await loadPage(page, signal, projectLimit, projectOffset);
       if (signal.aborted) return;
       if (page === 'projects') {
-        const parsed = parseProjectsResponse(payload);
+        const parsed = parseProjectsResponse(payload, projectLimit, projectOffset);
         if (!parsed) throw new Error('unavailable');
         setProjects(parsed);
         setState('loaded');
@@ -156,7 +160,7 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
       const reason = error instanceof Error ? error.message : 'unavailable';
       setState(reason === 'unauthorized' ? 'unauthorized' : reason === 'backend-not-implemented' ? 'backend-not-implemented' : 'unavailable');
     }
-  }, [page]);
+  }, [page, projectLimit, projectOffset]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -184,10 +188,14 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
             : state === 'unavailable' ? <p className="v1-page-state is-unavailable" role="alert">{t.unavailable}</p>
               : page === 'projects' && projects?.status === 'not_configured' ? <p className="v1-page-state" role="status">{t.projectsUnconfigured}</p>
                 : page === 'projects' && projects?.status === 'unavailable' ? <p className="v1-page-state is-unavailable" role="alert">{t.projectsUnavailable}</p>
-                  : page === 'projects' && projects?.status === 'empty' ? <p className="v1-page-state" role="status">{t.projectsEmpty} · {locale === 'en' ? 'Checked' : '检查时间'} {new Date(projects.freshness.checked_at).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}</p>
+                : page === 'projects' && projects?.status === 'empty' ? <>
+                  <p className="v1-page-state" role="status">{t.projectsEmpty} · {locale === 'en' ? 'Checked' : '检查时间'} {new Date(projects.freshness.checked_at).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}</p>
+                  <ProjectPagination locale={locale} offset={projectOffset} limit={projectLimit} hasMore={projects.pagination.has_more} onOffset={setProjectOffset} />
+                </>
                     : page === 'projects' && projects ? <>
                       {projects.status === 'partial' && <p className="v1-page-state is-partial" role="status">{t.projectPartial}</p>}
-                      <ProjectList items={projects.items} locale={locale} checkedAt={projects.freshness.checked_at} />
+                      <ProjectList items={projects.items} locale={locale} checkedAt={projects.freshness.checked_at} targetId={targetProjectId} />
+                      <ProjectPagination locale={locale} offset={projectOffset} limit={projectLimit} hasMore={projects.pagination.has_more} onOffset={setProjectOffset} />
                     </>
                 : activity?.status === 'unavailable' ? <p className="v1-page-state is-unavailable" role="alert">{t.unavailable}</p>
                   : activity?.items.length === 0 ? <p className="v1-page-state" role="status">{t.empty}</p>
@@ -230,13 +238,22 @@ export function V1ReadOnlyPage({ page, locale }: { page: PageId; locale: Locale 
   );
 }
 
-function ProjectList({ items, locale, checkedAt }: { items: ProjectRecord[]; locale: Locale; checkedAt: string }) {
+function ProjectPagination({ locale, offset, limit, hasMore, onOffset }: { locale: Locale; offset: number; limit: number; hasMore: boolean; onOffset: React.Dispatch<React.SetStateAction<number>> }) {
+  return <nav className="v1-pagination" aria-label={locale === 'en' ? 'Project pages' : '项目分页'}>
+    <button type="button" disabled={offset === 0} onClick={() => onOffset((value) => Math.max(0, value - limit))}>{locale === 'en' ? 'Previous projects' : '上一页项目'}</button>
+    <span>{offset + 1}–{offset + limit}</span>
+    <button type="button" disabled={!hasMore} onClick={() => onOffset((value) => value + limit)}>{locale === 'en' ? 'More projects' : '更多项目'}</button>
+  </nav>;
+}
+
+function ProjectList({ items, locale, checkedAt, targetId }: { items: ProjectRecord[]; locale: Locale; checkedAt: string; targetId: string | null }) {
   const t = copy[locale];
   return <>
     <p className="calendar-source-note">{locale === 'en' ? 'Source checked' : '来源检查时间'} · {new Date(checkedAt).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}</p>
     <div className="v1-project-grid">
-      {items.map((project) => <article className="v1-data-card v1-project-card" key={project.id}>
+      {items.map((project) => <article id={project.id === targetId ? `project-${project.id}` : undefined} className={`v1-data-card v1-project-card${project.id === targetId ? ' is-brief-source' : ''}`} key={project.id}>
         <div className="v1-data-card-heading"><h2>{project.title}</h2><span className="v1-status-pill">{t.projectStatuses[project.status]}</span></div>
+        {project.id === targetId && <p role="status">{locale === 'en' ? 'Referenced by this Daily Brief.' : '此项目被每日简报引用。'}</p>}
         {(project.next_step || project.updated_at || project.recent_activity || project.linked_notes) && <dl className="v1-data-fields">
           {project.next_step && <div><dt>{t.next}</dt><dd>{project.next_step}</dd></div>}
           {project.updated_at && <div><dt>{t.checkedAt}</dt><dd><time>{new Date(project.updated_at).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN')}</time></dd></div>}

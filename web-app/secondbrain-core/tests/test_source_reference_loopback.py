@@ -145,10 +145,33 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
 
             projects = client.get("/api/projects", headers={"Origin": origin})
             assert projects.status_code == 200
+            assert projects.headers["cache-control"] == "private, no-store"
             assert projects.json()["status"] == "real"
             assert "linked_notes" not in projects.json()["items"][0]
             assert note["path"] not in projects.text
             assert "Synthetic Project Note" not in projects.text
+
+            private_reads = (
+                client.get("/api/tasks?status=all", headers={"Origin": origin}),
+                client.get(f"/api/journal/{brief_day}", headers={"Origin": origin}),
+                client.get("/api/inbox/summary", headers={"Origin": origin}),
+                client.get("/api/knowledge/search?q=Synthetic", headers={"Origin": origin}),
+                client.get("/api/notes", headers={"Origin": origin}),
+            )
+            assert all(response.status_code == 200 for response in private_reads), [
+                (response.url.path, response.status_code) for response in private_reads
+            ]
+            assert all(response.headers["cache-control"] == "private, no-store"
+                       for response in private_reads)
+
+            # Unauthorized API errors are non-cacheable too, so an intermediary
+            # cannot retain an auth-dependent result from a prior request.
+            for path in ("/api/projects", "/api/tasks?status=all", f"/api/journal/{brief_day}",
+                         "/api/inbox/summary", "/api/knowledge/search?q=Synthetic", "/api/notes"):
+                response = httpx.get(f"{origin}{path}", headers={"Origin": origin},
+                                     trust_env=False, timeout=3.0)
+                assert response.status_code == 401
+                assert response.headers["cache-control"] == "private, no-store"
 
             import_body = {
                 "mode": "manual_generate", "date": brief_day, "timezone": "Asia/Shanghai",
@@ -168,6 +191,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             monkeypatch.setattr(DailyBriefAuditStore, "append", fail_first_created_audit)
             failed_import = client.post("/api/daily-brief", headers={"Origin": origin}, json=import_body)
             assert failed_import.status_code == 503
+            assert failed_import.headers["cache-control"] == "private, no-store"
             assert failed_import.json() == {"detail": "Daily Brief unavailable"}
             assert import_body["summary"] not in failed_import.text
             assert not (roots["briefs"] / f"{brief_day}.json").exists()
@@ -180,6 +204,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             assert empty_after_failed_audit.json()["items"] == []
             imported = client.post("/api/daily-brief", headers={"Origin": origin}, json=import_body)
             assert imported.status_code == 201
+            assert imported.headers["cache-control"] == "private, no-store"
             assert set(imported.json()) == {
                 "status", "brief_id", "date", "timezone", "record_version", "operation_id",
             }
@@ -190,6 +215,7 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             daily = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                headers={"Origin": origin})
             assert daily.status_code == 200
+            assert daily.headers["cache-control"] == "private, no-store"
             assert set(daily.json()) == {"status", "items", "source", "freshness"}
             assert daily.json()["status"] == "real"
             assert daily.json()["source"] == {"kind": "core-daily-brief-store"}
@@ -225,6 +251,34 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             denied_origin = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                        headers={"Origin": "http://evil.test"})
             assert denied_origin.status_code == 403
+            assert denied_origin.headers["cache-control"] == "private, no-store"
+
+            # Revoke source access after login. The Brief endpoint must reject
+            # before TaskStore performs any authoritative source read.
+            auth = app.state.app_auth
+            original_require_action = auth.require_action
+            def deny_task_source(request, action):
+                if action == "task.read":
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=403, detail="forbidden")
+                return original_require_action(request, action)
+            auth.require_action = deny_task_source
+            task_reads = []
+            original_task_read = task_store.list_for_projection
+            task_store.list_for_projection = lambda: task_reads.append("task") or original_task_read()
+            denied_read = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
+                                     headers={"Origin": origin})
+            assert denied_read.status_code == 403
+            assert denied_read.headers["cache-control"] == "private, no-store"
+            assert denied_read.json() == {"detail": "Daily Brief source access denied"}
+            assert task_reads == []
+            denied_write = client.post("/api/daily-brief", headers={"Origin": origin}, json=import_body)
+            assert denied_write.status_code == 403
+            assert denied_write.headers["cache-control"] == "private, no-store"
+            assert denied_write.json() == {"detail": "Daily Brief source access denied"}
+            assert task_reads == []
+            auth.require_action = original_require_action
+            task_store.list_for_projection = original_task_read
             journal_tree_after = _tree_snapshot(roots["journal"])
             # A read may update atime on platforms without O_NOATIME; all other
             # metadata, bytes, modes, identities, and directory entries must
@@ -306,6 +360,11 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             assert stale.status_code == 200
             assert stale.json()["status"] == "stale" and stale.json()["items"] == []
             assert "Synthetic verified-source summary" not in stale.text
+            stale_replay = client.post("/api/daily-brief", headers={"Origin": origin}, json=import_body)
+            assert stale_replay.status_code == 409
+            assert stale_replay.headers["cache-control"] == "private, no-store"
+            assert stale_replay.json() == {"detail": "Daily Brief source changed"}
+            assert import_body["summary"] not in stale_replay.text
 
             denied_origin = client.get(f"/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                        headers={"Origin": "http://evil.test"})

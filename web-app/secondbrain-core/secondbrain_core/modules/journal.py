@@ -44,7 +44,10 @@ class JournalStore:
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
                 or info.st_mode & 0o077 or not os.access(path, os.R_OK | os.X_OK)):
             raise ValueError("Journal root must be a private readable directory owned by the Core UID")
-        self.root = path
+        # Store the canonical configured directory so descriptor-anchored
+        # traversal remains portable on hosts where temp roots have a trusted
+        # symlinked system prefix (for example macOS /var -> /private/var).
+        self.root = path.resolve(strict=True)
 
     @staticmethod
     def today():
@@ -191,35 +194,80 @@ class JournalStore:
 
     def read(self, day):
         path = self._path(day)
-        lock_fd = os.open(self.root / f".{day}.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        # GET must remain genuinely read-only: the append-only writer owns
+        # lock creation, while readers use a bounded descriptor snapshot and
+        # reject concurrent replacement or mutation.
         try:
-            lock_stat = os.fstat(lock_fd)
-            if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != os.geteuid() or lock_stat.st_mode & 0o077:
-                raise HTTPException(status_code=500, detail="Journal lock file is not private")
-            fcntl.flock(lock_fd, fcntl.LOCK_SH)
-            try:
-                try:
-                    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-                except FileNotFoundError:
-                    return {"date": day, "entries": []}
-                except OSError as exc:
-                    raise HTTPException(status_code=500, detail="Journal file could not be opened safely") from exc
-                try:
-                    info = os.fstat(fd)
-                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
-                        raise HTTPException(status_code=500, detail="Journal file is not private")
-                    with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as stream:
-                        entries = [json.loads(line) for line in stream if line.strip()]
-                except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-                    raise HTTPException(status_code=500, detail="Journal file could not be read safely") from exc
-                finally:
-                    os.close(fd)
-            finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            root_fd = _open_dir_chain(str(self.root))
         except OSError as exc:
-            raise HTTPException(status_code=500, detail="Journal file could not be read safely") from exc
+            raise HTTPException(status_code=503, detail="Journal storage is temporarily unavailable") from exc
+        try:
+            root_stat = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_stat.st_mode) or root_stat.st_uid != os.geteuid()
+                    or root_stat.st_mode & 0o077):
+                raise HTTPException(status_code=503, detail="Journal storage is temporarily unavailable")
+            try:
+                data_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                                  | getattr(os, "O_NOATIME", 0), dir_fd=root_fd)
+            except FileNotFoundError:
+                try:
+                    os.stat(path.name, dir_fd=root_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    try:
+                        current_root = self.root.lstat()
+                    except OSError as exc:
+                        raise HTTPException(status_code=503,
+                                            detail="Journal source changed during read") from exc
+                    if (current_root.st_dev, current_root.st_ino) != (root_stat.st_dev, root_stat.st_ino):
+                        raise HTTPException(status_code=503, detail="Journal source changed during read")
+                    return {"date": day, "entries": []}
+                raise HTTPException(status_code=503, detail="Journal source changed during read")
+            except OSError as exc:
+                raise HTTPException(status_code=503, detail="Journal storage is temporarily unavailable") from exc
+            try:
+                before = os.fstat(data_fd)
+                if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                        or before.st_uid != os.geteuid() or before.st_mode & 0o077
+                        or before.st_size < 0 or before.st_size > _MAX_SOURCE_DAY_BYTES):
+                    raise HTTPException(status_code=503, detail="Journal source exceeds safe bounds")
+                chunks, remaining = [], _MAX_SOURCE_DAY_BYTES + 1
+                while remaining:
+                    chunk = os.read(data_fd, min(65_536, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                payload = b"".join(chunks)
+                after = os.fstat(data_fd)
+                try:
+                    current = os.stat(path.name, dir_fd=root_fd, follow_symlinks=False)
+                    current_root = self.root.lstat()
+                except OSError as exc:
+                    raise HTTPException(status_code=503, detail="Journal source changed during read") from exc
+
+                def identity(info):
+                    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid,
+                            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+                if (identity(before) != identity(after) or identity(after) != identity(current)
+                        or (current_root.st_dev, current_root.st_ino) != (root_stat.st_dev, root_stat.st_ino)
+                        or len(payload) != before.st_size or len(payload) > _MAX_SOURCE_DAY_BYTES):
+                    raise HTTPException(status_code=503, detail="Journal source changed during read")
+            finally:
+                os.close(data_fd)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Journal storage is temporarily unavailable") from exc
         finally:
-            os.close(lock_fd)
+            os.close(root_fd)
+
+        rows = payload.splitlines()
+        if sum(bool(row.strip()) for row in rows) > _MAX_SOURCE_DAY_ENTRIES:
+            raise HTTPException(status_code=503, detail="Journal source exceeds safe bounds")
+        try:
+            entries = [json.loads(line.decode("utf-8"), object_pairs_hook=_unique_json_object)
+                       for line in rows if line.strip()]
+        except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=503, detail="Journal source is invalid") from exc
         return {"date": day, "entries": entries}
 
     def read_source_day(self, day, *, max_bytes=_MAX_SOURCE_DAY_BYTES,

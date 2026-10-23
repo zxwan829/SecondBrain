@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { TaskPage } from './TaskPage';
 
-afterEach(() => { cleanup(); window.sessionStorage.clear(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); window.sessionStorage.clear(); window.history.replaceState({}, '', '/'); vi.unstubAllGlobals(); });
 
 const task = {
   id: 'a'.repeat(32), title: '合成任务', due_date: null, status: 'open' as const,
@@ -55,6 +55,46 @@ describe('TaskPage', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('当前环境未启用 Task 存储。');
   });
 
+  it('loads Companion only after explicit expansion and evaluates only after explicit click', async () => {
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/tasks?')) return ok({ tasks: [] });
+      if (url === '/api/companion/preferences' && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body));
+        return ok({ event: 'companion.preferences.receipt', version: 1, status: 'saved', revision: 1,
+          settings: { enabled: body.enabled, categories: body.categories } });
+      }
+      if (url === '/api/companion/preferences') return ok({ event: 'companion.preferences', version: 1, revision: 0, enabled: false, categories: [] });
+      if (url === '/api/companion/suggestions' || url === '/api/companion/suggestions/evaluate') return ok({ revision: 0, status: 'disabled', items: [] });
+      throw new Error(`Unexpected request ${url} ${init?.method ?? 'GET'}`);
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    await screen.findByRole('heading', { name: '待办' });
+    expect(request.mock.calls.some(([url]) => String(url).startsWith('/api/companion/'))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '主动建议' }));
+    await screen.findByRole('group', { name: '建议来源' });
+    expect(request.mock.calls.some(([url]) => url === '/api/companion/preferences')).toBe(true);
+    expect(request.mock.calls.some(([url]) => url === '/api/companion/suggestions/evaluate')).toBe(false);
+    fireEvent.click(screen.getByLabelText('启用建议'));
+    await waitFor(() => expect(request.mock.calls.some(([url, init]) => url === '/api/companion/preferences' && init?.method === 'PUT')).toBe(true));
+    await waitFor(() => expect((screen.getByRole('button', { name: '立即计算' }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: '立即计算' }));
+    await waitFor(() => expect(request.mock.calls.some(([url]) => url === '/api/companion/suggestions/evaluate')).toBe(true));
+    expect(request.mock.calls.find(([url]) => url === '/api/companion/suggestions/evaluate')?.[1]?.body).toBe('{}');
+  });
+
+  it('opens all Task states and highlights a Task linked from a Daily Brief', async () => {
+    window.history.replaceState({}, '', `/today?task_id=${task.id}#task-${task.id}`);
+    const request = vi.fn(async (url: string) => {
+      expect(url).toBe('/api/tasks?status=all');
+      return ok({ tasks: [task] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<TaskPage locale="zh-CN" />);
+    expect(await screen.findByText('此待办被每日简报引用。')).toBeTruthy();
+    expect(document.getElementById(`task-${task.id}`)).toBeTruthy();
+  });
+
   it('clears the previous filter results when the next Task read fails', async () => {
     const request = vi.fn(async (url: string) => url.endsWith('status=open')
       ? ok({ tasks: [task] })
@@ -99,7 +139,7 @@ describe('TaskPage', () => {
       if (url === '/api/tasks' && init?.method === 'POST') {
         posts += 1;
         const body = JSON.parse(String(init.body));
-        expect(body).toEqual({ title: '直接新建的任务', due_date: '2026-10-24', original_command: '添加待办：直接新建的任务；截止：2026-10-24' });
+        expect(body).toEqual({ title: '直接新建的任务', due_date: '2026-10-24', original_command: 'Task page explicit create' });
         stored = created;
         if (posts === 1) return { ok: false, status: 500, json: async () => ({ detail: 'response lost after commit' }) };
         return ok({ status: 'duplicate', task: stored });
@@ -166,6 +206,8 @@ describe('TaskPage', () => {
     ['wrong due date', { task: { ...task, title: '回执任务', due_date: '2026-10-25' } }],
     ['wrong task status', { task: { ...task, title: '回执任务', status: 'completed' } }],
     ['malformed task id', { task: { ...task, id: 'task-1', title: '回执任务' } }],
+    ['untrusted task source', { task: { ...task, title: '回执任务', source: 'unverified' } }],
+    ['missing task timestamps', { task: { ...task, title: '回执任务', created_at: undefined } }],
   ])('keeps the form open when the create receipt has %s', async (_caseName, patch) => {
     const response = { status: 'created', task: { ...task, title: '回执任务', due_date: null }, ...patch };
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => url === '/api/tasks' && init?.method === 'POST'

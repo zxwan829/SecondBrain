@@ -203,6 +203,14 @@ class KnowledgeReadStore:
         # Never derive this key from the App login credential or persist it.
         self._id_secret = secrets.token_bytes(32)
 
+    def context_source_id(self, relative_path, content_sha256):
+        """Return a process-scoped opaque ID without exposing a path oracle."""
+        if (not isinstance(relative_path, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", str(content_sha256))):
+            raise ValueError("Invalid Knowledge source identity")
+        identity = relative_path.encode("utf-8") + b"\x00" + content_sha256.encode("ascii")
+        return hmac.new(self._id_secret, b"context.v1\x00" + identity, hashlib.sha256).hexdigest()
+
     def _root_fd(self):
         if not self.root:
             raise HTTPException(status_code=503, detail="Knowledge is unavailable")
@@ -211,7 +219,7 @@ class KnowledgeReadStore:
         except OSError:
             raise HTTPException(status_code=503, detail="Knowledge is unavailable")
 
-    def search(self, query, limit):
+    def search(self, query, limit, *, max_total_bytes=MAX_TOTAL_BYTES):
         if not isinstance(query, str) or not query.strip():
             raise HTTPException(status_code=400, detail="A non-empty query is required")
         query = query.strip()
@@ -219,6 +227,9 @@ class KnowledgeReadStore:
             raise HTTPException(status_code=400, detail="Query is too long")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_LIMIT:
             raise HTTPException(status_code=400, detail="Invalid result limit")
+        if (not isinstance(max_total_bytes, int) or isinstance(max_total_bytes, bool)
+                or not 1 <= max_total_bytes <= MAX_TOTAL_BYTES):
+            raise HTTPException(status_code=400, detail="Invalid read budget")
         root_fd = self._root_fd()
         rows = []
         entries_seen = 0
@@ -228,7 +239,7 @@ class KnowledgeReadStore:
 
         def visit(directory_fd, prefix, depth=0):
             nonlocal entries_seen, bytes_read, budget_exceeded, invalid_paths_seen
-            if entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= MAX_TOTAL_BYTES or budget_exceeded:
+            if entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= max_total_bytes or budget_exceeded:
                 return
             try:
                 entries = os.scandir(directory_fd)
@@ -238,7 +249,7 @@ class KnowledgeReadStore:
                 with entries:
                     iterator = iter(entries)
                     while True:
-                        if bytes_read >= MAX_TOTAL_BYTES or budget_exceeded:
+                        if bytes_read >= max_total_bytes or budget_exceeded:
                             return
                         try:
                             entry = next(iterator)
@@ -283,7 +294,7 @@ class KnowledgeReadStore:
                             continue
                         try:
                             try:
-                                allowed_bytes = min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - bytes_read)
+                                allowed_bytes = min(MAX_FILE_BYTES, max_total_bytes - bytes_read)
                                 if opened_info.st_size > allowed_bytes:
                                     continue
                                 payload = _read_bounded(fd, allowed_bytes)
@@ -319,7 +330,7 @@ class KnowledgeReadStore:
         finally:
             os.close(root_fd)
         rows.sort(key=lambda row: (row["title"].casefold(), row["id"]))
-        return {"items": rows[:limit], "status": "truncated" if invalid_paths_seen or entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= MAX_TOTAL_BYTES or budget_exceeded else "ok"}
+        return {"items": rows[:limit], "status": "truncated" if invalid_paths_seen or entries_seen >= MAX_SCAN_ENTRIES or bytes_read >= max_total_bytes or budget_exceeded else "ok"}
 
     def detail(self, item_id):
         relative, expected_sha256 = _decode_token(item_id, self._id_secret)
@@ -364,6 +375,81 @@ class KnowledgeReadStore:
         status = _provenance_status(content)
         return {"status": "unavailable" if status == "unverified" else "missing",
                 "provenance_status": status, "source": None}
+
+    def chat_recall(self, query, *, max_items=3, max_item_bytes=8 * 1024,
+                    max_total_bytes=16 * 1024, max_scan_bytes=MAX_TOTAL_BYTES):
+        """Build a bounded internal Chat context from exact verified Knowledge.
+
+        This is deliberately separate from the public search response: the
+        relative path and content stay server-side and are never accepted from
+        a browser. Only documents whose exact current bytes have verified
+        provenance are eligible for a reference citation.
+        """
+        rows = self.search(query, max_items, max_total_bytes=max_scan_bytes)
+        selected = []
+        total = 0
+        partial = rows["status"] != "ok"
+        for row in rows["items"]:
+            if len(selected) >= max_items or total >= max_total_bytes:
+                partial = True
+                break
+            try:
+                relative, expected_sha256 = _decode_token(row["id"], self._id_secret)
+                source = self.source(row["id"])
+                if source.get("status") != "available" or source.get("provenance_status") != "verified":
+                    continue
+                detail = self.detail(row["id"])
+                payload = detail["content"].encode("utf-8")
+                digest = hashlib.sha256(payload).hexdigest()
+                if (not hmac.compare_digest(digest, expected_sha256)
+                        or not hmac.compare_digest(digest, detail["sha256"])):
+                    partial = True
+                    continue
+                remaining = max_total_bytes - total
+                excerpt = payload[:min(max_item_bytes, remaining)].decode("utf-8", errors="ignore")
+                if not excerpt:
+                    partial = True
+                    continue
+                selected.append({"relative_path": relative, "title": row["title"],
+                                 "sha256": digest, "content": excerpt,
+                                 "updated": row["updated"],
+                                 "provenance_status": "verified"})
+                total += len(excerpt.encode("utf-8"))
+                if len(payload) > len(excerpt.encode("utf-8")):
+                    partial = True
+            except HTTPException as exc:
+                if exc.status_code in {404, 409, 413, 422, 503}:
+                    partial = True
+                    continue
+                raise
+        return {"items": selected,
+                "status": "available" if selected and not partial else
+                          "partial" if partial else "none"}
+
+    def verify_chat_reference(self, relative_path, expected_sha256):
+        """Re-read one stored internal reference and classify its current state."""
+        if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+            return "unavailable"
+        root_fd = self._root_fd()
+        try:
+            try:
+                fd, info = _open_exact(root_fd, relative_path)
+            except (OSError, ValueError, UnicodeError):
+                return "unavailable"
+            try:
+                if info.st_size > MAX_FILE_BYTES:
+                    return "unavailable"
+                payload = _read_bounded(fd, MAX_FILE_BYTES)
+                if len(payload) > MAX_FILE_BYTES:
+                    return "unavailable"
+            finally:
+                os.close(fd)
+        finally:
+            os.close(root_fd)
+        digest = hashlib.sha256(payload).hexdigest()
+        if not hmac.compare_digest(digest, expected_sha256):
+            return "stale"
+        return "version_verified" if self._verified_source(relative_path, payload, digest) is not None else "unavailable"
 
     def _verified_source(self, relative, content, digest):
         if self.provenance_verifier is None:

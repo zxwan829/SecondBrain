@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from secondbrain_core.modules import journal as journal_module
-from secondbrain_core.modules.journal import JournalStore
+from secondbrain_core.modules.journal import JournalStore, _MAX_SOURCE_DAY_BYTES, _MAX_SOURCE_DAY_ENTRIES
 from secondbrain_core.modules.source_reference_authority import SourceReferenceAuthority
 
 
@@ -88,6 +88,96 @@ def test_source_read_succeeds_in_nonwritable_root_without_lock_or_other_side_eff
             # remain unchanged.
             continue
         assert after[key] == before[key], key
+
+
+def test_journal_api_read_succeeds_read_only_without_creating_lock(tmp_path):
+    root, store, entries = _store_with_rows(tmp_path, count=2)
+    source = root / f"{DAY}.jsonl"
+    os.chmod(source, 0o400)
+    os.chmod(root, 0o500)
+    names_before = sorted(path.name for path in root.iterdir())
+    root_before = _directory_state(root)
+    file_before = _file_state(source)
+
+    result = store.read(DAY)
+
+    assert result["date"] == DAY
+    assert [row["id"] for row in result["entries"]] == [row["id"] for row in entries]
+    assert sorted(path.name for path in root.iterdir()) == names_before
+    assert f".{DAY}.lock" not in names_before
+    assert _directory_state(root) == root_before
+    file_after = _file_state(source)
+    for key in file_before:
+        if key == "atime_ns" and not getattr(os, "O_NOATIME", 0):
+            continue
+        assert file_after[key] == file_before[key], key
+
+    missing_day = "2026-10-21"
+    assert store.read(missing_day) == {"date": missing_day, "entries": []}
+    assert sorted(path.name for path in root.iterdir()) == names_before
+
+
+@pytest.mark.parametrize("mutation", ["truncate", "in_place_rewrite", "atomic_replace"])
+def test_journal_api_read_rejects_concurrent_source_mutation(tmp_path, monkeypatch, mutation):
+    root, store, _ = _store_with_rows(tmp_path, count=8, text="x" * 12_000)
+    source = root / f"{DAY}.jsonl"
+    real_read = os.read
+    changed = False
+
+    def racing_read(fd, size):
+        nonlocal changed
+        chunk = real_read(fd, size)
+        if chunk and not changed:
+            changed = True
+            if mutation == "truncate":
+                with source.open("r+b") as stream:
+                    stream.truncate(0)
+            elif mutation == "in_place_rewrite":
+                with source.open("r+b") as stream:
+                    stream.seek(0)
+                    stream.write(b"X" * source.stat().st_size)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            else:
+                replacement = root / ".replacement"
+                replacement.write_bytes(source.read_bytes())
+                os.chmod(replacement, 0o600)
+                os.replace(replacement, source)
+        return chunk
+
+    monkeypatch.setattr(journal_module.os, "read", racing_read)
+    with pytest.raises(HTTPException) as raised:
+        store.read(DAY)
+    assert raised.value.status_code == 503
+    assert changed is True
+
+
+def test_journal_api_read_enforces_byte_and_row_budgets(tmp_path):
+    root, store, _ = _store_with_rows(tmp_path)
+    path = root / f"{DAY}.jsonl"
+    path.write_bytes(b"{}\n" * (_MAX_SOURCE_DAY_ENTRIES + 1))
+    os.chmod(path, 0o600)
+    with pytest.raises(HTTPException) as raised_rows:
+        store.read(DAY)
+    assert raised_rows.value.status_code == 503
+
+    path.write_bytes(b" " * (_MAX_SOURCE_DAY_BYTES + 1))
+    os.chmod(path, 0o600)
+    with pytest.raises(HTTPException) as raised_bytes:
+        store.read(DAY)
+    assert raised_bytes.value.status_code == 503
+
+
+def test_journal_api_read_rejects_ambiguous_duplicate_json_keys(tmp_path):
+    root, store, _ = _store_with_rows(tmp_path)
+    path = root / f"{DAY}.jsonl"
+    path.write_text('{"id":"first","id":"second"}\n', encoding="utf-8")
+
+    with pytest.raises(HTTPException) as raised:
+        store.read(DAY)
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail == "Journal source is invalid"
 
 
 @pytest.mark.parametrize("mutation", ["truncate", "in_place_rewrite", "atomic_replace"])

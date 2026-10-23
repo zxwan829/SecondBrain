@@ -1,0 +1,210 @@
+name: Writer Linux OS isolation subset
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  writer-linux-os-isolation:
+    if: github.repository == 'zxwan829/SecondBrain' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the reviewed #193 Linux test candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: 02c8ad3d8fd40f0e3752c0748d677462fb88870c
+          persist-credentials: false
+
+      - name: Verify disposable runner and record kernel, filesystem, LSM, and capabilities
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          test "$(id -u)" -ne 0
+          command -v sudo >/dev/null
+          command -v findmnt >/dev/null
+          command -v unshare >/dev/null
+          command -v python3.12 >/dev/null
+          printf 'runner_image=%s/%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+          printf 'runner_environment=%s\n' "$RUNNER_ENVIRONMENT"
+          printf 'kernel=%s\n' "$(uname -srmo)"
+          printf 'fixed_test_source=02c8ad3d8fd40f0e3752c0748d677462fb88870c\n'
+          python3.12 --version
+          printf 'runner_tmp_mount='; findmnt -n -T /tmp -o TARGET,FSTYPE,OPTIONS
+          if [ -r /sys/kernel/security/lsm ]; then
+            printf 'lsm='; tr '\n' ' ' </sys/kernel/security/lsm; printf '\n'
+          else
+            printf 'lsm=unavailable\n'
+          fi
+          python3.12 - <<'PY'
+          import ctypes
+          import errno
+          import platform
+
+          machine = platform.machine().lower()
+          syscall_number = 444 if machine in {"x86_64", "amd64", "aarch64", "arm64"} else None
+          if syscall_number is None:
+              print(f"landlock_abi=not_queried_unsupported_arch:{machine}")
+          else:
+              libc = ctypes.CDLL(None, use_errno=True)
+              result = libc.syscall(syscall_number, None, 0, 1)
+              if result >= 0:
+                  print(f"landlock_abi={result}")
+              else:
+                  error = ctypes.get_errno()
+                  print(f"landlock_abi=unavailable_errno:{error}:{errno.errorcode.get(error, 'UNKNOWN')}")
+          PY
+          printf 'runner_capabilities='; sudo --non-interactive awk '/^(CapPrm|CapEff|CapBnd):/ {printf "%s=%s ", $1, $2} END {print ""}' /proc/self/status
+
+      - name: Install isolated test runner dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3.12 -m venv "$RUNNER_TEMP/writer-linux-venv"
+          PIP_NO_INPUT=1 "$RUNNER_TEMP/writer-linux-venv/bin/python" -m pip install --disable-pip-version-check --index-url https://pypi.org/simple --only-binary=:all: 'pytest==9.1.1'
+
+      - name: Run only the Writer Linux OS isolation test
+        working-directory: web-app/secondbrain-core
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHON_RUNTIME="$(python3.12 -c 'import sys; print(sys.prefix)')"
+          SANDBOX_ROOT="$RUNNER_TEMP/writer-linux-sandbox-root"
+          RUNNER_USERNAME="$(id -un)"
+          RUNNER_UID="$(id -u)"
+          RUNNER_GID="$(id -g)"
+          SUBID_MAP="$(python3.12 - "$RUNNER_USERNAME" "$RUNNER_UID" "$RUNNER_GID" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          MAX_ID = (1 << 32) - 1
+          REQUIRED_COUNT = 5
+
+          def parse_subid_allocation(contents, username, numeric_id, primary_id, required_count):
+              records = []
+              for line_number, raw_line in enumerate(contents.splitlines(), start=1):
+                  line = raw_line.strip()
+                  if not line or line.startswith("#"):
+                      continue
+                  fields = line.split(":")
+                  subject = fields[0] if fields else ""
+                  if len(fields) != 3:
+                      if subject in {username, numeric_id}:
+                          raise ValueError(f"malformed matching allocation at line {line_number}")
+                      continue
+                  name, start_text, count_text = fields
+                  if name not in {username, numeric_id}:
+                      continue
+                  if not re.fullmatch(r"[0-9]+", start_text) or not re.fullmatch(r"[0-9]+", count_text):
+                      raise ValueError(f"malformed matching allocation at line {line_number}")
+                  start, count = int(start_text), int(count_text)
+                  end = start + count
+                  if count <= 0 or start >= MAX_ID or end > MAX_ID:
+                      raise ValueError(f"invalid allocation bounds at line {line_number}")
+                  records.append((name, start, end))
+
+              ordered = sorted(records, key=lambda record: (record[1], record[2]))
+              for previous, current in zip(ordered, ordered[1:]):
+                  if current[1] < previous[2]:
+                      raise ValueError("overlapping subordinate allocations")
+
+              matching = [
+                  (start, end) for name, start, end in records
+                  if name == username or name == numeric_id
+              ]
+              if not matching:
+                  raise ValueError("no allocation for runner identity")
+              usable = [
+                  start for start, end in matching
+                  if end - start >= required_count and not (start <= primary_id < end)
+              ]
+              if not usable:
+                  raise ValueError("no non-overlapping allocation of required length")
+              return min(usable)
+
+          username, uid_text, gid_text = sys.argv[1:4]
+          uid_start = parse_subid_allocation(Path("/etc/subuid").read_text(), username, uid_text, int(uid_text), REQUIRED_COUNT)
+          gid_start = parse_subid_allocation(Path("/etc/subgid").read_text(), username, gid_text, int(gid_text), REQUIRED_COUNT)
+          print(f"{uid_start}:{gid_start}")
+          PY
+          )"
+          IFS=: read -r SUBUID_START SUBGID_START <<<"$SUBID_MAP"
+          test -n "$SUBUID_START" && test -n "$SUBGID_START"
+          SANDBOX_ROOT="$RUNNER_TEMP/writer-linux-sandbox-root"
+          mkdir -p "$SANDBOX_ROOT"
+          # Keep unshare and its subordinate-ID helpers under the runner identity.
+          env \
+            SB_WRITER_OS_ISOLATION=disposable-linux \
+            SB_WRITER_TEST_PYTHONPATH="$GITHUB_WORKSPACE/web-app/secondbrain-core" \
+            PYTHONPATH="$GITHUB_WORKSPACE/web-app/secondbrain-core" \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            RUNNER_TEMP="$RUNNER_TEMP" \
+            PYTHON_RUNTIME="$PYTHON_RUNTIME" \
+            SANDBOX_ROOT="$SANDBOX_ROOT" \
+            TMPDIR=/tmp \
+            PYTHON_BIN="$RUNNER_TEMP/writer-linux-venv/bin/python" \
+            unshare --user --mount --net --ipc --uts --pid --fork --mount-proc --kill-child \
+            --setgroups=allow \
+            --map-users="0:${RUNNER_UID}:1" --map-users="31001:${SUBUID_START}:5" \
+            --map-groups="0:${RUNNER_GID}:1" --map-groups="31002:${SUBGID_START}:5" \
+            bash -euo pipefail -c '
+              mount --make-rprivate /
+              mount -t tmpfs -o size=256m,mode=0755,nodev,nosuid tmpfs "$SANDBOX_ROOT"
+              root="$SANDBOX_ROOT"
+              mkdir -p "$root"/{usr,lib,lib64,opt,proc,tmp,var/tmp,dev/shm,run,etc,oldroot}
+              mkdir -p "$root$GITHUB_WORKSPACE" "$root$RUNNER_TEMP/writer-linux-venv" "$root$PYTHON_RUNTIME"
+              ln -s usr/bin "$root/bin"
+              ln -s usr/sbin "$root/sbin"
+              for path in /usr /lib /lib64; do
+                if [ -e "$path" ]; then
+                  mkdir -p "$root$path"
+                  mount --bind "$path" "$root$path"
+                  mount -o remount,bind,ro "$root$path"
+                fi
+              done
+              mkdir -p "$root$(dirname "$PYTHON_RUNTIME")"
+              mount --bind "$PYTHON_RUNTIME" "$root$PYTHON_RUNTIME"
+              mount -o remount,bind,ro "$root$PYTHON_RUNTIME"
+              mount --bind "$GITHUB_WORKSPACE" "$root$GITHUB_WORKSPACE"
+              mount -o remount,bind,ro "$root$GITHUB_WORKSPACE"
+              mount --bind "$RUNNER_TEMP/writer-linux-venv" "$root$RUNNER_TEMP/writer-linux-venv"
+              mount -o remount,bind,ro "$root$RUNNER_TEMP/writer-linux-venv"
+              for device in null zero random urandom; do
+                : >"$root/dev/$device"
+                mount --bind "/dev/$device" "$root/dev/$device"
+                mount -o remount,bind,ro "$root/dev/$device"
+              done
+              mount -t tmpfs -o size=64m,mode=1777,nodev,nosuid,noexec tmpfs "$root/tmp"
+              mount -t tmpfs -o size=16m,mode=1777,nodev,nosuid,noexec tmpfs "$root/var/tmp"
+              mount -t tmpfs -o size=16m,mode=1777,nodev,nosuid,noexec tmpfs "$root/dev/shm"
+              mount -t tmpfs -o size=4m,mode=0755,nodev,nosuid,noexec tmpfs "$root/run"
+              mount -t proc -o nosuid,nodev,noexec proc "$root/proc"
+              cd "$root"
+              pivot_root . oldroot
+              umount -l /oldroot
+              rmdir /oldroot
+              cd "$GITHUB_WORKSPACE/web-app/secondbrain-core"
+              test "$(findmnt -n -T /tmp -o FSTYPE)" = tmpfs
+              workspace_options="$(findmnt -n -T "$GITHUB_WORKSPACE" -o OPTIONS)"
+              case ",$workspace_options," in *,ro,*) ;; *) exit 1 ;; esac
+              venv_options="$(findmnt -n -T "$RUNNER_TEMP/writer-linux-venv" -o OPTIONS)"
+              case ",$venv_options," in *,ro,*) ;; *) exit 1 ;; esac
+              printf "sandbox_root_mount="; findmnt -n -T / -o TARGET,FSTYPE,OPTIONS
+              printf "test_scratch_mount="; findmnt -n -T /tmp -o TARGET,FSTYPE,OPTIONS
+              printf "workspace_mount="; findmnt -n -T "$GITHUB_WORKSPACE" -o TARGET,FSTYPE,OPTIONS
+              printf "venv_mount="; findmnt -n -T "$RUNNER_TEMP/writer-linux-venv" -o TARGET,FSTYPE,OPTIONS
+              test -z "$(find /run /dev -type s -print -quit 2>/dev/null)"
+              printf "user_namespace_uid_map\\n"; cat /proc/self/uid_map
+              printf "user_namespace_gid_map\\n"; cat /proc/self/gid_map
+              grep -E "^Cap(Prm|Eff|Bnd):" /proc/self/status
+              test ! -e /run/host
+              test ! -e /var/run/docker.sock
+              exec "$PYTHON_BIN" -m pytest -q -p no:cacheprovider \
+                tests/test_restricted_knowledge_writer_linux_os_isolation.py
+            '

@@ -221,6 +221,50 @@ class TaskStore:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
+    def list_for_projection_read_only(self):
+        """Read a stable projection without creating or opening the Task lock file."""
+        try:
+            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError:
+            return {"tasks": []}
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Task projection unavailable") from exc
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                    or before.st_mode & 0o077 or before.st_size < 0
+                    or before.st_size > _MAX_PROJECTION_BYTES):
+                raise HTTPException(status_code=503, detail="Task projection unavailable")
+            payload = bytearray()
+            while len(payload) <= _MAX_PROJECTION_BYTES:
+                chunk = os.read(fd, min(65536, _MAX_PROJECTION_BYTES + 1 - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            after = os.fstat(fd)
+            try:
+                current = os.stat(self.path, follow_symlinks=False)
+            except OSError as exc:
+                raise HTTPException(status_code=503, detail="Task projection unavailable") from exc
+            identity = lambda info: (info.st_dev, info.st_ino, info.st_size,
+                                     info.st_mtime_ns, info.st_ctime_ns)
+            if (len(payload) != before.st_size or len(payload) > _MAX_PROJECTION_BYTES
+                    or identity(after) != identity(before) or identity(current) != identity(before)):
+                raise HTTPException(status_code=503, detail="Task projection changed during read")
+            try:
+                data = json.loads(payload.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                raise HTTPException(status_code=503, detail="Task projection unavailable") from exc
+            if (not isinstance(data, dict) or not isinstance(data.get("tasks"), list)
+                    or not isinstance(data.get("idempotency"), dict)):
+                raise HTTPException(status_code=503, detail="Task projection unavailable")
+            items = list(data["tasks"])
+            items.sort(key=lambda item: (item.get("due_date") or "9999-12-31",
+                                         item.get("created_at", ""), item.get("id", "")))
+            return {"tasks": items}
+        finally:
+            os.close(fd)
+
     def list(self, status="open", due_date=None):
         if status not in {"open", "completed", "all"}:
             raise HTTPException(status_code=400, detail="status must be open, completed, or all")
@@ -288,7 +332,12 @@ def create_task_router(auth, store, hermes=None, activity_store=None):
     def list_tasks(request: Request, status: str = "open", due_date: str | None = None):
         auth.require_action(request, "task.read")
         configured()
-        return store.list(status, due_date)
+        result = store.list(status, due_date)
+        for task in result["tasks"]:
+            version = task_source_version(task)
+            if version is not None:
+                task["source_ref"] = {"id": task["id"], "version": version}
+        return result
 
     @router.post("")
     async def create_task(request: Request, body: dict):

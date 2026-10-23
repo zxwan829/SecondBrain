@@ -31,6 +31,14 @@ class BriefImportRejected(ValueError):
     """Candidate rejected before persistence; message contains no source data."""
 
 
+class BriefImportForbidden(BriefImportRejected):
+    """A required source permission is no longer available."""
+
+
+class BriefImportStale(BriefImportRejected):
+    """A selected source no longer resolves to the submitted version."""
+
+
 class BriefImportConflict(RuntimeError):
     """A different record already owns the requested calendar date."""
 
@@ -127,8 +135,14 @@ class DailyBriefImportStore:
             for ref in refs:
                 result = verifier(dict(ref))
                 if result is not True and result != "verified":
+                    if result == "forbidden":
+                        raise BriefImportForbidden("source permission denied")
+                    if result in {"missing", "stale"}:
+                        raise BriefImportStale("source selection is stale")
+                    if result in {"unavailable", "failed"}:
+                        raise BriefImportUnavailable("source verification unavailable")
                     raise BriefImportRejected("source verification failed")
-        except BriefImportRejected:
+        except (BriefImportRejected, BriefImportUnavailable):
             raise
         except Exception as exc:
             raise BriefImportRejected("source verification failed") from exc
@@ -405,6 +419,8 @@ class DailyBriefImportStore:
                         existing, _ = self._read_existing(root_fd, record["date"] + ".json", self.max_record_bytes)
                         if hashlib.sha256(existing).hexdigest() != operation["record_sha256"]:
                             raise BriefImportUnavailable("idempotency record inconsistent")
+                        verifier = self._resolve_verifier(None, source_verifier_factory)
+                        self._verify(record["source_refs"], verifier)
                         return {"status": "duplicate", "brief_id": record["brief_id"],
                                 "date": record["date"], "timezone": record["timezone"],
                                 "record_sha256": operation["record_sha256"],

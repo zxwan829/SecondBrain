@@ -11,7 +11,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from .daily_brief_store import DailyBriefRecordReadStore
 from .daily_brief_import import (
     BriefImportConflict,
+    BriefImportForbidden,
     BriefImportRejected,
+    BriefImportStale,
     BriefImportUnavailable,
     DailyBriefAuditStore,
     DailyBriefImportStore,
@@ -97,6 +99,23 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
             "actor": actor,
         })
 
+    def require_source_permissions(request, refs):
+        required = {
+            "task": "task.read",
+            "project": "projects.read",
+            "journal": "journal.read",
+        }
+        kinds = {reference["kind"] for reference in refs}
+        for kind in ("task", "project", "journal"):
+            if kind in kinds:
+                try:
+                    auth.require_action(request, required[kind])
+                except HTTPException as exc:
+                    if exc.status_code == 403:
+                        raise HTTPException(status_code=403,
+                                            detail="Daily Brief source access denied") from None
+                    raise
+
     @router.get("/daily-brief")
     def daily_brief(request: Request,
                     day: str = Query(..., alias="date"),
@@ -113,7 +132,15 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
             # Each request gets one bounded, exact-ID Projects snapshot. No
             # arbitrary caller path or cross-scope lookup enters this adapter.
             authority = authority_factory(request)
-            snapshot = brief_store.read(day, timezone_name, source_verifier=authority.verify)
+            snapshot = brief_store.read(
+                day, timezone_name, source_verifier=authority.verify,
+                source_permission_preflight=lambda refs: require_source_permissions(request, refs),
+            )
+        except HTTPException as exc:
+            if exc.status_code in {401, 403}:
+                raise
+            return {"status": "unavailable", "items": [], "source": source,
+                    "freshness": {"checked_at": checked_at}}
         except Exception:
             return {"status": "unavailable", "items": [], "source": source,
                     "freshness": {"checked_at": checked_at}}
@@ -131,8 +158,10 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
             record = snapshot.record
             if record["generation_status"] == "failed":
                 status, items = "failed", []
-            elif record["generation_status"] == "stale" or snapshot.source_verification == "stale":
+            elif record["generation_status"] == "stale" or snapshot.source_verification in {"stale", "missing"}:
                 status, items = "stale", []
+            elif snapshot.source_verification == "forbidden":
+                raise HTTPException(status_code=403, detail="Daily Brief source access denied")
             elif snapshot.source_verification == "unavailable":
                 status, items = "unavailable", []
             elif snapshot.source_verification == "failed":
@@ -215,6 +244,19 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
                 raise HTTPException(status_code=503, detail="Daily Brief unavailable") from exc
             raise HTTPException(status_code=501, detail="approved import unavailable")
 
+        try:
+            require_source_permissions(request, refs)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                try:
+                    write_audit(request_id=request_id, brief_id="", day=day,
+                                timezone_name=timezone_name, refs=refs,
+                                outcome="rejected", actor=actor)
+                except Exception as audit_exc:
+                    raise HTTPException(status_code=503, detail="Daily Brief unavailable") from audit_exc
+                raise HTTPException(status_code=403, detail="Daily Brief source access denied") from None
+            raise
+
         candidate = {key: body[key] for key in ("date", "timezone", "categories", "summary", "source_refs")}
         request_sha256 = hashlib.sha256(_canonical(body)).hexdigest()
         def audit_created(result):
@@ -238,6 +280,22 @@ def create_daily_brief_agent_health_router(auth, hermes, brief_store=None, proje
             except Exception as audit_exc:
                 raise HTTPException(status_code=503, detail="Daily Brief unavailable") from audit_exc
             raise HTTPException(status_code=409, detail="Daily Brief conflict") from exc
+        except BriefImportForbidden as exc:
+            try:
+                write_audit(request_id=request_id, brief_id="", day=day,
+                            timezone_name=timezone_name, refs=refs,
+                            outcome="rejected", actor=actor)
+            except Exception as audit_exc:
+                raise HTTPException(status_code=503, detail="Daily Brief unavailable") from audit_exc
+            raise HTTPException(status_code=403, detail="Daily Brief source access denied") from exc
+        except BriefImportStale as exc:
+            try:
+                write_audit(request_id=request_id, brief_id="", day=day,
+                            timezone_name=timezone_name, refs=refs,
+                            outcome="rejected", actor=actor)
+            except Exception as audit_exc:
+                raise HTTPException(status_code=503, detail="Daily Brief unavailable") from audit_exc
+            raise HTTPException(status_code=409, detail="Daily Brief source changed") from exc
         except BriefImportRejected as exc:
             try:
                 write_audit(request_id=request_id, brief_id="", day=day,

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.app_auth import AppSessionAuth
@@ -390,11 +390,20 @@ class _SwitchAuditStore:
         return self.store.append(event)
 
 
-def make_http_client(tmp_path, *, audit_store=None):
+def make_http_client(tmp_path, *, audit_store=None, deny_actions=()):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-app-password\n")
     os.chmod(password_file, 0o600)
     auth = AppSessionAuth(str(password_file), ["https://app.test"])
+    if deny_actions:
+        original_require_action = auth.require_action
+
+        def guarded_require_action(request, action):
+            if action in deny_actions:
+                raise HTTPException(status_code=403, detail="forbidden")
+            return original_require_action(request, action)
+
+        auth.require_action = guarded_require_action
     token = "synthetic-app-session"
     auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
 
@@ -413,6 +422,12 @@ def make_http_client(tmp_path, *, audit_store=None):
     os.chmod(audit_root, 0o700)
     audit_store = audit_store or DailyBriefAuditStore(str(audit_root / "daily-brief-audit.jsonl"))
     app = FastAPI()
+    @app.middleware("http")
+    async def daily_brief_no_store(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/daily-brief"):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
     app.include_router(create_daily_brief_agent_health_router(
         auth, _NoopHermes(), brief_store=DailyBriefRecordReadStore(str(brief_root)),
         task_store=tasks,
@@ -461,6 +476,10 @@ def test_http_manual_import_verifies_authoritative_task_then_get_rereads(tmp_pat
     assert changed_key_conflict.status_code == 409
     assert changed_key_conflict.json() == {"detail": "Daily Brief conflict"}
 
+    duplicate_before_drift = client.post("/api/daily-brief", json=body, headers=headers)
+    assert duplicate_before_drift.status_code == 200
+    assert duplicate_before_drift.json()["status"] == "duplicate"
+
     tasks.update(task["id"], {"expected_updated_at": task["updated_at"],
                                "title": "Synthetic task changed after approval"})
     stale = client.get(f"/api/daily-brief?date={body['date']}&timezone=Asia%2FShanghai")
@@ -469,11 +488,8 @@ def test_http_manual_import_verifies_authoritative_task_then_get_rereads(tmp_pat
     assert stale.json()["items"] == []
 
     duplicate = client.post("/api/daily-brief", json=body, headers=headers)
-    assert duplicate.status_code == 200
-    assert duplicate.json() == {"status": "duplicate", "brief_id": response.json()["brief_id"],
-                                "date": body["date"], "timezone": "Asia/Shanghai",
-                                "record_version": response.json()["record_version"],
-                                "operation_id": response.json()["operation_id"]}
+    assert duplicate.status_code == 409
+    assert duplicate.json() == {"detail": "Daily Brief source changed"}
     changed = {**body, "summary": "Different approved text"}
     conflict = client.post("/api/daily-brief", json=changed, headers=headers)
     assert conflict.status_code == 409
@@ -483,6 +499,23 @@ def test_http_manual_import_verifies_authoritative_task_then_get_rereads(tmp_pat
     assert body["summary"] not in audit_text
     assert body["source_refs"][0]["id"] not in audit_text
     assert str(root) not in audit_text
+
+
+def test_http_manual_import_denied_source_permission_is_403_before_any_source_io(tmp_path):
+    client, body, _ref, root, audit_root, tasks, _task, _audit_store = make_http_client(
+        tmp_path, deny_actions={"task.read"})
+    reads = []
+    original_projection = tasks.list_for_projection
+    tasks.list_for_projection = lambda: reads.append("task") or original_projection()
+
+    denied = client.post("/api/daily-brief", json=body, headers={"Origin": "https://app.test"})
+    assert denied.status_code == 403
+    assert denied.headers["cache-control"] == "private, no-store"
+    assert denied.json() == {"detail": "Daily Brief source access denied"}
+    assert reads == []
+    assert not (root / f"{body['date']}.json").exists()
+    events = (audit_root / "daily-brief-audit.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(events[-1])["outcome"] == "rejected"
 
 
 def test_http_manual_import_rejects_auth_origin_schema_and_unsupported_import(tmp_path):

@@ -1,9 +1,112 @@
 # Progress Log
 
+## 2026-10-22 — Writer/Promote OS 安全准入与 Linux 隔离实验方案（Issue #96 PMO #6333663799）
+
+- **固定基线与审查输入：** 从 main `563a6fa8e4d6032a34536d879321738c20cf3c24` 的隔离 clone/branch 开始。读取项目 AGENTS、Agent-Rules、CURRENT、审计计划、Environment-Baseline 与 D067/D072/D073/D078/D086 相关边界，并引用 B #97 #6333624251。Environment-Baseline 最近记录为 2026-10-15；只作历史快照，不能当作当前运行事实。
+- **设计修订：** 更新 `Production-Readonly-Security-Audit-Plan.md`，提出独立 Core/Raw、Approval Authority、Writer identities；Authority-only Unix socket + `SO_PEERCRED`；Core/Hermes 无 Knowledge 写权限、Private 不挂载；单次授权 capability 与 exact-target create-only；禁止覆盖/删除/重命名；显式指出普通 POSIX 目录写权限不能单独实现 create-only，要求验证 Landlock 或等价内核策略，不支持即阻断；补充源版本竞态、幂等恢复、损坏状态保留及补偿回滚要求。
+- **授权包及 Linux 矩阵：** 生产审计要求精确 host/operator/window/container/path/commands/evidence allowlist，字段仍 UNKNOWN。Linux 后续实验只计划在全新 disposable、断网 VM + 临时盘 + synthetic roots 执行，覆盖 UID:GID/peer credentials/socket ACL、Core 直写拒绝、Writer create-only、撤权/版本竞态、崩溃恢复、日志与副作用；不挂载主机/生产数据，不使用容器 socket、Secret 或模型。`OS_ISOLATION_DESIGN=READY_FOR_REVIEW`，`PRODUCTION_READONLY_AUDIT=READY_FOR_TARGETED_AUTHORIZATION`，`LINUX_ISOLATION_TEST=PLAN_ONLY`。
+- **最小验证及边界：** 文档/引用/状态静态核对、`git diff --check`；无代码运行测试。未创建 VM/系统用户，不实际测 Linux 身份/socket/mount/ACL，不连接 NAS/生产，不读 Secrets/Private/业务数据，不修改 B 线文件或权限，不启用 Writer/Promote。
+- **未决项：** Authority 如何独立证明已认证用户确认需契约复审；真实生产目标/身份/挂载/ACL 与实验 runner/kernel/filesystem 都 UNKNOWN。该方案不能证明生产安全、也不授权生产审计或 Linux 实验。
+
+## 2026-10-22 — Hermes 离线合成角色隔离与生产审计授权包（Issue #96 PMO #6333466319）
+
+- **基线/范围：** 从 GitHub main `140bf90620a922ec6e855e3fae8853952fd65019` 创建隔离分支。只新增 D078 Guard 安全回归和审计计划文档修订，无 Core/运行逻辑变化。
+- **离线 Gate：** `HERMES_OFFLINE_ROLE_ISOLATION_GATE=PASS_WITH_LIMITS`。Fake Hermes `httpx.MockTransport` BFF 用例 3 passed：Session A/B citation 绑定、Knowledge 未授权与撤权先于引用/来源 I/O、无授权来源不生成引用；来源/consent binding 测试 29 passed；D078 Guard 单测 23 passed，新增两合成 Session 私有路径均 fail-closed 且拒绝 receipt/log 不含源 marker。全程临时 synthetic roots；未启动 Hermes 或使用网络、真实模型、凭据、业务数据。此证据只覆盖现有代码 seam，不证明生产 hook/容器 UID/真实 ACL。
+- **生产计划独立复核：** 发现前版授权表缺少精确命令、Docker 权限影响、输出留存和容器身份/target 未知时的明确停止规则；已补入 `Production-Readonly-Security-Audit-Plan.md`。命令限定 exact-container `docker inspect --format`、单路径 `stat`/可选 Synology ACL、逐个 exact secret target 的 `docker exec stat`；排除 `Config.Env`/env values、广泛 discovery、shell/wildcard/递归/读取 Secrets 正文。指出 Docker socket 风险、Private 内容边界、脱敏/本地安全存档和无写入回退。
+- **授权状态：** `PRODUCTION_READONLY_AUDIT_PLAN=READY_PLAN_ONLY`。host/IP、operator/权限、时间窗、当前 container ID/UID:GID、精确路径和 secret targets、证据位置均仍 `UNKNOWN`；未连接生产/NAS，未运行命令。实际审计需另行明确批准完整 allowlist。
+- **P0/P1 与最小测试：** 未发现新 P0/P1 或可复现 Core 缺陷；没有底层缺陷交 B。引用 PR #190 固定 HEAD `849ab4199affa2b2b4dcf88bec4e1efd47769b86` 上既有 Web 6 files/102 tests + typecheck/build/diff-check（PMO #6333466319），按 #6333522455 未重跑。仅跑本轮必要测试：Guard 23、BFF 3、source/consent binding 29；未跑 Core/Web 全量、浏览器、Vite/HTTP、build/typecheck（无相关运行代码/依赖修改）。
+- **安全与交付：** 没有真实数据、Writer/Promote、model、外网、NAS/Container/Secrets/ACL/mount 操作；无部署/合并/CI。Issue #96 为执行结果主记录；本候选含安全回归测试和计划实质修订，开 Draft PR 供独立复审。
+
+## 2026-10-22 — P0/P1 回归、Companion 与响应式检查（Issue #96 PMO #6333339018）
+
+- **固定输入与实现：** 从 main `4e51fd23d830db3b263271e7a61acda8433cd074` 创建隔离候选。Task 创建成功后按 open 状态显式读回；若旧筛选隐藏刚创建的 Task，则清除筛选并展示。Core 回执有效但列表 GET 失败时单独显示“创建已确认”和读回错误，避免将创建误报为失败。为这两个场景补回归测试。
+- **P0/P1 回归 Gate：** 六个 Web 定向测试文件（Task、Capture/Inbox/Review、Journal、Companion、Planning、Review）共 **102 passed**。覆盖 Capture 保存失败保留 Raw、重试后关联正确 Review；Journal 人工追加与读回失败；Task 过滤器隐藏、成功回执/失败读回拆分；Companion revision/retry 与跨 Chat Session 隔离。`P0_P1_REGRESSION_GATE=PASS_WITH_LIMITS`。没有修改 Core，未重跑未变化 Core 套件。
+- **响应式检查：** `MOBILE_RESPONSIVE_GATE=PASS_WITH_LIMITS`，依据现有 760px CSS 断点、Review 单栏布局/Task 单列布局及 jsdom 移动内部滚动回归。没有独立可切换视口的浏览器会话，Edge mobile screenshot/browser `MOBILE_BROWSER=NOT_RUN`；未安装浏览器，未声称设备验收。
+- **其他验证：** `npm run typecheck` PASS；`npm run build` PASS（现有 Canvas 大 chunk 警告）；`git diff --check` PASS。未触发 CI。
+- **生产只读审计准备：** 新增 `Production-Readonly-Security-Audit-Plan.md`，定义只读取经单独 allowlist 批准的主机/容器/UID:GID/挂载/目录 POSIX 与 ACL 元数据、Secrets 名称/存在性/权限，不读取值或业务内容、不递归、不写入、不提权绕过；含停止条件与零写入恢复说明。区分仓库历史记录和 UNKNOWN 的当前运行状态。单独提出离线 synthetic Hermes 角色隔离验证。`PRODUCTION_READONLY_AUDIT_PLAN=READY_PLAN_ONLY`；生产审计与 Hermes 测试 `NOT_RUN`，没有生产连接。
+- **安全与交付：** 未触碰真实 Task/Journal/Knowledge/Private/Session；未操作 NAS、Compose、UID/GID、ACL、mount、Secrets、Writer/Promote；未部署、合并或触发 CI。Draft PR 和固定 HEAD 在候选最终推送后回填；生产授权仍需另行明确。
+
+## 2026-10-22 — V1 P0/P1 连续任务 Capture→Inbox→Review 与关键入口（Issue #96 PMO #6332771271）
+
+- **固定输入与范围：** 从 main `3efef1939011fd755842602ef85b79d516dd7e48` 建隔离分支 `codex/v1-p0-p1-closeout-20261022`。仅 Web + 基线文档有改动；未改 Core。只用私有临时目录、合成账户/Task/Journal/Capture 内容与 Core Uvicorn + Vite 同源 localhost。
+- **Capture 正向路径：** Edge 实际登录并提交合成文本；Capture 返回成功并保留 `Capture-Inbox-Review.md`；Inbox 明确切至 Capture 范围后读回 `capture.md` 原文，再打开对应 Review，验证待审核状态、来源元数据与正文一致。当前页面仅有“暂缓”，Promote 为关闭状态；没有批准或写入 Knowledge，因此 `CAPTURE_REVIEW_POSITIVE_GATE=PASS_WITH_LIMITS`，`PROMOTE_BLOCKED_BY_DESIGN`。
+- **用户入口与合成业务：** Today 首页禁用“新建记录”改为“新建待办”导航到 Task 表单；创建前后 Core 回执核验 Task ID/title/due/status/source/timestamps，创建后分别读取 Task 列表，区分写成功和列表刷新失败。相同内容的模糊失败重试沿用同一 Idempotency-Key，内容变化生成新键。Edge 完成 Home→Task 创建→列表读回。Journal 页面用合成原文点击“追加原话”并读回成功；既有显式入口没有源码变更。Daily Brief `approved_import` 仍 501，手动入口已显示不支持说明。
+- **回归与测试：** 新增 Task 创建成功/读回、网络结果不确定时复用幂等键、首页入口导航测试；Daily Brief 增加 `approved_import` 未实现说明测试。Task/App 定向 Web 2 files/54 passed；Brief 定向 1 file/16 passed；Brief 改动后再次 Web 全量 38 files/422 passed；typecheck、build、diff-check PASS。Core Task/Capture/Inbox+Review 定向 44 passed、4 subtests；Core BFF/Auth 定向 32 passed。没有 Core 源码变化，未重跑未变化的 Core 全量。Build 保留现有 Canvas/Notes 大 chunk 提示。
+- **安全与 Gate：** 未认证 Core `/api/tasks` 返回 401，带 `Cache-Control: private, no-store`。桌面 Edge 1770px Journal DOM 无横向溢出；移动视口 `BLOCKED_ENV`。`P0_P1_ENTRY_GATE=PASS_WITH_LIMITS`；`V1_MUST_GATE=PASS_WITH_LIMITS`；`COMPANION_GATE=NOT_RUN`；`REAL_BROWSER_GATE=PASS_WITH_LIMITS`（桌面合成）；`PRODUCTION_SECURITY_GATE=BLOCKED_ENV`。真实模型、生产/NAS、真实 Vault/Private/用户内容、外部渠道、正式 Writer/Promote、用户验收均未执行。
+- **交付：** `00-CURRENT.md` 已更新 P0/P1 状态及旧 Capture 正向“NOT_RUN”缺口。Draft PR #189 已打开，最终固定 HEAD 以 PR head 和 Issue #96 最终回填为准。本轮不触发 CI；唯一 PR workflow 的 paths 只匹配该 workflow 文件；不合并、不部署。
+
+## 2026-10-22 — V1 可用性收口与 P0/P1 浏览器修复（Issue #96 PMO #6332253939）
+
+- **基线与范围：** 从 GitHub 最新 main `30976e87ca9f03940e2a4d9b13f684d7b93459f7` 建隔离 A 候选。仅使用私有临时目录、合成 Task/Project/Journal/Brief/App 凭据、本地 Uvicorn Core + Vite + Hermes stub；模型调用关闭。未触生产/NAS/真实 Vault/Private，未启 Writer/Promote，未合并或部署。
+- **矩阵与门禁：** 更新 `00-CURRENT.md` 现有 V1 MUST 和 D077 Companion 矩阵，采用 `IMPLEMENTED / SYNTHETIC_PASS / BLOCKED_ENV / NOT_RUN / NOT_DONE`，按 P0→P1→P2/P3 排列。报告 `V1_MUST_GATE=PASS_WITH_LIMITS`、`COMPANION_GATE=PASS_WITH_LIMITS`、`REAL_BROWSER_GATE=PASS_WITH_LIMITS`（Edge 桌面合成；iPad/Mobile 视口工具阻断）、`PRODUCTION_SECURITY_GATE=BLOCKED_ENV`。
+- **普通缺陷修复：** Core Planning 创建回执现在与 preview step DTO 一致（`decision=pending`, `execution_status=not_started`），消除有效创建被 Web 拒绝；Companion Preferences UI 按 Core 的 `settings` 嵌套成功回执验证并安全恢复状态，防止 Today 面板启用后崩溃；Journal 页面同时匹配裸 entry ID 与 date-qualified 来源 ID，Brief 回跳后正确高亮原 Journal 条目。三项均新增回归测试。
+- **真实 Edge 桌面浏览器（localhost 合成）：** 登录、Inbox/Review 中性空态、Chat 合成 Session、Knowledge 可信空态、Projects、Today/Calendar、Daily Brief、Journal 路由可见。实际完成 Brief 手工来源选择→保存→回读，Task/Project/Journal 引用回跳；Planning 从 Task/Project/Journal 元数据创建、逐项批准、每项独立 `effect=none` 合成执行、刷新恢复和跨 Session 隔离；Companion 仅用户显式启用/计算，反馈仅记录。Journal 引用命中高亮修复在重启后的最新 Edge 页面复验通过。当前浏览器视口 1770×1150，文档宽度相同，无横向溢出；无法用当前 Edge automation 改变视口，平板/手机 `BLOCKED_ENV`。
+- **合成安全 Gate：** 在固定候选树运行 `web-app/e2e/scripts/p3_consolidated_vite_gate.py`，`P3_1_5_HTTP=PASS_WITH_LIMITS`；真实 `create_app()` + Uvicorn 经 Vite 同源代理，纯临时合成数据。覆盖 session 不匹配、权限撤销先于来源读取、CAS 单胜者/幂等重放与冲突、来源版本漂移、显式拒绝/取消/重复动作、业务来源字节不变、response no-store、敏感正文/本地路径不外泄、重启后状态回读及 `effect=none`。
+- **测试证据：** Core 全量 `PYTHONPATH=. /private/tmp/secondbrain-p2-1-venv/bin/python -m pytest -q` → 510 passed、26 warnings、28 subtests；Web 全量 `npm test` → 38 files / 419 tests；`npm run typecheck`、`npm run build`、`git diff --check` PASS。Web build 保留既有 Canvas 2.3 MB / Notes 532 KB chunk 提示；此前锁依赖时报告 4 项 low/moderate advisories，未改依赖。
+- **BLOCKED_REQUIRES_AUTHORIZATION：** 真实 Hermes 角色隔离、Writer OS UID/GID/ACL/mount/peer、Raw admission、Private、生产 Compose、真实 Vault/个人 Session、微信/飞书、付费/外部模型及任何外发或正式 Writer/Promote。最小后续包建议限于指定运行环境/路径与身份的只读核验，不读正文、不写业务数据，明确停止/回退条件；外发或模型测试另列数据范围/成本并另授权。本轮未执行授权门外操作。
+- **未验收与下一授权门：** Capture/Raw→Review 正向完整浏览器路径、真实模型回答 grounding、真实记忆学习、平板/手机视口、生产 UID/GID/ACL/mount/peer、Private、Writer/Promote、NAS/Compose、真实 Vault/用户内容、外部渠道/付费模型均未本轮执行；相关项仍为 `NOT_RUN`、`NOT_DONE` 或 `BLOCKED_ENV`。完成情况与最终固定 SHA 由对应 Draft PR 及 Issue #96 交接记录提供；不把本地 synthetic pass 表述为生产或用户验收。
+
+## 2026-10-22 — Stage 2 #181 收口与 Stage 3 P3-1～P3-5 累计 Web 联合 Gate
+
+- **Stage 2 收口：** PR #181 固定 HEAD `7cf9ac10ce67efdcce779c71fb8c29fb81b519a4` 获 PMO 最终源码/Gate `PASS_WITH_LIMITS` 与 `MERGE_READY_FOR_APPROVAL`（#181 review #5608840413）；随后 GitHub 于 2026-10-22 03:26 UTC 合并到 main `aff7d9efdf758e0e957f30bf9749bd7b95a054fa`。该合并在 A 执行阶段三期间由 GitHub 状态确认，A 未执行合并。
+- **Stage 3 固定输入与 Core 修复：** 起始 main `57d0d3d94f92d235dd8c0c088bb1561cde76f3ae`；#181 合并后更新到 `aff7d9efdf758e0e957f30bf9749bd7b95a054fa`，并将整个 P3 累计候选重放到该最新 main；候选中累计 Core HEAD `574da42803e0681d95095f48ec97bb2ce1660fc7`。累计 Core #182 `17c76b7652b06bc9de18ba5d92c3ed1ca3340b85` → #183 `ef82e36e2047321a5088cb79896702281b74e766` → #184 `a722988bf9b9061b2209fe325b485d29f5a02f3f` → #185 `c3c755cd792bdbad43ab11955ec1fdcf4586f7ac` → #186 `128a45548c2315e478329011a84b0112f8b219df`。A 独立复审发现：合法 calendar_window 不得允许空 source_refs；非字符串 kind、decision、command、rating 必须 HTTP 400 而非未处理异常。B 将修复放在 #182 并顺序重放堆叠；更新固定 SHA：#182 `fd940daa535db0dd18935337c865e771e2d64f9c` → #183 `c02fbb5413232088a26b69cc174f2b0e09ec6145` → #184 `0e65b5c2fe278e11357586b2f387792df05629f5` → #185 `c290976762e629009ad4a3bd09ccc966b2cb308f` → #186 `d21cf6297754520ddbc10e10e08fdf4e599cff17`。B 报告定向 Core HTTP 测试 11 passed；A 在最终堆叠树重跑 `pytest -q tests/test_planning.py tests/test_app_auth_action_registry.py` 得 **11 passed，1 条 Starlette/httpx deprecation warning**。
+- **A Web 候选：** 从更新后的 #186 累计固定树开展并重放到 #181 合并后的 main；Chat UI commit `2633c37efb597716b0311539728f46ee9a1cc4b4`，Gate 修订 commit `1137681d690dbbe998f10d64c4924663c7042e34`，最终文档另行提交。新增 Chat 显式计划面板：用户加载并选择 Task/Project/Journal metadata refs（不读取 Journal 正文）、可选有界 Calendar window；Core 再核验版本。支持 Session-scoped 恢复、逐步 approve/reject、独立 synthetic `effect=none` execute、pause/resume/cancel/retry-ready、只读 retrospective/feedback。验证响应 event/session/revision/身份/来源格式，按精确操作 payload/session 保存幂等键；模糊失败复用原 key，已成功回执与后续列表刷新错误分开呈现。来源刷新会清除过期候选选择。
+- **Web 验证：** `npm test` → **38 test files / 417 tests passed**；`npm run typecheck` PASS；`npm run build` PASS（既有 Canvas/Notes chunk-size 提示）。新增 4 个 PlanningPanel DOM regression tests，覆盖显式来源读取、来源选择创建、Session 隔离、Core 确认与合成执行、模糊网络失败重试同 key、UTF-8 500-byte 目标和跨月 Calendar 拒绝。
+- **同源联合 Gate：** 在 Core cwd 执行 `PYTHONPATH=. /private/tmp/secondbrain-p2-1-venv/bin/python ../e2e/scripts/p3_consolidated_vite_gate.py` → `P3_1_5_HTTP=PASS_WITH_LIMITS`。脚本实际启动 `create_app()`/Uvicorn 与 Vite 同源 `/api` proxy，只使用 0700 临时 roots/合成 App 凭据；验证 Task/Project/Journal metadata、Journal 正文不出线、候选/复盘/反馈 exact replay 与冲突、Session mismatch 404、权限撤销先于来源读取、批准与每步 effect=none 合成执行、pause/resume/cancel、注入执行失败后显式 retry_ready 再恢复、并发 CAS 只有一个成功、来源漂移拒绝、业务来源文件在计划操作后字节不变、Core 重建后状态/反馈回读与 no-store。
+- Core 在最新 `aff7d9e` 累计候选重跑全量 `pytest -q` → **510 passed, 26 warnings, 28 subtests passed**；warnings 为 Starlette/httpx 及既有 Notes TestClient cookie deprecation。`git diff --check` PASS。安装锁定前端依赖时 npm 输出 4 项 low/moderate advisories；没有修改依赖。前端 build warning 与主线现有大型 Canvas/Notes bundle 同类。
+- **分层结果：** 源码与 Core 全量 510 项、Web 全量 417 项测试 PASS；真实 Uvicorn+Vite localhost synthetic HTTP PASS_WITH_LIMITS。真实浏览器点击、模型、生产、真实数据、用户验收 NOT RUN；`MODEL_CONTEXT_ADMISSION=BLOCKED`。所有 P3 PR 及 A 候选保持 Draft；无合并、部署、CI/Actions、Writer/Promote。
+- A 候选已在重放到最新 main 后重新运行 Core/Web 全量及同源 Gate；最终 PR fixed HEAD 由 GitHub readback 与 Issue #96/#97 收口评论记录。P3 等待 PMO 独立复审；任何合并须另有明确授权。
+
+
+## 2026-10-22 — PR #181 Companion Feedback revision 合同修复
+
+- 按 Issue #96 PMO 评论 #6331548178 修复跨层缺陷：Core 的 suggestion 公共 DTO 现返回每条建议的正整数 `revision`；重复 evaluate 再次发布仍有效候选时递增该候选 revision，使旧 UI 的反馈 CAS 明确得到 409。Web 严格校验候选 revision、用服务端 revision 提交反馈、校验回执，并在 revision 冲突后重读当前列表并显示提示。
+- Web 反馈在网络/服务端模糊失败后保留同一 payload 的幂等键，重试原操作使用相同 key；成功回执校验通过后才从 UI 移除候选。
+- 回归证据：`PYTHONPATH=web-app/secondbrain-core /private/tmp/secondbrain-p2-1-venv/bin/python -m pytest -q web-app/secondbrain-core/tests/test_companion_suggestions.py` → 5 passed；覆盖真实 localhost Uvicorn HTTP、首发 revision=1、再 evaluate revision=2、revision=1 stale 409、revision=2 成功、原回执精确重放、改 payload 冲突以及来源漂移失效。Web 组件定向 `npm test -- --run src/CompanionSuggestionsPanel.test.tsx` → 2 passed，覆盖 revision=3 提交、503 后相同幂等键/请求体重试、409 刷新。
+- 完整同源 HTTP 合成 Gate：`PYTHONPATH=/private/tmp/p2-2-3-ab-gate-20261022/web-app/secondbrain-core /private/tmp/secondbrain-p2-1-venv/bin/python /private/tmp/p2-2-3-ab-gate-20261022/web-app/e2e/scripts/p2_4_5_vite_gate.py` → P2-4 既有检查通过；P2-5 observed re-evaluate revision=2、stale feedback=409、当前 revision feedback=200、exact replay=True、changed replay=409、来源完成后隐藏、disable 后 empty、no-store 且 GET 未创建 `.tasks.lock`。纯合成临时根，无真实数据/模型/Writer/Promote。
+- `npm run typecheck` PASS；`npm run build` PASS（保留既有 Canvas/Notes 大 chunk 提示）；`git diff --check` PASS。仅运行受影响 Core/Web 定向测试与完整既有 localhost 集成 Gate，未重跑无关全量套件。
+- 当前候选 PR #181 保持 Draft；本条记录中的新固定 HEAD 以修复提交为准，等待 PMO 对新 SHA 独立复审。未合并、未部署、未访问真实数据、未触发 CI。
+
+## 2026-10-22 — P2-4/P2-5 最终联合 Gate（Issue #96/#97）
+
+- 从 main `57d0d3d94f92d235dd8c0c088bb1561cde76f3ae`（#178 merge）建立隔离分支。核对 #179 `ecb4b18b26e467643b7f0b2ef0d69e036796c5ff` 的历史累计依赖后，只移植净 P2-4；核对 #180 `d16773d61edbbc41a115f2c826eee84ee3832902` 后移植到当前 main，`app.py` 路由注册冲突同时保留 Context Preview 与 Companion Suggestions。未改写 #175/#179/#180 原分支。
+- 独立审查发现并修复：相同幂等请求应回放完全一致的原回执；Companion Suggestions 读取 Task 投影不得创建 `.tasks.lock`；P2-4 Grounding Candidates 在响应前二次校验 source version 并剔除漂移项。Today 增加用户显式展开的 Companion 设置/立即计算/反馈入口；未自动读取建议、未触发 Run 或副作用写入。
+- 本轮发现的额外 Web 缺口：P2-4 的 Grounding Candidates API 原先没有交互 UI；已在 Chat 增加用户点击触发的只读面板，严格验证 event/session/schema/SHA/no-store，并明确 `answer_attribution=not_established`。P2-5 的 Today 建议面板仅在用户展开时读取，只在点击“立即计算”时 evaluate；反馈使用正确的建议 revision，失败时清掉旧建议，设置重试只对相同 payload 复用幂等键。
+- 联合 HTTP 命令（cwd Core）：`PYTHONPATH=/private/tmp/p2-2-3-ab-gate-20261022/web-app/secondbrain-core /private/tmp/secondbrain-p2-1-venv/bin/python /private/tmp/p2-2-3-ab-gate-20261022/web-app/e2e/scripts/p2_4_5_vite_gate.py`。真实 `create_app()` + Uvicorn，经 Vite 同源 `/api` 代理，纯合成临时根；P2-4 observed: login 200、unauth 401、available 200/no-store、no match 200、source drift 200/partial、session mismatch 404、permission revoke 403；响应不含 source text/path。P2-5 observed: default off、evaluate disabled、preference save 200、GET 200 且无 `.tasks.lock`、explicit evaluate 200、feedback 200 + exact replay equality、changed replay 409、Task completion 后建议隐藏、disable 200 后 GET empty 200。Hermes Run 未调用。
+- **Gate：** `P2_4_CORE_HTTP_GATE=PASS_WITH_LIMITS`、`P2_4_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`；`P2_5_CORE_HTTP_GATE=PASS_WITH_LIMITS`、`P2_5_AB_SYNTHETIC_GATE=PASS_WITH_LIMITS`。Web DOM/contract 定向 4 files / 23 tests passed，覆盖显式展开/计算、准确请求体、会话/查询变化清除及严格响应验证；typecheck/build/diff-check PASS。Core 全量 501 passed + 28 subtests 为无变化 Core HEAD 的既有验证；Web 全量 34 files / 407 tests 是改动前基线，不重复运行。Build 保留既有 Notes/Canvas 大 chunk 警告。
+- 分层结论：CODE、Uvicorn+Vite 同源合成 HTTP、Web DOM 测试 PASS_WITH_LIMITS；真实浏览器点击 `NOT RUN`（DOM 并非真实浏览器）、模型 `NOT RUN`、生产与用户验收 `NOT RUN`；`MODEL_CONTEXT_ADMISSION=BLOCKED`。未合并、部署、访问真实数据或触发 CI。
+- 候选 PR [#181](https://github.com/zxwan829/SecondBrain/pull/181) 保持 Draft；从 #178 main 开始。最终固定 HEAD 以本条后续 docs-only 修订提交为准。联合 Gate 已完成，净新增代码等待 PMO 对最终 SHA 独立复审和合并裁定；不转 Ready、不合并、不部署。
+
 > 本文件按时间保存阶段证据。每条“当前/尚未/未部署”只代表该条记录日期的状态，不覆盖后续结果；最新项目状态只看 `00-CURRENT.md`，最新有据可查的生产快照看 `Environment-Baseline.md`。
 >
 > 排序：最新记录在前，历史记录在后；具体写入规则以 `Agent-Rules.md` 为准。
 
+
+## 2026-10-22 — P2-1/P2-2/P2-3 集中合并准备候选
+
+- 按 Issue #96 评论 #6330661993，在 main `df9971bc1aeecc83ed6bd3c10aed2e1dd1eb8a0a` 上汇总固定 PR 输入：Core #173 `535d8f934f7e922ada7e5542dfd84bb391f4a2c0` → Web #174 `e868c35d2196a13663969be2d32c03a7813ccb1a` → Core #177 `ce38826fd469eef11f2894f04bb4fe918797503e` → Core #175 `5c22ee664ca9573b036f30f34669d237ecebef43` → Web #176 `368f10c8e5ebd0bfcf5bfc376e747017b657a5e1`。来源 PR 全部保持 OPEN/Draft。
+- #175/#177 对 `personal_memory.py` 的重叠由单一集成结果化解：保留 8 MiB 实际读取上限和读取前后 dev/inode/size/mtime/ctime 稳定性校验，同时保留跨进程锁、revision CAS、幂等回放及冲突拒绝。联合文件测试覆盖全部对应行为；没有把局部解决方案写回 B 的原分支。
+- 固定候选上 Core `/private/tmp/secondbrain-p2-1-venv/bin/python -m pytest -q tests/test_context_preview.py tests/test_personal_memory.py tests/test_personal_learning.py`：43 passed。Web 四个 Context/Citation/Personal Memory 文件：35 passed；`npm run typecheck`、`npm run build`、`git diff --check` 通过。Build 保留既有 Canvas 大 chunk 警告。先前 B/A 独立全量测试不重复运行。
+- 本地 main+候选 merge-tree 无冲突；仅 Core `personal_learning.py` 和 `personal_memory.py` 有预期重叠，审查后共同结果通过定向套件。五个源 PR 的 Actions 查询均无 pull-request workflow run；本候选仅改应用和基线文档，工作流触发路径过滤为 workflow 文件，未手动触发 CI。GitHub branch protection/rulesets API 对私有仓库返回 403，保护规则状态 UNKNOWN。
+- 证据分类：CODE / 本机定向自动化 PASS；HTTP SYNTHETIC 沿用双 Gate #96 #6330632680 的证据；REAL_BROWSER NOT RUN；REAL_MODEL NOT RUN，`MODEL_CONTEXT_ADMISSION=BLOCKED`；PRODUCTION / USER_ACCEPTANCE NOT RUN。候选仍需独立审阅；不把源码准备写成已合并、部署或模型实际使用记忆。
+- NEXT：审查集中 Draft 候选与 #96 的 `MERGE_READY`/`MERGE_BLOCKED` 报告；保留原 PR/Draft，等 PMO 后续裁定合并拓扑与审批。不得合并 main 或部署。
+
+
+## 2026-10-22 — P2-1 A Web Context Preview READY
+
+- 基于文档收口后的 main `df9971bc1aeecc83ed6bd3c10aed2e1dd1eb8a0a`，A Draft PR #174 固定应用提交 `cf7f06f79d7eff409288157127649f75268cf0e9`，状态标记 `A_P2_1_WEB_READY`；结果见 [#96 #6324063852](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6324063852) / [#97 #6324066362](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6324066362)。
+- Chat 显式调用 Context v1 metadata preview；只提交 `{query}`，严格检查 session/schema、来源类型、条数与 8 KiB 上限及 `private, no-store`。仅展示 opaque ID、类型、版本、SHA、时间与状态。输入/会话切换时清除并取消旧请求，403 与无效响应 fail closed；不把来源正文或元数据送入 Hermes，也不声称 grounding。
+- Web 全量 32 files / 397 tests、定向 2 files / 25 tests、typecheck、build、diff-check 通过。合成 Mock/DOM 验证不代表 Core+Web localhost、真实浏览器、数据、Hermes/模型、生产或用户验收。Vite build 保留大 chunk 体积警告。
+- B PR #173 的固定 HEAD `f7a50fb5e70db2cc513258e3059fb726eed7ad30` 与测试数量记录在 PR 描述；截至本条更新，#97 尚无 `B_P2_1_CONTEXT_READY`，联合合成 Gate 未运行。下一步是双 READY 后由 A 做一次联合 Gate；`MODEL_CONTEXT_ADMISSION=BLOCKED`。
+
+## 2026-10-22 — 阶段一六部分收口，进入 P2-1 Web（Issue #96/#97）
+
+- 按 Issue #96 V2 的明确授权，以 GitHub 普通 merge 顺序合并阶段一第 6 部分：Core PR #171 固定 HEAD `dcb252060d1067ad322837085648942097c4b1a5` → main merge `2abdf4b25420a2efea3088448238cfc4d48af9d8`；Web PR #170 固定 HEAD `c778ae6932ae8ccb091afeb6e82aa2d065aa6855` → main merge `b590c15d81a3a1822304c955c788bfa4c912fea1`。#170 更新前的 A Web 审阅 HEAD 为 `ad54e081d4865307e7d6c9ef2ad08f903d8e6949`；Core merge 是历史父提交。两次 merge 均以 GitHub expected head SHA 锁定，未 force。PR #171 首次请求因 Draft 返回 405；转 Ready 后使用同一 SHA 合并。#170 在 main 前进后 mergeability 短暂为 false，重新读取为 true，且本地 merge-tree 无冲突后按固定 HEAD 合并。GitHub 私有仓库 branch-protection 查询返回套餐限制 403；未绕过规则，最终 GitHub merge API 正常接受两项合并。
+- 阶段一六部分盘点见 `00-CURRENT.md` 顶部。现有 #96/#97 阶段账本没有找到第 1–2 部分独立编号 Gate，因此没有追认通过；第 3 部分为 `STAGE1_PART3_SYNTHETIC_GATE=PASS_WITH_LIMITS` 且无新增源码 PR；第 4 部分 #165/#166 已合并，语义仅为可信 Knowledge“检索参考”，不证明模型 grounding；第 5 部分 #167/#168 已合并，Brief 仍是手工内容闭环；第 6 部分 #171/#170 合成 Gate `PASS_WITH_LIMITS`。
+- 阶段六固定版本合成证据记录于 [#96 #6323445544](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323445544)，独立源码复审见 [#96 #6323490860](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323490860)。候选运行：Core+Vite localhost HTTP PASS；Core 定向 28 passed、4 subtests；Web 定向 10 passed；Web typecheck/build/diff-check PASS。未变化的全量套件未重跑；真实浏览器仍 `BROWSER_BLOCKED_ENV/NOT RUN`。
+- 实际开放缺口：V1 与 D077 Companion MVP 仍 `NOT DONE`；#130 D086 Chat→Inbox 已 merged（`1954f88d1546c3c802c82a97a708aff7c32461f7`）；#164 Today Task 创建仍 Draft/Open。#106 Restricted Writer 的生产独立 OS UID/GID/ACL/mount/peer 准入保持 BLOCKED；#151 Raw 合成 admission 的同 UID namespace/commit 时间窗风险使生产信任边界仍 BLOCKED。真实 Hermes 低信任上下文/grounding、真实数据、浏览器/设备用户验收、部署均未完成。
+- 更新 CURRENT 与本条 Progress Log 的治理文档 PR 单独提交；仅修改以上两个基线文档，不混入应用源码或长期治理规则。纯文档改动运行 `git diff --check`，不重跑应用测试。文档 PR merge 后的实际 merge commit 和最终 main 记在 Issue #96 本任务结论。
+- **NEXT：阶段二 P2-1 Web。** B 已在 [#97 #6323865325](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6323865325) 冻结 Context v1，并在 [#96 #6323867891](https://github.com/zxwan829/SecondBrain/issues/96#issuecomment-6323867891) 同步。A 可立即按 `POST /api/chat/sessions/{session_id}/context-preview` 开发 metadata-only UI；每次按当前 Session 重新请求，依合同处理撤权、漂移、预算与失败，不缓存、不把内容/metadata 发送给 Hermes。`MODEL_CONTEXT_ADMISSION=BLOCKED`；Web 必须区别检索到来源元数据与模型真正使用来源回答，不标 grounded。不得把源码/合成状态写成生产或真实用户验收。
 
 ## 2026-10-20 — D089 #128 合并与治理基线追平
 

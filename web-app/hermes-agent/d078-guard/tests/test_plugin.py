@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import logging
 import sys
 import tempfile
 import types
@@ -55,6 +56,35 @@ class D078PluginTests(unittest.TestCase):
             "path": str(self.home / "MEMORY.md")}, hermes_home=self.home))
         self.assertIn("hermes_private_path", plugin.path_guard("read_file", {
             "path": str(self.home / "Sessions/synthetic.jsonl")}, hermes_home=self.home))
+
+    def test_denied_cross_session_reads_do_not_echo_source_markers_to_receipts_or_logs(self):
+        marker = "SYNTHETIC_SESSION_SECRET_6c41d2"
+        paths = (
+            self.home / "sessions" / f"synthetic-session-a-{marker}.jsonl",
+            self.home / "sessions" / f"synthetic-session-b-{marker}.jsonl",
+        )
+        captured = []
+
+        class CaptureHandler(logging.Handler):
+            def emit(self, record):
+                captured.append(record.getMessage())
+
+        handler = CaptureHandler()
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+        try:
+            with patch.object(plugin, "_hermes_homes", return_value=[self.home]):
+                results = [plugin.pre_tool_call("read_file", {"path": str(path)}) for path in paths]
+        finally:
+            root_logger.removeHandler(handler)
+
+        self.assertEqual([result["action"] for result in results], ["block", "block"])
+        for result in results:
+            self.assertIn("hermes_private_path", result["message"])
+            self.assertNotIn(marker, result["message"])
+            self.assertTrue(all(str(path) not in result["message"] for path in paths))
+        self.assertTrue(all(marker not in line for line in captured))
+        self.assertTrue(all(str(path) not in line for line in captured for path in paths))
 
     def test_symlink_and_relative_traversal_cannot_reach_sessions(self):
         link = self.home / "skills" / "session-link"

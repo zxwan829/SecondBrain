@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { CompanionSuggestionsPanel } from './CompanionSuggestionsPanel';
 
 type Task = {
   id: string; title: string; due_date: string | null; status: 'open' | 'completed';
@@ -37,8 +38,10 @@ function clearPendingCreate(key: string) {
 
 export function TaskPage({ locale }: { locale: Locale }) {
   const en = locale === 'en';
+  const requestedTaskId = new URLSearchParams(window.location.search).get('task_id');
+  const targetTaskId = requestedTaskId && /^[0-9a-f]{32}$/i.test(requestedTaskId) ? requestedTaskId.toLowerCase() : null;
   const [initialAttempt] = useState(readPendingCreate);
-  const [status, setStatus] = useState<'open' | 'completed' | 'all'>('open');
+  const [status, setStatus] = useState<'open' | 'completed' | 'all'>(targetTaskId ? 'all' : 'open');
   const [dueDate, setDueDate] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,6 +54,7 @@ export function TaskPage({ locale }: { locale: Locale }) {
   const [restoredAttempt, setRestoredAttempt] = useState(Boolean(initialAttempt));
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const createAttempt = useRef<TaskCreateAttempt | null>(initialAttempt);
   const createInFlight = useRef(false);
   const mounted = useRef(false);
@@ -156,13 +160,12 @@ export function TaskPage({ locale }: { locale: Locale }) {
     setLoading(false);
     const requestLifecycle = lifecycle.current;
     const isCurrent = () => mounted.current && lifecycle.current === requestLifecycle && createAttempt.current?.key === key;
-    const originalCommand = `添加待办：${title}${dueDateValue ? `；截止：${dueDateValue}` : ''}`;
     setCreating(true); setError(''); setNotice('');
     try {
       const response = await fetch('/api/tasks', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
-        body: JSON.stringify({ title, due_date: dueDateValue, original_command: originalCommand }),
+        body: JSON.stringify({ title, due_date: dueDateValue, original_command: 'Task page explicit create' }),
       });
       const body = await response.json().catch(() => ({})) as { detail?: string; status?: string; task?: Task };
       if (response.status === 401) { window.location.reload(); return; }
@@ -175,7 +178,8 @@ export function TaskPage({ locale }: { locale: Locale }) {
       }
       if ((body.status !== 'created' && body.status !== 'duplicate')
         || !body.task || typeof body.task.id !== 'string' || !/^[0-9a-f]{32}$/.test(body.task.id)
-        || body.task.title !== title || body.task.due_date !== dueDateValue || body.task.status !== 'open') {
+        || body.task.title !== title || body.task.due_date !== dueDateValue || body.task.status !== 'open'
+        || body.task.source !== 'web_app_explicit_task' || !body.task.created_at || !body.task.updated_at) {
         throw new Error(en ? 'The save response could not be verified. Your task is still here; retry safely.' : '无法核实保存回执，内容仍保留；可安全重试。');
       }
       const savedTask = body.task;
@@ -212,6 +216,8 @@ export function TaskPage({ locale }: { locale: Locale }) {
   };
 
   return <div className="task-page">
+    <button type="button" className="capture-secondary" onClick={() => setShowSuggestions((value) => !value)}>{en ? 'Suggestions' : '主动建议'}</button>
+    {showSuggestions && <CompanionSuggestionsPanel locale={locale} />}
     <header className="module-header"><div><p className="eyebrow">SECONDBRAIN / TODAY</p><h1>{en ? 'Today & Tasks' : '今日与待办'}</h1><p className="workspace-subtitle">{en ? 'Manage persisted tasks here or create one from Chat. Reminders are not enabled.' : '可直接管理待办，也可从 Chat 创建；提醒通知尚未实现。'}</p></div>
       <div className="task-header-actions"><button type="button" className="capture-primary" disabled={creating || Boolean(savingId)} onClick={() => { if (createOpen) cancelCreate(); else { setCreateOpen(true); setError(''); } }}>{createOpen ? (en ? 'Close form' : '收起') : (en ? 'New task' : '新建待办')}</button><button type="button" className="capture-secondary" disabled={loading || creating || Boolean(savingId)} onClick={() => void load()}>{loading ? (en ? 'Loading…' : '读取中…') : (en ? 'Refresh' : '刷新')}</button></div></header>
     <section className="task-panel" aria-labelledby="task-list-heading">
@@ -223,7 +229,8 @@ export function TaskPage({ locale }: { locale: Locale }) {
         <label>{en ? 'Due date (optional)' : '截止日期（可选）'}<input aria-label={en ? 'New task due date' : '新待办截止日期'} type="date" disabled={creating} value={newDueDate} onChange={(event) => setNewDueDate(event.target.value)} /></label>
         <div className="task-actions"><button type="submit" className="capture-primary" disabled={creating || !newTitle.trim()}>{creating ? (en ? 'Creating…' : '创建中…') : (en ? 'Create task' : '创建待办')}</button><button type="button" className="capture-secondary" disabled={creating} onClick={cancelCreate}>{en ? 'Cancel' : '取消'}</button></div>
       </form>}
-      {loading ? <p role="status">{en ? 'Loading tasks…' : '正在读取待办…'}</p> : tasks.length === 0 ? <p className="task-empty">{en ? 'No tasks in this view.' : '此视图中暂无待办。'}</p> : <ol className="task-list">{tasks.map((task) => <li className={`task-item ${task.status}`} key={task.id}>
+      {loading ? <p role="status">{en ? 'Loading tasks…' : '正在读取待办…'}</p> : tasks.length === 0 ? <p className="task-empty">{en ? 'No tasks in this view.' : '此视图中暂无待办。'}</p> : <ol className="task-list">{tasks.map((task) => <li id={task.id === targetTaskId ? `task-${task.id}` : undefined} className={`task-item ${task.status}${task.id === targetTaskId ? ' is-brief-source' : ''}`} key={task.id}>
+        {task.id === targetTaskId && <p role="status">{en ? 'Referenced by this Daily Brief.' : '此待办被每日简报引用。'}</p>}
         {editing?.id === task.id ? <div className="task-edit-form"><label>{en ? 'Title' : '标题'}<input value={editing.title} maxLength={4000} onChange={(event) => setEditing({ ...editing, title: event.target.value })} /></label><label>{en ? 'Due date' : '截止日期'}<input aria-label={en ? 'Edit due date' : '编辑截止日期'} type="date" value={editing.due_date} onChange={(event) => setEditing({ ...editing, due_date: event.target.value })} /></label><div className="task-actions"><button type="button" className="capture-primary" disabled={Boolean(savingId) || !editing.title.trim()} onClick={() => void update(task, { title: editing.title, due_date: editing.due_date || null })}>{savingId === task.id ? (en ? 'Saving…' : '保存中…') : (en ? 'Save' : '保存')}</button><button type="button" className="capture-secondary" onClick={() => setEditing(null)}>{en ? 'Cancel' : '取消'}</button></div></div>
           : <><div className="task-main"><div><h3>{task.title}</h3><p>{task.due_date ? `${en ? 'Due' : '截止'} ${task.due_date}` : (en ? 'No due date' : '未设截止日期')} · {en ? 'Updated' : '更新于'} {new Date(task.updated_at).toLocaleString(en ? 'en-US' : 'zh-CN')}</p></div><span className={`capture-status ${task.status === 'completed' ? 'status-completed' : ''}`}>{task.status === 'completed' ? (en ? 'Completed' : '已完成') : (en ? 'Open' : '未完成')}</span></div>
             <div className="task-actions"><button type="button" className="capture-secondary" disabled={Boolean(savingId) || creating} onClick={() => { if (!createInFlight.current) setEditing({ id: task.id, title: task.title, due_date: task.due_date ?? '' }); }}>{en ? 'Edit' : '编辑'}</button><button type="button" className="capture-secondary" disabled={Boolean(savingId) || creating} onClick={() => void update(task, { status: task.status === 'open' ? 'completed' : 'open' })}>{task.status === 'open' ? (en ? 'Complete' : '标记完成') : (en ? 'Reopen' : '恢复未完成')}</button></div>

@@ -22,6 +22,8 @@ import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLa
 import { isExplicitJournalIntent } from './journal-intent';
 import { parseExplicitTaskCommand } from './task-intent';
 import { activityTimeLabel, mergeChatTimeline, type ChatActivity, type ChatHistoryMessage } from './chat-activity';
+import { citationErrorBundle, parseKnowledgeCitationBundle, readCitationRunLocators, rememberCitationRun,
+  type CitationRunLocator, type KnowledgeCitationBundle } from './chat-knowledge-citations';
 import { V1ReadOnlyPage } from './V1ReadOnlyPages';
 import { V1BriefHealthPage } from './V1BriefHealthPages';
 import { CalendarPage } from './CalendarPage';
@@ -30,6 +32,12 @@ import { journalInboxAttemptKey, journalInboxFailureLabel, journalInboxReceiptKe
   parseJournalInboxPostReceipt, parseJournalInboxReceipt,
   type JournalInboxAttempt, type JournalInboxReceipt } from './chat-inbox';
 import { inboxEntryErrorLabel, inboxEntryStatusLabel, parseVerifiedInboxEntry } from './inbox-entry';
+import { ChatKnowledgeCitations } from './ChatKnowledgeCitations';
+import { ChatContextPreview, ChatNaturalCandidates } from './ChatContextPreview';
+import { ChatGroundingCandidates } from './ChatGroundingCandidates';
+import { fetchContextCandidates, fetchContextPreview, type ContextPreview } from './chat-context-preview';
+import { PersonalMemoryPage } from './PersonalMemoryPage';
+import { PlanningPanel } from './PlanningPanel';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -151,11 +159,11 @@ const messages = {
   'zh-CN': {
     brand: 'SecondBrain', workspace: '你的工作台', subtitle: '一眼掌握当前状态，专注今日最重要的事情',
     home: '首页', chat: '对话', today: '今日', calendar: '日历', inbox: '收件箱', review: '待审核', projects: '项目',
-    knowledge: '知识库', brief: '简报', agentHealth: 'Agent 状态', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', settings: '设置',
+    knowledge: '知识库', brief: '简报', agentHealth: 'Agent 状态', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', memory: '个人记忆', settings: '设置',
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
-    emptyTitle: '暂无今日记录', emptyDescription: '你可以记录日程，想法或待办事项', create: '新建记录',
+    emptyTitle: '暂无今日记录', emptyDescription: '可以先添加待办，日程功能尚未接入。', create: '新建待办',
     empty: '暂无内容', notConnected: '功能即将上线', notConnectedTitle: '功能即将上线',
     notConnectedDescription: '接入后将为你提供每日重点和重要更新', waiting: '待我处理',
     recentKnowledge: '最近知识', quick: '快捷操作', quickDescription: '常用能力，一键直达',
@@ -183,11 +191,11 @@ const messages = {
   en: {
     brand: 'SecondBrain', workspace: 'Your workspace', subtitle: 'See your current state and focus on what matters today',
     home: 'Home', chat: 'Chat', today: 'Today', calendar: 'Calendar', inbox: 'Inbox', review: 'Review', projects: 'Projects',
-    knowledge: 'Knowledge', brief: 'Brief', agentHealth: 'Agent Health', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', settings: 'Settings',
+    knowledge: 'Knowledge', brief: 'Brief', agentHealth: 'Agent Health', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', memory: 'Personal Memory', settings: 'Settings',
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
     returnedItems: 'API entries', agentSupport: 'SecondBrain V1', source: 'Data source',
-    emptyTitle: 'Nothing planned today', emptyDescription: 'Capture a schedule, idea, or task when you are ready', create: 'New entry',
+    emptyTitle: 'Nothing planned today', emptyDescription: 'Add a task here; calendar event creation is not connected yet.', create: 'New task',
     empty: 'Nothing here yet', notConnected: 'Coming soon', notConnectedTitle: 'Coming soon',
     notConnectedDescription: 'Daily highlights and important updates will appear here once connected', waiting: 'Waiting for me',
     recentKnowledge: 'Recent knowledge', quick: 'Quick actions', quickDescription: 'Your most-used destinations',
@@ -230,6 +238,7 @@ const navItems = [
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
   { id: 'notes', key: 'notes', icon: 'notes', section: 'library', route: '/notes' },
   { id: 'vocabulary', key: 'vocabulary', icon: 'check', section: 'library', route: '/vocabulary' },
+  { id: 'memory', key: 'memory', icon: 'brain', section: 'library', route: '/memory' },
   { id: 'settings', key: 'settings', icon: 'settings', section: 'bottom', route: '/settings' },
 ] as const;
 
@@ -529,7 +538,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         <section className="primary-grid" aria-label={t.today}>
-          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} />
+          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} onCreateTask={() => navigate('today')} />
           <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} />
         </section>
 
@@ -566,6 +575,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           : page === 'chat' ? <ChatPage locale={locale} blankMode={location.pathname === '/chat/blank'} onGoInbox={() => navigate('inbox')}
             onGoJournal={() => navigate('journal')} onGoToday={() => navigate('today')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
+            : page === 'memory' ? <PersonalMemoryPage key={routeRevision} locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
     </main>
@@ -1254,6 +1264,15 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const [selected, setSelected] = useState(() => blankMode ? blankState.selectedSessionId : '');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activities, setActivities] = useState<ChatActivity[]>([]);
+  const [citationBundles, setCitationBundles] = useState<KnowledgeCitationBundle[]>([]);
+  const [citationHistoryLoading, setCitationHistoryLoading] = useState(false);
+  const [citationPersistenceIssue, setCitationPersistenceIssue] = useState(false);
+  const [contextPreview, setContextPreview] = useState<ContextPreview | null>(null);
+  const [contextPreviewLoading, setContextPreviewLoading] = useState(false);
+  const [contextPreviewError, setContextPreviewError] = useState('');
+  const [naturalContext, setNaturalContext] = useState<ContextPreview | null>(null);
+  const [naturalContextLoading, setNaturalContextLoading] = useState(false);
+  const [naturalContextError, setNaturalContextError] = useState('');
   const timeline = mergeChatTimeline(messages, activities);
   const [input, setInput] = useState('');
   const [progress, setProgress] = useState('');
@@ -1287,8 +1306,28 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const selectedSessionRef = useRef(blankMode ? blankState.selectedSessionId : '');
   const selectionIntentRef = useRef(0);
   const contentLoadRef = useRef(0);
+  const citationHistoryAbortRef = useRef<AbortController | null>(null);
+  const contextPreviewAbortRef = useRef<AbortController | null>(null);
+  const contextPreviewSequenceRef = useRef(0);
+  const naturalContextAbortRef = useRef<AbortController | null>(null);
+  const naturalContextSequenceRef = useRef(0);
+  const citationFrameByRunRef = useRef(new Map<string, string>());
   const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
   const captureRequestSequence = useRef(0);
+
+  useEffect(() => () => {
+    citationHistoryAbortRef.current?.abort();
+    contextPreviewSequenceRef.current += 1;
+    contextPreviewAbortRef.current?.abort();
+    naturalContextSequenceRef.current += 1;
+    naturalContextAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    contextPreviewSequenceRef.current += 1;
+    contextPreviewAbortRef.current?.abort();
+    setContextPreview(null); setContextPreviewLoading(false); setContextPreviewError('');
+  }, [input]);
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -1429,6 +1468,45 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     }
   };
 
+  const restoreCitationReferences = async (sessionId: string, contentRequestId: number) => {
+    citationHistoryAbortRef.current?.abort();
+    const controller = new AbortController();
+    citationHistoryAbortRef.current = controller;
+    const locators = blankMode ? [] : readCitationRunLocators(sessionId);
+    if (!locators.length) {
+      if (contentRequestId === contentLoadRef.current && selectedSessionRef.current === sessionId) {
+        setCitationBundles([]);
+        setCitationHistoryLoading(false);
+      }
+      return;
+    }
+    setCitationBundles([]);
+    setCitationHistoryLoading(true);
+    const restored: KnowledgeCitationBundle[] = [];
+    for (const locator of locators) {
+      if (controller.signal.aborted) return;
+      try {
+        const response = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(locator.run_id)}/knowledge-citations`, {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) {
+          restored.push(citationErrorBundle(locator, response.status));
+          continue;
+        }
+        const payload: unknown = await response.json();
+        restored.push(parseKnowledgeCitationBundle(payload, locator) ?? citationErrorBundle(locator, 502));
+      } catch (cause) {
+        if (controller.signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError')) return;
+        restored.push(citationErrorBundle(locator, 503));
+      }
+    }
+    if (controller.signal.aborted || contentRequestId !== contentLoadRef.current
+      || selectedSessionRef.current !== sessionId) return;
+    setCitationBundles(restored);
+    setCitationHistoryLoading(false);
+  };
+
   const loadSessionContent = async (sessionId: string) => {
     if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     const requestId = ++contentLoadRef.current;
@@ -1484,6 +1562,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     if (historyResult.status === 'rejected') setError(historyResult.reason instanceof Error
       ? chatFailureLabel(historyResult.reason.message, locale) : chatFailureLabel('Could not load session history', locale));
     else if (activityResult.status === 'rejected') setError(en ? 'System operation history is temporarily unavailable.' : '系统操作历史暂时不可用。');
+    void restoreCitationReferences(sessionId, requestId);
   };
 
   const resetCaptureState = () => {
@@ -1498,12 +1577,63 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     journalInboxSequenceRef.current += 1;
     abortRef.current?.abort(); abortRef.current = null;
     resetCaptureState(); resetJournalInboxView(); setBusy(false); setRunId(''); setProgress('');
+    citationHistoryAbortRef.current?.abort(); setCitationBundles([]); setCitationHistoryLoading(false); setCitationPersistenceIssue(false);
+    contextPreviewSequenceRef.current += 1; contextPreviewAbortRef.current?.abort();
+    setContextPreview(null); setContextPreviewLoading(false); setContextPreviewError('');
+    naturalContextSequenceRef.current += 1; naturalContextAbortRef.current?.abort();
+    setNaturalContext(null); setNaturalContextLoading(false); setNaturalContextError('');
     selectedSessionRef.current = sessionId;
     setSelected(sessionId);
     if (blankMode) persistBlankChatState([...blankSessionIdsRef.current], sessionId);
     else localStorage.setItem('secondbrain.chat.session', sessionId);
     setError(''); setMessages([]); setActivities([]); setInput('');
     try { await loadSessionContent(sessionId); } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not load session history', locale)); }
+  };
+
+  const previewContext = async () => {
+    const sessionId = selectedSessionRef.current;
+    if (!sessionId || blankMode || busy) return;
+    contextPreviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    contextPreviewAbortRef.current = controller;
+    const sequence = ++contextPreviewSequenceRef.current;
+    setContextPreview(null); setContextPreviewError(''); setContextPreviewLoading(true);
+    try {
+      const result = await fetchContextPreview(sessionId, input, controller.signal);
+      if (controller.signal.aborted || sequence !== contextPreviewSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      setContextPreview(result);
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== contextPreviewSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      const status = (cause as Error & { status?: number }).status;
+      setContextPreviewError(status === 401
+        ? (en ? 'Sign in again to check authorized context.' : '请重新登录后再核验获准的上下文。')
+        : status === 403 ? (en ? 'Context access was denied. Refresh to check current permissions.' : '上下文访问已被拒绝；权限变化后请重新核验。')
+          : status === 400 ? (en ? 'Enter a query between 1 and 200 characters.' : '请输入 1 到 200 个字符的查询内容。')
+            : status === 404 ? (en ? 'This session is unavailable.' : '此会话不可用。')
+              : status === 503 ? (en ? 'Authorized sources are temporarily unavailable.' : '获准来源暂时不可用。')
+                : (en ? 'Context could not be verified. No metadata is shown.' : '上下文未能核验，未展示任何元数据。'));
+    } finally {
+      if (sequence === contextPreviewSequenceRef.current) setContextPreviewLoading(false);
+    }
+  };
+
+  const checkNaturalContext = async (sessionId: string, userInput: string) => {
+    if (blankMode || !userInput.trim() || [...userInput.trim()].length > 2000) return;
+    naturalContextAbortRef.current?.abort();
+    const controller = new AbortController(); naturalContextAbortRef.current = controller;
+    const sequence = ++naturalContextSequenceRef.current;
+    setNaturalContext(null); setNaturalContextError(''); setNaturalContextLoading(true);
+    try {
+      const result = await fetchContextCandidates(sessionId, userInput, controller.signal);
+      if (!controller.signal.aborted && sequence === naturalContextSequenceRef.current && selectedSessionRef.current === sessionId) setNaturalContext(result);
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== naturalContextSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      const status = (cause as Error & { status?: number }).status;
+      setNaturalContextError(status === 401 ? (en ? 'Sign in again to check related sources.' : '请重新登录后查看相关来源。')
+        : status === 403 ? (en ? 'Source access was denied; no candidates are shown.' : '来源访问被拒绝，未展示候选。')
+          : status === 404 ? (en ? 'This session is unavailable.' : '此会话不可用。')
+            : en ? 'Related sources could not be verified. Chat continued without them.' : '无法核验相关来源；对话已继续，未展示候选。');
+    } finally { if (sequence === naturalContextSequenceRef.current) setNaturalContextLoading(false); }
   };
 
   const pollRun = async (activeRun: string, sessionId: string) => {
@@ -1837,7 +1967,9 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       });
       const activeRun = String(started.run_id ?? '');
       if (!activeRun) throw new Error('Hermes did not return a run identifier');
+      if (!blankMode && !pendingAttachment) void checkNaturalContext(sessionId, prompt);
       startedRunId = activeRun;
+      if (!blankMode && !rememberCitationRun({ session_id: sessionId, run_id: activeRun })) setCitationPersistenceIssue(true);
       setInput('');
       setRunId(activeRun); setProgress(en ? 'Connected to Hermes' : '已连接 Hermes');
       if (!blankMode) {
@@ -1861,7 +1993,22 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         try { payload = JSON.parse(data.join('\n')) as Record<string, unknown>; } catch { payload = { text: data.join('\n') }; }
         const eventName = String(payload.event ?? 'message');
         const name = String(payload.name ?? payload.tool_name ?? payload.tool ?? 'tool');
-        if (eventName === 'message.delta' || eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
+        if (eventName === 'knowledge.citations') {
+          const locator: CitationRunLocator = { session_id: sessionId, run_id: activeRun };
+          const parsed = parseKnowledgeCitationBundle(payload, locator);
+          if (!parsed) {
+            setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), citationErrorBundle(locator, 502)]);
+          } else {
+            const fingerprint = JSON.stringify(parsed);
+            const previous = citationFrameByRunRef.current.get(activeRun);
+            if (previous && previous !== fingerprint) {
+              setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), citationErrorBundle(locator, 409)]);
+            } else if (!previous) {
+              citationFrameByRunRef.current.set(activeRun, fingerprint);
+              setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), parsed]);
+            }
+          }
+        } else if (eventName === 'message.delta' || eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
           const delta = String(payload.delta ?? payload.text ?? payload.output_text ?? payload.content ?? '');
           if (delta) setMessages((current) => current.map((message, index) => index === current.length - 1 && message.role === 'assistant' ? { ...message, text: message.text + delta } : message));
         } else if (eventName.startsWith('tool.')) {
@@ -2086,6 +2233,13 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
           </div>
           {item.activity.detail && <small>{item.activity.detail}</small>}
         </article>)}{!timeline.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      {!blankMode && <ChatContextPreview preview={contextPreview} loading={contextPreviewLoading} error={contextPreviewError}
+        onRefresh={() => void previewContext()} disabled={!selected || busy || input.trim().length === 0 || [...input.trim()].length > 200} locale={locale} />}
+      {!blankMode && <ChatNaturalCandidates preview={naturalContext} loading={naturalContextLoading} error={naturalContextError} locale={locale} />}
+      {!blankMode && <ChatGroundingCandidates sessionId={selected} query={input} locale={locale} disabled={!selected || busy} />}
+      <ChatKnowledgeCitations bundles={citationBundles.filter((bundle) => bundle.session_id === selected)} loading={citationHistoryLoading}
+        persistenceIssue={citationPersistenceIssue} locale={locale} />
+      {!blankMode && selected && <PlanningPanel key={selected} locale={locale} sessionId={selected} />}
       {journalInboxAttempt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent retry status' : '日记意图重试状态'}>
         <h3>{en ? 'Inbox save is not confirmed' : 'Inbox 保存结果尚未确认'}</h3>
         <p role="alert">{journalInboxFeedback || (en ? 'The original text and exact request are retained.' : '原文和完整请求已保留。')}</p>
@@ -2349,24 +2503,24 @@ function ModuleTitle({ title, icon, trailing }: { title: string; icon: string; t
   return <div className="module-title"><span className={`module-icon ${icon}`}><Icon name={icon} size={17} /></span><h2>{title}</h2>{trailing ?? <span className="module-menu" aria-hidden="true">•••</span>}</div>;
 }
 
-function TodayCard({ state, locale, onViewCalendar }: { state: ReturnType<typeof adaptHome>['today']; locale: Locale; onViewCalendar: () => void }) {
+function TodayCard({ state, locale, onViewCalendar, onCreateTask }: { state: ReturnType<typeof adaptHome>['today']; locale: Locale; onViewCalendar: () => void; onCreateTask: () => void }) {
   const t = messages[locale];
   return <article className="dashboard-card today-card" id="today">
     <img className="today-background" src={todayLandscapeUrl} alt="" aria-hidden="true" />
     <ModuleTitle title={t.today} icon="calendar" trailing={<button type="button" className="card-link" onClick={onViewCalendar} aria-label={t.viewCalendar}>{t.viewAll}<Icon name="chevron" size={14} /></button>} />
     <p className="today-description">{t.todayDescription}</p>
     {state.kind === 'content' ? <div className="today-items">{state.items.map((item, index) => <div className="today-item" key={`${item.title}-${index}`}><span className="timeline-dot"/><strong>{item.title}</strong></div>)}</div>
-      : state.kind === 'empty' ? <IllustratedEmpty locale={locale} />
+      : state.kind === 'empty' ? <IllustratedEmpty locale={locale} onCreateTask={onCreateTask} />
       : <div className="unknown-state"><span className="unknown-icon">?</span><strong>{t.noTodayData}</strong><small>UNAVAILABLE</small></div>}
   </article>;
 }
 
-function IllustratedEmpty({ locale }: { locale: Locale }) {
+function IllustratedEmpty({ locale, onCreateTask }: { locale: Locale; onCreateTask: () => void }) {
   const t = messages[locale];
   return <div className="illustrated-empty">
     <div className="empty-calendar"><Icon name="calendar" size={37} /></div>
     <strong>{t.emptyTitle}</strong><p>{t.emptyDescription}</p>
-    <button type="button" className="coming-button" disabled><Icon name="capture" size={15} />{t.create}<small>{t.soon}</small></button>
+    <button type="button" className="coming-button" onClick={onCreateTask}><Icon name="capture" size={15} />{t.create}</button>
   </div>;
 }
 
