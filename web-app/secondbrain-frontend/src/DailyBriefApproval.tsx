@@ -7,14 +7,14 @@ type SourceRef = { kind: 'task' | 'project' | 'journal'; id: string; version: st
 type SourceChoice = { key: string; label: string; ref: SourceRef; sourceDate?: string };
 type WriteReceipt = { status: 'created' | 'duplicate'; brief_id: string; date: string; timezone: 'Asia/Shanghai'; record_version: string; operation_id: string };
 type BriefRequestBase = {
-  date: string; timezone: 'Asia/Shanghai'; idempotency_key: string;
+  date: string; timezone: 'Asia/Shanghai';
   categories: string[]; summary: string; source_refs: SourceRef[]; approved: true;
 };
-type ManualBriefRequest = BriefRequestBase & { mode: 'manual_generate' };
+type ManualBriefRequest = BriefRequestBase & { mode: 'manual_generate'; idempotency_key: string };
 type ApprovedImportRequest = BriefRequestBase & { mode: 'approved_import'; import_ref: { kind: 'existing_brief'; id: string; version: string } };
 type BriefRequest = ManualBriefRequest | ApprovedImportRequest;
 type ImportOption = { kind: 'existing_brief'; id: string; date: string; timezone: 'Asia/Shanghai'; version: string };
-type StoredPending = { body: BriefRequest; receipt: WriteReceipt | null };
+type StoredPending = { body: BriefRequest; idempotency_key: string; receipt: WriteReceipt | null };
 type Phase = 'idle' | 'loading-sources' | 'editing' | 'confirming' | 'submitting' | 'unknown' | 'resolving-unknown' | 'unknown-date-blocked' | 'unknown-date-match' | 'done';
 type ReadbackState = 'pending' | 'verified' | 'matched-content-unconfirmed' | 'unavailable' | 'stale' | 'empty' | 'mismatch';
 const PENDING_STORAGE_KEY = 'secondbrain.dailyBrief.pending.v1';
@@ -141,11 +141,12 @@ function isSourceRef(value: unknown): value is SourceRef {
 }
 
 function parsePendingRequest(value: unknown): BriefRequest | null {
-  const baseKeys = ['mode', 'date', 'timezone', 'idempotency_key', 'categories', 'summary', 'source_refs', 'approved'];
-  const expectedKeys = value && isRecord(value) && value.mode === 'approved_import' ? [...baseKeys, 'import_ref'] : baseKeys;
+  const baseKeys = ['mode', 'date', 'timezone', 'categories', 'summary', 'source_refs', 'approved'];
+  const isImport = value && isRecord(value) && value.mode === 'approved_import';
+  const expectedKeys = isImport ? [...baseKeys, 'import_ref'] : [...baseKeys, 'idempotency_key'];
   if (!isRecord(value) || Object.keys(value).length !== expectedKeys.length || !expectedKeys.every((key) => Object.hasOwn(value, key))
     || !['manual_generate', 'approved_import'].includes(String(value.mode)) || !isCalendarDate(value.date) || value.timezone !== 'Asia/Shanghai'
-    || typeof value.idempotency_key !== 'string' || !/^ui-[A-Za-z0-9-]{16,128}$/.test(value.idempotency_key)
+    || (!isImport && (typeof value.idempotency_key !== 'string' || !/^ui-[A-Za-z0-9-]{16,128}$/.test(String(value.idempotency_key))))
     || !Array.isArray(value.categories) || value.categories.length > 30
     || !value.categories.every((item) => typeof item === 'string' && item.trim().length > 0 && item.length <= 80)
     || typeof value.summary !== 'string' || !value.summary.trim() || value.summary.length > 20000
@@ -165,16 +166,30 @@ function readPending(): StoredPending | null {
     const raw = window.sessionStorage.getItem(PENDING_STORAGE_KEY);
     if (!raw) return null;
     const value: unknown = JSON.parse(raw);
-    if (!isRecord(value) || Object.keys(value).length !== 2 || !Object.hasOwn(value, 'body') || !Object.hasOwn(value, 'receipt')) return null;
-    const body = parsePendingRequest(value.body);
+    if (!isRecord(value) || !Object.hasOwn(value, 'body') || !Object.hasOwn(value, 'receipt')) return null;
+    const legacyKey = isRecord(value.body) && typeof value.body.idempotency_key === 'string'
+      ? value.body.idempotency_key : null;
+    const legacyImportBody = legacyKey && isRecord(value.body) && value.body.mode === 'approved_import'
+      ? Object.fromEntries(Object.entries(value.body).filter(([key]) => key !== 'idempotency_key'))
+      : null;
+    const body = parsePendingRequest(value.body) ?? (legacyImportBody ? parsePendingRequest(legacyImportBody) : null);
     const receipt = value.receipt === null ? null : parseReceipt(value.receipt, body?.date ?? '');
-    return body && (value.receipt === null || receipt) ? { body, receipt } : null;
+    if (!body || (value.receipt !== null && !receipt)) return null;
+    // Preserve pending requests written by the earlier UI shape, including an
+    // approved_import key embedded in its body, so an unknown POST stays replayable.
+    const idempotencyKey = Object.hasOwn(value, 'idempotency_key') && typeof value.idempotency_key === 'string'
+      ? value.idempotency_key : legacyKey;
+    if (!idempotencyKey || !/^ui-[A-Za-z0-9-]{16,128}$/.test(idempotencyKey)) return null;
+    if (body.mode === 'manual_generate' && body.idempotency_key !== idempotencyKey) return null;
+    if (body.mode === 'approved_import' && legacyKey && !Object.hasOwn(value, 'idempotency_key'))
+      return { body, idempotency_key: idempotencyKey, receipt: receipt ?? null };
+    return { body, idempotency_key: idempotencyKey, receipt: receipt ?? null };
   } catch { return null; }
 }
 
-function savePending(body: BriefRequest, receipt: WriteReceipt | null): boolean {
+function savePending(body: BriefRequest, idempotencyKey: string, receipt: WriteReceipt | null): boolean {
   try {
-    window.sessionStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify({ body, receipt }));
+    window.sessionStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify({ body, idempotency_key: idempotencyKey, receipt }));
     return true;
   } catch { return false; }
 }
@@ -231,6 +246,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
   const [error, setError] = useState('');
   const [receipt, setReceipt] = useState<WriteReceipt | null>(restored?.receipt ?? null);
   const [savedRequest, setSavedRequest] = useState<BriefRequest | null>(restored?.body ?? null);
+  const [savedIdempotencyKey, setSavedIdempotencyKey] = useState<string | null>(restored?.idempotency_key ?? null);
   const [readbackState, setReadbackState] = useState<ReadbackState | null>(restored?.receipt ? 'pending' : null);
   const submitting = useRef(false);
   const mounted = useRef(true);
@@ -252,7 +268,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     };
   }, []);
 
-  function invalidateRequest() { setSavedRequest(null); setReceipt(null); setReadbackState(null); clearPending(); }
+  function invalidateRequest() { setSavedRequest(null); setSavedIdempotencyKey(null); setReceipt(null); setReadbackState(null); clearPending(); }
 
   async function loadApprovedImport() {
     setImportError(''); setImportOption(null); setImportRecord(null);
@@ -287,18 +303,20 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
   function confirmApprovedImport() {
     if (!importOption || !importRecord) { setImportError(copy.importLoadFailed); return; }
     if (targetDate !== getBusinessDate()) { setImportError(copy.targetDateUnsupported); return; }
+    setImportError('');
     const body: ApprovedImportRequest = {
-      mode: 'approved_import', date: targetDate, timezone: 'Asia/Shanghai', idempotency_key: `ui-${crypto.randomUUID()}`,
+      mode: 'approved_import', date: targetDate, timezone: 'Asia/Shanghai',
       categories: [...importRecord.categories], summary: importRecord.summary,
       source_refs: importRecord.source_refs.map((ref) => ({ kind: ref.kind, id: ref.id, version: ref.version })) as SourceRef[],
       approved: true, import_ref: { kind: 'existing_brief', id: importOption.id, version: importOption.version },
     };
-    if (!savePending(body, null)) { setImportError(copy.storageUnavailable); return; }
-    setSavedRequest(body); setBusinessDate(targetDate); setError(''); setPhase('confirming');
+    const idempotencyKey = `ui-${crypto.randomUUID()}`;
+    if (!savePending(body, idempotencyKey, null)) { setImportError(copy.storageUnavailable); return; }
+    setSavedRequest(body); setSavedIdempotencyKey(idempotencyKey); setBusinessDate(targetDate); setError(''); setPhase('confirming');
   }
 
   async function begin() {
-    setPhase('loading-sources'); setError(''); setReceipt(null); setReadbackState(null); setSelected([]); setBusinessDate(getBusinessDate()); clearPending(); setSavedRequest(null);
+    setPhase('loading-sources'); setError(''); setReceipt(null); setReadbackState(null); setSelected([]); setBusinessDate(getBusinessDate()); clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null);
     try { const values = await loadSources(); if (mounted.current) { setSources(values); setPhase('editing'); } }
     catch { if (mounted.current) { setSources([]); setError(copy.loadFailed); setPhase('idle'); } }
   }
@@ -396,37 +414,47 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     if (!existing && selectedSources.some((source) => source.ref.kind === 'journal' && source.sourceDate !== businessDate)) {
       clearJournalChoices(); invalidateRequest(); setError(copy.journalDateChanged); setPhase('editing'); return;
     }
-    const key = existing?.idempotency_key ?? `ui-${crypto.randomUUID()}`;
+    const key = existing ? savedIdempotencyKey : `ui-${crypto.randomUUID()}`;
+    if (!key) { setError(copy.storageUnavailable); setPhase('unknown'); return; }
     const body = existing ?? {
       mode: 'manual_generate' as const, date: businessDate, timezone: 'Asia/Shanghai' as const, idempotency_key: key,
       categories: categories.split(',').map((item) => item.trim()).filter(Boolean),
       summary, source_refs: selectedSources.map((source) => source.ref), approved: true as const,
     };
-    if (!existing && !savePending(body, null)) { setError(copy.storageUnavailable); setPhase('editing'); return; }
+    if (!existing && !savePending(body, key, null)) { setError(copy.storageUnavailable); setPhase('editing'); return; }
     submitting.current = true;
-    setSavedRequest(body); setPhase('submitting'); setError('');
+    setSavedRequest(body); setSavedIdempotencyKey(key); setPhase('submitting'); setError('');
     try {
+      const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json' };
+      if (body.mode === 'approved_import') headers['Idempotency-Key'] = key;
       const response = await fetch('/api/daily-brief', {
-        method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        method: 'POST', credentials: 'same-origin', headers,
         body: JSON.stringify(body),
       });
       if (response.status === 401 || response.status === 403) {
-        clearPending(); setSavedRequest(null); setError(copy.auth); setPhase(body.mode === 'approved_import' ? 'idle' : 'editing'); return;
+        clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null); setError(copy.auth); setPhase(body.mode === 'approved_import' ? 'idle' : 'editing'); return;
+      }
+      if (response.status === 400 || response.status === 422) {
+        if (body.mode === 'approved_import') {
+          clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null); setImportOption(null); setImportRecord(null);
+          setError(copy.invalidRequest); setPhase('idle'); return;
+        }
       }
       if (response.status === 409) {
-        clearPending(); setSavedRequest(null); setError(copy.conflict);
-        if (body.mode === 'approved_import') { setImportOption(null); setImportRecord(null); setImportError(copy.importLoadFailed); setPhase('idle'); }
-        else setPhase('editing');
+        clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null);
+        if (body.mode === 'approved_import') {
+          setError(''); setImportOption(null); setImportRecord(null); setImportError(copy.conflict); setPhase('idle');
+        } else { setError(copy.conflict); setPhase('editing'); }
         onSaved(); return;
       }
       if (response.status === 422) {
-        clearPending(); setSavedRequest(null); clearJournalChoices(); setError(copy.invalidRequest);
+        clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null); clearJournalChoices(); setError(copy.invalidRequest);
         if (body.mode === 'approved_import') { setImportOption(null); setImportRecord(null); setPhase('idle'); }
         else setPhase('editing');
         return;
       }
       if (response.status === 501 && body.mode === 'approved_import') {
-        clearPending(); setSavedRequest(null); setError(copy.importUnavailableCore); setPhase('idle'); return;
+        clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null); setError(copy.importUnavailableCore); setPhase('idle'); return;
       }
       if (!response.ok) { setError(response.status === 503 ? copy.unavailable : copy.unknown); setPhase('unknown'); return; }
       const parsed = parseReceipt(await response.json(), body.date);
@@ -434,7 +462,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
         setError(copy.unknown); setPhase('unknown'); return;
       }
       setReceipt(parsed); setReadbackState('pending'); setPhase('done');
-      savePending(body, parsed);
+      savePending(body, key, parsed);
       onSaved();
       void verifyReceipt(body, parsed);
     } catch {
