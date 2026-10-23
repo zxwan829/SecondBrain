@@ -4,6 +4,7 @@ import hmac
 import os
 import secrets
 import stat
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -26,6 +27,10 @@ class AppSessionAuth:
         "companion.read", "companion.write", "planning.approve", "planning.execute",
         "planning.read", "planning.write",
     })
+    SESSION_MANAGEABLE_READ_ACTIONS = frozenset({
+        "journal.read", "task.read", "projects.read", "daily_brief.read",
+        "personal_memory.read",
+    })
 
     def __init__(self, password_file, allowed_origins, session_ttl=28800):
         if not os.path.isabs(password_file):
@@ -35,6 +40,8 @@ class AppSessionAuth:
             raise ValueError("At least one exact App Origin is required")
         self.session_ttl = int(session_ttl)
         self._sessions = {}
+        self._session_actions = {}
+        self._session_lock = threading.RLock()
         self._failed = {}
         self._password = self._load_password(password_file)
 
@@ -77,7 +84,10 @@ class AppSessionAuth:
             raise HTTPException(status_code=401, detail="Login rejected")
         self._failed.pop(address, None)
         token = secrets.token_urlsafe(32)
-        self._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + self.session_ttl
+        session_id = hashlib.sha256(token.encode()).hexdigest()
+        with self._session_lock:
+            self._sessions[session_id] = time.time() + self.session_ttl
+            self._session_actions[session_id] = set(self.SUPPORTED_ACTIONS)
         return token
 
     def require_owner(self, request):
@@ -92,7 +102,12 @@ class AppSessionAuth:
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             self.check_origin(request)
         token = request.cookies.get(self.COOKIE_NAME, "")
-        expiry = self._sessions.get(hashlib.sha256(token.encode()).hexdigest(), 0)
+        session_id = hashlib.sha256(token.encode()).hexdigest()
+        with self._session_lock:
+            expiry = self._sessions.get(session_id, 0)
+            if expiry <= time.time():
+                self._sessions.pop(session_id, None)
+                self._session_actions.pop(session_id, None)
         if not token or expiry <= time.time():
             raise HTTPException(status_code=401, detail="App session required")
         return "owner"
@@ -103,12 +118,40 @@ class AppSessionAuth:
             raise ValueError("An action name is required")
         if action not in self.SUPPORTED_ACTIONS:
             raise HTTPException(status_code=403, detail="Action is not enabled")
-        return self.require_owner(request)
+        subject = self.require_owner(request)
+        token = request.cookies.get(self.COOKIE_NAME, "")
+        session_id = hashlib.sha256(token.encode()).hexdigest()
+        with self._session_lock:
+            grants = self._session_actions.setdefault(session_id, set(self.SUPPORTED_ACTIONS))
+            if action not in grants:
+                raise HTTPException(status_code=403, detail="Action is not enabled")
+        return subject
+
+    def set_session_action(self, request, action, granted):
+        """Narrow or restore an allowlisted read action for the current owner session."""
+        self.require_owner(request)
+        if (not isinstance(action, str) or action not in self.SESSION_MANAGEABLE_READ_ACTIONS
+                or type(granted) is not bool):
+            raise HTTPException(status_code=400, detail="Unsupported session action change")
+        token = request.cookies.get(self.COOKIE_NAME, "")
+        session_id = hashlib.sha256(token.encode()).hexdigest()
+        with self._session_lock:
+            if session_id not in self._sessions or self._sessions[session_id] <= time.time():
+                raise HTTPException(status_code=401, detail="App session required")
+            grants = self._session_actions.setdefault(session_id, set(self.SUPPORTED_ACTIONS))
+            if granted:
+                grants.add(action)
+            else:
+                grants.discard(action)
+        return granted
 
     def logout(self, request):
         token = request.cookies.get(self.COOKIE_NAME, "")
         if token:
-            self._sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)
+            session_id = hashlib.sha256(token.encode()).hexdigest()
+            with self._session_lock:
+                self._sessions.pop(session_id, None)
+                self._session_actions.pop(session_id, None)
 
     @classmethod
     def set_cookie(cls, response, request, token, ttl):
