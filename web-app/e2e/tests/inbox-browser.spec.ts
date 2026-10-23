@@ -580,13 +580,14 @@ for (const viewport of viewports) {
     const editor = page.locator('.ProseMirror');
     await expect(editor).toBeVisible();
 
+    const syntheticNoteBody = `Synthetic mobile note round trip ${viewport.name}`;
     observed.setFailureStage('notes_edit_save');
     const saveNoteResponsePromise = page.waitForResponse((response) => {
       const request = response.request();
       return request.method() === 'PUT' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
     }, { timeout: 5000 });
     observed.setDiagnosticAssertion('notes_save');
-    await editor.fill('Synthetic mobile note round trip');
+    await editor.fill(syntheticNoteBody);
     const saveNoteResponse = await saveNoteResponsePromise;
     expect(saveNoteResponse.status(), 'notes_save').toBe(200);
     await expect(page.getByRole('status').filter({ hasText: '已保存' }).first()).toBeVisible();
@@ -598,10 +599,10 @@ for (const viewport of viewports) {
       return request.method() === 'GET' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
     }, { timeout: 5000 });
     observed.setDiagnosticAssertion('notes_readback');
-    await page.getByRole('button', { name: 'Synthetic mobile note round trip', exact: true }).click();
+    await page.getByRole('button', { name: syntheticNoteBody, exact: true }).click();
     const readNoteResponse = await readNoteResponsePromise;
     expect(readNoteResponse.status(), 'notes_readback').toBe(200);
-    await expect(page.locator('.ProseMirror')).toContainText('Synthetic mobile note round trip');
+    await expect(page.locator('.ProseMirror')).toContainText(syntheticNoteBody);
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
 
     // Exercise the real Notes dialog layout CSS against each accepted viewport.
