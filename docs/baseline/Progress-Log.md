@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-10-23 — A-NEXT Edge 配置复核与本地三视口环境阻断
+
+- **PR #202 修复复审：** 审阅本地提交 `21034fa2c304a3af737c44662cd9195a777dce94` 相对固定基线 `cf317fecae86a0624affb1ec618e63731dfcac25` 的完整差异。变更限于 Playwright 断言/导航定位、允许的脱敏诊断 ID 和移动导航 DOM 回归；未删除 Calendar 请求断言、未放宽响应状态、未改 Core/产品代码。`SOURCE_REVIEW=PASS_WITH_LIMITS`。
+- **Edge 接入：** `playwright.config.ts` 支持通过 `SB_E2E_BROWSER_CHANNEL=msedge` 选择 Edge；未设置时保持默认 Playwright Chromium。E2E 运行器通过临时合成目录启动 Core + Vite，并显式关闭 Promote/Hermes。Playwright 日志显示每个用例使用独立临时 `user-data-dir`，未复用用户 Profile。
+- **实际浏览器结果：** 使用 Mac Microsoft Edge `155.0.4283.62`、Playwright `1.56.1` 本地运行三视口。Desktop、Tablet、Mobile 均在 `browserType.launch` 阶段由 Edge `SIGABRT` 退出；测试未进入页面。为定位脱敏器拒绝发布的首次运行，第二次本地诊断运行仅保留私有临时 harness 输出；三视口仍以相同启动错误终止。首轮 artifact 校验拒绝的直接原因是浏览器 fixture 启动失败时没有测试内 `failure-summary.json`，并非安全校验被关闭。无横向溢出、Calendar、Agent Health、Today 等页面行为均 `NOT RUN`。
+- **定向检查与限制：** Edge 版本、channel 选择及临时 Profile 从运行日志实证；测试没有调用生产/NAS/真实数据，没有 Actions、合并、部署或系统权限调整。`A_NEXT_READY=NOT_READY`。由于 Edge 在本环境无法启动，不将 Edge 日常测试方案标为已确认，也暂不改写长期规范；跨平台 Chromium 仍须按独立授权运行。
+- **交付：** Draft PR #202 的远端固定 HEAD 更新及最终 SHA 以本次推送/readback 为准；变更只增补本地 Edge channel 和状态文档。没有改动 Web/Core 运行逻辑。
+
 ## 2026-10-22 — Writer/Promote OS 安全准入与 Linux 隔离实验方案（Issue #96 PMO #6333663799）
 
 - **固定基线与审查输入：** 从 main `563a6fa8e4d6032a34536d879321738c20cf3c24` 的隔离 clone/branch 开始。读取项目 AGENTS、Agent-Rules、CURRENT、审计计划、Environment-Baseline 与 D067/D072/D073/D078/D086 相关边界，并引用 B #97 #6333624251。Environment-Baseline 最近记录为 2026-10-15；只作历史快照，不能当作当前运行事实。

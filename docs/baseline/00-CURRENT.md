@@ -1,12 +1,19 @@
 ---
 created: 2026-09-30
-updated: 2026-10-22
+updated: 2026-10-23
 status: current
 source: GitHub SecondBrain Monorepo
 ---
 # SecondBrain — 当前交付基线（V1 + Personal Intelligence）
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
+
+## 2026-10-23 A-NEXT 本地浏览器启动阻断（Issue #96）
+
+- **固定输入与源码复审：** PR #202 远端基线 `cf317fecae86a0624affb1ec618e63731dfcac25`；本地 E2E 修复提交 `21034fa2c304a3af737c44662cd9195a777dce94` 相对基线只改浏览器测试、诊断脱敏回归和导航 DOM 测试，源码复审 `PASS_WITH_LIMITS`。新增本地 Playwright `msedge` channel 选择配置；未修改业务/Core 代码。
+- **本地浏览器尝试：** 合成 Core Uvicorn + Vite harness 启动成功，`SB_PROMOTE_ENABLED=false`、Hermes 未配置。Playwright 1.56.1 启动 Microsoft Edge `155.0.4283.62` 时三个视口均在浏览器启动阶段 `SIGABRT`；日志确认每次使用 Playwright 临时 Profile。页面导航、Calendar、Agent Health、Today、横向溢出和权限旅程全部 `NOT RUN`，没有功能断言结论。首轮脱敏报告因启动失败时缺少视口诊断而被 fail-closed 拒绝；保留临时输出复核后，根因为浏览器进程启动失败，不是业务断言。
+- **视口与 Gate：** Desktop `BLOCKED_ENV / NOT RUN`；Tablet `BLOCKED_ENV / NOT RUN`；Mobile `BLOCKED_ENV / NOT RUN`。`A_NEXT_READY=NOT_READY`。没有触发 Actions；PR #202 保持 Draft/Open、未合并。
+- **后续：** 本机 Edge 方案尚未证明可用，暂不将其登记为已验证的日常长期规范。待解决本机 Edge 启动环境后，再以合成数据执行本地日常验收；阶段性跨平台 Gate 仍使用授权的 GitHub-hosted Chromium 工作流。不得把本次启动失败表述为页面 FAIL/PASS。
 
 ## 2026-10-22 Writer/Promote OS 安全准入准备（Issue #96，PMO #6333663799）
 
