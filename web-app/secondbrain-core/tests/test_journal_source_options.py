@@ -57,7 +57,9 @@ def setup(tmp_path, *, deny=()):
 
         auth.require_action = guarded
     token = "synthetic-app-session"
-    auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
+    session_id = hashlib.sha256(token.encode()).hexdigest()
+    auth._sessions[session_id] = time.time() + 600
+    auth._session_actions[session_id] = set(auth.SUPPORTED_ACTIONS)
     store = JournalStore(str(root))
     service = JournalSourceOptionsService(store, auth)
     return root, auth, token, store, service

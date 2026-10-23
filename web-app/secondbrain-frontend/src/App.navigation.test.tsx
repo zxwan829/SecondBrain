@@ -24,6 +24,7 @@ function mockAppFetch(notesStatus = 200, deferPut?: () => Promise<Response>, sum
     calls.push(url);
     if (url === '/api/auth/session') return new Response('{}', { status: 200 });
     if (url === '/api/home') return new Response(JSON.stringify(homeBody), { status: 200 });
+    if (/^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(url)) return new Response(JSON.stringify({ date: url.slice(-10), entries: [] }), { status: 200 });
     if (url === '/api/projects?limit=50&offset=0') return new Response(JSON.stringify({ status: 'not_configured', items: [], pagination: { limit: 50, offset: 0, has_more: false }, source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({ status: 'ok', items: [{ activity_id: 'opaque-synth-event-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }], pagination: { limit: 50, offset: 0, has_more: false }, source: ['journal'], freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
     if (url.startsWith('/api/daily-brief?')) return new Response(JSON.stringify({ status: 'not_configured', items: [], source: null, freshness: { checked_at: '2026-10-20T01:30:00Z' } }), { status: 200 });
@@ -128,6 +129,148 @@ describe('Notes application navigation gate', () => {
     expect(location.pathname).toBe('/today');
   });
 
+  it('opens the existing real Projects, Daily Brief, Activity, Agent Health, and Journal destinations from Home', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    const calls = mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: '打开项目' })[0]);
+    expect(await screen.findByRole('heading', { name: '项目' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((url) => url.startsWith('/api/projects?'))).toBe(true));
+    fireEvent.click(screen.getAllByRole('button', { name: '首页' })[0]);
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: '打开每日简报' })[0]);
+    expect(await screen.findByRole('heading', { name: '每日简报' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((url) => url.startsWith('/api/daily-brief?'))).toBe(true));
+    fireEvent.click(screen.getAllByRole('button', { name: '首页' })[0]);
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: '打开动态' })[0]);
+    expect(await screen.findByRole('heading', { name: '动态' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((url) => url.startsWith('/api/activity?'))).toBe(true));
+    fireEvent.click(screen.getAllByRole('button', { name: '首页' })[0]);
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getAllByRole('button', { name: '查看 Agent 状态' })[0]);
+    expect(await screen.findByRole('heading', { name: 'Agent 状态' })).toBeTruthy();
+    await waitFor(() => expect(calls).toContain('/api/agent/health'));
+    fireEvent.click(screen.getAllByRole('button', { name: '首页' })[0]);
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getByRole('button', { name: /新建日记/ }));
+    expect(await screen.findByRole('heading', { name: '日记' })).toBeTruthy();
+    expect(location.pathname).toBe('/journal');
+  });
+
+  it('returns Home from Agent Health through the mobile navigation and closes the menu', async () => {
+    mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看 Agent 状态' }));
+    await screen.findByRole('heading', { name: 'Agent 状态' });
+    expect(location.pathname).toBe('/agent-health');
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
+    const sidebar = document.querySelector('aside.sidebar') as HTMLElement;
+    expect(sidebar.classList.contains('is-open')).toBe(true);
+    fireEvent.click(within(sidebar).getByRole('button', { name: /^首页$/ }));
+
+    await screen.findByRole('heading', { name: '你的工作台' });
+    expect(location.pathname).toBe('/');
+    expect(screen.getByRole('button', { name: '打开导航菜单' }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens Today from the mobile navigation and closes the menu after routing', async () => {
+    const calls = mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
+    const sidebar = document.querySelector('aside.sidebar') as HTMLElement;
+    const menu = document.querySelector('.mobile-menu-button') as HTMLButtonElement;
+    expect(sidebar.classList.contains('is-open')).toBe(true);
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(sidebar).getByRole('button', { name: /^今日$/ }));
+
+    expect(await screen.findByRole('heading', { name: '今日与待办' })).toBeTruthy();
+    expect(location.pathname).toBe('/today');
+    await waitFor(() => expect(calls).toContain('/api/tasks?status=open'));
+    expect(menu.getAttribute('aria-expanded')).toBe('false');
+    expect(sidebar.classList.contains('is-open')).toBe(false);
+  });
+
+  it('renders the expanded Activity source and status contract from Core', async () => {
+    mockAppFetch();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const fallback = fetchMock.getMockImplementation()!;
+    const base = '2026-10-23T08:00:00Z';
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === '/api/activity?limit=50&offset=0') {
+        return new Response(JSON.stringify({
+          status: 'partial',
+          items: [
+            { activity_id: 'activity-project', kind: 'project', status: 'updated', occurred_at: base, project_id: 'SYNTH-PROJECT-1', project_status: 'active' },
+            { activity_id: 'activity-brief', kind: 'daily_brief', status: 'created', occurred_at: base, daily_brief_date: '2026-10-23' },
+            { activity_id: 'activity-memory', kind: 'personal_memory', status: 'revoked', occurred_at: base },
+          ],
+          pagination: { limit: 50, offset: 0, has_more: false },
+          source: ['projects', 'daily_brief', 'personal_memory'],
+          freshness: { checked_at: base },
+        }), { status: 200 });
+      }
+      return fallback(input, init);
+    });
+    startAt('/activity');
+
+    expect(await screen.findByRole('heading', { name: '项目更新' })).toBeTruthy();
+    expect(screen.getByText('已更新')).toBeTruthy();
+    expect(screen.getAllByText('每日简报').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2026-10-23').length).toBeGreaterThan(0);
+    expect(screen.getByText('个人记忆操作')).toBeTruthy();
+    expect(screen.getByText('已撤销')).toBeTruthy();
+  });
+
+  it('does not style an unavailable Home Agent as online', async () => {
+    mockAppFetch(200, undefined, 200, { agent: { status: 'unavailable', source: 'hermes-runtime' } });
+    startAt('/');
+
+    await screen.findByRole('heading', { name: '你的工作台' });
+    const statusBadge = document.querySelector('.header-agent') as HTMLElement | null;
+    expect(statusBadge).not.toBeNull();
+    expect(statusBadge!.textContent).toBe('尚未统计');
+    expect(statusBadge!.className).toContain('is-unavailable');
+    expect(statusBadge!.className).not.toContain('is-real');
+  });
+
+  it('reads a selected historical Daily Brief date without exposing the current-date save form', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    const calls = mockAppFetch();
+    startAt('/brief');
+    expect(await screen.findByRole('heading', { name: '每日简报' })).toBeTruthy();
+    const date = screen.getByLabelText('选择日期') as HTMLInputElement;
+    fireEvent.change(date, { target: { value: '2020-01-02' } });
+    await waitFor(() => expect(calls.some((url) => url.includes('date=2020-01-02'))).toBe(true));
+    expect(date.value).toBe('2020-01-02');
+    expect(screen.getByRole('note').textContent).toContain('历史日期为只读');
+    expect(screen.queryByRole('button', { name: '手动准备简报' })).toBeNull();
+  });
+
+  it('keeps Journal in an explicit error state when the Core response has no entries array', async () => {
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input) === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (/^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(String(input))) return new Response(JSON.stringify({ date: '2026-10-23', entries: null }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/journal');
+    expect(await screen.findByRole('heading', { name: '日记' })).toBeTruthy();
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.queryByText('当天还没有记录。')).toBeNull();
+  });
+
   it('loads Calendar only for a bounded Shanghai month and never requests bodies or Home', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'true');
     const calls = mockAppFetch();
@@ -211,6 +354,87 @@ describe('Notes application navigation gate', () => {
     expect(calls.some((url) => /sessions|messages|journal\/|tasks/.test(url))).toBe(false);
   });
 
+  it('loads Activity pages on demand, preserves earlier rows after a page failure, and retries the same page', async () => {
+    const calls: string[] = [];
+    let laterPageAttempts = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({
+        status: 'partial', items: [{ activity_id: 'activity-page-1', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }],
+        pagination: { limit: 50, offset: 0, has_more: true }, source: ['journal', 'tasks'], freshness: { checked_at: '2026-10-20T01:30:00Z' },
+      }), { status: 200 });
+      if (url === '/api/activity?limit=50&offset=50') {
+        laterPageAttempts += 1;
+        if (laterPageAttempts === 1) return new Response('{}', { status: 503 });
+        return new Response(JSON.stringify({
+          status: 'ok', items: [{ activity_id: 'activity-page-2', kind: 'task', status: 'failed', occurred_at: '2026-10-19T16:00:00+08:00', task_status: 'open' }],
+          pagination: { limit: 50, offset: 50, has_more: true }, source: ['journal', 'tasks'], freshness: { checked_at: '2026-10-20T01:30:01Z' },
+        }), { status: 200 });
+      }
+      if (url === '/api/activity?limit=50&offset=100') return new Response(JSON.stringify({
+        status: 'ok', items: [{ activity_id: 'activity-page-3', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-18T09:30:00+08:00', journal_date: '2026-10-18' }],
+        pagination: { limit: 50, offset: 100, has_more: false }, source: ['journal', 'tasks'], freshness: { checked_at: '2026-10-20T01:30:02Z' },
+      }), { status: 200 });
+      return new Response('{}', { status: 404 });
+    });
+    startAt('/activity');
+
+    expect(await screen.findByRole('heading', { name: '动态' })).toBeTruthy();
+    expect((await screen.findAllByText('日记操作')).length).toBeGreaterThan(0);
+    expect((await screen.findByRole('status')).textContent).toContain('来源或时间范围不完整');
+    fireEvent.click(screen.getByRole('button', { name: '加载更多动态' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getAllByText('日记操作').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '加载更多动态' }).hasAttribute('disabled')).toBe(true);
+    expect(calls.filter((url) => url === '/api/activity?limit=50&offset=50')).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: '重试加载' }));
+    expect((await screen.findAllByText('待办操作')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('日记操作').length).toBeGreaterThan(0);
+    expect(calls.filter((url) => url === '/api/activity?limit=50&offset=50')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: '加载更多动态' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: '加载更多动态' }));
+    expect(await screen.findByText('2026-10-18')).toBeTruthy();
+    expect(calls.filter((url) => url.startsWith('/api/activity?'))).toEqual([
+      '/api/activity?limit=50&offset=0',
+      '/api/activity?limit=50&offset=50',
+      '/api/activity?limit=50&offset=50',
+      '/api/activity?limit=50&offset=100',
+    ]);
+    expect(screen.queryByRole('button', { name: '加载更多动态' })).toBeNull();
+    expect(calls.some((url) => /sessions|messages|journal\/|tasks/.test(url))).toBe(false);
+  });
+
+  it('clears previously loaded Activity immediately when permission is revoked during pagination', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/activity?limit=50&offset=0') return new Response(JSON.stringify({
+        status: 'ok', items: [{ activity_id: 'activity-before-revocation', kind: 'journal', status: 'succeeded', occurred_at: '2026-10-20T09:30:00+08:00', journal_date: '2026-10-20' }],
+        pagination: { limit: 50, offset: 0, has_more: true }, source: ['journal', 'tasks'], freshness: { checked_at: '2026-10-20T01:30:00Z' },
+      }), { status: 200 });
+      if (url === '/api/activity?limit=50&offset=50') return new Response('{}', { status: 403 });
+      return new Response('{}', { status: 404 });
+    });
+    startAt('/activity');
+
+    expect(await screen.findByRole('heading', { name: '动态' })).toBeTruthy();
+    expect((await screen.findAllByText('日记操作')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: '加载更多动态' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('当前账户无权读取此页面数据。');
+    expect(screen.queryAllByText('日记操作')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: '加载更多动态' })).toBeNull();
+    expect(calls.filter((url) => url.startsWith('/api/activity?'))).toEqual([
+      '/api/activity?limit=50&offset=0', '/api/activity?limit=50&offset=50',
+    ]);
+    expect(calls.some((url) => /sessions|messages|journal\/|tasks/.test(url))).toBe(false);
+  });
+
   it('rejects an Activity response containing Journal or Task body fields', async () => {
     const calls: string[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
@@ -278,6 +502,19 @@ describe('Notes application navigation gate', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
     expect(screen.queryByText('private-session')).toBeNull();
+    expect(calls).toEqual(['/api/auth/session', '/api/agent/health']);
+  });
+
+  it('rejects an Agent Health status whose source does not match configuration state', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return new Response('{}', { status: 200 });
+      if (url === '/api/agent/health') return new Response(JSON.stringify({ status: 'online', source: null, checked_at: '2026-10-20T01:30:00Z' }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    startAt('/agent-health');
+    expect((await screen.findByRole('alert')).textContent).toContain('该页面数据暂不可用');
     expect(calls).toEqual(['/api/auth/session', '/api/agent/health']);
   });
 

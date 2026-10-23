@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchHome, type Home } from './api/home';
 import { adaptHome, type DataKind, type ListItem } from './api/home-adapter';
-import { DEMO_KPI_DELTAS, DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
+import { DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
 import { parseReviewDocument, ReviewMarkdown } from './ReviewMarkdown';
 import aiCubeUrl from './assets/ai-cube-user.png';
 import hermesOrbUrl from './assets/hermes-planet-user.png';
@@ -163,7 +163,7 @@ const messages = {
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
-    emptyTitle: '暂无今日记录', emptyDescription: '可以先添加待办，日程功能尚未接入。', create: '新建待办',
+    emptyTitle: '暂无今日记录', emptyDescription: '可以先添加待办，查看今天的日程。', create: '新建待办',
     empty: '暂无内容', notConnected: '功能即将上线', notConnectedTitle: '功能即将上线',
     notConnectedDescription: '接入后将为你提供每日重点和重要更新', waiting: '待我处理',
     recentKnowledge: '最近知识', quick: '快捷操作', quickDescription: '常用能力，一键直达',
@@ -172,6 +172,7 @@ const messages = {
     demoTrend: '趋势示意', demoSources: '来源占比示意', pending: '待审核', apiEntries: 'API 返回条目',
     unavailable: '尚未统计', noTodayData: '今日数据结构暂不可识别', technicalItems: 'Home API 当前返回的是项目目录文件，尚非业务项目列表。',
     viewAll: '查看全部', viewCalendar: '查看完整日历', reviewStatus: '待审核', projectType: '项目条目', knowledgeType: '知识条目',
+    openProjects: '打开项目', openKnowledge: '打开知识库', openReview: '打开待审核', openBrief: '打开每日简报', openActivity: '打开动态', openAgentHealth: '查看 Agent 状态', retryHome: '重试加载',
     statusUnavailable: '状态未提供', demoDelta: '趋势示意',
     briefDescription: '每日为你生成关键信息摘要', activityDescription: '聚合与你协作的动态',
     chatDescription: '与 SecondBrain 对话', reviewDescription: '查看待处理内容',
@@ -195,7 +196,7 @@ const messages = {
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
     returnedItems: 'API entries', agentSupport: 'SecondBrain V1', source: 'Data source',
-    emptyTitle: 'Nothing planned today', emptyDescription: 'Add a task here; calendar event creation is not connected yet.', create: 'New task',
+    emptyTitle: 'Nothing planned today', emptyDescription: 'Add a task or check today’s calendar.', create: 'New task',
     empty: 'Nothing here yet', notConnected: 'Coming soon', notConnectedTitle: 'Coming soon',
     notConnectedDescription: 'Daily highlights and important updates will appear here once connected', waiting: 'Waiting for me',
     recentKnowledge: 'Recent knowledge', quick: 'Quick actions', quickDescription: 'Your most-used destinations',
@@ -205,6 +206,7 @@ const messages = {
     apiEntries: 'API returned entries', unavailable: 'Not available', noTodayData: 'Today data shape is not recognized',
     technicalItems: 'The Home API currently returns project-directory files, not business project records.',
     viewAll: 'View all', viewCalendar: 'View full calendar', reviewStatus: 'Pending review', projectType: 'Project entry', knowledgeType: 'Knowledge entry',
+    openProjects: 'Open Projects', openKnowledge: 'Open Knowledge', openReview: 'Open Review', openBrief: 'Open Daily Brief', openActivity: 'Open Activity', openAgentHealth: 'View Agent Health', retryHome: 'Retry loading',
     statusUnavailable: 'Status unavailable', demoDelta: 'illustrative change',
     briefDescription: 'A daily summary of the information that matters', activityDescription: 'A view of the work happening around you',
     chatDescription: 'Talk with SecondBrain', reviewDescription: 'Review items waiting for you',
@@ -316,6 +318,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [locale, setLocale] = useState<Locale>(() => localStorage.getItem('secondbrain.locale') === 'en' ? 'en' : 'zh-CN');
   const [home, setHome] = useState<Home | null>(null);
   const [error, setError] = useState(false);
+  const [homeRetryRevision, setHomeRetryRevision] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname, enableNotes));
   const pageRef = useRef(page);
@@ -365,10 +368,13 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     if (homeRequestStarted.current && previousPage !== 'knowledge') return;
     let mounted = true;
     let completed = false;
+    const controller = new AbortController();
     homeRequestStarted.current = true;
-    fetchHome().then((data) => { completed = true; if (mounted) setHome(data); }).catch(() => { completed = true; if (mounted) setError(true); });
-    return () => { mounted = false; if (!completed) homeRequestStarted.current = false; };
-  }, [isKnowledgePage, isHomePage, isSingleSourceInboxPath, isInboxRoute]);
+    setHome(null);
+    setError(false);
+    fetchHome(controller.signal).then((data) => { completed = true; if (mounted) setHome(data); }).catch(() => { completed = true; if (mounted && !controller.signal.aborted) setError(true); });
+    return () => { mounted = false; controller.abort(); if (!completed) homeRequestStarted.current = false; };
+  }, [homeRetryRevision, isKnowledgePage, isHomePage, isSingleSourceInboxPath, isInboxRoute]);
   const registerNotesNavigationGuard = useCallback((guard: (() => boolean) | null) => {
     notesNavigationGuard.current = guard;
   }, []);
@@ -522,35 +528,35 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           </div>
           <div className="header-actions">
             <ClockWeather locale={locale} />
-            <span className={`header-agent ${view.agentStatus ? 'is-real' : 'is-unavailable'}`}><i />{view.agentStatus ? localizeStatus(view.agentStatus, locale) : t.unavailable}</span>
+            <span className={`header-agent ${view.agentStatus === 'online' ? 'is-real' : 'is-unavailable'}`}><i />{view.agentStatus === 'online' ? localizeStatus(view.agentStatus, locale) : view.agentStatus === 'not_configured' ? (locale === 'en' ? 'Not configured' : '未配置') : t.unavailable}</span>
             <button type="button" className="locale-button desktop-locale" onClick={changeLocale}>{t.localeLabel}<Icon name="chevron" size={13} /></button>
             <button type="button" className="settings-button" onClick={onLogout} title={t.coreLock} aria-label={t.coreLock}><Icon name="settings" size={17} /></button>
           </div>
         </header>
 
-        {error && <div className="error-state" role="alert">{locale === 'en' ? 'Home data could not be loaded. Try reloading the page.' : '暂时无法加载 Home 数据，请刷新页面重试。'}</div>}
+        {error && <div className="error-state" role="alert">{locale === 'en' ? 'Home data could not be loaded.' : '暂时无法加载 Home 数据。'} <button type="button" onClick={() => { homeRequestStarted.current = false; setHome(null); setError(false); setHomeRetryRevision((value) => value + 1); }}>{t.retryHome}</button></div>}
 
         <section className="overview-visual" aria-label={t.projectOverview}>
-          <KpiCard icon="folder" tone="blue" title={t.projectOverview} value={view.projectSource === 'UNAVAILABLE' ? '—' : String(view.projectItems.length)} detail={view.projectSource === 'REAL' ? t.returnedItems : t.unavailable} source={view.projectSource} chart="bars" locale={locale} demoDelta={view.source === 'REAL' ? DEMO_KPI_DELTAS.projects : undefined} />
-          <KpiCard icon="book" tone="violet" title={t.knowledgeOverview} value={view.source === 'UNAVAILABLE' ? t.unavailable : String(view.knowledgeItems.length)} detail={t.returnedItems} source={view.source} chart="line" locale={locale} demoDelta={view.source === 'REAL' ? DEMO_KPI_DELTAS.knowledge : undefined} />
-          <KpiCard icon="brain" tone="teal" title={t.agent} value={view.agentStatus ? localizeStatus(view.agentStatus, locale) : '—'} detail={view.agentStatus ? 'Hermes · REAL' : t.unavailable} source={view.agentSource} chart="orb" locale={locale} />
+          <KpiCard icon="folder" tone="blue" title={t.projectOverview} value={view.projectSource === 'UNAVAILABLE' ? '—' : String(view.projectItems.length)} detail={view.projectSource === 'REAL' ? t.returnedItems : t.unavailable} source={view.projectSource} chart="bars" locale={locale} />
+          <KpiCard icon="book" tone="violet" title={t.knowledgeOverview} value={view.knowledgeSource === 'UNAVAILABLE' ? '—' : String(view.knowledgeItems.length)} detail={view.knowledgeSource === 'REAL' ? t.returnedItems : t.unavailable} source={view.knowledgeSource} chart="line" locale={locale} />
+          <KpiCard icon="brain" tone="teal" title={t.agent} value={view.agentStatus ? localizeStatus(view.agentStatus, locale) : '—'} detail={view.agentStatus === 'online' ? 'Hermes · REAL' : t.unavailable} source={view.agentSource} chart="orb" locale={locale} />
           <Donut locale={locale} />
         </section>
 
         <section className="primary-grid" aria-label={t.today}>
           <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} onCreateTask={() => navigate('today')} />
-          <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} />
+          <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} onOpen={() => navigate('review')} />
         </section>
 
         <section className="secondary-grid" aria-label={t.projects}>
-          <ListCard id="projects" title={t.projects} items={view.projectItems} kind="project" source={view.projectSource} locale={locale} />
-          <ListCard id="knowledge" title={t.recentKnowledge} items={view.knowledgeItems} kind="knowledge" source={view.knowledgeSource} locale={locale} />
-          <AgentCard status={view.agentStatus} locale={locale} />
+          <ListCard id="projects" title={t.projects} items={view.projectItems} kind="project" source={view.projectSource} locale={locale} onOpen={() => navigate('projects')} openLabel={t.openProjects} />
+          <ListCard id="knowledge" title={t.recentKnowledge} items={view.knowledgeItems} kind="knowledge" source={view.knowledgeSource} locale={locale} onOpen={() => navigate('knowledge')} openLabel={t.openKnowledge} />
+          <AgentCard status={view.agentStatus} locale={locale} onOpen={() => navigate('agent-health')} />
         </section>
 
         <section className="info-grid">
-          <ConnectedPlaceholder id="brief" title={t.brief} description={t.briefDescription} locale={locale} icon="file" />
-          <ConnectedPlaceholder id="activity" title={t.activity} description={t.activityDescription} locale={locale} icon="activity" />
+          <HomeDestinationCard id="brief" title={t.brief} description={t.briefDescription} label={t.openBrief} icon="file" onOpen={() => navigate('brief')} />
+          <HomeDestinationCard id="activity" title={t.activity} description={t.activityDescription} label={t.openActivity} icon="activity" onOpen={() => navigate('activity')} />
         </section>
 
         <section className="quick-strip" aria-labelledby="quick-title">
@@ -559,7 +565,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
             <ActionCard icon="message" tone="action-blue" title={t.chat} description={t.chatDescription} onClick={() => navigate('chat')} />
             <ActionCard icon="check" tone="action-violet" title={t.review} description={t.reviewDescription} onClick={() => navigate('review')} />
             <ActionCard icon="capture" tone="action-teal" title={t.capture} description={t.captureDescription} onClick={() => navigate('chat')} />
-            <ActionCard icon="journal" tone="action-slate" title={t.newJournal} description={t.journalDescription} soon={t.soon} />
+            <ActionCard icon="journal" tone="action-slate" title={t.newJournal} description={t.journalDescription} onClick={() => navigate('journal')} />
           </div>
         </section>
 
@@ -875,27 +881,39 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   const [organizeBusy, setOrganizeBusy] = useState(false);
   const [organizeMessage, setOrganizeMessage] = useState('');
   const [anchorFeedback, setAnchorFeedback] = useState('');
+  const inboxLoadRevision = useRef(0);
   const load = async (showLoading = false) => {
+    const revision = ++inboxLoadRevision.current;
     if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/inbox', { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const value = await response.json();
+      if (revision !== inboxLoadRevision.current) return;
       setItems(sortByCapturedAt(Array.isArray(value.items) ? value.items : [], (item: CaptureItem) => item.capture_id));
-    } catch { setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
-    finally { setLoading(false); }
+    } catch { if (revision === inboxLoadRevision.current) setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
+    finally { if (revision === inboxLoadRevision.current) setLoading(false); }
   };
   useEffect(() => {
     void load(true);
-    void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => response.json()).then((value) => {
+    void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }).then((value) => {
       if (value && typeof value.blocked_reason === 'string') setOrganizeReason(value.blocked_reason);
       setOrganizeAvailable(value?.execution_available === true);
-    }).catch(() => setOrganizeReason(locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+    }).catch((cause) => {
+      setOrganizeAvailable(false);
+      const status = cause instanceof Error ? /^HTTP (\d{3})$/.exec(cause.message)?.[1] : undefined;
+      setOrganizeReason(status
+        ? (locale === 'en' ? `Organizer status could not be verified (HTTP ${status}); action remains disabled.` : `自动整理状态无法验证（HTTP ${status}），操作保持禁用。`)
+        : (locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+    });
     const refresh = () => void load();
     window.addEventListener('sb-inbox-refresh', refresh);
     const timer = window.setInterval(refresh, 5000);
-    return () => { window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
+    return () => { inboxLoadRevision.current += 1; window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
   }, []);
   useEffect(() => {
     const match = window.location.hash.match(/^#capture-([a-f\d]{32})$/i);
@@ -2511,7 +2529,7 @@ function TodayCard({ state, locale, onViewCalendar, onCreateTask }: { state: Ret
     <p className="today-description">{t.todayDescription}</p>
     {state.kind === 'content' ? <div className="today-items">{state.items.map((item, index) => <div className="today-item" key={`${item.title}-${index}`}><span className="timeline-dot"/><strong>{item.title}</strong></div>)}</div>
       : state.kind === 'empty' ? <IllustratedEmpty locale={locale} onCreateTask={onCreateTask} />
-      : <div className="unknown-state"><span className="unknown-icon">?</span><strong>{t.noTodayData}</strong><small>UNAVAILABLE</small></div>}
+      : <div className="unknown-state"><span className="unknown-icon">?</span><strong>{t.noTodayData}</strong><small>UNAVAILABLE</small><button type="button" className="coming-button" onClick={onCreateTask}>{t.create}</button></div>}
   </article>;
 }
 
@@ -2524,10 +2542,10 @@ function IllustratedEmpty({ locale, onCreateTask }: { locale: Locale; onCreateTa
   </div>;
 }
 
-function ReviewCard({ title, items, pendingCount, source, locale }: { title: string; items: ListItem[]; pendingCount: number | null; source: DataKind; locale: Locale }) {
+function ReviewCard({ title, items, pendingCount, source, locale, onOpen }: { title: string; items: ListItem[]; pendingCount: number | null; source: DataKind; locale: Locale; onOpen: () => void }) {
   const t = messages[locale];
   return <article className="dashboard-card review-card" id="waiting">
-    <ModuleTitle title={title} icon="check" trailing={<span className="review-count">{pendingCount === null ? '—' : pendingCount} <small>{t.pending}</small></span>} />
+    <ModuleTitle title={title} icon="check" trailing={<><span className="review-count">{pendingCount === null ? '—' : pendingCount} <small>{t.pending}</small></span><button type="button" className="card-link" onClick={onOpen} aria-label={t.openReview}>{t.viewAll}<Icon name="chevron" size={14} /></button></>} />
     <div className="card-subheading"><span className="status-light" />{source === 'REAL' ? `${items.length} ${locale === 'en' ? 'items' : '条待审核内容'}` : t.unavailable} <span className={`source-badge ${source === 'REAL' ? 'real' : 'unavailable'}`}>{source}</span></div>
     {items.length ? <div className="review-list">{items.slice(0, 5).map((item, index) => <div className="review-row" key={`${item.title}-${index}`}>
       <span className={`review-icon review-tone-${index % 4}`}><Icon name={index % 2 ? 'file' : 'check'} size={14} /></span>
@@ -2544,13 +2562,13 @@ function formatDate(value: ListItem['updated'], locale: Locale) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(locale === 'en' ? 'en-US' : 'zh-CN', { month: 'numeric', day: 'numeric' });
 }
 
-function ListCard({ id, title, items, kind, source, locale }: { id: string; title: string; items: ListItem[]; kind: 'project' | 'knowledge'; source: DataKind; locale: Locale }) {
+function ListCard({ id, title, items, kind, source, locale, onOpen, openLabel }: { id: string; title: string; items: ListItem[]; kind: 'project' | 'knowledge'; source: DataKind; locale: Locale; onOpen: () => void; openLabel: string }) {
   const t = messages[locale];
   const icon = kind === 'project' ? 'folder' : 'book';
   const label = kind === 'project' ? t.projectType : t.knowledgeType;
   const technical = kind === 'project' && source === 'UNAVAILABLE';
   return <article className={`dashboard-card list-card ${kind}-card`} id={id}>
-    <ModuleTitle title={title} icon={icon} trailing={<span className="section-count">{source === 'REAL' ? items.length : t.unavailable} <small>{source === 'REAL' ? t.apiEntries : source}</small></span>} />
+    <ModuleTitle title={title} icon={icon} trailing={<><span className="section-count">{source === 'REAL' ? items.length : t.unavailable} <small>{source === 'REAL' ? t.apiEntries : source}</small></span><button type="button" className="card-link" aria-label={openLabel} onClick={onOpen}>{t.viewAll}<Icon name="chevron" size={14} /></button></>} />
     {technical && <p className="semantic-note">{t.technicalItems}</p>}
     {items.length ? <div className="list-items">{items.slice(0, 4).map((item, index) => <div className="list-row" key={`${item.title}-${index}`}>
       <span className={`list-icon list-tone-${index % 4}`}><Icon name={icon} size={14} /></span>
@@ -2561,21 +2579,23 @@ function ListCard({ id, title, items, kind, source, locale }: { id: string; titl
   </article>;
 }
 
-function AgentCard({ status, locale }: { status: string | null; locale: Locale }) {
+function AgentCard({ status, locale, onOpen }: { status: string | null; locale: Locale; onOpen: () => void }) {
   const t = messages[locale];
+  const online = status === 'online';
+  const label = online ? t.online : status === 'not_configured' ? (locale === 'en' ? 'Not configured' : '未配置') : t.unavailable;
   return <article className="dashboard-card agent-card">
-    <ModuleTitle title={t.agent} icon="brain" trailing={<span className={`agent-pill ${status ? 'is-online' : ''}`}><i />{status ? t.online : t.unavailable}</span>} />
-    <div className="agent-visual"><div className="agent-copy"><strong>{t.agentSupport}</strong><small>{status ? `${localizeStatus(status, locale)} · REAL` : t.unavailable}</small></div><img className="agent-crystal" src={aiCubeUrl} alt="" aria-hidden="true" /></div>
+    <ModuleTitle title={t.agent} icon="brain" trailing={<><span className={`agent-pill ${online ? 'is-online' : ''}`}><i />{label}</span><button type="button" className="card-link" aria-label={t.openAgentHealth} onClick={onOpen}>{t.viewAll}<Icon name="chevron" size={14} /></button></>} />
+    <div className="agent-visual"><div className="agent-copy"><strong>{t.agentSupport}</strong><small>{online ? `${localizeStatus(status, locale)} · REAL` : label}</small></div><img className="agent-crystal" src={aiCubeUrl} alt="" aria-hidden="true" /></div>
     <div className="agent-visual-caption"><span className="source-badge demo">DEMO</span><span>{locale === 'en' ? 'Visual identity' : '视觉主图'}</span></div>
-    <div className="agent-footer"><span><i className={status ? 'online' : ''} />{locale === 'en' ? 'Runtime status' : '运行状态'}</span><strong>{status ? localizeStatus(status, locale) : '—'}</strong></div>
+    <div className="agent-footer"><span><i className={online ? 'online' : ''} />{locale === 'en' ? 'Runtime status' : '运行状态'}</span><strong>{online ? localizeStatus(status, locale) : label}</strong></div>
   </article>;
 }
 
-function ConnectedPlaceholder({ id, title, description, locale, icon }: { id: string; title: string; description: string; locale: Locale; icon: string }) {
-  const t = messages[locale];
+function HomeDestinationCard({ id, title, description, label, icon, onOpen }: { id: string; title: string; description: string; label: string; icon: string; onOpen: () => void }) {
   return <article className="dashboard-card connected-card" id={id}>
-    <ModuleTitle title={title} icon={icon} trailing={<span className="coming-pill">{t.soon}</span>} />
-    <div className="connected-content"><div className="connected-graphic"><Icon name={icon} size={30} /><span /><span /></div><div><strong>{t.notConnectedTitle}</strong><p>{description}</p></div></div>
+    <ModuleTitle title={title} icon={icon} trailing={<button type="button" className="card-link" aria-label={label} onClick={onOpen}>{label}<Icon name="chevron" size={14} /></button>} />
+    <div className="connected-content"><div className="connected-graphic"><Icon name={icon} size={30} /><span /><span /></div><div><strong>{title}</strong><p>{description}</p></div></div>
+    <button type="button" className="v1-page-retry" onClick={onOpen}>{label}</button>
   </article>;
 }
 

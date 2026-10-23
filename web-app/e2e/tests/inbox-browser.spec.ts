@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from '@playwright/test';
+import { expect, test, type Page, type Request, type Response } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,8 +15,56 @@ type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: s
 type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
-  | 'daily_brief_readback' | 'viewport_layout';
+  | 'daily_brief_readback' | 'permission_revocation' | 'post_revocation_navigation'
+  | 'agent_health' | 'today' | 'journal' | 'calendar' | 'viewport_layout';
+type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
+  | 'home_after_projects' | 'home_to_activity' | 'activity_heading'
+  | 'activity_get_response' | 'activity_get_status_200' | 'home_after_activity'
+  | 'home_after_revocation' | 'agent_health_heading' | 'home_after_agent_health'
+  | 'today_heading' | 'home_after_today' | 'journal_heading' | 'home_after_journal'
+  | 'activity_revocation_denial' | 'activity_revocation_empty' | 'activity_revocation_status_403'
+  | 'calendar_heading' | 'calendar_api_requests' | 'projects_navigation' | 'projects_api_response'
+  | 'activity_navigation' | 'agent_health_navigation' | 'agent_health_api_response'
+  | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
+  | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
+  | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
+
+function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
+  return page.waitForResponse((response) => {
+    const request = response.request();
+    const url = new URL(response.url());
+    return request.method() === 'GET' && url.pathname === path && matchesQuery(url.searchParams);
+  }, { timeout: 5000 }).catch(() => null);
+}
+
+async function expectSuccessfulGet(
+  responsePromise: Promise<Response | null>,
+  observed: Awaited<ReturnType<typeof configurePage>>,
+  assertion: DiagnosticAssertion,
+) {
+  observed.setDiagnosticAssertion(assertion);
+  const response = await responsePromise;
+  expect(response, `${assertion}_observed`).not.toBeNull();
+  expect(response?.status(), assertion).toBe(200);
+}
+
+async function expectNoHorizontalOverflow(
+  page: Page,
+  observed: Awaited<ReturnType<typeof configurePage>>,
+  viewport: { width: number },
+  assertion: Extract<DiagnosticAssertion, `layout_${string}`>,
+) {
+  observed.setDiagnosticAssertion(assertion);
+  const widths = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    document: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+  }));
+  expect(widths.viewport).toBe(viewport.width);
+  expect(Math.max(widths.document, widths.body), assertion).toBeLessThanOrEqual(widths.viewport);
+}
 
 function safePath(value: string): string {
   const url = new URL(value, baseUrl);
@@ -35,7 +83,9 @@ async function configurePage(page: Page) {
   let lastInboxBody: Record<string, unknown> | null = null;
   let dailyBriefPostCount = 0;
   let lastDailyBriefBody: Record<string, unknown> | null = null;
+  let activityReadRevoked = false;
   let failureStage: FailureStage = 'login';
+  let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
   page.on('request', (request) => {
     pending.set(request, Date.now());
@@ -118,10 +168,30 @@ async function configurePage(page: Page) {
     const sourceListPath = route.request().method() === 'GET'
       && ((url.pathname === '/api/tasks' && exactParams({ status: 'all' }))
         || (url.pathname === '/api/projects' && exactParams({ limit: '50', offset: '0' })));
+    const homePath = route.request().method() === 'GET' && url.pathname === '/api/home' && params.size === 0;
+    const healthPath = route.request().method() === 'GET' && url.pathname === '/api/agent/health' && params.size === 0;
+    const activityPath = route.request().method() === 'GET' && url.pathname === '/api/activity'
+      && exactParams({ limit: '50', offset: '0' });
+    const calendarPath = route.request().method() === 'GET' && url.pathname === '/api/calendar'
+      && exactParams({ from: params.get('from') ?? '', to: params.get('to') ?? '', timezone: 'Asia/Shanghai' })
+      && /^\d{4}-\d{2}-\d{2}$/.test(params.get('from') ?? '')
+      && /^\d{4}-\d{2}-\d{2}$/.test(params.get('to') ?? '');
+    const journalPath = route.request().method() === 'GET' && /^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(url.pathname)
+      && params.size === 0;
+    const taskListPath = route.request().method() === 'GET' && url.pathname === '/api/tasks'
+      && exactParams({ status: 'open' });
     if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
-      && !briefPath && !journalSourcePath && !sourceListPath) {
+      && !briefPath && !journalSourcePath && !sourceListPath && !homePath && !healthPath
+      && !activityPath && !calendarPath && !journalPath && !taskListPath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
+      return;
+    }
+    if (activityReadRevoked && activityPath) {
+      // The current Core contract has one owner action and no action-level
+      // revoke API. This same-origin synthetic denial verifies the Web's
+      // fail-closed response to a revoked activity.read capability.
+      await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ detail: 'activity.read revoked in synthetic fixture' }) });
       return;
     }
     if (url.pathname === '/api/inbox/entries' && route.request().method() === 'POST' && firstInboxResponse) {
@@ -151,7 +221,12 @@ async function configurePage(page: Page) {
     get lastInboxBody() { return lastInboxBody; },
     get dailyBriefPostCount() { return dailyBriefPostCount; },
     get lastDailyBriefBody() { return lastDailyBriefBody; },
+    get diagnosticAssertion() { return diagnosticAssertion; },
+    get activityReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && request.path === '/api/activity').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
+    setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
+    setActivityReadRevoked(revoked: boolean) { activityReadRevoked = revoked; },
   };
 }
 
@@ -241,6 +316,25 @@ async function signInAndCreateBlankSession(page: Page, viewport: { width: number
   await expect(page.getByRole('heading', { name: '合成会话 1' })).toBeVisible();
 }
 
+async function returnHomeFromNavigation(
+  page: Page,
+  viewport: { width: number },
+  observed: Awaited<ReturnType<typeof configurePage>>,
+  assertion: Extract<DiagnosticAssertion, 'home_after_projects' | 'home_after_activity' | 'home_after_revocation' | 'home_after_agent_health' | 'home_after_today' | 'home_after_journal'>,
+) {
+  observed.setDiagnosticAssertion(assertion);
+  if (viewport.width <= 760) {
+    const menu = page.locator('.mobile-menu-button');
+    await expect(menu).toHaveAttribute('aria-expanded', 'false');
+    await menu.click();
+    await expect(menu).toHaveAttribute('aria-expanded', 'true');
+  }
+  await page.locator('.sidebar nav').getByRole('button', { name: '首页', exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading', { name: '你的工作台' })).toBeVisible();
+  if (viewport.width <= 760) await expect(page.locator('.mobile-menu-button')).toHaveAttribute('aria-expanded', 'false');
+}
+
 let cachedPassword: string | undefined;
 async function readSyntheticPassword(): Promise<string> {
   if (!cachedPassword) {
@@ -318,9 +412,120 @@ for (const viewport of viewports) {
     await inspectOrCreateDailyBrief(page, viewport, observed);
     expect(observed.blockedOrigins.size).toBe(0);
 
-    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     observed.setFailureStage('viewport_layout');
-    expect(scrollWidth).toBeLessThanOrEqual(viewport.width);
+    const homeResponsePromise = waitForGetResponse(page, '/api/home');
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: '你的工作台' })).toBeVisible();
+    await expectSuccessfulGet(homeResponsePromise, observed, 'home_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_home');
+    observed.setDiagnosticAssertion('home_to_projects');
+    const projectsResponsePromise = waitForGetResponse(page, '/api/projects', (params) =>
+      params.get('limit') === '50' && params.get('offset') === '0' && Array.from(params.keys()).length === 2);
+    await page.getByRole('button', { name: '打开项目' }).first().click();
+    observed.setDiagnosticAssertion('projects_navigation');
+    await expect(page).toHaveURL(/\/projects(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('projects_heading');
+    await expect(page.getByRole('heading', { name: '项目' })).toBeVisible();
+    await expectSuccessfulGet(projectsResponsePromise, observed, 'projects_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_projects');
+    await returnHomeFromNavigation(page, viewport, observed, 'home_after_projects');
+    observed.setDiagnosticAssertion('home_to_activity');
+    const activityResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      const url = new URL(response.url());
+      return request.method() === 'GET' && url.pathname === '/api/activity'
+        && url.searchParams.get('limit') === '50' && url.searchParams.get('offset') === '0'
+        && Array.from(url.searchParams.keys()).length === 2;
+    }, { timeout: 5000 }).catch(() => null);
+    await page.getByRole('button', { name: '打开动态' }).first().click();
+    observed.setDiagnosticAssertion('activity_navigation');
+    await expect(page).toHaveURL(/\/activity(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('activity_heading');
+    await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
+    observed.setDiagnosticAssertion('activity_get_response');
+    const activityResponse = await activityResponsePromise;
+    observed.setDiagnosticAssertion('activity_get_status_200');
+    expect(activityResponse, 'activity_get_response_observed').not.toBeNull();
+    expect(activityResponse?.status(), 'activity_get_http_200').toBe(200);
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_activity');
+    observed.setDiagnosticAssertion('home_after_activity');
+    await returnHomeFromNavigation(page, viewport, observed, 'home_after_activity');
+    observed.setFailureStage('permission_revocation');
+    observed.setDiagnosticAssertion('activity_heading');
+    observed.setActivityReadRevoked(true);
+    await page.getByRole('button', { name: '打开动态' }).first().click();
+    observed.setDiagnosticAssertion('activity_heading');
+    await expect(page.getByRole('heading', { name: '动态' })).toBeVisible();
+    observed.setDiagnosticAssertion('activity_revocation_denial');
+    await expect(page.getByRole('alert')).toHaveText('当前账户无权读取此页面数据。');
+    observed.setDiagnosticAssertion('activity_revocation_empty');
+    expect(await page.locator('.v1-activity-card').count()).toBe(0);
+    observed.setDiagnosticAssertion('activity_revocation_status_403');
+    expect(observed.requestRecords.some((request) => request.method === 'GET'
+      && request.path === '/api/activity' && request.status === 403)).toBe(true);
+    observed.setActivityReadRevoked(false);
+    observed.setFailureStage('post_revocation_navigation');
+    await returnHomeFromNavigation(page, viewport, observed, 'home_after_revocation');
+    observed.setFailureStage('agent_health');
+    const agentHealthResponsePromise = waitForGetResponse(page, '/api/agent/health');
+    observed.setDiagnosticAssertion('agent_health_navigation');
+    await page.getByRole('button', { name: '查看 Agent 状态' }).first().click();
+    await expect(page).toHaveURL(/\/agent-health(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('agent_health_heading');
+    await expect(page.getByRole('heading', { level: 1, name: 'Agent 状态', exact: true })).toBeVisible();
+    await expectSuccessfulGet(agentHealthResponsePromise, observed, 'agent_health_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_agent_health');
+    await returnHomeFromNavigation(page, viewport, observed, 'home_after_agent_health');
+    observed.setFailureStage('today');
+    const todayResponsePromise = waitForGetResponse(page, '/api/tasks', (params) =>
+      params.get('status') === 'open' && Array.from(params.keys()).length === 1);
+    if (viewport.width <= 760) {
+      const menu = page.locator('.mobile-menu-button');
+      await expect(menu).toHaveAttribute('aria-expanded', 'false');
+      await menu.click();
+      await expect(menu).toHaveAttribute('aria-expanded', 'true');
+    }
+    observed.setDiagnosticAssertion('today_navigation');
+    await page.locator('.sidebar nav').getByRole('button', { name: '今日', exact: true }).click();
+    await expect(page).toHaveURL(/\/today(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('today_heading');
+    await expect(page.getByRole('heading', { name: '今日与待办' })).toBeVisible();
+    await expectSuccessfulGet(todayResponsePromise, observed, 'today_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_today');
+    if (viewport.width <= 760) await expect(page.locator('.mobile-menu-button')).toHaveAttribute('aria-expanded', 'false');
+    await returnHomeFromNavigation(page, viewport, observed, 'home_after_today');
+    observed.setFailureStage('journal');
+    const journalResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      const url = new URL(response.url());
+      return request.method() === 'GET' && /^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(url.pathname) && url.search === '';
+    }, { timeout: 5000 }).catch(() => null);
+    observed.setDiagnosticAssertion('journal_navigation');
+    await page.getByRole('button', { name: '新建日记' }).click();
+    await expect(page).toHaveURL(/\/journal(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('journal_heading');
+    await expect(page.getByRole('heading', { name: '日记' })).toBeVisible();
+    await expectSuccessfulGet(journalResponsePromise, observed, 'journal_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_journal');
+    await returnHomeFromNavigation(page, viewport, observed, 'home_after_journal');
+    observed.setFailureStage('calendar');
+    const calendarResponsePromise = waitForGetResponse(page, '/api/calendar', (params) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(params.get('from') ?? '')
+      && /^\d{4}-\d{2}-\d{2}$/.test(params.get('to') ?? '')
+      && params.get('timezone') === 'Asia/Shanghai' && Array.from(params.keys()).length === 3);
+    observed.setDiagnosticAssertion('calendar_navigation');
+    await page.getByRole('button', { name: '查看完整日历' }).click();
+    await expect(page).toHaveURL(/\/calendar(?:\?.*)?$/);
+    observed.setDiagnosticAssertion('calendar_heading');
+    await expect(page.getByRole('heading', { name: '日历' })).toBeVisible();
+    await expectSuccessfulGet(calendarResponsePromise, observed, 'calendar_api_response');
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_calendar');
+    observed.setDiagnosticAssertion('calendar_api_requests');
+    expect(observed.blockedOrigins.size).toBe(0);
+    for (const path of ['/api/home', '/api/projects', '/api/activity', '/api/agent/health', '/api/tasks', '/api/journal/', '/api/calendar']) {
+      expect(observed.requestRecords.some((request) => request.method === 'GET' && request.path.startsWith(path))).toBe(true);
+    }
+
   });
 }
 
@@ -333,10 +538,12 @@ test.afterEach(async ({ page }, testInfo) => {
     const isTimeout = errors.some((error) => error.name === 'TimeoutError' || /timeout/i.test(error.message));
     const isAssertion = errors.some((error) => /\bexpect(?:\(|\.)|\bExpected:|\bReceived:/i.test(error.message));
     await writeFile(join(testInfo.outputDir, 'failure-summary.json'), JSON.stringify({
-      schema_version: 1,
+      schema_version: 2,
       viewport: viewport?.name ?? 'unknown',
       stage: observed?.failureStage ?? 'login',
       code: isTimeout ? 'timeout' : isAssertion ? 'assertion_failed' : 'test_error',
+      assertion_id: observed?.diagnosticAssertion ?? 'test_setup',
+      activity_get_statuses: observed?.activityReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);
