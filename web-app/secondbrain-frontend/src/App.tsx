@@ -875,27 +875,39 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   const [organizeBusy, setOrganizeBusy] = useState(false);
   const [organizeMessage, setOrganizeMessage] = useState('');
   const [anchorFeedback, setAnchorFeedback] = useState('');
+  const inboxLoadRevision = useRef(0);
   const load = async (showLoading = false) => {
+    const revision = ++inboxLoadRevision.current;
     if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/inbox', { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const value = await response.json();
+      if (revision !== inboxLoadRevision.current) return;
       setItems(sortByCapturedAt(Array.isArray(value.items) ? value.items : [], (item: CaptureItem) => item.capture_id));
-    } catch { setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
-    finally { setLoading(false); }
+    } catch { if (revision === inboxLoadRevision.current) setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
+    finally { if (revision === inboxLoadRevision.current) setLoading(false); }
   };
   useEffect(() => {
     void load(true);
-    void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => response.json()).then((value) => {
+    void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }).then((value) => {
       if (value && typeof value.blocked_reason === 'string') setOrganizeReason(value.blocked_reason);
       setOrganizeAvailable(value?.execution_available === true);
-    }).catch(() => setOrganizeReason(locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+    }).catch((cause) => {
+      setOrganizeAvailable(false);
+      const status = cause instanceof Error ? /^HTTP (\d{3})$/.exec(cause.message)?.[1] : undefined;
+      setOrganizeReason(status
+        ? (locale === 'en' ? `Organizer status could not be verified (HTTP ${status}); action remains disabled.` : `自动整理状态无法验证（HTTP ${status}），操作保持禁用。`)
+        : (locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+    });
     const refresh = () => void load();
     window.addEventListener('sb-inbox-refresh', refresh);
     const timer = window.setInterval(refresh, 5000);
-    return () => { window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
+    return () => { inboxLoadRevision.current += 1; window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
   }, []);
   useEffect(() => {
     const match = window.location.hash.match(/^#capture-([a-f\d]{32})$/i);

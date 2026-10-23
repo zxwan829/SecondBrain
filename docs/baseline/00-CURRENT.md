@@ -8,18 +8,23 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 最新状态与唯一 NEXT：完整 V1 六阶段交付
+## 2026-10-23 当前状态与唯一 NEXT：V1 集成收口
 
-详细工作分解、A/B 所有权、依赖、验收、纸面推演与范围覆盖见 [V1-Delivery-Plan.md](V1-Delivery-Plan.md)。总控 [#76](https://github.com/zxwan829/SecondBrain/issues/76)，A [#96](https://github.com/zxwan829/SecondBrain/issues/96)，B [#97](https://github.com/zxwan829/SecondBrain/issues/97)。本节替代下方历史快照的阶段指令；历史证据保留，不作为第二份 NEXT。完整 V1 仍 **NOT DONE**。
+详细六阶段分解、A/B 所有权、依赖与验收见 [V1-Delivery-Plan.md](V1-Delivery-Plan.md)。总控 [#76](https://github.com/zxwan829/SecondBrain/issues/76)，A [#96](https://github.com/zxwan829/SecondBrain/issues/96)，B [#97](https://github.com/zxwan829/SecondBrain/issues/97)。完整 V1 仍 **NOT DONE**。
 
 | 当前对象 | 核验结果 | 下一步 |
 |---|---|---|
-| 核验 main | `70db581f4f93087eb7ab3456bf5726317645b444`，#197 与文档 PR #200 已合并 | 此 SHA 为本规划检查时快照，不代表生产 |
-| Linux Writer 子集 | #199 `6d4f0b61ed7e7474122e55cba7d0a50b4a74d01c`，[Run 39802960932](https://github.com/zxwan829/SecondBrain/actions/runs/39802960932) success，原始日志 `1 passed in 0.38s`；PMO `PASS_WITH_LIMITS` | 不重复旧环境排查；Authority-only、Writer 自身严格 create-only、生产 OS Gate 仍未通过 |
-| A | #198 Activity HEAD `ded3c4dc5f91fbf7ee17a058819e5f3f4fd566eb` 源码复审 PASS（[Review #5613809515](https://github.com/zxwan829/SecondBrain/pull/198#pullrequestreview-5613809515)），仍 Draft/未合并；Web UX Draft [#202](https://github.com/zxwan829/SecondBrain/pull/202) HEAD `6518f6cef8c201981628b0bb09718f374aea55cd` 叠加在 #198 分支，共 11 个 Web 文件；最终 HEAD 独立源码复审 PASS，新增 Notes 412 冲突与 Vocabulary 同义词映射回归；83 项跨模块、7 项 Home 信任状态和 23 项 Notes/Vocabulary 定向测试、typecheck/build/diff-check PASS；三视口 Playwright 仅完成清单解析，浏览器执行 NOT RUN；#199 仍 Draft/Open，Ready 动作被平台自动审批拒绝 | 继续隔离浏览器执行与跨层集成验收；A_NEXT_READY 仍未达成；按有效授权协调 #198 状态，不绕过 #199 拒绝 |
-| B | #106 Draft/Open；#193 CLOSED/NOT MERGED；#97 最新 C0 提案为 [评论 #6345462222](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6345462222) | 等待 PMO 对 Authority→Writer/create-only 合同作四项裁定；继续不依赖 Writer 的 Core 缺口；不把提案写成已实现或 OS 通过 |
-| 实际业务缺口 | main Planning 执行仍 `effect=none`；Brief `approved_import` 仍 501；Activity 尚不覆盖全部正式来源 | 补真实专用 API 接线，不把模拟/存储模块存在视为完整能力 |
-| 生产/模型/用户 | 本轮未操作 NAS、真实模型、真实渠道或个人数据 | 不推断现网正常，不借本计划启用 Writer/Promote |
+| main | `e33b836c67095df1537ac4fb3da76adc236f4a96`。#198、#212、#214、#215 已按顺序正常合入 | 本状态记录对应 GitHub main 快照；不代表部署或生产状态 |
+| A 普通 Web 批次 | #198 `b9bb97da`→`5fff974b`；#212 `3cf044cf`→`f58ecfd2`；#214 `36c67fd1`→`db810654`；#215 `9d35dc70`→`e33b836c`。各项 post-merge 定向回归分别 48、5、1、2 项通过；#214/#215 相邻 Inbox 修改的组合回归通过 | 保留 PR 各自已有 typecheck/build/diff-check 证据；本批未运行 Actions。细节见 Progress-Log 2026-10-23 集成收口记录 |
+| #201 Core 撤权 | PR HEAD `0267a2ce01be0f7898ca6dd7b54a21edd339e8ec`，包含修复提交 `ac1c171d3c5efd3e89fbcc6b578ac354a3d145d1`：缺失 grant 记录现返回 403；A 对该安全增量复审 `PASS_WITH_LIMITS`（#201 review #5629186192）。B 报告 4 个定向文件 55 passed；未重复执行。 | 此结论只关闭已识别的进程内 fail-open 路径，不是整个 Core PR、安全架构或生产验收。继续核对 #201/#207/#202 固定组合及各自剩余 Gate |
+| #207/#202 集成 | #207 `d1cd0904` 保留既有 `PASS_WITH_LIMITS`；#202 `62c97ff0` 仍依赖 #201/#207。#202 较早固定 Web SHA 的 Linux Chromium 三视口证据只适用于对应浏览器/测试代码，不自动等于当前组合 Gate | #201 已识别 fail-open 增量现已修复并完成有限复审；下一步核对 #201/#207/#202 当前固定 SHA、stacked base 与净差异，再做缺失的跨层 HTTP 验证。安全敏感 Core PR 不据普通 PR 授权自动合并 |
+| #216/#213 Trash | #216 `96d36dcf` 源码层原子 no-replace 与恢复复审 `PASS_WITH_LIMITS`；Linux `renameat2`、生产挂载/ACL/Synology Drive 未验证。#213 仍为设计候选 | 先冻结首发 DTO/action/排除与恢复合同；未完成相应验证前不启用可操作 Trash UI，不含 purge |
+| P4 Notes | localhost HTTP Gate 为 `PASS_WITH_LIMITS`；移动浏览器与 Obsidian 双向同步 `NOT RUN` | 有单次浏览器授权时再做合成移动验收；不得连接真实 Vault/NAS |
+| Writer/Promote 与生产 | OFF；D090/OS Gate 与生产安全门禁保持原状 | 不从普通 PR 合入推导部署或生产授权 |
+
+本批分支保护规则与 ruleset 的可读 GraphQL 查询均未返回配置项；普通 PR workflow 没有匹配本批文件的自动触发。所有 PR 均通过正常 GitHub Ready/Merge 路径处理；没有绕过检查、管理员合并、强推或新增 workflow。完整 V1 及真实生产/用户体验验收仍未完成。
+
+**唯一 NEXT：** A/B 以 #201 `0267a2ce`、#207 最新固定 SHA 与 #202 最新 Web SHA 对齐依赖，完成必要的 Core+Web localhost HTTP 组合验收；不得把本次有限的 #201 安全增量复审写成整项 Core/生产 Gate 通过。普通 Web 合并批已结束，不重复四项已通过回归。
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 
