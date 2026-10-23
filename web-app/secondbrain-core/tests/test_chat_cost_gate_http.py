@@ -174,12 +174,12 @@ class ChatCostGateHttpTests(unittest.TestCase):
         self.assertEqual(self.run_posts, 2)
 
     def test_non_success_sse_terminals_hold_reservation_with_reported_usage(self):
+        self.allow_envelope = True
+        start = self.run_once("failed-sse-terminal")
+        self.assertEqual(start.status_code, 200)
+        run_id = start.json()["run_id"]
         for terminal in ("run.failed", "run.cancelled", "run.interrupted"):
             with self.subTest(terminal=terminal):
-                self.allow_envelope = True
-                start = self.run_once("failed-sse-" + terminal)
-                self.assertEqual(start.status_code, 200)
-                run_id = start.json()["run_id"]
                 self.event = {
                     "event": terminal,
                     "runtime": {"provider": "synthetic", "model": "bounded/model"},
@@ -190,11 +190,6 @@ class ChatCostGateHttpTests(unittest.TestCase):
                 row = next(row for row in self.ledger_rows() if row.get("run_id") == run_id)
                 self.assertEqual(row["status"], "unknown")
                 self.assertEqual(row["accounted_microcny"], row["reserved_microcny"])
-                # Make each case independent of the previous reservation.
-                # The next admission needs a new state root; no retry or refund is implicit.
-                if terminal != "run.interrupted":
-                    self.tearDown()
-                    self.setUp()
 
     def test_ambiguous_start_failure_keeps_reservation_until_explicit_same_key_replay(self):
         self.allow_envelope = True
