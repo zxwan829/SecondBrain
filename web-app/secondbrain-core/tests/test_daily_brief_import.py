@@ -4,7 +4,7 @@ import json
 import multiprocessing
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -422,16 +422,22 @@ def make_http_client(tmp_path, *, audit_store=None, deny_actions=()):
     os.chmod(audit_root, 0o700)
     audit_store = audit_store or DailyBriefAuditStore(str(audit_root / "daily-brief-audit.jsonl"))
     app = FastAPI()
+    app.state.app_auth = auth
     @app.middleware("http")
     async def daily_brief_no_store(request, call_next):
         response = await call_next(request)
         if request.url.path.startswith("/api/daily-brief"):
             response.headers["Cache-Control"] = "private, no-store"
         return response
+    record_store = DailyBriefRecordReadStore(str(brief_root))
+    import_store = DailyBriefImportStore(str(brief_root))
+    app.state.brief_record_store = record_store
+    app.state.brief_import_store = import_store
+    app.state.task_store = tasks
     app.include_router(create_daily_brief_agent_health_router(
-        auth, _NoopHermes(), brief_store=DailyBriefRecordReadStore(str(brief_root)),
+        auth, _NoopHermes(), brief_store=record_store,
         task_store=tasks,
-        brief_import_store=DailyBriefImportStore(str(brief_root)),
+        brief_import_store=import_store,
         brief_audit_store=audit_store,
     ))
     client = TestClient(app, base_url="https://app.test")
@@ -534,8 +540,12 @@ def test_http_manual_import_rejects_auth_origin_schema_and_unsupported_import(tm
                 "import_ref": {"kind": "existing_brief", "id": "brief-source",
                                "version": "c" * 64}}
     response = client.post("/api/daily-brief", json=imported, headers={"Origin": "https://app.test"})
-    assert response.status_code == 501
+    assert response.status_code == 422  # approved_import uses the existing Idempotency-Key header
     assert "brief-source" not in response.text
+    imported.pop("idempotency_key")
+    missing_key = client.post("/api/daily-brief", json=imported,
+                              headers={"Origin": "https://app.test"})
+    assert missing_key.status_code == 422
     duplicate_keys = '{"mode":"manual_generate","mode":"manual_generate"}'
     assert client.post("/api/daily-brief", content=duplicate_keys,
                        headers={"Origin": "https://app.test", "Content-Type": "application/json"}).status_code == 422
@@ -544,6 +554,229 @@ def test_http_manual_import_rejects_auth_origin_schema_and_unsupported_import(tm
     nested = '{"mode":' + "[" * 2000 + "0" + "]" * 2000 + "}"
     assert client.post("/api/daily-brief", content=nested,
                        headers={"Origin": "https://app.test", "Content-Type": "application/json"}).status_code == 422
+
+
+def _seed_historical_brief(root, source_ref, *, day=None, brief_id="brief-source-synthetic"):
+    from datetime import timedelta
+    target_day = datetime.now(ZoneInfo(ZONE)).date()
+    source_day = day or (target_day - timedelta(days=1)).isoformat()
+    generated_at = datetime.combine(
+        date.fromisoformat(source_day), datetime.min.time().replace(hour=12),
+        tzinfo=ZoneInfo(ZONE),
+    ).isoformat(timespec="seconds")
+    candidate = {
+        "date": source_day, "timezone": ZONE, "categories": ["synthetic-review"],
+        "summary": "Synthetic historical Brief summary", "source_refs": [source_ref],
+    }
+    DailyBriefImportStore(str(root)).import_record(
+        candidate, source_verifier=lambda _ref: True,
+        brief_id=brief_id, generated_at=generated_at,
+    )
+    payload = (root / f"{source_day}.json").read_bytes()
+    return source_day, brief_id, hashlib.sha256(payload).hexdigest(), candidate
+
+
+def _approved_import_body(day, source_day, brief_id, version, copied):
+    return {
+        "mode": "approved_import", "date": day, "timezone": ZONE,
+        "categories": copied["categories"], "summary": copied["summary"],
+        "source_refs": copied["source_refs"], "approved": True,
+        "import_ref": {"kind": "existing_brief", "id": f"{source_day}:{brief_id}",
+                       "version": version},
+    }
+
+
+def test_http_brief_source_options_exact_date_and_approved_import_is_create_only(tmp_path, monkeypatch):
+    client, manual, _source_ref, root, audit_root, _tasks, _task, _audit = make_http_client(tmp_path)
+    source_day, brief_id, version, copied = _seed_historical_brief(root, manual["source_refs"][0])
+    headers = {"Origin": "https://app.test"}
+
+    def reject_directory_enumeration(*_args, **_kwargs):
+        raise AssertionError("exact-date Brief selection must not enumerate history")
+
+    monkeypatch.setattr(os, "listdir", reject_directory_enumeration)
+    selected = client.get(
+        f"/api/daily-brief/source-options/brief?date={source_day}&limit=1", headers=headers,
+    )
+    monkeypatch.undo()
+    assert selected.status_code == 200
+    assert selected.headers["cache-control"] == "private, no-store"
+    assert selected.json()["status"] == "real"
+    assert set(selected.json()) == {"status", "items", "freshness"}
+    assert selected.json()["items"] == [{
+        "kind": "existing_brief", "id": f"{source_day}:{brief_id}",
+        "date": source_day, "timezone": ZONE, "version": version,
+    }]
+    assert "Synthetic historical Brief summary" not in selected.text
+    assert str(root) not in selected.text
+
+    target_day = manual["date"]
+    body = _approved_import_body(target_day, source_day, brief_id, version, copied)
+    post_headers = {**headers, "Idempotency-Key": "brief-import-synthetic-key-0001"}
+    created = client.post("/api/daily-brief", json=body, headers=post_headers)
+    assert created.status_code == 201, created.text
+    assert set(created.json()) == {
+        "status", "brief_id", "date", "timezone", "record_version", "operation_id",
+    }
+    assert created.json()["status"] == "created"
+    assert "Synthetic historical Brief summary" not in created.text
+    target_bytes = (root / f"{target_day}.json").read_bytes()
+    assert created.json()["record_version"] == hashlib.sha256(target_bytes).hexdigest()
+    target_record = json.loads(target_bytes)
+    assert target_record["categories"] == copied["categories"]
+    assert target_record["summary"] == copied["summary"]
+    assert target_record["source_refs"] == copied["source_refs"]
+
+    replay = client.post("/api/daily-brief", json=body, headers=post_headers)
+    assert replay.status_code == 200 and replay.json()["status"] == "duplicate"
+    assert (root / f"{target_day}.json").read_bytes() == target_bytes
+    conflict = client.post("/api/daily-brief", json=body,
+                           headers={**headers, "Idempotency-Key": "brief-import-synthetic-key-0002"})
+    assert conflict.status_code == 409
+    assert conflict.json() == {"detail": "Daily Brief conflict"}
+
+    readback = client.get(f"/api/daily-brief?date={target_day}&timezone={ZONE}", headers=headers)
+    assert readback.status_code == 200 and readback.json()["status"] == "real"
+    assert readback.json()["items"][0]["summary"] == copied["summary"]
+    audit_text = (audit_root / "daily-brief-audit.jsonl").read_text(encoding="utf-8")
+    assert copied["summary"] not in audit_text
+    assert manual["source_refs"][0]["id"] not in audit_text
+
+
+def test_http_brief_import_source_version_drift_and_permissions_fail_closed(tmp_path, monkeypatch):
+    client, manual, _source_ref, root, _audit_root, tasks, _task, _audit = make_http_client(tmp_path)
+    source_day, brief_id, version, copied = _seed_historical_brief(root, manual["source_refs"][0])
+    headers = {"Origin": "https://app.test"}
+    target_day = manual["date"]
+    body = _approved_import_body(target_day, source_day, brief_id, version, copied)
+    reads = []
+    record_store = client.app.state.brief_record_store
+    original_read = record_store.read
+    monkeypatch.setattr(record_store, "read", lambda *args, **kwargs: (reads.append(args[0]), original_read(*args, **kwargs))[1])
+
+    original_require = client.app.state.app_auth.require_action
+    def deny_read(request, action):
+        if action == "daily_brief.read":
+            raise HTTPException(status_code=403, detail="denied")
+        return original_require(request, action)
+    client.app.state.app_auth.require_action = deny_read
+    denied_get = client.get(f"/api/daily-brief/source-options/brief?date={source_day}&limit=1", headers=headers)
+    assert denied_get.status_code == 403 and reads == []
+    denied_post = client.post("/api/daily-brief", json=body,
+                              headers={**headers, "Idempotency-Key": "brief-import-synthetic-key-0011"})
+    assert denied_post.status_code == 403 and reads == []
+    client.app.state.app_auth.require_action = original_require
+
+    def deny_task(request, action):
+        if action == "task.read":
+            raise HTTPException(status_code=403, detail="denied")
+        return original_require(request, action)
+    client.app.state.app_auth.require_action = deny_task
+    denied_source = client.post("/api/daily-brief", json=body,
+                                headers={**headers, "Idempotency-Key": "brief-import-synthetic-key-0012"})
+    assert denied_source.status_code == 403 and reads == []
+    task_reads = []
+    original_task_read = tasks.list_for_projection
+    monkeypatch.setattr(tasks, "list_for_projection",
+                        lambda: task_reads.append(True) or original_task_read())
+    denied_selector = client.get(
+        f"/api/daily-brief/source-options/brief?date={source_day}&limit=1", headers=headers,
+    )
+    assert denied_selector.status_code == 403
+    assert task_reads == []  # daily_brief.read allows the Brief read; task.read gates source IO.
+    assert not (root / f"{target_day}.json").exists()
+    client.app.state.app_auth.require_action = original_require
+
+    source_path = root / f"{source_day}.json"
+    changed_record = json.loads(source_path.read_bytes())
+    changed_record["summary"] = "Synthetic changed source"
+    source_path.write_text(json.dumps(changed_record, separators=(",", ":")), encoding="utf-8")
+    drifted = client.post("/api/daily-brief", json=body,
+                          headers={**headers, "Idempotency-Key": "brief-import-synthetic-key-0013"})
+    assert drifted.status_code == 409
+    assert drifted.json() == {"detail": "Daily Brief source changed"}
+    assert not (root / f"{target_day}.json").exists()
+    assert str(root) not in drifted.text and "Synthetic changed source" not in drifted.text
+
+
+def test_http_approved_import_rejects_stale_authoritative_refs_and_unavailable_source(tmp_path, monkeypatch):
+    client, manual, _source_ref, root, _audit_root, tasks, task, _audit = make_http_client(tmp_path)
+    source_day, brief_id, version, copied = _seed_historical_brief(root, manual["source_refs"][0])
+    body = _approved_import_body(manual["date"], source_day, brief_id, version, copied)
+    tasks.update(task["id"], {"expected_updated_at": task["updated_at"],
+                              "title": "Synthetic authoritative Task changed"})
+    stale = client.post("/api/daily-brief", json=body,
+                        headers={"Origin": "https://app.test",
+                                 "Idempotency-Key": "brief-import-source-drift-001"})
+    assert stale.status_code == 409
+    assert stale.json() == {"detail": "Daily Brief source changed"}
+    assert not (root / f"{manual['date']}.json").exists()
+
+    unavailable_dir = tmp_path / "unavailable"
+    unavailable_dir.mkdir()
+    client2, manual2, _ref2, root2, *_ = make_http_client(unavailable_dir)
+    source_day2, brief_id2, version2, copied2 = _seed_historical_brief(
+        root2, manual2["source_refs"][0], brief_id="brief-unavailable-synthetic",
+    )
+    unavailable_body = _approved_import_body(
+        manual2["date"], source_day2, brief_id2, version2, copied2,
+    )
+    store = client2.app.state.brief_record_store
+    monkeypatch.setattr(store, "read", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic unavailable")))
+    unavailable = client2.post(
+        "/api/daily-brief", json=unavailable_body,
+        headers={"Origin": "https://app.test", "Idempotency-Key": "brief-import-unavailable-001"},
+    )
+    assert unavailable.status_code == 503
+    assert unavailable.json() == {"detail": "Daily Brief unavailable"}
+    assert not (root2 / f"{manual2['date']}.json").exists()
+
+
+def test_http_brief_source_selector_rejects_non_exact_query_without_source_reads(tmp_path, monkeypatch):
+    client, _body, _ref, _root, _audit, _tasks, _task, _store = make_http_client(tmp_path)
+    store = client.app.state.brief_record_store
+    reads = []
+    monkeypatch.setattr(store, "read", lambda *args, **kwargs: reads.append(args[0]))
+    headers = {"Origin": "https://app.test"}
+    date = datetime.now(ZoneInfo(ZONE)).date().isoformat()
+    for query in (f"date={date}&limit=2", f"date={date}&date={date}",
+                  f"date={date}&extra=1", "limit=1"):
+        response = client.get(f"/api/daily-brief/source-options/brief?{query}", headers=headers)
+        assert response.status_code in {400, 422}
+    assert reads == []
+
+
+def test_http_approved_import_audit_uncertainty_recovers_on_exact_replay(tmp_path):
+    audit = _SwitchAuditStore(str(tmp_path / "audit" / "daily-brief-audit.jsonl"))
+    client, manual, _source_ref, root, _audit_root, _tasks, _task, _audit = make_http_client(
+        tmp_path, audit_store=audit,
+    )
+    source_day, brief_id, version, copied = _seed_historical_brief(root, manual["source_refs"][0])
+    body = _approved_import_body(manual["date"], source_day, brief_id, version, copied)
+    headers = {"Origin": "https://app.test", "Idempotency-Key": "brief-import-recovery-key-01"}
+
+    # The audit entry was atomically published but directory durability is uncertain.
+    audit.fail_published_fsync = True
+    uncertain = client.post("/api/daily-brief", json=body, headers=headers)
+    assert uncertain.status_code == 503
+    assert uncertain.json() == {"detail": "Daily Brief unavailable"}
+    target = root / f"{manual['date']}.json"
+    assert target.is_file()
+    assert client.get(
+        f"/api/daily-brief?date={manual['date']}&timezone={ZONE}",
+        headers={"Origin": "https://app.test"},
+    ).json()["status"] == "unavailable"
+
+    audit.fail_published_fsync = False
+    recovered = client.post("/api/daily-brief", json=body, headers=headers)
+    assert recovered.status_code == 200
+    assert recovered.json()["status"] == "duplicate"
+    readback = client.get(
+        f"/api/daily-brief?date={manual['date']}&timezone={ZONE}",
+        headers={"Origin": "https://app.test"},
+    )
+    assert readback.status_code == 200 and readback.json()["status"] == "real"
+    assert readback.json()["items"][0]["summary"] == copied["summary"]
 
 
 @pytest.mark.parametrize("failure", ["open", "append", "fsync", "short_write", "directory_fsync"])
