@@ -381,13 +381,13 @@ def test_activity_window_timezone_and_query_errors(tmp_path):
 def test_activity_default_journal_read_uses_fixed_365_day_window_and_marks_partial(tmp_path, monkeypatch):
     journal = make_journal(tmp_path)
     calls = []
-    original_read = journal.read
+    original_read = journal.read_source_day
 
-    def tracked_read(day):
+    def tracked_read(day, **kwargs):
         calls.append(day)
-        return original_read(day)
+        return original_read(day, **kwargs)
 
-    monkeypatch.setattr(journal, "read", tracked_read)
+    monkeypatch.setattr(journal, "read_source_day", tracked_read)
     response = make_client(tmp_path, journal=journal).get("/api/activity")
     assert response.status_code == 200
     assert len(calls) == 365
@@ -401,7 +401,7 @@ def test_activity_ids_distinguish_same_operation_on_separate_journal_days(tmp_pa
     operation_id = "synthetic-reused-operation"
     for index, day in enumerate((today, today - timedelta(days=1))):
         record = {
-            "id": f"synthetic-record-{index}", "operation_id": operation_id,
+            "id": hashlib.sha256(f"synthetic-record-{index}".encode()).hexdigest(), "operation_id": operation_id,
             "session_id": "synthetic-session", "date": day.isoformat(),
             "created_at": datetime.now().astimezone().isoformat(),
             "original_text": f"synthetic body {index}",
@@ -475,7 +475,11 @@ def test_activity_source_actions_are_checked_before_reading_each_source(tmp_path
     tasks = make_tasks(tmp_path)
     day = date.today().isoformat()
     journal_reads, task_reads = [], []
-    monkeypatch.setattr(journal, "read", lambda value: journal_reads.append(value) or {"entries": []})
+    def track_journal_read(value, **_kwargs):
+        journal_reads.append(value)
+        return {"available": True, "entries": {}, "bytes_read": 0}
+
+    monkeypatch.setattr(journal, "read_source_day", track_journal_read)
     monkeypatch.setattr(tasks, "list_for_projection_read_only",
                         lambda: task_reads.append(True) or {"tasks": []})
     client = make_client(tmp_path, journal=journal, tasks=tasks)
@@ -633,3 +637,67 @@ def test_daily_brief_activity_rejects_audit_replacement_during_snapshot_read(tmp
     assert replaced is True
     assert events == []
     assert complete is False
+
+
+def test_activity_journal_reads_obey_aggregate_byte_budget_and_mark_partial(tmp_path):
+    class BudgetedJournal:
+        def __init__(self):
+            self.calls = []
+
+        def read_source_day(self, day, *, max_bytes, max_entries):
+            self.calls.append((day, max_bytes, max_entries))
+            return {"available": True, "entries": {}, "bytes_read": max_bytes}
+
+    journal = BudgetedJournal()
+    tasks = make_tasks(tmp_path)
+    response = make_client(tmp_path, journal=journal, tasks=tasks).get(
+        "/api/activity?from=2026-10-01&to=2026-10-04")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["items"] == []
+    assert [call[1] for call in journal.calls] == [1024 * 1024, 1024 * 1024]
+    assert all(call[2] == 5000 for call in journal.calls)
+    assert len(journal.calls) == 2
+
+def test_activity_journal_reads_obey_aggregate_row_budget(tmp_path):
+    class BudgetedJournal:
+        def __init__(self):
+            self.calls = []
+
+        def read_source_day(self, day, *, max_bytes, max_entries):
+            self.calls.append((day, max_bytes, max_entries))
+            entries = {}
+            for index in range(max_entries):
+                entry_id = hashlib.sha256(f"{day}-{index}".encode()).hexdigest()
+                entries[entry_id] = {"record": {
+                    "id": entry_id, "operation_id": f"op-{day}-{index}",
+                    "session_id": "synthetic-session", "date": day,
+                    "created_at": f"{day}T08:00:00+00:00",
+                }}
+            return {"available": True, "entries": entries, "bytes_read": 0}
+
+    journal = BudgetedJournal()
+    tasks = make_tasks(tmp_path)
+    response = make_client(tmp_path, journal=journal, tasks=tasks).get(
+        "/api/activity?from=2026-10-01&to=2026-10-03&limit=1")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert len(response.json()["items"]) == 1
+    assert [call[2] for call in journal.calls] == [5000, 5000]
+    assert len(journal.calls) == 2
+
+def test_activity_journal_snapshot_failure_is_redacted_and_partial(tmp_path):
+    class UnavailableJournal:
+        def read_source_day(self, _day, *, max_bytes, max_entries):
+            raise OSError("synthetic private path /never-return-this")
+
+    tasks = make_tasks(tmp_path)
+    response = make_client(tmp_path, journal=UnavailableJournal(), tasks=tasks).get(
+        "/api/activity?from=2026-10-01&to=2026-10-01")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["items"] == []
+    assert "/never-return-this" not in response.text
