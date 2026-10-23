@@ -122,7 +122,11 @@ class AppSessionAuth:
         token = request.cookies.get(self.COOKIE_NAME, "")
         session_id = hashlib.sha256(token.encode()).hexdigest()
         with self._session_lock:
-            grants = self._session_actions.setdefault(session_id, set(self.SUPPORTED_ACTIONS))
+            grants = self._session_actions.get(session_id)
+            if grants is None:
+                # A missing grant record is inconsistent authorization state, not
+                # an invitation to restore the broad login-time allowlist.
+                raise HTTPException(status_code=403, detail="Action is not enabled")
             if action not in grants:
                 raise HTTPException(status_code=403, detail="Action is not enabled")
         return subject
@@ -138,7 +142,9 @@ class AppSessionAuth:
         with self._session_lock:
             if session_id not in self._sessions or self._sessions[session_id] <= time.time():
                 raise HTTPException(status_code=401, detail="App session required")
-            grants = self._session_actions.setdefault(session_id, set(self.SUPPORTED_ACTIONS))
+            grants = self._session_actions.get(session_id)
+            if grants is None:
+                raise HTTPException(status_code=403, detail="Action is not enabled")
             if granted:
                 grants.add(action)
             else:
