@@ -40,6 +40,7 @@ export function TaskPage({ locale }: { locale: Locale }) {
   const en = locale === 'en';
   const requestedTaskId = new URLSearchParams(window.location.search).get('task_id');
   const targetTaskId = requestedTaskId && /^[0-9a-f]{32}$/i.test(requestedTaskId) ? requestedTaskId.toLowerCase() : null;
+  const openCreateFromRoute = new URLSearchParams(window.location.search).get('create') === '1';
   const [initialAttempt] = useState(readPendingCreate);
   const [status, setStatus] = useState<'open' | 'completed' | 'all'>(targetTaskId ? 'all' : 'open');
   const [dueDate, setDueDate] = useState('');
@@ -47,7 +48,7 @@ export function TaskPage({ locale }: { locale: Locale }) {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState('');
   const [editing, setEditing] = useState<{ id: string; title: string; due_date: string } | null>(null);
-  const [createOpen, setCreateOpen] = useState(Boolean(initialAttempt));
+  const [createOpen, setCreateOpen] = useState(Boolean(initialAttempt) || openCreateFromRoute);
   const [newTitle, setNewTitle] = useState(initialAttempt?.title ?? '');
   const [newDueDate, setNewDueDate] = useState(initialAttempt?.dueDate ?? '');
   const [creating, setCreating] = useState(false);
@@ -63,6 +64,14 @@ export function TaskPage({ locale }: { locale: Locale }) {
   const refreshAfterCreate = useRef(false);
   const activeLoad = useRef<AbortController | null>(null);
   const loadSequence = useRef(0);
+
+  useEffect(() => {
+    if (!openCreateFromRoute) return;
+    const params = new URLSearchParams(window.location.search);
+    params.delete('create');
+    const search = params.toString();
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${search ? `?${search}` : ''}${window.location.hash}`);
+  }, [openCreateFromRoute]);
 
   const load = useCallback(async (showLoading = true, afterCreate = false) => {
     if (createInFlight.current && !afterCreate) return;
@@ -226,7 +235,7 @@ export function TaskPage({ locale }: { locale: Locale }) {
     <section className="task-panel" aria-labelledby="task-list-heading">
       <div className="task-toolbar"><h2 id="task-list-heading">{en ? 'Tasks' : '待办'}</h2><div className="task-filters"><label>{en ? 'Due date' : '截止日期'} <input aria-label={en ? 'Filter by due date' : '按截止日期筛选'} type="date" value={dueDate} disabled={creating} onChange={(event) => { if (!createInFlight.current) setDueDate(event.target.value); }} /></label><label>{en ? 'Status' : '状态'} <select value={status} disabled={creating} onChange={(event) => { if (!createInFlight.current) setStatus(event.target.value as typeof status); }}><option value="open">{en ? 'Open' : '未完成'}</option><option value="completed">{en ? 'Completed' : '已完成'}</option><option value="all">{en ? 'All' : '全部'}</option></select></label></div></div>
       {error && <p className="task-alert" role="alert">{error}</p>}{notice && <p role="status" className="task-notice">{notice}</p>}
-      {createOpen && <form className="task-create-form" onSubmit={(event) => void create(event)}>
+      {createOpen && <form className="task-create-form" aria-label={en ? 'Create task' : '新建待办'} onSubmit={(event) => void create(event)}>
         {restoredAttempt && <p role="status">{en ? 'A previous create result is unconfirmed. Retry the same task safely or cancel it.' : '上次创建结果尚未确认；可用相同内容安全重试，或取消后重新创建。'}</p>}
         <label>{en ? 'Task title' : '待办内容'}<input autoFocus required maxLength={4000} disabled={creating} value={newTitle} onChange={(event) => setNewTitle(event.target.value)} /></label>
         <label>{en ? 'Due date (optional)' : '截止日期（可选）'}<input aria-label={en ? 'New task due date' : '新待办截止日期'} type="date" disabled={creating} value={newDueDate} onChange={(event) => setNewDueDate(event.target.value)} /></label>
