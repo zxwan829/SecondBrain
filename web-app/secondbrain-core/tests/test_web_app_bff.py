@@ -513,6 +513,54 @@ class WebAppBffTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertTrue((self.tasks / "tasks.json").is_file())
 
+    def test_task_patch_idempotency_recovers_after_committed_write_and_lost_response(self):
+        task_id = "0" * 32
+        with patch.object(self.app.state.task_store, "update",
+                          side_effect=AssertionError("unauthenticated Task PATCH reached the store")):
+            denied = self.client.patch(
+                f"/api/tasks/{task_id}",
+                json={"status": "completed", "expected_updated_at": "synthetic"},
+                headers={"Origin": "https://testserver", "Idempotency-Key": "task-patch-denied"},
+            )
+        self.assertEqual(denied.status_code, 401)
+
+        self.login()
+        created = self.client.post(
+            "/api/tasks", json={"title": "响应丢失恢复待办"},
+            headers={"Origin": "https://testserver", "Idempotency-Key": "task-patch-create"},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        task = created.json()["task"]
+        body = {"status": "completed", "expected_updated_at": task["updated_at"]}
+        headers = {"Origin": "https://testserver", "Idempotency-Key": "task-patch-commit-drop"}
+        store_update = self.app.state.task_store.update
+        attempts = {"count": 0}
+
+        def commit_then_drop_response(task_id, body, idempotency_key=None):
+            result = store_update(task_id, body, idempotency_key=idempotency_key)
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise HTTPException(status_code=503, detail="synthetic lost response after commit")
+            return result
+
+        with patch.object(self.app.state.task_store, "update", side_effect=commit_then_drop_response):
+            interrupted = self.client.patch(f"/api/tasks/{task['id']}", json=body, headers=headers)
+            self.assertEqual(interrupted.status_code, 503)
+            recovered = self.client.patch(f"/api/tasks/{task['id']}", json=body, headers=headers)
+            self.assertEqual(recovered.status_code, 200, recovered.text)
+            duplicate = self.client.patch(f"/api/tasks/{task['id']}", json=body, headers=headers)
+            self.assertEqual(duplicate.status_code, 200, duplicate.text)
+
+        self.assertEqual(recovered.json(), duplicate.json())
+        self.assertEqual(recovered.json()["task"]["status"], "completed")
+        self.assertEqual(len(recovered.json()["task"]["history"]), 2)
+        changed = self.client.patch(
+            f"/api/tasks/{task['id']}",
+            json={**body, "status": "open"}, headers=headers,
+        )
+        self.assertEqual(changed.status_code, 409)
+        self.assertEqual(self.calls, [])
+
     def test_session_activity_is_durable_idempotent_session_scoped_and_reconciled(self):
         self.login()
         headers = {"Origin": "https://testserver", "Idempotency-Key": "journal-op-1"}
