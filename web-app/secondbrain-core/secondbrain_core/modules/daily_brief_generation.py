@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Callable
-from datetime import date
+from datetime import date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
@@ -74,6 +74,83 @@ class DailyBriefGenerationCandidate:
                 raise HTTPException(413, "Brief source budget exceeded")
         return rows
 
+    def _bind_intent(self, reservation, day, timezone, refs):
+        """Record only reconciliation metadata before the synthetic model call."""
+        def bind(state):
+            rows = state.get("budget", {}).get("chat_runs", {})
+            row = next((item for item in rows.values()
+                        if item.get("reservation_id") == reservation["reservation_id"]), None)
+            if row is None or row.get("status") != "reserved" or "brief_intent" in row:
+                raise ValueError("Brief reservation changed")
+            row["brief_intent"] = {"date": day, "timezone": timezone,
+                                   "refs_sha256": _digest(refs)}
+            row["brief_recovery_state"] = "reserved"
+        self.cost_gate.state.update(bind)
+
+    def _mark_recovery(self, reservation_id, state_name):
+        def mark(state):
+            rows = state.get("budget", {}).get("chat_runs", {})
+            row = next((item for item in rows.values()
+                        if item.get("reservation_id") == reservation_id), None)
+            if row is not None and row.get("brief_result") is None:
+                row["brief_recovery_state"] = state_name
+        try:
+            self.cost_gate.state.update(mark)
+        except Exception:
+            # The read-only operator diagnosis still detects a missing receipt.
+            pass
+
+    def diagnose(self, *, actor: str, session_id: str, idempotency_key: str,
+                 operator_preflight: Callable[[], None]):
+        """Operator-only, read-only reconciliation. Never exposes source text or paths."""
+        operator_preflight()
+        if (not all(isinstance(value, str) and value for value in
+                    (actor, session_id, idempotency_key))):
+            raise HTTPException(422, "Invalid Brief operation")
+        scope = hashlib.sha256(f"{actor}\0{session_id}\0{idempotency_key}".encode()).hexdigest()
+        rows = self.cost_gate.state.read().get("budget", {}).get("chat_runs", {})
+        row = rows.get(scope)
+        if row is None:
+            return {"state": "not_found", "recovery_required": False,
+                    "manual_action": False}
+        intent = row.get("brief_intent")
+        if (not isinstance(intent, dict) or not isinstance(intent.get("date"), str)
+                or intent.get("timezone") != "Asia/Shanghai"):
+            return {"state": "unbound_reservation", "recovery_required": True,
+                    "manual_action": True}
+        try:
+            pending = self.store.has_pending_for_date(intent["date"])
+            snapshot = DailyBriefRecordReadStore(self.store.root).read(
+                intent["date"], intent["timezone"])
+        except Exception:
+            pending, snapshot = False, None
+        if pending:
+            state_name = "brief_pending_commit"
+        elif snapshot is None or not snapshot.available or snapshot.failure_status is not None:
+            state_name = "brief_unavailable"
+        elif not snapshot.found:
+            state_name = ("cost_settled_no_brief" if row.get("status") == "settled"
+                          else "outcome_unknown_no_brief")
+        elif (isinstance(row.get("brief_result"), dict)
+              and row["brief_result"].get("record_sha256") == snapshot.sha256
+              and row["brief_result"].get("brief_id") == snapshot.record["brief_id"]
+              and intent.get("refs_sha256") == _digest(snapshot.record["source_refs"])
+              and row.get("status") == "settled"):
+            state_name = "committed"
+        else:
+            # A same-date file alone cannot prove which request published it.
+            state_name = "date_record_present_unattributed"
+        phase = row.get("brief_recovery_state")
+        if phase not in {"reserved", "model_unknown", "cost_settled_brief_unknown", "committed"}:
+            phase = "unknown"
+        return {"state": state_name, "recovery_required": state_name != "committed",
+                "cost_status": row.get("status") if row.get("status") in
+                {"reserved", "started", "unknown", "settled"} else "unknown",
+                "phase": phase,
+                "accounted_microcny": row.get("accounted_microcny") if
+                type(row.get("accounted_microcny")) is int else None,
+                "manual_action": state_name != "committed"}
+
     def generate(self, *, day: str, timezone: str, refs: list[dict], actor: str,
                  session_id: str, idempotency_key: str, confirmed: bool):
         if not self.enabled or not getattr(self.model, "synthetic_only", False):
@@ -86,6 +163,7 @@ class DailyBriefGenerationCandidate:
             raise HTTPException(422, "Brief confirmation required")
         try:
             if (not isinstance(day, str) or date.fromisoformat(day).isoformat() != day
+                    or day != datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
                     or timezone != "Asia/Shanghai"):
                 raise ValueError
             ZoneInfo(timezone)
@@ -117,13 +195,20 @@ class DailyBriefGenerationCandidate:
             # A crashed model/write outcome must never trigger a second call.
             raise HTTPException(409, "Brief generation recovery required")
         try:
-            result = self.model.generate(context)
+            self._bind_intent(reservation, day, timezone, refs)
+        except Exception as exc:
+            raise HTTPException(503, "Brief generation recovery required") from exc
+        phase = "model_unknown"
+        try:
+            run_id = "brief-" + reservation["reservation_id"]
+            result = self.model.generate(context, run_id=run_id)
             if (not isinstance(result, dict) or not isinstance(result.get("run_id"), str)
-                    or not result["run_id"]):
+                    or result["run_id"] != run_id):
                 raise ValueError("untrusted generation receipt")
-            self.cost_gate.attach_run(reservation["reservation_id"], result["run_id"])
-            if not self.cost_gate.settle_completed(result["run_id"], result.get("terminal")):
+            self.cost_gate.attach_run(reservation["reservation_id"], run_id)
+            if not self.cost_gate.settle_completed(run_id, result.get("terminal")):
                 raise ValueError("usage receipt unavailable")
+            phase = "cost_settled_brief_unknown"
             candidate = {"date": day, "timezone": timezone,
                          "categories": result["categories"], "summary": result["summary"],
                          "source_refs": refs}
@@ -147,8 +232,13 @@ class DailyBriefGenerationCandidate:
                 if row is None or row.get("status") != "settled":
                     raise ValueError("cost receipt changed")
                 row["brief_result"] = persisted
+                row["brief_recovery_state"] = "committed"
             self.cost_gate.state.update(save_receipt)
             return persisted
         except Exception as exc:
-            self.cost_gate.mark_reservation_unknown(reservation["reservation_id"])
+            try:
+                self.cost_gate.mark_reservation_unknown(reservation["reservation_id"])
+            except Exception:
+                pass
+            self._mark_recovery(reservation["reservation_id"], phase)
             raise HTTPException(503, "Brief generation recovery required") from exc
