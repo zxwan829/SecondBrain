@@ -29,6 +29,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections'
+  | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
+  | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
+  | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
   | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
@@ -234,6 +237,8 @@ async function configurePage(page: Page) {
       && request.path === '/api/activity').map((request) => request.status).slice(-4); },
     get notesCollectionReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/notes').map((request) => request.status).slice(-4); },
+    get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
     setActivityReadRevoked(revoked: boolean) { activityReadRevoked = revoked; },
@@ -246,7 +251,9 @@ async function inspectOrCreateDailyBrief(
   observed: Awaited<ReturnType<typeof configurePage>>,
 ) {
   observed.setFailureStage('daily_brief_read');
+  observed.setDiagnosticAssertion('daily_brief_navigation');
   await page.goto('/brief');
+  observed.setDiagnosticAssertion('daily_brief_heading');
   await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible();
   const beforeOpen = observed.dailyBriefPostCount;
   expect(beforeOpen).toBe(0);
@@ -254,19 +261,24 @@ async function inspectOrCreateDailyBrief(
   if (!desktopWriter) {
     // The desktop viewport is the sole writer for today's singleton Brief.
     // Tablet and mobile independently verify the persisted read-only result.
+    observed.setDiagnosticAssertion('daily_brief_saved_readback');
     await expect(page.getByText('Synthetic manually approved daily brief')).toBeVisible();
   }
 
   expect(observed.dailyBriefPostCount).toBe(0);
   observed.setFailureStage('daily_brief_sources');
+  observed.setDiagnosticAssertion('daily_brief_open_prepare');
   await page.getByRole('button', { name: '手动准备简报' }).click();
+  observed.setDiagnosticAssertion('daily_brief_sources');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
   await expect(page.getByRole('checkbox', { name: /Synthetic brief project source/ })).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
   observed.setFailureStage('daily_brief_journal');
+  observed.setDiagnosticAssertion('daily_brief_journal_action');
   await page.getByRole('button', { name: '加载 Journal 来源' }).click();
+  observed.setDiagnosticAssertion('daily_brief_journal_source');
   const journalSource = page.getByRole('checkbox', { name: /Journal 来源 1/ });
   await expect(journalSource).toBeVisible();
   await expect(page.getByText('Synthetic Journal source fixture; never read or published by the UI.')).toHaveCount(0);
@@ -279,6 +291,7 @@ async function inspectOrCreateDailyBrief(
   await page.getByLabel('分类（逗号分隔）').fill('合成验收');
 
   observed.setFailureStage('daily_brief_preview');
+  observed.setDiagnosticAssertion('daily_brief_preview');
   await page.getByRole('button', { name: '预览并确认' }).click();
   await expect(page.getByText('确认要保存这份简报？')).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
@@ -585,7 +598,7 @@ for (const viewport of viewports) {
       return request.method() === 'GET' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
     }, { timeout: 5000 });
     observed.setDiagnosticAssertion('notes_readback');
-    await page.getByRole('button', { name: createdNote.path, exact: true }).click();
+    await page.getByRole('button', { name: 'Synthetic mobile note round trip', exact: true }).click();
     const readNoteResponse = await readNoteResponsePromise;
     expect(readNoteResponse.status(), 'notes_readback').toBe(200);
     await expect(page.locator('.ProseMirror')).toContainText('Synthetic mobile note round trip');
@@ -626,6 +639,7 @@ test.afterEach(async ({ page }, testInfo) => {
       assertion_id: observed?.diagnosticAssertion ?? 'test_setup',
       activity_get_statuses: observed?.activityReadStatuses ?? [],
       notes_collection_statuses: observed?.notesCollectionReadStatuses ?? [],
+      daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);

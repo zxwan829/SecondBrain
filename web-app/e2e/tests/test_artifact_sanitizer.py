@@ -219,6 +219,16 @@ def test_failure_diagnostic_can_include_bounded_notes_collection_statuses():
         module._validate_failure_diagnostics([diagnostic])
 
 
+def test_failure_diagnostic_can_include_bounded_daily_brief_get_statuses():
+    diagnostic = {"viewport": "mobile-390x844", "stage": "daily_brief_read", "code": "timeout",
+                  "assertion_id": "daily_brief_saved_readback", "activity_get_statuses": [200, 403],
+                  "daily_brief_get_statuses": [200, 200]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["daily_brief_get_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
 def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
     stages_and_assertions = [
         ("post_revocation_navigation", "home_after_revocation"),
@@ -287,6 +297,8 @@ def test_browser_navigation_waits_for_page_apis_and_uses_unambiguous_mobile_safe
     assert "await expectSuccessfulGet(calendarResponsePromise, observed, 'calendar_api_response')" in browser_spec
     assert "await expectSuccessfulGet(collectionsResponsePromise, observed, 'notes_collections')" in browser_spec
     assert "notes_collection_statuses: observed?.notesCollectionReadStatuses ?? []" in browser_spec
+    assert "daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? []" in browser_spec
+    assert "daily_brief_saved_readback" in browser_spec
     assert "getByRole('heading', { level: 1, name: 'Agent 状态', exact: true })" in browser_spec
     assert "await expect(menu).toHaveAttribute('aria-expanded', 'true')" in browser_spec
     assert "page.locator('.sidebar nav').getByRole('button', { name: '今日', exact: true })" in browser_spec
