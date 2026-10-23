@@ -21,7 +21,7 @@ const PENDING_STORAGE_KEY = 'secondbrain.dailyBrief.pending.v1';
 
 const text = {
   'zh-CN': {
-    start: '手动准备简报', importUnavailable: '已批准简报导入暂不可用；可选择旧日期查看可导入内容，Core 未接通时不会报告保存成功。', importStart: '从旧简报导入', sourceDate: '来源简报日期', loadImport: '读取该日简报', importing: '正在按选定日期读取简报…', importPreview: '将原样复制到今天的新简报', importConfirm: '确认导入并创建', importUnavailableCore: 'Core 尚未启用已批准简报导入；没有创建新简报。', importLoadFailed: '无法安全核验该日期的简报；没有提交导入。', importEmpty: '该日期没有可导入的简报。', cancel: '取消', loading: '正在读取可核验的任务与项目…',
+    start: '手动准备简报', importUnavailable: '已批准简报导入暂不可用；可选择来源与目标日期查看副本，Core 未接通时不会报告保存成功。', importStart: '从旧简报导入', sourceDate: '来源简报日期', targetDate: '目标简报日期', targetDateUnsupported: '当前 Core 仅接受今天作为目标日期；没有提交导入。', loadImport: '读取该日简报', importing: '正在按选定日期读取简报…', importPreview: '原样复制到选定目标日期', importConfirm: '确认导入并创建', importUnavailableCore: 'Core 尚未启用已批准简报导入；没有创建新简报。', importLoadFailed: '无法安全核验该日期的简报；没有提交导入。', importEmpty: '该日期没有可导入的简报。', cancel: '取消', loading: '正在读取可核验的任务与项目…',
     title: '手动创建每日简报', sourceHeading: '选择本次简报来源', journalNote: 'Journal 仅返回 Core 核验过的来源元数据，不读取正文。点击“加载 Journal 来源”后才会发起只读请求。',
     summary: '简报正文（由你编写并确认）', summaryPlaceholder: '仅填写基于下方已选来源的内容；不会调用模型。',
     categories: '分类（逗号分隔）', categoriesPlaceholder: '今日任务', prepare: '预览并确认',
@@ -42,7 +42,7 @@ const text = {
     storageUnavailable: '浏览器当前标签页不能安全暂存未知请求，因此未发送任何保存请求。',
   },
   en: {
-    start: 'Prepare a brief manually', importUnavailable: 'Approved brief import is not available yet. You can inspect one selected date; Core will not report a save until import is supported.', importStart: 'Import a previous brief', sourceDate: 'Source brief date', loadImport: 'Read that date', importing: 'Reading the selected date…', importPreview: 'Copy unchanged into a new brief for today', importConfirm: 'Confirm import and create', importUnavailableCore: 'Core has not enabled approved brief import; no new brief was created.', importLoadFailed: 'The brief for this date could not be verified safely; nothing was submitted.', importEmpty: 'There is no brief to import for that date.', cancel: 'Cancel', loading: 'Loading verifiable Tasks and Projects…',
+    start: 'Prepare a brief manually', importUnavailable: 'Approved brief import is not available yet. Select a source and target date to preview; Core will not report a save until import is supported.', importStart: 'Import a previous brief', sourceDate: 'Source brief date', targetDate: 'Target brief date', targetDateUnsupported: 'Current Core accepts only today as the target date; nothing was submitted.', loadImport: 'Read that date', importing: 'Reading the selected date…', importPreview: 'Copy unchanged into the selected target date', importConfirm: 'Confirm import and create', importUnavailableCore: 'Core has not enabled approved brief import; no new brief was created.', importLoadFailed: 'The brief for this date could not be verified safely; nothing was submitted.', importEmpty: 'There is no brief to import for that date.', cancel: 'Cancel', loading: 'Loading verifiable Tasks and Projects…',
     title: 'Create a daily brief manually', sourceHeading: 'Select sources for this brief', journalNote: 'Journal returns only Core-verified source metadata, not entry text. The read-only request runs only when you select “Load Journal sources.”',
     summary: 'Brief text (written and confirmed by you)', summaryPlaceholder: 'Use only the selected sources. No model is called.',
     categories: 'Categories (comma-separated)', categoriesPlaceholder: 'Today’s tasks', prepare: 'Review and confirm',
@@ -237,6 +237,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
   const readbackController = useRef<AbortController | null>(null);
   const getBusinessDate = () => shanghaiDate(dateNow());
   const [businessDate, setBusinessDate] = useState(() => getBusinessDate());
+  const [targetDate, setTargetDate] = useState(() => getBusinessDate());
   const [importDate, setImportDate] = useState('');
   const [importLoading, setImportLoading] = useState(false);
   const [importOption, setImportOption] = useState<ImportOption | null>(null);
@@ -255,7 +256,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
 
   async function loadApprovedImport() {
     setImportError(''); setImportOption(null); setImportRecord(null);
-    if (!isCalendarDate(importDate) || importDate >= getBusinessDate()) { setImportError(copy.importLoadFailed); return; }
+    if (!isCalendarDate(importDate) || !isCalendarDate(targetDate) || importDate >= targetDate) { setImportError(copy.importLoadFailed); return; }
     setImportLoading(true);
     try {
       const selectorParams = new URLSearchParams({ date: importDate, limit: '1' });
@@ -285,7 +286,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
 
   function confirmApprovedImport() {
     if (!importOption || !importRecord) { setImportError(copy.importLoadFailed); return; }
-    const targetDate = getBusinessDate();
+    if (targetDate !== getBusinessDate()) { setImportError(copy.targetDateUnsupported); return; }
     const body: ApprovedImportRequest = {
       mode: 'approved_import', date: targetDate, timezone: 'Asia/Shanghai', idempotency_key: `ui-${crypto.randomUUID()}`,
       categories: [...importRecord.categories], summary: importRecord.summary,
@@ -462,13 +463,16 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
       <label>{copy.sourceDate}<input type="date" value={importDate} max={getBusinessDate()} onChange={(event) => {
         setImportDate(event.target.value); setImportOption(null); setImportRecord(null); setImportError('');
       }} /></label>
+      <label>{copy.targetDate}<input type="date" value={targetDate} onChange={(event) => {
+        setTargetDate(event.target.value); setImportOption(null); setImportRecord(null); setImportError('');
+      }} /></label>
       <button type="button" onClick={() => void loadApprovedImport()} disabled={importLoading || !importDate}>{importLoading ? copy.importing : copy.loadImport}</button>
       {importLoading && <p role="status">{copy.importing}</p>}
       {importError && <p role="alert">{importError}</p>}
       {importRecord && importOption && <>
         <h4>{copy.importPreview}</h4>
         <p>来源：{importRecord.date} · {importRecord.brief_id}</p>
-        <p>目标：{getBusinessDate()}</p>
+        <p>目标：{targetDate}</p>
         <p>{importRecord.categories.join(' · ')}</p>
         <pre>{importRecord.summary}</pre>
         <ul>{importRecord.source_refs.map((ref) => <li key={`${ref.kind}:${ref.id}`}>{ref.kind} · {ref.id}</li>)}</ul>

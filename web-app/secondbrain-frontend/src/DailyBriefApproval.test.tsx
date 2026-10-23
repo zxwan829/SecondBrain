@@ -133,13 +133,14 @@ describe('Daily Brief explicit approval UI draft', () => {
     render(<DailyBriefApproval locale="zh-CN" onSaved={() => {}} dateNow={() => new Date(targetDate + 'T02:00:00Z')} />);
     expect(calls).toHaveLength(0);
     fireEvent.change(screen.getByLabelText('来源简报日期'), { target: { value: sourceDate } });
+    fireEvent.change(screen.getByLabelText('目标简报日期'), { target: { value: targetDate } });
     fireEvent.click(screen.getByRole('button', { name: '读取该日简报' }));
     expect(await screen.findByText('Exact synthetic historical summary')).toBeTruthy();
     expect(calls).toHaveLength(2);
     expect(calls[0].path).toBe('/api/daily-brief/source-options/brief?date=' + sourceDate + '&limit=1');
     expect(calls[0].headers?.get('cache')).toBeNull();
     expect(calls[1].path).toBe('/api/daily-brief?date=' + sourceDate + '&timezone=Asia%2FShanghai');
-    expect(screen.getByText(/将原样复制到今天的新简报/)).toBeTruthy();
+    expect(screen.getByText(/原样复制到选定目标日期/)).toBeTruthy();
     expect(screen.getByText('旧分类')).toBeTruthy();
     expect(calls.some((call) => call.method === 'POST')).toBe(false);
 
