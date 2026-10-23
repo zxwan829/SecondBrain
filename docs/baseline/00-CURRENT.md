@@ -8,24 +8,24 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-22 最新状态与唯一 NEXT：完整 V1 六阶段交付
+## 2026-10-23 最新状态与唯一 NEXT：完整 V1 六阶段交付
 
 详细工作分解、A/B 所有权、依赖、验收、纸面推演与范围覆盖见 [V1-Delivery-Plan.md](V1-Delivery-Plan.md)。总控 [#76](https://github.com/zxwan829/SecondBrain/issues/76)，A [#96](https://github.com/zxwan829/SecondBrain/issues/96)，B [#97](https://github.com/zxwan829/SecondBrain/issues/97)。本节替代下方历史快照的阶段指令；历史证据保留，不作为第二份 NEXT。完整 V1 仍 **NOT DONE**。
 
 | 当前对象 | 核验结果 | 下一步 |
 |---|---|---|
-| 核验 main | `70db581f4f93087eb7ab3456bf5726317645b444`，#197 与文档 PR #200 已合并 | 此 SHA 为本规划检查时快照，不代表生产 |
-| Linux Writer 子集 | #199 `6d4f0b61ed7e7474122e55cba7d0a50b4a74d01c`，[Run 39802960932](https://github.com/zxwan829/SecondBrain/actions/runs/39802960932) success，原始日志 `1 passed in 0.38s`；PMO `PASS_WITH_LIMITS` | 不重复旧环境排查；Authority-only、Writer 自身严格 create-only、生产 OS Gate 仍未通过 |
-| A | #198 Activity HEAD `ded3c4dc5f91fbf7ee17a058819e5f3f4fd566eb` 源码复审 PASS（[Review #5613809515](https://github.com/zxwan829/SecondBrain/pull/198#pullrequestreview-5613809515)），仍 Draft/未合并；Web UX Draft [#202](https://github.com/zxwan829/SecondBrain/pull/202) HEAD `6518f6cef8c201981628b0bb09718f374aea55cd` 叠加在 #198 分支，共 11 个 Web 文件；最终 HEAD 独立源码复审 PASS，新增 Notes 412 冲突与 Vocabulary 同义词映射回归；83 项跨模块、7 项 Home 信任状态和 23 项 Notes/Vocabulary 定向测试、typecheck/build/diff-check PASS；三视口 Playwright 仅完成清单解析，浏览器执行 NOT RUN；#199 仍 Draft/Open，Ready 动作被平台自动审批拒绝 | 继续隔离浏览器执行与跨层集成验收；A_NEXT_READY 仍未达成；按有效授权协调 #198 状态，不绕过 #199 拒绝 |
-| B | #106 Draft/Open；#193 CLOSED/NOT MERGED；#97 最新 C0 提案为 [评论 #6345462222](https://github.com/zxwan829/SecondBrain/issues/97#issuecomment-6345462222) | 等待 PMO 对 Authority→Writer/create-only 合同作四项裁定；继续不依赖 Writer 的 Core 缺口；不把提案写成已实现或 OS 通过 |
-| 实际业务缺口 | main Planning 执行仍 `effect=none`；Brief `approved_import` 仍 501；Activity 尚不覆盖全部正式来源 | 补真实专用 API 接线，不把模拟/存储模块存在视为完整能力 |
-| 生产/模型/用户 | 本轮未操作 NAS、真实模型、真实渠道或个人数据 | 不推断现网正常，不借本计划启用 Writer/Promote |
+| 核验 main | GitHub `main` 与远端 refs 均为 `e28db843df53c2ac48c71abbedeb3713c77d338b`；这是代码/文档基线，不代表生产 | 后续每个组合候选固定记录 main 与 PR HEAD |
+| A Web 集成 | #198 `b9bb97dace8f67d74b29177da644dbe092b954ab`、#202 `62c97ff0c66bee6ec8a673790f14098ecb94b898` 均 Draft/Open；#198 独立源码复审 PASS_WITH_LIMITS，#202 依赖 #198 与 Core #201/#207。三视口既有 Run #39947619906 保留，不重跑 | #198 按独立 PR 条件准备；Core 到位后再按顺序处理 #202；状态检查为空且分支保护/必需检查规则未核实 |
+| A P4-4 | Draft #212 HEAD `3cf044cf981461aa556ac0f14af2cf4aee3d0e25`；独立源码复审 PASS_WITH_LIMITS（Review #5628152181）；词库读取重试与 412 刷新失败保护已补，定向 5/5、typecheck、diff-check PASS | 等待常规 PR 流程；不重复已通过验证 |
+| B Core | #201 HEAD `42fbc3a7672ec1688ba55b563f8f77399b512e0f`、#207 HEAD `d1cd0904c85e606d03ff4479d181dc0164cfc560` 均 Draft/Open，A 源码复审 PASS_WITH_LIMITS；既有定向测试及无冲突集成候选复用 | 按实际依赖收口；#209 不因存在而自动成为 #202 阻断 |
+| P4-5 Trash | 已批准业务规范确认回收站功能方向，但物理路径及排除/清理规则待定；当前 NotesStore 只接显式 drafts/authorized roots，无 Trash root、删除或恢复 API。候选设计见 `P4-5-Trash-Candidate.md`；仅代码/规范盘点，未访问真实 Vault/NAS | 先核实 Core 挂载/权限与 Obsidian 同步兼容；候选未冻结、未创建目录，不授权生产路径变更或清理 |
+| 生产/模型/用户 | 本轮未访问 NAS、真实 Vault、真实业务数据或付费模型；Writer/Promote、Chat cost gate OFF；D090 门禁不变 | 用户授权的本地合成开发继续；Actions、main 合并、部署与不可逆删除仍分别受门禁约束 |
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 
 **六阶段：** P1 业务底座与知识闭环；P2 个人智能伙伴（保留 P2-1～5）；P3 计划与受控行动（保留 P3-1～5）；P4 多渠道、多格式与笔记工作台；P5 安全上线与实际环境集成；P6 完整业务验收与交付。当前 P1/P2/P3 均有已实现或合成通过部分，仍有关键欠项；P4/P5 准备可并行。历史 M1/M2 的限定验收不是六阶段全部完成。
 
-**唯一 NEXT：** A 按计划 A-NEXT 完成真实 Web/集成包；B 按 B-NEXT 先交剩余安全合同，并连续推进不依赖该裁定的 Core 业务缺口。普通问题在授权范围自主修复/定向测试/提交；A 统筹集成，B 修自己的 Core，PMO 独立复审重大合同与阶段。两线在“同一业务能力 + 固定 HEAD + 合同/证据”到齐后汇合，未到齐的能力不能借其他能力通过而跳 Gate，也不阻断无依赖工作。
+**唯一 NEXT：** A 继续按 V1 计划完成 Web 与集成收口；推进 P4-5 的 Trash 候选合同，并与 B 确认真实 Core 路径/权限及删除恢复 API 后再做跨层实现。并行推进已冻结合同且不依赖新 Core 接口的 Web 工作。A 统筹集成，B 修自己的 Core；未到齐的能力不能借其他能力通过而跳 Gate，也不阻断无依赖工作。
 
 **范围与授权：** 原 V1 MUST、D077 Companion MVP、D086 预算/主动协作、Notes/标签等已批准目标完整保留。微信为正式 MUST；飞书同渠道包按 D087 核实首版范围，不将架构偏好冒充上线证据。Notes/图形/词库已有实现优先复用。生产、真实个人数据/模型/渠道、费用、权限拓扑及新的特权实验仍各遵既有授权；本次计划不新增通用许可。已有 #199 状态拒绝单列处理，不重启已过子集实验，不引入第二位人类审查人。
 
