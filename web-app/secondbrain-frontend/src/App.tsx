@@ -544,7 +544,9 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         <section className="primary-grid" aria-label={t.today}>
-          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} onCreateTask={() => navigate('today')} />
+          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} onCreateTask={() => {
+            pushAppPath('/today?create=1'); setPage('today'); setRouteRevision((value) => value + 1); setMenuOpen(false);
+          }} />
           <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} onOpen={() => navigate('review')} />
         </section>
 

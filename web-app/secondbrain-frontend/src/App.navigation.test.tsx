@@ -127,6 +127,7 @@ describe('Notes application navigation gate', () => {
     expect(await screen.findByRole('heading', { name: '今日与待办' })).toBeTruthy();
     expect(screen.getByRole('form', { name: '新建待办' })).toBeTruthy();
     expect(location.pathname).toBe('/today');
+    expect(location.search).toBe('');
   });
 
   it('opens the existing real Projects, Daily Brief, Activity, Agent Health, and Journal destinations from Home', async () => {
