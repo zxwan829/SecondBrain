@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Request, type Response } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const baseUrl = process.env.SB_E2E_BASE_URL ?? 'http://127.0.0.1:4173';
@@ -525,6 +525,22 @@ for (const viewport of viewports) {
     for (const path of ['/api/home', '/api/projects', '/api/activity', '/api/agent/health', '/api/tasks', '/api/journal/', '/api/calendar']) {
       expect(observed.requestRecords.some((request) => request.method === 'GET' && request.path.startsWith(path))).toBe(true);
     }
+
+    // Exercise the real Notes dialog layout CSS against each accepted viewport.
+    // This uses only static synthetic markup; Notes save/reopen is covered by
+    // the separate localhost HTTP and component tests.
+    observed.setDiagnosticAssertion('layout_no_horizontal_overflow');
+    await page.setContent('<div class="visual-dialog-backdrop"><section class="visual-dialog" role="dialog" aria-label="合成图形"><header class="visual-dialog-header"><h2>思维导图</h2><span>synthetic.mindmap.json</span><button type="button">关闭</button></header><div class="visual-map-editor"></div><footer class="visual-dialog-footer"><span>已保存</span><button type="button">保存图形</button></footer></section></div>');
+    await page.addStyleTag({ content: await readFile(new URL('../../secondbrain-frontend/src/styles/app.css', import.meta.url), 'utf8') });
+    const dialogGeometry = await page.locator('.visual-dialog').evaluate((dialog) => {
+      const bounds = dialog.getBoundingClientRect();
+      const close = dialog.querySelector('header button')?.getBoundingClientRect();
+      return { left: bounds.left, right: bounds.right, closeLeft: close?.left, closeRight: close?.right };
+    });
+    expect(dialogGeometry.left).toBeGreaterThanOrEqual(20);
+    expect(dialogGeometry.right).toBeLessThanOrEqual(viewport.width - 20);
+    expect(dialogGeometry.closeLeft).toBeGreaterThanOrEqual(dialogGeometry.left);
+    expect(dialogGeometry.closeRight).toBeLessThanOrEqual(dialogGeometry.right);
 
   });
 }
