@@ -168,7 +168,7 @@ def _knowledge_items(knowledge_root, limit=8):
 
 def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, review_root, knowledge_root,
                           organizer=None, personal_learning=None, knowledge_store=None,
-                          citation_store=None):
+                          citation_store=None, chat_cost_gate=None):
     router = APIRouter(prefix="/api")
     run_approvals = RunApprovalRegistry()
     citation_fallback = {}
@@ -349,7 +349,34 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
             # Personal Learning's existing gated behavior is unchanged. Knowledge
             # excerpts are never sent through Hermes' system-level instructions.
             run_body["instructions"] = instructions
-        result = await hermes.start_run(run_body, key)
+        cost_reservation = None
+        if chat_cost_gate is not None:
+            # The live Hermes contract must attest enforcement before any
+            # reservation or paid Run is admitted. Missing/unknown capability
+            # fails closed; legacy behavior remains unchanged while disabled.
+            capabilities = await hermes.capabilities()
+            chat_cost_gate.require_hermes_envelope(capabilities)
+            run_body = chat_cost_gate.bind_envelope(run_body)
+            cost_reservation = chat_cost_gate.reserve(
+                owner=owner, session_id=safe_session_id, idempotency_key=key,
+                run_body=run_body, request_class="passive",
+            )
+            chat_cost_gate.require_replay_window(cost_reservation)
+        try:
+            result = await hermes.start_run(run_body, key)
+        except asyncio.CancelledError:
+            if chat_cost_gate is not None and cost_reservation is not None:
+                chat_cost_gate.mark_reservation_unknown(cost_reservation["reservation_id"])
+            raise
+        except Exception:
+            if chat_cost_gate is not None and cost_reservation is not None:
+                chat_cost_gate.mark_reservation_unknown(cost_reservation["reservation_id"])
+            # A failed transport may have reached Hermes; keep the reservation
+            # and never auto-retry. An explicit identical idempotency replay is
+            # the only path that can reconcile a run at Hermes.
+            raise
+        if chat_cost_gate is not None and cost_reservation is not None:
+            chat_cost_gate.attach_run(cost_reservation["reservation_id"], result["run_id"])
         run_approvals.register_run(hermes._safe_id(result["run_id"]), safe_session_id, owner)
         if citation_store is not None:
             try:
@@ -380,9 +407,15 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
         except HTTPException:
             knowledge_read_allowed = False
         safe_run_id = hermes._safe_id(run_id)
-        chunks = await hermes.stream_run(run_id)
+        try:
+            chunks = await hermes.stream_run(run_id)
+        except Exception:
+            if chat_cost_gate is not None:
+                chat_cost_gate.mark_unknown(safe_run_id)
+            raise
 
         async def events():
+            cost_terminal_seen = False
             if citation_store is not None:
                 registered_session = run_approvals.session_for_run(safe_run_id, owner)
                 current_knowledge_access = knowledge_read_allowed
@@ -411,30 +444,45 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
                 if (citation_event is not None and registered_session
                         and citation_event.get("session_id") == registered_session):
                     yield _sse_event_frame("knowledge.citations", citation_event)
-            async for chunk in chunks:
-                outgoing = chunk
-                payload = _sse_payload(chunk)
-                if payload and payload.get("event") == "approval.request":
-                    card = run_approvals.bind_event(safe_run_id, owner, payload)
-                    if card:
-                        outgoing = _sse_frame(card)
-                    else:
-                        request_id = payload.get("request_id")
-                        if isinstance(request_id, str) and request_id:
-                            try:
-                                await hermes.resolve_run_approval(safe_run_id, request_id, "deny")
-                            except HTTPException:
-                                pass  # Native approval timeout is also fail-closed.
-                        outgoing = _sse_frame({"event": "approval.blocked", "failure_code": "approval_event_invalid"})
-                if personal_learning and personal_learning.is_success_event(chunk):
-                    try:
-                        await personal_learning.complete_run(hermes._safe_id(run_id), hermes)
-                    except Exception:
-                        # Learning is best-effort and must not break a completed Chat run.
-                        pass
-                elif personal_learning and personal_learning.is_discard_event(chunk):
-                    personal_learning.discard_run(hermes._safe_id(run_id))
-                yield outgoing
+            try:
+                async for chunk in chunks:
+                    outgoing = chunk
+                    payload = _sse_payload(chunk)
+                    if chat_cost_gate is not None and payload:
+                        event_name = payload.get("event")
+                        if event_name in {"run.completed", "run.failed", "run.cancelled", "run.interrupted"}:
+                            cost_terminal_seen = True
+                            if event_name == "run.completed":
+                                if not chat_cost_gate.settle_completed(safe_run_id, payload):
+                                    chat_cost_gate.mark_unknown(safe_run_id)
+                            else:
+                                # Non-success terminals are never trusted usage
+                                # receipts, even when they include token numbers.
+                                chat_cost_gate.mark_unknown(safe_run_id)
+                    if payload and payload.get("event") == "approval.request":
+                        card = run_approvals.bind_event(safe_run_id, owner, payload)
+                        if card:
+                            outgoing = _sse_frame(card)
+                        else:
+                            request_id = payload.get("request_id")
+                            if isinstance(request_id, str) and request_id:
+                                try:
+                                    await hermes.resolve_run_approval(safe_run_id, request_id, "deny")
+                                except HTTPException:
+                                    pass  # Native approval timeout is also fail-closed.
+                            outgoing = _sse_frame({"event": "approval.blocked", "failure_code": "approval_event_invalid"})
+                    if personal_learning and personal_learning.is_success_event(chunk):
+                        try:
+                            await personal_learning.complete_run(hermes._safe_id(run_id), hermes)
+                        except Exception:
+                            # Learning is best-effort and must not break a completed Chat run.
+                            pass
+                    elif personal_learning and personal_learning.is_discard_event(chunk):
+                        personal_learning.discard_run(hermes._safe_id(run_id))
+                    yield outgoing
+            finally:
+                if chat_cost_gate is not None:
+                    chat_cost_gate.finish_stream(safe_run_id, cost_terminal_seen)
 
         return StreamingResponse(events(), media_type="text/event-stream", headers={
             "Cache-Control": "private, no-store, no-transform", "X-Accel-Buffering": "no",
