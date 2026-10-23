@@ -52,7 +52,7 @@ class ChatCostGateHttpTests(unittest.TestCase):
         self.policy_file.chmod(0o600)
         self.allow_envelope = False
         self.event = {"event": "run.completed", "runtime": {"provider": "unknown", "model": "unknown"},
-                      "usage": {"input_tokens": 1, "output_tokens": 1}}
+                      "usage": {"input_tokens": 1, "output_tokens": 1, "model_calls": 1}}
         self.calls = []
         self.logical_runs = {}
         self.run_posts = 0
@@ -154,7 +154,7 @@ class ChatCostGateHttpTests(unittest.TestCase):
         self.event = {
             "event": "run.completed",
             "runtime": {"provider": "synthetic-fallback", "model": "bounded/model"},
-            "usage": {"input_tokens": 200, "output_tokens": 100},
+            "usage": {"input_tokens": 20, "output_tokens": 10, "model_calls": 1},
         }
         replay = self.run_once("cost-replay-key")
         self.assertEqual(replay.status_code, 200, replay.text)
@@ -166,12 +166,35 @@ class ChatCostGateHttpTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["request_class"], "passive")
         self.assertEqual(rows[0]["status"], "settled")
-        self.assertEqual(rows[0]["actual_microcny"], 700)
+        self.assertEqual(rows[0]["actual_microcny"], 70)
         self.assertIn("not an invoice", rows[0]["estimate_basis"])
 
         blocked = self.run_once("second-cost-key")
         self.assertEqual(blocked.status_code, 429, blocked.text)
         self.assertEqual(self.run_posts, 2)
+
+    def test_non_success_sse_terminals_hold_reservation_with_reported_usage(self):
+        for terminal in ("run.failed", "run.cancelled", "run.interrupted"):
+            with self.subTest(terminal=terminal):
+                self.allow_envelope = True
+                start = self.run_once("failed-sse-" + terminal)
+                self.assertEqual(start.status_code, 200)
+                run_id = start.json()["run_id"]
+                self.event = {
+                    "event": terminal,
+                    "runtime": {"provider": "synthetic", "model": "bounded/model"},
+                    "usage": {"input_tokens": 20, "output_tokens": 10, "model_calls": 1},
+                }
+                response = self.client.get(f"/api/chat/runs/{run_id}/events")
+                self.assertEqual(response.status_code, 200)
+                row = next(row for row in self.ledger_rows() if row.get("run_id") == run_id)
+                self.assertEqual(row["status"], "unknown")
+                self.assertEqual(row["accounted_microcny"], row["reserved_microcny"])
+                # Make each case independent of the previous reservation.
+                # The next admission needs a new state root; no retry or refund is implicit.
+                if terminal != "run.interrupted":
+                    self.tearDown()
+                    self.setUp()
 
     def test_ambiguous_start_failure_keeps_reservation_until_explicit_same_key_replay(self):
         self.allow_envelope = True
