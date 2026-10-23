@@ -32,6 +32,7 @@ MAX_ACTIVITY_CAPTURE_STATE_FILES = 500
 MAX_ACTIVITY_CAPTURE_BYTES = 2 * 1024 * 1024
 MAX_DISPLAY_FILENAME_CHARS = 255
 MAX_WEB_BYTES = 5 * 1024 * 1024
+MAX_PDF_EXTRACTED_TEXT_CHARS = 1_000_000
 MAX_REDIRECTS = 4
 ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg",
                     ".webp", ".gif", ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
@@ -920,7 +921,7 @@ class CaptureService:
                     raise ValueError("Encrypted PDFs are not supported")
                 if len(reader.pages) > 500:
                     raise ValueError("PDF exceeds the 500 page limit")
-                content = "\n\n".join((page.extract_text() or "") for page in reader.pages).strip()
+                content, truncated = _extract_pdf_text_bounded(reader)
                 if not content:
                     page_sizes = [(page.mediabox.width, page.mediabox.height) for page in reader.pages]
                     content = self.processors.ocr_pdf(raw, len(reader.pages), page_sizes)
@@ -930,8 +931,13 @@ class CaptureService:
                     document_title = str(reader.metadata.title).strip()
                     if document_title:
                         state["document_title"] = document_title[:300]
-                if len(content) > 1_000_000:
-                    content = content[:1_000_000]
+                if truncated:
+                    content += ("\n\n[PDF text extraction stopped at the 1,000,000-character "
+                                "safety limit. The original PDF is retained; extracted text is incomplete.]\n")
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "PDF text extraction reached the 1,000,000-character limit; extracted text is incomplete.",
+                    }
             elif input_type in {"png", "jpg", "jpeg", "webp", "gif"}:
                 recognized = self.processors.ocr_image(raw)
                 state["processor"] = {"name": "tesseract", "kind": "image_ocr",
@@ -1077,6 +1083,43 @@ class CaptureService:
 
 class ProcessorUnavailable(Exception):
     pass
+
+
+class _PDFTextLimitReached(Exception):
+    """Internal control flow used to stop pypdf once the output budget is full."""
+
+
+def _extract_pdf_text_bounded(reader):
+    """Collect PDF text incrementally and stop parsing when the output budget is exceeded."""
+    chunks = []
+    collected = 0
+    truncated = False
+
+    for page_number, page in enumerate(reader.pages):
+        def collect(text, *_context):
+            nonlocal collected, truncated
+            if not isinstance(text, str):
+                raise ValueError("PDF text extractor returned an invalid chunk")
+            if not text:
+                return
+            remaining = MAX_PDF_EXTRACTED_TEXT_CHARS - collected
+            if len(text) > remaining:
+                if remaining:
+                    chunks.append(text[:remaining])
+                    collected += remaining
+                truncated = True
+                raise _PDFTextLimitReached
+            chunks.append(text)
+            collected += len(text)
+
+        try:
+            if page_number:
+                collect("\n\n")
+            page.extract_text(visitor_text=collect)
+        except _PDFTextLimitReached:
+            break
+
+    return "".join(chunks).strip(), truncated
 
 
 def create_capture_router(auth, service):

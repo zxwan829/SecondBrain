@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from PIL import Image
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from secondbrain_core.modules.capture import CaptureService
 from secondbrain_core.modules.hermes_api import HermesAPI
@@ -91,6 +92,82 @@ class MultimodalCaptureTests(unittest.TestCase):
         self.assertEqual(done["processor"]["kind"], "pdf_ocr")
         self.assertIn("扫描件识别正文", (self.review / done["review_path"]).read_text())
         self.assertEqual(hashlib.sha256((self.raw / item["raw_path"]).read_bytes()).hexdigest(), original_hash)
+
+    def test_pdf_text_budget_stops_extraction_and_reports_partial_with_raw_preserved(self):
+        class FakePage:
+            def __init__(self, chunks):
+                self.chunks = chunks
+                self.calls = 0
+
+            def extract_text(self, *, visitor_text):
+                self.calls += 1
+                for chunk in self.chunks:
+                    visitor_text(chunk, None, None, None, None)
+                return ""
+
+        first_page = FakePage(["A" * 600_000, "B" * 500_000])
+        later_page = FakePage(["must not be reached"])
+        reader = Mock(is_encrypted=False, pages=[first_page, later_page], metadata=None)
+        processors = Mock()
+        service = CaptureService(self.raw, self.review, self.state, processors)
+        raw = b"%PDF-1.7\nsynthetic bounded extraction fixture"
+        item = service.accept_file("large-readable.pdf", raw)
+        raw_digest = hashlib.sha256((self.raw / item["raw_path"]).read_bytes()).hexdigest()
+
+        with patch("secondbrain_core.modules.capture.PdfReader", return_value=reader):
+            service.process(item, raw)
+
+        result = service.get(item["capture_id"])
+        review = (self.review / result["review_path"]).read_text()
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        self.assertIn("text extraction reached the 1,000,000-character limit", result["error"]["message"])
+        self.assertIn("The original PDF is retained; extracted text is incomplete.", review)
+        self.assertTrue(review.endswith("A" * 600_000 + "B" * 400_000 +
+                                        "\n\n[PDF text extraction stopped at the 1,000,000-character "
+                                        "safety limit. The original PDF is retained; extracted text is incomplete.]\n"))
+        self.assertEqual(first_page.calls, 1)
+        self.assertEqual(later_page.calls, 0)
+        self.assertEqual(hashlib.sha256((self.raw / result["raw_path"]).read_bytes()).hexdigest(), raw_digest)
+        self.assertEqual(len(list(self.review.glob("*.md"))), 1)
+        processors.ocr_pdf.assert_not_called()
+        first_review_path = result["review_path"]
+        first_review_digest = hashlib.sha256(review.encode("utf-8")).hexdigest()
+        with patch("secondbrain_core.modules.capture.PdfReader", return_value=reader):
+            retried = service.retry(item["capture_id"])
+        retry_review = (self.review / retried["review_path"]).read_bytes()
+        self.assertEqual(retried["status"], "partial_success")
+        self.assertEqual(retried["review_path"], first_review_path)
+        self.assertEqual(hashlib.sha256(retry_review).hexdigest(), first_review_digest)
+        self.assertEqual(hashlib.sha256((self.raw / retried["raw_path"]).read_bytes()).hexdigest(), raw_digest)
+        self.assertEqual(len(list(self.review.glob("*.md"))), 1)
+
+    def test_real_pypdf_visitor_stops_after_crossing_the_text_budget(self):
+        writer = PdfWriter()
+        font = DictionaryObject({NameObject("/Type"): NameObject("/Font"),
+                                 NameObject("/Subtype"): NameObject("/Type1"),
+                                 NameObject("/BaseFont"): NameObject("/Helvetica")})
+        font_ref = writer._add_object(font)
+        for text in (b"A" * 600_000, b"B" * 600_000):
+            page = writer.add_blank_page(width=300, height=300)
+            page[NameObject("/Resources")] = DictionaryObject({
+                NameObject("/Font"): DictionaryObject({NameObject("/F1"): font_ref})
+            })
+            stream = DecodedStreamObject()
+            stream.set_data(b"BT /F1 10 Tf 1 0 0 1 10 10 Tm (" + text + b") Tj ET")
+            page[NameObject("/Contents")] = writer._add_object(stream)
+        pdf = io.BytesIO()
+        writer.write(pdf)
+
+        from pypdf import PdfReader
+        from secondbrain_core.modules.capture import _extract_pdf_text_bounded
+        reader = PdfReader(io.BytesIO(pdf.getvalue()), strict=True)
+        extracted, truncated = _extract_pdf_text_bounded(reader)
+
+        self.assertTrue(truncated)
+        self.assertEqual(len(extracted), 1_000_000)
+        self.assertEqual(extracted[:600_000], "A" * 600_000)
+        self.assertEqual(extracted[600_000:], "\n\n" + "B" * 399_998)
 
     def test_image_ocr_review_separates_text_and_ai_description_unavailable(self):
         image = io.BytesIO()

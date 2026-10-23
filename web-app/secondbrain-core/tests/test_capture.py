@@ -230,7 +230,8 @@ class CaptureServiceTests(unittest.TestCase):
 
     def test_pdf_metadata_title_does_not_replace_unicode_upload_filename(self):
         class Page:
-            def extract_text(self):
+            def extract_text(self, *, visitor_text):
+                visitor_text("Readable PDF body", None, None, None, None)
                 return "Readable PDF body"
         class Metadata:
             title = "(anonymous)"
