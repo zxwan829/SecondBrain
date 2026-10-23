@@ -1,38 +1,12 @@
-## 2026-10-23 — A-NEXT 集成收口与 READY_WITH_LIMITS（Issue #96）
-
-- **GitHub 状态：** main `e28db843df53c2ac48c71abbedeb3713c77d338b`。PR #198 Draft/Open，HEAD `b9bb97dace8f67d74b29177da644dbe092b954ab`，最新独立源码复审 #5625412036 `PASS_WITH_LIMITS`，GitHub 显示 `MERGEABLE/CLEAN`。PR #202 Draft/Open；浏览器实测源 HEAD `289fec56afe7baa49f69e77bd6ca2657a3af1ce6` 的独立复审 #5627693807 为 `PASS_WITH_LIMITS`。为接入 #198 最新 HEAD 并同步 CURRENT，新增 stacked merge candidate；初始集成提交 `d3a0f95388f36cc1ca56ffe6fec28615669913f3` 已由 GitHub 回读并显示 PR #202 `MERGEABLE/CLEAN`。没有执行 main merge。
-- **浏览器证据保留：** 唯一授权 Run [#39947619906](https://github.com/zxwan829/SecondBrain/actions/runs/39947619906) 的事件 SHA 与 `CHECKOUT_SHA` 均为 `289fec56afe7baa49f69e77bd6ca2657a3af1ce6`。GitHub-hosted Ubuntu 24.04/Linux Chromium 下 Desktop 1440×1000、Tablet 820×1180、Mobile 390×844 均 PASS；JUnit 3/3，横向溢出断言均 PASS。脱敏 artifact ID `12498324276`，SHA-256 `42490de67d3ba8ee46a7151d114e5f3725a6b658c2da5897739aa7f28dc88193`。不重跑该 Gate。
-- **能力边界：** 页面中的权限拒绝路径由合成 403 seam 覆盖，不等于真实 Core 对单项来源撤权通过；Activity 来源仍有限。完整 V1 继续 NOT DONE，P2 真实模型与预算、P3 真实执行、P4 扩展能力、P5 Writer OS/生产准入和 P6 用户验收按 `V1-Delivery-Plan.md` 跟踪。Writer/Promote 保持 OFF；未触及生产、真实数据或模型。
-- **集成准备：** #202 原 base 指向 #198 分支较早版本，merge-tree 仅发现 `00-CURRENT.md` 文本冲突；已在隔离 stacked branch 接入最新 #198、保留其 V1 计划/Writer workflow 文件，并更新 CURRENT/Progress Log。推送后 GitHub 回报两 PR 均 `MERGEABLE/CLEAN`。两 PR 的 checks/status 列表为空；branch protection/ruleset 查询返回 403，无法核实 required checks。空列表不等同于没有门禁。
-- **验证边界：** 仅运行文档/合并差异检查 `git diff --cached --check`，通过；未运行测试或 Actions。Run #39947619906 只证明精确 checkout SHA `289fec...`，不覆盖新 stacked composition；本轮没有重复浏览器 Gate。
-- **P4-3 现状盘点：** NotesPage 已实现 Markdown 延迟自动保存、ETag 串行保存/412 冲突保留、历史版本预览、图片粘贴上传及 MindMap/Canvas 源文件编辑；现有组件测试覆盖多项失败恢复。尚需按正式合同核对完整端到端保存/重开、移动交互与附件相对路径在实际 Core API 下的行为；本轮未发现可据此直接修复的具体缺陷，也未运行测试。
-- **NEXT：** main merge 仍需有效授权；获批后按 #198→#202 顺序处理。其后按 P4-3 对现有 Notes/Tiptap/MindMap/Canvas 的未覆盖路径做最小定向验收，只修有证据的 Web 问题，精确 Core/API 缺陷交 B。真实 Core 撤权和 Writer OS Gate 不得用浏览器模拟替代。
-
 # Progress Log
 
-## 2026-10-23 — PR #202 failure-summary 根因分类修复（Review #5627423096）
+## 2026-10-23 — 普通 Web PR 批量集成收口（Issue #96 授权）
 
-- **复审问题：** PR #202 固定 HEAD `205f84fd9adc6b853083c461920a6044c174d331` 的独立复审指出，sanitizer 将所有缺少 `failure-summary.json` 的失败视口自动标为 `test_setup/test_error`，JUnit 视口身份并不能证明初始化失败。
-- **最小修复：** `_collect_failure_diagnostics` 不再从 JUnit 失败状态合成 `test_setup`。只有精确路径下存在完整、通过固定 schema/枚举校验且与失败用例视口一一匹配的 `failure-summary.json` 才保留诊断；多余或缺失诊断均拒绝发布报告。JUnit 精确用例 allowlist、自由文本/敏感字段过滤、截图 allowlist 和业务断言未改。
-- **回归与验证：** sanitizer 新增/更新负例，覆盖普通失败测试缺少诊断、部分失败视口缺摘要以及全部失败视口无显式诊断时 artifact 不发布；另验证显式 `test_setup` 摘要仍保留。定向 `test_artifact_sanitizer.py` **55 passed**；`git diff --check` PASS。
-- **固定版本与边界：** 修复由 PR #202 新 Draft HEAD 承载，SHA 以 push 后 GitHub readback 为准。未运行 Actions、浏览器或无关测试；未合并、部署或访问真实数据。Linux 三视口浏览器 Gate 仍 NOT RUN，`A_NEXT_READY=NOT_READY`。
-
-## 2026-10-23 — A-NEXT Linux Chromium Gate 准备与脱敏报告修复
-
-- **固定基线：** PR #202 已核实原固定 HEAD `63896b79566ad47cad1b46471abf8a5f033e5abd`，Draft/Open；本候选保留该提交及 `21034fa2` 的既有 Web 测试修复。PR 最新 HEAD 以本条最终提交并 GitHub readback 为准。
-- **环境裁定：** 正式三视口 E2E 固定使用 GitHub-hosted Ubuntu 24.04 + Playwright Chromium。macOS 仅运行组件/DOM、Core+Vite 合成 HTTP、typecheck/build；停止重复排查 Edge SIGABRT/Chromium SIGTRAP。已更新 `Agent-Rules.md` 长期规则与 CURRENT。
-- **脚本审查：** 原 Activity waiter 在点击前注册并严格核对响应；Calendar 请求参数/响应、Agent Health 精确 H1、Mobile Today 菜单状态，以及每页 document/body 横向溢出检查均保留。未发现有证据支持删除或放宽这些断言。
-- **已复现的报告缺陷：** Edge 启动失败时 Playwright 的 `page` fixture 尚未创建，`test.afterEach` 不会写逐视口摘要；JUnit 仍能精确列出三个固定测试用例，旧 sanitizer 因视口诊断集合不完整拒绝整份报告。本候选只为缺失的失败视口生成固定 `test_setup/test_error` 记录，来源为严格 allowlist JUnit identity；不读取/输出自由文本异常、header、cookie、正文或截图，不接受额外/错配诊断。新增回归分别覆盖部分缺摘要及三个浏览器 setup 失败。
-- **Gate 准备：** `a-web-playwright-synthetic.yml` 明确 checkout 事件 SHA，并在测试前比对 `git rev-parse HEAD`，输出固定 `CHECKOUT_SHA`；Ubuntu 24.04、Chromium、合成环境和脱敏流程不变。实际 GitHub Actions `workflow_dispatch` 未运行；Linux 三视口仍 `NOT RUN`，`A_NEXT_READY=NOT_READY`。
-- **验证边界：** 本轮只运行 E2E sanitizer 定向 Python 测试、workflow YAML/shell 静态检查和 diff-check；没有 Mac 浏览器、无关 Web 全量、Core 全量、Actions、生产/NAS/真实数据、合并或部署。实施者二次差异复核不冒充独立复审；独立复审保持待办，Linux Gate 须针对复审后的固定 SHA 另行授权。
-
-## 2026-10-23 — A-NEXT Edge 配置复核与本地三视口环境阻断
-
-- **PR #202 修复复审：** 审阅本地提交 `21034fa2c304a3af737c44662cd9195a777dce94` 相对固定基线 `cf317fecae86a0624affb1ec618e63731dfcac25` 的完整差异。变更限于 Playwright 断言/导航定位、允许的脱敏诊断 ID 和移动导航 DOM 回归；未删除 Calendar 请求断言、未放宽响应状态、未改 Core/产品代码。`SOURCE_REVIEW=PASS_WITH_LIMITS`。
-- **Edge 接入：** `playwright.config.ts` 支持通过 `SB_E2E_BROWSER_CHANNEL=msedge` 选择 Edge；未设置时保持默认 Playwright Chromium。E2E 运行器通过临时合成目录启动 Core + Vite，并显式关闭 Promote/Hermes。Playwright 日志显示每个用例使用独立临时 `user-data-dir`，未复用用户 Profile。
-- **实际浏览器结果：** 使用 Mac Microsoft Edge `155.0.4283.62`、Playwright `1.56.1` 本地运行三视口。Desktop、Tablet、Mobile 均在 `browserType.launch` 阶段由 Edge `SIGABRT` 退出；测试未进入页面。为定位脱敏器拒绝发布的首次运行，第二次本地诊断运行仅保留私有临时 harness 输出；三视口仍以相同启动错误终止。首轮 artifact 校验拒绝的直接原因是浏览器 fixture 启动失败时没有测试内 `failure-summary.json`，并非安全校验被关闭。无横向溢出、Calendar、Agent Health、Today 等页面行为均 `NOT RUN`。
-- **定向检查与限制：** Edge 版本、channel 选择及临时 Profile 从运行日志实证；测试没有调用生产/NAS/真实数据，没有 Actions、合并、部署或系统权限调整。`A_NEXT_READY=NOT_READY`。由于 Edge 在本环境无法启动，不将 Edge 日常测试方案标为已确认，也暂不改写长期规范；跨平台 Chromium 仍须按独立授权运行。
-- **交付：** Draft PR #202 的远端固定 HEAD 更新及最终 SHA 以本次推送/readback 为准；变更只增补本地 Edge channel 和状态文档。没有改动 Web/Core 运行逻辑。
+- **固定基线与合并顺序：** 从 main `e28db843df53c2ac48c71abbedeb3713c77d338b` 起，按 #198 → #212 → #214 → #215 使用 GitHub 正常 Ready/Merge 流程，未绕过保护或检查。对应 main merge commit：#198 `5fff974bae9f31f6149fabc7fd087b7374507489`；#212 `f58ecfd28c5fbe4c4bae37aaf94433830689daef`；#214 `db81065413e71d832f2cf6c88f9995b105dc1757`；#215 `e33b836c67095df1537ac4fb3da76adc236f4a96`。最终 main 为 `e33b836c67095df1537ac4fb3da76adc236f4a96`。
+- **合并前准入：** 四个固定 HEAD 均有此前记录的独立源码 `PASS_WITH_LIMITS`、相关定向回归及 typecheck/build/diff-check 证据；#214/#215 还复用本地组合 HEAD `84b29ad5f306bdee0706db61b63548f72ffa951a` 的 2 项回归。最新 main 上对 #212/#214/#215 的三方树检查均无冲突；#214/#215 仍仅改相邻 Inbox 页面与测试。GraphQL 对 main 返回 `branchProtectionRules=[]`、`rulesets=[]`；REST 保护/rules 查询受私有仓库套餐限制返回 403，不能将 REST 错误解释为绕过许可。仓库现有 pull_request workflow 仅对 `d077-hermes-smoke.yml` 文件路径触发，与本批文件不匹配；其余浏览器/Linux 工作流为手动触发。本批没有触发 Actions。
+- **逐项合并后验证：** #198 在 main `5fff974b` 运行 `npm test -- src/App.navigation.test.tsx` → **48 passed**；#212 在 main `f58ecfd2` 运行 `npm test -- src/VocabularyPage.test.tsx` → **5 passed**；#214 在 main `db810654` 运行其 stale Inbox poll 测试 → **1 passed, 74 skipped**；#215 在 main `e33b836c` 运行 Inbox stale poll + Organizer 403 组合回归 → **2 passed, 74 skipped**。测试依赖首次尝试使用用户 npm 缓存时因现有权限错误失败；未更改缓存/系统权限，改在隔离临时仓库和 `/private/tmp` cache 安装锁定依赖后测试通过。没有因该环境错误重复无关测试。
+- **审查与边界：** 所有合并均指定并校验预期 PR HEAD；无 force push、admin bypass 或 main reset。没有发生回滚。未触发 Actions、未部署、未访问真实数据，Writer/Promote 与费用门禁保持 OFF。
+- **剩余集成状态：** #201 旧 HEAD `353fc9614c77a5e7a9f5d3549f602bb394afd4d2` 的缺失 grant fail-open 已由候选 HEAD `0267a2ce01be0f7898ca6dd7b54a21edd339e8ec` 中提交 `ac1c171d3c5efd3e89fbcc6b578ac354a3d145d1` 修复：`require_action()` 与 `set_session_action()` 对缺失授权记录均拒绝；B 的 55 项定向证据见 #97 评论 #6366400709。A 在当前 PR HEAD 对该安全增量复审 `PASS_WITH_LIMITS`（Review #5629186192），未重跑测试。该结论只覆盖进程内 fail-closed 修复，不表示整项 Core PR、生产或 OS Gate 通过。#207 `d1cd0904c85e606d03ff4479d181dc0164cfc560` 保留既有 `PASS_WITH_LIMITS`；#202 `62c97ff0c66bee6ec8a673790f14098ecb94b898` 仍需核对最新 base/净差异及固定跨层合同。#216 `96d36dcf5248195178f5e86ad132893590987efb` 的 source-level no-replace/recovery 修复复审 `PASS_WITH_LIMITS`；Linux `renameat2`、生产同卷挂载/ACL 与 Synology Drive 未运行。Notes 移动浏览器和 Obsidian 双向同步仍 `NOT RUN`.
 
 ## 2026-10-22 — Writer/Promote OS 安全准入与 Linux 隔离实验方案（Issue #96 PMO #6333663799）
 
