@@ -18,7 +18,7 @@ from pypdf import PdfWriter
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.capture import (CaptureService, create_capture_router, _public_http_url,
                                               _resolve_public_url, _fetch_url, _TextExtractor,
-                                              MAX_WEB_EXTRACT_CHARS, MAX_WEB_EXTRACT_PARTS)
+                                              MAX_TEXT_CHARS, MAX_WEB_EXTRACT_CHARS, MAX_WEB_EXTRACT_PARTS)
 from secondbrain_core.modules.multimodal_capture import MultimodalCaptureProcessors
 
 
@@ -100,6 +100,24 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertIn("Keep this exact body.", review)
         self.assertTrue(complete["original_asset"].startswith("/knowledge-assets/00-Inbox/"))
         self.assertEqual(complete["display_filename"], "capture.md")
+
+    def test_oversize_text_upload_preserves_raw_and_reports_partial_extraction(self):
+        for filename in ("long.txt", "long.md"):
+            with self.subTest(filename=filename):
+                original_text = "A" * (MAX_TEXT_CHARS + 1) + "MUST NOT APPEAR IN REVIEW"
+                original = original_text.encode("utf-8")
+                item = self.service.accept_file(filename, original)
+
+                self.service.process(item, original)
+                result = self.service.get(item["capture_id"])
+
+                self.assertEqual(result["status"], "partial_success")
+                self.assertEqual(result["error"]["code"], "processing_failed")
+                self.assertEqual((self.raw / result["raw_path"]).read_bytes(), original)
+                review = (self.review / result["review_path"]).read_text(encoding="utf-8")
+                self.assertIn("[Content truncated at the 200,000-character safety limit.", review)
+                self.assertNotIn("MUST NOT APPEAR IN REVIEW", review)
+                self.assertLess(len(review), MAX_TEXT_CHARS + 1000)
 
     def test_approved_review_execution_replays_after_service_restart_without_duplicate_files(self):
         text = "# Exact preview\n\nBody with preserved trailing whitespace. \n"

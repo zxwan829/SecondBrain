@@ -996,6 +996,14 @@ class CaptureService:
                     content = decoded
                 else:
                     content = decoded.strip()
+                    if input_type in {"txt", "text", "md", "markdown"} and len(content) > MAX_TEXT_CHARS:
+                        content = (content[:MAX_TEXT_CHARS]
+                                   + "\n\n[Content truncated at the 200,000-character safety limit. "
+                                     "The original file is retained.]\n")
+                        state["partial_error"] = {
+                            "code": "processing_failed",
+                            "message": "Text extraction reached the 200,000-character limit; the original file was retained.",
+                        }
                 if source_type != "inbox_proposal_review" and input_type in {"txt", "text"}:
                     first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
                     if first_line:
