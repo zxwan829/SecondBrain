@@ -389,36 +389,68 @@ class ChatCostGate:
         self.state.update(mutate)
 
     def settle_completed(self, run_id: str, event: Any) -> bool:
+        """Settle only a matching eligible Run with a complete bounded terminal receipt."""
+        if not isinstance(run_id, str) or not run_id:
+            return False
         runtime = event.get("runtime") if isinstance(event, dict) else None
         usage = event.get("usage") if isinstance(event, dict) else None
-        if not isinstance(runtime, dict) or not isinstance(usage, dict):
-            self.mark_unknown(run_id)
-            return False
-        route_key = f"{runtime.get('provider', '')}/{runtime.get('model', '')}"
-        route = next((item for item in self.policy.routes if item.key == route_key), None)
-        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
-        output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
-        if (route is None or type(input_tokens) is not int or type(output_tokens) is not int
-                or input_tokens < 0 or output_tokens < 0):
-            self.mark_unknown(run_id)
-            return False
+        route = None
+        valid = (isinstance(event, dict) and event.get("event") == "run.completed"
+                 and event.get("run_id", run_id) == run_id
+                 and isinstance(runtime, dict) and isinstance(usage, dict))
+        if valid:
+            provider, model = runtime.get("provider"), runtime.get("model")
+            if isinstance(provider, str) and isinstance(model, str):
+                route = next((item for item in self.policy.routes
+                              if item.provider == provider and item.model == model), None)
+        input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else None
+        output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else None
+        model_calls = usage.get("model_calls") if isinstance(usage, dict) else None
+        if isinstance(usage, dict):
+            # Conflicting aliases are not a trustworthy terminal usage report.
+            if ("prompt_tokens" in usage and usage["prompt_tokens"] != input_tokens
+                    or "completion_tokens" in usage and usage["completion_tokens"] != output_tokens):
+                valid = False
+        valid = (valid and route is not None
+                 and type(input_tokens) is int and type(output_tokens) is int
+                 and type(model_calls) is int and 1 <= model_calls <= self.policy.max_model_calls
+                 and 0 <= input_tokens <= self.policy.max_input_tokens * model_calls
+                 and 0 <= output_tokens <= self.policy.max_output_tokens * model_calls)
         amount = (_microcny(input_tokens, route.input_microcny_per_million)
-                  + _microcny(output_tokens, route.output_microcny_per_million))
-        cleaned_usage = {"input_tokens": input_tokens, "output_tokens": output_tokens}
+                  + _microcny(output_tokens, route.output_microcny_per_million)) if valid else None
+        transitioned = [False]
+
         def mutate(state):
             rows = state.get("budget", {}).get("chat_runs", {})
-            row = next((item for item in rows.values() if item.get("run_id") == run_id), None)
-            if row and row.get("status") in {"reserved", "started", "unknown"}:
-                row["status"] = "settled"
-                row["actual_microcny"] = amount
-                row["accounted_microcny"] = amount
-                row["runtime"] = {"provider": route.provider, "model": route.model}
-                row["usage"] = cleaned_usage
-                row["over_reservation"] = amount > int(row.get("reserved_microcny", 0))
-                row["estimate_basis"] = "trusted Hermes runtime/usage priced locally; not an invoice or provider cap"
+            row = next((item for item in rows.values()
+                        if item.get("run_id") == run_id), None)
+            if row is None or row.get("status") not in {"reserved", "started", "unknown"}:
+                return
+            # Preserve the full reservation on any integrity mismatch. A prior
+            # failure/interrupt or ambiguous transport must not free the budget.
+            eligible = (valid and row.get("policy_id") == self.policy.policy_id
+                        and row.get("policy_digest") == self.policy.digest
+                        and row.get("price_version") == self.policy.price_version
+                        and row.get("price_source") == self.policy.price_source
+                        and type(row.get("reserved_microcny")) is int
+                        and amount <= row["reserved_microcny"])
+            if not eligible:
+                row["status"] = "unknown"
                 row["resolved_at"] = iso()
+                return
+            row["status"] = "settled"
+            row["actual_microcny"] = amount
+            row["accounted_microcny"] = amount
+            row["runtime"] = {"provider": route.provider, "model": route.model}
+            row["usage"] = {"input_tokens": input_tokens, "output_tokens": output_tokens,
+                            "model_calls": model_calls}
+            row["over_reservation"] = False
+            row["estimate_basis"] = "trusted Hermes runtime/usage priced locally; not an invoice or provider cap"
+            row["resolved_at"] = iso()
+            transitioned[0] = True
+
         self.state.update(mutate)
-        return True
+        return transitioned[0]
 
     def finish_stream(self, run_id: str, terminal_seen: bool) -> None:
         if not terminal_seen:
