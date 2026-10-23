@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.hermes_api import HermesAPI
+from secondbrain_core.modules.daily_brief_import import DailyBriefImportStore
 from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStore
 from secondbrain_core.modules.tasks import TaskStore, task_source_version
@@ -798,8 +799,73 @@ def test_real_localhost_approved_task_action_is_idempotent_across_planning_commi
                 row for row in task_store.list_for_projection()["tasks"]
                 if row["id"] == receipt["task_id"]))
             assert "Synthetic follow-up" not in recovered.text
+            follow_up = next(row for row in task_store.list_for_projection()["tasks"]
+                             if row["id"] == receipt["task_id"])
+            assert follow_up["title"] == "Synthetic follow-up"
             assert [row["title"] for row in task_store.list_for_projection()["tasks"]].count(
                 "Synthetic follow-up") == 1
+
+            # The separate Task PATCH receipt shares the TaskStore ledger with
+            # Planning's create_task key without overwriting it.
+            update_body = {"title": "Synthetic follow-up updated",
+                           "expected_updated_at": follow_up["updated_at"]}
+            update_headers = {**headers, "Idempotency-Key": "synthetic-task-update-key"}
+            updated = client.patch(f"/api/tasks/{follow_up['id']}",
+                                   headers=update_headers, json=update_body)
+            replayed_update = client.patch(f"/api/tasks/{follow_up['id']}",
+                                           headers=update_headers, json=update_body)
+            assert updated.status_code == 200 and replayed_update.status_code == 200
+            assert updated.json() == replayed_update.json()
+            assert updated.json()["task"]["title"] == "Synthetic follow-up updated"
+            task_ledger = task_store._read_unlocked()["idempotency"].values()
+            assert {item.get("operation") for item in task_ledger} >= {"task.create", "task.update"}
+
+            # Exercise Brief selector -> approved_import -> GET using this
+            # same real Core app/Uvicorn server and the updated Task as source.
+            imported_task = updated.json()["task"]
+            brief_task_ref = {"kind": "task", "id": imported_task["id"],
+                              "version": task_source_version(imported_task)}
+            source_day, target_day = "2026-10-22", "2026-10-21"
+            brief_candidate = {
+                "date": source_day, "timezone": "Asia/Shanghai",
+                "categories": ["synthetic-integration"],
+                "summary": "Synthetic historical Brief",
+                "source_refs": [brief_task_ref],
+            }
+            source_brief_id = "brief-integration-source"
+            DailyBriefImportStore(str(roots["briefs"])).import_record(
+                brief_candidate, source_verifier=lambda ref: ref == brief_task_ref,
+                brief_id=source_brief_id,
+                generated_at="2026-10-22T12:00:00+08:00",
+            )
+            options = client.get(
+                f"/api/daily-brief/source-options/brief?date={source_day}&limit=1",
+                headers=headers,
+            )
+            assert options.status_code == 200, options.text
+            selected = options.json()["items"][0]
+            assert selected["id"] == f"{source_day}:{source_brief_id}"
+            import_body = {
+                "mode": "approved_import", "date": target_day,
+                "timezone": "Asia/Shanghai", "categories": brief_candidate["categories"],
+                "summary": brief_candidate["summary"], "source_refs": [brief_task_ref],
+                "approved": True,
+                "import_ref": {"kind": "existing_brief", "id": selected["id"],
+                               "version": selected["version"]},
+            }
+            import_headers = {**headers, "Idempotency-Key": "synthetic-approved-brief-import"}
+            imported = client.post("/api/daily-brief", headers=import_headers, json=import_body)
+            assert imported.status_code == 201, imported.text
+            import_replay = client.post("/api/daily-brief", headers=import_headers, json=import_body)
+            assert import_replay.status_code == 200 and import_replay.json()["status"] == "duplicate"
+            brief_readback = client.get(
+                f"/api/daily-brief?date={target_day}&timezone=Asia%2FShanghai", headers=headers)
+            assert brief_readback.status_code == 200 and brief_readback.json()["status"] == "real"
+            copied = brief_readback.json()["items"][0]
+            assert copied["summary"] == brief_candidate["summary"]
+            assert copied["categories"] == brief_candidate["categories"]
+            assert copied["source_refs"] == brief_candidate["source_refs"]
+
             activity_day = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
             app.state.daily_brief_audit_store.append({
                 "event_type": "daily_brief_import", "request_id": "synthetic-brief-request",
