@@ -15,8 +15,8 @@ source: GitHub SecondBrain Monorepo
 | 当前对象 | 核验结果 | 下一步 |
 |---|---|---|
 | A Activity PR #198 | Draft/Open，HEAD `b9bb97dace8f67d74b29177da644dbe092b954ab`；最新独立审查 #5625412036 为 `PASS_WITH_LIMITS`，未见 P0/P1；GitHub 报 `MERGEABLE/CLEAN`，没有显示状态检查 | 尚无本次合并授权；待明确批准后依序合入 main。Activity 当前来源边界和真实 Core 单项撤权仍未验收 |
-| A Web PR #202 | Draft/Open，固定浏览器验收源 HEAD `289fec56afe7baa49f69e77bd6ca2657a3af1ce6`；审查 #5627693807 为 `PASS_WITH_LIMITS`。Run [#39947619906](https://github.com/zxwan829/SecondBrain/actions/runs/39947619906) 在该 SHA 完成 Ubuntu 24.04 Chromium Desktop 1440×1000、Tablet 820×1180、Mobile 390×844，三视口及横向溢出均 PASS | 当前 PR 依赖 #198；已准备的 stacked 更新需以 GitHub 当前 PR ref 重新核对审查和最小集成证据，不能把旧 Run 当成新组合 HEAD 的浏览器 Gate |
-| 合并与检查门禁 | #198 GitHub mergeable；更新 #202 stack 前 GitHub 曾报告 conflict，merge-tree 确认为唯一冲突 `00-CURRENT.md`，现由本集成候选解决。两 PR checks 状态均为空；分支保护/ruleset API 因 GitHub 403（套餐/权限限制）不可读取 | 推送后回读 #202 的 merge 状态；不因空检查列表自行新增 CI 门禁。用户尚未明确批准 main merge，故不执行 |
+| A Web PR #202 | Draft/Open；浏览器验收固定源 HEAD `289fec56afe7baa49f69e77bd6ca2657a3af1ce6`，审查 #5627693807 对该源码为 `PASS_WITH_LIMITS`。Run [#39947619906](https://github.com/zxwan829/SecondBrain/actions/runs/39947619906) 在该 SHA 完成 Ubuntu 24.04 Chromium Desktop 1440×1000、Tablet 820×1180、Mobile 390×844，三视口及横向溢出均 PASS。现 stacked 分支已接入 #198 HEAD `b9bb97dace8f67d74b29177da644dbe092b954ab`，当前 PR ref 以 GitHub 回读为准 | 新组合候选为 mergeable/clean；旧 Review 和 Run 仍只覆盖其精确固定源，不自动覆盖集成后的组合。保留 Draft，待合并许可并补最小组合证据 |
+| 合并与检查门禁 | #198、更新后的 #202 均回读为 `MERGEABLE/CLEAN`；两 PR checks/status 均未列出检查。分支保护/ruleset API 因 GitHub 403（套餐/权限限制）不可读取 | 不因空检查列表自行新增 CI 门禁。用户尚未明确批准 main merge，故不执行 |
 | Browser 验收范围 | Run #39947619906 artifact ID `12498324276`，SHA-256 `42490de67d3ba8ee46a7151d114e5f3725a6b658c2da5897739aa7f28dc88193`；JUnit 3/3，无失败/跳过；Promote=false，合成数据，未触及真实数据 | 保留证据，不重跑。403 权限撤销是合成浏览器 seam，不证明真实 Core 对单项来源撤权 |
 | 后续 V1 缺口 | Core 单项撤权及实时来源访问边界仍缺真实 Core 证明；P2 的真实模型/回源/学习与 D086 预算验收、P3 真实计划执行、P4 多格式/渠道/Notes 工作台、P5 Writer OS/生产准入、P6 完整用户验收仍按六阶段计划跟踪 | 普通 Web 工作可继续；不得将合成浏览器通过推断成 Core/生产/真实模型通过 |
 
