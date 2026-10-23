@@ -587,7 +587,18 @@ def test_daily_brief_file_set_assertion_rejects_unexpected_files_and_symlinks(tm
     (brief_root / "2026-10-21.json").write_text("synthetic")
     (brief_root / f".op-{operation_hash}.json").write_text("synthetic")
     (brief_root / f".op-lock-{operation_hash}").touch()
-    assert module._assert_exact_brief_file_set(brief_root, "2026-10-21.json") == 3
+    (brief_root / ".date-lock-2026-10-21").touch()
+    assert module._assert_exact_brief_file_set(brief_root, "2026-10-21.json") == 4
+
+    (brief_root / ".date-lock-2026-10-21").unlink()
+    with pytest.raises(RuntimeError, match="file set mismatch"):
+        module._assert_exact_brief_file_set(brief_root, "2026-10-21.json")
+    (brief_root / ".date-lock-2026-10-21").touch()
+
+    (brief_root / ".pending-2026-10-21.json").write_text("synthetic")
+    with pytest.raises(RuntimeError, match="file set mismatch"):
+        module._assert_exact_brief_file_set(brief_root, "2026-10-21.json")
+    (brief_root / ".pending-2026-10-21.json").unlink()
 
     (brief_root / "unexpected.json").write_text("synthetic")
     with pytest.raises(RuntimeError, match="file set mismatch"):

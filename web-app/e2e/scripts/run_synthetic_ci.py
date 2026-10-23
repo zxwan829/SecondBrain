@@ -758,8 +758,11 @@ def _assert_exact_brief_file_set(root: Path, date_file_name: str) -> int:
         match.group(1) for name in names
         if (match := re.fullmatch(r"\.op-lock-([a-f0-9]{64})", name)) is not None
     }
-    expected_shape = (date_file_name in names and len(operation_hashes) == 1
-                      and operation_hashes == lock_hashes and len(names) == 3)
+    date_match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\.json", date_file_name)
+    date_lock = f".date-lock-{date_match.group(1)}" if date_match else None
+    expected_shape = (date_lock is not None and date_file_name in names
+                      and date_lock in names and len(operation_hashes) == 1
+                      and operation_hashes == lock_hashes and len(names) == 4)
     if not expected_shape:
         raise RuntimeError("synthetic Daily Brief directory file set mismatch")
     return len(names)
