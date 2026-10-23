@@ -244,7 +244,7 @@ describe('Knowledge read-only page', () => {
     expect(await screen.findByRole('heading', { name: 'Previous private-looking body' })).toBeTruthy();
     failDetail = true;
     fireEvent.click(screen.getByRole('button', { name: /Synthetic Alpha/ }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/not permitted/);
+    expect((await screen.findByRole('alert')).textContent).toMatch(/request was not authorized/);
     expect(screen.queryByRole('heading', { name: 'Previous private-looking body' })).toBeNull();
     expect(screen.queryByText('Synthetic Alpha')).toBeNull();
     expect(screen.queryByText('Synthetic Beta')).toBeNull();

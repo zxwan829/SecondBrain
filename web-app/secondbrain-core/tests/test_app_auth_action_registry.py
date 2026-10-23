@@ -15,7 +15,9 @@ def test_daily_brief_write_is_explicitly_registered_and_unknown_actions_default_
     os.chmod(password_file, 0o600)
     auth = AppSessionAuth(str(password_file), ["https://app.test"])
     token = "synthetic-session"
-    auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 60
+    session_id = hashlib.sha256(token.encode()).hexdigest()
+    auth._sessions[session_id] = time.time() + 60
+    auth._session_actions[session_id] = set(auth.SUPPORTED_ACTIONS)
     app = FastAPI()
 
     @app.post("/known")
@@ -37,6 +39,28 @@ def test_daily_brief_write_is_explicitly_registered_and_unknown_actions_default_
     assert denied.json() == {"detail": "Action is not enabled"}
 
 
+def test_missing_grant_record_fails_closed_for_active_session(tmp_path):
+    password_file = tmp_path / "password"
+    password_file.write_bytes(b"synthetic-password\n")
+    os.chmod(password_file, 0o600)
+    auth = AppSessionAuth(str(password_file), ["https://app.test"])
+    token = "synthetic-session-without-grants"
+    session_id = hashlib.sha256(token.encode()).hexdigest()
+    auth._sessions[session_id] = time.time() + 60
+    app = FastAPI()
+
+    @app.get("/protected")
+    def protected(request: Request):
+        auth.require_action(request, "journal.read")
+        return {"ok": True}
+
+    client = TestClient(app, base_url="https://app.test")
+    client.cookies.set(auth.COOKIE_NAME, token)
+    denied = client.get("/protected")
+    assert denied.status_code == 403
+    assert denied.json() == {"detail": "Action is not enabled"}
+
+
 def test_supported_action_registry_covers_existing_literal_and_dynamic_families():
     expected = {
         "activity.read", "agent.health.read", "auth.logout", "auth.session",
@@ -49,5 +73,7 @@ def test_supported_action_registry_covers_existing_literal_and_dynamic_families(
         "projects.read", "promote.read", "review.defer",
         "review.read", "task.read", "task.write", "vocabulary.read", "vocabulary.write",
         "inbox.proposals.read", "inbox.proposals.write",
+        "companion.read", "companion.write", "planning.approve", "planning.execute",
+        "planning.read", "planning.write",
     }
     assert AppSessionAuth.SUPPORTED_ACTIONS == expected

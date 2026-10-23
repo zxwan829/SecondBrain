@@ -9,7 +9,7 @@ type SourceStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 function failureMessage(status: number | null, locale: Locale): string {
   if (status === 401) return locale === 'en' ? 'Your session has expired. Sign in again to search Knowledge.' : '登录状态已失效，请重新登录后搜索知识库。';
-  if (status === 403) return locale === 'en' ? 'Knowledge access is not permitted for this request.' : '当前请求没有读取知识库的权限。';
+  if (status === 403) return locale === 'en' ? 'The Knowledge request was not authorized. Check your sign-in or request security policy.' : 'Knowledge 请求未获授权；请检查登录状态或请求安全策略。';
   if (status === 404) return locale === 'en' ? 'This result is no longer available. Search again for a current result.' : '该条目已不可用，请重新搜索获取最新结果。';
   if (status === 409) return locale === 'en' ? 'This document changed after search. Search again before opening it.' : '文档在搜索后发生变化，请重新搜索再打开。';
   if (status === 413 || status === 422) return locale === 'en' ? 'This document cannot be displayed.' : '该文档无法安全显示。';
