@@ -205,6 +205,21 @@ def test_failure_diagnostic_accepts_action_revocation_stage():
     assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
 
 
+def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
+    stages_and_assertions = [
+        ("post_revocation_navigation", "home_after_revocation"),
+        ("agent_health", "home_after_agent_health"),
+        ("today", "today_heading"),
+        ("journal", "home_after_journal"),
+        ("calendar", "calendar_heading"),
+        ("viewport_layout", "layout_no_horizontal_overflow"),
+    ]
+    for stage, assertion_id in stages_and_assertions:
+        diagnostic = {"viewport": "mobile-390x844", "stage": stage, "code": "assertion_failed",
+                      "assertion_id": assertion_id, "activity_get_statuses": [200, 403]}
+        assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+
+
 @pytest.mark.parametrize("statuses", [[True], ["200"], [99], [600], [200, 200, 200, 200, 200]])
 def test_failure_diagnostic_rejects_non_http_or_unbounded_activity_statuses(statuses):
     diagnostic = {"viewport": "desktop-1440x1000", "stage": "viewport_layout",
@@ -220,6 +235,8 @@ def test_browser_activity_assertion_waits_for_core_response_and_uses_fixed_diagn
     assert "expect(activityResponse?.status(), 'activity_get_http_200').toBe(200)" in browser_spec
     assert "&& request.path === '/api/activity' && request.status === 200)).toBe(true);" not in browser_spec
     assert "activity_get_statuses: observed?.activityReadStatuses ?? []" in browser_spec
+    assert "home_after_revocation" in browser_spec
+    assert "layout_no_horizontal_overflow" in browser_spec
 
 
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():

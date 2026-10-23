@@ -60,13 +60,16 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "login", "session", "first_submit", "retry", "conflict",
     "ordinary_chat", "source_protection", "daily_brief_read", "daily_brief_sources",
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
-    "daily_brief_readback", "permission_revocation", "viewport_layout",
+    "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
+    "agent_health", "today", "journal", "calendar", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "test_setup", "home_to_projects", "projects_heading", "home_after_projects",
     "home_to_activity", "activity_heading", "activity_get_response",
-    "activity_get_status_200", "home_after_activity",
+    "activity_get_status_200", "home_after_activity", "home_after_revocation",
+    "agent_health_heading", "home_after_agent_health", "today_heading", "home_after_today",
+    "journal_heading", "home_after_journal", "calendar_heading", "layout_no_horizontal_overflow",
 }
 MAX_FAILURE_DIAGNOSTIC_BYTES = 1024
 MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)

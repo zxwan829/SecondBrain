@@ -164,6 +164,25 @@ describe('Notes application navigation gate', () => {
     expect(location.pathname).toBe('/journal');
   });
 
+  it('returns Home from Agent Health through the mobile navigation and closes the menu', async () => {
+    mockAppFetch();
+    startAt('/');
+    await screen.findByRole('heading', { name: '你的工作台' });
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看 Agent 状态' }));
+    await screen.findByRole('heading', { name: 'Agent 状态' });
+    expect(location.pathname).toBe('/agent-health');
+
+    fireEvent.click(screen.getByRole('button', { name: '打开导航菜单' }));
+    const sidebar = document.querySelector('aside.sidebar') as HTMLElement;
+    expect(sidebar.classList.contains('is-open')).toBe(true);
+    fireEvent.click(within(sidebar).getByRole('button', { name: /^首页$/ }));
+
+    await screen.findByRole('heading', { name: '你的工作台' });
+    expect(location.pathname).toBe('/');
+    expect(screen.getByRole('button', { name: '打开导航菜单' }).getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('renders the expanded Activity source and status contract from Core', async () => {
     mockAppFetch();
     const fetchMock = vi.mocked(globalThis.fetch);
