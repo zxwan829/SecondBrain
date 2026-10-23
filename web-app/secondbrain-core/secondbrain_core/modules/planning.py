@@ -1,7 +1,8 @@
-"""Bounded, session-scoped deterministic planning candidates.
+"""Bounded, session-scoped deterministic planning candidates and approved actions.
 
-This module deliberately does not call a model or execute suggested actions.
-Candidates contain only server-verified source references and review reasons.
+No model is called. Any task action is explicitly supplied by the user, stored
+in the private candidate ledger, approved, source-revalidated, then executed
+through TaskStore's idempotent create operation.
 """
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ from .tasks import task_source_version
 
 _MAX_BODY_BYTES = 16 * 1024
 _MAX_OBJECTIVE_BYTES = 500
+_MAX_PROPOSED_TASKS = 10
+_MAX_TASK_TITLE_BYTES = 200
 _MAX_SOURCE_REFS = 20
 _MAX_STEPS = 20
 _MAX_RESPONSE_BYTES = 16 * 1024
@@ -97,7 +100,11 @@ def _validate_ref(reference):
 
 
 def _validate_request(value):
-    if not isinstance(value, dict) or set(value) != {"objective", "source_refs", "calendar_window"}:
+    if (not isinstance(value, dict)
+            or set(value) not in (
+                {"objective", "source_refs", "calendar_window"},
+                {"objective", "source_refs", "calendar_window", "proposed_tasks"},
+            )):
         raise HTTPException(status_code=400, detail="Invalid planning candidate request")
     objective = value["objective"]
     if not isinstance(objective, str) or not objective.strip() or len(objective.encode("utf-8")) > _MAX_OBJECTIVE_BYTES:
@@ -127,7 +134,22 @@ def _validate_request(value):
         window = {"from": start.isoformat(), "to": end.isoformat(), "timezone": zone_name}
     else:
         zone = None
-    return objective.strip(), normalized, window, zone
+    proposed_tasks = value.get("proposed_tasks", [])
+    if not isinstance(proposed_tasks, list) or len(proposed_tasks) > _MAX_PROPOSED_TASKS:
+        raise HTTPException(status_code=400, detail="Invalid proposed Task actions")
+    task_actions = []
+    for action in proposed_tasks:
+        if not isinstance(action, dict) or set(action) != {"title", "due_date"}:
+            raise HTTPException(status_code=400, detail="Invalid proposed Task action")
+        title = action["title"]
+        if (not isinstance(title, str) or not title.strip()
+                or len(title.strip().encode("utf-8")) > _MAX_TASK_TITLE_BYTES):
+            raise HTTPException(status_code=400, detail="Invalid proposed Task title")
+        due_date = action["due_date"]
+        if due_date is not None:
+            due_date = _parse_day(due_date).isoformat()
+        task_actions.append({"title": title.strip(), "due_date": due_date})
+    return objective.strip(), normalized, window, zone, task_actions
 
 
 class PlanningCandidateStore:
@@ -350,7 +372,9 @@ class PlanningCandidateStore:
                 "candidate_id": candidate_id, "session_id": session_id,
                 "revision": revision, "position": position, "event": event_type,
                 "idempotency_key_sha256": key_hash,
-                "source_ref_sha256": hashlib.sha256(_canonical_bytes(step["source_ref"])).hexdigest(),
+                "source_ref_sha256": hashlib.sha256(_canonical_bytes(
+                    step.get("source_ref") or {"kind": step.get("kind"), "task": step.get("task")}
+                )).hexdigest(),
                 "recorded_at": _stamp(_now()),
             })
             self._write_unlocked(data)
@@ -545,9 +569,31 @@ class PlanningCandidateService:
             return "unavailable"
         return "verified" if all(state == "verified" for state in states) else "stale"
 
-    def _synthetic_execute(self, step):
-        """Synthetic no-op executor; tests may replace it with a failing function."""
-        return {"status": "simulated", "execution_mode": "synthetic", "effect": "none"}
+    def _execute_step(self, step, *, candidate_id, position, session_id):
+        """Execute only explicit, approved Core actions; review steps persist locally."""
+        if step.get("kind") == "create_task":
+            if self.task_store is None:
+                raise HTTPException(status_code=503, detail="Task service is unavailable")
+            operation_id = f"planning:{candidate_id}:{position}"
+            result = self.task_store.create(
+                step["task"]["title"], step["task"]["due_date"], operation_id,
+                original_command="", session_id=session_id,
+            )
+            task = result["task"]
+            version = task_source_version(task)
+            if version is None:
+                # The Task may already be committed. Keep the candidate retryable;
+                # deterministic TaskStore idempotency will recover its receipt.
+                raise HTTPException(status_code=503, detail="Task result could not be verified")
+            return {
+                "status": "completed", "execution_mode": "core",
+                "effect": "task_created", "task_id": task["id"],
+                "task_version": version,
+            }
+        if step.get("kind") == "review_source":
+            return {"status": "completed", "execution_mode": "core",
+                    "effect": "planning_ledger"}
+        raise HTTPException(status_code=409, detail="Unsupported planning action")
 
     @staticmethod
     async def _read_body(request):
@@ -695,14 +741,17 @@ class PlanningCandidateService:
         self.auth.require_action(request, "planning.execute")
         for action in sorted(self._candidate_actions(record)):
             self.auth.require_action(request, action)
+        states = record.get("step_states", [])
+        if not isinstance(position, int) or isinstance(position, bool) or not 1 <= position <= len(states):
+            raise HTTPException(status_code=404, detail="Planning step not found")
+        step = record.get("steps", [])[position - 1]
+        if step.get("kind") == "create_task":
+            self.auth.require_action(request, "task.write")
         replay = self.ledger.replay(candidate_id, session_id, key_hash, fingerprint)
         if replay is not None:
             return replay
         if record.get("revision") != expected_revision:
             raise HTTPException(status_code=409, detail="Planning candidate revision changed")
-        states = record.get("step_states", [])
-        if not isinstance(position, int) or isinstance(position, bool) or not 1 <= position <= len(states):
-            raise HTTPException(status_code=404, detail="Planning step not found")
         if states[position - 1].get("decision") != "approved":
             raise HTTPException(status_code=409, detail="Planning step requires explicit approval")
         if states[position - 1].get("execution_status") not in {"not_started", "retry_ready"}:
@@ -713,18 +762,34 @@ class PlanningCandidateService:
             raise HTTPException(status_code=409, detail="Planning sources changed or became unavailable")
         self.auth.require_action(request, "chat.read")
         self.auth.require_action(request, "planning.execute")
+        if step.get("kind") == "create_task":
+            # Recheck the write action after the second source verification.
+            self.auth.require_action(request, "task.write")
 
         def transition(candidate, step, state, revision):
             try:
-                result = self._synthetic_execute(step)
+                result = self._execute_step(
+                    step, candidate_id=candidate_id, position=position, session_id=session_id,
+                )
                 state["execution_status"] = result["status"]
+            except HTTPException:
+                # A Task write can have committed before the Planning ledger
+                # update fails. Leave the candidate unchanged; retry uses the
+                # deterministic TaskStore operation key to recover exactly once.
+                if step.get("kind") == "create_task":
+                    raise
+                result = {"status": "failed", "execution_mode": "core", "effect": "planning_ledger"}
+                state["execution_status"] = "failed"
+                candidate["workflow_status"] = "partial"
             except Exception:
-                result = {"status": "failed", "execution_mode": "synthetic", "effect": "none"}
+                result = {"status": "failed", "execution_mode": "core", "effect": "planning_ledger"}
                 state["execution_status"] = "failed"
                 candidate["workflow_status"] = "partial"
             else:
                 states_now = candidate.get("step_states", [])
-                if states_now and all(item.get("execution_status") == "simulated" for item in states_now):
+                if states_now and all(item.get("decision") == "rejected"
+                                      or item.get("execution_status") == "completed"
+                                      for item in states_now):
                     candidate["workflow_status"] = "completed"
                 elif any(item.get("execution_status") == "failed" for item in states_now):
                     candidate["workflow_status"] = "partial"
@@ -736,7 +801,7 @@ class PlanningCandidateService:
                 "revision": revision, "position": position,
                 **result,
             }
-            return response, "synthetic_step_failed" if result["status"] == "failed" else "synthetic_step_simulated"
+            return response, "planning_step_failed" if result["status"] == "failed" else "planning_step_completed"
 
         return self.ledger.mutate(
             candidate_id=candidate_id, session_id=session_id, key_hash=key_hash,
@@ -816,14 +881,20 @@ class PlanningCandidateService:
         state_by_position = {item["position"]: item for item in states if isinstance(item, dict)}
         steps = []
         for step in record.get("steps", []):
-            ref = step["source_ref"]
             state = state_by_position.get(step["position"], {})
-            key = (ref["kind"], ref["id"], ref["version"])
+            ref = step.get("source_ref")
+            source_state = ("verified" if source_states
+                            and all(value == "verified" for value in source_states.values())
+                            else "not_applicable")
+            if isinstance(ref, dict):
+                key = (ref["kind"], ref["id"], ref["version"])
+                source_state = source_states.get(key, "unavailable")
             steps.append({
                 "position": step["position"], "kind": step["kind"], "source_ref": ref,
                 "decision": state.get("decision", "pending"),
                 "execution_status": state.get("execution_status", "not_started"),
-                "source_state": source_states.get(key, "unavailable"),
+                "source_state": source_state,
+                **({"task": step["task"]} if step.get("kind") == "create_task" else {}),
             })
         decisions = [item["decision"] for item in steps]
         executions = [item["execution_status"] for item in steps]
@@ -836,7 +907,8 @@ class PlanningCandidateService:
             "workflow_status": record.get("workflow_status", "active"),
             "counts": {
                 "planned": len(steps), "approved": decisions.count("approved"),
-                "rejected": decisions.count("rejected"), "completed": executions.count("simulated"),
+                "rejected": decisions.count("rejected"),
+                "completed": sum(value in {"simulated", "completed"} for value in executions),
                 "failed": executions.count("failed"),
                 "stale_sources": sum(1 for item in steps if item["source_state"] != "verified"),
             },
@@ -892,7 +964,10 @@ class PlanningCandidateService:
             body = json.loads(payload.decode("utf-8"), object_pairs_hook=_unique_object)
         except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=400, detail="Invalid planning candidate request") from exc
-        objective, refs, window, zone = _validate_request(body)
+        objective, refs, window, zone, task_actions = _validate_request(body)
+        if task_actions:
+            # Permission is checked before Hermes or any source-store IO.
+            self.auth.require_action(request, "task.write")
         actions = {"task": "task.read", "project": "projects.read", "journal": "journal.read"}
         kinds = {ref["kind"] for ref in refs}
         if window is not None:
@@ -951,6 +1026,13 @@ class PlanningCandidateService:
                     raise HTTPException(status_code=413, detail="Planning source selection is too large")
         if status in {"ready", "needs_review"}:
             status = self._review_status(authority, [step["source_ref"] for step in steps])
+            steps.extend({
+                "position": 0, "kind": "create_task", "task": action,
+                "reason": "user_submitted_task_action", "priority": "user_selected",
+                "depends_on": [],
+            } for action in task_actions)
+            if len(steps) > _MAX_STEPS:
+                raise HTTPException(status_code=413, detail="Planning action selection is too large")
 
         # Use a fresh request-scoped authority for a second version check after
         # all projections have been read. Any drift removes every step.
@@ -970,9 +1052,22 @@ class PlanningCandidateService:
                 status, steps = "stale", []
         self._authorize(request, refs, window)
         steps = [{**step, "position": index + 1} for index, step in enumerate(steps)]
-        stored_refs = [step["source_ref"] for step in steps]
+        stored_refs = [step["source_ref"] for step in steps if "source_ref" in step]
         expires_at = _stamp(_now() + timedelta(minutes=30))
 
+        # Bound the response before persisting a candidate, so oversized
+        # requests cannot leave an unreachable durable record behind.
+        response_steps = [{**step, "decision": "pending", "execution_status": "not_started"}
+                          for step in steps]
+        response = {
+            "event": "planning.candidate", "version": 1,
+            "session_id": session_id, "candidate_id": "0" * 32,
+            "revision": 0, "expires_at": expires_at,
+            "status": status, "objective": objective, "steps": response_steps,
+            "workflow_status": "active",
+        }
+        if len(_canonical_bytes(response)) > _MAX_RESPONSE_BYTES:
+            raise HTTPException(status_code=413, detail="Planning response is too large")
         candidate_id = self.ledger.create(
             session_id=session_id,
             objective=objective,
@@ -982,20 +1077,7 @@ class PlanningCandidateService:
             status=status,
             expires_at=expires_at,
         )
-        # The creation receipt and subsequent preview share the same step DTO.
-        # Keep workflow state explicit so clients can verify the receipt before
-        # storing its session-scoped locator or refreshing the full preview.
-        response_steps = [{**step, "decision": "pending", "execution_status": "not_started"}
-                          for step in steps]
-        response = {
-            "event": "planning.candidate", "version": 1,
-            "session_id": session_id, "candidate_id": candidate_id,
-            "revision": 0, "expires_at": expires_at,
-            "status": status, "objective": objective, "steps": response_steps,
-            "workflow_status": "active",
-        }
-        if len(_canonical_bytes(response)) > _MAX_RESPONSE_BYTES:
-            raise HTTPException(status_code=413, detail="Planning response is too large")
+        response["candidate_id"] = candidate_id
         return response
 
     @staticmethod

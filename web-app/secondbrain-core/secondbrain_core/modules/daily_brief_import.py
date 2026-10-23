@@ -529,9 +529,114 @@ class DailyBriefAuditStore:
     _FIELDS = {"event_type", "request_id", "brief_id", "date", "timezone",
                "source_kind_counts", "outcome", "recorded_at", "actor"}
     MAX_BYTES = 16 * 1024 * 1024
+    MAX_ACTIVITY_BYTES = 1024 * 1024
+    MAX_ACTIVITY_EVENTS = 5000
 
     def __init__(self, path):
         self.path = path if isinstance(path, str) and os.path.isabs(path) else ""
+
+    @property
+    def configured(self):
+        return bool(self.path)
+
+    @staticmethod
+    def _identity(info):
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_nlink,
+                info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    def read_activity_events(self):
+        """Read a stable, bounded audit snapshot without creating a lock file.
+
+        The route exposes only successful Brief creation events. If the source
+        exceeds its byte/line budget or changes during the read, return no rows
+        and mark the snapshot incomplete so callers cannot imply completeness.
+        """
+        if not self.path:
+            return [], False
+        parent, name = os.path.split(self.path)
+        root_fd = None
+        audit_fd = None
+        try:
+            root_fd = _open_dir_chain(parent)
+            root_info = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.geteuid()
+                    or root_info.st_mode & 0o077):
+                return [], False
+            try:
+                audit_fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                                   | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+            except FileNotFoundError:
+                return [], True
+            before = os.fstat(audit_fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                    or before.st_mode & 0o077 or before.st_nlink != 1
+                    or before.st_size < 0 or before.st_size > self.MAX_ACTIVITY_BYTES):
+                return [], False
+            chunks, remaining = [], self.MAX_ACTIVITY_BYTES + 1
+            while remaining:
+                chunk = os.read(audit_fd, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+            after = os.fstat(audit_fd)
+            try:
+                current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+                current_root_fd = _open_dir_chain(parent)
+            except OSError:
+                return [], False
+            try:
+                current_root = os.fstat(current_root_fd)
+                if (self._identity(before) != self._identity(after)
+                        or self._identity(after) != self._identity(current)
+                        or (root_info.st_dev, root_info.st_ino) !=
+                           (current_root.st_dev, current_root.st_ino)):
+                    return [], False
+            finally:
+                os.close(current_root_fd)
+            if len(payload) != before.st_size or len(payload) > self.MAX_ACTIVITY_BYTES:
+                return [], False
+            lines = payload.splitlines()
+            if len(lines) > self.MAX_ACTIVITY_EVENTS or any(len(line) > 4096 for line in lines):
+                return [], False
+            events = []
+            for line in lines:
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line.decode("utf-8"), object_pairs_hook=_unique_object)
+                except (UnicodeError, ValueError, json.JSONDecodeError, RecursionError):
+                    return [], False
+                if (not isinstance(event, dict) or set(event) != self._FIELDS
+                        or event.get("event_type") != "daily_brief_import"
+                        or event.get("outcome") not in {"created", "duplicate", "rejected", "failed"}
+                        or not isinstance(event.get("request_id"), str)
+                        or not 1 <= len(event["request_id"]) <= 128
+                        or not isinstance(event.get("brief_id"), str)
+                        or len(event["brief_id"]) > 128
+                        or not isinstance(event.get("date"), str)
+                        or not isinstance(event.get("recorded_at"), str)
+                        or len(event["recorded_at"]) > 64
+                        or not isinstance(event.get("source_kind_counts"), dict)
+                        or not isinstance(event.get("actor"), str)):
+                    return [], False
+                try:
+                    if date.fromisoformat(event["date"]).isoformat() != event["date"]:
+                        return [], False
+                except ValueError:
+                    return [], False
+                if event["outcome"] == "created" and event["brief_id"]:
+                    events.append({"request_id": event["request_id"], "brief_id": event["brief_id"],
+                                   "date": event["date"], "recorded_at": event["recorded_at"]})
+            return events, True
+        except (OSError, ValueError, TypeError):
+            return [], False
+        finally:
+            if audit_fd is not None:
+                os.close(audit_fd)
+            if root_fd is not None:
+                os.close(root_fd)
 
     def append(self, event):
         if not self.path or not isinstance(event, dict) or set(event) != self._FIELDS:

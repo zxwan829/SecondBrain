@@ -189,6 +189,17 @@ class PersonalMemoryStore:
                 fcntl.flock(fd, fcntl.LOCK_UN)
                 os.close(fd)
 
+    def read_activity_events(self) -> list[dict[str, str]]:
+        """Return a minimal projection of the bounded authoritative event log.
+
+        `_read_events` performs the existing private-file, 8 MiB budget,
+        revision-chain, and stable-snapshot checks. This read never creates a
+        lock file and excludes memory content, source references and memory IDs.
+        """
+        return [{"event_id": row["event_id"], "operation": row["operation"],
+                 "recorded_at": row["recorded_at"]}
+                for row in self._read_events()]
+
     def _append(self, event: dict[str, Any]) -> dict[str, Any]:
         with self._thread_lock:
             lock_fd = self._open_lock()
