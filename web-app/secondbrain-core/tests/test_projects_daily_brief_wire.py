@@ -16,6 +16,7 @@ from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStor
 from secondbrain_core.modules.tasks import TaskStore, task_source_version
 from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.notes import NotesStore
+from secondbrain_core.modules.tasks import create_task_router
 from secondbrain_core.app import create_app
 
 
@@ -76,8 +77,18 @@ def make_client(tmp_path, *, projects_store=None, brief_store=None, task_store=N
 
         auth.require_action = guarded_require_action
     token = "synthetic-app-session"
-    auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
+    session_id = hashlib.sha256(token.encode()).hexdigest()
+    auth._sessions[session_id] = time.time() + 600
+    auth._session_actions[session_id] = set(auth.SUPPORTED_ACTIONS)
     app = FastAPI()
+    @app.middleware("http")
+    async def daily_brief_no_store(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/daily-brief"):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
+    if task_store is not None:
+        app.include_router(create_task_router(auth, task_store))
     app.include_router(create_projects_activity_router(auth, projects_store=projects_store,
                                                        notes_store=notes_store))
     app.include_router(create_daily_brief_agent_health_router(
@@ -217,6 +228,10 @@ def test_daily_brief_verifies_task_and_journal_exact_id_versions(tmp_path):
     brief_store = DailyBriefRecordReadStore(str(briefs_root))
     client = make_client(tmp_path, brief_store=brief_store, task_store=task_store,
                          journal_store=journal_store)
+    task_list = client.get("/api/tasks?status=all")
+    assert task_list.status_code == 200
+    selected_task = next(item for item in task_list.json()["tasks"] if item["id"] == task["id"])
+    assert selected_task["source_ref"] == {"id": task["id"], "version": task_ref["version"]}
     write_brief(briefs_root, source_refs=[task_ref, journal_ref])
     response = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}")
     assert response.status_code == 200
@@ -247,12 +262,15 @@ def test_daily_brief_hides_task_and_journal_when_source_permission_is_denied(tmp
     client = make_client(tmp_path, task_store=task_store,
                          brief_store=DailyBriefRecordReadStore(str(briefs_root)),
                          deny_actions={"task.read"})
+    reads = []
+    original_projection = task_store.list_for_projection
+    task_store.list_for_projection = lambda: reads.append("task") or original_projection()
     response = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}")
-    assert response.status_code == 200
-    assert response.json()["items"] == []
-    assert response.json()["status"] == "partial"
+    assert response.status_code == 403
+    assert response.headers["cache-control"] == "private, no-store"
     assert task["id"] not in response.text
     assert "Synthetic summary" not in response.text
+    assert reads == []
 
 
 def test_projects_wire_empty_and_unavailable_are_distinct(tmp_path):
@@ -331,7 +349,7 @@ def test_daily_brief_verifies_exact_project_source_and_withholds_stale_or_unknow
         body = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}").json()
         assert body["items"] == []
         assert "Synthetic summary" not in json.dumps(body)
-        assert body["status"] == "partial"
+        assert body["status"] == "stale"
 
     for kind in ("note", "capture", "review"):
         write_brief(briefs_root, source_refs=[{"kind": kind, "id": f"{kind}-id",
@@ -350,15 +368,18 @@ def test_daily_brief_does_not_disclose_project_existence_without_projects_permis
         {"kind": "project", "id": "project-private", "version": version},
         {"kind": "project", "id": "project-private", "version": "0" * 64},
     ])
-    client = make_client(tmp_path, projects_store=ProjectsSourceReadStore(str(projects_root)),
+    project_store = ProjectsSourceReadStore(str(projects_root))
+    source_reads = []
+    original_read = project_store.read_snapshot
+    project_store.read_snapshot = lambda: source_reads.append("project") or original_read()
+    client = make_client(tmp_path, projects_store=project_store,
                          brief_store=DailyBriefRecordReadStore(str(briefs_root)),
                          deny_actions={"projects.read"})
     response = client.get(f"/api/daily-brief?date={DAY}&timezone={ZONE}")
-    assert response.status_code == 200
-    assert response.json()["status"] == "partial"
-    assert response.json()["items"] == []
+    assert response.status_code == 403
     assert "project-private" not in response.text
     assert "Synthetic summary" not in response.text
+    assert source_reads == []
 
 
 def test_daily_brief_does_not_verify_absence_from_incomplete_project_snapshot(tmp_path):
@@ -441,6 +462,6 @@ def test_create_app_wires_only_explicit_synthetic_roots_and_keeps_brief_unverifi
         assert projects.status_code == brief.status_code == 200
         assert projects.json()["status"] == "real"
         assert projects.json()["items"][0]["id"] == "project-from-app"
-        assert brief.json()["status"] == "partial"
+        assert brief.json()["status"] == "stale"
         assert brief.json()["items"] == []
         assert "Synthetic summary" not in brief.text

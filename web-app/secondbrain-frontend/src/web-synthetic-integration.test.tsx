@@ -32,6 +32,88 @@ afterEach(() => {
 });
 
 describe('A Web-only synthetic UI to HTTP integration', () => {
+  it('carries an explicit Chat Journal intent through the exact Inbox receipt into its version-matched Review', async () => {
+    const inboxId = '7'.repeat(32);
+    const sourcePath = '10-Review/synthetic-chat-journal.md';
+    const sourceSha = 'f'.repeat(64);
+    const originalText = '记一下：合成验收的原始内容';
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    history.replaceState({}, '', '/chat/blank');
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    let acceptedBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method || 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method, body });
+      if (url === '/api/auth/session') return json({ authenticated: true });
+      if (url === '/api/chat/sessions' && method === 'POST') return json({ session_id: 'synthetic-blank-session' });
+      if (url === '/api/chat/sessions/synthetic-blank-session/messages') return json({ messages: [] });
+      if (url === '/api/chat/sessions/synthetic-blank-session/activities') return json({ activities: [] });
+      if (url === '/api/inbox/entries' && method === 'POST') {
+        acceptedBody = body;
+        return new Response(JSON.stringify({
+        inbox_id: inboxId, status: 'processing', captured_at: '2026-10-21T08:00:00.000Z', occurred_at: body?.occurred_at,
+        source: { channel: 'web', event_id: body?.source_event_id }, intent: 'journal_intent', replayed: false,
+        consent_evidence: { kind: 'authenticated_app_explicit_action', subject: 'synthetic-user', recorded_at: body?.occurred_at },
+      }), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url === `/api/inbox/entries/${inboxId}`) return json({
+        inbox_id: inboxId, status: 'completed', captured_at: '2026-10-21T08:00:00.000Z', occurred_at: acceptedBody?.occurred_at,
+        source: { channel: 'web', event_id: acceptedBody?.source_event_id }, intent: 'journal_intent',
+        consent_evidence: { kind: 'authenticated_app_explicit_action', subject: 'synthetic-user', recorded_at: acceptedBody?.occurred_at },
+        approved_proposal: null,
+        source_ref: { capture_id: inboxId, review_path: sourcePath, review_sha256: sourceSha },
+      });
+      if (url === '/api/promote/review/items') return json({ items: [{
+        review_path: sourcePath, review_sha256: sourceSha, target_filename: 'Knowledge/synthetic-chat-journal.md',
+        title: 'Synthetic Chat Journal source', status: 'pending', captured_at: '2026-10-21T08:00:00.000Z',
+      }] });
+      if (url === `/api/promote/review/items/${sourcePath}`) return json({
+        review_path: sourcePath, review_sha256: sourceSha, target_filename: 'Knowledge/synthetic-chat-journal.md',
+        title: 'Synthetic Chat Journal source', status: 'pending', content: '# Synthetic Review source only',
+      });
+      if (url === '/api/promote/status') return json({ promote_enabled: false });
+      return json({ detail: 'unmatched synthetic route' }, 404);
+    });
+
+    const chatApp = render(<App />);
+    expect(await screen.findByRole('heading', { name: '空白验收' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '创建合成会话' }));
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: originalText } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    const inboxLink = await screen.findByRole('link', { name: '打开 Inbox 条目' });
+    expect(inboxLink.getAttribute('href')).toBe(`/inbox#capture-${inboxId}`);
+    chatApp.unmount();
+    history.replaceState({}, '', inboxLink.getAttribute('href')!);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Inbox 条目状态' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Core Inbox 状态已核对' })).toBeTruthy();
+    expect(await screen.findByText('处理完成')).toBeTruthy();
+    expect(location.pathname).toBe('/inbox');
+    expect(location.hash).toBe(`#capture-${inboxId}`);
+    expect(calls.find((call) => call.url === '/api/inbox/entries' && call.method === 'POST')?.body).toEqual({
+      original_text: originalText, source_channel: 'web', source_event_id: expect.any(String),
+      occurred_at: expect.any(String), intent: 'journal_intent',
+    });
+    expect(calls.filter((call) => call.url === `/api/inbox/entries/${inboxId}`)).toHaveLength(2);
+    expect(calls.some((call) => call.url === '/api/journal/entries' || call.url.endsWith('/runs')
+      || call.url === '/api/promote/review/preview' || call.url === '/api/promote/auth/unlock'
+      || call.url === '/api/promote/review/confirm' || call.url.startsWith('/api/knowledge/'))).toBe(false);
+    expect(screen.queryByText(originalText)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '打开版本匹配的 Review 来源' }));
+    expect(await screen.findByText('Synthetic Review source only')).toBeTruthy();
+    expect(location.pathname).toBe('/review');
+    expect(new URLSearchParams(location.search).get('review_path')).toBe(sourcePath);
+    expect(new URLSearchParams(location.search).get('source_sha256')).toBe(sourceSha);
+    expect(screen.queryByText(originalText)).toBeNull();
+    expect(calls.some((call) => call.url === '/api/promote/review/preview'
+      || call.url === '/api/promote/auth/unlock' || call.url === '/api/promote/review/confirm')).toBe(false);
+  });
+
   it('requires explicit Inbox, Review, Promote, search and detail actions and preserves the exact mocked contract', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'false');
     localStorage.clear(); sessionStorage.clear();
@@ -170,7 +252,7 @@ describe('A Web-only synthetic UI to HTTP integration', () => {
     expect(calls.every((call) => call.url.startsWith('/api/auth/') || call.url.startsWith('/api/inbox/summary')
       || call.url.startsWith('/api/capture/') || call.url.startsWith('/api/inbox/')
       || call.url.startsWith('/api/promote/') || call.url.startsWith('/api/knowledge/'))).toBe(true);
-  });
+  }, 15_000);
 
   it('fails closed for Promote OFF and an explicit HTTP 423 without unlock, confirm or a success link', async () => {
     const calls: string[] = [];
@@ -212,5 +294,143 @@ describe('A Web-only synthetic UI to HTTP integration', () => {
     expect((screen.getByRole('button', { name: /确认将此版本写入/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByText('已将精确预览版本写入 Knowledge。')).toBeNull();
     expect(screen.queryByRole('link', { name: '打开 Knowledge 搜索' })).toBeNull();
+  });
+
+  it('opens only the exact Chat Inbox receipt and exposes a Review link only for its verified source version', async () => {
+    const inboxId = 'f'.repeat(32);
+    const sourceSha = 'e'.repeat(64);
+    const sourcePath = 'Inbox-synthetic-journal-source.md';
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    history.replaceState({}, '', `/inbox#capture-${inboxId}`);
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return json({ authenticated: true });
+      if (url === `/api/inbox/entries/${inboxId}`) return json({
+        inbox_id: inboxId, status: 'processing', captured_at: '2026-10-21T08:00:00Z', occurred_at: '2026-10-21T07:59:00Z',
+        source: { channel: 'web', event_id: 'synthetic-journal-event' }, intent: 'journal_intent',
+        consent_evidence: { kind: 'authenticated_app_explicit_action', subject: 'synthetic-user', recorded_at: '2026-10-21T07:59:00Z' },
+        approved_proposal: null,
+        source_ref: { capture_id: inboxId, review_path: sourcePath, review_sha256: sourceSha },
+      });
+      if (url === '/api/promote/review/items') return json({ items: [{
+        review_path: sourcePath, review_sha256: sourceSha, target_filename: 'Knowledge/synthetic-source.md',
+        title: 'Synthetic linked source', status: 'pending', captured_at: '2026-10-21T08:00:00Z',
+      }] });
+      if (url === '/api/promote/status') return json({ promote_enabled: false });
+      if (url === `/api/promote/review/items/${sourcePath}`) return json({
+        review_path: sourcePath, review_sha256: sourceSha, target_filename: 'Knowledge/synthetic-source.md',
+        title: 'Synthetic linked source', status: 'pending', content: '# Synthetic source only',
+      });
+      return json({ detail: 'unmatched synthetic route' }, 404);
+    });
+
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Inbox 条目状态' })).toBeTruthy();
+    expect(await screen.findByText('处理中')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Core Inbox 状态已核对' })).toBeTruthy();
+    expect(screen.getByLabelText('Inbox 状态')).toBeTruthy();
+    expect(screen.queryByText('Core 已核验此条目')).toBeNull();
+    expect(screen.queryByLabelText('已核验 Inbox 条目')).toBeNull();
+    expect(screen.getByText(/不代表.*已完成写入/)).toBeTruthy();
+    expect(screen.queryByText('Original private content')).toBeNull();
+    expect(calls).toEqual(['/api/auth/session', `/api/inbox/entries/${inboxId}`]);
+    fireEvent.click(screen.getByRole('button', { name: '打开版本匹配的 Review 来源' }));
+    expect(await screen.findByText('Synthetic source only')).toBeTruthy();
+    expect(location.pathname).toBe('/review');
+    expect(new URLSearchParams(location.search).get('review_path')).toBe(sourcePath);
+    expect(new URLSearchParams(location.search).get('source_sha256')).toBe(sourceSha);
+    expect(calls).toContain(`/api/promote/review/items/${sourcePath}`);
+    expect(calls.some((url) => url === '/api/inbox/summary?limit=100' || url === '/api/inbox?limit=100'
+      || url.startsWith('/api/inbox/') && url !== `/api/inbox/entries/${inboxId}`)).toBe(false);
+    expect(calls.some((url) => url === '/api/home' || url.startsWith('/api/knowledge/'))).toBe(false);
+  });
+
+  it('does not open a linked Review version when its hash changed since the Inbox source record', async () => {
+    const inboxId = '9'.repeat(32);
+    const originalSha = 'a'.repeat(64);
+    const changedSha = 'b'.repeat(64);
+    const sourcePath = '10-Review/synthetic-drift.md';
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    history.replaceState({}, '', `/inbox#capture-${inboxId}`);
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return json({ authenticated: true });
+      if (url === `/api/inbox/entries/${inboxId}`) return json({
+        inbox_id: inboxId, status: 'completed', captured_at: '2026-10-21T08:00:00Z', occurred_at: '2026-10-21T07:59:00Z',
+        source: { channel: 'web', event_id: 'synthetic-drift-event' }, intent: 'journal_intent',
+        consent_evidence: { kind: 'authenticated_app_explicit_action', subject: 'synthetic-user', recorded_at: '2026-10-21T07:59:00Z' },
+        approved_proposal: null,
+        source_ref: { capture_id: inboxId, review_path: sourcePath, review_sha256: originalSha },
+      });
+      if (url === '/api/promote/review/items') return json({ items: [{
+        review_path: sourcePath, review_sha256: changedSha, target_filename: 'Knowledge/drift.md',
+        title: 'Synthetic changed source', status: 'pending',
+      }] });
+      if (url === '/api/promote/status') return json({ promote_enabled: false });
+      return json({}, 404);
+    });
+
+    render(<App />);
+    expect(await screen.findByRole('button', { name: '打开版本匹配的 Review 来源' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '打开版本匹配的 Review 来源' }));
+    expect(await screen.findByText('关联的 Review 来源版本已变化；未打开来源正文。')).toBeTruthy();
+    expect(calls.some((url) => url.startsWith('/api/promote/review/items/10-Review/'))).toBe(false);
+    expect(screen.queryByText('Original private content')).toBeNull();
+  });
+
+  it('withholds Review content when its detail hash differs from the verified list version', async () => {
+    const sourcePath = '10-Review/synthetic-detail-drift.md';
+    const listedSha = '1'.repeat(64);
+    const returnedSha = '2'.repeat(64);
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    history.replaceState({}, '', `/review?review_path=${encodeURIComponent(sourcePath)}&source_sha256=${listedSha}`);
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return json({ authenticated: true });
+      if (url === '/api/promote/review/items') return json({ items: [{
+        review_path: sourcePath, review_sha256: listedSha, target_filename: 'Knowledge/drift.md',
+        title: 'Synthetic listed source', status: 'pending',
+      }] });
+      if (url === `/api/promote/review/items/${sourcePath}`) return json({
+        review_path: sourcePath, review_sha256: returnedSha, target_filename: 'Knowledge/drift.md',
+        title: 'Synthetic changed source', status: 'pending', content: 'PRIVATE SYNTHETIC BODY MUST NOT RENDER',
+      });
+      if (url === '/api/promote/status') return json({ promote_enabled: false });
+      return json({}, 404);
+    });
+
+    render(<App />);
+    expect(await screen.findByText('打开时 Review 来源版本发生变化；未展示来源正文。')).toBeTruthy();
+    expect(screen.queryByText('PRIVATE SYNTHETIC BODY MUST NOT RENDER')).toBeNull();
+    expect(calls).toContain(`/api/promote/review/items/${sourcePath}`);
+    expect(calls).not.toContain('/api/promote/review/preview');
+    expect(calls).not.toContain('/api/promote/auth/unlock');
+    expect(calls).not.toContain('/api/promote/review/confirm');
+  });
+
+  it.each([
+    [401, '登录状态已失效；重新登录后可核验此 Inbox 条目。'],
+    [403, '当前账户无权读取此 Inbox 条目。'],
+    [503, 'Inbox 状态暂时不可用；当前状态未核验。'],
+  ])('shows a safe HTTP %i state and never offers a source link', async (status, expectedMessage) => {
+    const inboxId = '8'.repeat(32);
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    history.replaceState({}, '', `/inbox#capture-${inboxId}`);
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input); calls.push(url);
+      if (url === '/api/auth/session') return json({ authenticated: true });
+      if (url === `/api/inbox/entries/${inboxId}`) return json({ detail: 'synthetic-secret-detail-must-not-display' }, status);
+      return json({}, 404);
+    });
+
+    render(<App />);
+    expect(await screen.findByText(expectedMessage)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '打开已核验的 Review 来源' })).toBeNull();
+    expect(document.body.textContent).not.toContain('synthetic-secret-detail-must-not-display');
+    expect(calls).toEqual(['/api/auth/session', `/api/inbox/entries/${inboxId}`]);
   });
 });

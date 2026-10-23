@@ -18,13 +18,25 @@ import stat
 
 _EVENT_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
+# The existing ledger stores this field as text. Require its canonical decimal
+# representation so it has the semantics of a positive monotonic integer and
+# cannot treat labels such as "record-v1" as an anti-ABA revision.
+_POSITIVE_VERSION = re.compile(r"^[1-9][0-9]{0,63}$")
+_SOURCE_SYSTEM = re.compile(r"^[a-z][a-z0-9._-]{0,63}$")
+_DECISION_KEY = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_INTENT = re.compile(r"^[a-z][a-z0-9._-]{0,31}$")
 MAX_SOURCE_TEXT_UTF8_BYTES = 200_000
 MAX_BINDING_STATE_BYTES = 512_000
 
 
 @dataclass(frozen=True)
 class VerifiedCaptureSuggestionSource:
-    """Server adapter result, returned only after authenticating its source."""
+    """Snapshot returned by an injected, server-authenticating source reader.
+
+    ``source_record_version`` is the canonical decimal encoding of a positive
+    monotonic integer. The record shape alone is not proof of authenticity;
+    callers must inject a trusted Core-side reader and a fixed allowlist.
+    """
 
     source_event_id: str
     original_text: str
@@ -33,6 +45,8 @@ class VerifiedCaptureSuggestionSource:
     subject: str
     received_at: str
     expires_at: str
+    source_system: str
+    lifecycle_status: str
 
 
 @dataclass(frozen=True)
@@ -46,6 +60,36 @@ class CoreCaptureConsentRecord:
     source_record_version: str
     decision: str
     recorded_at: str
+
+
+@dataclass(frozen=True)
+class TrustedCaptureSuggestionActionContext:
+    """Server-injected acceptance evidence for a pure candidate validator.
+
+    These booleans are attestations from a trusted caller, not checks of HTTP
+    input and not proof by themselves. No route or production authority builds
+    this object in the current application.
+    """
+
+    authenticated_subject: str
+    session_authenticated: bool
+    origin_validated: bool
+    permission_checked: bool
+
+
+@dataclass(frozen=True)
+class CaptureSuggestionConsentDecisionCandidate:
+    """Synthetic audit candidate only; never a bearer or Inbox credential."""
+
+    decision: str
+    actor_subject: str
+    source_event_id: str
+    source_record_version: str
+    original_text_sha256: str
+    intent: str
+    idempotency_key: str
+    recorded_at: str
+    semantic_fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -77,10 +121,12 @@ class TrustedCaptureSuggestionBindingAuthority:
     trusted source exists and always fail closed.
     """
 
-    def __init__(self, source_reader=None, consent_reader=None, clock=None):
+    def __init__(self, source_reader=None, consent_reader=None, clock=None,
+                 allowed_source_systems=()):
         self.source_reader = source_reader
         self.consent_reader = consent_reader
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.allowed_source_systems = frozenset(allowed_source_systems)
 
     def resolve(self, *, source_event_id, expected_text, expected_version,
                 authenticated_subject, consent_id):
@@ -106,6 +152,21 @@ class TrustedCaptureSuggestionBindingAuthority:
             return None
         if source != confirm_source or consent != confirm_consent:
             return None
+        try:
+            now = self.clock()
+        except Exception:
+            return None
+        source = validate_verified_capture_suggestion_source(
+            source, confirm_source,
+            allowed_source_systems=self.allowed_source_systems,
+            expected_event_id=source_event_id,
+            expected_text=expected_text,
+            expected_version=expected_version,
+            expected_subject=authenticated_subject,
+            now=now,
+        )
+        if source is None:
+            return None
         if not isinstance(source, VerifiedCaptureSuggestionSource):
             return None
         if not isinstance(consent, CoreCaptureConsentRecord):
@@ -117,6 +178,8 @@ class TrustedCaptureSuggestionBindingAuthority:
                 or not isinstance(source.subject, str)
                 or not isinstance(source.received_at, str)
                 or not isinstance(source.expires_at, str)
+                or not isinstance(source.source_system, str)
+                or not isinstance(source.lifecycle_status, str)
                 or not isinstance(consent.consent_id, str)
                 or not isinstance(consent.subject, str)
                 or not isinstance(consent.source_event_id, str)
@@ -186,6 +249,138 @@ def _within_utf8_budget(value):
         return len(value.encode("utf-8")) <= MAX_SOURCE_TEXT_UTF8_BYTES
     except UnicodeError:
         return False
+
+
+def validate_verified_capture_suggestion_source(
+    first_read, second_read, *, allowed_source_systems, expected_event_id,
+    expected_text, expected_version, expected_subject, now,
+):
+    """Purely validate two server-reader snapshots; never performs I/O.
+
+    The injected reader is responsible for source authentication and for
+    returning server-owned event, subject, source system, version and lifecycle
+    metadata. This function enforces structural integrity, allowlist membership,
+    byte/hash consistency and stability across both reads. ``None`` is the only
+    failure result, so callers must fail closed.
+    """
+    if (not isinstance(first_read, VerifiedCaptureSuggestionSource)
+            or not isinstance(second_read, VerifiedCaptureSuggestionSource)
+            or first_read != second_read
+            or not isinstance(allowed_source_systems, (set, frozenset, tuple, list))
+            or not allowed_source_systems
+            or not isinstance(expected_event_id, str)
+            or not _EVENT_ID.fullmatch(expected_event_id)
+            or not isinstance(expected_text, str)
+            or not expected_text.strip()
+            or not _within_utf8_budget(expected_text)
+            or not isinstance(expected_version, str)
+            or not _POSITIVE_VERSION.fullmatch(expected_version)
+            or not isinstance(expected_subject, str)
+            or not expected_subject or len(expected_subject) > 256
+            or not isinstance(now, datetime) or now.tzinfo is None):
+        return None
+    source = first_read
+    if (not isinstance(source.source_event_id, str)
+            or not isinstance(source.original_text, str)
+            or not isinstance(source.original_text_sha256, str)
+            or not isinstance(source.source_record_version, str)
+            or not isinstance(source.subject, str)
+            or not isinstance(source.received_at, str)
+            or not isinstance(source.expires_at, str)
+            or not isinstance(source.source_system, str)
+            or not isinstance(source.lifecycle_status, str)
+            or not _EVENT_ID.fullmatch(source.source_event_id)
+            or not source.subject or len(source.subject) > 256
+            or not _POSITIVE_VERSION.fullmatch(source.source_record_version)
+            or source.source_system not in allowed_source_systems
+            or not _SOURCE_SYSTEM.fullmatch(source.source_system)
+            or source.lifecycle_status != "active"
+            or not _within_utf8_budget(source.original_text)):
+        return None
+    try:
+        digest = hashlib.sha256(source.original_text.encode("utf-8")).hexdigest()
+        received_at = datetime.fromisoformat(source.received_at.replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(source.expires_at.replace("Z", "+00:00"))
+        now = now.astimezone(timezone.utc)
+        if received_at.tzinfo is None or expires_at.tzinfo is None:
+            return None
+        received_at = received_at.astimezone(timezone.utc)
+        expires_at = expires_at.astimezone(timezone.utc)
+    except (AttributeError, TypeError, ValueError, OverflowError, UnicodeError):
+        return None
+    if (source.source_event_id != expected_event_id
+            or source.original_text != expected_text
+            or source.original_text_sha256 != digest
+            or not _SHA256.fullmatch(source.original_text_sha256)
+            or source.source_record_version != expected_version
+            or source.subject != expected_subject
+            or expires_at <= received_at
+            or now >= expires_at
+            or received_at > now):
+        return None
+    return source
+
+
+def validate_capture_suggestion_acceptance(
+    first_source_read, second_source_read, *, allowed_source_systems,
+    action_context, intent, idempotency_key, now,
+):
+    """Return a non-authorizing accept-event candidate or ``None``.
+
+    This is a pure validator. It does not create or append consent, grant a
+    binding, issue an Inbox token, or establish that the injected action-context
+    attestations are true. A future route must obtain that context from its own
+    frozen server-side session/Origin/permission checks.
+    """
+    if (type(action_context) is not TrustedCaptureSuggestionActionContext
+            or not isinstance(action_context.authenticated_subject, str)
+            or not action_context.authenticated_subject
+            or len(action_context.authenticated_subject) > 256
+            or action_context.session_authenticated is not True
+            or action_context.origin_validated is not True
+            or action_context.permission_checked is not True
+            or not isinstance(intent, str) or not _INTENT.fullmatch(intent)
+            or not isinstance(idempotency_key, str)
+            or not _DECISION_KEY.fullmatch(idempotency_key)
+            or not isinstance(now, datetime) or now.tzinfo is None):
+        return None
+    actor = action_context.authenticated_subject
+    source = validate_verified_capture_suggestion_source(
+        first_source_read, second_source_read,
+        allowed_source_systems=allowed_source_systems,
+        expected_event_id=(first_source_read.source_event_id
+                           if isinstance(first_source_read, VerifiedCaptureSuggestionSource)
+                           else ""),
+        expected_text=(first_source_read.original_text
+                       if isinstance(first_source_read, VerifiedCaptureSuggestionSource)
+                       else ""),
+        expected_version=(first_source_read.source_record_version
+                          if isinstance(first_source_read, VerifiedCaptureSuggestionSource)
+                          else ""),
+        expected_subject=actor,
+        now=now,
+    )
+    if source is None:
+        return None
+    material = {
+        "decision": "accept",
+        "actor_subject": actor,
+        "source_event_id": source.source_event_id,
+        "source_record_version": source.source_record_version,
+        "original_text_sha256": source.original_text_sha256,
+        "intent": intent,
+        "idempotency_key": idempotency_key,
+    }
+    try:
+        fingerprint = hashlib.sha256(json.dumps(
+            material, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        recorded_at = now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except (AttributeError, TypeError, ValueError, UnicodeError):
+        return None
+    return CaptureSuggestionConsentDecisionCandidate(
+        **material, recorded_at=recorded_at, semantic_fingerprint=fingerprint,
+    )
 
 
 class TrustedCaptureSuggestionBindingStore:

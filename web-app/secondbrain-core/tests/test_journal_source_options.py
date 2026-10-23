@@ -57,7 +57,9 @@ def setup(tmp_path, *, deny=()):
 
         auth.require_action = guarded
     token = "synthetic-app-session"
-    auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
+    session_id = hashlib.sha256(token.encode()).hexdigest()
+    auth._sessions[session_id] = time.time() + 600
+    auth._session_actions[session_id] = set(auth.SUPPORTED_ACTIONS)
     store = JournalStore(str(root))
     service = JournalSourceOptionsService(store, auth)
     return root, auth, token, store, service
@@ -321,8 +323,11 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
     initial_root = root.stat()
     initial_file = journal_path.stat()
     initial_bytes = journal_path.read_bytes()
+    # Match the Core entrypoint's default: proxy headers are parsed, but no
+    # forwarding peer is trusted unless SB_TRUSTED_PROXY_IPS explicitly lists it.
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="critical",
-                                           lifespan="off", access_log=False))
+                                           lifespan="off", access_log=False,
+                                           proxy_headers=True, forwarded_allow_ips=""))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
     try:
@@ -335,19 +340,63 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
                                 json={"password": "synthetic-journal-selector-password"})
             assert login.status_code == 200
             base_url = "/api/daily-brief/source-options/journal"
+            # Real localhost HTTP: browser-style same-origin GET has no Origin.
+            # The login above deliberately retains strict explicit Origin.
+            originless = client.get(f"{base_url}?date={DAY}", headers={
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty",
+            })
+            assert originless.status_code == 200
+            assert originless.headers["cache-control"] == "private, no-store"
+            assert originless.json()["status"] == "real"
+            assert read_calls > 0
+            # An untrusted peer cannot rewrite the ASGI authority via forwarding
+            # headers; the trusted Host/scheme remain authoritative.
+            before = read_calls
+            spoofed_forwarding = client.get(f"{base_url}?date={DAY}", headers={
+                "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Dest": "empty", "X-Forwarded-Host": "evil.invalid",
+                "X-Forwarded-Proto": "https",
+            })
+            assert spoofed_forwarding.status_code == 200
+            assert spoofed_forwarding.json()["status"] == "real"
+            assert read_calls > before
+
+            # Invalid Host is rejected before routing by TrustedHostMiddleware
+            # (400); a Host accepted by middleware but whose authority differs
+            # from the configured Origin reaches the route and is denied (403).
+            read_calls = 0
+            for rejected_headers, expected_status in (
+                ({"Sec-Fetch-Site": "cross-site"}, 403),
+                ({"Sec-Fetch-Site": "same-site"}, 403),
+                ({"Sec-Fetch-Site": "same-origin", "Host": "evil.invalid"}, 400),
+                ({"Sec-Fetch-Site": "same-origin", "Host": f"{host}:1"}, 403),
+                ({"Sec-Fetch-Site": "same-origin", "Origin": "null"}, 403),
+                ({"Sec-Fetch-Site": "same-origin", "Origin": "http://evil.invalid"}, 403),
+                ({"Sec-Fetch-Site": "same-origin", "X-Forwarded-Host": "evil.invalid",
+                  "X-Forwarded-Proto": "https", "Host": "evil.invalid"}, 400),
+            ):
+                before = read_calls
+                denied = client.get(f"{base_url}?date={DAY}", headers=rejected_headers)
+                assert denied.status_code == expected_status, (rejected_headers, denied.status_code)
+                assert denied.headers["cache-control"] == "private, no-store"
+                assert read_calls == before, rejected_headers
 
             anonymous = httpx.get(f"{origin}{base_url}", headers={"Origin": origin},
                                   trust_env=False)
             assert anonymous.status_code == 401
+            assert anonymous.headers["cache-control"] == "private, no-store"
             anonymous_bad_origin = httpx.get(
                 f"{origin}{base_url}?date={DAY}", headers={"Origin": "http://attacker.invalid"},
                 trust_env=False,
             )
             assert anonymous_bad_origin.status_code == 403
+            assert anonymous_bad_origin.headers["cache-control"] == "private, no-store"
             assert read_calls == 0
 
             denied = client.get(f"{base_url}?date={DAY}", headers={"Origin": "http://attacker.invalid"})
             assert denied.status_code == 403 and read_calls == 0
+            assert denied.headers["cache-control"] == "private, no-store"
             auth = service.auth
             original_action = auth.require_action
             for action in ("daily_brief.read", "journal.read"):
@@ -429,6 +478,7 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
 
             empty = client.get(f"{base_url}?date=2026-10-21", headers={"Origin": origin})
             assert empty.status_code == 200 and empty.json()["status"] == "empty"
+            assert empty.headers["cache-control"] == "private, no-store"
             assert empty.json()["items"] == []
 
             # A missing store and a filesystem permission failure both map to
@@ -436,6 +486,7 @@ def test_real_localhost_http_runs_frozen_source_options_route(tmp_path, monkeypa
             monkeypatch.setattr(service, "journal_store", None)
             unavailable = client.get(f"{base_url}?date={DAY}", headers={"Origin": origin})
             assert unavailable.status_code == 200 and unavailable.json()["status"] == "unavailable"
+            assert unavailable.headers["cache-control"] == "private, no-store"
             assert unavailable.json()["items"] == [] and str(root) not in unavailable.text
             monkeypatch.setattr(service, "journal_store", source_store)
             if os.geteuid() != 0:
@@ -593,3 +644,76 @@ def _client(app, token, host):
     if token:
         client.cookies.set(AppSessionAuth.COOKIE_NAME, token)
     return client
+
+
+def test_d089_originless_browser_get_exact_authority_and_fail_closed(tmp_path, monkeypatch):
+    root, auth, token, store, service = setup(tmp_path)
+    append_row(root / f"{DAY}.jsonl", "synthetic d089 row")
+    reads = 0
+    original = store.read_source_day
+
+    def counted(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "read_source_day", counted)
+    app = _test_app(service, auth)
+    url = f"/__test/journal-source-options?date={DAY}"
+    with _client(app, token, "https://app.test") as client:
+        allowed = client.get(url, headers={
+            "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+        })
+        assert allowed.status_code == 200 and allowed.json()["status"] == "real"
+        assert reads > 0
+        for headers in (
+            {},
+            {"Sec-Fetch-Site": "same-site"},
+            {"Sec-Fetch-Site": "cross-site"},
+            {"Sec-Fetch-Site": "none"},
+            {"Sec-Fetch-Site": "same-origin, cross-site"},
+            {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate"},
+            {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Dest": "document"},
+            {"Sec-Fetch-Site": "same-origin", "Origin": "null"},
+            {"Sec-Fetch-Site": "same-origin", "Origin": ""},
+            {"Sec-Fetch-Site": "same-origin", "Origin": "https://evil.test"},
+            {"Sec-Fetch-Site": "same-origin", "Origin": "https://app.test:444"},
+            {"Sec-Fetch-Site": "same-origin", "Host": "evil.test"},
+            {"Sec-Fetch-Site": "same-origin", "X-Forwarded-Host": "evil.test",
+             "X-Forwarded-Proto": "http", "Host": "evil.test"},
+        ):
+            before = reads
+            response = client.get(url, headers=headers)
+            assert response.status_code in ({400, 403} if headers.get("Host") == "evil.test" else {403}), headers
+            assert reads == before, headers
+        before = reads
+        assert client.get(url, headers={"Origin": "https://app.test"}).status_code == 200
+        assert reads > before
+    with _client(app, None, "https://app.test") as client:
+        before = reads
+        assert client.get(url, headers={"Sec-Fetch-Site": "same-origin"}).status_code == 401
+        assert reads == before
+    for action in ("daily_brief.read", "journal.read"):
+        _, deny_auth, deny_token, deny_store, deny_service = setup(
+            tmp_path / f"deny-{action}", deny={action})
+        denied_app = _test_app(deny_service, deny_auth)
+        with _client(denied_app, deny_token, "https://app.test") as client:
+            assert client.get(url, headers={"Sec-Fetch-Site": "same-origin"}).status_code == 403
+
+
+def test_d089_rejects_duplicated_origin_and_fetch_metadata(tmp_path):
+    _, auth, token, _, service = setup(tmp_path)
+    from fastapi.testclient import TestClient
+    with _client(_test_app(service, auth), token, "https://app.test") as client:
+        url = f"/__test/journal-source-options?date={DAY}"
+        for pairs in (
+            [("Sec-Fetch-Site", "same-origin"), ("Sec-Fetch-Site", "same-origin")],
+            [("Origin", "https://app.test"), ("Origin", "https://app.test")],
+            [("Sec-Fetch-Site", "same-origin"), ("Sec-Fetch-Mode", "cors"),
+             ("Sec-Fetch-Mode", "cors")],
+            [("Sec-Fetch-Site", "same-origin"), ("Host", "app.test"),
+             ("Host", "app.test")],
+        ):
+            response = client.get(url, headers=pairs)
+            assert response.status_code == 403, pairs

@@ -18,6 +18,7 @@ from .chat_activity import task_activity
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_TITLE_BYTES = 4096
 _MAX_PROJECTION_BYTES = 2 * 1024 * 1024
+_MAX_TASK_UPDATE_IDEMPOTENCY_KEYS = 4096
 _TASK_SOURCE_VERSION_FIELDS = ("id", "title", "due_date", "status", "created_at", "updated_at", "source")
 
 
@@ -181,7 +182,8 @@ class TaskStore:
         def operation(data):
             prior = data["idempotency"].get(key_hash)
             if prior:
-                if prior["fingerprint"] != fingerprint:
+                if (prior.get("operation") not in {None, "task.create"}
+                        or prior["fingerprint"] != fingerprint):
                     raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different Task content")
                 task = next((item for item in data["tasks"] if item["id"] == prior["task_id"]), None)
                 if task is None:
@@ -196,7 +198,9 @@ class TaskStore:
                     "operation_id": idempotency_key, "session_id": session_id,
                     "history": [{"at": stamp, "event": "created", "changes": {"title": title.strip(), "due_date": due_date, "status": "open"}}]}
             data["tasks"].append(task)
-            data["idempotency"][key_hash] = {"fingerprint": fingerprint, "task_id": task["id"]}
+            data["idempotency"][key_hash] = {
+                "operation": "task.create", "fingerprint": fingerprint, "task_id": task["id"],
+            }
             return {"status": "created", "task": task}, True
 
         return self._with_lock(operation)
@@ -221,6 +225,50 @@ class TaskStore:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
+    def list_for_projection_read_only(self):
+        """Read a stable projection without creating or opening the Task lock file."""
+        try:
+            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except FileNotFoundError:
+            return {"tasks": []}
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Task projection unavailable") from exc
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                    or before.st_mode & 0o077 or before.st_size < 0
+                    or before.st_size > _MAX_PROJECTION_BYTES):
+                raise HTTPException(status_code=503, detail="Task projection unavailable")
+            payload = bytearray()
+            while len(payload) <= _MAX_PROJECTION_BYTES:
+                chunk = os.read(fd, min(65536, _MAX_PROJECTION_BYTES + 1 - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            after = os.fstat(fd)
+            try:
+                current = os.stat(self.path, follow_symlinks=False)
+            except OSError as exc:
+                raise HTTPException(status_code=503, detail="Task projection unavailable") from exc
+            identity = lambda info: (info.st_dev, info.st_ino, info.st_size,
+                                     info.st_mtime_ns, info.st_ctime_ns)
+            if (len(payload) != before.st_size or len(payload) > _MAX_PROJECTION_BYTES
+                    or identity(after) != identity(before) or identity(current) != identity(before)):
+                raise HTTPException(status_code=503, detail="Task projection changed during read")
+            try:
+                data = json.loads(payload.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                raise HTTPException(status_code=503, detail="Task projection unavailable") from exc
+            if (not isinstance(data, dict) or not isinstance(data.get("tasks"), list)
+                    or not isinstance(data.get("idempotency"), dict)):
+                raise HTTPException(status_code=503, detail="Task projection unavailable")
+            items = list(data["tasks"])
+            items.sort(key=lambda item: (item.get("due_date") or "9999-12-31",
+                                         item.get("created_at", ""), item.get("id", "")))
+            return {"tasks": items}
+        finally:
+            os.close(fd)
+
     def list(self, status="open", due_date=None):
         if status not in {"open", "completed", "all"}:
             raise HTTPException(status_code=400, detail="status must be open, completed, or all")
@@ -235,7 +283,7 @@ class TaskStore:
 
         return self._with_lock(operation)
 
-    def update(self, task_id, body):
+    def update(self, task_id, body, idempotency_key=None):
         if not isinstance(body, dict) or not body:
             raise HTTPException(status_code=400, detail="Task changes are required")
         expected = body.get("expected_updated_at")
@@ -255,13 +303,40 @@ class TaskStore:
             changes["due_date"] = _valid_date(changes["due_date"])
         if "status" in changes and changes["status"] not in {"open", "completed"}:
             raise HTTPException(status_code=400, detail="Task status must be open or completed")
+        key_hash = self._key_hash(idempotency_key) if idempotency_key is not None else None
+        fingerprint = None
+        if key_hash is not None:
+            fingerprint = hashlib.sha256(json.dumps({
+                "operation": "task.update", "task_id": task_id,
+                "expected_updated_at": expected, "changes": changes,
+            }, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
 
         def operation(data):
+            if key_hash is not None:
+                prior = data["idempotency"].get(key_hash)
+                if prior is not None:
+                    if (prior.get("operation") != "task.update"
+                            or prior.get("fingerprint") != fingerprint
+                            or prior.get("task_id") != task_id):
+                        raise HTTPException(status_code=409, detail="Idempotency-Key was already used differently")
+                    replay_task = next((item for item in data["tasks"] if item["id"] == task_id), None)
+                    if (replay_task is None
+                            or replay_task.get("updated_at") != prior.get("result_updated_at")):
+                        raise HTTPException(status_code=409, detail="Task changed after the keyed update; reload before retrying")
+                    return {"task": replay_task}, False
+
             task = next((item for item in data["tasks"] if item["id"] == task_id), None)
             if task is None:
                 raise HTTPException(status_code=404, detail="Task not found")
             if task["updated_at"] != expected:
                 raise HTTPException(status_code=409, detail="Task changed since it was loaded; reload before editing")
+            if key_hash is not None:
+                update_key_count = sum(
+                    1 for item in data["idempotency"].values()
+                    if isinstance(item, dict) and item.get("operation") == "task.update"
+                )
+                if update_key_count >= _MAX_TASK_UPDATE_IDEMPOTENCY_KEYS:
+                    raise HTTPException(status_code=503, detail="Task retry ledger is full")
             previous = {key: task.get(key) for key in changes}
             task.update(changes)
             stamp = _now()
@@ -272,6 +347,11 @@ class TaskStore:
             task.setdefault("history", []).append({"at": stamp, "event": "updated", "changes": {
                 key: {"from": previous[key], "to": task[key]} for key in changes if previous[key] != task[key]
             }})
+            if key_hash is not None:
+                data["idempotency"][key_hash] = {
+                    "operation": "task.update", "fingerprint": fingerprint,
+                    "task_id": task_id, "result_updated_at": stamp,
+                }
             return {"task": task}, True
 
         return self._with_lock(operation)
@@ -288,7 +368,12 @@ def create_task_router(auth, store, hermes=None, activity_store=None):
     def list_tasks(request: Request, status: str = "open", due_date: str | None = None):
         auth.require_action(request, "task.read")
         configured()
-        return store.list(status, due_date)
+        result = store.list(status, due_date)
+        for task in result["tasks"]:
+            version = task_source_version(task)
+            if version is not None:
+                task["source_ref"] = {"id": task["id"], "version": version}
+        return result
 
     @router.post("")
     async def create_task(request: Request, body: dict):
@@ -331,6 +416,6 @@ def create_task_router(auth, store, hermes=None, activity_store=None):
         configured()
         if not re.fullmatch(r"[0-9a-f]{32}", task_id):
             raise HTTPException(status_code=404, detail="Task not found")
-        return store.update(task_id, body)
+        return store.update(task_id, body, idempotency_key=request.headers.get("idempotency-key"))
 
     return router

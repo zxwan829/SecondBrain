@@ -48,6 +48,34 @@ still be current, and the Core consent timestamp must fall between receipt and
 the current time. Original text is capped by UTF-8 bytes, not character count,
 and the complete source/consent projection has a bounded serialized budget.
 
+S1 adds the pure `validate_verified_capture_suggestion_source` check over two
+snapshots; it performs no reads or writes. The injected Core reader remains the
+authentication boundary and its source-system allowlist is fixed by trusted
+server configuration, never by a request field. The verifier also requires a
+server-owned subject/event, exact original-text SHA-256, an `active` lifecycle,
+and a stable source system/version/subject/lifecycle tuple across both reads.
+For compatibility with the existing metadata ledger, the version is stored as
+text but must be the canonical decimal spelling of a positive integer. The
+reader contract must guarantee monotonicity across edits and restoration of
+older bytes; the verifier cannot independently prove that an upstream version
+is monotonic. Synthetic A→B→A cases prove the old revision cannot be replayed
+when the restored bytes carry a new revision. No concrete source system has
+been selected or authenticated in production.
+
+The S2 `validate_capture_suggestion_acceptance` function is also pure. It
+requires an internal typed action-context object, an accept-only action,
+server-derived actor/source subject equality, and the S1 two-snapshot result.
+Its session/Origin/permission booleans are testable attestations supplied by a
+trusted future caller; the booleans do not validate HTTP input or authenticate
+anything themselves. Its result is only a candidate audit event with a
+semantic idempotency fingerprint. It is not a consent record, binding, token,
+or Inbox authorization. A test-only in-memory append-only stream demonstrates
+exact replay and same-event/intent conflict behavior, including key rotation,
+actor, revision, digest and decision changes. No production consent store or
+write path is present. Exact intent vocabulary, permission action, consent
+expiry/revocation/one-time semantics, event-key scope and audit retention still
+need a cross-line decision.
+
 `TrustedCaptureSuggestionBindingStore` is an unconfigured internal candidate
 ledger for synthetic/local validation. It binds one event+subject to one
 metadata tuple under an inter-process lock, replays an identical tuple, and

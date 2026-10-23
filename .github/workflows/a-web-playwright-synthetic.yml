@@ -1,0 +1,73 @@
+name: A Web synthetic browser acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a-web-playwright-synthetic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-browser:
+    if: github.repository == 'zxwan829/SecondBrain' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify checked out event SHA
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$EXPECTED_SHA"
+          echo "CHECKOUT_SHA=$actual_sha"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            web-app/secondbrain-frontend/package-lock.json
+            web-app/e2e/package-lock.json
+      - name: Install isolated Core dependencies
+        working-directory: web-app/secondbrain-core
+        run: python -m pip install -e ".[test]"
+      - name: Install frontend and test dependencies
+        run: |
+          npm ci --prefix web-app/secondbrain-frontend
+          npm ci --prefix web-app/e2e
+      - name: Install Linux Chromium
+        working-directory: web-app/e2e
+        run: npx playwright install --with-deps chromium
+      - name: Run Web regression and type checks
+        working-directory: web-app/secondbrain-frontend
+        run: |
+          npm test
+          npm run typecheck
+      - name: Build Web assets
+        working-directory: web-app/secondbrain-frontend
+        run: npm run build
+      - name: Verify trace artifact redaction
+        run: python -m pytest -q web-app/e2e/tests/test_artifact_sanitizer.py
+      - name: Run isolated Core + Web browser acceptance
+        id: synthetic
+        run: python web-app/e2e/scripts/run_synthetic_ci.py
+      - name: Upload sanitized acceptance evidence
+        if: always() && steps.synthetic.outputs.artifacts_verified == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-web-playwright-synthetic-${{ github.run_id }}
+          # The run-specific directory is uploaded only after the runner emits
+          # a success output following allowlist + redaction + leak validation.
+          path: web-app/e2e/artifacts-sanitized/${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: ignore
+          retention-days: 7
