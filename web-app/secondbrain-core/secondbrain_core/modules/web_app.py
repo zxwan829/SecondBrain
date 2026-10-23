@@ -443,7 +443,12 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
                         event_name = payload.get("event")
                         if event_name in {"run.completed", "run.failed", "run.cancelled", "run.interrupted"}:
                             cost_terminal_seen = True
-                            if not chat_cost_gate.settle_completed(safe_run_id, payload):
+                            if event_name == "run.completed":
+                                if not chat_cost_gate.settle_completed(safe_run_id, payload):
+                                    chat_cost_gate.mark_unknown(safe_run_id)
+                            else:
+                                # Non-success terminals are never trusted usage
+                                # receipts, even when they include token numbers.
                                 chat_cost_gate.mark_unknown(safe_run_id)
                     if payload and payload.get("event") == "approval.request":
                         card = run_approvals.bind_event(safe_run_id, owner, payload)
