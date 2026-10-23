@@ -124,13 +124,13 @@ def test_create_app_uvicorn_localhost_lifecycle_http(tmp_path, monkeypatch):
         listener.close()
 
 
-def _create_personal_memory_in_process(root, connection):
+def _create_personal_memory_in_process(root, connection, start_event):
     """Wait for a coordinated race, then replay the same durable create key."""
     try:
         store = PersonalMemoryStore(root)
         connection.send({"ready": True})
-        if connection.recv() != "start":
-            raise RuntimeError("worker was not released")
+        if not start_event.wait(15):
+            raise TimeoutError("worker start barrier timed out")
         result = store.create(
             content={"text": "Synthetic cross-process memory"},
             category="preference",
@@ -253,6 +253,7 @@ class PersonalMemoryStoreTests(unittest.TestCase):
 
     def test_cross_process_duplicate_create_is_one_durable_idempotent_event(self):
         context = multiprocessing.get_context("spawn")
+        start_event = context.Event()
         workers = []
         parent_connections = []
         try:
@@ -260,7 +261,7 @@ class PersonalMemoryStoreTests(unittest.TestCase):
                 parent, child = context.Pipe()
                 process = context.Process(
                     target=_create_personal_memory_in_process,
-                    args=(str(self.root), child),
+                    args=(str(self.root), child, start_event),
                 )
                 process.start()
                 child.close()
@@ -270,8 +271,9 @@ class PersonalMemoryStoreTests(unittest.TestCase):
             for connection in parent_connections:
                 self.assertTrue(connection.poll(15), "worker did not initialize")
                 self.assertEqual(connection.recv(), {"ready": True})
-            for connection in parent_connections:
-                connection.send("start")
+            # Release every ready worker at once so their independent stores
+            # contend for the same durable idempotency record.
+            start_event.set()
 
             results = []
             for connection in parent_connections:
@@ -284,6 +286,7 @@ class PersonalMemoryStoreTests(unittest.TestCase):
                 self.assertFalse(process.is_alive(), "worker did not exit")
                 self.assertEqual(process.exitcode, 0)
         finally:
+            start_event.set()
             for process in workers:
                 if process.is_alive():
                     process.terminate()
