@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from secondbrain_core.modules.app_auth import AppSessionAuth
+from secondbrain_core.modules.capture import CaptureService, MAX_ACTIVITY_CAPTURE_BYTES, MAX_ACTIVITY_CAPTURE_STATE_FILES
 from secondbrain_core.modules.daily_brief_import import DailyBriefAuditStore
 from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.personal_memory import PersonalMemoryStore
@@ -16,7 +17,7 @@ from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStor
 from secondbrain_core.modules.tasks import TaskStore
 
 
-def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_audit=None, memory=None):
+def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_audit=None, memory=None, capture=None):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-password-value\n")
     os.chmod(password_file, 0o600)
@@ -31,6 +32,7 @@ def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_a
         auth, journal, tasks, projects_store=projects,
         daily_brief_audit_store=daily_brief_audit,
         memory_store=memory,
+        capture_service=capture,
     ))
     client = TestClient(app, base_url="https://app.test")
     client.cookies.set(auth.COOKIE_NAME, token)
@@ -56,6 +58,28 @@ def make_memory(tmp_path):
     root.mkdir(mode=0o700)
     os.chmod(root, 0o700)
     return PersonalMemoryStore(root)
+
+
+def make_capture(tmp_path):
+    raw = tmp_path / "capture-raw"
+    review = tmp_path / "capture-review"
+    state = tmp_path / "core-state"
+    for root in (raw, review, state):
+        root.mkdir(mode=0o700)
+        os.chmod(root, 0o700)
+    return CaptureService(raw, review, state, processors=object())
+
+
+def capture_state(capture_id, *, status="partial_success", captured_at=None, padding=""):
+    return {
+        "capture_id": capture_id, "source_type": "text", "input_type": "txt",
+        "captured_at": captured_at or f"{date.today().isoformat()}T08:00:00Z",
+        "updated_at": "2026-10-24T08:01:00Z", "status": status,
+        "raw_path": "PRIVATE-raw.txt", "raw_sha256": "a" * 64,
+        "review_path": "PRIVATE-review.md", "review_sha256": "b" * 64,
+        "content_preview": "PRIVATE capture content", "capture_context": "PRIVATE context",
+        "padding": padding,
+    }
 
 
 def test_projects_is_authenticated_truthful_empty_contract(tmp_path):
@@ -232,6 +256,117 @@ def test_activity_personal_memory_permission_is_preflighted_before_read(tmp_path
     assert response.json()["status"] == "partial"
     assert response.json()["source"] == []
     assert reads == []
+
+
+def test_activity_projects_capture_state_without_recovery_or_sensitive_fields(tmp_path, monkeypatch):
+    capture = make_capture(tmp_path)
+    capture_id = "a" * 32
+    state = capture_state(capture_id)
+    capture._write_state(state)
+    path = capture._state_path(capture_id)
+    before = path.read_bytes()
+    monkeypatch.setattr(capture, "_recover_interrupted", lambda _state: (_ for _ in ()).throw(
+        AssertionError("Activity must never recover or mutate Capture state")))
+
+    response = make_client(tmp_path, capture=capture).get(
+        f"/api/activity?from={date.today().isoformat()}&to={date.today().isoformat()}&timezone=UTC")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == ["capture"]
+    assert body["status"] == "partial"  # Capture is a real source, but Activity has other required sources.
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item == {
+        "activity_id": item["activity_id"], "kind": "capture", "status": "partial_success",
+        "occurred_at": f"{date.today().isoformat()}T08:00:00.000000Z",
+    }
+    assert len(item["activity_id"]) == 32
+    assert capture_id not in response.text
+    assert "PRIVATE" not in response.text
+    assert str(capture.raw_root) not in response.text
+    assert str(capture.review_root) not in response.text
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in capture.state_root.iterdir()) == [capture_id + ".json"]
+
+
+def test_activity_capture_permission_is_preflighted_before_state_io(tmp_path, monkeypatch):
+    capture = make_capture(tmp_path)
+    reads = []
+    monkeypatch.setattr(capture, "read_activity_events", lambda: reads.append(True) or ([], True))
+    client = make_client(tmp_path, capture=capture)
+    auth = client.app.state.test_auth
+    original_require_action = auth.require_action
+
+    def deny_capture_before_io(request, action):
+        if action == "inbox.read":
+            raise __import__("fastapi").HTTPException(status_code=403, detail="denied")
+        return original_require_action(request, action)
+
+    monkeypatch.setattr(auth, "require_action", deny_capture_before_io)
+    response = client.get("/api/activity")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["source"] == []
+    assert reads == []
+
+
+def test_activity_capture_file_count_budget_fails_closed_as_partial(tmp_path):
+    capture = make_capture(tmp_path)
+    for index in range(MAX_ACTIVITY_CAPTURE_STATE_FILES + 1):
+        (capture.state_root / (f"{index:032x}.json")).write_text("{}", encoding="utf-8")
+        os.chmod(capture.state_root / (f"{index:032x}.json"), 0o600)
+
+    response = make_client(tmp_path, capture=capture).get("/api/activity")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["source"] == ["capture"]
+    assert response.json()["items"] == []
+
+
+def test_activity_capture_aggregate_byte_budget_fails_closed_as_partial(tmp_path):
+    capture = make_capture(tmp_path)
+    per_record = (MAX_ACTIVITY_CAPTURE_BYTES // 3) + 100_000
+    for index in range(3):
+        capture._write_state(capture_state(f"{index + 1:032x}", padding="x" * per_record))
+
+    response = make_client(tmp_path, capture=capture).get("/api/activity")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["source"] == ["capture"]
+    assert response.json()["items"] == []
+
+
+def test_activity_capture_state_replacement_during_read_fails_closed(tmp_path, monkeypatch):
+    import secondbrain_core.modules.capture as capture_module
+
+    capture = make_capture(tmp_path)
+    capture_id = "c" * 32
+    capture._write_state(capture_state(capture_id))
+    state_path = capture._state_path(capture_id)
+    replacement = capture.state_root / "replacement.tmp"
+    replacement.write_bytes(state_path.read_bytes().replace(b"partial_success", b"completed"))
+    os.chmod(replacement, 0o600)
+    original_read = os.read
+    replaced = False
+
+    def replace_after_read(fd, size):
+        nonlocal replaced
+        payload = original_read(fd, size)
+        if not replaced and payload:
+            replaced = True
+            os.replace(replacement, state_path)
+        return payload
+
+    monkeypatch.setattr(capture_module.os, "read", replace_after_read)
+    events, complete = capture.read_activity_events()
+
+    assert replaced is True
+    assert events == []
+    assert complete is False
 
 
 def test_activity_window_timezone_and_query_errors(tmp_path):

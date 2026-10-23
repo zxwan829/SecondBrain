@@ -164,6 +164,7 @@ def create_app():
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
     app.state.app_auth = auth
+    app.state.capture_service = capture
     app.state.personal_memory_store = memory_store
     app.state.knowledge_read_store = knowledge_read_store
     app.state.task_store = task_store
@@ -204,6 +205,7 @@ def create_app():
     app.include_router(create_projects_activity_router(
         auth, journal_store, task_store, projects_store=projects_store, notes_store=notes_store,
         daily_brief_audit_store=daily_brief_audit_store, memory_store=memory_store,
+        capture_service=capture,
     ))
     app.include_router(create_daily_brief_agent_health_router(
         auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,
