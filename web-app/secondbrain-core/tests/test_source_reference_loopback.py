@@ -238,13 +238,27 @@ def test_core_real_loopback_verifies_task_project_journal_and_project_note(tmp_p
             conflict = client.post("/api/daily-brief", headers={"Origin": origin}, json=different_key)
             assert conflict.status_code == 409
             assert conflict.json() == {"detail": "Daily Brief conflict"}
-            unsupported = client.post("/api/daily-brief", headers={"Origin": origin}, json={
-                **import_body, "mode": "approved_import",
-                "import_ref": {"kind": "existing_brief", "id": "brief-synthetic", "version": "c" * 64},
+            malformed_approved_body = {
+                key: value for key, value in import_body.items() if key != "idempotency_key"
+            }
+            malformed_approved_body.update({
+                "mode": "approved_import",
+                "import_ref": {"kind": "existing_brief", "id": "brief-synthetic",
+                               "version": "c" * 64},
             })
-            assert unsupported.status_code == 501
-            assert unsupported.json() == {"detail": "approved import unavailable"}
-            assert "brief-synthetic" not in unsupported.text
+            malformed_approved_import = client.post(
+                "/api/daily-brief",
+                headers={"Origin": origin, "Idempotency-Key": "loopback-approved-key-20261020"},
+                json=malformed_approved_body,
+            )
+            # approved_import is implemented and covered by the dedicated
+            # import suite; this loopback fixture deliberately omits its
+            # manual_generate-only body field and uses a non-date-qualified
+            # import_ref with a valid Idempotency-Key header. It must fail
+            # closed as invalid input, not claim the route is unavailable.
+            assert malformed_approved_import.status_code == 422
+            assert malformed_approved_import.json() == {"detail": "invalid request"}
+            assert "brief-synthetic" not in malformed_approved_import.text
             unauthenticated = httpx.get(f"{origin}/api/daily-brief?date={brief_day}&timezone=Asia%2FShanghai",
                                         headers={"Origin": origin}, trust_env=False, timeout=3.0)
             assert unauthenticated.status_code == 401
