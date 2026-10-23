@@ -1,10 +1,10 @@
 # Progress Log
 
-## 2026-10-24 — 统一主 Agent 集成复核更新
+## 2026-10-24 — 统一主 Agent 集成复核与 P4 收口更新
 
-- GitHub main 已推进至 `ce6478897318846234793195de66a3c838d4a220`；#221 Core 与 #222 Web 分别以 merge commits `0f31b84655f18ee307f210afa9feda9e9f4026a5`、`ce6478897318846234793195de66a3c838d4a220` 合入。下方同日较早记录保留当时快照，不再代表当前 PR 状态。
-- #220 `d3e6d253` 与 #223 `f0c1fc8f` 均已独立源码复审 `PASS_WITH_LIMITS`，仍为 Draft/Open。将两者依赖顺序组合到最新 main 后，`App.navigation.test.tsx` 61/61、typecheck、build、`git diff --check` 均通过。只组合 #223 时 60/61，唯一失败正是 #220 的 Home→Task 入口修复，确认依赖关系。未启动新 Actions。
-- #219 文档复审发现并修正 #221/#222 过期状态及 Progress-Log 末尾重复旧记录；当前 V1 仍 NOT DONE。无生产部署、真实数据/模型访问或 Writer/Promote/费用门禁变更。
+- GitHub main 已推进至 `1ffd4b48a4825812b1b5f6459c40ee4194a3f4a7`。本节是本日日志的最新纠正；下方同日记录描述其记录时的快照，不再表示当前 PR 状态。#221 Core、#222 Web、#220 Notes/Home→Task、#223 Organizer 均按正常 GitHub Merge 路径合入；#220/#223 固定 HEAD 分别为 `d3e6d253ad44292a8470e06e5056985b9ee3473f`、`f0c1fc8f4c02dbcd2da4fa441dcfb21a10748c7a`，merge commits 为 `4157fc6cc38026aadd2df0425869360c5adf6603`、`1ffd4b48a4825812b1b5f6459c40ee4194a3f4a7`。
+- #220/#223 均获独立源码复审 `PASS_WITH_LIMITS`。最新 main + 两 PR 依赖顺序组合的 Git tree 相同；`App.navigation.test.tsx` 61/61、typecheck、build、`git diff --check` 均通过。只组合 #223 时 60/61，唯一失败由尚未合入的 #220 Home→Task 修复解决，证明先合依赖再合后续 PR 的必要性。未启动新 Actions。
+- #219 文档复审发现并修正 #221/#222 过期状态及 Progress-Log 末尾重复旧记录；用户验收、Obsidian 双向同步、P4 多格式质量、Trash OS/权限门槛、P5 生产验证与 P6 全范围验收仍未完成。无生产部署、真实数据/模型访问或 Writer/Promote/费用门禁变更。
 
 ## 2026-10-24 — Capture Activity Web 复审与 Organizer status 竞态修复
 
