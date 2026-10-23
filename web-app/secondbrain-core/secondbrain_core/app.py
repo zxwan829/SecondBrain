@@ -31,6 +31,7 @@ from .modules.daily_brief_import import DailyBriefAuditStore, DailyBriefImportSt
 from .modules.calendar_read import create_calendar_read_router
 from .modules.planning import PlanningCandidateService, PlanningCandidateStore, create_planning_router
 from .modules.notes import configured_notes_store, create_notes_router
+from .modules.notes_trash import NotesTrashStore, create_notes_trash_router
 from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
 from .modules.vocabulary import VocabularyStore, create_vocabulary_router
 from .modules.inbox_proposals import InboxProposalStore, InboxProposalSources, create_inbox_proposal_router
@@ -114,6 +115,7 @@ def create_app():
         os.environ.get("SB_NOTES_DRAFTS_ROOT", "").strip(),
         os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
     )
+    notes_trash_store = NotesTrashStore(notes_store, os.environ.get("SB_NOTES_TRASH_ROOT", "").strip())
     inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")
     inbox_proposal_sources = InboxProposalSources(capture, notes_store)
     vocabulary_store = VocabularyStore(approval_root)
@@ -169,6 +171,7 @@ def create_app():
     app.state.task_store = task_store
     app.state.projects_source_store = projects_store
     app.state.companion_suggestion_store = companion_store
+    app.state.notes_trash_store = notes_trash_store
     app.state.chat_knowledge_citation_store = chat_knowledge_citation_store
     app.state.planning_candidate_store = planning_candidate_store
     app.state.planning_candidate_service = planning_candidate_service
@@ -211,6 +214,7 @@ def create_app():
     app.include_router(create_journal_source_options_router(journal_source_options))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
     app.include_router(create_planning_router(planning_candidate_service))
+    app.include_router(create_notes_trash_router(auth, notes_store, notes_trash_store))
     app.include_router(create_notes_router(auth, notes_store))
     app.include_router(create_knowledge_read_router(
         auth, knowledge_read_store))
