@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-10-23 — #201/#207/#202 fail-closed 与合成集成收口
+
+- **基线与固定 PR 版本：** GitHub main `d8e58585dcb2e6b03707861b1a3233c666c466fa`（新增 #217 docs-only；运行代码基线 `e33b836c`）。#201 当前 `ea70fca9dde78793b05d5aaed7523f26bf432a72`，#207 当前 `a5560d90cf138847558395af8eab7a2d7a077465`，#202 当前 `6c650c9518870f69f830afe5c0945f871d2e1e42`，base 为 main。
+- **#201 安全增量：** `ac1c171d3c5efd3e89fbcc6b578ac354a3d145d1` 已令有效 session 缺 grant 时 `require_action()` / `set_session_action()` fail closed（403）；A 的安全增量复审 #5629186192 为 `PASS_WITH_LIMITS`。从 `0267a2ce` 到当前 `ea70fca9` 仅五个合成测试夹具显式初始化登录 grant map，A 对该 fixture-only 增量复审 #5629351990。B 报告当前 #201/#207/#209 集成候选 12 个相关 Core 模块 158 passed（#97 #6366547203）；A 未重复运行。
+- **#207 增量：** 从已复审实现 `d1cd0904` 到 `a5560d90` 仅更新 `test_daily_brief_import.py` 的合成 session fixture，没有改 `approved_import` 实现/合同；A fixture-only 复审 #5629352916。此前实现复审 `PASS_WITH_LIMITS` 保持适用。
+- **Web/Core HTTP Gate：** 在本地隔离候选上合入 main `e33b836c`、#201 `0267a2ce`、#207 `d1cd0904`、#202 `62c97ff0` 与测试修订，组合提交 `0ed4048610da2ed0419fe1e878ba4776ff9431ef`。复用 `p3_consolidated_vite_gate.py`，结果 `P3_1_5_HTTP=PASS_WITH_LIMITS`。覆盖 Home、Activity、Projects、Today/Task 创建幂等回执/更新 CAS 冲突/读回、Journal、Calendar、Brief `approved_import` 创建/重放/读回/409、Planning approve/execute/`task_created` 回执与精确重放、会话隔离、权限拒绝先于来源校验、失败恢复与进程重建后持久读回。仅临时合成 roots/Uvicorn+Vite；无真实数据/模型。
+- **测试合同修正：** Gate 原先错误地把 Task PATCH 误当作支持 Idempotency-Key 的幂等重放。实际合同使用 `expected_updated_at` CAS；同一旧版本第二次请求应返回 409。#202 提交 `950f02260e887e212bba549b0cd4627f22723747` 修正为断言首个更新 200、过期版本重放 409 和权威列表读回。随后 #202 同步 main docs-only merge，当前 HEAD 为 `6c650c95`；运行代码未变。定向 Gate 在修正后通过；`git diff --check` 与 Python 语法检查通过。
+- **未验收/边界：** #202 当前 SHA 没有新的三视口浏览器运行（`NOT RUN`）；旧 Run 只适用于其固定 HEAD，当前 `A_NEXT_READY=NOT_READY`。没有全量 Core 测试、Actions、main 合并/部署或真实数据访问。Writer/Promote 与费用门禁保持 OFF；#201 安全敏感 PR 不按普通 PR 自动合并授权处理。
+
 ## 2026-10-23 — 普通 Web PR 批量集成收口（Issue #96 授权）
 
 - **固定基线与合并顺序：** 从 main `e28db843df53c2ac48c71abbedeb3713c77d338b` 起，按 #198 → #212 → #214 → #215 使用 GitHub 正常 Ready/Merge 流程，未绕过保护或检查。对应 main merge commit：#198 `5fff974bae9f31f6149fabc7fd087b7374507489`；#212 `f58ecfd28c5fbe4c4bae37aaf94433830689daef`；#214 `db81065413e71d832f2cf6c88f9995b105dc1757`；#215 `e33b836c67095df1537ac4fb3da76adc236f4a96`。最终 main 为 `e33b836c67095df1537ac4fb3da76adc236f4a96`。

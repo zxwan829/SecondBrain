@@ -17,6 +17,7 @@ export default defineConfig({
   ],
   use: {
     ...devices['Desktop Chrome'],
+    channel: process.env.SB_E2E_BROWSER_CHANNEL === 'msedge' ? 'msedge' : undefined,
     baseURL: process.env.SB_E2E_BASE_URL ?? 'http://127.0.0.1:4173',
     serviceWorkers: 'block',
     trace: 'retain-on-failure',

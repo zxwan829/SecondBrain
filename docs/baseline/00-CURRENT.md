@@ -14,17 +14,17 @@ source: GitHub SecondBrain Monorepo
 
 | 当前对象 | 核验结果 | 下一步 |
 |---|---|---|
-| main | `e33b836c67095df1537ac4fb3da76adc236f4a96`。#198、#212、#214、#215 已按顺序正常合入 | 本状态记录对应 GitHub main 快照；不代表部署或生产状态 |
+| main | `d8e58585dcb2e6b03707861b1a3233c666c466fa`。包含 #198、#212、#214、#215 合入及 docs-only #217；应用代码基线仍为 `e33b836c` | 本状态记录对应 GitHub main 快照；不代表部署或生产状态 |
 | A 普通 Web 批次 | #198 `b9bb97da`→`5fff974b`；#212 `3cf044cf`→`f58ecfd2`；#214 `36c67fd1`→`db810654`；#215 `9d35dc70`→`e33b836c`。各项 post-merge 定向回归分别 48、5、1、2 项通过；#214/#215 相邻 Inbox 修改的组合回归通过 | 保留 PR 各自已有 typecheck/build/diff-check 证据；本批未运行 Actions。细节见 Progress-Log 2026-10-23 集成收口记录 |
-| #201 Core 撤权 | PR HEAD `0267a2ce01be0f7898ca6dd7b54a21edd339e8ec`，包含修复提交 `ac1c171d3c5efd3e89fbcc6b578ac354a3d145d1`：缺失 grant 记录现返回 403；A 对该安全增量复审 `PASS_WITH_LIMITS`（#201 review #5629186192）。B 报告 4 个定向文件 55 passed；未重复执行。 | 此结论只关闭已识别的进程内 fail-open 路径，不是整个 Core PR、安全架构或生产验收。继续核对 #201/#207/#202 固定组合及各自剩余 Gate |
-| #207/#202 集成 | #207 `d1cd0904` 保留既有 `PASS_WITH_LIMITS`；#202 `62c97ff0` 仍依赖 #201/#207。#202 较早固定 Web SHA 的 Linux Chromium 三视口证据只适用于对应浏览器/测试代码，不自动等于当前组合 Gate | #201 已识别 fail-open 增量现已修复并完成有限复审；下一步核对 #201/#207/#202 当前固定 SHA、stacked base 与净差异，再做缺失的跨层 HTTP 验证。安全敏感 Core PR 不据普通 PR 授权自动合并 |
+| #201 Core 撤权 | 当前 PR HEAD `ea70fca9dde78793b05d5aaed7523f26bf432a72`；运行时 fail-closed 修复 `ac1c171d3c5efd3e89fbcc6b578ac354a3d145d1` 未变化。A 对安全修复增量及后续五个 fixture-only 文件分别作有限复审（#5629186192、#5629351990）；B 的最新组合 Core 回归 158 passed。 | 仅表示已识别的进程内 missing-grant fail-open 已关闭；不表示整个 Core PR、安全架构或生产验收通过。PR 保持 Draft，安全敏感变更不适用普通 PR 自动合并授权 |
+| #207/#202 集成 | #207 当前 HEAD `a5560d90cf138847558395af8eab7a2d7a077465`，#201 当前 HEAD `ea70fca9…`；两者最新增量均为 fixture-only，Core 运行时代码与已组合验证树不变。#202 当前 HEAD `6c650c9518870f69f830afe5c0945f871d2e1e42`，base 已改为 main `d8e58585…`。固定本地组合树 `0ed4048610da2ed0419fe1e878ba4776ff9431ef` 的 Vite→Uvicorn Gate 为 `PASS_WITH_LIMITS`。 | 保留既有浏览器证据，但它不是当前 #202 HEAD 的三视口结果；本轮浏览器 `NOT RUN`，因此当前 `A_NEXT_READY=NOT_READY`。PR #202 保持 Draft，待当前 Web HEAD 独立复核/适用浏览器 Gate 后再评估 |
 | #216/#213 Trash | #216 `96d36dcf` 源码层原子 no-replace 与恢复复审 `PASS_WITH_LIMITS`；Linux `renameat2`、生产挂载/ACL/Synology Drive 未验证。#213 仍为设计候选 | 先冻结首发 DTO/action/排除与恢复合同；未完成相应验证前不启用可操作 Trash UI，不含 purge |
 | P4 Notes | localhost HTTP Gate 为 `PASS_WITH_LIMITS`；移动浏览器与 Obsidian 双向同步 `NOT RUN` | 有单次浏览器授权时再做合成移动验收；不得连接真实 Vault/NAS |
 | Writer/Promote 与生产 | OFF；D090/OS Gate 与生产安全门禁保持原状 | 不从普通 PR 合入推导部署或生产授权 |
 
 本批分支保护规则与 ruleset 的可读 GraphQL 查询均未返回配置项；普通 PR workflow 没有匹配本批文件的自动触发。所有 PR 均通过正常 GitHub Ready/Merge 路径处理；没有绕过检查、管理员合并、强推或新增 workflow。完整 V1 及真实生产/用户体验验收仍未完成。
 
-**唯一 NEXT：** A/B 以 #201 `0267a2ce`、#207 最新固定 SHA 与 #202 最新 Web SHA 对齐依赖，完成必要的 Core+Web localhost HTTP 组合验收；不得把本次有限的 #201 安全增量复审写成整项 Core/生产 Gate 通过。普通 Web 合并批已结束，不重复四项已通过回归。
+**唯一 NEXT：** 在 #96/#97 保留本次 Core+Web localhost HTTP 证据与 test-contract 修正；等待 #202 当前 HEAD 的独立复核及新的浏览器执行许可。不得把安全增量或 localhost 合成 Gate 写成整项 Core/生产/V1 通过。普通 Web 合并批已结束，不重复四项已通过回归。
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 

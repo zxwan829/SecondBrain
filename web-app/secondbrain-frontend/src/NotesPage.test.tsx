@@ -69,6 +69,27 @@ describe('NotesPage', () => {
     await screen.findByText('保存失败', {}, { timeout: 3000 });
     expect(editor.value).toContain('Unsaved content.');
   });
+
+  it('keeps unsaved Markdown and reports a version conflict when autosave returns 412', async () => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (init?.method === 'PUT') return new Response(JSON.stringify({ detail: 'revision changed' }), { status: 412 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: '# Keep this edit\n\nConflict content.' } });
+    expect(await screen.findByText('版本冲突', {}, { timeout: 3000 })).toBeTruthy();
+    expect(screen.getByText('文件已在其他位置修改。当前输入仍保留；请复制未保存内容后重新载入再合并。')).toBeTruthy();
+    expect(editor.value).toContain('Conflict content.');
+  });
+
   it('serializes overlapping autosaves with the newest confirmed ETag', async () => {
     const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
     const pending: ((response: Response) => void)[] = [];

@@ -1,6 +1,6 @@
 ---
 created: 2026-09-28
-updated: 2026-10-20
+updated: 2026-10-23
 status: current
 type: agent-rules
 ---
@@ -39,6 +39,12 @@ type: agent-rules
 - 各切片只运行自身必要的定向合成测试；无需逐切片重复真实浏览器、真实模型或 NAS 验收。集成负责人以最新 `main` 为基线，保留其独有修复，再协调并行切片和未合并 PR 的冲突与依赖。
 - 跨模块接口、共享 BFF/UI 和安全门禁完成集成后，按一份统一计划集中运行必要的合成回归。对已由未变代码覆盖且无共享接口影响的测试不重复执行；前置条件缺失的依赖场景应标记 BLOCKED，不得伪报 PASS。
 - 集成合成验证完成后，如下一步涉及 NAS、生产配置/权限、真实模型、真实个人数据出站或用户浏览器验收，应停止并取得与该操作相匹配的明确授权。`main` PR 合并与生产操作仍遵循各自审批流程。
+
+## Web 浏览器自动化环境
+
+- Web Playwright 三视口端到端验收的正式运行环境为 GitHub-hosted Ubuntu 24.04 + Playwright Chromium，通过 `.github/workflows/a-web-playwright-synthetic.yml` 执行。该 workflow 为手动触发；触发前须固定目标 SHA 并取得对应运行授权，执行时 checkout `github.sha` 并验证实际 `HEAD` 完全一致。
+- macOS 工作站只运行组件/DOM 测试、Core + Vite localhost HTTP 合成联调、typecheck 与 build；不在 macOS 上启动 Playwright 浏览器，不继续排查已知 Edge SIGABRT/Chromium SIGTRAP。不得借用个人浏览器 Profile 或修改系统权限来绕过。
+- 本地组件和 HTTP 测试通过不替代 Linux 浏览器验收；Linux 浏览器 Gate 通过也不替代生产、真实数据或用户验收。报告必须区分浏览器未启动、视口旅程未运行和实际页面断言失败。
 
 ## SecondBrain 数据与安全边界
 

@@ -57,13 +57,29 @@ FAILURE_JUNIT_TESTCASE_VIEWPORTS = {
     ("inbox-browser.spec.ts", "explicit Inbox capture, retry, conflict and source protection at mobile-390x844"): "mobile-390x844",
 }
 FAILURE_DIAGNOSTIC_STAGES = {
-    "login", "session", "first_submit", "retry", "conflict",
+    "test_setup", "login", "session", "first_submit", "retry", "conflict",
     "ordinary_chat", "source_protection", "daily_brief_read", "daily_brief_sources",
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
-    "daily_brief_readback", "viewport_layout",
+    "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
+    "agent_health", "today", "journal", "calendar", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
-MAX_FAILURE_DIAGNOSTIC_BYTES = 512
+FAILURE_DIAGNOSTIC_ASSERTIONS = {
+    "test_setup", "home_to_projects", "projects_heading", "home_after_projects",
+    "home_to_activity", "activity_heading", "activity_get_response",
+    "activity_get_status_200", "home_after_activity", "home_after_revocation",
+    "agent_health_heading", "home_after_agent_health", "today_heading", "home_after_today",
+    "journal_heading", "home_after_journal", "calendar_heading", "layout_no_horizontal_overflow",
+    "projects_navigation", "projects_api_response", "activity_navigation",
+    "agent_health_navigation", "agent_health_api_response", "today_navigation",
+    "today_api_response", "journal_navigation", "journal_api_response",
+    "calendar_navigation", "calendar_api_response", "home_api_response",
+    "layout_home", "layout_projects", "layout_activity", "layout_agent_health",
+    "layout_today", "layout_journal", "layout_calendar",
+    "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
+    "calendar_api_requests",
+}
+MAX_FAILURE_DIAGNOSTIC_BYTES = 1024
 MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_SCREENSHOT_WIDTH = 2048
@@ -197,28 +213,36 @@ def _sanitize_run_summary(path: Path) -> None:
                     encoding="utf-8")
 
 
-def _validate_failure_diagnostics(value) -> list[dict[str, str]]:
+def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
     if not isinstance(value, list) or len(value) > MAX_FAILURE_SCREENSHOTS:
         raise RuntimeError("failure diagnostic schema rejected; upload withheld")
     validated = []
     seen_viewports = set()
     for entry in value:
-        if not isinstance(entry, dict) or set(entry) != {"viewport", "stage", "code"}:
+        if not isinstance(entry, dict) or set(entry) != {
+                "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}:
             raise RuntimeError("failure diagnostic fields rejected; upload withheld")
         viewport = entry["viewport"]
         stage = entry["stage"]
         code = entry["code"]
+        assertion_id = entry["assertion_id"]
+        activity_statuses = entry["activity_get_statuses"]
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
+                or not isinstance(assertion_id, str) or assertion_id not in FAILURE_DIAGNOSTIC_ASSERTIONS
+                or not isinstance(activity_statuses, list) or len(activity_statuses) > 4
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in activity_statuses)
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
         seen_viewports.add(viewport)
-        validated.append({"viewport": viewport, "stage": stage, "code": code})
+        validated.append({"viewport": viewport, "stage": stage, "code": code,
+                          "assertion_id": assertion_id, "activity_get_statuses": activity_statuses})
     return validated
 
 
-def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, str]]:
+def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
     junit_path = raw_root / "junit.xml"
     summary_path = raw_root / "run-summary.json"
     if junit_path.is_symlink() or summary_path.is_symlink():
@@ -296,16 +320,27 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, str]]:
                 raw = json.loads(source.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
                 raise RuntimeError("failure diagnostic JSON rejected; upload withheld") from error
-            if (not isinstance(raw, dict) or set(raw) != {"schema_version", "viewport", "stage", "code"}
-                    or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 1
+            if (not isinstance(raw, dict) or set(raw) != {
+                    "schema_version", "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
+                    or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 2
                     or raw.get("viewport") != viewport):
                 raise RuntimeError("failure diagnostic source schema rejected; upload withheld")
-            diagnostics.append({"viewport": viewport, "stage": raw.get("stage"), "code": raw.get("code")})
+            diagnostics.append({
+                "viewport": viewport, "stage": raw.get("stage"), "code": raw.get("code"),
+                "assertion_id": raw.get("assertion_id"),
+                "activity_get_statuses": raw.get("activity_get_statuses"),
+            })
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
-    if failed_viewport_set != diagnostic_viewports:
+    if not diagnostic_viewports.issubset(failed_viewport_set):
         raise RuntimeError("failure diagnostics do not match failed testcase viewports; upload withheld")
+    # JUnit identifies which allowlisted viewport failed, but not why. A
+    # missing per-viewport summary is not evidence of browser/test setup
+    # failure; withhold the report unless every failed viewport has an
+    # explicit, validated diagnostic rather than inventing a stage.
+    if diagnostic_viewports != failed_viewport_set:
+        raise RuntimeError("failure diagnostics do not cover every failed testcase viewport; upload withheld")
     viewport_order = {name: index for index, name in enumerate(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values())}
     diagnostics.sort(key=lambda entry: viewport_order[entry["viewport"]])
     return diagnostics
