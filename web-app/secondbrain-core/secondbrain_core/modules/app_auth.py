@@ -28,7 +28,7 @@ class AppSessionAuth:
         "planning.read", "planning.write",
     })
     SESSION_MANAGEABLE_READ_ACTIONS = frozenset({
-        "journal.read", "task.read", "projects.read", "daily_brief.read",
+        "journal.read", "task.read", "projects.read", "daily_brief.read", "inbox.read",
         "personal_memory.read",
     })
 
