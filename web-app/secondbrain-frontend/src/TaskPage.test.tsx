@@ -309,6 +309,47 @@ describe('TaskPage', () => {
     expect(screen.getAllByRole('heading', { name: '离开页面时创建' })).toHaveLength(1);
   });
 
+  it('keeps a newer restored attempt when an older unmounted request succeeds', async () => {
+    let finishFirst!: (value: ReturnType<typeof ok>) => void;
+    let finishSecond!: (value: { ok: boolean; status: number; json: () => Promise<unknown> }) => void;
+    const firstPost = new Promise<ReturnType<typeof ok>>((resolve) => { finishFirst = resolve; });
+    const secondPost = new Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>((resolve) => { finishSecond = resolve; });
+    const created = { ...task, id: '9'.repeat(32), title: '并发离页恢复' };
+    const keys: string[] = [];
+    let postNumber = 0;
+    const request = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/tasks' && init?.method === 'POST') {
+        keys.push(new Headers(init.headers).get('Idempotency-Key') ?? '');
+        postNumber += 1;
+        return postNumber === 1 ? firstPost : secondPost;
+      }
+      return Promise.resolve(ok({ tasks: [] }));
+    });
+    vi.stubGlobal('fetch', request);
+    const first = render(<TaskPage locale="zh-CN" />);
+    await screen.findByText('此视图中暂无待办。');
+    fireEvent.click(screen.getByRole('button', { name: '新建待办' }));
+    fireEvent.change(screen.getByLabelText('待办内容'), { target: { value: '并发离页恢复' } });
+    fireEvent.submit(screen.getByLabelText('待办内容').closest('form')!);
+    await waitFor(() => expect(postNumber).toBe(1));
+
+    first.unmount();
+    const second = render(<TaskPage locale="zh-CN" />);
+    expect(await screen.findByText('上次创建结果尚未确认；可用相同内容安全重试，或取消后重新创建。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '创建待办' }));
+    await waitFor(() => expect(postNumber).toBe(2));
+    expect(keys[1]).toBe(keys[0]);
+
+    await act(async () => { finishFirst(ok({ status: 'created', task: created })); await firstPost; });
+    await act(async () => { finishSecond({ ok: false, status: 500, json: async () => ({ detail: 'response lost after commit' }) }); await secondPost; });
+    expect((await screen.findByRole('alert')).textContent).toContain('response lost after commit');
+    second.unmount();
+
+    render(<TaskPage locale="zh-CN" />);
+    expect(await screen.findByText('上次创建结果尚未确认；可用相同内容安全重试，或取消后重新创建。')).toBeTruthy();
+    expect((screen.getByLabelText('待办内容') as HTMLInputElement).value).toBe('并发离页恢复');
+  });
+
   it('keeps a verified create visible when the following list response is stale', async () => {
     const created = { ...task, id: '2'.repeat(32), title: '列表快照落后的任务' };
     let listReads = 0;

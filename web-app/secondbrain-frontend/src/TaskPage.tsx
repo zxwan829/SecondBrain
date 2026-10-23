@@ -183,8 +183,8 @@ export function TaskPage({ locale }: { locale: Locale }) {
         throw new Error(en ? 'The save response could not be verified. Your task is still here; retry safely.' : '无法核实保存回执，内容仍保留；可安全重试。');
       }
       const savedTask = body.task;
-      clearPendingCreate(key);
       if (!isCurrent()) return;
+      clearPendingCreate(key);
       confirmedCreates.current.set(savedTask.id, savedTask);
       createAttempt.current = null;
       setRestoredAttempt(false);
