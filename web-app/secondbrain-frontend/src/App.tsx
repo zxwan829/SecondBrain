@@ -73,6 +73,21 @@ type CaptureSummary = {
 };
 type InboxScope = 'capture' | 'drafts' | null;
 
+function organizerRunMessage(value: unknown, locale: Locale): string {
+  const en = locale === 'en';
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return en ? 'Organizer result could not be verified. Check its status before running again.' : '整理结果暂无法核验。请先查看 Organizer 状态，不要立即重复执行。';
+  }
+  const result = value as { status?: unknown; draft_count?: unknown };
+  if (result.status === 'no_new_messages') return en ? 'No new messages to organize.' : '没有新增对话，无需整理。';
+  if (result.status === 'already_running') return en ? 'An organization job is already running.' : '已有整理任务正在运行。';
+  if (result.status === 'no_candidates') return en ? 'Organization finished; no Review drafts were produced.' : '整理完成，没有可生成的 Review 草稿。';
+  if (result.status === 'completed' && Number.isInteger(result.draft_count) && (result.draft_count as number) >= 0) {
+    return en ? `Organization finished; ${result.draft_count} drafts added.` : `整理完成，新增 ${result.draft_count} 条 Review 草稿。`;
+  }
+  return en ? 'Organizer result could not be verified. Check its status before running again.' : '整理结果暂无法核验。请先查看 Organizer 状态，不要立即重复执行。';
+}
+
 function capturedAtMillis(value?: string | null): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -544,7 +559,9 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         </section>
 
         <section className="primary-grid" aria-label={t.today}>
-          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} onCreateTask={() => navigate('today')} />
+          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} onCreateTask={() => {
+            pushAppPath('/today?create=1'); setPage('today'); setRouteRevision((value) => value + 1); setMenuOpen(false);
+          }} />
           <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} onOpen={() => navigate('review')} />
         </section>
 
@@ -678,6 +695,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
   const detailRevision = useRef(0);
   const selectedCaptureId = useRef<string | null>(null);
   const summaryRevision = useRef(0);
+  const organizerStatusRevision = useRef(0);
   const organizerController = useRef<AbortController | null>(null);
 
   const loadSummary = useCallback(async (signal?: AbortSignal) => {
@@ -715,6 +733,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
       selectedCaptureId.current = null;
       detailController.current?.abort();
       organizerController.current?.abort();
+      organizerStatusRevision.current += 1;
       window.clearInterval(timer);
       window.removeEventListener('sb-inbox-refresh', refresh);
     };
@@ -723,15 +742,16 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
   const refreshOrganizerStatus = useCallback(async () => {
     const signal = organizerController.current?.signal;
     if (!signal || signal.aborted) return;
+    const revision = ++organizerStatusRevision.current;
     try {
       const response = await fetch('/api/automation/organize/status', { credentials: 'same-origin', signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const value = await response.json() as { blocked_reason?: unknown; execution_available?: unknown };
-      if (signal.aborted) return;
+      if (signal.aborted || revision !== organizerStatusRevision.current) return;
       setOrganizeReason(typeof value.blocked_reason === 'string' ? value.blocked_reason : '');
       setOrganizeAvailable(value.execution_available === true);
     } catch (cause) {
-      if (!signal.aborted) {
+      if (!signal.aborted && revision === organizerStatusRevision.current) {
         setOrganizeAvailable(false);
         setOrganizeReason(cause instanceof Error ? cause.message : (en ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
       }
@@ -765,9 +785,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
       const response = await fetch('/api/automation/organize/run', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error('organizer_run_failed');
-      const label = value.status === 'no_new_messages' ? (en ? 'No new messages to organize.' : '没有新增对话，无需整理。')
-        : value.status === 'already_running' ? (en ? 'An organization job is already running.' : '已有整理任务正在运行。')
-          : (en ? `Organization finished; ${Number(value.draft_count ?? 0)} drafts added.` : `整理完成，新增 ${Number(value.draft_count ?? 0)} 条 Review 草稿。`);
+      const label = organizerRunMessage(value, locale);
       setOrganizeMessage(label);
       window.dispatchEvent(new Event('sb-inbox-refresh'));
     } catch {
@@ -961,9 +979,7 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
       const response = await fetch('/api/automation/organize/run', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error('organizer_run_failed');
-      const label = value.status === 'no_new_messages' ? (text ? 'No new messages to organize.' : '没有新增对话，无需整理。')
-        : value.status === 'already_running' ? (text ? 'An organization job is already running.' : '已有整理任务正在运行。')
-          : (text ? `Organization finished; ${Number(value.draft_count ?? 0)} drafts added.` : `整理完成，新增 ${Number(value.draft_count ?? 0)} 条 Review 草稿。`);
+      const label = organizerRunMessage(value, locale);
       setOrganizeMessage(label); window.dispatchEvent(new Event('sb-inbox-refresh'));
     } catch {
       setOrganizeMessage(text ? 'Organization could not be completed; check its status and try again.' : '整理未能完成，请查看运行状态后再试。');
