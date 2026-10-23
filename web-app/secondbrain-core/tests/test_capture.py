@@ -2,6 +2,7 @@ import io
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -246,24 +247,22 @@ class CaptureServiceTests(unittest.TestCase):
         item = self.service.accept_file("readable.pdf", original)
         self.service.process(item, original)
         complete = self.service.get(item["capture_id"])
+        if not sys.platform.startswith("linux"):
+            self.assertEqual(complete["status"], "partial_success")
+            self.assertEqual(complete["error"]["code"], "processing_failed")
+            self.assertIn("resource limits", complete["error"]["message"])
+            self.assertIsNone(complete["review_path"])
+            self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), original)
+            return
         self.assertEqual(complete["status"], "completed")
         self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), original)
         self.assertIn("hello PDF capture", (self.review / complete["review_path"]).read_text())
 
     def test_pdf_metadata_title_does_not_replace_unicode_upload_filename(self):
-        class Page:
-            def extract_text(self, *, visitor_text):
-                visitor_text("Readable PDF body", None, None, None, None)
-                return "Readable PDF body"
-        class Metadata:
-            title = "(anonymous)"
-        class Reader:
-            is_encrypted = False
-            pages = [Page()]
-            metadata = Metadata()
-
         data = b"%PDF-1.4\nfixture"
-        with patch("secondbrain_core.modules.capture.PdfReader", return_value=Reader()):
+        with patch("secondbrain_core.modules.capture._extract_pdf_text_in_limited_worker", return_value={
+                "status": "ok", "page_count": 1, "text": "Readable PDF body", "truncated": False,
+                "page_sizes": [], "metadata_title": "(anonymous)"}):
             item = self.service.accept_file("C:\\fakepath\\会议纪要.pdf", data)
             self.service.process(item, data)
         complete = self.service.get(item["capture_id"])

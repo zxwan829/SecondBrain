@@ -1,8 +1,10 @@
 import hashlib
 import io
 import json
+import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -88,6 +90,14 @@ class MultimodalCaptureTests(unittest.TestCase):
         original_hash = hashlib.sha256((self.raw / item["raw_path"]).read_bytes()).hexdigest()
         service.process(item, raw)
         done = service.get(item["capture_id"])
+        if not sys.platform.startswith("linux"):
+            self.assertEqual(done["status"], "partial_success")
+            self.assertEqual(done["error"]["code"], "processing_failed")
+            self.assertIn("resource limits", done["error"]["message"])
+            self.assertIsNone(done["review_path"])
+            self.assertEqual(hashlib.sha256((self.raw / done["raw_path"]).read_bytes()).hexdigest(), original_hash)
+            self.assertEqual(processors.pdf_calls, 0)
+            return
         self.assertEqual(done["status"], "completed")
         self.assertEqual(processors.pdf_calls, 1)
         self.assertEqual(done["processor"]["kind"], "pdf_ocr")
@@ -95,27 +105,17 @@ class MultimodalCaptureTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256((self.raw / item["raw_path"]).read_bytes()).hexdigest(), original_hash)
 
     def test_pdf_text_budget_stops_extraction_and_reports_partial_with_raw_preserved(self):
-        class FakePage:
-            def __init__(self, chunks):
-                self.chunks = chunks
-                self.calls = 0
-
-            def extract_text(self, *, visitor_text):
-                self.calls += 1
-                for chunk in self.chunks:
-                    visitor_text(chunk, None, None, None, None)
-                return ""
-
-        first_page = FakePage(["A" * 600_000, "B" * 500_000])
-        later_page = FakePage(["must not be reached"])
-        reader = Mock(is_encrypted=False, pages=[first_page, later_page], metadata=None)
         processors = Mock()
         service = CaptureService(self.raw, self.review, self.state, processors)
         raw = b"%PDF-1.7\nsynthetic bounded extraction fixture"
         item = service.accept_file("large-readable.pdf", raw)
         raw_digest = hashlib.sha256((self.raw / item["raw_path"]).read_bytes()).hexdigest()
+        bounded_text = "A" * 600_000 + "\n\n" + "B" * 399_998
+        parsed = {"status": "ok", "page_count": 2, "text": bounded_text, "truncated": True,
+                  "page_sizes": [], "metadata_title": None}
 
-        with patch("secondbrain_core.modules.capture.PdfReader", return_value=reader):
+        with patch("secondbrain_core.modules.capture._extract_pdf_text_in_limited_worker",
+                   return_value=parsed) as worker:
             service.process(item, raw)
 
         result = service.get(item["capture_id"])
@@ -124,17 +124,17 @@ class MultimodalCaptureTests(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "processing_failed")
         self.assertIn("text extraction reached the 1,000,000-character limit", result["error"]["message"])
         self.assertIn("The original PDF is retained; extracted text is incomplete.", review)
-        self.assertTrue(review.endswith("A" * 600_000 + "B" * 400_000 +
+        self.assertTrue(review.endswith(bounded_text +
                                         "\n\n[PDF text extraction stopped at the 1,000,000-character "
                                         "safety limit. The original PDF is retained; extracted text is incomplete.]\n"))
-        self.assertEqual(first_page.calls, 1)
-        self.assertEqual(later_page.calls, 0)
+        worker.assert_called_once_with(raw)
         self.assertEqual(hashlib.sha256((self.raw / result["raw_path"]).read_bytes()).hexdigest(), raw_digest)
         self.assertEqual(len(list(self.review.glob("*.md"))), 1)
         processors.ocr_pdf.assert_not_called()
         first_review_path = result["review_path"]
         first_review_digest = hashlib.sha256(review.encode("utf-8")).hexdigest()
-        with patch("secondbrain_core.modules.capture.PdfReader", return_value=reader):
+        with patch("secondbrain_core.modules.capture._extract_pdf_text_in_limited_worker",
+                   return_value=parsed):
             retried = service.retry(item["capture_id"])
         retry_review = (self.review / retried["review_path"]).read_bytes()
         self.assertEqual(retried["status"], "partial_success")
@@ -169,6 +169,44 @@ class MultimodalCaptureTests(unittest.TestCase):
         self.assertEqual(len(extracted), 1_000_000)
         self.assertEqual(extracted[:600_000], "A" * 600_000)
         self.assertEqual(extracted[600_000:], "\n\n" + "B" * 399_998)
+
+    def test_single_compressed_content_stream_cannot_exhaust_pdf_worker_memory(self):
+        compressor = zlib.compressobj(level=1)
+        compressed_parts = []
+        block = b" " * (4 * 1024 * 1024)
+        for _ in range(160):
+            compressed_parts.append(compressor.compress(block))
+        compressed_parts.append(compressor.flush())
+        stream = b"".join(compressed_parts)
+        objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
+                   b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                   b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
+                   b"<< /Length " + str(len(stream)).encode() +
+                   b" /Filter /FlateDecode >>\nstream\n" + stream + b"\nendstream"]
+        pdf = bytearray(b"%PDF-1.4\n")
+        offsets = [0]
+        for index, obj in enumerate(objects, 1):
+            offsets.append(len(pdf))
+            pdf.extend(f"{index} 0 obj\n".encode() + obj + b"\nendobj\n")
+        xref = len(pdf)
+        pdf.extend(b"xref\n0 5\n0000000000 65535 f \n")
+        for offset in offsets[1:]:
+            pdf.extend(f"{offset:010d} 00000 n \n".encode())
+        pdf.extend(f"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
+        raw = bytes(pdf)
+        self.assertLess(len(raw), 5 * 1024 * 1024)
+
+        service = CaptureService(self.raw, self.review, self.state, ProcessorStub())
+        item = service.accept_file("synthetic-expansion.pdf", raw)
+        raw_digest = hashlib.sha256(raw).hexdigest()
+        service.process(item, raw)
+        result = service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        self.assertIn("resource limits", result["error"]["message"])
+        self.assertIsNone(result["review_path"])
+        self.assertEqual(hashlib.sha256((self.raw / result["raw_path"]).read_bytes()).hexdigest(), raw_digest)
+        self.assertEqual(len(list(self.review.glob("*.md"))), 0)
 
     def test_image_ocr_review_separates_text_and_ai_description_unavailable(self):
         image = io.BytesIO()
@@ -243,10 +281,9 @@ class MultimodalCaptureTests(unittest.TestCase):
         processors = MultimodalCaptureProcessors(tesseract="/usr/bin/tesseract",
                                                  pdftoppm="/usr/bin/pdftoppm")
         service = CaptureService(self.raw, self.review, self.state, processors)
-        with patch("secondbrain_core.modules.capture.PdfReader") as reader_factory:
-            reader = Mock(is_encrypted=False, pages=[Mock(extract_text=lambda: "")] * 11, metadata=None)
-            reader_factory.return_value = reader
-            # A syntactically valid PDF Raw is sufficient for the patched reader.
+        with patch("secondbrain_core.modules.capture._extract_pdf_text_in_limited_worker",
+                   return_value={"status": "page_limit", "page_count": 11}):
+            # A syntactically valid Raw is sufficient for the patched worker result.
             item = service.accept_file("large-scan.pdf", b"%PDF-1.7\nfixture")
             service.process(item, b"%PDF-1.7\nfixture")
         result = service.get(item["capture_id"])

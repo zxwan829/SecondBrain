@@ -12,6 +12,8 @@ import os
 import re
 import socket
 import stat
+import subprocess
+import sys
 import threading
 import unicodedata
 import uuid
@@ -21,7 +23,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, UploadFile
-from pypdf import PdfReader
+from .pdf_text_extraction import extract_pdf_text_bounded as _extract_pdf_text_bounded
 from .channel_identity import authenticated_web_identity
 
 
@@ -35,6 +37,10 @@ MAX_WEB_BYTES = 5 * 1024 * 1024
 MAX_WEB_EXTRACT_CHARS = 500_000
 MAX_WEB_EXTRACT_PARTS = 20_000
 MAX_PDF_EXTRACTED_TEXT_CHARS = 1_000_000
+PDF_TEXT_WORKER_TIMEOUT_SECONDS = 15
+PDF_TEXT_WORKER_OUTPUT_BYTES = 8 * 1024 * 1024
+PDF_TEXT_WORKER_WAIT_SECONDS = 2
+_PDF_TEXT_WORKER_SLOT = threading.BoundedSemaphore(1)
 MAX_REDIRECTS = 4
 ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg",
                     ".webp", ".gif", ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
@@ -59,6 +65,54 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _extract_pdf_text_in_limited_worker(raw):
+    worker = Path(__file__).with_name("pdf_text_worker.py")
+    core_root = Path(__file__).resolve().parents[2]
+    if not _PDF_TEXT_WORKER_SLOT.acquire(timeout=PDF_TEXT_WORKER_WAIT_SECONDS):
+        raise ValueError("PDF processing capacity is busy; the original upload was retained")
+    try:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(worker)], input=raw, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                timeout=PDF_TEXT_WORKER_TIMEOUT_SECONDS, check=False, close_fds=True,
+                start_new_session=True,
+                cwd=core_root,
+                env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"},
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("PDF parsing exceeded its safe processing time limit") from exc
+    finally:
+        _PDF_TEXT_WORKER_SLOT.release()
+    if result.returncode != 0 or len(result.stdout) > PDF_TEXT_WORKER_OUTPUT_BYTES:
+        raise ValueError("PDF parsing exceeded its safe resource limits")
+    try:
+        value = json.loads(result.stdout.decode("utf-8"))
+    except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("PDF parsing returned an invalid bounded result") from exc
+    if not isinstance(value, dict) or not isinstance(value.get("status"), str):
+        raise ValueError("PDF parsing returned an invalid bounded result")
+    status = value["status"]
+    if status == "encrypted":
+        raise ValueError("Encrypted PDFs are not supported")
+    if status == "page_limit":
+        raise ValueError("PDF exceeds the 500 page limit")
+    if status != "ok":
+        raise ValueError("PDF parsing exceeded its safe resource limits")
+    if (set(value) != {"status", "page_count", "text", "truncated", "page_sizes", "metadata_title"}
+            or type(value.get("page_count")) is not int or not 0 <= value["page_count"] <= 500
+            or not isinstance(value.get("text"), str) or len(value["text"]) > MAX_PDF_EXTRACTED_TEXT_CHARS
+            or type(value.get("truncated")) is not bool or not isinstance(value.get("page_sizes"), list)
+            or len(value["page_sizes"]) not in {0, value["page_count"]}
+            or (value.get("metadata_title") is not None and not isinstance(value["metadata_title"], str))):
+        raise ValueError("PDF parsing returned an invalid bounded result")
+    for size in value["page_sizes"]:
+        if (not isinstance(size, list) or len(size) != 2
+                or any(type(dimension) not in {float, int} or not 0 < dimension < 1_000_000
+                       for dimension in size)):
+            raise ValueError("PDF page dimensions could not be verified")
+    return value
 
 
 def _safe_name(name, suffix):
@@ -951,19 +1005,14 @@ class CaptureService:
                     }
                 state["derived_source_url"] = final_url
             elif input_type == "pdf":
-                reader = PdfReader(__import__("io").BytesIO(raw), strict=True)
-                if reader.is_encrypted:
-                    raise ValueError("Encrypted PDFs are not supported")
-                if len(reader.pages) > 500:
-                    raise ValueError("PDF exceeds the 500 page limit")
-                content, truncated = _extract_pdf_text_bounded(reader)
+                parsed = _extract_pdf_text_in_limited_worker(raw)
+                content, truncated = parsed["text"], parsed["truncated"]
                 if not content:
-                    page_sizes = [(page.mediabox.width, page.mediabox.height) for page in reader.pages]
-                    content = self.processors.ocr_pdf(raw, len(reader.pages), page_sizes)
+                    content = self.processors.ocr_pdf(raw, parsed["page_count"], parsed["page_sizes"])
                     state["processor"] = {"name": "tesseract", "kind": "pdf_ocr",
-                                          "pages": len(reader.pages), "languages": "chi_sim+eng"}
-                if reader.metadata and reader.metadata.title:
-                    document_title = str(reader.metadata.title).strip()
+                                          "pages": parsed["page_count"], "languages": "chi_sim+eng"}
+                if parsed["metadata_title"]:
+                    document_title = parsed["metadata_title"]
                     if document_title:
                         state["document_title"] = document_title[:300]
                 if truncated:
@@ -1127,43 +1176,6 @@ class CaptureService:
 
 class ProcessorUnavailable(Exception):
     pass
-
-
-class _PDFTextLimitReached(Exception):
-    """Internal control flow used to stop pypdf once the output budget is full."""
-
-
-def _extract_pdf_text_bounded(reader):
-    """Collect PDF text incrementally and stop parsing when the output budget is exceeded."""
-    chunks = []
-    collected = 0
-    truncated = False
-
-    for page_number, page in enumerate(reader.pages):
-        def collect(text, *_context):
-            nonlocal collected, truncated
-            if not isinstance(text, str):
-                raise ValueError("PDF text extractor returned an invalid chunk")
-            if not text:
-                return
-            remaining = MAX_PDF_EXTRACTED_TEXT_CHARS - collected
-            if len(text) > remaining:
-                if remaining:
-                    chunks.append(text[:remaining])
-                    collected += remaining
-                truncated = True
-                raise _PDFTextLimitReached
-            chunks.append(text)
-            collected += len(text)
-
-        try:
-            if page_number:
-                collect("\n\n")
-            page.extract_text(visitor_text=collect)
-        except _PDFTextLimitReached:
-            break
-
-    return "".join(chunks).strip(), truncated
 
 
 def create_capture_router(auth, service):
