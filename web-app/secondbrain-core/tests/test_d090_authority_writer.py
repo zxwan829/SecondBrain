@@ -228,6 +228,44 @@ def test_wrong_gid_is_rejected_before_reading_request_body(monkeypatch):
     assert not conn.body_read
 
 
+def test_writer_binds_peer_to_configured_authority_before_body_and_cannot_be_overridden(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(d090.socket, "SO_PEERCRED", 123, raising=False)
+    root = tmp_path / "knowledge"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    signer = d090.Ed25519GrantSigner("test-key-1", Ed25519PrivateKey.generate())
+    role_ids = d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103)
+    writer = d090.StrictCreateOnlyWriter(
+        str(root), signer.public_key, signer.key_id, {"target-1": "approved.md"},
+        role_ids, allow_synthetic_identities=True,
+    )
+
+    class Connection:
+        body_read = False
+
+        def getsockopt(self, *_args):
+            # Synthetic non-Authority peer; SO_PEERCRED is mocked, not OS proof.
+            return struct.pack("3i", 1, 3999, 3999)
+
+        def recvmsg(self, *_args):
+            self.body_read = True
+            raise AssertionError("Writer read request body from non-Authority peer")
+
+    conn = Connection()
+    try:
+        with pytest.raises(d090.D090Rejected, match="authority_peer_rejected"):
+            writer.handle_connection(conn)
+        assert not conn.body_read
+
+        # There is no per-call UID/GID override in the handler API.
+        with pytest.raises(TypeError):
+            writer.handle_connection(conn, 3999, 3999)
+        assert not conn.body_read
+    finally:
+        writer.close()
+
+
 def test_ipc_ancillary_file_descriptors_are_rejected():
     read_fd, write_fd = os.pipe()
     passed_fd = os.dup(write_fd)

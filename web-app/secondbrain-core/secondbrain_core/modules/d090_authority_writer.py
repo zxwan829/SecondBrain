@@ -437,10 +437,11 @@ class StrictCreateOnlyWriter:
                 os.close(fd)
         return {"operation_id": grant["operation_id"], "content_sha256": digest, "status": "published"}
 
-    def handle_connection(self, conn: socket.socket, expected_authority_uid: int,
-                          expected_authority_gid: int) -> None:
-        """Handle one socket request after checking peer credentials, before body IO."""
-        authority_peer_before_body(conn, expected_authority_uid, expected_authority_gid)
+    def handle_connection(self, conn: socket.socket) -> None:
+        """Handle one request only from the configured Authority, before body IO."""
+        authority_peer_before_body(
+            conn, self.role_ids.authority_uid, self.role_ids.authority_gid,
+        )
         request = receive_bounded_json_without_fds(conn)
         if set(request) != {"grant", "content_base64"} or not isinstance(request.get("grant"), dict):
             raise D090Rejected("ipc_invalid_request")
