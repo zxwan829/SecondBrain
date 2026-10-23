@@ -1,13 +1,13 @@
 """Bounded Notes Trash candidate; all filesystem changes stay under explicit roots."""
+import ctypes
+import errno
 import fcntl
 import hashlib
 import json
 import os
 import re
-import secrets
 import stat
-import threading
-import time
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -24,7 +24,7 @@ _EXCLUDED = {"drafts", "inbox", "00-inbox", "00_inbox", "capture", "raw", "revie
              "memory", "personal-memory", "journal", "private", "attachments", ".obsidian", ".trash"}
 _MANIFEST_FIELDS = {"schema", "trash_id", "operation_key_sha256", "collection", "relative_path",
                     "sha256", "size_bytes", "trashed_at", "state", "device", "inode",
-                    "restored_at", "purged_at", "purge_challenge_sha256", "purge_session_sha256"}
+                    "restored_at", "recovery_reason", "recovery_sha256"}
 _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 
 
@@ -91,6 +91,27 @@ def _read_at(directory_fd, name, limit, *, max_links=1):
         os.close(fd)
 
 
+def _rename_noreplace(source_fd, source_name, target_fd, target_name):
+    """Atomically move one name without replacing the destination name."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith("linux"):
+        function_name, flags = "renameat2", 1  # RENAME_NOREPLACE
+    elif sys.platform == "darwin":
+        function_name, flags = "renameatx_np", 4  # RENAME_EXCL
+    else:
+        raise OSError(errno.ENOTSUP, "atomic no-replace rename is unavailable")
+    function = getattr(libc, function_name, None)
+    if function is None:
+        raise OSError(errno.ENOTSUP, "atomic no-replace rename is unavailable")
+    function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    result = function(source_fd, os.fsencode(source_name), target_fd,
+                      os.fsencode(target_name), flags)
+    if result != 0:
+        error = ctypes.get_errno() or errno.EIO
+        raise OSError(error, os.strerror(error), target_name)
+
+
 class NotesTrashStore:
     """Synthetic-ready same-filesystem move/restore store; never scans Notes roots."""
 
@@ -101,8 +122,6 @@ class NotesTrashStore:
     def __init__(self, notes_store, trash_root):
         self.notes_store = notes_store
         self.trash_root = trash_root if isinstance(trash_root, str) and trash_root else ""
-        self._challenges = {}
-        self._lock = threading.RLock()
         if self.trash_root:
             path = Path(self.trash_root)
             if (not path.is_absolute() or path.name != "secondbrain"
@@ -198,18 +217,18 @@ class NotesTrashStore:
     def _valid_manifest(value, trash_id):
         return (isinstance(value, dict) and set(value) == _MANIFEST_FIELDS
                 and value.get("schema") == 1 and value.get("trash_id") == trash_id
-                and value.get("state") in {"pending", "trashed", "restored", "purge_pending", "purged"}
+                and value.get("state") in {"pending", "trashed", "restored", "recovery_required"}
                 and isinstance(value.get("collection"), str)
                 and isinstance(value.get("relative_path"), str)
                 and isinstance(value.get("sha256"), str) and _SHA256.fullmatch(value["sha256"])
                 and type(value.get("size_bytes")) is int and 0 <= value["size_bytes"] <= MAX_MARKDOWN_BYTES
                 and type(value.get("device")) is int and type(value.get("inode")) is int
-                and (value.get("purge_challenge_sha256") is None
-                     or (isinstance(value.get("purge_challenge_sha256"), str)
-                         and _SHA256.fullmatch(value["purge_challenge_sha256"]) is not None))
-                and (value.get("purge_session_sha256") is None
-                     or (isinstance(value.get("purge_session_sha256"), str)
-                         and _SHA256.fullmatch(value["purge_session_sha256"]) is not None)))
+                and (value.get("recovery_reason") is None
+                     or value.get("recovery_reason") in {"move_identity_mismatch", "source_name_conflict",
+                                                          "restore_identity_mismatch", "trash_name_missing"})
+                and (value.get("recovery_sha256") is None
+                     or (isinstance(value.get("recovery_sha256"), str)
+                         and _SHA256.fullmatch(value["recovery_sha256"]) is not None)))
 
     def _load_manifest(self, item_fd, trash_id):
         try:
@@ -277,7 +296,49 @@ class NotesTrashStore:
         return {"trash_id": manifest["trash_id"], "collection": manifest["collection"],
                 "path": manifest["relative_path"], "sha256": manifest["sha256"],
                 "size_bytes": manifest["size_bytes"], "trashed_at": manifest["trashed_at"],
-                "status": status or manifest["state"], "duplicate": duplicate}
+                "status": status or manifest["state"], "duplicate": duplicate,
+                "recovery_reason": manifest["recovery_reason"]}
+
+    def _mark_recovery_required(self, item_fd, manifest, reason, observed_sha256=None):
+        manifest.update(state="recovery_required", recovery_reason=reason,
+                        recovery_sha256=observed_sha256)
+        self._write_manifest(item_fd, manifest)
+        self._append_event(item_fd, {"event": "recovery_required", "trash_id": manifest["trash_id"],
+                                     "reason": reason, "observed_sha256": observed_sha256,
+                                     "recorded_at": _now(), "actor": "owner"})
+
+    def _commit_trashed(self, item_fd, parent_fd, manifest, digest, info, *, duplicate=False):
+        os.fsync(parent_fd)
+        os.fsync(item_fd)
+        manifest.update(state="trashed", device=info.st_dev, inode=info.st_ino)
+        self._append_event(item_fd, {"event": "trashed", "trash_id": manifest["trash_id"],
+                                     "sha256": digest, "recorded_at": _now(), "actor": "owner"})
+        self._write_manifest(item_fd, manifest)
+        return self._item_result(manifest, status="trashed", duplicate=duplicate)
+
+    def _recover_atomic_move(self, item_fd, parent_fd, filename, manifest, digest):
+        """Commit only when the expected inode is in Trash and the source name is absent."""
+        moved = None
+        info = None
+        source_absent = False
+        try:
+            moved, info = _read_at(item_fd, "note.md", MAX_MARKDOWN_BYTES)
+        except OSError:
+            pass
+        if info is not None:
+            try:
+                os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                source_absent = True
+            except OSError:
+                pass
+        if (source_absent and info is not None
+                and hashlib.sha256(moved).hexdigest() == digest
+                and (info.st_dev, info.st_ino) == (manifest["device"], manifest["inode"])):
+            return self._commit_trashed(item_fd, parent_fd, manifest, digest, info, duplicate=True)
+        observed = hashlib.sha256(moved).hexdigest() if moved is not None else None
+        self._mark_recovery_required(item_fd, manifest, "source_name_conflict", observed)
+        raise HTTPException(status_code=503, detail="Trash action requires manual recovery")
 
     def trash(self, collection, relative, expected_sha256, idempotency_key):
         self._require_configured()
@@ -329,22 +390,18 @@ class NotesTrashStore:
                     note_bytes = None
                     note_info = None
                 if note_bytes is not None:
-                    if hashlib.sha256(note_bytes).hexdigest() != expected_sha256:
+                    if (hashlib.sha256(note_bytes).hexdigest() != expected_sha256
+                            or (note_info.st_dev, note_info.st_ino) != (manifest["device"], manifest["inode"])):
                         raise HTTPException(status_code=503, detail="Trash record requires recovery")
                     try:
                         current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
                     except FileNotFoundError:
                         current = None
                     if current is not None:
-                        if (current.st_dev, current.st_ino) != (note_info.st_dev, note_info.st_ino):
-                            raise HTTPException(status_code=409, detail="Source path changed during Trash recovery")
-                        os.unlink(filename, dir_fd=parent_fd)
-                        os.fsync(parent_fd)
-                    manifest.update(state="trashed", device=note_info.st_dev, inode=note_info.st_ino)
-                    self._write_manifest(item_fd, manifest)
-                    self._append_event(item_fd, {"event": "trashed", "trash_id": trash_id,
-                                                 "sha256": expected_sha256, "recorded_at": _now(), "actor": "owner"})
-                    return self._item_result(manifest, status="trashed", duplicate=True)
+                        self._mark_recovery_required(item_fd, manifest, "source_name_conflict")
+                        raise HTTPException(status_code=503, detail="Trash action requires manual recovery")
+                    return self._commit_trashed(item_fd, parent_fd, manifest, expected_sha256,
+                                                note_info, duplicate=True)
                 try:
                     source_bytes, source_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
                 except FileNotFoundError as exc:
@@ -352,7 +409,15 @@ class NotesTrashStore:
                 created = False
             digest = hashlib.sha256(source_bytes).hexdigest()
             if digest != expected_sha256:
+                if manifest is not None and manifest["state"] == "pending":
+                    self._mark_recovery_required(item_fd, manifest, "source_name_conflict", digest)
+                    raise HTTPException(status_code=503, detail="Trash action requires manual recovery")
                 raise HTTPException(status_code=409, detail="Note changed; refresh before moving to Trash")
+            if (manifest is not None and manifest["state"] == "pending"
+                    and (source_info.st_dev, source_info.st_ino)
+                    != (manifest["device"], manifest["inode"])):
+                self._mark_recovery_required(item_fd, manifest, "source_name_conflict", digest)
+                raise HTTPException(status_code=503, detail="Trash action requires manual recovery")
             if root_fd is None:
                 root_fd = self._root_fd(create=True)
             if os.fstat(parent_fd).st_dev != os.fstat(root_fd).st_dev:
@@ -384,48 +449,36 @@ class NotesTrashStore:
                             "collection": collection, "relative_path": relative, "sha256": digest,
                             "size_bytes": len(source_bytes), "trashed_at": _now(), "state": "pending",
                             "device": source_info.st_dev, "inode": source_info.st_ino,
-                            "restored_at": None, "purged_at": None, "purge_challenge_sha256": None,
-                            "purge_session_sha256": None}
+                            "restored_at": None, "recovery_reason": None, "recovery_sha256": None}
                 self._write_manifest(item_fd, manifest, exclusive=True)
                 self._append_event(item_fd, {"event": "trash_intent", "trash_id": trash_id,
                                              "sha256": digest, "recorded_at": _now(), "actor": "owner"})
 
-            # Anchor the exact checked inode before removing its source name.
-            # A hard link is same-filesystem and no-overwrite; a restart between
-            # link and unlink is detected by the pending manifest on replay.
             try:
-                current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+                _rename_noreplace(parent_fd, filename, item_fd, "note.md")
+            except FileExistsError:
+                return self._recover_atomic_move(item_fd, parent_fd, filename, manifest, digest)
             except OSError as exc:
-                raise HTTPException(status_code=409, detail="Note changed before Trash commit") from exc
-            if ((current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns)
-                    != (source_info.st_dev, source_info.st_ino, source_info.st_size,
-                        source_info.st_mtime_ns, source_info.st_ctime_ns)):
-                raise HTTPException(status_code=409, detail="Note changed before Trash commit")
+                if exc.errno == errno.ENOENT:
+                    return self._recover_atomic_move(item_fd, parent_fd, filename, manifest, digest)
+                raise HTTPException(status_code=503, detail="Trash cannot move the verified note safely") from exc
             try:
-                os.link(filename, "note.md", src_dir_fd=parent_fd, dst_dir_fd=item_fd,
-                        follow_symlinks=False)
-            except FileExistsError as exc:
-                raise HTTPException(status_code=503, detail="Trash action requires manual recovery") from exc
+                moved, moved_info = _read_at(item_fd, "note.md", MAX_MARKDOWN_BYTES)
             except OSError as exc:
-                raise HTTPException(status_code=503, detail="Trash cannot anchor the verified note safely") from exc
-            moved, moved_info = _read_at(item_fd, "note.md", MAX_MARKDOWN_BYTES, max_links=2)
-            if (hashlib.sha256(moved).hexdigest() != digest
-                    or (moved_info.st_dev, moved_info.st_ino) != (source_info.st_dev, source_info.st_ino)):
-                raise HTTPException(status_code=503, detail="Trash action requires manual recovery")
-            try:
-                current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
-            except OSError as exc:
-                raise HTTPException(status_code=503, detail="Trash action requires manual recovery") from exc
-            if (current.st_dev, current.st_ino) != (source_info.st_dev, source_info.st_ino):
-                raise HTTPException(status_code=409, detail="Note changed before Trash commit; recovery required")
-            os.unlink(filename, dir_fd=parent_fd)
-            os.fsync(parent_fd)
-            os.fsync(item_fd)
-            manifest.update(state="trashed", device=moved_info.st_dev, inode=moved_info.st_ino)
-            self._write_manifest(item_fd, manifest)
-            self._append_event(item_fd, {"event": "trashed", "trash_id": trash_id,
-                                         "sha256": digest, "recorded_at": _now(), "actor": "owner"})
-            return self._item_result(manifest, status="trashed")
+                self._mark_recovery_required(item_fd, manifest, "move_identity_mismatch")
+                raise HTTPException(status_code=503, detail="Moved note requires manual recovery") from exc
+            moved_digest = hashlib.sha256(moved).hexdigest()
+            if (moved_digest != digest or (moved_info.st_dev, moved_info.st_ino)
+                    != (source_info.st_dev, source_info.st_ino)):
+                try:
+                    _rename_noreplace(item_fd, "note.md", parent_fd, filename)
+                    os.fsync(parent_fd)
+                    os.fsync(item_fd)
+                    self._mark_recovery_required(item_fd, manifest, "move_identity_mismatch", moved_digest)
+                except OSError:
+                    self._mark_recovery_required(item_fd, manifest, "move_identity_mismatch", moved_digest)
+                raise HTTPException(status_code=409, detail="Note changed during Trash move; recovery required")
+            return self._commit_trashed(item_fd, parent_fd, manifest, digest, moved_info)
         except HTTPException:
             raise
         except OSError as exc:
@@ -478,7 +531,7 @@ class NotesTrashStore:
                 finally:
                     os.close(item_fd)
             page = items[offset:offset + limit]
-            return {"status": "partial" if any(row["status"] in {"pending", "purge_pending"} for row in items)
+            return {"status": "partial" if any(row["status"] in {"pending", "recovery_required"} for row in items)
                     else ("empty" if not items else "real"), "items": page,
                     "pagination": {"limit": limit, "offset": offset, "has_more": offset + len(page) < len(items)}}
         finally:
@@ -506,69 +559,83 @@ class NotesTrashStore:
             parent_fd, filename = self._source_parent(manifest["collection"], manifest["relative_path"])
             if os.fstat(parent_fd).st_dev != os.fstat(root_fd).st_dev:
                 raise HTTPException(status_code=503, detail="Notes and Trash must share a filesystem")
+
             try:
-                trash_bytes, trash_info = _read_at(item_fd, "note.md", MAX_MARKDOWN_BYTES, max_links=2)
+                trash_bytes, trash_info = _read_at(item_fd, "note.md", MAX_MARKDOWN_BYTES)
             except FileNotFoundError:
-                # A prior restore may have linked the destination and crashed
-                # before updating the manifest. Only the recorded inode proves it.
+                # A prior atomic rename may have completed before its durable
+                # manifest update. Complete only if the target is the recorded inode.
                 try:
-                    current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
-                    restored, restored_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES, max_links=2)
+                    restored, restored_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
                 except OSError as exc:
+                    self._mark_recovery_required(item_fd, manifest, "trash_name_missing")
                     raise HTTPException(status_code=503, detail="Restore requires manual recovery") from exc
-                if ((current.st_dev, current.st_ino) != (manifest["device"], manifest["inode"])
-                        or (restored_info.st_dev, restored_info.st_ino) != (manifest["device"], manifest["inode"])
+                if ((restored_info.st_dev, restored_info.st_ino) != (manifest["device"], manifest["inode"])
                         or hashlib.sha256(restored).hexdigest() != manifest["sha256"]):
                     raise HTTPException(status_code=409, detail="Restore target is occupied")
+                os.fsync(parent_fd)
+                os.fsync(item_fd)
                 manifest.update(state="restored", restored_at=_now())
-                self._write_manifest(item_fd, manifest)
                 self._append_event(item_fd, {"event": "restored", "trash_id": trash_id,
                                              "sha256": manifest["sha256"], "recorded_at": manifest["restored_at"],
                                              "actor": "owner"})
+                self._write_manifest(item_fd, manifest)
                 return self._item_result(manifest, status="restored", duplicate=True)
+
             if (hashlib.sha256(trash_bytes).hexdigest() != manifest["sha256"]
                     or (trash_info.st_dev, trash_info.st_ino) != (manifest["device"], manifest["inode"])):
+                self._mark_recovery_required(item_fd, manifest, "restore_identity_mismatch",
+                                             hashlib.sha256(trash_bytes).hexdigest())
                 raise HTTPException(status_code=503, detail="Trash item failed integrity verification")
+
             try:
-                os.link("note.md", filename, src_dir_fd=item_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+                _rename_noreplace(item_fd, "note.md", parent_fd, filename)
             except FileExistsError:
-                # Recover only the precise interrupted no-overwrite link from a
-                # prior restore attempt; different content or inode is a conflict.
+                # A competing restore may have completed. A same-inode target is
+                # an idempotent success; any other target remains untouched.
                 try:
-                    current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
-                    current_bytes, current_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES,
-                                                           max_links=2)
+                    restored, restored_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
                 except OSError as exc:
                     raise HTTPException(status_code=409,
                                         detail="Restore target already exists; nothing was overwritten") from exc
-                if ((current.st_dev, current.st_ino) != (trash_info.st_dev, trash_info.st_ino)
-                        or (current_info.st_dev, current_info.st_ino) != (trash_info.st_dev, trash_info.st_ino)
-                        or hashlib.sha256(current_bytes).hexdigest() != manifest["sha256"]):
+                if ((restored_info.st_dev, restored_info.st_ino) != (trash_info.st_dev, trash_info.st_ino)
+                        or hashlib.sha256(restored).hexdigest() != manifest["sha256"]):
                     raise HTTPException(status_code=409,
                                         detail="Restore target already exists; nothing was overwritten")
-                os.unlink("note.md", dir_fd=item_fd)
-                os.fsync(item_fd)
-                manifest.update(state="restored", restored_at=_now())
-                self._write_manifest(item_fd, manifest)
-                self._append_event(item_fd, {"event": "restored", "trash_id": trash_id,
-                                             "sha256": manifest["sha256"], "recorded_at": manifest["restored_at"],
-                                             "actor": "owner"})
-                return self._item_result(manifest, status="restored", duplicate=True)
-            except OSError as exc:
-                raise HTTPException(status_code=503, detail="Restore cannot be completed safely") from exc
+            except FileNotFoundError as exc:
+                # Another process may have won the atomic rename. Prove the final
+                # target before treating it as a duplicate; otherwise retain recovery state.
+                try:
+                    restored, restored_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
+                except OSError:
+                    self._mark_recovery_required(item_fd, manifest, "trash_name_missing")
+                    raise HTTPException(status_code=503, detail="Restore requires manual recovery") from exc
+                if ((restored_info.st_dev, restored_info.st_ino) != (trash_info.st_dev, trash_info.st_ino)
+                        or hashlib.sha256(restored).hexdigest() != manifest["sha256"]):
+                    self._mark_recovery_required(item_fd, manifest, "trash_name_missing",
+                                                 hashlib.sha256(restored).hexdigest())
+                    raise HTTPException(status_code=503, detail="Restore requires manual recovery") from exc
+
+            restored, restored_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
+            if ((restored_info.st_dev, restored_info.st_ino) != (trash_info.st_dev, trash_info.st_ino)
+                    or hashlib.sha256(restored).hexdigest() != manifest["sha256"]):
+                try:
+                    _rename_noreplace(parent_fd, filename, item_fd, "note.md")
+                    os.fsync(parent_fd)
+                    os.fsync(item_fd)
+                except OSError:
+                    pass
+                self._mark_recovery_required(item_fd, manifest, "restore_identity_mismatch",
+                                             hashlib.sha256(restored).hexdigest())
+                raise HTTPException(status_code=503, detail="Restore identity changed; recovery required")
+
             os.fsync(parent_fd)
-            try:
-                os.unlink("note.md", dir_fd=item_fd)
-                os.fsync(item_fd)
-            except OSError as exc:
-                # The original and restored names remain hard links to the same
-                # verified inode; a retry recognizes it and finishes safely.
-                raise HTTPException(status_code=503, detail="Restore requires safe retry") from exc
+            os.fsync(item_fd)
             manifest.update(state="restored", restored_at=_now())
-            self._write_manifest(item_fd, manifest)
             self._append_event(item_fd, {"event": "restored", "trash_id": trash_id,
                                          "sha256": manifest["sha256"], "recorded_at": manifest["restored_at"],
                                          "actor": "owner"})
+            self._write_manifest(item_fd, manifest)
             return self._item_result(manifest, status="restored")
         except HTTPException:
             raise
@@ -577,104 +644,6 @@ class NotesTrashStore:
         finally:
             if parent_fd is not None:
                 os.close(parent_fd)
-            if item_fd is not None:
-                os.close(item_fd)
-            os.close(root_fd)
-
-    def preview_purge(self, trash_id, session_id):
-        self._require_configured()
-        if not isinstance(trash_id, str) or not _TRASH_ID.fullmatch(trash_id):
-            raise HTTPException(status_code=404, detail="Trash item not found")
-        root_fd = self._root_fd()
-        if root_fd is None:
-            raise HTTPException(status_code=404, detail="Trash item not found")
-        item_fd = None
-        try:
-            try:
-                item_fd = os.open(trash_id, _DIRECTORY_FLAGS, dir_fd=root_fd)
-            except FileNotFoundError as exc:
-                raise HTTPException(status_code=404, detail="Trash item not found") from exc
-            manifest = self._load_manifest(item_fd, trash_id)
-            if manifest["state"] != "trashed":
-                raise HTTPException(status_code=409, detail="Trash item is not eligible for permanent deletion")
-            payload, info = _read_at(item_fd, "note.md", MAX_MARKDOWN_BYTES)
-            if hashlib.sha256(payload).hexdigest() != manifest["sha256"]:
-                raise HTTPException(status_code=503, detail="Trash item failed integrity verification")
-            challenge = secrets.token_urlsafe(32)
-            expires = time.time() + 300
-            with self._lock:
-                self._challenges[hashlib.sha256(challenge.encode()).hexdigest()] = (session_id, trash_id,
-                                                                                    manifest["sha256"], expires)
-            return {"trash_id": trash_id, "sha256": manifest["sha256"],
-                    "size_bytes": len(payload), "confirmation": challenge,
-                    "expires_in_seconds": 300, "requires_exact_confirmation": "permanently_delete"}
-        except HTTPException:
-            raise
-        except OSError as exc:
-            raise HTTPException(status_code=503, detail="Permanent deletion preview is unavailable") from exc
-        finally:
-            if item_fd is not None:
-                os.close(item_fd)
-            os.close(root_fd)
-
-    def confirm_purge(self, trash_id, session_id, body):
-        self._require_configured()
-        if not isinstance(trash_id, str) or not _TRASH_ID.fullmatch(trash_id):
-            raise HTTPException(status_code=404, detail="Trash item not found")
-        if (not isinstance(body, dict) or set(body) != {"confirmation", "confirm", "sha256"}
-                or body.get("confirm") != "permanently_delete"
-                or not isinstance(body.get("confirmation"), str)
-                or not isinstance(body.get("sha256"), str) or not _SHA256.fullmatch(body["sha256"])):
-            raise HTTPException(status_code=400, detail="Exact permanent deletion confirmation is required")
-        challenge_hash = hashlib.sha256(body["confirmation"].encode()).hexdigest()
-        root_fd = self._root_fd()
-        if root_fd is None:
-            raise HTTPException(status_code=404, detail="Trash item not found")
-        item_fd = None
-        try:
-            try:
-                item_fd = os.open(trash_id, _DIRECTORY_FLAGS, dir_fd=root_fd)
-            except FileNotFoundError as exc:
-                raise HTTPException(status_code=404, detail="Trash item not found") from exc
-            manifest = self._load_manifest(item_fd, trash_id)
-            if manifest["state"] == "purged":
-                if (manifest.get("purge_challenge_sha256") != challenge_hash
-                        or manifest.get("purge_session_sha256") != hashlib.sha256(session_id.encode()).hexdigest()):
-                    raise HTTPException(status_code=409, detail="Permanent deletion confirmation expired or mismatched")
-                return self._item_result(manifest, status="purged", duplicate=True)
-            with self._lock:
-                challenge = self._challenges.pop(challenge_hash, None)
-            if (challenge is None or challenge[0] != session_id or challenge[1] != trash_id
-                    or challenge[2] != body["sha256"] or challenge[3] <= time.time()):
-                raise HTTPException(status_code=409, detail="Permanent deletion confirmation expired or mismatched")
-            if manifest["state"] != "trashed" or manifest["sha256"] != body["sha256"]:
-                raise HTTPException(status_code=409, detail="Trash item changed after confirmation preview")
-            payload, info = _read_at(item_fd, "note.md", MAX_MARKDOWN_BYTES)
-            if hashlib.sha256(payload).hexdigest() != manifest["sha256"]:
-                raise HTTPException(status_code=503, detail="Trash item failed integrity verification")
-            manifest.update(state="purge_pending")
-            self._append_event(item_fd, {"event": "permanent_delete_intent", "trash_id": trash_id,
-                                         "sha256": manifest["sha256"], "recorded_at": _now(), "actor": "owner"})
-            self._write_manifest(item_fd, manifest)
-            current = os.stat("note.md", dir_fd=item_fd, follow_symlinks=False)
-            if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
-                raise HTTPException(status_code=503, detail="Trash item changed during permanent deletion")
-            os.unlink("note.md", dir_fd=item_fd)
-            os.fsync(item_fd)
-            purged_at = _now()
-            self._append_event(item_fd, {"event": "permanently_deleted", "trash_id": trash_id,
-                                         "sha256": manifest["sha256"], "recorded_at": purged_at,
-                                         "actor": "owner"})
-            manifest.update(state="purged", purged_at=purged_at,
-                            purge_challenge_sha256=challenge_hash,
-                            purge_session_sha256=hashlib.sha256(session_id.encode()).hexdigest())
-            self._write_manifest(item_fd, manifest)
-            return self._item_result(manifest, status="purged")
-        except HTTPException:
-            raise
-        except OSError as exc:
-            raise HTTPException(status_code=503, detail="Permanent deletion requires manual recovery") from exc
-        finally:
             if item_fd is not None:
                 os.close(item_fd)
             os.close(root_fd)
@@ -714,24 +683,5 @@ def create_notes_trash_router(auth, notes_store, trash_store):
         response.headers["Cache-Control"] = "private, no-store"
         response.status_code = 200 if result.get("duplicate") else 201
         return result
-
-    @router.post("/{trash_id}/purge/preview")
-    def preview_purge(request: Request, response: Response, trash_id: str):
-        require(request, "purge")
-        token = request.cookies.get(auth.COOKIE_NAME, "")
-        session_id = hashlib.sha256(token.encode()).hexdigest()
-        result = trash_store.preview_purge(trash_id, session_id)
-        response.headers["Cache-Control"] = "private, no-store"
-        return result
-
-    @router.post("/{trash_id}/purge/confirm")
-    def confirm_purge(request: Request, response: Response, trash_id: str, body: dict):
-        require(request, "purge")
-        token = request.cookies.get(auth.COOKIE_NAME, "")
-        session_id = hashlib.sha256(token.encode()).hexdigest()
-        result = trash_store.confirm_purge(trash_id, session_id, body)
-        response.headers["Cache-Control"] = "private, no-store"
-        response.status_code = 200 if result.get("duplicate") else 204
-        return result if response.status_code == 200 else Response(status_code=204, headers={"Cache-Control": "private, no-store"})
 
     return router

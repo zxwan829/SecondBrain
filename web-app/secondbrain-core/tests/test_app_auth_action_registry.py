@@ -45,7 +45,7 @@ def test_supported_action_registry_covers_existing_literal_and_dynamic_families(
         "chat.approve_tool", "chat.manage", "chat.read", "chat.run", "chat.stop",
         "chat.write", "daily_brief.read", "daily_brief.write", "home.read",
         "inbox.read", "journal.append", "journal.read", "knowledge.read", "notes.read",
-        "notes.create", "notes.write", "notes.delete", "notes.restore", "notes.purge",
+        "notes.create", "notes.write", "notes.delete", "notes.restore",
         "personal_memory.read", "personal_memory.write",
         "projects.read", "promote.read", "review.defer",
         "review.read", "task.read", "task.write", "vocabulary.read", "vocabulary.write",
