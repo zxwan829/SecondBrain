@@ -59,7 +59,7 @@ describe('NotePropertiesPanel', () => {
     render(<NotePropertiesPanel note={note} onSaved={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: '编辑类型与标签' }));
     const oldTag = await screen.findByLabelText('CRM（已停用或未入库，可移除）');
-    expect(oldTag.checked).toBe(true);
+    expect((oldTag as HTMLInputElement).checked).toBe(true);
     fireEvent.click(oldTag);
     fireEvent.change(screen.getByRole('combobox', { name: '类型' }), { target: { value: '笔记' } });
     fireEvent.click(screen.getByRole('button', { name: '确认保存属性' }));
