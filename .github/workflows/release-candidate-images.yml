@@ -62,17 +62,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          root="$RUNNER_TEMP/app-candidate-smoke"
-          mkdir -p "$root/state" "$root/review" "$root/knowledge" "$root/raw"
-          printf 'synthetic-candidate-password\n' > "$root/app-password"
-          chown -R 1026:100 "$root"
-          chmod 0700 "$root/state"
-          chmod 0400 "$root/app-password"
           image="secondbrain-app:candidate-${{ github.event.pull_request.base.sha || github.sha }}"
           docker run -d --name secondbrain-app-candidate-smoke \
             --network none --read-only --user 1026:100 \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
-            --mount "type=bind,src=$root,dst=/candidate-data" \
+            --tmpfs /candidate-data:rw,nosuid,size=64m,uid=1026,gid=100,mode=0700 \
             -e SB_REVIEW_ROOT=/candidate-data/review \
             -e SB_KNOWLEDGE_ROOT=/candidate-data/knowledge \
             -e SB_PROMOTE_STATE_ROOT=/candidate-data/state \
@@ -81,7 +75,8 @@ jobs:
             -e SB_CORE_ALLOWED_HOSTS=localhost,127.0.0.1 \
             -e SB_APP_PASSWORD_FILE=/candidate-data/app-password \
             -e SB_PROMOTE_ENABLED=false \
-            "$image"
+            --entrypoint /bin/sh "$image" -ec \
+            'mkdir -p /candidate-data/state /candidate-data/review /candidate-data/knowledge /candidate-data/raw; chmod 0700 /candidate-data/state; printf "synthetic-candidate-password\\n" > /candidate-data/app-password; chmod 0400 /candidate-data/app-password; exec python -m secondbrain_core'
           cleanup() { docker rm -f secondbrain-app-candidate-smoke >/dev/null 2>&1 || true; }
           trap cleanup EXIT
           for attempt in $(seq 1 30); do
