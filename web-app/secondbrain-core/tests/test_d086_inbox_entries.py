@@ -160,19 +160,46 @@ class D086InboxEntryHTTPTests(unittest.TestCase):
         forged_identity = self.client.post("/api/inbox/entries", headers=self.headers,
                                            json=self.payload(channel_identity={"channel": "web", "subject": "owner"}))
         self.assertEqual(forged_identity.status_code, 400, forged_identity.text)
-        unsupported = self.client.post("/api/inbox/entries", headers=self.headers,
-                                       json=self.payload(source_channel="hermes"))
-        self.assertEqual(unsupported.status_code, 501, unsupported.text)
+        # The production intake route has only the authenticated Web adapter.
+        # Keep external channel names explicitly fail-closed until a separately
+        # authenticated provider and its contract are integrated.
+        for channel in ("wechat", "feishu", "hermes", "unknown-channel"):
+            with self.subTest(channel=channel):
+                unsupported = self.client.post("/api/inbox/entries", headers=self.headers,
+                                               json=self.payload(source_channel=channel))
+                self.assertEqual(unsupported.status_code, 501, unsupported.text)
+        # Content/media declarations are not an accepted substitute for a
+        # verified channel message. This route accepts text-only Web intake.
+        for field, value in (("message_type", "voice"), ("content_type", "image/png")):
+            with self.subTest(unsupported_message_field=field):
+                unsupported_message = self.client.post(
+                    "/api/inbox/entries", headers=self.headers,
+                    json={**self.payload(), field: value},
+                )
+                self.assertEqual(unsupported_message.status_code, 400,
+                                 unsupported_message.text)
+        unsupported_intent = self.client.post(
+            "/api/inbox/entries", headers=self.headers,
+            json=self.payload(intent="ordinary_chat"),
+        )
+        self.assertEqual(unsupported_intent.status_code, 400, unsupported_intent.text)
         approved = self.client.post("/api/inbox/entries", headers=self.headers,
                                     json=self.payload(intent="approved_suggestion"))
         self.assertEqual(approved.status_code, 409, approved.text)
         malformed_intent = self.client.post("/api/inbox/entries", headers=self.headers,
                                             json=self.payload(intent=["task_intent"]))
         self.assertEqual(malformed_intent.status_code, 400, malformed_intent.text)
-        attachments = self.client.post("/api/inbox/entries", headers=self.headers,
-                                       json=self.payload(attachment_refs=["/some/path"]))
-        self.assertEqual(attachments.status_code, 400, attachments.text)
+        for refs in (["/some/path"], ["channel://wechat/synthetic-attachment"],
+                     [{"event_id": "other-event", "attachment_id": "synthetic-1"}]):
+            with self.subTest(attachment_refs=refs):
+                attachments = self.client.post(
+                    "/api/inbox/entries", headers=self.headers,
+                    json=self.payload(attachment_refs=refs),
+                )
+                self.assertEqual(attachments.status_code, 400, attachments.text)
         self.assertEqual(len(list(self.raw.glob("*.md"))), 1)
+        self.assertEqual(len(list(self.review.glob("*.md"))), 1)
+        self.assertEqual(len(list((self.state / "captures").glob("*.json"))), 1)
         self.assertEqual(list(self.knowledge.iterdir()), [])
 
     def test_approved_suggestion_requires_live_core_decision_and_exact_source_version(self):
