@@ -13,3 +13,4 @@ LABEL org.opencontainers.image.version="0.22.2" \
       io.secondbrain.hermes.patch-sha256="${SB_HERMES_PATCH_SHA256}"
 
 COPY agent/tool_executor.py /opt/hermes/agent/tool_executor.py
+COPY gateway/platforms/weixin.py /opt/hermes/gateway/platforms/weixin.py
