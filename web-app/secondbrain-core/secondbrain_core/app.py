@@ -27,6 +27,7 @@ from .modules.journal_source_options import (
 )
 from .modules.tasks import TaskStore, create_task_router
 from .modules.projects_activity_read import create_projects_activity_router
+from .modules.review_promote.activity_read import ReviewActivityReadStore
 from .modules.daily_brief_agent_health import create_daily_brief_agent_health_router
 from .modules.projects_source_read import ProjectsSourceReadStore
 from .modules.daily_brief_store import DailyBriefRecordReadStore
@@ -224,7 +225,7 @@ def create_app():
     app.include_router(create_projects_activity_router(
         auth, journal_store, task_store, projects_store=projects_store, notes_store=notes_store,
         daily_brief_audit_store=daily_brief_audit_store, memory_store=memory_store,
-        capture_service=capture,
+        capture_service=capture, review_store=ReviewActivityReadStore(review_root),
     ))
     app.include_router(create_daily_brief_agent_health_router(
         auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,
