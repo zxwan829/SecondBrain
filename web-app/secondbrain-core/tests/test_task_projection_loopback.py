@@ -8,7 +8,7 @@ import httpx
 import uvicorn
 
 from secondbrain_core.app import create_app
-from secondbrain_core.modules.tasks import TaskStore
+from secondbrain_core.modules.tasks import TaskStore, task_source_version
 
 
 def _private_dir(path):
@@ -75,7 +75,14 @@ def test_task_projection_loopback_reads_only_synthetic_private_store(tmp_path, m
             assert login.status_code == 200, login.text
             response = client.get("/api/tasks?status=all", headers={"Origin": origin})
             assert response.status_code == 200, response.text
-            assert response.json() == {"tasks": [task]}
+            projected_tasks = response.json()["tasks"]
+            assert len(projected_tasks) == 1
+            projected = projected_tasks[0]
+            for field in ("id", "title", "due_date", "status", "created_at", "updated_at", "source"):
+                assert projected[field] == task[field]
+            assert projected["source_ref"] == {
+                "id": task["id"], "version": task_source_version(task),
+            }
             calendar = client.get("/api/calendar?from=2026-10-21&to=2026-10-21",
                                   headers={"Origin": origin})
             assert calendar.status_code == 200, calendar.text
