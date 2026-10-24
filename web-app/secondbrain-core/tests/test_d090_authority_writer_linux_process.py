@@ -149,13 +149,13 @@ def _run_case(*, drop_response: bool):
         ), roles.writer_uid, roles.writer_gid, module_root)
         processes.append(writer_proc)
         assert _readline(writer_proc) == "READY"
-        os.chown(socket_path, roles.authority_uid, roles.authority_gid)
-        socket_path.chmod(0o660)
+        os.chown(socket_path, roles.authority_uid, roles.authority_gid, follow_symlinks=False)
+        os.chmod(socket_path, 0o660, follow_symlinks=False)
 
         if not drop_response:
             # Deliberately expose only the disposable test socket for one probe.
             # The Writer must reject the real, wrong UID/GID before reading its body.
-            socket_path.chmod(0o666)
+            os.chmod(socket_path, 0o666, follow_symlinks=False)
             probe = _spawn(
                 _command("probe", roles, socket_path, helper),
                 roles.core_uid, roles.core_gid, module_root,
@@ -163,8 +163,8 @@ def _run_case(*, drop_response: bool):
             processes.append(probe)
             assert _readline(writer_proc) == "REJECTED authority_peer_rejected"
             assert probe.wait(timeout=5) == 0
-            os.chown(socket_path, roles.authority_uid, roles.authority_gid)
-            socket_path.chmod(0o660)
+            os.chown(socket_path, roles.authority_uid, roles.authority_gid, follow_symlinks=False)
+            os.chmod(socket_path, 0o660, follow_symlinks=False)
 
         authority_cmd = _command(
             "authority", roles, socket_path, helper, ledger_root=authority_root,
