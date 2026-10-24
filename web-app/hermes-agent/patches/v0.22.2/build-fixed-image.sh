@@ -6,6 +6,7 @@ image_tag=${2:?usage: build-fixed-image.sh HERMES_SOURCE_CHECKOUT IMAGE_TAG}
 expected_commit=d923a5eb487a17c0a68801bba9ef0f56c81040a8
 script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 patch_file="$script_dir/pre-tool-hook-fail-closed.patch"
+media_patch_file="$script_dir/weixin-media-download-budget.patch"
 dockerfile="$script_dir/Dockerfile"
 
 actual_commit=$(git -C "$source_checkout" rev-parse HEAD)
@@ -18,17 +19,19 @@ if [[ -n "$(git -C "$source_checkout" status --porcelain)" ]]; then
     exit 2
 fi
 
-patch_sha=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$patch_file")
+patch_sha=$(python3 -c 'import hashlib,pathlib,sys; h=hashlib.sha256(); [h.update(part) for path in sys.argv[1:] for part in (pathlib.Path(path).name.encode(), b"\0", pathlib.Path(path).read_bytes(), b"\0")]; print(h.hexdigest())' "$patch_file" "$media_patch_file")
 build_root=$(mktemp -d "${TMPDIR:-/tmp}/secondbrain-hermes-v0222-build.XXXXXX")
 cleanup() {
     rm -rf "$build_root"
 }
 trap cleanup EXIT
 
-mkdir -p "$build_root/source" "$build_root/context/agent"
+mkdir -p "$build_root/source" "$build_root/context/agent" "$build_root/context/gateway/platforms"
 git -C "$source_checkout" archive "$expected_commit" | tar -x -C "$build_root/source"
 git -C "$build_root/source" apply --unidiff-zero "$patch_file"
+git -C "$build_root/source" apply "$media_patch_file"
 cp "$build_root/source/agent/tool_executor.py" "$build_root/context/agent/tool_executor.py"
+cp "$build_root/source/gateway/platforms/weixin.py" "$build_root/context/gateway/platforms/weixin.py"
 cp "$dockerfile" "$build_root/context/Dockerfile"
 
 docker build \
