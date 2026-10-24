@@ -157,6 +157,10 @@ SECCOMP_ALLOW = {
     76,   # truncate (to prove Landlock denial)
     79,   # getcwd
     82,   # rename (to prove Landlock denial)
+    102,  # getuid
+    104,  # getgid
+    107,  # geteuid
+    108,  # getegid
     186,  # gettid
     202,  # futex
     228,  # clock_gettime

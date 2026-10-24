@@ -23,6 +23,7 @@ ALLOWED_RUNTIME_SYSCALLS = {
     "pwrite64", "mremap", "madvise", "nanosleep", "getpid", "exit", "fcntl",
     "fsync", "truncate", "getcwd", "rename", "gettid", "futex", "clock_gettime",
     "exit_group", "openat", "newfstatat", "unlinkat", "renameat", "linkat",
+    "getuid", "getgid", "geteuid", "getegid",
     "getrandom", "rseq",
 }
 DENIED_PROBE_SYSCALLS = {
@@ -81,7 +82,7 @@ def test_seccomp_allowlist_covers_exact_writer_publish_runtime():
             f"stdout:\n{process.stdout}\nstderr:\n{process.stderr}\n"
             f"post-filter syscalls: {observed}"
         )
-        assert "SECCOMP_READY uid=31003 gid=31103" in process.stdout
+        assert "SECCOMP_READY uid=31003 gid=31103 euid=31003 egid=31103" in process.stdout
         assert "PASS exact_writer_publish=1" in process.stdout
         assert sentinel.read_text(encoding="utf-8") == "synthetic protected sentinel"
         assert (target_root / "approved.md").read_bytes() == b"# synthetic approved bytes\n"
