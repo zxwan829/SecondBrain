@@ -103,6 +103,17 @@ def test_journal_get_preserves_shape_and_is_read_only_over_localhost(tmp_path, m
             assert not any(name.endswith(".lock") for name in writable_before)
             assert reads == [day]
 
+            source_path = roots["journal"] / f"{day}.jsonl"
+            source_bytes = source_path.read_bytes()
+            source_path.write_bytes(b'{"id":"synthetic-malformed"\n')
+            malformed = client.get(f"/api/journal/{day}", headers={"Origin": origin})
+            assert malformed.status_code == 503
+
+            source_path.write_bytes(b" " * (1024 * 1024 + 1))
+            oversized = client.get(f"/api/journal/{day}", headers={"Origin": origin})
+            assert oversized.status_code == 503
+            source_path.write_bytes(source_bytes)
+
             os.chmod(roots["journal"] / f"{day}.jsonl", 0o400)
             os.chmod(roots["journal"], 0o500)
             readonly_before = _source_snapshot(roots["journal"])
@@ -121,7 +132,7 @@ def test_journal_get_preserves_shape_and_is_read_only_over_localhost(tmp_path, m
 
             assert _source_snapshot(roots["journal"]) == readonly_before
             assert not any(name.endswith(".lock") for name in readonly_before)
-            assert reads == [day, day, missing_day]
+            assert reads == [day, day, day, day, missing_day]
     finally:
         if server is not None:
             server.should_exit = True
