@@ -14,13 +14,16 @@ from secondbrain_core.modules.daily_brief_import import DailyBriefAuditStore
 from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.personal_memory import PersonalMemoryStore
 from secondbrain_core.modules.projects_activity_read import create_projects_activity_router
-from secondbrain_core.modules.review_promote.activity_read import ReviewActivityReadStore
+from secondbrain_core.modules.review_promote.activity_read import (
+    PromoteAuditActivityReadStore,
+    ReviewActivityReadStore,
+)
 from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStore
 from secondbrain_core.modules.tasks import TaskStore
 
 
 def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_audit=None, memory=None, capture=None,
-                review=None):
+                review=None, promote_activity=None):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-password-value\n")
     os.chmod(password_file, 0o600)
@@ -37,6 +40,7 @@ def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_a
         memory_store=memory,
         capture_service=capture,
         review_store=review,
+        promote_activity_store=promote_activity,
     ))
     client = TestClient(app, base_url="https://app.test")
     client.cookies.set(auth.COOKIE_NAME, token)
@@ -79,6 +83,23 @@ def make_review(tmp_path):
     root.mkdir(mode=0o700)
     os.chmod(root, 0o700)
     return ReviewActivityReadStore(str(root)), root
+
+
+def make_promote_activity(tmp_path):
+    root = tmp_path / "approval"
+    root.mkdir(mode=0o700)
+    os.chmod(root, 0o700)
+    path = root / "audit.jsonl"
+    path.write_text(json.dumps({
+        "event": "promoted", "request_id": "synthetic-request",
+        "approver_subject": "synthetic-subject",
+        "approved_at": "2026-10-24T08:14:00Z",
+        "recorded_at": "2026-10-24T08:15:00Z",
+        "review_path": "private/review.md", "review_sha256": "a" * 64,
+        "target_filename": "private-note.md", "output_sha256": "b" * 64,
+    }, separators=(",", ":")) + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+    return PromoteAuditActivityReadStore(str(path))
 
 
 def capture_state(capture_id, *, status="partial_success", captured_at=None, padding=""):
@@ -611,6 +632,45 @@ def test_review_activity_malformed_frontmatter_is_partial(tmp_path):
 
     assert rows == []
     assert complete is False
+
+
+def test_activity_projects_promote_audit_status_only_with_promote_permission(tmp_path):
+    store = make_promote_activity(tmp_path)
+    response = make_client(tmp_path, promote_activity=store).get(
+        "/api/activity?from=2026-10-24&to=2026-10-24&timezone=UTC")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == ["promote"]
+    assert len(body["items"]) == 1
+    assert set(body["items"][0]) == {"activity_id", "kind", "status", "occurred_at"}
+    assert body["items"][0]["kind"] == "promote"
+    assert body["items"][0]["status"] == "promoted"
+    assert "private/review.md" not in response.text
+    assert "private-note.md" not in response.text
+    assert "synthetic-subject" not in response.text
+
+
+def test_activity_promote_permission_is_preflighted_before_audit_read(tmp_path, monkeypatch):
+    store = make_promote_activity(tmp_path)
+    reads = []
+    monkeypatch.setattr(store, "read", lambda: reads.append(True) or ([], True))
+    client = make_client(tmp_path, promote_activity=store)
+    auth = client.app.state.test_auth
+    original_require_action = auth.require_action
+
+    def deny_promote_before_io(request, action):
+        if action == "promote.read":
+            raise __import__("fastapi").HTTPException(status_code=403, detail="denied")
+        return original_require_action(request, action)
+
+    monkeypatch.setattr(auth, "require_action", deny_promote_before_io)
+    response = client.get("/api/activity?from=2026-10-24&to=2026-10-24&timezone=UTC")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == []
+    assert response.json()["status"] == "partial"
+    assert reads == []
 
 
 def test_activity_reads_only_minimal_successful_daily_brief_audit_events(tmp_path):
