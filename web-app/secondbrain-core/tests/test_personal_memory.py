@@ -1,6 +1,7 @@
 import concurrent.futures
 import hashlib
 import json
+import multiprocessing
 import os
 import socket
 import tempfile
@@ -123,6 +124,28 @@ def test_create_app_uvicorn_localhost_lifecycle_http(tmp_path, monkeypatch):
         listener.close()
 
 
+def _create_personal_memory_in_process(root, connection, start_event):
+    """Wait for a coordinated race, then replay the same durable create key."""
+    try:
+        store = PersonalMemoryStore(root)
+        connection.send({"ready": True})
+        if not start_event.wait(15):
+            raise TimeoutError("worker start barrier timed out")
+        result = store.create(
+            content={"text": "Synthetic cross-process memory"},
+            category="preference",
+            fact_kind="user_stated",
+            source_type="user_message",
+            source_ref="synthetic-process-race:message-1",
+            idempotency_key="synthetic-process-race-create",
+        )
+        connection.send({"ok": True, "result": result})
+    except Exception as exc:
+        connection.send({"ok": False, "error": type(exc).__name__})
+    finally:
+        connection.close()
+
+
 class PersonalMemoryStoreTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -227,6 +250,57 @@ class PersonalMemoryStoreTests(unittest.TestCase):
         self.assertEqual(len(rows), 26)
         self.assertEqual(len(self.store.active_view(limit=20)), 20)
         self.assertTrue(all(row["schema"] == 1 for row in rows))
+
+    def test_cross_process_duplicate_create_is_one_durable_idempotent_event(self):
+        context = multiprocessing.get_context("spawn")
+        start_event = context.Event()
+        workers = []
+        parent_connections = []
+        try:
+            for _ in range(8):
+                parent, child = context.Pipe()
+                process = context.Process(
+                    target=_create_personal_memory_in_process,
+                    args=(str(self.root), child, start_event),
+                )
+                process.start()
+                child.close()
+                workers.append(process)
+                parent_connections.append(parent)
+
+            for connection in parent_connections:
+                self.assertTrue(connection.poll(15), "worker did not initialize")
+                self.assertEqual(connection.recv(), {"ready": True})
+            # Release every ready worker at once so their independent stores
+            # contend for the same durable idempotency record.
+            start_event.set()
+
+            results = []
+            for connection in parent_connections:
+                self.assertTrue(connection.poll(15), "worker did not finish create")
+                result = connection.recv()
+                self.assertTrue(result["ok"], result)
+                results.append(result["result"])
+            for process in workers:
+                process.join(15)
+                self.assertFalse(process.is_alive(), "worker did not exit")
+                self.assertEqual(process.exitcode, 0)
+        finally:
+            start_event.set()
+            for process in workers:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(5)
+            for connection in parent_connections:
+                connection.close()
+
+        self.assertTrue(all(result == results[0] for result in results))
+        event_path = self.root / "personal-memory.jsonl"
+        rows = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0], results[0])
+        self.assertEqual(rows[0]["idempotency_key"], "synthetic-process-race-create")
+        self.assertEqual(rows[0]["content"]["text"], "Synthetic cross-process memory")
 
     def test_cross_process_corrections_use_revision_cas(self):
         first = self.create(source_ref="synthetic-cas:message-1", key="cas-create")

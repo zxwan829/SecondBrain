@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Request, type Response } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const baseUrl = process.env.SB_E2E_BASE_URL ?? 'http://127.0.0.1:4173';
@@ -16,6 +16,7 @@ type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
   | 'daily_brief_readback' | 'permission_revocation' | 'post_revocation_navigation'
+  | 'notes_navigation' | 'notes_create' | 'notes_edit_save' | 'notes_reopen'
   | 'agent_health' | 'today' | 'journal' | 'calendar' | 'viewport_layout';
 type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
   | 'home_after_projects' | 'home_to_activity' | 'activity_heading'
@@ -27,8 +28,12 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'activity_navigation' | 'agent_health_navigation' | 'agent_health_api_response'
   | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
+  | 'notes_navigation_link' | 'notes_collections'
+  | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
+  | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
+  | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
-  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_no_horizontal_overflow';
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -68,7 +73,7 @@ async function expectNoHorizontalOverflow(
 
 function safePath(value: string): string {
   const url = new URL(value, baseUrl);
-  return url.pathname.replace(/[0-9a-f]{32}/g, '<opaque-id>');
+  return url.pathname.replace(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{32}/gi, '<opaque-id>');
 }
 
 async function configurePage(page: Page) {
@@ -180,9 +185,15 @@ async function configurePage(page: Page) {
       && params.size === 0;
     const taskListPath = route.request().method() === 'GET' && url.pathname === '/api/tasks'
       && exactParams({ status: 'open' });
+    const notesPath = params.size === 0 && (
+      (url.pathname === '/api/notes' && ['GET', 'POST'].includes(route.request().method()))
+      || (route.request().method() === 'GET' && url.pathname === '/api/notes/drafts')
+      || (['GET', 'PUT'].includes(route.request().method())
+        && /^\/api\/notes\/drafts\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(url.pathname))
+    );
     if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
       && !briefPath && !journalSourcePath && !sourceListPath && !homePath && !healthPath
-      && !activityPath && !calendarPath && !journalPath && !taskListPath) {
+      && !activityPath && !calendarPath && !journalPath && !taskListPath && !notesPath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
       return;
@@ -224,6 +235,10 @@ async function configurePage(page: Page) {
     get diagnosticAssertion() { return diagnosticAssertion; },
     get activityReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/activity').map((request) => request.status).slice(-4); },
+    get notesCollectionReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && request.path === '/api/notes').map((request) => request.status).slice(-4); },
+    get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
     setActivityReadRevoked(revoked: boolean) { activityReadRevoked = revoked; },
@@ -236,7 +251,9 @@ async function inspectOrCreateDailyBrief(
   observed: Awaited<ReturnType<typeof configurePage>>,
 ) {
   observed.setFailureStage('daily_brief_read');
+  observed.setDiagnosticAssertion('daily_brief_navigation');
   await page.goto('/brief');
+  observed.setDiagnosticAssertion('daily_brief_heading');
   await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible();
   const beforeOpen = observed.dailyBriefPostCount;
   expect(beforeOpen).toBe(0);
@@ -244,19 +261,24 @@ async function inspectOrCreateDailyBrief(
   if (!desktopWriter) {
     // The desktop viewport is the sole writer for today's singleton Brief.
     // Tablet and mobile independently verify the persisted read-only result.
+    observed.setDiagnosticAssertion('daily_brief_saved_readback');
     await expect(page.getByText('Synthetic manually approved daily brief')).toBeVisible();
   }
 
   expect(observed.dailyBriefPostCount).toBe(0);
   observed.setFailureStage('daily_brief_sources');
+  observed.setDiagnosticAssertion('daily_brief_open_prepare');
   await page.getByRole('button', { name: '手动准备简报' }).click();
+  observed.setDiagnosticAssertion('daily_brief_sources');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
   await expect(page.getByRole('checkbox', { name: /Synthetic brief project source/ })).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
   observed.setFailureStage('daily_brief_journal');
+  observed.setDiagnosticAssertion('daily_brief_journal_action');
   await page.getByRole('button', { name: '加载 Journal 来源' }).click();
+  observed.setDiagnosticAssertion('daily_brief_journal_source');
   const journalSource = page.getByRole('checkbox', { name: /Journal 来源 1/ });
   await expect(journalSource).toBeVisible();
   await expect(page.getByText('Synthetic Journal source fixture; never read or published by the UI.')).toHaveCount(0);
@@ -269,6 +291,7 @@ async function inspectOrCreateDailyBrief(
   await page.getByLabel('分类（逗号分隔）').fill('合成验收');
 
   observed.setFailureStage('daily_brief_preview');
+  observed.setDiagnosticAssertion('daily_brief_preview');
   await page.getByRole('button', { name: '预览并确认' }).click();
   await expect(page.getByText('确认要保存这份简报？')).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
@@ -526,6 +549,78 @@ for (const viewport of viewports) {
       expect(observed.requestRecords.some((request) => request.method === 'GET' && request.path.startsWith(path))).toBe(true);
     }
 
+    observed.setFailureStage('notes_navigation');
+    if (viewport.width <= 760) {
+      const menu = page.locator('.mobile-menu-button');
+      if (await menu.getAttribute('aria-expanded') === 'false') await menu.click();
+      await expect(menu).toHaveAttribute('aria-expanded', 'true');
+    }
+    const collectionsResponsePromise = waitForGetResponse(page, '/api/notes');
+    const notesNavigationButton = page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true });
+    observed.setDiagnosticAssertion('notes_navigation_link');
+    await expect(notesNavigationButton).toBeVisible();
+    observed.setDiagnosticAssertion('notes_navigation');
+    await notesNavigationButton.click();
+    observed.setDiagnosticAssertion('notes_collections');
+    await expectSuccessfulGet(collectionsResponsePromise, observed, 'notes_collections');
+    await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+    await expect(page.getByRole('heading', { name: '笔记', exact: true })).toBeVisible();
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
+
+    observed.setFailureStage('notes_create');
+    const createNoteResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/notes', { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_create');
+    await page.getByRole('button', { name: '新建 Draft', exact: true }).click();
+    const createNoteResponse = await createNoteResponsePromise;
+    expect(createNoteResponse.status(), 'notes_create').toBe(200);
+    const createdNote = await createNoteResponse.json() as { collection: string; path: string };
+    expect(createdNote.collection).toBe('drafts');
+    expect(createdNote.path).toMatch(/^[0-9a-f-]{36}$/i);
+    const editor = page.locator('.ProseMirror');
+    await expect(editor).toBeVisible();
+
+    const syntheticNoteBody = `Synthetic mobile note round trip ${viewport.name}`;
+    observed.setFailureStage('notes_edit_save');
+    const saveNoteResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === 'PUT' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
+    }, { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_save');
+    await editor.fill(syntheticNoteBody);
+    const saveNoteResponse = await saveNoteResponsePromise;
+    expect(saveNoteResponse.status(), 'notes_save').toBe(200);
+    await expect(page.getByRole('status').filter({ hasText: '已保存' }).first()).toBeVisible();
+
+    observed.setFailureStage('notes_reopen');
+    await page.reload();
+    const readNoteResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === 'GET' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
+    }, { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_readback');
+    await page.getByRole('button', { name: syntheticNoteBody, exact: true }).click();
+    const readNoteResponse = await readNoteResponsePromise;
+    expect(readNoteResponse.status(), 'notes_readback').toBe(200);
+    await expect(page.locator('.ProseMirror')).toContainText(syntheticNoteBody);
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
+
+    // Exercise the real Notes dialog layout CSS against each accepted viewport.
+    // This uses only static synthetic markup; Notes save/reopen is covered by
+    // the separate localhost HTTP and component tests.
+    observed.setDiagnosticAssertion('layout_no_horizontal_overflow');
+    await page.setContent('<div class="visual-dialog-backdrop"><section class="visual-dialog" role="dialog" aria-label="合成图形"><header class="visual-dialog-header"><h2>思维导图</h2><span>synthetic.mindmap.json</span><button type="button">关闭</button></header><div class="visual-map-editor"></div><footer class="visual-dialog-footer"><span>已保存</span><button type="button">保存图形</button></footer></section></div>');
+    await page.addStyleTag({ content: await readFile(new URL('../../secondbrain-frontend/src/styles/app.css', import.meta.url), 'utf8') });
+    const dialogGeometry = await page.locator('.visual-dialog').evaluate((dialog) => {
+      const bounds = dialog.getBoundingClientRect();
+      const close = dialog.querySelector('header button')?.getBoundingClientRect();
+      return { left: bounds.left, right: bounds.right, closeLeft: close?.left, closeRight: close?.right };
+    });
+    expect(dialogGeometry.left).toBeGreaterThanOrEqual(20);
+    expect(dialogGeometry.right).toBeLessThanOrEqual(viewport.width - 20);
+    expect(dialogGeometry.closeLeft).toBeGreaterThanOrEqual(dialogGeometry.left);
+    expect(dialogGeometry.closeRight).toBeLessThanOrEqual(dialogGeometry.right);
+
   });
 }
 
@@ -544,6 +639,8 @@ test.afterEach(async ({ page }, testInfo) => {
       code: isTimeout ? 'timeout' : isAssertion ? 'assertion_failed' : 'test_error',
       assertion_id: observed?.diagnosticAssertion ?? 'test_setup',
       activity_get_statuses: observed?.activityReadStatuses ?? [],
+      notes_collection_statuses: observed?.notesCollectionReadStatuses ?? [],
+      daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);

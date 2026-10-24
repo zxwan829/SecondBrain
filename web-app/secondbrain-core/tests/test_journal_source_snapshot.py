@@ -1,6 +1,5 @@
 """Journal source reads remain side-effect free and fail closed on races."""
 import hashlib
-import json
 import os
 import stat
 
@@ -32,6 +31,21 @@ def _store_with_rows(tmp_path, count=1, text="synthetic journal entry"):
     return root, store, entries
 
 
+def _read_bytes_without_atime(path):
+    """Read fixture bytes without perturbing Linux atime assertions."""
+    flags = os.O_RDONLY | getattr(os, "O_NOATIME", 0)
+    fd = os.open(path, flags)
+    try:
+        chunks = []
+        while True:
+            chunk = os.read(fd, 64 * 1024)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+
 def _file_state(path):
     info = path.lstat()
     return {
@@ -39,7 +53,7 @@ def _file_state(path):
         "dev": info.st_dev, "ino": info.st_ino, "nlink": info.st_nlink,
         "size": info.st_size, "mtime_ns": info.st_mtime_ns,
         "ctime_ns": info.st_ctime_ns, "atime_ns": info.st_atime_ns,
-        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "sha256": hashlib.sha256(_read_bytes_without_atime(path)).hexdigest(),
     }
 
 
@@ -67,11 +81,13 @@ def test_source_read_succeeds_in_nonwritable_root_without_lock_or_other_side_eff
     root_entries_before = sorted(path.name for path in root.iterdir())
     root_state_before = _directory_state(root)
     before = _file_state(source)
-    expected_row = json.loads(source.read_text(encoding="utf-8").splitlines()[0])
+    # Use the fixture's already parsed row rather than reading the file here:
+    # that would alter atime before the production side-effect assertion.
+    expected_row = entries[0]
     result = store.read_source_day(DAY)
     assert result["available"] is True
     assert result["entries"][entries[0]["id"]]["version"] == hashlib.sha256(
-        source.read_bytes().splitlines()[0]
+        _read_bytes_without_atime(source).splitlines()[0]
     ).hexdigest()
     authority = SourceReferenceAuthority(journal_store=store,
                                          permission_checks={"journal": lambda: None})

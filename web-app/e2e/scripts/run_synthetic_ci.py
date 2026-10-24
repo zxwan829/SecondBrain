@@ -34,7 +34,7 @@ E2E = Path(__file__).resolve().parents[1]
 ARTIFACTS = E2E / "artifacts-sanitized"
 CORE_URL = ""
 WEB_URL = ""
-OPAQUE_ID = __import__("re").compile(r"(?i)\b[0-9a-f]{32}\b")
+OPAQUE_ID = __import__("re").compile(r"(?i)\b(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{32})\b")
 REPORT_ID = __import__("re").compile(r"(?i)\b(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\b")
 SENSITIVE_KEYS = ("header", "cookie", "authorization", "bearer", "token", "credential", "passphrase",
                   "postdata", "post_data", "body", "content", "snapshot", "params", "value", "text",
@@ -61,7 +61,8 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "ordinary_chat", "source_protection", "daily_brief_read", "daily_brief_sources",
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
     "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
-    "agent_health", "today", "journal", "calendar", "viewport_layout",
+    "agent_health", "today", "journal", "calendar", "notes_navigation",
+    "notes_create", "notes_edit_save", "notes_reopen", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 FAILURE_DIAGNOSTIC_ASSERTIONS = {
@@ -76,6 +77,11 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "calendar_navigation", "calendar_api_response", "home_api_response",
     "layout_home", "layout_projects", "layout_activity", "layout_agent_health",
     "layout_today", "layout_journal", "layout_calendar",
+    "notes_navigation", "notes_navigation_link", "notes_collections", "notes_create", "notes_save",
+    "notes_readback", "layout_notes",
+    "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
+    "daily_brief_open_prepare", "daily_brief_sources", "daily_brief_journal_action",
+    "daily_brief_journal_source", "daily_brief_preview",
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
     "calendar_api_requests",
 }
@@ -207,7 +213,7 @@ def _sanitize_run_summary(path: Path) -> None:
     allowed = {"result", "core", "web", "browser", "promote_enabled", "hermes",
                "raw_record_count", "journal_files", "knowledge_files", "exit_code",
                "journal_source_fixture_files", "journal_mutated_files", "brief_files",
-               "brief_file_set_verified", "python", "node",
+               "brief_file_set_verified", "notes_files", "python", "node",
                "html_report_uploaded", "screenshots_uploaded"}
     path.write_text(json.dumps({key: summary[key] for key in allowed if key in summary}, indent=2) + "\n",
                     encoding="utf-8")
@@ -219,14 +225,19 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
     validated = []
     seen_viewports = set()
     for entry in value:
-        if not isinstance(entry, dict) or set(entry) != {
-                "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}:
+        base_keys = {"viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
+        allowed_shapes = {frozenset(base_keys), frozenset(base_keys | {"notes_collection_statuses"}),
+                          frozenset(base_keys | {"daily_brief_get_statuses"}),
+                          frozenset(base_keys | {"notes_collection_statuses", "daily_brief_get_statuses"})}
+        if not isinstance(entry, dict) or frozenset(entry) not in allowed_shapes:
             raise RuntimeError("failure diagnostic fields rejected; upload withheld")
         viewport = entry["viewport"]
         stage = entry["stage"]
         code = entry["code"]
         assertion_id = entry["assertion_id"]
         activity_statuses = entry["activity_get_statuses"]
+        notes_statuses = entry.get("notes_collection_statuses", [])
+        brief_statuses = entry.get("daily_brief_get_statuses", [])
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
@@ -234,11 +245,22 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(activity_statuses, list) or len(activity_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in activity_statuses)
+                or not isinstance(notes_statuses, list) or len(notes_statuses) > 4
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in notes_statuses)
+                or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in brief_statuses)
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
         seen_viewports.add(viewport)
-        validated.append({"viewport": viewport, "stage": stage, "code": code,
-                          "assertion_id": assertion_id, "activity_get_statuses": activity_statuses})
+        normalized = {"viewport": viewport, "stage": stage, "code": code,
+                      "assertion_id": assertion_id, "activity_get_statuses": activity_statuses}
+        if "notes_collection_statuses" in entry:
+            normalized["notes_collection_statuses"] = notes_statuses
+        if "daily_brief_get_statuses" in entry:
+            normalized["daily_brief_get_statuses"] = brief_statuses
+        validated.append(normalized)
     return validated
 
 
@@ -320,8 +342,11 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
                 raw = json.loads(source.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
                 raise RuntimeError("failure diagnostic JSON rejected; upload withheld") from error
-            if (not isinstance(raw, dict) or set(raw) != {
-                    "schema_version", "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
+            base_keys = {"schema_version", "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
+            allowed_shapes = {frozenset(base_keys), frozenset(base_keys | {"notes_collection_statuses"}),
+                              frozenset(base_keys | {"daily_brief_get_statuses"}),
+                              frozenset(base_keys | {"notes_collection_statuses", "daily_brief_get_statuses"})}
+            if (not isinstance(raw, dict) or frozenset(raw) not in allowed_shapes
                     or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 2
                     or raw.get("viewport") != viewport):
                 raise RuntimeError("failure diagnostic source schema rejected; upload withheld")
@@ -330,6 +355,10 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
                 "assertion_id": raw.get("assertion_id"),
                 "activity_get_statuses": raw.get("activity_get_statuses"),
             })
+            if "notes_collection_statuses" in raw:
+                diagnostics[-1]["notes_collection_statuses"] = raw["notes_collection_statuses"]
+            if "daily_brief_get_statuses" in raw:
+                diagnostics[-1]["daily_brief_get_statuses"] = raw["daily_brief_get_statuses"]
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
@@ -758,8 +787,11 @@ def _assert_exact_brief_file_set(root: Path, date_file_name: str) -> int:
         match.group(1) for name in names
         if (match := re.fullmatch(r"\.op-lock-([a-f0-9]{64})", name)) is not None
     }
-    expected_shape = (date_file_name in names and len(operation_hashes) == 1
-                      and operation_hashes == lock_hashes and len(names) == 3)
+    date_match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\.json", date_file_name)
+    date_lock = f".date-lock-{date_match.group(1)}" if date_match else None
+    expected_shape = (date_lock is not None and date_file_name in names
+                      and date_lock in names and len(operation_hashes) == 1
+                      and operation_hashes == lock_hashes and len(names) == 4)
     if not expected_shape:
         raise RuntimeError("synthetic Daily Brief directory file set mismatch")
     return len(names)
@@ -771,10 +803,15 @@ def http_smoke(password_path: Path) -> list[dict]:
     client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     request_log: list[dict] = []
 
-    def request(method: str, path: str, body: dict | None = None, *, opener=client, origin=WEB_URL):
+    def request(method: str, path: str, body: dict | None = None, *, headers: dict[str, str] | None = None,
+                opener=client, origin=WEB_URL):
         started = time.monotonic()
         data = json.dumps(body).encode() if body is not None else None
-        request_headers = {"Origin": origin, "Content-Type": "application/json"} if body is not None else {"Origin": origin}
+        request_headers = {"Origin": origin}
+        if body is not None:
+            request_headers["Content-Type"] = "application/json"
+        if headers:
+            request_headers.update(headers)
         req = urllib.request.Request(WEB_URL + path, data=data, headers=request_headers, method=method)
         try:
             response = opener.open(req, timeout=10)
@@ -806,6 +843,31 @@ def http_smoke(password_path: Path) -> list[dict]:
     status, _, _ = request("GET", "/api/auth/session")
     if status != 200:
         raise RuntimeError("synthetic App session check failed")
+
+    status, collections, _ = request("GET", "/api/notes")
+    if status != 200 or collections != {"collections": [{"id": "drafts", "kind": "drafts"}]}:
+        raise RuntimeError("synthetic Notes collections read did not return the private Drafts collection")
+    initial_note = "# Synthetic HTTP note\n\nInitial body.\n"
+    status, note, _ = request("POST", "/api/notes", {"content": initial_note})
+    if (status != 200 or not isinstance(note, dict) or note.get("collection") != "drafts"
+            or not isinstance(note.get("path"), str) or not __import__("re").fullmatch(r"[0-9a-f-]{36}", note["path"])
+            or note.get("content") != initial_note or not isinstance(note.get("etag"), str)):
+        raise RuntimeError("synthetic Notes Draft creation receipt did not match the request")
+    note_path = f"/api/notes/drafts/{note['path']}"
+    status, read_note, _ = request("GET", note_path)
+    if status != 200 or not isinstance(read_note, dict) or read_note.get("content") != initial_note:
+        raise RuntimeError("synthetic Notes Draft initial readback did not match the created content")
+    updated_note_content = "# Synthetic HTTP note\n\nUpdated body.\n"
+    status, updated_note, _ = request("PUT", note_path, {"content": updated_note_content},
+                                      headers={"If-Match": f'"{note["etag"]}"'})
+    if status != 200 or not isinstance(updated_note, dict) or updated_note.get("content") != updated_note_content:
+        raise RuntimeError("synthetic Notes Draft update did not return the saved content")
+    stale_status, _, _ = request("PUT", note_path, {"content": "# Synthetic HTTP note\n\nStale body.\n"},
+                                 headers={"If-Match": f'"{note["etag"]}"'})
+    status, persisted_note, _ = request("GET", note_path)
+    if (stale_status != 412 or status != 200 or not isinstance(persisted_note, dict)
+            or persisted_note.get("content") != updated_note_content):
+        raise RuntimeError("synthetic Notes stale ETag did not preserve the latest saved content")
 
     day = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
     status, tasks, _ = request("GET", "/api/tasks?status=all")
@@ -887,14 +949,14 @@ def http_smoke(password_path: Path) -> list[dict]:
     conflict_status, _, _ = request("POST", "/api/daily-brief", conflict_payload)
     if conflict_status != 409:
         raise RuntimeError("Daily Brief changed payload with the same key did not return HTTP 409")
-    unsupported_status, unsupported, unsupported_raw = request("POST", "/api/daily-brief", {
+    invalid_import_status, invalid_import, invalid_import_raw = request("POST", "/api/daily-brief", {
         **brief_payload, "mode": "approved_import",
         "import_ref": {"kind": "existing_brief", "id": "synthetic-import", "version": "a" * 64},
     })
-    if (unsupported_status != 501 or not isinstance(unsupported, dict)
-            or unsupported.get("detail") != "approved import unavailable"
-            or b"synthetic-import" in unsupported_raw):
-        raise RuntimeError("unsupported approved_import was not safely rejected with HTTP 501")
+    if (invalid_import_status != 422 or not isinstance(invalid_import, dict)
+            or invalid_import.get("detail") != "invalid request"
+            or b"synthetic-import" in invalid_import_raw):
+        raise RuntimeError("malformed approved_import reference was not safely rejected with HTTP 422")
 
     denied_payload = {"original_text": "synthetic origin denial", "source_channel": "web",
                       "source_event_id": f"e2e-{uuid.uuid4()}",
@@ -978,7 +1040,7 @@ def main() -> int:
     log_files = []
     result = 1
     try:
-        dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs")}
+        dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs", "notes")}
         for path in dirs.values():
             path.mkdir(mode=0o700)
         journal_fixture = seed_daily_brief_sources(dirs)
@@ -996,6 +1058,7 @@ def main() -> int:
             "SB_TASK_ROOT": str(dirs["task"]),
             "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
+            "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
             "SB_DASHBOARD_ORIGINS": WEB_URL,
             "SB_CORE_ALLOWED_HOSTS": "127.0.0.1,localhost",
@@ -1003,6 +1066,7 @@ def main() -> int:
             "SB_HERMES_API_URL": "",
             "SB_PERSONAL_MEMORY_ENABLED": "false",
             "SB_PERSONAL_LEARNING_ENABLED": "false",
+            "VITE_ENABLE_NOTES": "true",
             "SB_E2E_BASE_URL": WEB_URL,
             "SB_CORE_PROXY_TARGET": CORE_URL,
             "SB_E2E_PASSWORD_FILE": str(password_path),
@@ -1084,6 +1148,7 @@ def main() -> int:
             "journal_mutated_files": journal_mutated_files,
             "brief_files": brief_directory_files,
             "brief_file_set_verified": brief_file_set_verified,
+            "notes_files": sum(1 for path in dirs["notes"].rglob("*") if path.is_file() and not path.is_symlink()),
             "knowledge_files": sum(path.is_file() for path in dirs["knowledge"].rglob("*")),
             "exit_code": test_returncode,
             "python": python,
