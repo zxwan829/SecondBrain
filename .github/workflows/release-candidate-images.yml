@@ -1,0 +1,171 @@
+name: Build isolated SecondBrain release candidate images
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release-candidate-images.yml
+      - web-app/Dockerfile.app
+      - web-app/hermes-agent/patches/v0.22.2/**
+      - web-app/hermes-agent/d078-guard/**
+      - web-app/hermes-agent/weixin-inbox/**
+      - web-app/hermes-agent/tests/weixin_gateway_smoke.py
+      - web-app/hermes-agent/tests/hermes_plugin_coexistence_smoke.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secondbrain-release-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    if: github.repository == 'zxwan829/SecondBrain'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout build recipe
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout exact application source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: source-tree
+          persist-credentials: false
+
+      - name: Checkout pinned Hermes v0.22.2 source
+        uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: d923a5eb487a17c0a68801bba9ef0f56c81040a8
+          path: hermes-agent-source
+          persist-credentials: false
+
+      - name: Build App/Core image from the exact source revision
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          cp web-app/Dockerfile.app source-tree/web-app/Dockerfile.app
+          docker build --file source-tree/web-app/Dockerfile.app --platform linux/amd64 \
+            --build-arg VITE_ENABLE_NOTES=true \
+            --build-arg "SB_SOURCE_REVISION=$SOURCE_SHA" \
+            --tag "secondbrain-app:candidate-${SOURCE_SHA}" \
+            source-tree/web-app
+
+      - name: Verify isolated App startup and static UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="secondbrain-app:candidate-${{ github.event.pull_request.base.sha || github.sha }}"
+          docker run -d --name secondbrain-app-candidate-smoke \
+            --network none --read-only --user 1026:100 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+            --tmpfs /candidate-data:rw,nosuid,size=64m,uid=1026,gid=100,mode=0700 \
+            -e SB_REVIEW_ROOT=/candidate-data/review \
+            -e SB_KNOWLEDGE_ROOT=/candidate-data/knowledge \
+            -e SB_PROMOTE_STATE_ROOT=/candidate-data/state \
+            -e SB_CAPTURE_RAW_ROOT=/candidate-data/raw \
+            -e SB_DASHBOARD_ORIGINS=http://localhost \
+            -e SB_CORE_ALLOWED_HOSTS=localhost,127.0.0.1 \
+            -e SB_APP_PASSWORD_FILE=/candidate-data/app-password \
+            -e SB_PROMOTE_ENABLED=false \
+            --entrypoint /bin/sh "$image" -ec \
+            'mkdir -p /candidate-data/state /candidate-data/review /candidate-data/knowledge /candidate-data/raw; chmod 0700 /candidate-data/state; printf "synthetic-candidate-password\\n" > /candidate-data/app-password; chmod 0400 /candidate-data/app-password; exec python -m secondbrain_core'
+          cleanup() { docker rm -f secondbrain-app-candidate-smoke >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          for attempt in $(seq 1 30); do
+            if docker exec secondbrain-app-candidate-smoke python -c \
+              'import json,urllib.request; r=urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8000/health",headers={"Host":"localhost"}),timeout=2); d=json.load(r); assert d["status"]=="ok" and d["promote_enabled"] is False' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec secondbrain-app-candidate-smoke python -c \
+            'import json,urllib.request; h={"Host":"localhost"}; d=json.load(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8000/health",headers=h),timeout=3)); print("APP_HEALTH",d); assert d["status"]=="ok", d; assert d["promote_enabled"] is False, d; r=urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8000/notes",headers=h),timeout=3); body=r.read(); content_type=r.headers.get("Content-Type",""); print("NOTES_ROUTE",r.status,content_type,"bytes=",len(body)); assert r.status==200 and content_type.startswith("text/html") and len(body)>100; print("APP_CANDIDATE_STARTUP_STATIC_AND_PROMOTE_OFF_PASS")'
+
+      - name: Build pinned Hermes v0.22.2 with D078 and Weixin plugins
+        shell: bash
+        run: |
+          set -euo pipefail
+          web-app/hermes-agent/patches/v0.22.2/build-fixed-image.sh \
+            "$GITHUB_WORKSPACE/hermes-agent-source" \
+            "secondbrain-hermes:candidate-${{ github.event.pull_request.base.sha || github.sha }}"
+
+      - name: Verify both plugins load together in a synthetic profile
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hermes-candidate-home"
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+            -e HERMES_HOME=/tmp/hermes-candidate-home \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/web-app/hermes-agent/tests/hermes_plugin_coexistence_smoke.py,dst=/tmp/plugin-smoke.py,readonly" \
+            --entrypoint /bin/sh "secondbrain-hermes:candidate-${SOURCE_SHA}" -ec \
+            'python3 -B /tmp/plugin-smoke.py'
+
+      - name: Verify synthetic Gateway Inbox smoke
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+            --tmpfs /opt/data:rw,nosuid,size=128m,mode=1777 \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --memory 2g --cpus 1 --pids-limit 128 --user 10001:10001 \
+            --workdir /opt/hermes \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/source-tree/web-app/hermes-agent/tests/weixin_gateway_smoke.py,dst=/tmp/weixin_gateway_smoke.py,readonly" \
+            --entrypoint /bin/sh "secondbrain-hermes:candidate-${SOURCE_SHA}" -ec \
+            'python3 -B /tmp/weixin_gateway_smoke.py'
+
+      - name: Export images, source manifest, and checksums
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/secondbrain-release-candidate"
+          mkdir -p "$out"
+          app="secondbrain-app:candidate-${SOURCE_SHA}"
+          hermes="secondbrain-hermes:candidate-${SOURCE_SHA}"
+          app_id=$(docker image inspect "$app" --format '{{.Id}}')
+          app_revision=$(docker image inspect "$app" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          hermes_id=$(docker image inspect "$hermes" --format '{{.Id}}')
+          hermes_source=$(docker image inspect "$hermes" --format '{{index .Config.Labels "io.secondbrain.hermes.source-commit"}}')
+          hermes_overlay=$(docker image inspect "$hermes" --format '{{index .Config.Labels "io.secondbrain.hermes.patch-sha256"}}')
+          test "$app_revision" = "$SOURCE_SHA"
+          test "$hermes_source" = d923a5eb487a17c0a68801bba9ef0f56c81040a8
+          cat > "$out/manifest.txt" <<EOF
+          source_commit=$SOURCE_SHA
+          app_tag=$app
+          app_image_id=$app_id
+          app_source_revision=$app_revision
+          hermes_tag=$hermes
+          hermes_image_id=$hermes_id
+          hermes_source_commit=$hermes_source
+          hermes_overlay_sha256=$hermes_overlay
+          platform=linux/amd64
+          promote_enabled=false
+          real_credentials=none
+          EOF
+          docker save "$app" "$hermes" | gzip -1 > "$out/secondbrain-candidate-images.tar.gz"
+          (cd "$out" && sha256sum secondbrain-candidate-images.tar.gz > SHA256SUMS)
+          cat "$out/manifest.txt"
+          cat "$out/SHA256SUMS"
+
+      - name: Upload candidate image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: secondbrain-release-candidate-${{ github.event.pull_request.base.sha || github.sha }}
+          path: ${{ runner.temp }}/secondbrain-release-candidate/
+          if-no-files-found: error
+          retention-days: 14

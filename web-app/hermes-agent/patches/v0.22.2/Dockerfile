@@ -15,3 +15,4 @@ LABEL org.opencontainers.image.version="0.22.2" \
 COPY agent/tool_executor.py /opt/hermes/agent/tool_executor.py
 COPY gateway/platforms/weixin.py /opt/hermes/gateway/platforms/weixin.py
 COPY weixin-inbox/ /opt/hermes/plugins/secondbrain-weixin-inbox/
+COPY d078-guard/ /opt/hermes/plugins/secondbrain-d078-guard/

@@ -12,6 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SB_STATIC_ROOT=/app/static TMPD
 # override these at runtime with their own least-privilege UID/GID.
 ARG SB_APP_UID=1026
 ARG SB_APP_GID=100
+ARG SB_SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.revision=${SB_SOURCE_REVISION}
 RUN apt-get update \
     && apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/* \
