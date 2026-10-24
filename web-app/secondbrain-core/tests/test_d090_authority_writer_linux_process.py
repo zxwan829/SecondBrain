@@ -149,7 +149,7 @@ def _run_case(*, drop_response: bool):
         ), roles.writer_uid, roles.writer_gid, module_root)
         processes.append(writer_proc)
         assert _readline(writer_proc) == "READY"
-        socket_path.chown(roles.authority_uid, roles.authority_gid)
+        os.chown(socket_path, roles.authority_uid, roles.authority_gid)
         socket_path.chmod(0o660)
 
         if not drop_response:
@@ -163,7 +163,7 @@ def _run_case(*, drop_response: bool):
             processes.append(probe)
             assert _readline(writer_proc) == "REJECTED authority_peer_rejected"
             assert probe.wait(timeout=5) == 0
-            socket_path.chown(roles.authority_uid, roles.authority_gid)
+            os.chown(socket_path, roles.authority_uid, roles.authority_gid)
             socket_path.chmod(0o660)
 
         authority_cmd = _command(
