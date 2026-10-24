@@ -6,6 +6,7 @@ authentication, identity, consent, or production registration contract.
 """
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +22,7 @@ from secondbrain_core.modules.trusted_channel_adapter import create_trusted_chan
 
 
 HERMES_SOURCE_ROOT = os.environ.get("HERMES_SOURCE_ROOT")
+HERMES_V0_22_2_COMMIT = "d923a5eb487a17c0a68801bba9ef0f56c81040a8"
 if HERMES_SOURCE_ROOT:
     import sys
     sys.path.insert(0, HERMES_SOURCE_ROOT)
@@ -35,7 +37,7 @@ else:
     _HERMES_IMPORT_ERROR = None
 
 
-pytestmark = pytest.mark.skipif(WeixinAdapter is None,
+pytestmark = pytest.mark.skipif(WeixinAdapter is None or not HERMES_SOURCE_ROOT,
                                reason="set HERMES_SOURCE_ROOT to the pinned Hermes v0.22.2 source")
 
 
@@ -69,8 +71,13 @@ class SyntheticHermesIdentityProvider:
 
 class WeixinTrustedChannelBridgeTests(unittest.TestCase):
     def setUp(self):
-        if WeixinAdapter is None:
-            self.skipTest(f"Hermes source unavailable: {_HERMES_IMPORT_ERROR}")
+        if WeixinAdapter is None or not HERMES_SOURCE_ROOT:
+            self.skipTest(f"Hermes source unavailable: {_HERMES_IMPORT_ERROR or 'HERMES_SOURCE_ROOT is unset'}")
+        hermes_head = subprocess.check_output(
+            ["git", "-C", HERMES_SOURCE_ROOT, "rev-parse", "HEAD"], text=True,
+        ).strip()
+        self.assertEqual(hermes_head, HERMES_V0_22_2_COMMIT,
+                         "bridge fixture must run against the exact Hermes v0.22.2 source commit")
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         self.raw, self.review, self.state = (self.root / name for name in ("raw", "review", "state"))
