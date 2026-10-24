@@ -1,10 +1,28 @@
 ---
 created: 2026-09-28
-updated: 2026-10-19
+updated: 2026-10-24
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
+
+## 最新生产只读预检（2026-10-24；NAS 部署准备）
+
+- 本轮经 SSH 对 NAS 执行只读核验，未构建/拉取镜像、修改文件或配置、重启/重建容器、读取 Secret 或业务数据。SSH 本地 known_hosts 更新因当前执行环境权限受限而告警；远端只读命令仍成功，未修改本地权限或 SSH 配置。
+- App `secondbrain-app` 容器 `9562e402f72b67b0eacba3a99a0fc23c7c23098c5b8ecebf8517f552dbb29c39`，镜像 `secondbrain-app:m2-pr94-c7eda992-app-only` / `sha256:728fc7d180f7687c90c58be2e9beb970a4010bfb10bd04777371861f3139aeeb`，running、healthy、RestartCount 0，运行身份 `1026:100`，仅发布 `127.0.0.1:9120->8000`。镜像未提供可核验的 OCI source revision label；`c7eda992` 标签对应源码提交仅是来源线索，不是镜像内容证明。相对当前 main `1ddff32463b06753758cae144d79de05632deb52` 的差异很大，需由当前 main 重建 App 候选。
+- Hermes `secondbrain-hermes` 容器 `908a4b37c41344e97441013a18995e727971a10242d49dee65e39f3bf00c43d6`，镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / `sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`，running、RestartCount 0；无 Docker healthcheck。运行身份 root；发布 `192.168.3.27:9119->9119`。镜像标签记录 Hermes 上游 `d923a5eb487a17c0a68801bba9ef0f56c81040a8` 及 D078 patch SHA-256 `b53818487205733039378a8e3c7218cc298eca1c39e1a34dec997dd306f855b0`，未含 Weixin 插件 overlay；镜像内 `secondbrain-weixin-inbox` 插件目录不存在。D078 Guard 目录在活动 Hermes Home 下存在，profile 配置存在且元数据为 `1026:100 / 0640`；本轮未读配置内容，Plugin Doctor 未取得可用的新输出，因此 Hook 当前注册状态仍以历史核验为依据。
+- 两容器位于 `secondbrain_default`；App 地址 `172.18.0.2`、Hermes `172.18.0.3`。从 App 容器对 `http://hermes:8642/health` 的只读请求返回 HTTP 200，确认内部 DNS、网络和 API 健康端点可达。Docker Server `24.0.2` linux/amd64。App 容器挂载目标包括 `/knowledge` RO、Core state RW、Review RW、Inbox RW 及两个只读 Secret 文件引用；Hermes 的 SecondBrain 根为 RO，两个捕获目录与 Inbox 为 RW。两容器当前挂载列表均无 Private。
+- 运行容器 Compose labels 指向项目 `secondbrain`、服务 `secondbrain-app`/`hermes`、工作目录 `/volume1/docker/secondbrain` 和配置路径 `/volume1/docker/secondbrain/compose.yaml`。Compose 文件仅检查元数据/摘要：`1026:100 / 0640`，SHA-256 `5703458d5db4703d3a1e9377c3aafbfacc470863b92c15f4305e802f64b1c17b`，与 2026-10-19 记录一致；未输出或检查原始 Compose 内容，避免展开配置值。运行时只选取容器身份、网络、挂载目标、环境变量键名存在性等字段。
+- Core/Hermes 容器均不存在 `SB_WEIXIN_INBOX_ENABLED`、`SB_WEIXIN_INBOX_HMAC_KEY`、`SB_WEIXIN_ALLOWED_SENDERS_JSON`、`SB_WEIXIN_CORE_INBOX_URL`、`SB_WEIXIN_CORE_INBOX_HMAC_KEY` 这些环境变量键；没有读取任何环境变量值。Core 源码默认关闭微信 Inbox；当前因此未启用。当前 Hermes 镜像没有 Weixin 插件，不能承载微信 MVP。旧 App 回滚镜像 `sha256:e55b0e9c65433a208df0f66a68ec2f91e2341b163108e5d09030ac4a7b343f47` 仍存在；当前运行 App/Hermes 镜像也保留。历史 Hermes 回滚镜像是否仍存在，本轮未查询。
+- 当前部署准备为 **NOT READY**：需要从最新 main 构建 App；使用固定 Hermes v0.22.2/D078/Weixin 源码构建并验证新 Hermes 镜像；将 Weixin 配置片段合并进现有 Hermes profile（保留既有设置）、限制为经白名单的私聊并禁用群聊；Core 继续默认关闭，启用时才注入 HMAC 与 sender 白名单引用，Hermes 设置内部 Core URL 与相同 HMAC 引用。Secret 值只能由受保护的 Secret 注入机制提供，不放入 Compose 明文、仓库、日志或聊天。目标影响服务为 `secondbrain-app` 与 `hermes`；扫码需用户本人另行批准和完成。
+- 最小回滚建议：部署获批后先保存并校验当前 Compose 快照及摘要，保留旧 App/Hermes 镜像和现有 Hermes profile；若微信验收失败，先关闭 Core 微信开关并禁用 Hermes 微信插件/平台，再恢复快照中的旧镜像引用与原 profile，仅定向重建相关服务并健康检查。保留 Core state/业务目录，不清理镜像或数据。此为准备方案，不是当前可执行授权。
+
+## NAS SSH 与 sudo 提权凭据引用
+
+- NAS SSH 连接引用为用户 `joe`、主机 `192.168.3.27`、私钥路径 `~/.ssh/id_ed25519_secondbrain_nas`。Mac Keychain 服务名为 `JoeNas-sudo`、账户 `joe`；本机 helper 为 `~/.local/bin/joe-nas-sudo`。服务名是 Keychain 项，helper 是调用脚本，两者不可混淆。此处只登记引用，不记录密码、私钥内容或 Secret 值。
+- 历史记录：2026-10-09 曾由 helper 成功经 SSH 提权并返回 `uid=0(root)`。本次（2026-10-24）先用现有 `sudo -n` 执行已授权的只读 Docker 查询并成功，因此未调用 helper，也未读取 Keychain 凭据值。helper 存在且当前文件权限为 `0700`；Keychain 项存在性已检查，不读取其内容。历史成功不保证未来通道始终可用，施工前仍需按具体授权范围做只读验证。
+- `/private/tmp/nas-sudo-password` 是历史临时密码文件路径，不是今后标准凭据来源。`/etc/sudoers.d/secondbrain-codex-dev` 是历史施工期提权配置，现存状态未核实；不得依赖或修改。普通 `sudo -n` 不可用时，优先按既有 helper 的原生调用方式复用，不要求用户重复提供已配置密码；不得输出、记录、复制或重新保存明文凭据。
+- 已有 sudo 通道仅表示可执行相应授权的管理查询，不构成所有 NAS/生产操作的授权。每次仍须遵循用户对具体操作的范围、生产边界和必要批准。
 
 ## 最新生产快照（2026-10-19；Hermes 静态 IP 冲突修复，Issue #76）
 
