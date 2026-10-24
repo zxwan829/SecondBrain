@@ -9,6 +9,8 @@ on:
       - "web-app/secondbrain-core/tests/test_d090_authority_writer_linux_process.py"
       - "web-app/secondbrain-core/tests/d090_landlock_process_helper.py"
       - "web-app/secondbrain-core/tests/test_d090_landlock_synthetic_process.py"
+      - "web-app/secondbrain-core/tests/d090_seccomp_writer_process_helper.py"
+      - "web-app/secondbrain-core/tests/test_d090_seccomp_writer_process.py"
       - ".github/workflows/d090-linux-process-boundary.yml"
   workflow_dispatch:
     inputs:
@@ -53,6 +55,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install syscall tracer for the bounded runtime inventory
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq strace
       - name: Install isolated Core test dependencies
         working-directory: web-app/secondbrain-core
         run: python -m pip install -e ".[test,writer]"
@@ -60,8 +66,9 @@ jobs:
         working-directory: web-app/secondbrain-core
         run: |
           python_bin="$(command -v python)"
-          sudo env PYTHONPATH="${PYTHONPATH:-}" "$python_bin" -m pytest -q -p no:cacheprovider \
+          sudo env PYTHONPATH="${PYTHONPATH:-}" "$python_bin" -m pytest -q -s -p no:cacheprovider \
             tests/test_d090_authority_writer_linux_process.py \
-            tests/test_d090_landlock_synthetic_process.py
+            tests/test_d090_landlock_synthetic_process.py \
+            tests/test_d090_seccomp_writer_process.py
       - name: Check patch whitespace
         run: git diff --check

@@ -78,7 +78,7 @@ def landlock_abi() -> int:
 def cap_status() -> dict[str, int]:
     values: dict[str, int] = {}
     for line in Path("/proc/self/status").read_text().splitlines():
-        if line.startswith(("CapEff:", "CapPrm:", "CapInh:", "NoNewPrivs:")):
+        if line.startswith(("CapEff:", "CapPrm:", "CapInh:", "CapAmb:", "CapBnd:", "NoNewPrivs:")):
             key, value = line.split(":", 1)
             values[key] = int(value.strip(), 16 if key.startswith("Cap") else 10)
     return values
@@ -103,6 +103,93 @@ def add_path_rule(ruleset_fd: int, path: Path, allowed: int):
             fail_errno(f"add Landlock rule for {path.name}")
     finally:
         os.close(parent_fd)
+
+
+# Seccomp syscall numbers and architecture below intentionally match the ephemeral
+# Ubuntu 24.04 x86_64 workflow. This is a synthetic test helper, not production
+# sandbox initialization. Keep the allowlist tied to this helper's observed path.
+SECCOMP_ARCH_X86_64 = 0xC000003E
+SECCOMP_RET_KILL_PROCESS = 0x80000000
+SECCOMP_RET_ERRNO = 0x00050000
+SECCOMP_RET_ALLOW = 0x7FFF0000
+BPF_LD_W_ABS = 0x20
+BPF_JMP_JEQ_K = 0x15
+BPF_RET_K = 0x06
+PR_SET_SECCOMP = 22
+SECCOMP_MODE_FILTER = 2
+
+
+class SockFilter(ctypes.Structure):
+    _fields_ = [("code", ctypes.c_ushort), ("jt", ctypes.c_ubyte),
+                ("jf", ctypes.c_ubyte), ("k", ctypes.c_uint32)]
+
+
+class SockFprog(ctypes.Structure):
+    _fields_ = [("len", ctypes.c_ushort),
+                ("filter", ctypes.POINTER(SockFilter))]
+
+
+# Initial candidate allowlist for the exact StrictCreateOnlyWriter.publish path
+# plus runtime calls observed after seccomp activation. Tighten from the Linux
+# strace inventory before accepting this candidate.
+SECCOMP_ALLOW = {
+    0,    # read
+    1,    # write
+    3,    # close
+    5,    # fstat
+    9,    # mmap
+    10,   # mprotect
+    11,   # munmap
+    12,   # brk
+    13,   # rt_sigaction
+    14,   # rt_sigprocmask
+    15,   # rt_sigreturn
+    16,   # ioctl
+    17,   # pread64
+    18,   # pwrite64
+    25,   # mremap
+    28,   # madvise
+    35,   # nanosleep
+    39,   # getpid
+    60,   # exit
+    72,   # fcntl
+    74,   # fsync
+    76,   # truncate (to prove Landlock denial)
+    79,   # getcwd
+    82,   # rename (to prove Landlock denial)
+    186,  # gettid
+    202,  # futex
+    228,  # clock_gettime
+    231,  # exit_group
+    257,  # openat
+    262,  # newfstatat
+    263,  # unlinkat (to prove Landlock denial)
+    264,  # renameat (to prove Landlock denial)
+    265,  # linkat (exact Writer publication primitive)
+    318,  # getrandom
+    334,  # rseq
+}
+
+
+def install_minimal_seccomp():
+    if ARCH not in {"x86_64", "amd64"}:
+        raise RuntimeError(f"seccomp slice only supports x86_64 runner, got {ARCH}")
+    instructions = [
+        SockFilter(BPF_LD_W_ABS, 0, 0, 4),  # seccomp_data.arch
+        SockFilter(BPF_JMP_JEQ_K, 1, 0, SECCOMP_ARCH_X86_64),
+        SockFilter(BPF_RET_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
+        SockFilter(BPF_LD_W_ABS, 0, 0, 0),  # seccomp_data.nr
+    ]
+    for syscall_number in sorted(SECCOMP_ALLOW):
+        instructions.extend((
+            SockFilter(BPF_JMP_JEQ_K, 0, 1, syscall_number),
+            SockFilter(BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW),
+        ))
+    instructions.append(SockFilter(BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | errno.EPERM))
+    filter_array = (SockFilter * len(instructions))(*instructions)
+    program = SockFprog(len(instructions), filter_array)
+    if LIBC.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(program)) != 0:
+        fail_errno("install synthetic seccomp allowlist")
 
 
 def assert_denied(label: str, callback):
