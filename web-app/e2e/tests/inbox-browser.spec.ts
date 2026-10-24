@@ -614,12 +614,34 @@ for (const viewport of viewports) {
     const dialogGeometry = await page.locator('.visual-dialog').evaluate((dialog) => {
       const bounds = dialog.getBoundingClientRect();
       const close = dialog.querySelector('header button')?.getBoundingClientRect();
-      return { left: bounds.left, right: bounds.right, closeLeft: close?.left, closeRight: close?.right };
+      return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom,
+        closeLeft: close?.left, closeRight: close?.right, closeTop: close?.top, closeBottom: close?.bottom };
     });
     expect(dialogGeometry.left).toBeGreaterThanOrEqual(20);
     expect(dialogGeometry.right).toBeLessThanOrEqual(viewport.width - 20);
+    expect(dialogGeometry.top).toBeGreaterThanOrEqual(20);
+    expect(dialogGeometry.bottom).toBeLessThanOrEqual(viewport.height - 20);
     expect(dialogGeometry.closeLeft).toBeGreaterThanOrEqual(dialogGeometry.left);
     expect(dialogGeometry.closeRight).toBeLessThanOrEqual(dialogGeometry.right);
+    expect(dialogGeometry.closeTop).toBeGreaterThanOrEqual(dialogGeometry.top);
+    expect(dialogGeometry.closeBottom).toBeLessThanOrEqual(dialogGeometry.bottom);
+
+    // Short landscape viewport reproduces the phone keyboard/orientation class
+    // of failure where the old 420px minimum height hid the dialog footer.
+    await page.setViewportSize({ width: 844, height: 390 });
+    const landscapeGeometry = await page.locator('.visual-dialog').evaluate((dialog) => {
+      const bounds = dialog.getBoundingClientRect();
+      const close = dialog.querySelector('header button')?.getBoundingClientRect();
+      const save = dialog.querySelector('footer button')?.getBoundingClientRect();
+      return { top: bounds.top, bottom: bounds.bottom, closeTop: close?.top,
+        closeBottom: close?.bottom, saveTop: save?.top, saveBottom: save?.bottom };
+    });
+    expect(landscapeGeometry.top).toBeGreaterThanOrEqual(8);
+    expect(landscapeGeometry.bottom).toBeLessThanOrEqual(382);
+    expect(landscapeGeometry.closeTop).toBeGreaterThanOrEqual(landscapeGeometry.top);
+    expect(landscapeGeometry.closeBottom).toBeLessThanOrEqual(landscapeGeometry.bottom);
+    expect(landscapeGeometry.saveTop).toBeGreaterThanOrEqual(landscapeGeometry.top);
+    expect(landscapeGeometry.saveBottom).toBeLessThanOrEqual(landscapeGeometry.bottom);
 
   });
 }
