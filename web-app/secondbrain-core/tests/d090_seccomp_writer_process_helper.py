@@ -152,10 +152,13 @@ def main():
     if extra_fds != [writer.root_fd]:
         raise AssertionError(f"Writer FD allowlist mismatch: {extra_fds}, expected {[writer.root_fd]}")
 
+    # getpid is intentionally outside the narrow allowlist; capture identity
+    # before confinement rather than widening the filter for trace bookkeeping.
+    writer_pid = os.getpid()
     install_minimal_seccomp()
     from d090_landlock_process_helper import SECCOMP_ALLOW
     print(
-        f"SECCOMP_READY writer_pid={os.getpid()} landlock_abi={abi} fd_allowlist=1 "
+        f"SECCOMP_READY writer_pid={writer_pid} landlock_abi={abi} fd_allowlist=1 "
         f"allow_syscalls={','.join(str(n) for n in sorted(SECCOMP_ALLOW))}",
         flush=True,
     )
