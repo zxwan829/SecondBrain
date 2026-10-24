@@ -87,7 +87,7 @@ jobs:
             sleep 2
           done
           docker exec secondbrain-app-candidate-smoke python -c \
-            'import json,urllib.request; h={"Host":"localhost"}; d=json.load(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8000/health",headers=h),timeout=3)); print("APP_HEALTH",d); assert d["status"]=="ok", d; assert d["promote_enabled"] is False, d; r=urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8000/notes",headers=h),timeout=3); body=r.read().decode().lower(); print("NOTES_ROUTE",r.status,r.headers.get("Content-Type"),"html=",("<html" in body)); assert r.status==200 and "<html" in body; print("APP_CANDIDATE_STARTUP_STATIC_AND_PROMOTE_OFF_PASS")'
+            'import json,urllib.request; h={"Host":"localhost"}; d=json.load(urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8000/health",headers=h),timeout=3)); print("APP_HEALTH",d); assert d["status"]=="ok", d; assert d["promote_enabled"] is False, d; r=urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:8000/notes",headers=h),timeout=3); body=r.read(); content_type=r.headers.get("Content-Type",""); print("NOTES_ROUTE",r.status,content_type,"bytes=",len(body)); assert r.status==200 and content_type.startswith("text/html") and len(body)>100; print("APP_CANDIDATE_STARTUP_STATIC_AND_PROMOTE_OFF_PASS")'
 
       - name: Build pinned Hermes v0.22.2 with D078 and Weixin plugins
         shell: bash
