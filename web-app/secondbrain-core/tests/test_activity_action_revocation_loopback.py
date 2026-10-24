@@ -90,7 +90,7 @@ def test_real_core_source_action_grant_revoke_precedes_io_and_recovers(tmp_path,
         "journal", "tasks", "projects", "daily_brief", "personal_memory", "capture",
     )}
     readers = {
-        "journal": (journal_store, "read"),
+        "journal": (journal_store, "read_source_day"),
         "tasks": (app.state.task_store, "list_for_projection_read_only"),
         "projects": (app.state.projects_source_store, "read_snapshot"),
         "daily_brief": (app.state.daily_brief_audit_store, "read_activity_events"),
