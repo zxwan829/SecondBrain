@@ -377,6 +377,18 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .mind-map-canvas { flex: 1; min-height: 260px; overflow: hidden; background: #fff; border-radius: 8px; }
 .excalidraw-canvas > .excalidraw { flex: 1; min-height: 0; }
 @media (max-width: 760px) { .notes-layout { grid-template-columns: 1fr; } .notes-sidebar ul { max-height: 180px; overflow: auto; } .notes-document-heading { flex-wrap: wrap; } .notes-trash li { align-items: flex-start; flex-direction: column; } }
+@media (max-height: 520px) {
+  .visual-dialog-backdrop { padding: 8px; }
+  .visual-dialog {
+    box-sizing: border-box;
+    height: min(820px, calc(100vh - 16px));
+    height: min(820px, calc(100dvh - 16px));
+    min-height: 0;
+    gap: 8px;
+    padding: 10px;
+  }
+  .mind-map-canvas { min-height: 0; }
+}
 .journal-notice { color: #92e5be; }
 .journal-error { color: #ff9b9b; }
 .journal-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

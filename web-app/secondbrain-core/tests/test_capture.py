@@ -102,6 +102,42 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertTrue(complete["original_asset"].startswith("/knowledge-assets/00-Inbox/"))
         self.assertEqual(complete["display_filename"], "capture.md")
 
+    def test_normal_size_text_uploads_preserve_raw_and_create_review(self):
+        for filename, original in (
+            ("uploaded.txt", "Plain text upload with Unicode: 你好。\n".encode("utf-8")),
+            ("uploaded.md", "# Markdown upload\n\nKeep **this body** intact.\n".encode("utf-8")),
+        ):
+            with self.subTest(filename=filename):
+                item = self.service.accept_file(filename, original)
+                self.service.process(item, original)
+
+                complete = self.service.get(item["capture_id"])
+                self.assertEqual(complete["status"], "completed")
+                self.assertEqual(complete["source_type"], "text" if filename.endswith(".txt") else "markdown")
+                self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), original)
+                review = (self.review / complete["review_path"]).read_text(encoding="utf-8")
+                self.assertIn('source_type: "' + complete["source_type"] + '"', review)
+                self.assertIn(original.decode("utf-8").rstrip(), review)
+
+    def test_capture_context_accept_text_process_preserves_lifecycle_and_metadata(self):
+        original = "Context body that must remain exact.\n"
+        context = "Synthetic context supplied with the capture."
+        item = self.service.accept_text(original, source_type="capture_context", context=context)
+        raw = (self.raw / item["raw_path"]).read_bytes()
+
+        self.service.process(item, raw)
+
+        complete = self.service.get(item["capture_id"])
+        self.assertEqual(complete["status"], "completed")
+        self.assertEqual(complete["source_type"], "capture_context")
+        self.assertEqual(complete["capture_context"], context)
+        self.assertEqual(raw, original.encode("utf-8"))
+        self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), original.encode("utf-8"))
+        review = (self.review / complete["review_path"]).read_text(encoding="utf-8")
+        self.assertIn('source_type: "capture_context"', review)
+        self.assertIn('capture_context: "' + context + '"', review)
+        self.assertIn(original.rstrip(), review)
+
     def test_oversize_text_upload_preserves_raw_and_reports_partial_extraction(self):
         for filename in ("long.txt", "long.md"):
             with self.subTest(filename=filename):
