@@ -26,8 +26,8 @@ The Weixin download tests run from the same pinned source checkout after applyin
 ```sh
 git apply --unidiff-zero --check /path/to/pre-tool-hook-fail-closed.patch
 git apply --unidiff-zero /path/to/pre-tool-hook-fail-closed.patch
-git apply --check /path/to/weixin-media-download-budget.patch
-git apply /path/to/weixin-media-download-budget.patch
+git apply --unidiff-zero --check /path/to/weixin-media-download-budget.patch
+git apply --unidiff-zero /path/to/weixin-media-download-budget.patch
 python -m pytest -q tests/gateway/test_weixin.py tests/gateway/test_weixin_secret_scope.py tests/gateway/test_weixin_typing.py
 ```
 

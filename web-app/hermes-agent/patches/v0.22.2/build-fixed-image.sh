@@ -29,7 +29,7 @@ trap cleanup EXIT
 mkdir -p "$build_root/source" "$build_root/context/agent" "$build_root/context/gateway/platforms"
 git -C "$source_checkout" archive "$expected_commit" | tar -x -C "$build_root/source"
 git -C "$build_root/source" apply --unidiff-zero "$patch_file"
-git -C "$build_root/source" apply "$media_patch_file"
+git -C "$build_root/source" apply --unidiff-zero "$media_patch_file"
 cp "$build_root/source/agent/tool_executor.py" "$build_root/context/agent/tool_executor.py"
 cp "$build_root/source/gateway/platforms/weixin.py" "$build_root/context/gateway/platforms/weixin.py"
 cp "$dockerfile" "$build_root/context/Dockerfile"

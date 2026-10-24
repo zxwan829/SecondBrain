@@ -2,10 +2,7 @@ diff --git a/gateway/platforms/weixin.py b/gateway/platforms/weixin.py
 index 59710ed2..6b049eda 100644
 --- a/gateway/platforms/weixin.py
 +++ b/gateway/platforms/weixin.py
-@@ -344,11 +344,36 @@ async def _upload_ciphertext(session: aiohttp.ClientSession, *, ciphertext: byte
-     return await asyncio.wait_for(_do(), timeout=120)
- 
- 
+@@ -347 +347,11 @@ async def _upload_ciphertext(session: aiohttp.ClientSession, *, ciphertext: byte
 -async def _download_bytes(session: aiohttp.ClientSession, *, url: str, timeout_seconds: float = 60.0) -> bytes:
 +MAX_INBOUND_MEDIA_BYTES = 128 * 1024 * 1024
 +_MEDIA_DOWNLOAD_CHUNK_BYTES = 64 * 1024
@@ -18,9 +15,7 @@ index 59710ed2..6b049eda 100644
 +    if max_bytes < 0:
 +        raise ValueError("max_bytes must be non-negative")
 +
-     async def _do() -> bytes:
-         async with session.get(url) as response:
-             response.raise_for_status()
+@@ -351 +361,16 @@ async def _download_bytes(session: aiohttp.ClientSession, *, url: str, timeout_s
 -            return await response.read()
 +            content_length = response.headers.get("Content-Length")
 +            if content_length is not None:
@@ -38,17 +33,11 @@ index 59710ed2..6b049eda 100644
 +                    raise ValueError("Weixin media exceeds the configured download limit")
 +                chunks.append(chunk)
 +            return b"".join(chunks)
-     return await asyncio.wait_for(_do(), timeout=timeout_seconds)
- 
- 
 diff --git a/tests/gateway/test_weixin.py b/tests/gateway/test_weixin.py
 index b8a8c459..22864ae7 100644
 --- a/tests/gateway/test_weixin.py
 +++ b/tests/gateway/test_weixin.py
-@@ -124,6 +124,102 @@ class TestWeixinConfig:
-         assert config.get_connected_platforms() == [Platform.WEIXIN]
- 
- 
+@@ -126,0 +127,96 @@ class TestWeixinConfig:
 +class TestWeixinBoundedDownload:
 +    class _Stream:
 +        def __init__(self, chunks):
@@ -145,6 +134,3 @@ index b8a8c459..22864ae7 100644
 +        cache.assert_not_awaited()
 +
 +
- class TestWeixinStatePersistence:
-     def test_save_weixin_account_preserves_existing_file_on_replace_failure(self, tmp_path, monkeypatch):
-         account_path = tmp_path / "weixin" / "accounts" / "acct.json"
