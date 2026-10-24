@@ -16,7 +16,7 @@ source: GitHub SecondBrain Monorepo
 
 | 当前对象 | 核验结果 | 下一步 |
 |---|---|---|
-| main | `c87cb9f5c2fc83757e57c14a951e3d2c38df6fe7`；包含 #138 只读 Journal GET 合成合同测试（merge SHA 即当前 HEAD）。既有 #225/#210/#230/#231 集成仍在历史中 | 当前记录对应 GitHub main 源码快照；Chat cost gate 与 Writer/Promote 仍 OFF，不代表部署或生产状态 |
+| main | `066d80b033a5837e9a055c48df0b25159dd0a785`；包含 #138 只读 Journal GET 合成合同测试、Linux D090 workflow #234、Hermes v0.22.2 Weixin bounded-download overlay #235。 | Chat cost gate 与 Writer/Promote 仍 OFF；代码合并不代表镜像构建、生产部署或运行验收 |
 | A 普通 Web 批次 | #198 `b9bb97da`→`5fff974b`；#212 `3cf044cf`→`f58ecfd2`；#214 `36c67fd1`→`db810654`；#215 `9d35dc70`→`e33b836c`。各项 post-merge 定向回归分别 48、5、1、2 项通过；#214/#215 相邻 Inbox 修改的组合回归通过 | 保留 PR 各自已有 typecheck/build/diff-check 证据；本批未运行 Actions。细节见 Progress-Log 2026-10-23 集成收口记录 |
 | #201 Core 撤权 | 固定 PR HEAD `ea70fca9dde78793b05d5aaed7523f26bf432a72` 已获本次单独安全敏感合并授权并合入 main `e611ecc4`。fail-closed 修复 `ac1c171d` 与后续 fixture-only 增量独立复审为 `PASS_WITH_LIMITS`；相关 Core 组合回归 158 passed。 | 只关闭已识别的进程内 missing-grant fail-open；跨进程持久撤权、OS 隔离、生产安全仍未验收 |
 | #207/#202 集成 | #207 固定 HEAD `aff4171f86b00bb8420e0cfe2af8a0978fdb2f37` 同步 main 时无 Core 文件变化，已合入 `6c372ff6`。#202 固定 HEAD `69f39cccfbae56c66a4db6f483e8dc75aee0cf7b` 已合入 `5fd9df3c`。新 main tree 与先前 82 Web / 158 Core / Vite→Uvicorn `PASS_WITH_LIMITS` 的固定组合 tree 相同，三次合并后 diff-check 通过。 | Linux Chromium Run #39984102838 在 #202 精确 HEAD 上三视口 PASS，合成 Web `A_NEXT_READY=READY_WITH_LIMITS`；它不证明真实 Core 跨进程撤权、生产部署或完整 V1 验收 |
@@ -29,12 +29,13 @@ source: GitHub SecondBrain Monorepo
 | P4-6 Organizer 状态反馈 | #223 已合并，HEAD `f0c1fc8f4c02dbcd2da4fa441dcfb21a10748c7a`，merge `1ffd4b48a4825812b1b5f6459c40ee4194a3f4a7`。修复 403 后旧 200 重开 action 的竞态，并明确显示 Core `no_candidates`；未知/畸形成功回执提示先检查状态，不伪报 0/NaN。Inbox scope 20 passed；与 #220 依赖顺序组合后全导航 61/61，typecheck/build/diff-check 通过 | Core 仍负责服务端授权；生产/真实数据及 Organizer 自动运行仍按原门禁关闭 |
 | #164 Today→Task | PR #164 原 HEAD `a8cd447f` 复审发现成功回执后 busy 状态未清除；修复 HEAD `f020d303a38153c7a8a0bb06c7609a4228b5770a` 已于 main merge commit `2782f73fa44a21549f7758c4e449076304875917` 合入。独立增量源码复审记录为 PASS_WITH_LIMITS；TaskPage 29/29 post-merge 定向回归通过，typecheck/build/diff-check 均在相同代码树通过 | 普通 Web 修复已收口；没有由此推导生产部署或完整 V1 验收 |
 | #138 Journal GET | 已按普通 GitHub 路径合并；精确 PR HEAD `479411488c78e5d3765f1d45e9c64371634d228f`，merge/main SHA `c87cb9f5c2fc83757e57c14a951e3d2c38df6fe7`；独立 exact-head review PASS，Journal 定向测试 20 passed，diff-check PASS | 只刻画当前只读 localhost 行为；legacy ID/date 兼容与 atime 未额外断言，不改业务行为 |
-| D090 #206 candidate | Draft；测试增量 HEAD `555913b`，Authority durable `committing` ledger reopen fail-closed 回归；独立源码复审 PASS；D090/Writer 定向模块 41 passed、1 Linux-only skip | 仅合成 ledger-reopen 证据；Linux OS isolation gate NOT RUN，仍需独立完整安全复审；不标 Ready、不合并，Writer/Promote 保持 OFF |
+| D090 #206 candidate | Draft；精确 HEAD `5fcff5a74bc2d1b8ce3fe8bad4b8e40fdb9ca61b`。Ubuntu 24.04 / Python 3.12 workflow [#40061040515](https://github.com/zxwan829/SecondBrain/actions/runs/40061040515) 通过分离 UID/GID 的 SO_PEERCRED、严格发布/回执重放、响应丢失后 recovery_required 与重启拒绝重试进程测试；独立 exact-head 复审待完成。 | 只证明合成 Authority/Writer 进程边界；不包含 Landlock/seccomp/capability/部署权限与人工批准 proof。保持 Draft、不合并，Writer/Promote 保持 OFF |
+| P4-2 Hermes Weixin | PR #235 已合并，SHA `066d80b033a5837e9a055c48df0b25159dd0a785`；Hermes v0.22.2 原生 adapter 下载采用 128 MiB 有界流，55 项定向测试通过。 | 真实/持久 Core 身份授权、Inbox 重放和附件绑定仍待合成桥接与合同；Weixin 启用/allowlist 生产配置未知；未构建部署镜像、未扫码 |
 | Writer/Promote 与生产 | OFF；D090/OS Gate 与生产安全门禁保持原状 | 不从普通 PR 合入推导部署或生产授权 |
 
 本批分支保护规则与 ruleset 的可读 GraphQL 查询均未返回配置项；REST 查询受私有仓库功能限制返回 403，不能以此绕过平台门禁。#201/#207/#202 均通过正常 GitHub Ready/Merge 路径处理；没有管理员绕过、强推或 main reset。Notes Run #40008488314 使用既有手动工作流、合成数据和脱敏 artifact。完整 V1 及真实生产/用户体验验收仍未完成。
 
-**当前 NEXT：** main 为 `c87cb9f5c2fc83757e57c14a951e3d2c38df6fe7`；#138 已合并，不能继续作为待办。当前可继续的 D090 候选工作仅限 #206 已授权的合成故障语义与隔离证据：HEAD `555913b` 的 durable-`committing` ledger-reopen 测试通过，但不是 OS 进程崩溃或 Linux isolation 证明；Writer Linux OS Gate 未运行，PR 保持 Draft。现有 Linux Writer workflow 固定检出历史 #193 测试 SHA，不适用于证明 #206 当前候选，因此不得借其结果宣称 Gate 通过。其他可见 V1 候选暂不可安全实现：P3-5 Review/Promote/Agent/Skill Activity 尚缺 DTO 与权限预检合同；#216/#213 Trash 缺 C2 root 和 owner-session 默认授权语义；#101 缺渠道身份/wire/密钥/同意/内容绑定合同；P2 真实智能效果、P5 生产验收与 P6 用户验收分别受真实模型/数据/生产授权边界约束。无新的合同明确代码包可领取时，继续保留候选和证据，不扩展范围；V1 仍 NOT DONE。
+**当前 NEXT：** main 为 `066d80b033a5837e9a055c48df0b25159dd0a785`。先完成 #206 exact-head 独立复审并记录已有 Linux 进程测试；完整 D090 仍有 Landlock/seccomp/权限与 proof 门禁。P4-2 在临时候选 #101 上补 Hermes→Core 合成桥接测试；不注册生产路由、不扫码，仍需真实身份/密钥/同意与附件绑定合同才可进入 QR 验收。P3-5 Review/Promote/Agent/Skill Activity 仍缺 DTO 与权限预检合同；#216/#213 Trash 缺 C2 root 和 owner-session 默认授权语义；P4-4 的纯 helper 未成为持久笔记元数据；P2 真实智能效果、P5 生产验收与 P6 用户验收仍受真实模型/数据/生产授权边界约束。无依赖可安全实现的模块继续保留证据并推进；V1 仍 NOT DONE。
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 
