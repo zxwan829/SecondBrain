@@ -381,4 +381,74 @@ describe('NotesPage', () => {
     }
   });
 
+  it('requires confirmation before soft deletion and sends the current SHA with an idempotency key', async () => {
+    const note = { collection: 'projects', path: 'synthetic.md', content: '# Synthetic\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    const deletes: RequestInit[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'projects', kind: 'authorized' }] }), { status: 200 });
+      if (url === '/api/notes/projects') return new Response(JSON.stringify({ items: [{ path: note.path, title: 'Synthetic' }] }), { status: 200 });
+      if (url === '/api/notes/projects/synthetic.md') return new Response(JSON.stringify(note), { status: 200 });
+      if (url.startsWith('/api/notes/trash/projects/synthetic.md') && init?.method === 'DELETE') {
+        deletes.push(init);
+        return new Response(JSON.stringify({ status: 'trashed', trash_id: 'b'.repeat(32) }), { status: 201 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Synthetic' }));
+    fireEvent.click(await screen.findByRole('button', { name: '移到回收站' }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(deletes).toHaveLength(0);
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: '移到回收站' }));
+    await screen.findByText('笔记已移到回收站，可在回收站恢复；共享附件未删除。');
+    expect(deletes).toHaveLength(1);
+    expect(new Headers(deletes[0].headers).get('If-Match')).toBe(`"${note.etag}"`);
+    expect(new Headers(deletes[0].headers).get('Idempotency-Key')).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(screen.getByText('选择笔记或新建 Draft')).toBeTruthy();
+  });
+
+  it('reports an unconfigured Trash root honestly and keeps the note untouched', async () => {
+    const note = { collection: 'projects', path: 'synthetic.md', content: '# Synthetic\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'projects', kind: 'authorized' }] }), { status: 200 });
+      if (url === '/api/notes/projects') return new Response(JSON.stringify({ items: [{ path: note.path, title: 'Synthetic' }] }), { status: 200 });
+      if (url === '/api/notes/projects/synthetic.md') return new Response(JSON.stringify(note), { status: 200 });
+      if (url === '/api/notes/trash?limit=50&offset=0') return new Response(JSON.stringify({ detail: 'Notes Trash is not configured' }), { status: 501 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Synthetic' }));
+    fireEvent.click(screen.getByRole('button', { name: '回收站' }));
+    expect(await screen.findByText('回收站尚未配置。笔记未被删除；请先配置隔离的 Trash 存储位置。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '返回笔记' })).toBeTruthy();
+  });
+
+  it('keeps a conflicted Trash item and refuses to overwrite its original path', async () => {
+    const item = { trash_id: 'b'.repeat(32), collection: 'projects', path: 'synthetic.md', sha256: 'a'.repeat(64), size_bytes: 10, trashed_at: '2026-10-24T00:00:00Z', status: 'trashed', duplicate: false, recovery_reason: null };
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let restoreCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'projects', kind: 'authorized' }] }), { status: 200 });
+      if (url === '/api/notes/projects') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes/trash?limit=50&offset=0') return new Response(JSON.stringify({ status: 'real', items: [item], pagination: { limit: 50, offset: 0, has_more: false } }), { status: 200 });
+      if (url === `/api/notes/trash/${item.trash_id}/restore` && init?.method === 'POST') {
+        restoreCalls += 1;
+        return new Response(JSON.stringify({ detail: 'Restore target already exists' }), { status: 409 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '回收站' }));
+    fireEvent.click(await screen.findByRole('button', { name: '恢复到原目录' }));
+    expect(await screen.findByText('恢复目标已存在，未覆盖任何文件。请先处理同名目标后再重试。')).toBeTruthy();
+    expect(screen.getByText('synthetic.md')).toBeTruthy();
+    expect(restoreCalls).toBe(1);
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('拒绝覆盖'));
+  });
+
 });

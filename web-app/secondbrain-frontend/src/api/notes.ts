@@ -2,6 +2,11 @@ export type Note = { collection: string; path: string; content: string; etag: st
 export type NoteCollection = { id: string; kind: 'drafts' | 'authorized' };
 export type VisualKind = 'mindmap' | 'excalidraw';
 export type VisualAsset = { filename: string; etag: string; content: string };
+export type NotesTrashItem = {
+  trash_id: string; collection: string; path: string; sha256: string;
+  size_bytes: number; trashed_at: string; status: string; duplicate: boolean;
+  recovery_reason: string | null;
+};
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { credentials: 'same-origin', ...init });
@@ -41,4 +46,14 @@ export const notesApi = {
       method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"`, 'If-Asset-Match': `"${asset.etag}"` },
       body: JSON.stringify({ content }),
     }),
+  listTrash: (offset = 0, signal?: AbortSignal) => json<{ status: string; items: NotesTrashItem[]; pagination: { limit: number; offset: number; has_more: boolean } }>(
+    `/api/notes/trash?limit=50&offset=${encodeURIComponent(String(offset))}`, signal ? { signal } : undefined,
+  ),
+  trash: (note: Note, idempotencyKey: string) => json<NotesTrashItem>(
+    `/api/notes/trash/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`,
+    { method: 'DELETE', headers: { 'If-Match': `"${note.etag}"`, 'Idempotency-Key': idempotencyKey } },
+  ),
+  restoreTrash: (trashId: string) => json<NotesTrashItem>(
+    `/api/notes/trash/${encodeURIComponent(trashId)}/restore`, { method: 'POST' },
+  ),
 };
