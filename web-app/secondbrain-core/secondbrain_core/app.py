@@ -12,6 +12,7 @@ from .modules.app_auth import AppSessionAuth
 from .modules.auto_organize import OrganizerControlStore, create_auto_organize_router
 from .modules.capture import CaptureService, create_capture_router, create_inbox_entry_router
 from .modules.channel_identity import WeixinHmacIdentityProvider
+from .modules.weixin_config import load_weixin_inbox_config
 from .modules.trusted_channel_adapter import create_trusted_channel_router
 from .modules.capture_suggestion_binding import TrustedCaptureSuggestionBindingAuthority
 from .modules.hermes_api import HermesAPI
@@ -214,11 +215,10 @@ def create_app():
         raise RuntimeError("SB_WEIXIN_INBOX_ENABLED must be true or false")
     if weixin_enabled == "true":
         try:
-            weixin_secret = os.environ["SB_WEIXIN_INBOX_HMAC_KEY"].encode("utf-8")
-            weixin_senders = json.loads(os.environ["SB_WEIXIN_ALLOWED_SENDERS_JSON"])
+            weixin_secret, weixin_senders = load_weixin_inbox_config()
             weixin_identity = WeixinHmacIdentityProvider(weixin_secret, weixin_senders)
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Weixin Inbox requires a valid key and Core-owned sender allowlist") from exc
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Weixin Inbox configuration is invalid: {exc}") from exc
         app.include_router(create_trusted_channel_router(capture, weixin_identity))
     # Journal/Task business records are authoritative and the activity index is
     # repairable under the private Core state root; Hermes has no state mount.

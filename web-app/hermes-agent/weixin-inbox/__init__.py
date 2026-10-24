@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import os
+import stat
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -15,6 +16,37 @@ from urllib.request import Request, urlopen
 
 PREFIXES = ("收录：", "收录:")
 MAX_CAPTURE_CHARS = 20_000
+
+
+def _load_hmac_key():
+    value = os.environ.get("SB_WEIXIN_CORE_INBOX_HMAC_KEY")
+    raw_path = os.environ.get("SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE")
+    if value is not None and raw_path is not None:
+        raise ValueError("Set only one of SB_WEIXIN_CORE_INBOX_HMAC_KEY or SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE")
+    if raw_path is not None:
+        path = raw_path.strip()
+        if not path:
+            raise ValueError("SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE path is empty")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077
+                    or info.st_uid != os.geteuid()):
+                raise ValueError("Weixin HMAC key file must be private and owned by the service user")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                raw_secret = stream.read(4097)
+        finally:
+            os.close(fd)
+        if len(raw_secret) > 4096:
+            raise ValueError("Weixin HMAC key file exceeds 4096 bytes")
+        secret = raw_secret.strip()
+    elif value is not None:
+        secret = value.encode("utf-8")
+    else:
+        raise ValueError("Weixin HMAC key is not configured")
+    if len(secret) < 32:
+        raise ValueError("Weixin HMAC key must contain at least 32 bytes")
+    return secret
 
 
 def _capture_text(text):
@@ -46,11 +78,12 @@ def _handle_post_gateway_admission(*, platform="", source=None, message_id=None,
         return {"action": "handled", "reply": "保存失败：缺少可信发送者或消息编号，未写入 Inbox。"}
 
     endpoint = os.environ.get("SB_WEIXIN_CORE_INBOX_URL", "").strip()
-    secret = os.environ.get("SB_WEIXIN_CORE_INBOX_HMAC_KEY", "").encode("utf-8")
+    try:
+        secret = _load_hmac_key()
+    except (OSError, ValueError):
+        return {"action": "handled", "reply": "保存失败：渠道认证配置无效，未写入 Inbox。"}
     if not endpoint.startswith("http://") and not endpoint.startswith("https://"):
         return {"action": "handled", "reply": "保存失败：Core Inbox 尚未配置，未写入 Inbox。"}
-    if len(secret) < 32:
-        return {"action": "handled", "reply": "保存失败：渠道认证未配置，未写入 Inbox。"}
 
     body = {
         "original_text": capture_text,

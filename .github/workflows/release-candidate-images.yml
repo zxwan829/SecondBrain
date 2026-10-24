@@ -5,6 +5,10 @@ on:
     paths:
       - .github/workflows/release-candidate-images.yml
       - web-app/Dockerfile.app
+      - web-app/secondbrain-core/secondbrain_core/app.py
+      - web-app/secondbrain-core/secondbrain_core/modules/weixin_config.py
+      - web-app/secondbrain-core/tests/test_weixin_config.py
+      - web-app/secondbrain-core/tests/test_weixin_post_admission_e2e.py
       - web-app/hermes-agent/patches/v0.22.2/**
       - web-app/hermes-agent/d078-guard/**
       - web-app/hermes-agent/weixin-inbox/**
@@ -33,7 +37,7 @@ jobs:
       - name: Checkout exact application source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: source-tree
           persist-credentials: false
 
@@ -45,10 +49,21 @@ jobs:
           path: hermes-agent-source
           persist-credentials: false
 
+      - name: Run targeted Core Weixin credential tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Core test dependencies and validate secret loading
+        working-directory: source-tree/web-app/secondbrain-core
+        run: |
+          python -m pip install --disable-pip-version-check -e '.[test]'
+          python -m pytest -q tests/test_weixin_config.py
+
       - name: Build App/Core image from the exact source revision
         shell: bash
         env:
-          SOURCE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           cp web-app/Dockerfile.app source-tree/web-app/Dockerfile.app
@@ -62,7 +77,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image="secondbrain-app:candidate-${{ github.event.pull_request.base.sha || github.sha }}"
+          image="secondbrain-app:candidate-${{ github.event.pull_request.head.sha || github.sha }}"
           docker run -d --name secondbrain-app-candidate-smoke \
             --network none --read-only --user 1026:100 \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
@@ -95,12 +110,12 @@ jobs:
           set -euo pipefail
           web-app/hermes-agent/patches/v0.22.2/build-fixed-image.sh \
             "$GITHUB_WORKSPACE/hermes-agent-source" \
-            "secondbrain-hermes:candidate-${{ github.event.pull_request.base.sha || github.sha }}"
+            "secondbrain-hermes:candidate-${{ github.event.pull_request.head.sha || github.sha }}"
 
       - name: Verify both plugins load together in a synthetic profile
         shell: bash
         env:
-          SOURCE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/hermes-candidate-home"
@@ -114,7 +129,7 @@ jobs:
       - name: Verify synthetic Gateway Inbox smoke
         shell: bash
         env:
-          SOURCE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           docker run --rm --network none --read-only \
@@ -128,9 +143,10 @@ jobs:
             'python3 -B /tmp/weixin_gateway_smoke.py'
 
       - name: Export images, source manifest, and checksums
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         env:
-          SOURCE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/secondbrain-release-candidate"
@@ -163,9 +179,10 @@ jobs:
           cat "$out/SHA256SUMS"
 
       - name: Upload candidate image artifact
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: secondbrain-release-candidate-${{ github.event.pull_request.base.sha || github.sha }}
+          name: secondbrain-release-candidate-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/secondbrain-release-candidate/
           if-no-files-found: error
           retention-days: 14

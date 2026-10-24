@@ -47,6 +47,9 @@ class WeixinPostAdmissionE2ETests(unittest.TestCase):
         self.plugin = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.plugin)
         self.key = b"synthetic-weixin-hmac-key-not-a-credential"
+        self.key_file = root / "weixin-hmac-key"
+        self.key_file.write_bytes(self.key + b"\n")
+        self.key_file.chmod(0o600)
         provider = WeixinHmacIdentityProvider(self.key, {"synthetic-weixin-user": "synthetic-owner"})
         app = FastAPI()
         app.include_router(create_trusted_channel_router(self.service, provider))
@@ -67,8 +70,9 @@ class WeixinPostAdmissionE2ETests(unittest.TestCase):
         self.urlopen_patch.start()
         self.env_patch = patch.dict(os.environ, {
             "SB_WEIXIN_CORE_INBOX_URL": "http://core.test/api/internal/v1/channel-events",
-            "SB_WEIXIN_CORE_INBOX_HMAC_KEY": self.key.decode(),
+            "SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE": str(self.key_file),
         })
+        os.environ.pop("SB_WEIXIN_CORE_INBOX_HMAC_KEY", None)
         self.env_patch.start()
         self.hook_patches = patch("hermes_cli.lifecycle.has_hook", return_value=True), patch(
             "hermes_cli.lifecycle.ainvoke_hook", side_effect=self.invoke_plugin)
@@ -153,6 +157,16 @@ class WeixinPostAdmissionE2ETests(unittest.TestCase):
         self.assertTrue(changed[0])
         self.assertIn("保存失败", changed[1])
         self.assertEqual(len(list((Path(self.temp.name) / "raw").glob("Inbox-*.md"))), 1)
+
+    def test_ambiguous_or_missing_file_key_fails_without_claiming_success(self):
+        with patch.dict(os.environ, {"SB_WEIXIN_CORE_INBOX_HMAC_KEY": self.key.decode()}):
+            ambiguous = self._dispatch("收录：配置歧义", "synthetic-event-ambiguous")
+        self.assertIn("保存失败", ambiguous[1])
+        self.assertEqual(len(list((Path(self.temp.name) / "raw").glob("Inbox-*.md"))), 0)
+        self.key_file.unlink()
+        missing = self._dispatch("收录：文件缺失", "synthetic-event-missing")
+        self.assertIn("保存失败", missing[1])
+        self.assertEqual(len(list((Path(self.temp.name) / "raw").glob("Inbox-*.md"))), 0)
 
 
 class _SyntheticResponse:
