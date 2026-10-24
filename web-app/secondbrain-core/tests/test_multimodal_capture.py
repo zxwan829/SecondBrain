@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,11 +10,15 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from PIL import Image
+from pypdf import filters
+from pypdf.errors import LimitReachedError
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from secondbrain_core.modules.capture import CaptureService
 from secondbrain_core.modules.hermes_api import HermesAPI
-from secondbrain_core.modules.pdf_text_worker import MAX_DECOMPRESSED_STREAM_BYTES
+from secondbrain_core.modules.pdf_text_worker import (
+    MAX_DECOMPRESSED_STREAM_BYTES, _configure_decoder_limits,
+)
 from secondbrain_core.modules.multimodal_capture import (
     MAX_IMAGE_PIXELS, PDF_OCR_TARGET_DPI, MultimodalCaptureProcessors, _pdf_page_dpi,
 )
@@ -202,11 +207,37 @@ class MultimodalCaptureTests(unittest.TestCase):
         self.assertLess(len(raw), 5 * 1024 * 1024)
         self.assertGreater(16 * 1024 * 1024, MAX_DECOMPRESSED_STREAM_BYTES)
 
+        # Exercise the exact configuration function used by the isolated
+        # worker; constructing a reader applies that configuration before
+        # parsing and proves the Flate decoder raises its limit exception.
+        _configure_decoder_limits(filters)
+        from pypdf import PdfReader
+        with self.assertRaises(LimitReachedError):
+            PdfReader(io.BytesIO(raw), strict=True).pages[0].extract_text()
+
         service = CaptureService(self.raw, self.review, self.state, ProcessorStub())
         item = service.accept_file("synthetic-expansion.pdf", raw)
         raw_digest = hashlib.sha256(raw).hexdigest()
-        service.process(item, raw)
+        worker_results = []
+        real_run = subprocess.run
+
+        def capture_worker_result(*args, **kwargs):
+            completed = real_run(*args, **kwargs)
+            worker_results.append(completed)
+            return completed
+
+        with patch("secondbrain_core.modules.capture.subprocess.run",
+                   side_effect=capture_worker_result):
+            service.process(item, raw)
         result = service.get(item["capture_id"])
+        self.assertEqual(len(worker_results), 1)
+        worker_response = json.loads(worker_results[0].stdout.decode("utf-8"))
+        if sys.platform.startswith("linux"):
+            self.assertEqual(worker_results[0].returncode, 0)
+            self.assertEqual(worker_response, {"status": "decompression_limit"})
+        else:
+            self.assertNotEqual(worker_results[0].returncode, 0)
+            self.assertEqual(worker_response, {"status": "resource_limits_unavailable"})
         self.assertEqual(result["status"], "partial_success")
         self.assertEqual(result["error"]["code"], "processing_failed")
         self.assertIn("resource limits", result["error"]["message"])

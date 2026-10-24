@@ -15,6 +15,12 @@ MAX_PAGES = 500
 MAX_TEXT_CHARS = 1_000_000
 
 
+def _configure_decoder_limits(filters):
+    """Set bounded defaults before pypdf builds each reader configuration."""
+    filters.ZLIB_MAX_OUTPUT_LENGTH = MAX_DECOMPRESSED_STREAM_BYTES
+    filters.ZLIB_MAX_RECOVERY_INPUT_LENGTH = MAX_DECOMPRESSION_RECOVERY_INPUT_BYTES
+
+
 def _emit(value):
     sys.stdout.buffer.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
@@ -50,9 +56,9 @@ def main():
         # this one-shot worker's memory budget. Set the legacy configuration
         # before constructing PdfReader; pypdf applies it to its per-context
         # Configuration during reader initialization. The dependency is
-        # constrained to pypdf < 7, where these compatibility names exist.
-        filters.ZLIB_MAX_OUTPUT_LENGTH = MAX_DECOMPRESSED_STREAM_BYTES
-        filters.ZLIB_MAX_RECOVERY_INPUT_LENGTH = MAX_DECOMPRESSION_RECOVERY_INPUT_BYTES
+        # constrained to pypdf >= 6.21.2, < 7: this range includes the decoder
+        # limit support and the currently known PDF resource-consumption fixes.
+        _configure_decoder_limits(filters)
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
         from secondbrain_core.modules.pdf_text_extraction import extract_pdf_text_bounded
 
@@ -68,7 +74,13 @@ def main():
         if page_count > MAX_PAGES:
             _emit({"status": "page_limit", "page_count": page_count})
             return 0
-        text, truncated = extract_pdf_text_bounded(reader, MAX_TEXT_CHARS)
+        try:
+            text, truncated = extract_pdf_text_bounded(reader, MAX_TEXT_CHARS)
+        except filters.LimitReachedError:
+            # Keep the parent-facing failure generic, while preserving a
+            # machine-readable reason for synthetic verification of the cap.
+            _emit({"status": "decompression_limit"})
+            return 0
         page_sizes = []
         if not text:
             for page in reader.pages:
