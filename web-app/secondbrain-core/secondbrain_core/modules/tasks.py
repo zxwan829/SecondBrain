@@ -177,11 +177,34 @@ class TaskStore:
                 os.close(fd)
             os.close(root_fd)
 
-    def _write_unlocked(self, data):
+    def _restore_unlocked(self, root_fd, data):
+        """Restore the pre-commit snapshot in the already-pinned Task root."""
+        temporary = f".tasks-restore-{uuid.uuid4().hex}.tmp"
+        fd = None
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=root_fd)
+            with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as stream:
+                json.dump(data, stream, ensure_ascii=False, separators=(",", ":"))
+                stream.write("\n")
+                stream.flush()
+                os.fsync(fd)
+            os.replace(temporary, self.path.name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+            os.fsync(root_fd)
+        finally:
+            if fd is not None:
+                os.close(fd)
+            try:
+                os.unlink(temporary, dir_fd=root_fd)
+            except FileNotFoundError:
+                pass
+
+    def _write_unlocked(self, data, rollback):
         temporary = f".tasks-{uuid.uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         root_fd = self._open_root()
         fd = None
+        committed = False
         try:
             fd = os.open(temporary, flags, 0o600, dir_fd=root_fd)
             with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as stream:
@@ -189,23 +212,43 @@ class TaskStore:
                 stream.write("\n")
                 stream.flush()
                 os.fsync(fd)
-            # Validate the configured path immediately before the atomic commit.
-            # If the root was replaced while the temporary file was written,
-            # abort before making a durable change in the displaced directory.
             check_fd = self._open_root()
             os.close(check_fd)
             os.replace(temporary, self.path.name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+            committed = True
             os.fsync(root_fd)
-            # os.replace + directory fsync is the commit point. Do not perform
-            # fallible path-based checks after it: a root rename at this point
-            # must not turn a committed write into an ambiguous error response.
-        except HTTPException:
+            # The pinned FD can now refer to a displaced directory. If the
+            # configured path changed during the replace, roll back there before
+            # reporting failure so the replacement root never misses a success.
+            check_fd = self._open_root()
+            os.close(check_fd)
+        except HTTPException as exc:
+            if committed:
+                try:
+                    rollback()
+                    self._restore_unlocked(root_fd, data)
+                except OSError as rollback_exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Task write outcome requires recovery; restore the initialized Task root and retry",
+                    ) from rollback_exc
+                raise HTTPException(status_code=503, detail="Task write was rolled back because storage changed") from exc
             try:
                 os.unlink(temporary, dir_fd=root_fd)
             except OSError:
                 pass
             raise
         except OSError as exc:
+            if committed:
+                try:
+                    rollback()
+                    self._restore_unlocked(root_fd, data)
+                except OSError as rollback_exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Task write outcome requires recovery; reload Task state before retrying",
+                    ) from rollback_exc
+                raise HTTPException(status_code=503, detail="Task write was rolled back after storage sync failure") from exc
             try:
                 os.unlink(temporary, dir_fd=root_fd)
             except OSError:
@@ -220,9 +263,13 @@ class TaskStore:
         fd = self._lock()
         try:
             data = self._read_unlocked()
-            result, changed = operation(data)
+            outcome = operation(data)
+            result, changed = outcome[:2]
+            rollback = outcome[2] if len(outcome) == 3 else None
             if changed:
-                self._write_unlocked(data)
+                if rollback is None:
+                    raise RuntimeError("Task mutation must define rollback state")
+                self._write_unlocked(data, rollback)
             return result
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -270,7 +317,10 @@ class TaskStore:
             data["idempotency"][key_hash] = {
                 "operation": "task.create", "fingerprint": fingerprint, "task_id": task["id"],
             }
-            return {"status": "created", "task": task}, True
+            def rollback():
+                data["tasks"].remove(task)
+                data["idempotency"].pop(key_hash, None)
+            return {"status": "created", "task": task}, True, rollback
 
         return self._with_lock(operation)
 
@@ -407,6 +457,9 @@ class TaskStore:
                 if update_key_count >= _MAX_TASK_UPDATE_IDEMPOTENCY_KEYS:
                     raise HTTPException(status_code=503, detail="Task retry ledger is full")
             previous = {key: task.get(key) for key in changes}
+            previous_updated_at = task["updated_at"]
+            previous_history_length = len(task.get("history", []))
+            had_history = "history" in task
             task.update(changes)
             stamp = _now()
             prior_stamp = datetime.fromisoformat(task["updated_at"])
@@ -421,7 +474,19 @@ class TaskStore:
                     "operation": "task.update", "fingerprint": fingerprint,
                     "task_id": task_id, "result_updated_at": stamp,
                 }
-            return {"task": task}, True
+            previous_values = {key: previous[key] for key in changes}
+
+            def rollback():
+                task.update(previous_values)
+                task["updated_at"] = previous_updated_at
+                if had_history:
+                    del task["history"][previous_history_length:]
+                else:
+                    task.pop("history", None)
+                if key_hash is not None:
+                    data["idempotency"].pop(key_hash, None)
+
+            return {"task": task}, True, rollback
 
         return self._with_lock(operation)
 

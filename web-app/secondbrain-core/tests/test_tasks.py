@@ -107,8 +107,8 @@ class TaskStoreTests(unittest.TestCase):
         body = {"status": "completed", "expected_updated_at": task["updated_at"]}
         write = self.store._write_unlocked
 
-        def commit_then_fail(data):
-            write(data)
+        def commit_then_fail(data, rollback):
+            write(data, rollback)
             raise HTTPException(status_code=503, detail="synthetic response interruption after durable commit")
 
         with patch.object(self.store, "_write_unlocked", side_effect=commit_then_fail):
@@ -242,7 +242,8 @@ class TaskStoreTests(unittest.TestCase):
         self.assertFalse(list(self.root.glob(".tasks-*.tmp")))
         self.assertFalse((displaced / "tasks.json").exists())
 
-    def test_task_write_returns_committed_receipt_if_root_moves_after_commit(self):
+    def test_task_write_rolls_back_if_root_moves_after_commit_before_path_check(self):
+        task = self.store.create("Synthetic pre-swap task", None, "pre-swap-create")["task"]
         displaced = Path(self.temp.name) / "tasks-original"
         replacement = Path(self.temp.name) / "tasks-replacement"
         original_fsync = os.fsync
@@ -257,21 +258,103 @@ class TaskStoreTests(unittest.TestCase):
                 self.root.chmod(0o700)
 
         with patch.object(tasks_module.os, "fsync", side_effect=fsync_then_replace_directory):
-            result = self.store.create("Synthetic committed root swap", None, "root-swap-commit")
+            with self.assertRaises(HTTPException) as interrupted:
+                self.store.update(task["id"], {
+                    "status": "completed", "expected_updated_at": task["updated_at"],
+                }, idempotency_key="root-swap-update")
 
         self.assertTrue(moved["done"])
-        self.assertEqual(result["status"], "created")
-        self.assertEqual(result["task"]["title"], "Synthetic committed root swap")
+        self.assertEqual(interrupted.exception.status_code, 503)
+        self.assertEqual(interrupted.exception.detail, "Task write was rolled back because storage changed")
         self.assertFalse((self.root / "tasks.json").exists())
+        self.assertEqual(tasks_module.json.loads((displaced / "tasks.json").read_text())["tasks"], [task])
 
-        # Restore the original store root; the durable idempotency receipt must
-        # recover the same committed result without creating a second Task.
+        # Restore the original store root; retry proceeds as a new commit because
+        # the prior attempt was durably rolled back.
         self.root.rename(replacement)
         displaced.rename(self.root)
-        replay = self.store.create("Synthetic committed root swap", None, "root-swap-commit")
-        self.assertEqual(replay["status"], "duplicate")
-        self.assertEqual(replay["task"], result["task"])
+        replay = self.store.update(task["id"], {
+            "status": "completed", "expected_updated_at": task["updated_at"],
+        }, idempotency_key="root-swap-update")
+        self.assertEqual(replay["task"]["status"], "completed")
+        self.assertEqual(len(replay["task"]["history"]), 2)
         self.assertEqual(len(self.store.list("all")["tasks"]), 1)
+
+    def test_task_write_rolls_back_if_directory_fsync_fails_then_keyed_retry_commits(self):
+        original_fsync = os.fsync
+        failed = {"once": False}
+
+        def fail_first_directory_sync(fd):
+            if (not failed["once"]
+                    and tasks_module.stat.S_ISDIR(os.fstat(fd).st_mode)):
+                failed["once"] = True
+                raise OSError("synthetic directory fsync failure")
+            return original_fsync(fd)
+
+        with patch.object(tasks_module.os, "fsync", side_effect=fail_first_directory_sync):
+            with self.assertRaises(HTTPException) as interrupted:
+                self.store.create("Synthetic fsync recovery", None, "fsync-retry-key")
+
+        self.assertTrue(failed["once"])
+        self.assertEqual(interrupted.exception.status_code, 503)
+        self.assertEqual(interrupted.exception.detail,
+                         "Task write was rolled back after storage sync failure")
+        self.assertEqual(tasks_module.json.loads(self.store.path.read_text()),
+                         {"tasks": [], "idempotency": {}})
+
+        retry = self.store.create("Synthetic fsync recovery", None, "fsync-retry-key")
+        self.assertEqual(retry["status"], "created")
+        self.assertEqual(len(self.store.list("all")["tasks"]), 1)
+
+    def test_task_write_reports_recovery_if_rollback_directory_fsync_also_fails(self):
+        original_fsync = os.fsync
+        directory_syncs = {"count": 0}
+
+        def fail_commit_and_rollback_directory_sync(fd):
+            if tasks_module.stat.S_ISDIR(os.fstat(fd).st_mode):
+                directory_syncs["count"] += 1
+                if directory_syncs["count"] <= 2:
+                    raise OSError("synthetic directory fsync failure")
+            return original_fsync(fd)
+
+        with patch.object(tasks_module.os, "fsync", side_effect=fail_commit_and_rollback_directory_sync):
+            with self.assertRaises(HTTPException) as interrupted:
+                self.store.create("Synthetic rollback uncertainty", None, "rollback-retry-key")
+
+        self.assertEqual(directory_syncs["count"], 2)
+        self.assertEqual(interrupted.exception.status_code, 503)
+        self.assertEqual(interrupted.exception.detail,
+                         "Task write outcome requires recovery; reload Task state before retrying")
+
+        # The visible state is read under the same store lock; keyed retry either
+        # replays the committed receipt or performs the rolled-back operation.
+        retry = self.store.create("Synthetic rollback uncertainty", None, "rollback-retry-key")
+        self.assertIn(retry["status"], {"created", "duplicate"})
+        self.assertEqual(len(self.store.list("all")["tasks"]), 1)
+
+    def test_task_write_rolls_back_root_swap_between_validation_and_replace(self):
+        displaced = Path(self.temp.name) / "tasks-original"
+        original_replace = os.replace
+        swapped = {"done": False}
+
+        def swap_root_then_replace(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+            if not swapped["done"]:
+                swapped["done"] = True
+                self.root.rename(displaced)
+                self.root.mkdir(mode=0o700)
+                self.root.chmod(0o700)
+            return original_replace(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+        with patch.object(tasks_module.os, "replace", side_effect=swap_root_then_replace):
+            with self.assertRaises(HTTPException) as interrupted:
+                self.store.create("Synthetic mid-commit root swap", None, "mid-swap-key")
+
+        self.assertTrue(swapped["done"])
+        self.assertEqual(interrupted.exception.status_code, 503)
+        self.assertEqual(interrupted.exception.detail, "Task write was rolled back because storage changed")
+        self.assertFalse((self.root / "tasks.json").exists())
+        self.assertEqual(tasks_module.json.loads((displaced / "tasks.json").read_text()),
+                         {"tasks": [], "idempotency": {}})
 
     def test_task_data_reader_preserves_owner_only_read_only_file_compatibility(self):
         task = self.store.create("Synthetic read-only legacy mode", None, "legacy-mode-create")["task"]
