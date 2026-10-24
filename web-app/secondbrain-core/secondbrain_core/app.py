@@ -27,7 +27,10 @@ from .modules.journal_source_options import (
 )
 from .modules.tasks import TaskStore, create_task_router
 from .modules.projects_activity_read import create_projects_activity_router
-from .modules.review_promote.activity_read import ReviewActivityReadStore
+from .modules.review_promote.activity_read import (
+    PromoteAuditActivityReadStore,
+    ReviewActivityReadStore,
+)
 from .modules.daily_brief_agent_health import create_daily_brief_agent_health_router
 from .modules.projects_source_read import ProjectsSourceReadStore
 from .modules.daily_brief_store import DailyBriefRecordReadStore
@@ -164,6 +167,7 @@ def create_app():
     daily_brief_store = DailyBriefRecordReadStore(daily_brief_root or None)
     daily_brief_import_store = DailyBriefImportStore(daily_brief_root or None)
     daily_brief_audit_store = DailyBriefAuditStore(os.path.join(approval_root, "daily-brief-audit.jsonl"))
+    promote_activity_store = PromoteAuditActivityReadStore(audit_path)
     planning_candidate_store = PlanningCandidateStore(approval_root)
     planning_candidate_service = PlanningCandidateService(
         auth, hermes, task_store, projects_store, journal_store, planning_candidate_store,
@@ -226,6 +230,7 @@ def create_app():
         auth, journal_store, task_store, projects_store=projects_store, notes_store=notes_store,
         daily_brief_audit_store=daily_brief_audit_store, memory_store=memory_store,
         capture_service=capture, review_store=ReviewActivityReadStore(review_root),
+        promote_activity_store=promote_activity_store,
     ))
     app.include_router(create_daily_brief_agent_health_router(
         auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,

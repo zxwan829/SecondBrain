@@ -4,14 +4,15 @@ import { parseProjectsResponse, type ProjectRecord, type ProjectsResponse } from
 type Locale = 'zh-CN' | 'en';
 type PageId = 'projects' | 'activity';
 type PageLoadState = 'loading' | 'loaded' | 'backend-not-implemented' | 'unauthorized' | 'unavailable';
-type ActivityKind = 'journal' | 'task' | 'project' | 'daily_brief' | 'personal_memory' | 'capture' | 'review';
+type ActivityKind = 'journal' | 'task' | 'project' | 'daily_brief' | 'personal_memory' | 'capture' | 'review' | 'promote';
 type ActivityActionStatus = 'succeeded' | 'failed' | 'updated' | 'created' | 'corrected' | 'revoked' | 'expired';
 type CaptureLifecycleStatus = 'pending' | 'prepared' | 'processing' | 'completed' | 'partial_success' | 'failed';
 type ReviewStatus = 'pending' | 'deferred' | 'approved' | 'promoting' | 'promoted' | 'failed';
+type PromoteStatus = 'promoted';
 type ActivityEvent = {
   activity_id: string;
   kind: ActivityKind;
-  status: ActivityActionStatus | CaptureLifecycleStatus | ReviewStatus;
+  status: ActivityActionStatus | CaptureLifecycleStatus | ReviewStatus | PromoteStatus;
   occurred_at: string;
   journal_date?: string;
   task_due_date?: string | null;
@@ -24,7 +25,7 @@ type ActivityResponse = {
   status: 'ok' | 'empty' | 'partial' | 'unavailable';
   items: ActivityEvent[];
   pagination: { limit: number; offset: number; has_more: boolean };
-  source: Array<'journal' | 'tasks' | 'projects' | 'daily_brief' | 'personal_memory' | 'capture' | 'review'>;
+  source: Array<'journal' | 'tasks' | 'projects' | 'daily_brief' | 'personal_memory' | 'capture' | 'review' | 'promote'>;
   freshness: { checked_at: string };
 };
 
@@ -32,6 +33,7 @@ const forbiddenActivityFields = ['original_text', 'original_command', 'session_i
 const activityActionStatuses: ActivityActionStatus[] = ['succeeded', 'failed', 'updated', 'created', 'corrected', 'revoked', 'expired'];
 const captureLifecycleStatuses: CaptureLifecycleStatus[] = ['pending', 'prepared', 'processing', 'completed', 'partial_success', 'failed'];
 const reviewStatuses: ReviewStatus[] = ['pending', 'deferred', 'approved', 'promoting', 'promoted', 'failed'];
+const promoteStatuses: PromoteStatus[] = ['promoted'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -62,9 +64,11 @@ function parseActivityResponse(value: unknown): ActivityResponse | null {
       ? captureLifecycleStatuses.includes(String(raw.status) as CaptureLifecycleStatus)
       : kind === 'review'
         ? reviewStatuses.includes(String(raw.status) as ReviewStatus)
-        : activityActionStatuses.includes(String(raw.status) as ActivityActionStatus);
+        : kind === 'promote'
+          ? promoteStatuses.includes(String(raw.status) as PromoteStatus)
+          : activityActionStatuses.includes(String(raw.status) as ActivityActionStatus);
     if (typeof raw.activity_id !== 'string' || !raw.activity_id.trim()
-      || !['journal', 'task', 'project', 'daily_brief', 'personal_memory', 'capture', 'review'].includes(kind)
+      || !['journal', 'task', 'project', 'daily_brief', 'personal_memory', 'capture', 'review', 'promote'].includes(kind)
       || !validStatus
       || !isIsoDateTime(raw.occurred_at)) return null;
     if (raw.journal_date !== undefined && (typeof raw.journal_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.journal_date))) return null;
@@ -77,7 +81,7 @@ function parseActivityResponse(value: unknown): ActivityResponse | null {
     if (raw.project_status !== undefined && !['active', 'paused', 'completed', 'archived', 'unknown'].includes(String(raw.project_status))) return null;
     items.push(raw as unknown as ActivityEvent);
   }
-  if (!value.source.every((item) => ['journal', 'tasks', 'projects', 'daily_brief', 'personal_memory', 'capture', 'review'].includes(String(item)))) return null;
+  if (!value.source.every((item) => ['journal', 'tasks', 'projects', 'daily_brief', 'personal_memory', 'capture', 'review', 'promote'].includes(String(item)))) return null;
   return {
     status: value.status as ActivityResponse['status'], items,
     pagination: { limit: pagination.limit as number, offset: pagination.offset as number, has_more: pagination.has_more },
@@ -126,10 +130,10 @@ const copy = {
     projectStatus: '状态', next: '下一步', notes: '关联资料', journal: '日记操作', task: '待办操作',
     succeeded: '已完成', failed: '未完成', dueDate: '到期日期', taskStatus: '待办状态',
     happenedAt: '时间', checkedAt: '数据检查时间', source: '数据来源', briefDate: '简报日期',
-    activityKinds: { journal: '日记操作', task: '待办操作', project: '项目更新', daily_brief: '每日简报', personal_memory: '个人记忆操作', capture: '采集状态', review: '审核状态' },
+    activityKinds: { journal: '日记操作', task: '待办操作', project: '项目更新', daily_brief: '每日简报', personal_memory: '个人记忆操作', capture: '采集状态', review: '审核状态', promote: '知识发布' },
     activityStatuses: { succeeded: '已完成', failed: '未完成', updated: '已更新', created: '已创建', corrected: '已更正', revoked: '已撤销', expired: '已过期', pending: '待审核', deferred: '已暂缓', approved: '已批准', promoting: '处理中', promoted: '已发布' },
     captureStatuses: { pending: '待处理', prepared: '已准备', processing: '处理中', completed: '已完成', partial_success: '部分完成', failed: '失败' },
-    sources: { journal: '日记', tasks: '待办', projects: '项目', daily_brief: '每日简报', personal_memory: '个人记忆', capture: '采集', review: '审核' },
+    sources: { journal: '日记', tasks: '待办', projects: '项目', daily_brief: '每日简报', personal_memory: '个人记忆', capture: '采集', review: '审核', promote: '知识发布' },
   },
   en: {
     projects: { eyebrow: 'WORKSPACE / PROJECTS', title: 'Projects', description: 'Review project status, next actions, and related notes.' },
@@ -150,10 +154,10 @@ const copy = {
     projectStatus: 'Status', next: 'Next action', notes: 'Related notes', journal: 'Journal operation', task: 'Task operation',
     succeeded: 'Succeeded', failed: 'Failed', dueDate: 'Due date', taskStatus: 'Task status',
     happenedAt: 'Time', checkedAt: 'Data checked', source: 'Sources', briefDate: 'Brief date',
-    activityKinds: { journal: 'Journal operation', task: 'Task operation', project: 'Project update', daily_brief: 'Daily Brief', personal_memory: 'Personal Memory operation', capture: 'Capture status', review: 'Review status' },
+    activityKinds: { journal: 'Journal operation', task: 'Task operation', project: 'Project update', daily_brief: 'Daily Brief', personal_memory: 'Personal Memory operation', capture: 'Capture status', review: 'Review status', promote: 'Knowledge publish' },
     activityStatuses: { succeeded: 'Succeeded', failed: 'Failed', updated: 'Updated', created: 'Created', corrected: 'Corrected', revoked: 'Revoked', expired: 'Expired', pending: 'Pending review', deferred: 'Deferred', approved: 'Approved', promoting: 'Processing', promoted: 'Promoted' },
     captureStatuses: { pending: 'Pending', prepared: 'Prepared', processing: 'Processing', completed: 'Completed', partial_success: 'Partial success', failed: 'Failed' },
-    sources: { journal: 'Journal', tasks: 'Tasks', projects: 'Projects', daily_brief: 'Daily Brief', personal_memory: 'Personal Memory', capture: 'Capture', review: 'Review' },
+    sources: { journal: 'Journal', tasks: 'Tasks', projects: 'Projects', daily_brief: 'Daily Brief', personal_memory: 'Personal Memory', capture: 'Capture', review: 'Review', promote: 'Knowledge publish' },
   },
 } as const;
 

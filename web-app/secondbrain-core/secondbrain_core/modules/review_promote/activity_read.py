@@ -20,7 +20,6 @@ _FIELDS = frozenset({
     "event", "request_id", "approver_subject", "approved_at", "recorded_at",
     "review_path", "review_sha256", "target_filename", "output_sha256",
 })
-_REVIEW_ACTIVITY_STATUSES = frozenset({"pending", "deferred", "approved", "promoting", "promoted", "failed"})
 _REVIEW_ACTIVITY_MAX_FILES = 2000
 _REVIEW_ACTIVITY_MAX_BYTES = 2 * 1024 * 1024
 _REVIEW_ACTIVITY_MAX_FILE_BYTES = 64 * 1024
@@ -209,6 +208,9 @@ class PromoteAuditActivityReadStore:
                 os.close(fd)
             if directory_fd is not None:
                 os.close(directory_fd)
+
+
+_REVIEW_ACTIVITY_STATUSES = frozenset({"pending", "deferred", "approved", "promoting", "promoted", "failed"})
 
 
 class ReviewActivityReadStore:

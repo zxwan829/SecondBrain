@@ -217,12 +217,13 @@ describe('Notes application navigation gate', () => {
             { activity_id: 'activity-brief', kind: 'daily_brief', status: 'created', occurred_at: base, daily_brief_date: '2026-10-23' },
             { activity_id: 'activity-memory', kind: 'personal_memory', status: 'revoked', occurred_at: base },
             { activity_id: 'activity-review', kind: 'review', status: 'pending', occurred_at: base },
+            { activity_id: 'activity-promote', kind: 'promote', status: 'promoted', occurred_at: base },
             ...(['pending', 'prepared', 'processing', 'completed', 'partial_success', 'failed'] as const).map((status, index) => ({
               activity_id: `activity-capture-${index}`, kind: 'capture' as const, status, occurred_at: base,
             })),
           ],
           pagination: { limit: 50, offset: 0, has_more: false },
-          source: ['projects', 'daily_brief', 'personal_memory', 'capture', 'review'],
+          source: ['projects', 'daily_brief', 'personal_memory', 'capture', 'review', 'promote'],
           freshness: { checked_at: base },
         }), { status: 200 });
       }
@@ -237,6 +238,7 @@ describe('Notes application navigation gate', () => {
     expect(screen.getByText('个人记忆操作')).toBeTruthy();
     expect(screen.getByText('已撤销')).toBeTruthy();
     expect(screen.getByText('审核状态')).toBeTruthy();
+    expect(screen.getAllByText('知识发布')).toHaveLength(2);
     expect(screen.getAllByText('待审核')).toHaveLength(2);
     expect(screen.getAllByText('采集状态')).toHaveLength(6);
     expect(screen.getByText('待处理')).toBeTruthy();
