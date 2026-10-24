@@ -91,6 +91,18 @@ class TrustedChannelAdapterHTTPTests(unittest.TestCase):
         self.assertEqual(self.post(payload=attached).status_code, 501)
         self.assertEqual(list(self.raw.glob("Inbox-*.md")), [])
 
+    def test_proposal_fields_are_rejected_for_explicit_intents_before_any_write(self):
+        for intent in ("explicit_capture", "journal_intent", "task_intent"):
+            for field, value in (("approved_proposal_id", "a" * 32),
+                                 ("approved_proposal_version", 1)):
+                with self.subTest(intent=intent, field=field):
+                    response = self.post(payload={**self.payload, "intent": intent, field: value})
+                    self.assertEqual(response.status_code, 400, response.text)
+                    self.assertIn("Core approval binding", response.text)
+                    self.assertEqual(list(self.raw.iterdir()), [])
+                    self.assertEqual(list(self.review.iterdir()), [])
+                    self.assertEqual(list((self.state / "captures").glob("*.json")), [])
+
     def test_event_key_conflict_is_rejected_and_scope_is_separated(self):
         self.assertEqual(self.post().status_code, 202)
         first_id = self.post().json()["inbox_id"]

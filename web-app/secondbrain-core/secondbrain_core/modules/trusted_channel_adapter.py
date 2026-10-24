@@ -39,6 +39,8 @@ def create_trusted_channel_router(service, identity_provider: TrustedChannelIden
             raise HTTPException(501, "Approved suggestions require the Core approval binding adapter")
         if body.get("intent") not in {"explicit_capture", "journal_intent", "task_intent"}:
             raise HTTPException(400, "An explicit Inbox save intent is required")
+        if "approved_proposal_id" in body or "approved_proposal_version" in body:
+            raise HTTPException(400, "Proposal evidence requires the Core approval binding adapter")
         attachments = body.get("attachment_refs", [])
         if attachments:
             raise HTTPException(501, "External attachment references require a trusted channel binding")
