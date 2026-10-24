@@ -129,49 +129,10 @@ class SockFprog(ctypes.Structure):
                 ("filter", ctypes.POINTER(SockFilter))]
 
 
-# Initial candidate allowlist for the exact StrictCreateOnlyWriter.publish path
-# plus runtime calls observed after seccomp activation. Tighten from the Linux
-# strace inventory before accepting this candidate.
+# Narrow x86_64 set for the exact Writer publish path and identity evidence.
+# Every other syscall is denied with EPERM.
 SECCOMP_ALLOW = {
-    0,    # read
-    1,    # write
-    3,    # close
-    5,    # fstat
-    9,    # mmap
-    10,   # mprotect
-    11,   # munmap
-    12,   # brk
-    13,   # rt_sigaction
-    14,   # rt_sigprocmask
-    15,   # rt_sigreturn
-    16,   # ioctl
-    17,   # pread64
-    18,   # pwrite64
-    25,   # mremap
-    28,   # madvise
-    35,   # nanosleep
-    39,   # getpid
-    60,   # exit
-    72,   # fcntl
-    74,   # fsync
-    76,   # truncate (to prove Landlock denial)
-    79,   # getcwd
-    82,   # rename (to prove Landlock denial)
-    102,  # getuid
-    104,  # getgid
-    107,  # geteuid
-    108,  # getegid
-    186,  # gettid
-    202,  # futex
-    228,  # clock_gettime
-    231,  # exit_group
-    257,  # openat
-    262,  # newfstatat
-    263,  # unlinkat (to prove Landlock denial)
-    264,  # renameat (to prove Landlock denial)
-    265,  # linkat (exact Writer publication primitive)
-    318,  # getrandom
-    334,  # rseq
+    0, 1, 3, 5, 11, 13, 74, 102, 104, 107, 108, 231, 257, 262, 265,
 }
 
 

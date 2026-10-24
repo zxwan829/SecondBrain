@@ -149,11 +149,15 @@ def main():
         raise AssertionError(f"Writer FD allowlist mismatch: {extra_fds}, expected {[writer.root_fd]}")
 
     install_minimal_seccomp()
+    from d090_landlock_process_helper import SECCOMP_ALLOW
     print(
-        f"SECCOMP_READY uid={os.getuid()} gid={os.getgid()} "
-        f"euid={os.geteuid()} egid={os.getegid()} landlock_abi={abi} fd_allowlist=1",
+        f"SECCOMP_READY landlock_abi={abi} fd_allowlist=1 "
+        f"allow_syscalls={','.join(str(n) for n in sorted(SECCOMP_ALLOW))}",
         flush=True,
     )
+    if (os.getuid(), os.getgid(), os.geteuid(), os.getegid()) != (WRITER_UID, WRITER_GID, WRITER_UID, WRITER_GID):
+        raise AssertionError("seccomp identity syscalls returned unexpected Writer identity")
+    print(f"WRITER_IDENTITY uid={os.getuid()} gid={os.getgid()} euid={os.geteuid()} egid={os.getegid()}", flush=True)
 
     receipt = writer.publish(signed, CONTENT)
     if receipt.get("status") != "published" or receipt.get("operation_id") != grant["operation_id"]:
@@ -161,14 +165,13 @@ def main():
     if (target_root / "approved.md").read_bytes() != CONTENT:
         raise AssertionError("exact Writer target content mismatch")
 
-    # Landlock denies these against an owned, otherwise writable sentinel outside
-    # the one allowed Writer target directory. Seccomp allows the syscall itself
-    # so these results exercise the filesystem policy rather than the syscall filter.
+    # openat is seccomp-allowed, so its EACCES exercises Landlock. Destructive
+    # syscall probes are denied by seccomp default policy and are not Landlock evidence.
     assert_denied("open protected sentinel for write",
                   lambda: os.open(protected_sentinel, os.O_WRONLY | os.O_CLOEXEC))
-    assert_denied("truncate protected sentinel", lambda: os.truncate(protected_sentinel, 0))
-    assert_denied("unlink protected sentinel", lambda: os.unlink(protected_sentinel))
-    assert_denied("rename protected sentinel", lambda: os.rename(protected_sentinel, protected_root / "moved.txt"))
+    assert_denied("seccomp truncate syscall", lambda: os.truncate(protected_sentinel, 0))
+    assert_denied("seccomp unlink syscall", lambda: os.unlink(protected_sentinel))
+    assert_denied("seccomp rename syscall", lambda: os.rename(protected_sentinel, protected_root / "moved.txt"))
 
     # Landlock does not enforce metadata changes. Since the published file is
     # owned by Writer, this otherwise-allowed chmod must be rejected by seccomp.
