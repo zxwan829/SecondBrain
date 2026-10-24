@@ -20,10 +20,13 @@ MAX_CAPTURE_CHARS = 20_000
 
 def _load_hmac_key():
     value = os.environ.get("SB_WEIXIN_CORE_INBOX_HMAC_KEY")
-    path = os.environ.get("SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE", "").strip()
-    if value is not None and path:
+    raw_path = os.environ.get("SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE")
+    if value is not None and raw_path is not None:
         raise ValueError("Set only one of SB_WEIXIN_CORE_INBOX_HMAC_KEY or SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE")
-    if path:
+    if raw_path is not None:
+        path = raw_path.strip()
+        if not path:
+            raise ValueError("SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE path is empty")
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
             info = os.fstat(fd)
@@ -31,9 +34,12 @@ def _load_hmac_key():
                     or info.st_uid != os.geteuid()):
                 raise ValueError("Weixin HMAC key file must be private and owned by the service user")
             with os.fdopen(fd, "rb", closefd=False) as stream:
-                secret = stream.read(4097).strip()
+                raw_secret = stream.read(4097)
         finally:
             os.close(fd)
+        if len(raw_secret) > 4096:
+            raise ValueError("Weixin HMAC key file exceeds 4096 bytes")
+        secret = raw_secret.strip()
     elif value is not None:
         secret = value.encode("utf-8")
     else:

@@ -24,10 +24,13 @@ def _private_file(path, name, *, max_bytes):
 
 def _configured_value(env_name, file_env_name, *, max_bytes):
     env_value = os.environ.get(env_name)
-    file_path = os.environ.get(file_env_name, "").strip()
-    if env_value is not None and file_path:
+    raw_file_path = os.environ.get(file_env_name)
+    if env_value is not None and raw_file_path is not None:
         raise ValueError(f"Set only one of {env_name} or {file_env_name}")
-    if file_path:
+    if raw_file_path is not None:
+        file_path = raw_file_path.strip()
+        if not file_path:
+            raise ValueError(f"{file_env_name} file path is empty")
         return _private_file(file_path, file_env_name, max_bytes=max_bytes)
     if env_value is None:
         raise ValueError(f"{env_name} or {file_env_name} is required")

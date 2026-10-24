@@ -59,6 +59,23 @@ def main():
         spec = importlib.util.spec_from_file_location("secondbrain_weixin_smoke", PLUGIN)
         plugin = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(plugin)
+        assert plugin._load_hmac_key() == KEY
+        os.environ["SB_WEIXIN_CORE_INBOX_HMAC_KEY"] = KEY.decode()
+        os.environ["SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE"] = "  "
+        try:
+            plugin._load_hmac_key()
+            raise AssertionError("blank key file path must fail closed")
+        except ValueError:
+            pass
+        os.environ.pop("SB_WEIXIN_CORE_INBOX_HMAC_KEY", None)
+        os.environ["SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE"] = str(key_file)
+        key_file.write_bytes(b"x" * 4097)
+        try:
+            plugin._load_hmac_key()
+            raise AssertionError("oversized key file must fail closed")
+        except ValueError:
+            pass
+        key_file.write_bytes(KEY + b"\n")
 
         saved = {}
         def fake_core(request, timeout):

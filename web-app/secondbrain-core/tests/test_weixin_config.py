@@ -57,6 +57,18 @@ def test_rejects_empty_unreadable_or_unprotected_key_file(tmp_path, monkeypatch)
         load_weixin_inbox_config()
 
 
+def test_rejects_empty_file_path_and_ambiguity_even_when_path_is_blank(tmp_path, monkeypatch):
+    key_file, sender_file = _files(tmp_path)
+    monkeypatch.setenv("SB_WEIXIN_ALLOWED_SENDERS_JSON_FILE", str(sender_file))
+    monkeypatch.setenv("SB_WEIXIN_INBOX_HMAC_KEY", KEY.decode())
+    monkeypatch.setenv("SB_WEIXIN_INBOX_HMAC_KEY_FILE", "   ")
+    with pytest.raises(ValueError, match="Set only one"):
+        load_weixin_inbox_config()
+    monkeypatch.delenv("SB_WEIXIN_INBOX_HMAC_KEY", raising=False)
+    with pytest.raises(ValueError, match="path is empty"):
+        load_weixin_inbox_config()
+
+
 def test_rejects_malformed_sender_json(tmp_path, monkeypatch):
     key_file, sender_file = _files(tmp_path)
     sender_file.write_bytes(b"not-json")
