@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { MarkdownEditor } from './MarkdownEditor';
-import { notesApi, type Note, type NoteCollection, type VisualAsset, type VisualKind } from './api/notes';
+import { notesApi, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
 import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
 
 const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module) => ({ default: module.VisualAssetDialog })));
@@ -17,6 +17,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [trashView, setTrashView] = useState(false);
+  const [trashItems, setTrashItems] = useState<NotesTrashItem[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashOffset, setTrashOffset] = useState(0);
+  const [trashHasMore, setTrashHasMore] = useState(false);
   const [restorePreview, setRestorePreview] = useState<{ etag: string; content: string } | null>(null);
   const [visualAsset, setVisualAsset] = useState<VisualAsset | null>(null);
   const [unpersistedVisual, setUnpersistedVisual] = useState<{ note: Note; asset: VisualAsset } | null>(null);
@@ -32,6 +37,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const visualNavigationRisk = useRef(false);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingSaves = useRef(0);
+  const trashIdempotencyKeys = useRef<Record<string, string>>({});
 
   const setCurrent = (next: Note | null, body = '') => {
     noteRef.current = next;
@@ -225,6 +231,95 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     } catch { /* save() retains the unsaved Markdown and reports the failure. */ }
   };
 
+  const openTrash = async () => {
+    if (!protectUnsaved()) return;
+    beginTransition();
+    setCurrent(null);
+    setTrashView(true);
+    setMessage('');
+    setTrashOffset(0);
+    setTrashLoading(true);
+    try {
+      const result = await notesApi.listTrash(0);
+      setTrashItems(result.items);
+      setTrashHasMore(result.pagination.has_more);
+      if (result.status === 'partial') setMessage('回收站包含待恢复项目；请联系管理员检查恢复状态。');
+    } catch (error) {
+      setTrashItems([]);
+      const status = (error as Error & { status?: number }).status;
+      setMessage(status === 501
+        ? '回收站尚未配置。笔记未被删除；请先配置隔离的 Trash 存储位置。'
+        : status === 401 ? '登录状态已失效，请重新登录后查看回收站。'
+          : status === 403 ? '当前登录会话没有读取回收站的权限。'
+            : '回收站暂时无法读取；笔记未被删除，请稍后重试。');
+    } finally { setTrashLoading(false); }
+  };
+
+  const changeTrashPage = async (offset: number) => {
+    if (offset < 0 || trashLoading) return;
+    setTrashLoading(true); setMessage('');
+    try {
+      const result = await notesApi.listTrash(offset);
+      setTrashItems(result.items);
+      setTrashOffset(result.pagination.offset);
+      setTrashHasMore(result.pagination.has_more);
+      if (result.status === 'partial') setMessage('回收站包含待恢复项目；请联系管理员检查恢复状态。');
+    } catch {
+      setMessage('回收站页暂时无法读取；当前列表保持不变，请重试。');
+    } finally { setTrashLoading(false); }
+  };
+
+  const closeTrash = () => {
+    beginTransition();
+    setTrashView(false);
+    setMessage('');
+    void refresh(collection);
+  };
+
+  const trashSelectedNote = async () => {
+    const target = note;
+    if (!target || state !== '已保存' || loading || creatingVisual || savingVisual) return;
+    const confirmed = window.confirm(`将“${target.path}”移到回收站？笔记可从回收站恢复；共享附件不会删除。`);
+    if (!confirmed) return;
+    const key = noteKey(target);
+    const idempotencyKey = trashIdempotencyKeys.current[key] ?? globalThis.crypto.randomUUID();
+    trashIdempotencyKeys.current[key] = idempotencyKey;
+    setLoading(true); setMessage('');
+    try {
+      await notesApi.trash(target, idempotencyKey);
+      delete trashIdempotencyKeys.current[key];
+      setCurrent(null);
+      setMessage('笔记已移到回收站，可在回收站恢复；共享附件未删除。');
+      void refresh(target.collection);
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status;
+      setMessage(status === 501 ? '回收站尚未配置，笔记未被删除。'
+        : status === 401 ? '登录状态已失效，笔记未被删除。'
+          : status === 403 ? '当前会话没有删除此笔记的权限，笔记未被删除。'
+            : status === 409 ? '笔记已变化或请求状态不一致，笔记未被覆盖；请刷新后检查。'
+              : '移入回收站未能确认完成；笔记内容和附件均未执行清理。请检查回收站后再重试。');
+    } finally { setLoading(false); }
+  };
+
+  const restoreTrashItem = async (item: NotesTrashItem) => {
+    if (item.status !== 'trashed' || trashLoading) return;
+    if (!window.confirm(`将“${item.path}”恢复到原目录 ${item.collection}？如果目标已存在，系统会拒绝覆盖。`)) return;
+    setTrashLoading(true); setMessage('');
+    try {
+      await notesApi.restoreTrash(item.trash_id);
+      setTrashItems((current) => current.filter((row) => row.trash_id !== item.trash_id));
+      setMessage('笔记已恢复到原目录；共享附件未删除。');
+      void refresh(item.collection);
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status;
+      setMessage(status === 409 ? '恢复目标已存在，未覆盖任何文件。请先处理同名目标后再重试。'
+        : status === 401 ? '登录状态已失效，笔记仍保留在回收站。'
+          : status === 403 ? '当前会话没有恢复权限，笔记仍保留在回收站。'
+            : status === 503 ? '恢复状态需要检查；没有自动覆盖或清理文件，请联系管理员处理。'
+              : '恢复未能确认完成；笔记仍受回收站保护，请刷新状态后重试。');
+    } finally { setTrashLoading(false); }
+  };
+
   const openVisual = async (filename: string) => {
     const target = noteRef.current;
     const kind = visualKindFromFilename(filename);
@@ -294,8 +389,28 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
 
   return <main className="notes-page">
     <header className="module-header"><div><p className="eyebrow">SECONDBRAIN / NOTES</p><h1>笔记</h1><p className="workspace-subtitle">以 Markdown 文件为正文来源；普通目录仅显示已显式授权的范围。</p></div>
-      <button type="button" onClick={() => void createDraft()} disabled={loading}>新建 Draft</button></header>
-    <div className="notes-layout">
+      <div className="notes-header-actions">
+        <button type="button" onClick={() => trashView ? closeTrash() : void openTrash()} disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
+        {!trashView && <button type="button" onClick={() => void createDraft()} disabled={loading}>新建 Draft</button>}
+      </div></header>
+    {trashView ? <section className="notes-trash" aria-label="回收站">
+      <h2>回收站</h2>
+      <p>笔记保留在原目录信息中，可恢复到原位置；恢复时不会覆盖已存在的文件，共享附件不会被删除。此处不提供永久删除。</p>
+      {trashLoading && <p role="status">正在读取回收站…</p>}
+      {trashItems.length === 0 && !trashLoading && !message && <p>回收站为空。</p>}
+      <ul>{trashItems.map((item) => <li key={item.trash_id}>
+        <div><strong>{item.path}</strong><span>{item.collection} · {new Date(item.trashed_at).toLocaleString()} · {item.status}</span></div>
+        {item.status === 'trashed'
+          ? <button type="button" onClick={() => void restoreTrashItem(item)} disabled={trashLoading}>恢复到原目录</button>
+          : <span role="status">需要检查，暂不可恢复</span>}
+      </li>)}</ul>
+      <nav aria-label="回收站分页" className="notes-trash-pagination">
+        <button type="button" onClick={() => void changeTrashPage(trashOffset - 50)} disabled={trashLoading || trashOffset === 0}>上一页</button>
+        <span>第 {Math.floor(trashOffset / 50) + 1} 页</span>
+        <button type="button" onClick={() => void changeTrashPage(trashOffset + 50)} disabled={trashLoading || !trashHasMore}>下一页</button>
+      </nav>
+      {message && <p role="alert">{message}</p>}
+    </section> : <div className="notes-layout">
       <aside className="notes-sidebar" aria-label="笔记目录">
         <label htmlFor="notes-collection">笔记目录</label>
         <select id="notes-collection" value={collection} onChange={(event) => selectCollection(event.target.value)}>
@@ -313,6 +428,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           </>}
           {note && note.collection === 'drafts' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(note.path) && onOpenInboxSource && <button type="button" onClick={() => { if (protectUnsaved()) onOpenInboxSource(note.collection, note.path); }}>单来源 Inbox 审批</button>}
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
+          {note && <button type="button" onClick={() => void trashSelectedNote()} disabled={state !== '已保存' || loading || creatingVisual || savingVisual || visualAsset !== null || unpersistedVisual !== null}>移到回收站</button>}
         </div>
         {restorePreview && <section className="notes-restore-preview" aria-label="历史版本预览">
           <h2>最近历史版本预览</h2><pre>{restorePreview.content}</pre>
@@ -329,7 +445,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         {unpersistedVisual && state === '保存失败' && note && noteKey(note) === noteKey(unpersistedVisual.note) &&
           <button type="button" onClick={() => void retryVisualReference()}>重试保存图形引用</button>}
       </section>
-    </div>
+    </div>}
     {visualAsset && <Suspense fallback={<p role="status">正在加载图形编辑器…</p>}>
       <VisualAssetDialog key={`${note ? noteKey(note) : ''}:${visualAsset.filename}`} kind={visualKindFromFilename(visualAsset.filename)!} asset={visualAsset}
         onSave={saveVisual} onClose={() => setVisualAsset(null)} onNavigationRiskChange={updateVisualNavigationRisk} canSave={state === '已保存'} />

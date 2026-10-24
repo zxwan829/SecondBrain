@@ -103,6 +103,15 @@ def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exp
             time.sleep(0.02)
         assert server.started
         with httpx.Client(base_url=origin, timeout=5, trust_env=False) as client:
+            anonymous_list = client.get("/api/notes/trash", headers={"Origin": origin})
+            assert anonymous_list.status_code == 401
+            anonymous_delete = client.delete("/api/notes/trash/projects/synthetic-note.md", headers={
+                "Origin": origin, "If-Match": f'"{sha}"', "Idempotency-Key": "synthetic-trash-anonymous",
+            })
+            assert anonymous_delete.status_code == 401
+            assert note.read_bytes() == original
+            assert not (vault / ".trash" / "secondbrain").exists()
+
             login = client.post("/api/auth/login", headers={"Origin": origin},
                                 json={"password": "synthetic-notes-trash-password"})
             assert login.status_code == 200
