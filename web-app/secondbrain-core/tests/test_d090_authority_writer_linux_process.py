@@ -162,7 +162,9 @@ def _run_case(*, drop_response: bool):
             )
             processes.append(probe)
             assert _readline(writer_proc) == "REJECTED authority_peer_rejected"
-            assert probe.wait(timeout=5) == 0
+            probe_exit = probe.wait(timeout=5)
+            probe_stderr = probe.stderr.read() if probe_exit != 0 else ""
+            assert probe_exit == 0, f"synthetic wrong-peer probe failed: {probe_stderr}"
             os.chown(socket_path, roles.authority_uid, roles.authority_gid, follow_symlinks=False)
             os.chmod(socket_path, 0o660, follow_symlinks=False)
 
