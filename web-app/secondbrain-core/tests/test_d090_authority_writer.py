@@ -190,6 +190,56 @@ def test_uncertain_writer_result_is_durable_and_never_retried(tmp_path):
     assert calls == ["operation-1"]
 
 
+def test_authority_restart_after_durable_committing_fence_fails_closed(monkeypatch, tmp_path):
+    calls = []
+
+    def publish(grant, content):
+        calls.append(grant["operation_id"])
+        return {"operation_id": grant["operation_id"],
+                "content_sha256": hashlib.sha256(content).hexdigest(),
+                "status": "published"}
+
+    core, signer = authority(tmp_path, publish)
+    grant = issue(core)
+    real_begin = core._begin
+    begin_count = 0
+
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    def crash_after_durable_fence():
+        nonlocal begin_count
+        begin_count += 1
+        if begin_count == 2:
+            # The first transaction durably changed issued -> committing and
+            # was closed. Simulate death before entering the Writer phase.
+            raise SimulatedProcessCrash
+        return real_begin()
+
+    monkeypatch.setattr(core, "_begin", crash_after_durable_fence)
+    with pytest.raises(SimulatedProcessCrash):
+        core.commit(grant, CONTENT)
+    assert calls == []
+
+    reopened = d090.D090Authority(
+        str(tmp_path / "authority"), signer, publish,
+        role_ids=d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103),
+        allow_synthetic_identities=True,
+    )
+    db = reopened._connect()
+    try:
+        assert db.execute(
+            "SELECT state FROM grants WHERE operation_id=?", ("operation-1",)
+        ).fetchone() == ("committing",)
+    finally:
+        db.close()
+
+    with pytest.raises(d090.D090RecoveryRequired, match="operation_recovery_required"):
+        reopened.commit(grant, CONTENT)
+    assert reopened.revoke("operation-1") == "in_progress"
+    assert calls == []
+
+
 def test_peer_mismatch_is_rejected_before_reading_request_body(monkeypatch):
     monkeypatch.setattr(d090.socket, "SO_PEERCRED", 123, raising=False)
 
