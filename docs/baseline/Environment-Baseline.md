@@ -6,7 +6,15 @@ type: environment-baseline
 ---
 # Environment Baseline
 
-## 最新生产只读预检（2026-10-24；NAS 部署准备）
+## 最新生产部署与验收（2026-10-24；V1 第一阶段）
+
+- **发布来源：** GitHub `main` `ce247d0c2f014c67f407c7b8721022da6afe2753`；Actions [#40075395885](https://github.com/zxwan829/SecondBrain/actions/runs/40075395885)，artifact `12553425795`。ZIP SHA-256 `4ad0b8eb26eb93ebfcf71f18667487122203ef54f31db4c1cd5dffcf5fc7de37`；镜像包 `secondbrain-candidate-images.tar.gz` SHA-256 `079c99c444be8867ccb4396f5344bc859bbc57ffd2d4a9542b0b6543d7329fce`，内部 `SHA256SUMS` 已在本机与 NAS 校验。App 镜像 ID `sha256:e201c93c7f19ec1ac15f742659ce023a0f12228fd846035090e42f6e69d3cec5`，revision label 与 main SHA 相同。Hermes 镜像 ID `sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821`，版本 `0.22.2`，上游源码 `d923a5eb487a17c0a68801bba9ef0f56c81040a8`，D078/Weixin overlay SHA-256 `eb20ef03146b1a15eda7659327f777377fefe8584ce45bc5fef3ba1be406d353`。
+- **切换与回滚资产：** 受保护目录 `/volume1/docker/secondbrain/rollback/v1-ce247d0c-predeploy-20261024T080514Z/`（父目录 `0700 root:root`）。包含原 Compose 快照 SHA-256 `5703458d5db4703d3a1e9377c3aafbfacc470863b92c15f4305e802f64b1c17b`、原 Hermes `config.yaml` SHA-256 `34fe0bdad9d6e5990677b87ffa67cfb8fd237a18462da6958737bff23faf9155`、停 App 后一致复制的 Core state（55 files / 184320 bytes；文件清单 SHA-256 `1c0aaef4f0556813d02a1de464ca21bdaa62166885346d4dba34c643be8b4087`）及镜像包。所有快照校验通过。新 Compose SHA-256 `0aedb4b104870ddc5ce23a2f1adde10b84b51bf06f7e35d3377356bcc5a84708`；与原文件相比仅变更 App/Hermes 两个 image refs；Compose `config --quiet` 通过。旧 App (`sha256:728fc7d180f7687c90c58be2e9beb970a4010bfb10bd04777371861f3139aeeb`) 与旧 Hermes (`sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a`) 镜像仍在本机可回滚。
+- **部署验收：** `secondbrain-app` running/healthy、UID/GID `1026:100`；`/health`、`/`、`/notes`、`/login` 返回 200；未认证 `/api/notes` 返回预期 401。App revision label 正确。`hermes` running/root；Dashboard `192.168.3.27:9119/` 返回 302，App 到 Hermes `http://hermes:8642/health` 返回 200。Hermes 插件列表显示活动用户版 `secondbrain-d078-guard` enabled，bundled 版与用户版 SHA 相同；固定镜像内 `secondbrain-weixin-inbox` 文件存在且插件为 `not enabled`。直接对活动 D078 用户插件函数进行的合成无效终端 pre-tool 调用被阻断，未执行命令；这不是 API Terminal/真实模型 Run 验收。活动 Hermes profile SHA 与快照相同。App/Hermes 网络、端口、身份及挂载路径与部署前一致；Private 未挂载。其他容器均保持运行，未重启。Core `SB_WEIXIN_INBOX_ENABLED` 有效值 false，`SB_PROMOTE_ENABLED=false`；API Terminal 配置未改且仍保持关闭。
+- **回滚：** 先将快照 `compose.yaml` 原样恢复到 `/volume1/docker/secondbrain/compose.yaml`，执行 `docker compose -f /volume1/docker/secondbrain/compose.yaml config --quiet`，再仅对受影响服务执行 `docker compose ... up -d --no-deps --no-build --force-recreate --pull never secondbrain-app` 和/或 `hermes`。旧镜像已确认存在。不要因镜像回退自动覆盖当前 Core state；本次未发现启动迁移代码，如出现状态兼容疑问，先保留运行期间 state 并评估快照，不盲目恢复数据。
+- **尚未验收：** 未登录执行真实用户会话、Chat/Run 或读写个人数据；未扫码、未启用微信或发送消息；没有用户最终体验验收。此记录只代表部署与上述健康/路由检查通过。
+
+## 部署前只读预检（2026-10-24；已由上方生产部署记录更新）
 
 - 本轮经 SSH 对 NAS 执行只读核验，未构建/拉取镜像、修改文件或配置、重启/重建容器、读取 Secret 或业务数据。SSH 本地 known_hosts 更新因当前执行环境权限受限而告警；远端只读命令仍成功，未修改本地权限或 SSH 配置。
 - App `secondbrain-app` 容器 `9562e402f72b67b0eacba3a99a0fc23c7c23098c5b8ecebf8517f552dbb29c39`，镜像 `secondbrain-app:m2-pr94-c7eda992-app-only` / `sha256:728fc7d180f7687c90c58be2e9beb970a4010bfb10bd04777371861f3139aeeb`，running、healthy、RestartCount 0，运行身份 `1026:100`，仅发布 `127.0.0.1:9120->8000`。镜像未提供可核验的 OCI source revision label；`c7eda992` 标签对应源码提交仅是来源线索，不是镜像内容证明。相对当前 main `1ddff32463b06753758cae144d79de05632deb52` 的差异很大，需由当前 main 重建 App 候选。

@@ -8,7 +8,7 @@ source: GitHub SecondBrain Monorepo
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
 
-## 2026-10-24 当前状态与唯一 NEXT：V1 集成收口
+## 2026-10-24 当前状态与唯一 NEXT：V1 第一阶段已部署，待用户体验验收
 
 **现行协作基线（2026-10-24）：** 单一 Codex 主 Agent 是 V1 开发/集成/合并的唯一调度负责人；Web/Core 为子任务角色（支持时子 Agent + 独立 worktree，否则顺序执行），不再由用户在旧 A/B 窗口间转发指令。主 Agent 自主领取已授权工作、协调独立复审、满足门禁后合并普通 PR、继续下一项；实际任务持续性受 Codex 会话与运行器约束，跨会话无人值守尚未建设。具体唯一规则见 [Agent-Rules.md](Agent-Rules.md)，历史 A/B 分工表只作为技术工作包划分。安全敏感、生产、真实数据及费用门禁维持原样。
 
@@ -16,7 +16,7 @@ source: GitHub SecondBrain Monorepo
 
 | 当前对象 | 核验结果 | 下一步 |
 |---|---|---|
-| main | 本次状态更新的 review base 为 `6ff5592ae8aade44d7e763d7d4f7e2eed43e0998`；最近运行时代码合并 #235 为 `066d80b033a5837e9a055c48df0b25159dd0a785`。#236 已将 CURRENT 同步到该代码快照。 | Chat cost gate 与 Writer/Promote 仍 OFF；代码合并不代表镜像构建、生产部署或运行验收 |
+| main / 生产部署 | 当前 main `ce247d0c2f014c67f407c7b8721022da6afe2753` 已部署到 DS920+：App `sha256:e201c93c…` healthy；Hermes v0.22.2 `sha256:73f4f332…` running。镜像、构建源 SHA、Hermes overlay 与运行摘要见 [Environment-Baseline.md](Environment-Baseline.md)。 | 用户登录与实际业务体验仍待验收；微信保持关闭，Writer/Promote 与 API Terminal 保持关闭 |
 | A 普通 Web 批次 | #198 `b9bb97da`→`5fff974b`；#212 `3cf044cf`→`f58ecfd2`；#214 `36c67fd1`→`db810654`；#215 `9d35dc70`→`e33b836c`。各项 post-merge 定向回归分别 48、5、1、2 项通过；#214/#215 相邻 Inbox 修改的组合回归通过 | 保留 PR 各自已有 typecheck/build/diff-check 证据；本批未运行 Actions。细节见 Progress-Log 2026-10-23 集成收口记录 |
 | #201 Core 撤权 | 固定 PR HEAD `ea70fca9dde78793b05d5aaed7523f26bf432a72` 已获本次单独安全敏感合并授权并合入 main `e611ecc4`。fail-closed 修复 `ac1c171d` 与后续 fixture-only 增量独立复审为 `PASS_WITH_LIMITS`；相关 Core 组合回归 158 passed。 | 只关闭已识别的进程内 missing-grant fail-open；跨进程持久撤权、OS 隔离、生产安全仍未验收 |
 | #207/#202 集成 | #207 固定 HEAD `aff4171f86b00bb8420e0cfe2af8a0978fdb2f37` 同步 main 时无 Core 文件变化，已合入 `6c372ff6`。#202 固定 HEAD `69f39cccfbae56c66a4db6f483e8dc75aee0cf7b` 已合入 `5fd9df3c`。新 main tree 与先前 82 Web / 158 Core / Vite→Uvicorn `PASS_WITH_LIMITS` 的固定组合 tree 相同，三次合并后 diff-check 通过。 | Linux Chromium Run #39984102838 在 #202 精确 HEAD 上三视口 PASS，合成 Web `A_NEXT_READY=READY_WITH_LIMITS`；它不证明真实 Core 跨进程撤权、生产部署或完整 V1 验收 |
@@ -31,12 +31,12 @@ source: GitHub SecondBrain Monorepo
 | #138 Journal GET | 已按普通 GitHub 路径合并；精确 PR HEAD `479411488c78e5d3765f1d45e9c64371634d228f`，merge/main SHA `c87cb9f5c2fc83757e57c14a951e3d2c38df6fe7`；独立 exact-head review PASS，Journal 定向测试 20 passed，diff-check PASS | 只刻画当前只读 localhost 行为；legacy ID/date 兼容与 atime 未额外断言，不改业务行为 |
 | D090 #206 candidate | Draft；精确 HEAD `5fcff5a74bc2d1b8ce3fe8bad4b8e40fdb9ca61b`。Ubuntu 24.04 / Python 3.12 run [#40061040515](https://github.com/zxwan829/SecondBrain/actions/runs/40061040515) 通过 SO_PEERCRED、strict create/replay 与 response-loss recovery 进程测试；独立复审 `PASS_WITH_LIMITS`。 | 限于合成 Authority/Writer 进程边界；Landlock、seccomp、capabilities/FD、部署权限和人工 proof 均未完整验收；保持 Draft、不合并，Writer/Promote OFF |
 | D090 Landlock #238 | Draft stacked on #206；精确 HEAD `58cc558281662d3102c6e6f1b68907318fab7081`；Ubuntu run [#40061975420](https://github.com/zxwan829/SecondBrain/actions/runs/40061975420) 2 passed，独立精确 HEAD 复审 PASS。此前同一 SHA 的一次 run 失败于 peer probe，诊断后未复现，根因 UNKNOWN。 | 只证明 ABI>=3、no_new_privs、能力/FD观察及指定 synthetic filesystem rights；不限制 Landlock 未覆盖的元数据操作，不证明 seccomp/strict-create-only/full gate；保持 Draft |
-| P4-2 Hermes Weixin | PR #235 已合并，SHA `066d80b033a5837e9a055c48df0b25159dd0a785`；Hermes v0.22.2 原生 adapter 下载采用 128 MiB 有界流，55 项定向测试通过。Draft PR #237 (`0298fe67f947774debe1fe756a2098fa03da670c`) 在 #101 候选上增加 synthetic bridge suite：10 passed / 6 subtests，独立复审 PASS。 | #237 仅为 #101 candidate，尚非 main 集成；真实身份/key/consent/附件绑定合同仍缺，生产 Weixin enabled/allowlist UNKNOWN；未建镜像部署、未扫码 |
+| P4-2 Hermes Weixin | main `ce247d0c…` 的固定 Hermes 镜像现已包含原生 `secondbrain-weixin-inbox` 插件；NAS 文件存在但插件为 `not enabled`，Core 开关有效值 false。D078 活动用户插件 enabled，API 健康正常。 | 微信尚未启用、未配置 HMAC/sender 白名单、未扫码或收发真实消息；真实微信人工验收需后续单独授权 |
 | Writer/Promote 与生产 | OFF；D090/OS Gate 与生产安全门禁保持原状 | 不从普通 PR 合入推导部署或生产授权 |
 
 本批分支保护规则与 ruleset 的可读 GraphQL 查询均未返回配置项；REST 查询受私有仓库功能限制返回 403，不能以此绕过平台门禁。#201/#207/#202 均通过正常 GitHub Ready/Merge 路径处理；没有管理员绕过、强推或 main reset。Notes Run #40008488314 使用既有手动工作流、合成数据和脱敏 artifact。完整 V1 及真实生产/用户体验验收仍未完成。
 
-**当前 NEXT：** 本次 review base main 为 `6ff5592ae8aade44d7e763d7d4f7e2eed43e0998`。P4-2 Hermes→Core synthetic bridge 已在 Draft #237/#101 候选完成；真实身份/key/consent/附件绑定合同缺失，不注册生产路由或进入扫码验收。D090 #206/#238 的 limited process/Landlock synthetic slices 已独立复审和 Linux 验证，但尚缺 seccomp、完整 combined policy 与人工 proof；不得合并/启用 Writer/Promote。P3-5 Review/Promote/Agent/Skill Activity 仍缺 DTO 与权限预检合同；#216/#213 Trash 缺 C2 root 和 owner-session 默认授权语义；P4-4 的纯 helper未成为持久笔记元数据；P2 真实智能效果、P5 生产验收与 P6 用户验收仍受真实模型/数据/生产授权边界约束。V1 仍 NOT DONE。
+**当前 NEXT：** 第一阶段候选已部署到 NAS，运行证据见 [Environment-Baseline.md](Environment-Baseline.md)。下一步由用户登录 Web 体验 Chat、Notes、Task、Journal 与 Inbox；本次没有使用账户登录、真实会话或业务正文，故不标用户验收通过。P4-2 微信需另行授权真实扫码/消息验收；当前 Core 开关 false、Hermes 插件未启用。其余 V1 仍 NOT DONE：D090 OS Gate 保持 Draft 且 Writer/Promote OFF；P3-5 Activity 来源扩展与 Trash 授权合同按既有队列推进；真实模型、个人数据、渠道和其余 P6 验收仍受各自边界约束。
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 
