@@ -1,4 +1,5 @@
 """Narrow Core-owned Notes API for explicitly configured Markdown roots."""
+import csv
 import hashlib
 import fcntl
 import json
@@ -36,6 +37,120 @@ def markdown_safety(content: str) -> list[str]:
         if re.search(pattern, content, re.M | re.S if label == "Obsidian comments" else re.M):
             reasons.append(label)
     return reasons
+
+
+def _note_properties(content: str) -> tuple[str | None, list[str]]:
+    """Read the two managed properties from a deliberately small YAML subset."""
+    lines = content.splitlines()
+    if not lines or lines[0] != "---":
+        return None, []
+    try:
+        end = lines.index("---", 1)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Note frontmatter is incomplete") from exc
+    type_lines = [index for index, line in enumerate(lines[1:end], 1) if line.startswith("类型:")]
+    tag_lines = [index for index, line in enumerate(lines[1:end], 1) if line.startswith("tags:")]
+    if len(type_lines) > 1 or len(tag_lines) > 1:
+        raise HTTPException(status_code=422, detail="Managed note properties contain duplicate keys")
+
+    def scalar(raw):
+        value = raw.strip()
+        if not value:
+            return ""
+        if value.startswith('"'):
+            try:
+                parsed = json.loads(value)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="Managed note property is not supported") from exc
+            if not isinstance(parsed, str):
+                raise HTTPException(status_code=422, detail="Managed note property is not a string")
+            return parsed
+        if value.startswith("'") and value.endswith("'") and len(value) >= 2:
+            return value[1:-1].replace("''", "'")
+        if (value in {"|", ">", "|-", "|+", ">-", ">+"}
+                or value.startswith(("&", "*", "!", "{", "["))
+                or any(mark in value for mark in ("\n", "\r", " #", ": "))):
+            raise HTTPException(status_code=422, detail="Managed note property is not supported")
+        return value
+
+    selected_type = scalar(lines[type_lines[0]].split(":", 1)[1]) if type_lines else ""
+    if type_lines and type_lines[0] + 1 < end and lines[type_lines[0] + 1].startswith((" ", "\t")):
+        raise HTTPException(status_code=422, detail="Multiline type values are not supported")
+    tags: list[str] = []
+    if tag_lines:
+        index = tag_lines[0]
+        raw = lines[index].split(":", 1)[1].strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except ValueError:
+                if not (raw.startswith("[") and raw.endswith("]")):
+                    raise HTTPException(status_code=422, detail="Managed tags must be a YAML string list")
+                try:
+                    parsed = next(csv.reader([raw[1:-1]], skipinitialspace=True))
+                    parsed = [scalar(item) for item in parsed if item.strip()]
+                except (csv.Error, StopIteration) as exc:
+                    raise HTTPException(status_code=422, detail="Managed tags must be a YAML string list") from exc
+            if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+                raise HTTPException(status_code=422, detail="Managed tags must be a string list")
+            tags = parsed
+        else:
+            cursor = index + 1
+            while cursor < end and lines[cursor].startswith("  - "):
+                tags.append(scalar(lines[cursor][4:]))
+                cursor += 1
+            if cursor < end and lines[cursor].startswith(" "):
+                raise HTTPException(status_code=422, detail="Managed tags use unsupported YAML syntax")
+    return selected_type or None, tags
+
+
+def _replace_note_properties(content: str, note_type: str, tags: list[str]) -> str:
+    """Replace only top-level 类型/tags lines, preserving all other bytes and body."""
+    newline = "\r\n" if "\r\n" in content else "\n"
+    lines = content.splitlines(keepends=True)
+    bare = lambda line: line.removesuffix("\r\n").removesuffix("\n").removesuffix("\r")
+    has_frontmatter = bool(lines and bare(lines[0]) == "---")
+    if has_frontmatter:
+        end = next((index for index, line in enumerate(lines[1:], 1) if bare(line) == "---"), None)
+        if end is None:
+            raise HTTPException(status_code=422, detail="Note frontmatter is incomplete")
+        _note_properties(content)
+        body = "".join(lines[end + 1:])
+        header = lines[1:end]
+        closing_line = lines[end]
+    else:
+        body, header = content, []
+        closing_line = "---" + newline
+
+    kept: list[str] = []
+    skip_tag_items = False
+    found_type = found_tags = False
+    for line in header:
+        value = bare(line)
+        if value.startswith("类型:"):
+            if not found_type:
+                kept.append("类型: " + json.dumps(note_type, ensure_ascii=False) + newline)
+                found_type = True
+            skip_tag_items = False
+            continue
+        if value.startswith("tags:"):
+            if not found_tags:
+                kept.append("tags: " + json.dumps(tags, ensure_ascii=False) + newline)
+                found_tags = True
+            skip_tag_items = not value.split(":", 1)[1].strip()
+            continue
+        if skip_tag_items and (value.startswith("  - ") or not value.strip()):
+            continue
+        skip_tag_items = False
+        kept.append(line)
+    if not found_type:
+        kept.append("类型: " + json.dumps(note_type, ensure_ascii=False) + newline)
+    if not found_tags:
+        kept.append("tags: " + json.dumps(tags, ensure_ascii=False) + newline)
+
+    if has_frontmatter:
+        return "---" + newline + "".join(kept) + closing_line + body
+    return "---" + newline + "".join(kept) + closing_line + body
 
 
 class NotesStore:
@@ -359,11 +474,11 @@ class NotesStore:
             if owned_fd:
                 os.close(directory_fd)
 
-    def update(self, collection, relative, content, expected):
+    def update(self, collection, relative, content, expected, *, metadata_only=False):
         if collection not in self.roots:
             raise HTTPException(status_code=404, detail="Notes collection not found")
         self._validate(content)
-        if markdown_safety(content):
+        if markdown_safety(content) and not metadata_only:
             raise HTTPException(status_code=422, detail="This Markdown contains unsupported syntax and cannot be saved through the rich-text editor")
         path, directory = self._path(collection, relative, create=collection == "drafts")
         directory_fd = self._open_directory(directory)
@@ -383,7 +498,7 @@ class NotesStore:
             current_etag = self._digest(current)
             if not expected or expected.strip('"') != current_etag:
                 raise HTTPException(status_code=412, detail="Note changed; reload before saving")
-            if markdown_safety(current):
+            if markdown_safety(current) and not metadata_only:
                 raise HTTPException(status_code=422, detail="This Markdown contains unsupported syntax and is read-only")
             namespace = self._history_namespace(collection, relative)
             history_fd = self._open_history_directory_for_update(directory_fd, namespace)
@@ -409,7 +524,15 @@ class NotesStore:
                 os.close(lock_fd)
                 os.close(directory_fd)
         return {"collection": collection, "path": relative, "content": content, "etag": self._digest(content),
-                "read_only": False, "safety_reasons": []}
+                "read_only": bool(markdown_safety(content)), "safety_reasons": markdown_safety(content)}
+
+    def update_properties(self, collection, relative, note_type, tags, expected):
+        """Update only managed frontmatter keys using Notes' existing CAS/history path."""
+        current = self.read(collection, relative)
+        if not expected or expected.strip('"') != current["etag"]:
+            raise HTTPException(status_code=412, detail="Note changed; reload before saving properties")
+        replacement = _replace_note_properties(current["content"], note_type, tags)
+        return self.update(collection, relative, replacement, expected, metadata_only=True)
 
     def history(self, collection, relative):
         path, directory = self._path(collection, relative)
@@ -700,7 +823,7 @@ def configured_notes_store(drafts_root, authorized_roots_json=""):
         raise RuntimeError("SB_NOTES_AUTHORIZED_ROOTS must be a JSON object of named explicit paths")
 
 
-def create_notes_router(auth, store):
+def create_notes_router(auth, store, vocabulary_store=None):
     router = APIRouter(prefix="/api/notes")
 
     def require(request, action):
@@ -770,10 +893,43 @@ def create_notes_router(auth, store):
         return Response(content=data, media_type=media_type,
                          headers=headers)
 
+    @router.get("/{collection}/{relative:path}/properties")
+    def read_properties(request: Request, response: Response, collection: str, relative: str):
+        require(request, "read")
+        result = store.read(collection, relative)
+        note_type, tags = _note_properties(result["content"])
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        return {"type": note_type or "", "tags": tags, "etag": result["etag"]}
+
     @router.get("/{collection}/{relative:path}")
     def read(request: Request, response: Response, collection: str, relative: str):
         require(request, "read")
         result = store.read(collection, relative)
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        return result
+
+    @router.put("/{collection}/{relative:path}/properties")
+    def update_properties(request: Request, response: Response, collection: str, relative: str, body: dict):
+        require(request, "write")
+        if vocabulary_store is None:
+            raise HTTPException(status_code=503, detail="Vocabulary is not configured")
+        if body.get("confirmed") is not True:
+            raise HTTPException(status_code=400, detail="Explicit property confirmation is required")
+        note_type = body.get("type")
+        tags = body.get("tags")
+        if not isinstance(note_type, str) or not isinstance(tags, list) or len(tags) > 30:
+            raise HTTPException(status_code=422, detail="Type and tags are invalid")
+        if any(not isinstance(tag, str) for tag in tags) or len(set(tags)) != len(tags):
+            raise HTTPException(status_code=422, detail="Tags must be unique strings")
+        catalog = vocabulary_store.read()
+        active_types = {item["name"] for item in catalog["types"] if item["enabled"]}
+        active_tags = {item["name"] for item in catalog["tags"] if item["enabled"]}
+        current_type, current_tags = _note_properties(store.read(collection, relative)["content"])
+        if ((note_type not in active_types and note_type != current_type)
+                or any(tag not in active_tags and tag not in current_tags for tag in tags)):
+            raise HTTPException(status_code=409, detail="Properties must use active Core vocabulary values")
+        result = store.update_properties(collection, relative, note_type, tags,
+                                         request.headers.get("if-match", ""))
         response.headers["ETag"] = f'"{result["etag"]}"'
         return result
 

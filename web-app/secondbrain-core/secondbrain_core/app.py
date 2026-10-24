@@ -221,7 +221,7 @@ def create_app():
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
     app.include_router(create_planning_router(planning_candidate_service))
     app.include_router(create_notes_trash_router(auth, notes_store, notes_trash_store))
-    app.include_router(create_notes_router(auth, notes_store))
+    app.include_router(create_notes_router(auth, notes_store, vocabulary_store))
     app.include_router(create_knowledge_read_router(
         auth, knowledge_read_store))
     app.include_router(create_vocabulary_router(auth, vocabulary_store))

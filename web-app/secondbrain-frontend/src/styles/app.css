@@ -345,6 +345,11 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .notes-trash li span { color: #aebed3; font-size: 12px; }
 .notes-trash-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .notes-trash-pagination span { color: #aebed3; font-size: 12px; }
+.notes-properties { padding: 8px 0; }
+.notes-properties-panel { display: grid; gap: 10px; max-width: 560px; margin-top: 10px; padding: 14px; border: 1px solid rgb(151 177 215 / 18%); border-radius: 10px; background: rgb(4 11 22 / 42%); }
+.notes-properties-panel > label { display: grid; gap: 6px; }
+.notes-properties-panel fieldset { display: flex; flex-wrap: wrap; gap: 10px; }
+.notes-properties-panel fieldset label { display: inline-flex; align-items: center; gap: 5px; }
 .notes-sidebar { display: flex; flex-direction: column; gap: 12px; }
 .notes-sidebar ul { list-style: none; display: grid; gap: 6px; margin: 0; padding: 0; }
 .notes-sidebar li button { width: 100%; text-align: left; overflow-wrap: anywhere; }
