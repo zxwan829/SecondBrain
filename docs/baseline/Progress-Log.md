@@ -1,5 +1,12 @@
 # Progress Log
 
+## 2026-10-24 — V1 第一阶段 NAS 部署与健康验收
+
+- 将 GitHub main `ce247d0c2f014c67f407c7b8721022da6afe2753` 对应 App/Core 与固定 Hermes v0.22.2/D078/Weixin 镜像部署到 DS920+。Actions #40075395885 artifact 的 ZIP、镜像包、内部 `SHA256SUMS`、Docker Image IDs、App revision label、Hermes upstream/overlay labels 全部匹配。
+- App 与 Hermes 分服务重建；Compose 仅更改两项镜像引用。App healthy；`/health`、首页、Notes、登录页 200，未认证 Notes API 401。Hermes API 200、Dashboard 302；活动 D078 user plugin enabled，Weixin plugin 文件存在但未启用。D078 合成非法 terminal 输入被阻断且未执行。
+- App UID/GID、Hermes root、网络/端口/挂载保持原值，Private 未挂载；Weixin、Promote、API Terminal 关闭。其他 NAS 容器未重启。未执行真实登录业务、真实微信扫码/消息、个人数据操作或用户体验验收。
+- 回滚目录与资产摘要、旧镜像 ID、回滚步骤及详细验收见 [Environment-Baseline.md](Environment-Baseline.md)。无回滚触发。
+
 ## 2026-10-24 — P4-1/P4-3 合成收口与 Journal 队列审计
 
 - **main：** 当前 `4d4577eb43a9e66e607e416bed75600e814cfd0a`，正常合入 #210、#230、#231。无生产部署、真实个人文件、真实 Vault/NAS、模型费用或 Writer/Promote 操作。
