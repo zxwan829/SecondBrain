@@ -52,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           cp web-app/Dockerfile.app source-tree/web-app/Dockerfile.app
-          docker build --platform linux/amd64 \
+          docker build --file source-tree/web-app/Dockerfile.app --platform linux/amd64 \
             --build-arg VITE_ENABLE_NOTES=true \
             --build-arg "SB_SOURCE_REVISION=$SOURCE_SHA" \
             --tag "secondbrain-app:candidate-${SOURCE_SHA}" \
