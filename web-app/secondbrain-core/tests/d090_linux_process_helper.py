@@ -134,7 +134,12 @@ def probe(args):
         conn.connect(args.socket_path)
         conn.sendall(b"{\"synthetic_probe\":true}\n")
         conn.settimeout(3)
-        if conn.recv(1):
+        try:
+            response = conn.recv(1)
+        except ConnectionResetError:
+            # Linux may reset a stream when the peer closes with our unread probe body queued.
+            response = b""
+        if response:
             raise AssertionError("Writer responded to a rejected peer")
     finally:
         conn.close()
