@@ -4,6 +4,7 @@ import os
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -13,11 +14,13 @@ from secondbrain_core.modules.daily_brief_import import DailyBriefAuditStore
 from secondbrain_core.modules.journal import JournalStore
 from secondbrain_core.modules.personal_memory import PersonalMemoryStore
 from secondbrain_core.modules.projects_activity_read import create_projects_activity_router
+from secondbrain_core.modules.review_promote.activity_read import ReviewActivityReadStore
 from secondbrain_core.modules.projects_source_read import ProjectsSourceReadStore
 from secondbrain_core.modules.tasks import TaskStore
 
 
-def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_audit=None, memory=None, capture=None):
+def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_audit=None, memory=None, capture=None,
+                review=None):
     password_file = tmp_path / "app-password"
     password_file.write_bytes(b"synthetic-password-value\n")
     os.chmod(password_file, 0o600)
@@ -33,6 +36,7 @@ def make_client(tmp_path, journal=None, tasks=None, projects=None, daily_brief_a
         daily_brief_audit_store=daily_brief_audit,
         memory_store=memory,
         capture_service=capture,
+        review_store=review,
     ))
     client = TestClient(app, base_url="https://app.test")
     client.cookies.set(auth.COOKIE_NAME, token)
@@ -68,6 +72,13 @@ def make_capture(tmp_path):
         root.mkdir(mode=0o700)
         os.chmod(root, 0o700)
     return CaptureService(raw, review, state, processors=object())
+
+
+def make_review(tmp_path):
+    root = tmp_path / "review"
+    root.mkdir(mode=0o700)
+    os.chmod(root, 0o700)
+    return ReviewActivityReadStore(str(root)), root
 
 
 def capture_state(capture_id, *, status="partial_success", captured_at=None, padding=""):
@@ -525,6 +536,81 @@ def test_activity_projects_denied_before_project_index_io(tmp_path, monkeypatch)
     assert response.json()["status"] == "partial"
     assert response.json()["source"] == []
     assert reads == []
+
+
+def test_activity_projects_review_status_only_with_review_permission(tmp_path):
+    review, root = make_review(tmp_path)
+    private_marker = "PRIVATE_REVIEW_BODY_MARKER"
+    (root / "synthetic-review.md").write_text(
+        "---\ntype: review\ncaptured_at: 2026-10-24T08:15:00Z\nreview_status: pending\n---\n"
+        f"# Synthetic\n\n{private_marker}\n", encoding="utf-8")
+    os.chmod(root / "synthetic-review.md", 0o600)
+
+    response = make_client(tmp_path, review=review).get(
+        "/api/activity?from=2026-10-24&to=2026-10-24&timezone=UTC")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "partial"  # Other configured activity sources are absent.
+    assert body["source"] == ["review"]
+    assert len(body["items"]) == 1
+    assert set(body["items"][0]) == {"activity_id", "kind", "status", "occurred_at"}
+    assert body["items"][0]["kind"] == "review"
+    assert body["items"][0]["status"] == "pending"
+    assert private_marker not in response.text
+    assert str(root) not in response.text
+
+
+def test_activity_review_permission_is_preflighted_before_filesystem_reads(tmp_path, monkeypatch):
+    review, _root = make_review(tmp_path)
+    reads = []
+    monkeypatch.setattr(review, "read", lambda *_args: reads.append(True) or ([], True))
+    client = make_client(tmp_path, review=review)
+    auth = client.app.state.test_auth
+    original_require_action = auth.require_action
+
+    def deny_review_before_io(request, action):
+        if action == "review.read":
+            raise __import__("fastapi").HTTPException(status_code=403, detail="denied")
+        return original_require_action(request, action)
+
+    monkeypatch.setattr(auth, "require_action", deny_review_before_io)
+    day = date.today().isoformat()
+    response = client.get(f"/api/activity?from={day}&to={day}&timezone=UTC")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "partial"
+    assert response.json()["source"] == []
+    assert reads == []
+
+
+def test_review_activity_skips_symlink_and_reports_partial_without_reading_target(tmp_path):
+    review, root = make_review(tmp_path)
+    outside = tmp_path / "outside.md"
+    outside.write_text(
+        "---\ncaptured_at: 2026-10-24T08:15:00Z\nreview_status: pending\n---\nPRIVATE\n",
+        encoding="utf-8")
+    os.chmod(outside, 0o600)
+    (root / "linked.md").symlink_to(outside)
+
+    rows, complete = review.read(date(2026, 10, 24), date(2026, 10, 24), ZoneInfo("UTC"))
+
+    assert rows == []
+    assert complete is False
+
+
+def test_review_activity_malformed_frontmatter_is_partial(tmp_path):
+    review, root = make_review(tmp_path)
+    malformed = root / "truncated.md"
+    malformed.write_text(
+        "---\ncaptured_at: 2026-10-24T08:15:00Z\nreview_status: pending\n",
+        encoding="utf-8")
+    os.chmod(malformed, 0o600)
+
+    rows, complete = review.read(date(2026, 10, 24), date(2026, 10, 24), ZoneInfo("UTC"))
+
+    assert rows == []
+    assert complete is False
 
 
 def test_activity_reads_only_minimal_successful_daily_brief_audit_events(tmp_path):

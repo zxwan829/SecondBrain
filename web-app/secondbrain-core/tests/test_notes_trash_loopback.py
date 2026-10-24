@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 import uvicorn
+from fastapi import HTTPException
 
 from secondbrain_core.app import create_app
 import secondbrain_core.modules.notes_trash as notes_trash_module
@@ -117,6 +118,25 @@ def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exp
             assert login.status_code == 200
             assert client.get("/api/notes/trash", headers={"Origin": origin}).json()["status"] == "empty"
 
+            auth = app.state.app_auth
+            require_action = auth.require_action
+
+            def deny_notes_delete(request, action):
+                if action == "notes.delete":
+                    raise HTTPException(status_code=403, detail="Action is not enabled")
+                return require_action(request, action)
+
+            monkeypatch.setattr(auth, "require_action", deny_notes_delete)
+            authenticated_but_unauthorized = client.delete(
+                "/api/notes/trash/projects/synthetic-note.md", headers={
+                    "Origin": origin, "If-Match": f'"{sha}"',
+                    "Idempotency-Key": "synthetic-trash-no-delete-grant",
+                })
+            assert authenticated_but_unauthorized.status_code == 403
+            assert note.read_bytes() == original
+            assert not (vault / ".trash" / "secondbrain").exists()
+            monkeypatch.setattr(auth, "require_action", require_action)
+
             stale = client.delete("/api/notes/trash/projects/synthetic-note.md",
                                   headers={"Origin": origin, "If-Match": '"' + "0" * 64 + '"',
                                            "Idempotency-Key": "synthetic-trash-stale"})
@@ -152,6 +172,19 @@ def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exp
             trash_item = vault / ".trash" / "secondbrain" / entry["trash_id"]
             assert (trash_item / "note.md").read_bytes() == original
             assert attachment.read_bytes() == b"synthetic-shared-attachment"
+
+            def deny_notes_restore(request, action):
+                if action == "notes.restore":
+                    raise HTTPException(status_code=403, detail="Action is not enabled")
+                return require_action(request, action)
+
+            monkeypatch.setattr(auth, "require_action", deny_notes_restore)
+            unauthorized_restore = client.post(f"/api/notes/trash/{entry['trash_id']}/restore",
+                                               headers={"Origin": origin})
+            assert unauthorized_restore.status_code == 403
+            assert not note.exists()
+            assert (trash_item / "note.md").read_bytes() == original
+            monkeypatch.setattr(auth, "require_action", require_action)
 
             replay = client.delete("/api/notes/trash/projects/synthetic-note.md", headers={
                 "Origin": origin, "If-Match": f'"{sha}"', "Idempotency-Key": "synthetic-trash-1",

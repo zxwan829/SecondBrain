@@ -8,7 +8,7 @@ import json
 import os
 import re
 import stat
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .worker import _open_dir_chain, _REQUEST_ID, _SAFE_NAME, _SHA256
 
@@ -20,6 +20,11 @@ _FIELDS = frozenset({
     "event", "request_id", "approver_subject", "approved_at", "recorded_at",
     "review_path", "review_sha256", "target_filename", "output_sha256",
 })
+_REVIEW_ACTIVITY_STATUSES = frozenset({"pending", "deferred", "approved", "promoting", "promoted", "failed"})
+_REVIEW_ACTIVITY_MAX_FILES = 2000
+_REVIEW_ACTIVITY_MAX_BYTES = 2 * 1024 * 1024
+_REVIEW_ACTIVITY_MAX_FILE_BYTES = 64 * 1024
+_REVIEW_ACTIVITY_MAX_DEPTH = 16
 
 
 def _unique_object(pairs):
@@ -204,3 +209,177 @@ class PromoteAuditActivityReadStore:
                 os.close(fd)
             if directory_fd is not None:
                 os.close(directory_fd)
+
+
+class ReviewActivityReadStore:
+    """Bounded metadata-only projection of Core-owned Review Markdown files."""
+
+    def __init__(self, review_root):
+        self.review_root = os.path.abspath(review_root) if review_root else None
+
+    @staticmethod
+    def _metadata(payload):
+        try:
+            lines = payload.decode("utf-8").splitlines()
+        except UnicodeDecodeError:
+            return None
+        if not lines or lines[0].strip() != "---":
+            return None
+        status = None
+        captured_at = None
+        closed = False
+        for line in lines[1:256]:
+            if line.strip() == "---":
+                closed = True
+                break
+            match = re.match(r"^(review_status|status):\s*['\"]?([^'\"]+)['\"]?\s*$", line)
+            if match:
+                status = match.group(2).strip()
+            match = re.match(r"^captured_at:\s*(.*?)\s*$", line)
+            if match:
+                captured_at = match.group(1).strip()
+                if captured_at.startswith('"'):
+                    try:
+                        captured_at = json.loads(captured_at)
+                    except (ValueError, TypeError):
+                        return None
+        if (not closed or status not in _REVIEW_ACTIVITY_STATUSES
+                or not isinstance(captured_at, str)):
+            return None
+        return status, captured_at
+
+    def read(self, start, end, zone):
+        """Return minimal rows and completeness; never expose paths or content."""
+        if not self.review_root:
+            return [], False
+        root_fd = None
+        rows = []
+        complete = True
+        files_read = 0
+        bytes_read = 0
+
+        def visit(directory_fd, relative_parts, depth):
+            nonlocal complete, files_read, bytes_read
+            if depth > _REVIEW_ACTIVITY_MAX_DEPTH:
+                complete = False
+                return
+            try:
+                names = sorted(os.listdir(directory_fd))
+            except OSError:
+                complete = False
+                return
+            for name in names:
+                try:
+                    entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                except OSError:
+                    complete = False
+                    continue
+                if stat.S_ISLNK(entry.st_mode):
+                    complete = False
+                    continue
+                if stat.S_ISDIR(entry.st_mode):
+                    if name.startswith("."):
+                        complete = False
+                        continue
+                    try:
+                        child_fd = os.open(name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                                           getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                    except OSError:
+                        complete = False
+                        continue
+                    try:
+                        child = os.fstat(child_fd)
+                        if child.st_uid != os.geteuid() or child.st_mode & 0o077:
+                            complete = False
+                            continue
+                        visit(child_fd, (*relative_parts, name), depth + 1)
+                    finally:
+                        os.close(child_fd)
+                    continue
+                if not name.lower().endswith(".md"):
+                    continue
+                files_read += 1
+                if files_read > _REVIEW_ACTIVITY_MAX_FILES:
+                    complete = False
+                    return
+                if (not stat.S_ISREG(entry.st_mode) or entry.st_uid != os.geteuid()
+                        or entry.st_mode & 0o077 or entry.st_nlink != 1
+                        or entry.st_size > _REVIEW_ACTIVITY_MAX_FILE_BYTES
+                        or bytes_read + entry.st_size > _REVIEW_ACTIVITY_MAX_BYTES):
+                    complete = False
+                    continue
+                try:
+                    fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                                 getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
+                    try:
+                        before = os.fstat(fd)
+                        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                                or before.st_mode & 0o077 or before.st_nlink != 1
+                                or before.st_size > _REVIEW_ACTIVITY_MAX_FILE_BYTES):
+                            raise OSError("Review entry changed to an unsafe file")
+                        payload = bytearray()
+                        while len(payload) <= _REVIEW_ACTIVITY_MAX_FILE_BYTES:
+                            chunk = os.read(fd, min(8192, _REVIEW_ACTIVITY_MAX_FILE_BYTES + 1 - len(payload)))
+                            if not chunk:
+                                break
+                            payload.extend(chunk)
+                        after = os.fstat(fd)
+                    finally:
+                        os.close(fd)
+                except OSError:
+                    complete = False
+                    continue
+                try:
+                    current_entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                except OSError:
+                    complete = False
+                    continue
+                if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) !=
+                        (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+                        or (before.st_dev, before.st_ino) !=
+                        (current_entry.st_dev, current_entry.st_ino)
+                        or not stat.S_ISREG(current_entry.st_mode)
+                        or stat.S_ISLNK(current_entry.st_mode)
+                        or len(payload) != before.st_size or len(payload) > _REVIEW_ACTIVITY_MAX_FILE_BYTES):
+                    complete = False
+                    continue
+                bytes_read += len(payload)
+                metadata = self._metadata(bytes(payload))
+                if metadata is None:
+                    complete = False
+                    continue
+                status, captured_at = metadata
+                try:
+                    stamp = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    complete = False
+                    continue
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=zone)
+                stamp = stamp.astimezone(timezone.utc)
+                if not (start <= stamp.astimezone(zone).date() <= end):
+                    continue
+                relative = "/".join((*relative_parts, name))
+                digest = hashlib.sha256(payload).hexdigest()
+                activity_id = hashlib.sha256(
+                    f"secondbrain-activity-v1\0review\0{relative}\0{digest}".encode("utf-8")
+                ).hexdigest()[:32]
+                rows.append({
+                    "activity_id": activity_id,
+                    "kind": "review",
+                    "status": status,
+                    "occurred_at": stamp.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                })
+
+        try:
+            root_fd = _open_dir_chain(self.review_root)
+            root_info = os.fstat(root_fd)
+            if root_info.st_uid != os.geteuid() or root_info.st_mode & 0o077:
+                return [], False
+            visit(root_fd, (), 0)
+        except (OSError, ValueError, TypeError):
+            return [], False
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
+        return rows, complete
