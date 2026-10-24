@@ -186,3 +186,26 @@ unchanged.
 Build the single-service candidate image from `web-app/` using `Dockerfile.app`.
 Image building is not deployment. Do not change the production port, Compose,
 containers, mounts, or Promote setting without separate authorization.
+
+# Trusted channel adapter status
+
+`create_trusted_channel_router()` remains opt-in. The Hermes v0.22.2 Weixin
+plugin uses `post_gateway_admission` only for admitted, non-internal messages
+that reach the idle-session lane; running-session fast-paths and slash commands
+do not invoke it. The hook is fail-open, so it is not an authorization gate.
+Ordinary chat passes to Hermes. Only an explicit `收录：...` DM is submitted to
+Core; Core verifies exact-body HMAC, a Core-owned Weixin sender-to-subject
+allowlist, `capture.write`, and the native event ID before the idempotent Inbox
+write, then signs the receipt so a non-Core HTTP 202 cannot be reported as a
+successful save. The route is disabled unless `SB_WEIXIN_INBOX_ENABLED=true`; enabling it
+requires `SB_WEIXIN_INBOX_HMAC_KEY` (at least 32 UTF-8 bytes) and
+`SB_WEIXIN_ALLOWED_SENDERS_JSON` (a JSON object mapping platform sender IDs to
+stable Core subjects). The Hermes plugin separately requires
+`SB_WEIXIN_CORE_INBOX_URL` and the same HMAC key in its own environment. No
+production values are supplied here; production enablement and real Weixin
+validation remain separately authorized. Keep D078 unchanged.
+
+The adapter MVP supports explicit plain-text Inbox capture only. Journal/Task
+intent, approved suggestions, and external attachment references remain
+unsupported and fail closed. Inbox replay is idempotent. The existing Web
+`/api/inbox/entries` request and response contract is unchanged.

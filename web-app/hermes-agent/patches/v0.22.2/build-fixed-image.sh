@@ -8,6 +8,7 @@ script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 patch_file="$script_dir/pre-tool-hook-fail-closed.patch"
 media_patch_file="$script_dir/weixin-media-download-budget.patch"
 dockerfile="$script_dir/Dockerfile"
+weixin_plugin_dir="$script_dir/../../weixin-inbox"
 
 actual_commit=$(git -C "$source_checkout" rev-parse HEAD)
 if [[ "$actual_commit" != "$expected_commit" ]]; then
@@ -19,19 +20,21 @@ if [[ -n "$(git -C "$source_checkout" status --porcelain)" ]]; then
     exit 2
 fi
 
-patch_sha=$(python3 -c 'import hashlib,pathlib,sys; h=hashlib.sha256(); [h.update(part) for path in sys.argv[1:] for part in (pathlib.Path(path).name.encode(), b"\0", pathlib.Path(path).read_bytes(), b"\0")]; print(h.hexdigest())' "$patch_file" "$media_patch_file")
+patch_sha=$(python3 -c 'import hashlib,pathlib,sys; h=hashlib.sha256(); [h.update(part) for path in sys.argv[1:] for part in (pathlib.Path(path).name.encode(), b"\0", pathlib.Path(path).read_bytes(), b"\0")]; print(h.hexdigest())' "$patch_file" "$media_patch_file" "$weixin_plugin_dir/__init__.py" "$weixin_plugin_dir/plugin.yaml")
 build_root=$(mktemp -d "${TMPDIR:-/tmp}/secondbrain-hermes-v0222-build.XXXXXX")
 cleanup() {
     rm -rf "$build_root"
 }
 trap cleanup EXIT
 
-mkdir -p "$build_root/source" "$build_root/context/agent" "$build_root/context/gateway/platforms"
+mkdir -p "$build_root/source" "$build_root/context/agent" "$build_root/context/gateway/platforms" "$build_root/context/weixin-inbox"
 git -C "$source_checkout" archive "$expected_commit" | tar -x -C "$build_root/source"
 git -C "$build_root/source" apply --unidiff-zero "$patch_file"
 git -C "$build_root/source" apply --unidiff-zero "$media_patch_file"
 cp "$build_root/source/agent/tool_executor.py" "$build_root/context/agent/tool_executor.py"
 cp "$build_root/source/gateway/platforms/weixin.py" "$build_root/context/gateway/platforms/weixin.py"
+cp "$weixin_plugin_dir/__init__.py" "$build_root/context/weixin-inbox/__init__.py"
+cp "$weixin_plugin_dir/plugin.yaml" "$build_root/context/weixin-inbox/plugin.yaml"
 cp "$dockerfile" "$build_root/context/Dockerfile"
 
 docker build \

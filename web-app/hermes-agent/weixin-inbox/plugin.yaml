@@ -1,0 +1,5 @@
+name: secondbrain-weixin-inbox
+version: 0.1.0
+description: Save explicit Weixin DM capture commands to SecondBrain Core Inbox.
+provides_hooks:
+  - post_gateway_admission
