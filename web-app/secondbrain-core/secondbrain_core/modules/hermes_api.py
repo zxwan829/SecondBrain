@@ -10,6 +10,8 @@ from fastapi import HTTPException
 
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,256}$")
+MAX_AUDIO_TRANSCRIPTION_RESPONSE_BYTES = 1_048_576
+MAX_AUDIO_TRANSCRIPT_CHARS = 200_000
 
 
 class HermesAPI:
@@ -158,21 +160,47 @@ class HermesAPI:
                    "data_url": f"data:{mime_type};base64,{base64.b64encode(data).decode('ascii')}"}
         try:
             with httpx.Client(base_url=self.base_url,
-                              headers={"Authorization": f"Bearer {self.api_key}"},
+                              headers={"Authorization": f"Bearer {self.api_key}",
+                                       "Accept-Encoding": "identity"},
                               timeout=timeout, follow_redirects=False,
                               transport=self.transport) as client:
-                response = client.post("/api/audio/transcribe", json=payload)
+                with client.stream("POST", "/api/audio/transcribe", json=payload) as response:
+                    if response.status_code >= 400:
+                        raise HTTPException(status_code=502,
+                                            detail=f"Hermes transcription returned HTTP {response.status_code}")
+                    if response.headers.get("content-encoding", "identity").lower() not in {"", "identity"}:
+                        raise HTTPException(status_code=502,
+                                            detail="Hermes transcription returned an unsupported encoding")
+                    declared_length = response.headers.get("content-length")
+                    if declared_length is not None:
+                        try:
+                            if (not declared_length.isascii() or not declared_length.isdecimal()
+                                    or len(declared_length) > 20):
+                                raise ValueError("invalid content length")
+                            if int(declared_length) > MAX_AUDIO_TRANSCRIPTION_RESPONSE_BYTES:
+                                raise HTTPException(status_code=502,
+                                                    detail="Hermes transcription response exceeded the size limit")
+                        except ValueError as exc:
+                            raise HTTPException(status_code=502,
+                                                detail="Hermes transcription returned invalid response metadata") from exc
+                    chunks, total = [], 0
+                    for chunk in response.iter_raw(chunk_size=65_536):
+                        total += len(chunk)
+                        if total > MAX_AUDIO_TRANSCRIPTION_RESPONSE_BYTES:
+                            raise HTTPException(status_code=502,
+                                                detail="Hermes transcription response exceeded the size limit")
+                        chunks.append(chunk)
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail="Hermes transcription unavailable") from exc
-        if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"Hermes transcription returned HTTP {response.status_code}")
         try:
-            result = response.json()
-        except (ValueError, json.JSONDecodeError) as exc:
+            result = json.loads(b"".join(chunks).decode("utf-8"))
+        except (ValueError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
             raise HTTPException(status_code=502, detail="Hermes transcription returned invalid data") from exc
         transcript = result.get("transcript") if isinstance(result, dict) else None
         if not isinstance(result, dict) or result.get("ok") is not True or not isinstance(transcript, str) or not transcript.strip():
             raise HTTPException(status_code=502, detail="Hermes returned no transcription")
+        if len(transcript.strip()) > MAX_AUDIO_TRANSCRIPT_CHARS:
+            raise HTTPException(status_code=502, detail="Hermes transcription exceeded the text limit")
         return {"transcript": transcript.strip(), "provider": str(result.get("provider") or "Hermes STT")[:80]}
 
     async def start_run(self, body, idempotency_key):

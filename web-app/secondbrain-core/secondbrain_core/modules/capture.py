@@ -12,6 +12,8 @@ import os
 import re
 import socket
 import stat
+import subprocess
+import sys
 import threading
 import unicodedata
 import uuid
@@ -21,7 +23,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, UploadFile
-from pypdf import PdfReader
+from .pdf_text_extraction import extract_pdf_text_bounded as _extract_pdf_text_bounded
 from .channel_identity import authenticated_web_identity
 
 
@@ -32,6 +34,13 @@ MAX_ACTIVITY_CAPTURE_STATE_FILES = 500
 MAX_ACTIVITY_CAPTURE_BYTES = 2 * 1024 * 1024
 MAX_DISPLAY_FILENAME_CHARS = 255
 MAX_WEB_BYTES = 5 * 1024 * 1024
+MAX_WEB_EXTRACT_CHARS = 500_000
+MAX_WEB_EXTRACT_PARTS = 20_000
+MAX_PDF_EXTRACTED_TEXT_CHARS = 1_000_000
+PDF_TEXT_WORKER_TIMEOUT_SECONDS = 15
+PDF_TEXT_WORKER_OUTPUT_BYTES = 8 * 1024 * 1024
+PDF_TEXT_WORKER_WAIT_SECONDS = 2
+_PDF_TEXT_WORKER_SLOT = threading.BoundedSemaphore(1)
 MAX_REDIRECTS = 4
 ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg",
                     ".webp", ".gif", ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
@@ -56,6 +65,54 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _extract_pdf_text_in_limited_worker(raw):
+    worker = Path(__file__).with_name("pdf_text_worker.py")
+    core_root = Path(__file__).resolve().parents[2]
+    if not _PDF_TEXT_WORKER_SLOT.acquire(timeout=PDF_TEXT_WORKER_WAIT_SECONDS):
+        raise ValueError("PDF processing capacity is busy; the original upload was retained")
+    try:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(worker)], input=raw, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                timeout=PDF_TEXT_WORKER_TIMEOUT_SECONDS, check=False, close_fds=True,
+                start_new_session=True,
+                cwd=core_root,
+                env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"},
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("PDF parsing exceeded its safe processing time limit") from exc
+    finally:
+        _PDF_TEXT_WORKER_SLOT.release()
+    if result.returncode != 0 or len(result.stdout) > PDF_TEXT_WORKER_OUTPUT_BYTES:
+        raise ValueError("PDF parsing exceeded its safe resource limits")
+    try:
+        value = json.loads(result.stdout.decode("utf-8"))
+    except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("PDF parsing returned an invalid bounded result") from exc
+    if not isinstance(value, dict) or not isinstance(value.get("status"), str):
+        raise ValueError("PDF parsing returned an invalid bounded result")
+    status = value["status"]
+    if status == "encrypted":
+        raise ValueError("Encrypted PDFs are not supported")
+    if status == "page_limit":
+        raise ValueError("PDF exceeds the 500 page limit")
+    if status != "ok":
+        raise ValueError("PDF parsing exceeded its safe resource limits")
+    if (set(value) != {"status", "page_count", "text", "truncated", "page_sizes", "metadata_title"}
+            or type(value.get("page_count")) is not int or not 0 <= value["page_count"] <= 500
+            or not isinstance(value.get("text"), str) or len(value["text"]) > MAX_PDF_EXTRACTED_TEXT_CHARS
+            or type(value.get("truncated")) is not bool or not isinstance(value.get("page_sizes"), list)
+            or len(value["page_sizes"]) not in {0, value["page_count"]}
+            or (value.get("metadata_title") is not None and not isinstance(value["metadata_title"], str))):
+        raise ValueError("PDF parsing returned an invalid bounded result")
+    for size in value["page_sizes"]:
+        if (not isinstance(size, list) or len(size) != 2
+                or any(type(dimension) not in {float, int} or not 0 < dimension < 1_000_000
+                       for dimension in size)):
+            raise ValueError("PDF page dimensions could not be verified")
+    return value
 
 
 def _safe_name(name, suffix):
@@ -125,9 +182,31 @@ class _TextExtractor(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts = []
+        self.part_chars = 0
+        self.truncated = False
         self.skip = 0
         self.title = []
+        self.title_chars = 0
         self.in_title = False
+
+    def _append(self, text):
+        if not text or self.truncated:
+            return
+        if len(self.parts) >= MAX_WEB_EXTRACT_PARTS:
+            self.truncated = True
+            return
+        remaining = MAX_WEB_EXTRACT_CHARS - self.part_chars
+        if remaining <= 0:
+            self.truncated = True
+            return
+        if len(text) > remaining:
+            text = text[:remaining]
+            self.truncated = True
+        self.parts.append(text)
+        self.part_chars += len(text)
+
+    def extracted_text(self):
+        return "\n".join(line.strip() for line in "".join(self.parts).splitlines() if line.strip())
 
     def handle_starttag(self, tag, attrs):
         if tag in self.BLOCKED:
@@ -135,7 +214,7 @@ class _TextExtractor(HTMLParser):
         if tag == "title":
             self.in_title = True
         if tag in {"p", "div", "br", "li", "h1", "h2", "h3", "article", "section"}:
-            self.parts.append("\n")
+            self._append("\n")
 
     def handle_endtag(self, tag):
         if tag in self.BLOCKED and self.skip:
@@ -144,10 +223,13 @@ class _TextExtractor(HTMLParser):
             self.in_title = False
 
     def handle_data(self, data):
-        if self.in_title:
-            self.title.append(data.strip())
+        if self.in_title and self.title_chars < 300:
+            part = data.strip()[:300 - self.title_chars]
+            if part:
+                self.title.append(part)
+                self.title_chars += len(part)
         if not self.skip and data.strip():
-            self.parts.append(data.strip())
+            self._append(data.strip())
 
 
 def _resolve_public_url(url):
@@ -906,32 +988,49 @@ class CaptureService:
                     parser = _TextExtractor()
                     parser.feed(body)
                     title = " ".join(" ".join(parser.title).split()) or final_url
-                    extracted = "\n".join(line.strip() for line in "".join(parser.parts).splitlines() if line.strip())
+                    extracted = parser.extracted_text()
+                    truncated = parser.truncated
                 else:
                     title, extracted = final_url, body
+                    truncated = len(extracted) > MAX_WEB_EXTRACT_CHARS
                 if not extracted.strip():
                     raise ValueError("No readable page text was extracted")
                 state["title"] = title[:300]
-                content = extracted[:500_000]
+                content = extracted[:MAX_WEB_EXTRACT_CHARS]
+                if truncated or len(extracted) > MAX_WEB_EXTRACT_CHARS:
+                    content += "\n\n[Content truncated at the safe extraction limit.]"
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "Web content exceeded the safe extraction limit; the original URL was retained.",
+                    }
                 state["derived_source_url"] = final_url
             elif input_type == "pdf":
-                reader = PdfReader(__import__("io").BytesIO(raw), strict=True)
-                if reader.is_encrypted:
-                    raise ValueError("Encrypted PDFs are not supported")
-                if len(reader.pages) > 500:
-                    raise ValueError("PDF exceeds the 500 page limit")
-                content = "\n\n".join((page.extract_text() or "") for page in reader.pages).strip()
+                parsed = _extract_pdf_text_in_limited_worker(raw)
+                content, truncated = parsed["text"], parsed["truncated"]
                 if not content:
-                    page_sizes = [(page.mediabox.width, page.mediabox.height) for page in reader.pages]
-                    content = self.processors.ocr_pdf(raw, len(reader.pages), page_sizes)
+                    content = self.processors.ocr_pdf(raw, parsed["page_count"], parsed["page_sizes"])
                     state["processor"] = {"name": "tesseract", "kind": "pdf_ocr",
-                                          "pages": len(reader.pages), "languages": "chi_sim+eng"}
-                if reader.metadata and reader.metadata.title:
-                    document_title = str(reader.metadata.title).strip()
+                                          "pages": parsed["page_count"], "languages": "chi_sim+eng"}
+                if parsed["metadata_title"]:
+                    document_title = parsed["metadata_title"]
                     if document_title:
                         state["document_title"] = document_title[:300]
-                if len(content) > 1_000_000:
-                    content = content[:1_000_000]
+                if truncated:
+                    content = content[:MAX_PDF_EXTRACTED_TEXT_CHARS] + (
+                        "\n\n[PDF text extraction stopped at the 1,000,000-character "
+                        "safety limit. The original PDF is retained; extracted text is incomplete.]\n")
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "PDF text extraction reached the 1,000,000-character limit; extracted text is incomplete.",
+                    }
+                elif len(content) > MAX_PDF_EXTRACTED_TEXT_CHARS:
+                    content = content[:MAX_PDF_EXTRACTED_TEXT_CHARS] + (
+                        "\n\n[PDF OCR text was truncated at the 1,000,000-character "
+                        "safety limit. The original PDF is retained; extracted text is incomplete.]\n")
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "PDF OCR reached the 1,000,000-character limit; extracted text is incomplete.",
+                    }
             elif input_type in {"png", "jpg", "jpeg", "webp", "gif"}:
                 recognized = self.processors.ocr_image(raw)
                 state["processor"] = {"name": "tesseract", "kind": "image_ocr",
@@ -955,6 +1054,14 @@ class CaptureService:
                     content = decoded
                 else:
                     content = decoded.strip()
+                    if input_type in {"txt", "text", "md", "markdown"} and len(content) > MAX_TEXT_CHARS:
+                        content = (content[:MAX_TEXT_CHARS]
+                                   + "\n\n[Content truncated at the 200,000-character safety limit. "
+                                     "The original file is retained.]\n")
+                        state["partial_error"] = {
+                            "code": "processing_failed",
+                            "message": "Text extraction reached the 200,000-character limit; the original file was retained.",
+                        }
                 if source_type != "inbox_proposal_review" and input_type in {"txt", "text"}:
                     first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
                     if first_line:
@@ -970,7 +1077,8 @@ class CaptureService:
             state.update(status="partial_success", error={"code": "processor_unavailable", "message": str(exc)}, updated_at=_now())
         except Exception as exc:
             state.pop("partial_error", None)
-            state.update(status="partial_success", error={"code": "processing_failed", "message": str(exc)[:500]}, updated_at=_now())
+            message = exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, str) else str(exc)
+            state.update(status="partial_success", error={"code": "processing_failed", "message": message[:500]}, updated_at=_now())
         self._write_state(state)
 
     def _verify_artifacts(self, state):
