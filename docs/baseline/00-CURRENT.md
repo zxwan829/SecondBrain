@@ -16,7 +16,7 @@ source: GitHub SecondBrain Monorepo
 
 | 当前对象 | 核验结果 | 下一步 |
 |---|---|---|
-| main / 生产部署 | 当前 main `ce247d0c2f014c67f407c7b8721022da6afe2753` 已部署到 DS920+：App `sha256:e201c93c…` healthy；Hermes v0.22.2 `sha256:73f4f332…` running。镜像、构建源 SHA、Hermes overlay 与运行摘要见 [Environment-Baseline.md](Environment-Baseline.md)。 | 用户登录与实际业务体验仍待验收；微信保持关闭，Writer/Promote 与 API Terminal 保持关闭 |
+| main / 生产部署 | 当前 main `78d138cea2f54ebfa5f8b96ccf56f2382f2e50e1`（PR #251 仅更新部署文档）；DS920+ 运行镜像的应用源码 revision 为 `ce247d0c2f014c67f407c7b8721022da6afe2753`。App `sha256:e201c93c…` healthy；Hermes v0.22.2 `sha256:73f4f332…` running。镜像、构建源 SHA、Hermes overlay 与运行摘要见 [Environment-Baseline.md](Environment-Baseline.md)。 | 用户登录与实际业务体验仍待验收；微信保持关闭，Writer/Promote 与 API Terminal 保持关闭 |
 | A 普通 Web 批次 | #198 `b9bb97da`→`5fff974b`；#212 `3cf044cf`→`f58ecfd2`；#214 `36c67fd1`→`db810654`；#215 `9d35dc70`→`e33b836c`。各项 post-merge 定向回归分别 48、5、1、2 项通过；#214/#215 相邻 Inbox 修改的组合回归通过 | 保留 PR 各自已有 typecheck/build/diff-check 证据；本批未运行 Actions。细节见 Progress-Log 2026-10-23 集成收口记录 |
 | #201 Core 撤权 | 固定 PR HEAD `ea70fca9dde78793b05d5aaed7523f26bf432a72` 已获本次单独安全敏感合并授权并合入 main `e611ecc4`。fail-closed 修复 `ac1c171d` 与后续 fixture-only 增量独立复审为 `PASS_WITH_LIMITS`；相关 Core 组合回归 158 passed。 | 只关闭已识别的进程内 missing-grant fail-open；跨进程持久撤权、OS 隔离、生产安全仍未验收 |
 | #207/#202 集成 | #207 固定 HEAD `aff4171f86b00bb8420e0cfe2af8a0978fdb2f37` 同步 main 时无 Core 文件变化，已合入 `6c372ff6`。#202 固定 HEAD `69f39cccfbae56c66a4db6f483e8dc75aee0cf7b` 已合入 `5fd9df3c`。新 main tree 与先前 82 Web / 158 Core / Vite→Uvicorn `PASS_WITH_LIMITS` 的固定组合 tree 相同，三次合并后 diff-check 通过。 | Linux Chromium Run #39984102838 在 #202 精确 HEAD 上三视口 PASS，合成 Web `A_NEXT_READY=READY_WITH_LIMITS`；它不证明真实 Core 跨进程撤权、生产部署或完整 V1 验收 |
