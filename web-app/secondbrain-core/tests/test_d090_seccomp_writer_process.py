@@ -22,6 +22,8 @@ ALLOW_NAMES = {"read", "write", "close", "fstat", "munmap", "rt_sigaction", "fsy
                "newfstatat", "linkat"}
 DENIED_PROBE_SYSCALLS = {"chmod", "fchmodat", "fchmodat2", "socket", "fork", "clone", "clone3",
                          "prctl", "truncate", "unlink", "rename"}
+DENIED_SYSCALL_NAMES = {"chmod", "fchmodat", "fchmodat2", "socket", "fork", "clone", "clone3",
+                        "prctl", "truncate", "unlink", "unlinkat", "rename", "renameat", "renameat2"}
 
 
 @pytest.mark.skipif(
@@ -51,7 +53,7 @@ def test_seccomp_allowlist_covers_exact_writer_publish_runtime():
             "SB_D090_SECCOMP_WRITER": "synthetic-only",
         }
         process = subprocess.run(
-            [strace, "-ff", "-qq", "-o", str(trace_prefix), sys.executable,
+            [strace, "-ff", "-qq", "-s", "8192", "-e", "trace=all", "-o", str(trace_prefix), sys.executable,
              str(HELPER), str(root)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -63,10 +65,20 @@ def test_seccomp_allowlist_covers_exact_writer_publish_runtime():
             check=False,
         )
         trace_files = list(root.glob("syscalls.trace.*"))
-        child_trace = next((path for path in trace_files if "SECCOMP_READY" in path.read_text(encoding="utf-8", errors="replace")), None)
-        assert child_trace is not None, f"no PID-scoped trace contains SECCOMP_READY; files={trace_files}"
+        writer_pid_match = re.search(r"^SECCOMP_READY writer_pid=(\d+)\b", process.stdout, re.MULTILINE)
+        assert writer_pid_match, (
+            f"helper did not report its post-filter Writer PID; rc={process.returncode}\n"
+            f"stdout:\n{process.stdout}\nstderr:\n{process.stderr}"
+        )
+        writer_pid = writer_pid_match.group(1)
+        child_trace = root / f"syscalls.trace.{writer_pid}"
+        assert child_trace in trace_files, (
+            f"strace -ff has no trace for reported Writer PID {writer_pid}; files={trace_files}"
+        )
         trace_lines = child_trace.read_text(encoding="utf-8").splitlines()
-        marker_index = next(i for i, line in enumerate(trace_lines) if "SECCOMP_READY" in line)
+        marker_indices = [i for i, line in enumerate(trace_lines) if "SECCOMP_READY" in line]
+        assert len(marker_indices) == 1, f"expected one untruncated readiness marker for Writer PID {writer_pid}: {marker_indices}"
+        marker_index = marker_indices[0]
         marker = trace_lines[marker_index]
         allowed_numbers = re.search(r"allow_syscalls=([0-9,]+)", marker)
         assert allowed_numbers, f"marker missing exact filter allowlist: {marker}"
@@ -79,20 +91,42 @@ def test_seccomp_allowlist_covers_exact_writer_publish_runtime():
         successful = {name for name, result in rows if not result.startswith("-1 ")}
         eperm = {name for name, result in rows if result.startswith("-1 EPERM")}
         eacces = {name for name, result in rows if result.startswith("-1 EACCES")}
-        print(f"SECCOMP_CHILD_PID_TRACE pid={child_trace.name.rsplit('.', 1)[-1]} successful={sorted(successful)} EPERM={sorted(eperm)} EACCES={sorted(eacces)}")
+        print(
+            f"SECCOMP_WRITER_PID_TRACE pid={writer_pid} successful={sorted(successful)} "
+            f"EPERM={sorted(eperm)} EACCES={sorted(eacces)}",
+            flush=True,
+        )
         assert process.returncode == 0, (
             f"exact Writer seccomp helper failed rc={process.returncode}\n"
             f"stdout:\n{process.stdout}\nstderr:\n{process.stderr}\n"
             f"PID-scoped post-filter trace rows: {rows}"
         )
-        assert "SECCOMP_READY" in process.stdout
+        assert f"SECCOMP_READY writer_pid={writer_pid} " in process.stdout
         assert "uid=31003 gid=31103 euid=31003 egid=31103" in process.stdout
-        assert "PASS exact_writer_publish=1" in process.stdout
+        assert "PASS exact_writer_publish=1 landlock_eacces=1 seccomp_eperm=7" in process.stdout
         assert sentinel.read_text(encoding="utf-8") == "synthetic protected sentinel"
         assert (target_root / "approved.md").read_bytes() == b"# synthetic approved bytes\n"
         assert sorted(path.name for path in target_root.iterdir()) == ["approved.md"]
 
         assert ALLOW_NAMES <= successful, f"required syscalls not successful in child trace: {ALLOW_NAMES-successful}"
         assert successful <= ALLOW_NAMES, f"unallowlisted successful child syscalls: {successful-ALLOW_NAMES}"
-        assert {"chmod", "socket", "prctl", "truncate", "unlink", "rename"} <= eperm, f"seccomp EPERM probes missing: {eperm}"
-        assert "openat" in eacces, f"protected openat did not show Landlock EACCES: {eacces}"
+        denied_rows = [(name, result) for name, result in rows if result.startswith("-1 EPERM")]
+        landlock_rows = [(name, result) for name, result in rows if result.startswith("-1 EACCES")]
+        assert len(denied_rows) == 7, f"expected exactly 7 seccomp EPERM denials in Writer PID trace: {denied_rows}"
+        assert len(landlock_rows) == 1 and landlock_rows[0][0] == "openat", (
+            f"expected exactly one Landlock EACCES denial on openat, observed {landlock_rows}"
+        )
+        denied_names = {name for name, _ in denied_rows}
+        assert denied_names <= DENIED_SYSCALL_NAMES, f"unexpected syscall attributed to seccomp denials: {denied_names}"
+        denied_categories = [
+            {"truncate"},
+            {"unlink", "unlinkat"},
+            {"rename", "renameat", "renameat2"},
+            {"chmod", "fchmodat", "fchmodat2"},
+            {"socket"},
+            {"fork", "clone", "clone3"},
+            {"prctl"},
+        ]
+        assert all(sum(name in category for name in denied_names) == 1 for category in denied_categories), (
+            f"seccomp EPERM calls do not map one-to-one to the seven intended probes: {denied_names}"
+        )

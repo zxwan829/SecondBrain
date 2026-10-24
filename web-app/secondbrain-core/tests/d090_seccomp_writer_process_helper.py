@@ -132,6 +132,10 @@ def main():
     signed = {**grant, "signature": signer.sign(grant)}
 
     set_no_new_privs_and_drop_to_writer()
+    # Prove the identical open is permitted by ordinary DAC before adding the
+    # Landlock ruleset, so the later EACCES is attributable to Landlock.
+    probe_fd = os.open(protected_sentinel, os.O_WRONLY | os.O_CLOEXEC)
+    os.close(probe_fd)
     abi = install_writer_landlock(target_root)
     writer = d090.StrictCreateOnlyWriter(
         str(target_root), signer.public_key, signer.key_id, {"target-1": "approved.md"},
@@ -151,7 +155,7 @@ def main():
     install_minimal_seccomp()
     from d090_landlock_process_helper import SECCOMP_ALLOW
     print(
-        f"SECCOMP_READY landlock_abi={abi} fd_allowlist=1 "
+        f"SECCOMP_READY writer_pid={os.getpid()} landlock_abi={abi} fd_allowlist=1 "
         f"allow_syscalls={','.join(str(n) for n in sorted(SECCOMP_ALLOW))}",
         flush=True,
     )
@@ -167,17 +171,23 @@ def main():
 
     # openat is seccomp-allowed, so its EACCES exercises Landlock. Destructive
     # syscall probes are denied by seccomp default policy and are not Landlock evidence.
-    assert_denied("open protected sentinel for write",
-                  lambda: os.open(protected_sentinel, os.O_WRONLY | os.O_CLOEXEC))
-    assert_denied("seccomp truncate syscall", lambda: os.truncate(protected_sentinel, 0))
-    assert_denied("seccomp unlink syscall", lambda: os.unlink(protected_sentinel))
-    assert_denied("seccomp rename syscall", lambda: os.rename(protected_sentinel, protected_root / "moved.txt"))
+    landlock_denials = [assert_denied(
+        "open protected sentinel for write",
+        lambda: os.open(protected_sentinel, os.O_WRONLY | os.O_CLOEXEC),
+    )]
+    seccomp_denials = [
+        assert_denied("seccomp truncate syscall", lambda: os.truncate(protected_sentinel, 0)),
+        assert_denied("seccomp unlink syscall", lambda: os.unlink(protected_sentinel)),
+        assert_denied("seccomp rename syscall", lambda: os.rename(protected_sentinel, protected_root / "moved.txt")),
+    ]
 
     # Landlock does not enforce metadata changes. Since the published file is
     # owned by Writer, this otherwise-allowed chmod must be rejected by seccomp.
-    assert_denied("chmod published target", lambda: os.chmod(target_root / "approved.md", 0o600))
-    assert_denied("create network socket", lambda: socket.socket(socket.AF_INET, socket.SOCK_STREAM))
-    assert_denied("fork child process", os.fork)
+    seccomp_denials.extend((
+        assert_denied("chmod published target", lambda: os.chmod(target_root / "approved.md", 0o600)),
+        assert_denied("create network socket", lambda: socket.socket(socket.AF_INET, socket.SOCK_STREAM)),
+        assert_denied("fork child process", os.fork),
+    ))
     def attempt_seccomp_change():
         ctypes.set_errno(0)
         result = LIBC.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.c_void_p())
@@ -187,9 +197,17 @@ def main():
         if error != errno.EPERM:
             raise OSError(error, f"post-install prctl failed unexpectedly: {os.strerror(error)}")
         raise PermissionError(error, "seccomp denied post-install prctl")
-    assert_denied("change seccomp policy", attempt_seccomp_change)
+    seccomp_denials.append(assert_denied("change seccomp policy", attempt_seccomp_change))
     writer.close()
-    print("PASS exact_writer_publish=1 landlock_denials=4 seccomp_metadata_socket_process_denials=3", flush=True)
+    if landlock_denials != [errno.EACCES] or seccomp_denials != [errno.EPERM] * 7:
+        raise AssertionError(
+            f"denial source/count mismatch: Landlock={landlock_denials}, seccomp={seccomp_denials}"
+        )
+    print(
+        f"PASS exact_writer_publish=1 landlock_eacces={len(landlock_denials)} "
+        f"seccomp_eperm={len(seccomp_denials)}",
+        flush=True,
+    )
     return 0
 
 

@@ -164,7 +164,7 @@ def assert_denied(label: str, callback):
         if exc.errno not in (errno.EACCES, errno.EPERM):
             raise AssertionError(f"{label} failed for unexpected reason: {exc}") from exc
         print(f"DENIED {label} errno={exc.errno}", flush=True)
-        return
+        return exc.errno
     raise AssertionError(f"Landlock unexpectedly allowed {label}")
 
 
