@@ -32,7 +32,7 @@ source: GitHub SecondBrain Monorepo
 
 本批分支保护规则与 ruleset 的可读 GraphQL 查询均未返回配置项；REST 查询受私有仓库功能限制返回 403，不能以此绕过平台门禁。#201/#207/#202 均通过正常 GitHub Ready/Merge 路径处理；没有管理员绕过、强推或 main reset。Notes Run #40008488314 使用既有手动工作流、合成数据和脱敏 artifact。完整 V1 及真实生产/用户体验验收仍未完成。
 
-**当前 NEXT：** main 为 `4d4577eb43a9e66e607e416bed75600e814cfd0a`。P4-1 当前识别的合成覆盖缺口已由 #210/#231 补齐；P4-3 短屏图形对话框合成旅程由 #230 通过，但真实设备输入和同步仍未验收。P3-4 `approved_import` 已由 #225 实现，现有定向组合 36 passed，无需重复开发。下一包继续用户已授权的 #138 Journal GET 合成 loopback 合同刻画，保持只读与现有行为，不扩大 legacy 语义。P3-5 其余 Review/Promote/Agent/Skill Activity 来源须先冻结 DTO 和对应权限预检；#216 Trash 仍因 C2 root/action 合同未决而 BLOCKED；#101 渠道身份/wire 合同未冻结。P5 真实环境/安全验收和 P6 用户验收仍未完成，V1 为 NOT DONE。
+**当前 NEXT：** main 为 `4d4577eb43a9e66e607e416bed75600e814cfd0a`。P4-1 当前识别的合成覆盖缺口已由 #210/#231 补齐；P4-3 短屏图形对话框合成旅程由 #230 通过，但真实设备输入和同步仍未验收。P3-4 `approved_import` 已由 #207 实现，#225 修正 stale 501 测试断言；现有定向组合 36 passed，无需重复开发。下一包继续用户已授权的 #138 Journal GET 合成 loopback 合同刻画，保持只读与现有行为，不扩大 legacy 语义。P3-5 其余 Review/Promote/Agent/Skill Activity 来源须先冻结 DTO 和对应权限预检；#216 Trash 仍因 C2 root/action 合同未决而 BLOCKED；#101 渠道身份/wire 合同未冻结。P5 真实环境/安全验收和 P6 用户验收仍未完成，V1 为 NOT DONE。
 
 **V1 后续优化（用户已确认方向与协作方式）：** 全面 Web UI 改版另设优化包 U，详见交付计划第11节；采用自然语言要求→可点击预览→用户确认，A/Codex维护布局规则、组件和视觉回归，Figma可选，不要求用户学习设计工具。该优化包不新增V1完成门槛，也不立即替换当前视觉基线。
 
