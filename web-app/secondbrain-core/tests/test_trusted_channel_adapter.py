@@ -1,4 +1,6 @@
 import json
+import hashlib
+import hmac
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +29,43 @@ class SyntheticIdentityProvider:
             from fastapi import HTTPException
             raise HTTPException(401, "Synthetic adapter authentication failed")
         return self.identity
+
+
+class SyntheticWeixinIdentityProvider:
+    """Test-only contract model for a verified native Hermes caller.
+
+    The key and platform subject below are synthetic fixtures. A production
+    provider must verify Hermes' authenticated caller envelope and map its
+    verified platform subject through a server-owned allowlist/consent store.
+    """
+    _TEST_KEY = b"synthetic-only-weixin-test-key"
+
+    def __init__(self):
+        self.consent_active = True
+        self.calls = 0
+
+    def signature(self, raw_body):
+        return hmac.new(self._TEST_KEY, raw_body, hashlib.sha256).hexdigest()
+
+    def authenticate(self, request, raw_body):
+        from fastapi import HTTPException
+
+        self.calls += 1
+        supplied = request.headers.get("X-Synthetic-Signature", "")
+        expected = self.signature(raw_body)
+        if not hmac.compare_digest(supplied, expected):
+            raise HTTPException(401, "Synthetic Hermes caller authentication failed")
+        # Platform subject is mapped server-side; no body field selects the
+        # Core principal, tenant, consent record, adapter, or channel.
+        if request.headers.get("X-Synthetic-Platform-User") != "platform-user-ref-1":
+            raise HTTPException(401, "Synthetic platform identity is not mapped")
+        if not self.consent_active:
+            raise HTTPException(403, "Synthetic user consent is revoked")
+        return TrustedChannelIdentity(
+            "wechat", "synthetic-core-principal-1", "trusted_adapter_v1",
+            "hermes-v0.22.2-native-weixin", "synthetic-tenant-1",
+            "synthetic-consent-grant-1",
+        )
 
 
 class TrustedChannelAdapterHTTPTests(unittest.TestCase):
@@ -151,6 +190,87 @@ class TrustedChannelAdapterHTTPTests(unittest.TestCase):
                 response = client.post("/api/internal/v1/channel-events", json=self.payload,
                                        headers=self.headers)
             self.assertEqual(response.status_code, 409)
+        finally:
+            client.close()
+
+    def test_synthetic_weixin_auth_maps_verified_subject_and_binds_exact_body(self):
+        provider = SyntheticWeixinIdentityProvider()
+        app = FastAPI()
+        app.include_router(create_trusted_channel_router(self.service, provider))
+        client = TestClient(app)
+        raw_body = json.dumps(self.payload, separators=(",", ":")).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "X-Synthetic-Platform-User": "platform-user-ref-1",
+            "X-Synthetic-Signature": provider.signature(raw_body),
+        }
+        try:
+            with patch.object(self.service, "mark_scheduled", return_value=False):
+                response = client.post("/api/internal/v1/channel-events", content=raw_body,
+                                       headers=headers)
+                self.assertEqual(response.status_code, 202, response.text)
+                state = json.loads((self.state / "captures" /
+                                    (response.json()["inbox_id"] + ".json")).read_text())
+                self.assertEqual(state["identity_scope"], {
+                    "adapter_id": "hermes-v0.22.2-native-weixin",
+                    "tenant": "synthetic-tenant-1",
+                    "principal": "synthetic-core-principal-1",
+                    "consent_evidence_id": "synthetic-consent-grant-1",
+                })
+                self.assertNotIn("platform-user-ref-1", json.dumps(state["identity_scope"]))
+
+                # A valid signature for different bytes cannot be reused.
+                changed_body = raw_body.replace(b"synthetic explicit save", b"altered")
+                tampered = client.post("/api/internal/v1/channel-events", content=changed_body,
+                                       headers=headers)
+                self.assertEqual(tampered.status_code, 401)
+                self.assertEqual(len(list(self.raw.glob("Inbox-*.md"))), 1)
+        finally:
+            client.close()
+
+    def test_synthetic_weixin_replay_is_idempotent_and_revocation_blocks_replay(self):
+        provider = SyntheticWeixinIdentityProvider()
+        app = FastAPI()
+        app.include_router(create_trusted_channel_router(self.service, provider))
+        client = TestClient(app)
+        raw_body = json.dumps(self.payload, separators=(",", ":")).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "X-Synthetic-Platform-User": "platform-user-ref-1",
+            "X-Synthetic-Signature": provider.signature(raw_body),
+        }
+        try:
+            with patch.object(self.service, "mark_scheduled", return_value=False):
+                first = client.post("/api/internal/v1/channel-events", content=raw_body,
+                                    headers=headers)
+                self.assertEqual(first.status_code, 202, first.text)
+                # Recreate Core's service/router over the same synthetic roots
+                # to verify the idempotency record survives a process restart.
+                restarted_service = CaptureService(str(self.raw), str(self.review), str(self.state))
+                restarted_app = FastAPI()
+                restarted_app.include_router(create_trusted_channel_router(restarted_service, provider))
+                restarted_client = TestClient(restarted_app)
+                replay = restarted_client.post("/api/internal/v1/channel-events", content=raw_body,
+                                               headers=headers)
+                self.assertEqual(replay.status_code, 202, replay.text)
+                self.assertEqual(replay.headers["idempotent-replay"], "true")
+                self.assertEqual(first.json()["inbox_id"], replay.json()["inbox_id"])
+                self.assertEqual(len(list(self.raw.glob("Inbox-*.md"))), 1)
+
+                # The authoritative consent check runs before Inbox idempotency;
+                # revocation blocks both retries and newly observed events.
+                provider.consent_active = False
+                revoked_replay = restarted_client.post("/api/internal/v1/channel-events", content=raw_body,
+                                                       headers=headers)
+                self.assertEqual(revoked_replay.status_code, 403)
+                new_payload = {**self.payload, "source_event_id": "evt-after-revoke"}
+                new_body = json.dumps(new_payload, separators=(",", ":")).encode("utf-8")
+                new_headers = {**headers, "X-Synthetic-Signature": provider.signature(new_body)}
+                after_revoke = restarted_client.post("/api/internal/v1/channel-events", content=new_body,
+                                                     headers=new_headers)
+                self.assertEqual(after_revoke.status_code, 403)
+                self.assertEqual(len(list(self.raw.glob("Inbox-*.md"))), 1)
+                restarted_client.close()
         finally:
             client.close()
 
