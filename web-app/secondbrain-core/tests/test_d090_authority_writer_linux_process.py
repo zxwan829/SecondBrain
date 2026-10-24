@@ -50,10 +50,11 @@ def _drop_identity(uid: int, gid: int):
     os.setuid(uid)
 
 
-def _command(mode: str, roles: d090.D090RoleIds, socket_path: Path, **extra) -> list[str]:
+def _command(mode: str, roles: d090.D090RoleIds, socket_path: Path,
+             helper: Path, **extra) -> list[str]:
     values = (roles.core_uid, roles.authority_uid, roles.writer_uid,
               roles.core_gid, roles.authority_gid, roles.writer_gid)
-    command = [sys.executable, str(HELPER), mode, "--socket-path", str(socket_path),
+    command = [sys.executable, str(helper), mode, "--socket-path", str(socket_path),
                "--role-ids", ",".join(str(value) for value in values)]
     for key, value in extra.items():
         if isinstance(value, bool):
@@ -114,6 +115,9 @@ def _prepare(root: Path, roles: d090.D090RoleIds, operation_id: str):
 def _run_case(*, drop_response: bool):
     base = Path(tempfile.mkdtemp(prefix="secondbrain-d090-linux-"))
     base.chmod(0o711)
+    helper = base / "d090_linux_process_helper.py"
+    shutil.copyfile(HELPER, helper)
+    helper.chmod(0o644)
     processes: list[subprocess.Popen] = []
     try:
         uid0 = _unused_block(41000, 3, pwd.getpwuid)
@@ -128,7 +132,7 @@ def _run_case(*, drop_response: bool):
             base, roles, "synthetic-operation",
         )
         writer_proc = _spawn(_command(
-            "writer", roles, socket_path, knowledge_root=knowledge_root,
+            "writer", roles, socket_path, helper, knowledge_root=knowledge_root,
             public_key=public_path, drop_response=drop_response,
         ), roles.writer_uid, roles.writer_gid)
         processes.append(writer_proc)
@@ -140,7 +144,7 @@ def _run_case(*, drop_response: bool):
             # Deliberately expose only the disposable test socket for one probe.
             # The Writer must reject the real, wrong UID/GID before reading its body.
             socket_path.chmod(0o666)
-            probe = _spawn(_command("probe", roles, socket_path), roles.core_uid, roles.core_gid)
+            probe = _spawn(_command("probe", roles, socket_path, helper), roles.core_uid, roles.core_gid)
             processes.append(probe)
             assert _readline(writer_proc) == "REJECTED authority_peer_rejected"
             assert probe.wait(timeout=5) == 0
@@ -148,7 +152,7 @@ def _run_case(*, drop_response: bool):
             socket_path.chmod(0o660)
 
         authority_cmd = _command(
-            "authority", roles, socket_path, ledger_root=authority_root,
+            "authority", roles, socket_path, helper, ledger_root=authority_root,
             private_key=private_path, operation_id="synthetic-operation",
             expect_recovery=drop_response,
         )
