@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { MarkdownEditor } from './MarkdownEditor';
+import { NotePropertiesPanel } from './NotePropertiesPanel';
 import { notesApi, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
 import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
 
@@ -435,6 +436,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           <button type="button" onClick={() => setRestorePreview(null)}>取消</button>
           <button type="button" onClick={confirmRestore}>使用此版本</button>
         </section>}
+        {note && state === '已保存' && !loading && <NotePropertiesPanel key={noteKey(note)} note={note} onSaved={(saved) => {
+          setCurrent(saved, saved.content); setState('已保存'); setMessage(''); void refresh(saved.collection);
+        }} />}
         {note ? note.read_only ? <>
           <div className="notes-safety" role="status">此文件含有当前富文本编辑器不能安全往返的语法（{note.safety_reasons.join('、')}），原始 Markdown 保留只读。</div>
           <pre className="notes-raw-source">{content}</pre>

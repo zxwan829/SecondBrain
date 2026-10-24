@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from secondbrain_core.modules.notes import NotesStore, configured_notes_store, create_notes_router, markdown_safety
+from secondbrain_core.modules.vocabulary import VocabularyStore
 
 
 class NotesStoreTests(unittest.TestCase):
@@ -180,6 +181,86 @@ class NotesStoreTests(unittest.TestCase):
                               headers={"If-Match": f'"{saved.json()["etag"]}"',
                                        "If-Asset-Match": fetched.headers["etag"]})
         self.assertEqual(replaced.status_code, 200)
+
+    def test_confirmed_properties_update_only_managed_frontmatter_with_etag_and_history(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+                if action == "notes.write" and request.headers.get("x-deny-write") == "true":
+                    raise HTTPException(status_code=403, detail="Notes write permission required")
+
+        initial = '---\ncustom: "keep me"\n类型: "摘要"\ntags:\n  - "CRM"\n---\n\n[[Wiki Link]]\n'
+        draft = self.store.create("# Temporary\n")
+        note_path = self.drafts / draft["path"] / "note.md"
+        note_path.write_text(initial)
+        note_path.chmod(0o600)
+        draft = self.store.read("drafts", draft["path"])
+        approval_root = Path(self.temp.name) / "approval"
+        approval_root.mkdir(mode=0o700)
+        vocab = VocabularyStore(approval_root)
+        vocab.add_tag("SecondBrain", 0, True)
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store, vocab))
+        client = TestClient(app)
+        url = f"/api/notes/drafts/{draft['path']}/properties"
+        self.assertEqual(client.get(url).status_code, 401)
+        client.cookies.set("session", "owner")
+        properties = client.get(url)
+        self.assertEqual(properties.status_code, 200)
+        self.assertEqual(properties.json()["type"], "摘要")
+        self.assertEqual(properties.json()["tags"], ["CRM"])
+        revision = properties.headers["etag"]
+        denied = client.put(url, json={"type": "笔记", "tags": [], "confirmed": True},
+                            headers={"If-Match": revision, "x-deny-write": "true"})
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(self.store.read("drafts", draft["path"])["content"], initial)
+        unconfirmed = client.put(url, json={"type": "笔记", "tags": [], "confirmed": False},
+                                 headers={"If-Match": revision})
+        self.assertEqual(unconfirmed.status_code, 400)
+        unknown = client.put(url, json={"type": "笔记", "tags": ["not-approved"], "confirmed": True},
+                             headers={"If-Match": revision})
+        self.assertEqual(unknown.status_code, 409)
+        saved = client.put(url, json={"type": "笔记", "tags": ["SecondBrain", "CRM"], "confirmed": True},
+                           headers={"If-Match": revision})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.headers["etag"], f'"{saved.json()["etag"]}"')
+        content = saved.json()["content"]
+        self.assertIn('custom: "keep me"', content)
+        self.assertIn('类型: "笔记"', content)
+        self.assertIn('tags: ["SecondBrain", "CRM"]', content)
+        self.assertTrue(content.endswith("\n\n[[Wiki Link]]\n"))
+        self.assertEqual(self.store.history("drafts", draft["path"])["versions"][0]["content"], initial)
+        stale = client.put(url, json={"type": "摘要", "tags": [], "confirmed": True},
+                           headers={"If-Match": revision})
+        self.assertEqual(stale.status_code, 412)
+        self.assertEqual(self.store.read("drafts", draft["path"])["content"], content)
+
+    def test_multiline_managed_type_is_rejected_without_changing_note_bytes(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+
+        initial = '---\n类型: |\n  multiline value\ntags: []\n---\n\n# Body\n'
+        draft = self.store.create("# Temporary\n")
+        note_path = self.drafts / draft["path"] / "note.md"
+        note_path.write_text(initial)
+        note_path.chmod(0o600)
+        vocab_root = Path(self.temp.name) / "approval-multiline"
+        vocab_root.mkdir(mode=0o700)
+        vocab = VocabularyStore(vocab_root)
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store, vocab))
+        client = TestClient(app)
+        client.cookies.set("session", "owner")
+        url = f"/api/notes/drafts/{draft['path']}/properties"
+        self.assertEqual(client.get(url).status_code, 422)
+        etag = self.store.read("drafts", draft["path"])["etag"]
+        updated = client.put(url, json={"type": "笔记", "tags": [], "confirmed": True},
+                             headers={"If-Match": f'"{etag}"'})
+        self.assertEqual(updated.status_code, 422)
+        self.assertEqual(note_path.read_text(), initial)
 
     def test_history_http_distinguishes_empty_history_missing_note_and_auth_failure(self):
         class SessionAuth:

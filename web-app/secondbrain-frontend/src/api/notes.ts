@@ -1,5 +1,6 @@
 export type Note = { collection: string; path: string; content: string; etag: string; read_only: boolean; safety_reasons: string[] };
 export type NoteCollection = { id: string; kind: 'drafts' | 'authorized' };
+export type NoteProperties = { type: string; tags: string[]; etag: string };
 export type VisualKind = 'mindmap' | 'excalidraw';
 export type VisualAsset = { filename: string; etag: string; content: string };
 export type NotesTrashItem = {
@@ -27,6 +28,11 @@ export const notesApi = {
   read: (collection: string, path: string, signal?: AbortSignal) => json<Note>(pathUrl(collection, path), signal ? { signal } : undefined),
   create: (content: string) => json<Note>('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }),
   save: (note: Note, content: string) => json<Note>(pathUrl(note.collection, note.path), { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"` }, body: JSON.stringify({ content }) }),
+  readProperties: (note: Note) => json<NoteProperties>(`${pathUrl(note.collection, note.path)}/properties`),
+  saveProperties: (note: Note, type: string, tags: string[]) => json<Note>(`${pathUrl(note.collection, note.path)}/properties`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"` },
+    body: JSON.stringify({ type, tags, confirmed: true }),
+  }),
   history: (note: Note) => json<{ versions: { etag: string; content: string }[] }>(`${pathUrl(note.collection, note.path)}/history`),
   upload: async (note: Note, file: File) => {
     const data = new FormData(); data.append('file', file);
