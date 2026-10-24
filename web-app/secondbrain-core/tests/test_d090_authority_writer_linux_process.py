@@ -75,10 +75,15 @@ def _readline(process: subprocess.Popen, timeout: float = 10) -> str:
     return line.strip()
 
 
-def _spawn(command: list[str], uid: int, gid: int) -> subprocess.Popen:
+def _spawn(command: list[str], uid: int, gid: int, module_root: Path) -> subprocess.Popen:
+    child_env = os.environ.copy()
+    existing_pythonpath = child_env.get("PYTHONPATH", "")
+    child_env["PYTHONPATH"] = str(module_root) + (
+        os.pathsep + existing_pythonpath if existing_pythonpath else ""
+    )
     return subprocess.Popen(
         command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True, close_fds=True,
+        stderr=subprocess.PIPE, text=True, close_fds=True, env=child_env,
         preexec_fn=lambda: _drop_identity(uid, gid),
     )
 
@@ -115,11 +120,18 @@ def _prepare(root: Path, roles: d090.D090RoleIds, operation_id: str):
 def _run_case(*, drop_response: bool):
     base = Path(tempfile.mkdtemp(prefix="secondbrain-d090-linux-"))
     base.chmod(0o711)
-    helper = base / "d090_linux_process_helper.py"
-    shutil.copyfile(HELPER, helper)
-    helper.chmod(0o644)
     processes: list[subprocess.Popen] = []
     try:
+        helper = base / "d090_linux_process_helper.py"
+        shutil.copyfile(HELPER, helper)
+        helper.chmod(0o644)
+        module_root = base / "role_modules"
+        module_root.mkdir(mode=0o755)
+        shutil.copytree(Path(__file__).parents[1] / "secondbrain_core",
+                        module_root / "secondbrain_core")
+        for path in (module_root / "secondbrain_core").rglob("*"):
+            path.chmod(0o755 if path.is_dir() else 0o644)
+        (module_root / "secondbrain_core").chmod(0o755)
         uid0 = _unused_block(41000, 3, pwd.getpwuid)
         gid0 = _unused_block(51000, 3, grp.getgrgid)
         roles = d090.D090RoleIds(uid0, uid0 + 1, uid0 + 2,
@@ -134,7 +146,7 @@ def _run_case(*, drop_response: bool):
         writer_proc = _spawn(_command(
             "writer", roles, socket_path, helper, knowledge_root=knowledge_root,
             public_key=public_path, drop_response=drop_response,
-        ), roles.writer_uid, roles.writer_gid)
+        ), roles.writer_uid, roles.writer_gid, module_root)
         processes.append(writer_proc)
         assert _readline(writer_proc) == "READY"
         socket_path.chown(roles.authority_uid, roles.authority_gid)
@@ -144,7 +156,10 @@ def _run_case(*, drop_response: bool):
             # Deliberately expose only the disposable test socket for one probe.
             # The Writer must reject the real, wrong UID/GID before reading its body.
             socket_path.chmod(0o666)
-            probe = _spawn(_command("probe", roles, socket_path, helper), roles.core_uid, roles.core_gid)
+            probe = _spawn(
+                _command("probe", roles, socket_path, helper),
+                roles.core_uid, roles.core_gid, module_root,
+            )
             processes.append(probe)
             assert _readline(writer_proc) == "REJECTED authority_peer_rejected"
             assert probe.wait(timeout=5) == 0
@@ -156,7 +171,7 @@ def _run_case(*, drop_response: bool):
             private_key=private_path, operation_id="synthetic-operation",
             expect_recovery=drop_response,
         )
-        authority_proc = _spawn(authority_cmd, roles.authority_uid, roles.authority_gid)
+        authority_proc = _spawn(authority_cmd, roles.authority_uid, roles.authority_gid, module_root)
         processes.append(authority_proc)
         result = _readline(authority_proc)
         assert authority_proc.wait(timeout=8) == 0, authority_proc.stderr.read()
