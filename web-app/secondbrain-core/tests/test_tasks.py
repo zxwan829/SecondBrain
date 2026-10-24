@@ -219,7 +219,7 @@ class TaskStoreTests(unittest.TestCase):
         self.assertEqual(replaced.exception.status_code, 503)
         self.assertFalse((self.root / "tasks.json").exists())
 
-    def test_task_write_fd_stays_pinned_if_root_moves_after_open(self):
+    def test_task_write_aborts_if_root_moves_before_atomic_commit(self):
         displaced = Path(self.temp.name) / "tasks-original"
         original_open_root = self.store._open_root
         calls = {"count": 0}
@@ -240,9 +240,38 @@ class TaskStoreTests(unittest.TestCase):
         self.assertEqual(replaced.exception.status_code, 503)
         self.assertFalse((self.root / "tasks.json").exists())
         self.assertFalse(list(self.root.glob(".tasks-*.tmp")))
-        # A fail-closed error may leave the atomic write in the displaced private
-        # directory, but it must never cross into the replacement path.
-        self.assertTrue((displaced / "tasks.json").exists())
+        self.assertFalse((displaced / "tasks.json").exists())
+
+    def test_task_write_returns_committed_receipt_if_root_moves_after_commit(self):
+        displaced = Path(self.temp.name) / "tasks-original"
+        replacement = Path(self.temp.name) / "tasks-replacement"
+        original_fsync = os.fsync
+        moved = {"done": False}
+
+        def fsync_then_replace_directory(fd):
+            original_fsync(fd)
+            if not moved["done"] and os.fstat(fd).st_mode & 0o170000 == 0o040000:
+                moved["done"] = True
+                self.root.rename(displaced)
+                self.root.mkdir(mode=0o700)
+                self.root.chmod(0o700)
+
+        with patch.object(tasks_module.os, "fsync", side_effect=fsync_then_replace_directory):
+            result = self.store.create("Synthetic committed root swap", None, "root-swap-commit")
+
+        self.assertTrue(moved["done"])
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(result["task"]["title"], "Synthetic committed root swap")
+        self.assertFalse((self.root / "tasks.json").exists())
+
+        # Restore the original store root; the durable idempotency receipt must
+        # recover the same committed result without creating a second Task.
+        self.root.rename(replacement)
+        displaced.rename(self.root)
+        replay = self.store.create("Synthetic committed root swap", None, "root-swap-commit")
+        self.assertEqual(replay["status"], "duplicate")
+        self.assertEqual(replay["task"], result["task"])
+        self.assertEqual(len(self.store.list("all")["tasks"]), 1)
 
     def test_task_data_reader_preserves_owner_only_read_only_file_compatibility(self):
         task = self.store.create("Synthetic read-only legacy mode", None, "legacy-mode-create")["task"]

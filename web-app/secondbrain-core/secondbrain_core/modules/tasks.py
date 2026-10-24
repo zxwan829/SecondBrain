@@ -189,12 +189,16 @@ class TaskStore:
                 stream.write("\n")
                 stream.flush()
                 os.fsync(fd)
-            os.replace(temporary, self.path.name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
-            os.fsync(root_fd)
-            # The directory FD keeps all writes pinned to the initialized root. A
-            # final identity check prevents reporting success after its path moved.
+            # Validate the configured path immediately before the atomic commit.
+            # If the root was replaced while the temporary file was written,
+            # abort before making a durable change in the displaced directory.
             check_fd = self._open_root()
             os.close(check_fd)
+            os.replace(temporary, self.path.name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+            os.fsync(root_fd)
+            # os.replace + directory fsync is the commit point. Do not perform
+            # fallible path-based checks after it: a root rename at this point
+            # must not turn a committed write into an ambiguous error response.
         except HTTPException:
             try:
                 os.unlink(temporary, dir_fd=root_fd)
