@@ -2,6 +2,7 @@ import io
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -12,10 +13,14 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from PIL import Image
 from pypdf import PdfWriter
 
 from secondbrain_core.app import create_app
-from secondbrain_core.modules.capture import CaptureService, create_capture_router, _public_http_url, _resolve_public_url, _fetch_url
+from secondbrain_core.modules.capture import (CaptureService, create_capture_router, _public_http_url,
+                                              _resolve_public_url, _fetch_url, _TextExtractor,
+                                              MAX_TEXT_CHARS, MAX_WEB_EXTRACT_CHARS, MAX_WEB_EXTRACT_PARTS)
+from secondbrain_core.modules.multimodal_capture import MultimodalCaptureProcessors
 
 
 class CaptureServiceTests(unittest.TestCase):
@@ -96,6 +101,24 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertIn("Keep this exact body.", review)
         self.assertTrue(complete["original_asset"].startswith("/knowledge-assets/00-Inbox/"))
         self.assertEqual(complete["display_filename"], "capture.md")
+
+    def test_oversize_text_upload_preserves_raw_and_reports_partial_extraction(self):
+        for filename in ("long.txt", "long.md"):
+            with self.subTest(filename=filename):
+                original_text = "A" * (MAX_TEXT_CHARS + 1) + "MUST NOT APPEAR IN REVIEW"
+                original = original_text.encode("utf-8")
+                item = self.service.accept_file(filename, original)
+
+                self.service.process(item, original)
+                result = self.service.get(item["capture_id"])
+
+                self.assertEqual(result["status"], "partial_success")
+                self.assertEqual(result["error"]["code"], "processing_failed")
+                self.assertEqual((self.raw / result["raw_path"]).read_bytes(), original)
+                review = (self.review / result["review_path"]).read_text(encoding="utf-8")
+                self.assertIn("[Content truncated at the 200,000-character safety limit.", review)
+                self.assertNotIn("MUST NOT APPEAR IN REVIEW", review)
+                self.assertLess(len(review), MAX_TEXT_CHARS + 1000)
 
     def test_approved_review_execution_replays_after_service_restart_without_duplicate_files(self):
         text = "# Exact preview\n\nBody with preserved trailing whitespace. \n"
@@ -224,23 +247,44 @@ class CaptureServiceTests(unittest.TestCase):
         item = self.service.accept_file("readable.pdf", original)
         self.service.process(item, original)
         complete = self.service.get(item["capture_id"])
+        if not sys.platform.startswith("linux"):
+            self.assertEqual(complete["status"], "partial_success")
+            self.assertEqual(complete["error"]["code"], "processing_failed")
+            self.assertIn("resource limits", complete["error"]["message"])
+            self.assertIsNone(complete["review_path"])
+            self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), original)
+            return
         self.assertEqual(complete["status"], "completed")
         self.assertEqual((self.raw / complete["raw_path"]).read_bytes(), original)
         self.assertIn("hello PDF capture", (self.review / complete["review_path"]).read_text())
 
-    def test_pdf_metadata_title_does_not_replace_unicode_upload_filename(self):
-        class Page:
-            def extract_text(self):
-                return "Readable PDF body"
-        class Metadata:
-            title = "(anonymous)"
-        class Reader:
-            is_encrypted = False
-            pages = [Page()]
-            metadata = Metadata()
+    def test_oversize_pdf_ocr_is_truncated_and_reported_partial(self):
+        original = b"%PDF-1.4\nsynthetic scan"
+        worker_result = {
+            "status": "ok", "page_count": 1, "text": "", "truncated": False,
+            "page_sizes": [[612.0, 792.0]], "metadata_title": None,
+        }
+        with patch("secondbrain_core.modules.capture._extract_pdf_text_in_limited_worker",
+                   return_value=worker_result), \
+             patch.object(self.service.processors, "ocr_pdf", return_value="x" * 1_500_000):
+            item = self.service.accept_file("oversize-scan.pdf", original)
+            self.service.process(item, original)
+        result = self.service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        review_text = (self.review / result["review_path"]).read_text(encoding="utf-8")
+        self.assertIn("PDF OCR text was truncated", review_text)
+        self.assertIn("x" * 1_000_000, review_text)
+        self.assertNotIn("x" * 1_000_001, review_text)
+        raw_path = self.raw / result["raw_path"]
+        self.assertEqual(raw_path.read_bytes(), original)
+        self.assertEqual(result["raw_sha256"], hashlib.sha256(original).hexdigest())
 
+    def test_pdf_metadata_title_does_not_replace_unicode_upload_filename(self):
         data = b"%PDF-1.4\nfixture"
-        with patch("secondbrain_core.modules.capture.PdfReader", return_value=Reader()):
+        with patch("secondbrain_core.modules.capture._extract_pdf_text_in_limited_worker", return_value={
+                "status": "ok", "page_count": 1, "text": "Readable PDF body", "truncated": False,
+                "page_sizes": [], "metadata_title": "(anonymous)"}):
             item = self.service.accept_file("C:\\fakepath\\会议纪要.pdf", data)
             self.service.process(item, data)
         complete = self.service.get(item["capture_id"])
@@ -276,6 +320,66 @@ class CaptureServiceTests(unittest.TestCase):
         self.assertNotIn("Readable body", raw)
         self.assertIn("Readable body", review)
         self.assertNotIn("ignored", review)
+
+    def test_url_html_extraction_is_bounded_and_reports_partial_with_raw_preserved(self):
+        url = "https://capture.example/large-html"
+        page = "<html><title>" + ("T" * 5000) + "</title><p>" + \
+               ("Readable " * (MAX_WEB_EXTRACT_CHARS // 5 + 200)) + "</p></html>"
+        with patch("secondbrain_core.modules.capture._public_http_url", return_value=urlsplit(url)), \
+             patch("secondbrain_core.modules.capture._fetch_url",
+                   return_value=(url, page, "text/html; charset=utf-8")):
+            item = self.service.accept_url(url)
+            raw_path = self.raw / item["raw_path"]
+            original_raw = raw_path.read_bytes()
+            original_sha = hashlib.sha256(original_raw).hexdigest()
+            self.service.process(item, original_raw)
+        result = self.service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        self.assertEqual(hashlib.sha256(raw_path.read_bytes()).hexdigest(), original_sha)
+        review = (self.review / result["review_path"]).read_text(encoding="utf-8")
+        self.assertIn("[Content truncated at the safe extraction limit.]", review)
+        self.assertIn("original URL was retained", result["error"]["message"])
+
+    def test_url_text_plain_truncation_is_not_reported_as_complete(self):
+        url = "https://capture.example/large-text"
+        text = "x" * (MAX_WEB_EXTRACT_CHARS + 17)
+        with patch("secondbrain_core.modules.capture._public_http_url", return_value=urlsplit(url)), \
+             patch("secondbrain_core.modules.capture._fetch_url",
+                   return_value=(url, text, "text/plain; charset=utf-8")):
+            item = self.service.accept_url(url)
+            self.service.process(item, (self.raw / item["raw_path"]).read_bytes())
+        result = self.service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        review = (self.review / result["review_path"]).read_text(encoding="utf-8")
+        self.assertIn("[Content truncated at the safe extraction limit.]", review)
+
+    def test_html_extractor_bounds_many_tiny_nodes_and_title(self):
+        parser = _TextExtractor()
+        parser.feed("<html><title>" + ("T" * 5000) + "</title>" + "<p>x</p>" * 25_000 + "</html>")
+        parser.close()
+        self.assertTrue(parser.truncated)
+        self.assertLessEqual(len(parser.parts), MAX_WEB_EXTRACT_PARTS)
+        self.assertLessEqual(parser.part_chars, MAX_WEB_EXTRACT_CHARS)
+        self.assertLessEqual(parser.title_chars, 300)
+
+    def test_animated_image_is_explicitly_partial_and_preserves_raw_without_review(self):
+        frame_one = Image.new("RGB", (12, 12), "white")
+        frame_two = Image.new("RGB", (12, 12), "black")
+        image = io.BytesIO()
+        frame_one.save(image, format="GIF", save_all=True, append_images=[frame_two], duration=100, loop=0)
+        original = image.getvalue()
+        service = CaptureService(self.raw, self.review, self.state,
+                                 processors=MultimodalCaptureProcessors(tesseract="synthetic-tesseract"))
+        item = service.accept_file("animated.gif", original)
+        service.process(item, original)
+        result = service.get(item["capture_id"])
+        self.assertEqual(result["status"], "partial_success")
+        self.assertEqual(result["error"]["code"], "processing_failed")
+        self.assertIn("Animated image OCR is unsupported", result["error"]["message"])
+        self.assertIsNone(result["review_path"])
+        self.assertEqual((self.raw / result["raw_path"]).read_bytes(), original)
 
     def test_url_extraction_failure_preserves_initial_raw_hash(self):
         url = "https://capture.example/empty"
