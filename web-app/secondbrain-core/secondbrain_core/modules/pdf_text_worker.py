@@ -9,6 +9,8 @@ from pathlib import Path
 
 MEMORY_LIMIT_BYTES = 384 * 1024 * 1024
 CPU_LIMIT_SECONDS = 12
+MAX_DECOMPRESSED_STREAM_BYTES = 8 * 1024 * 1024
+MAX_DECOMPRESSION_RECOVERY_INPUT_BYTES = 1024 * 1024
 MAX_PAGES = 500
 MAX_TEXT_CHARS = 1_000_000
 
@@ -43,7 +45,14 @@ def main():
         return 2
 
     try:
-        from pypdf import PdfReader
+        from pypdf import PdfReader, filters
+        # pypdf's default FlateDecode output ceiling (75 MB) is too large for
+        # this one-shot worker's memory budget. Set the legacy configuration
+        # before constructing PdfReader; pypdf applies it to its per-context
+        # Configuration during reader initialization. The dependency is
+        # constrained to pypdf < 7, where these compatibility names exist.
+        filters.ZLIB_MAX_OUTPUT_LENGTH = MAX_DECOMPRESSED_STREAM_BYTES
+        filters.ZLIB_MAX_RECOVERY_INPUT_LENGTH = MAX_DECOMPRESSION_RECOVERY_INPUT_BYTES
         sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
         from secondbrain_core.modules.pdf_text_extraction import extract_pdf_text_bounded
 

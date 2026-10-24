@@ -13,6 +13,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from secondbrain_core.modules.capture import CaptureService
 from secondbrain_core.modules.hermes_api import HermesAPI
+from secondbrain_core.modules.pdf_text_worker import MAX_DECOMPRESSED_STREAM_BYTES
 from secondbrain_core.modules.multimodal_capture import (
     MAX_IMAGE_PIXELS, PDF_OCR_TARGET_DPI, MultimodalCaptureProcessors, _pdf_page_dpi,
 )
@@ -174,27 +175,32 @@ class MultimodalCaptureTests(unittest.TestCase):
         compressor = zlib.compressobj(level=1)
         compressed_parts = []
         block = b" " * (4 * 1024 * 1024)
-        for _ in range(160):
+        for _ in range(4):
             compressed_parts.append(compressor.compress(block))
         compressed_parts.append(compressor.flush())
         stream = b"".join(compressed_parts)
+        font = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
         objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
                    b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-                   b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
+                   b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                   b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
                    b"<< /Length " + str(len(stream)).encode() +
-                   b" /Filter /FlateDecode >>\nstream\n" + stream + b"\nendstream"]
+                   b" /Filter /FlateDecode >>\nstream\n"
+                   + stream + b"\nendstream",
+                   font]
         pdf = bytearray(b"%PDF-1.4\n")
         offsets = [0]
         for index, obj in enumerate(objects, 1):
             offsets.append(len(pdf))
             pdf.extend(f"{index} 0 obj\n".encode() + obj + b"\nendobj\n")
         xref = len(pdf)
-        pdf.extend(b"xref\n0 5\n0000000000 65535 f \n")
+        pdf.extend(b"xref\n0 6\n0000000000 65535 f \n")
         for offset in offsets[1:]:
             pdf.extend(f"{offset:010d} 00000 n \n".encode())
-        pdf.extend(f"trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
+        pdf.extend(f"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
         raw = bytes(pdf)
         self.assertLess(len(raw), 5 * 1024 * 1024)
+        self.assertGreater(16 * 1024 * 1024, MAX_DECOMPRESSED_STREAM_BYTES)
 
         service = CaptureService(self.raw, self.review, self.state, ProcessorStub())
         item = service.accept_file("synthetic-expansion.pdf", raw)
