@@ -41,10 +41,14 @@ class Response:
 
 def main():
     os.environ["SB_WEIXIN_CORE_INBOX_URL"] = "http://synthetic-core.invalid/api/internal/v1/channel-events"
-    os.environ["SB_WEIXIN_CORE_INBOX_HMAC_KEY"] = KEY.decode()
     with tempfile.TemporaryDirectory(prefix="weixin-gateway-smoke-") as home:
         os.environ["HERMES_HOME"] = home
         Path(home).mkdir(exist_ok=True)
+        key_file = Path(home) / "weixin-hmac-key"
+        key_file.write_bytes(KEY + b"\n")
+        key_file.chmod(0o600)
+        os.environ.pop("SB_WEIXIN_CORE_INBOX_HMAC_KEY", None)
+        os.environ["SB_WEIXIN_CORE_INBOX_HMAC_KEY_FILE"] = str(key_file)
 
         from gateway.config import GatewayConfig, Platform, PlatformConfig
         from gateway.platforms.event import MessageEvent
@@ -119,6 +123,16 @@ def main():
         assert isinstance(denied, str) and "保存失败" in denied, denied
         assert "capture-denied" not in saved
         assert runner._handle_message_with_agent.await_count == 1
+
+        os.environ["SB_WEIXIN_CORE_INBOX_HMAC_KEY"] = KEY.decode()
+        ambiguous = send("收录：配置歧义", "capture-ambiguous")
+        assert isinstance(ambiguous, str) and "保存失败" in ambiguous, ambiguous
+        assert "capture-ambiguous" not in saved
+        os.environ.pop("SB_WEIXIN_CORE_INBOX_HMAC_KEY", None)
+        key_file.unlink()
+        missing = send("收录：凭据缺失", "capture-missing")
+        assert isinstance(missing, str) and "保存失败" in missing, missing
+        assert "capture-missing" not in saved
 
     print("WEIXIN_GATEWAY_SYNTHETIC_PASS")
 
