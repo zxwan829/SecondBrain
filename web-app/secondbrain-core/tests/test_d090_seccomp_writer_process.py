@@ -68,16 +68,6 @@ def test_seccomp_allowlist_covers_exact_writer_publish_runtime():
             timeout=12,
             check=False,
         )
-        assert process.returncode == 0, (
-            f"exact Writer seccomp helper failed rc={process.returncode}\n"
-            f"stdout:\n{process.stdout}\nstderr:\n{process.stderr}"
-        )
-        assert "SECCOMP_READY uid=31003 gid=31103" in process.stdout
-        assert "PASS exact_writer_publish=1" in process.stdout
-        assert sentinel.read_text(encoding="utf-8") == "synthetic protected sentinel"
-        assert (target_root / "approved.md").read_bytes() == b"# synthetic approved bytes\n"
-        assert sorted(path.name for path in target_root.iterdir()) == ["approved.md"]
-
         trace_lines = trace_path.read_text(encoding="utf-8").splitlines()
         marker_index = next(i for i, line in enumerate(trace_lines) if "SECCOMP_READY" in line)
         observed = sorted({
@@ -85,6 +75,18 @@ def test_seccomp_allowlist_covers_exact_writer_publish_runtime():
             for line in trace_lines[marker_index:]
             if (match := re.search(r"\b([a-zA-Z0-9_]+)\(", line))
         })
+        print("SECCOMP_RUNTIME_SYSCALLS_OBSERVED " + ",".join(observed))
+        assert process.returncode == 0, (
+            f"exact Writer seccomp helper failed rc={process.returncode}\n"
+            f"stdout:\n{process.stdout}\nstderr:\n{process.stderr}\n"
+            f"post-filter syscalls: {observed}"
+        )
+        assert "SECCOMP_READY uid=31003 gid=31103" in process.stdout
+        assert "PASS exact_writer_publish=1" in process.stdout
+        assert sentinel.read_text(encoding="utf-8") == "synthetic protected sentinel"
+        assert (target_root / "approved.md").read_bytes() == b"# synthetic approved bytes\n"
+        assert sorted(path.name for path in target_root.iterdir()) == ["approved.md"]
+
         assert observed, "no post-seccomp runtime syscall trace was captured"
         assert {"openat", "write", "fsync", "linkat", "close"} <= set(observed), (
             f"expected actual Writer publish syscalls missing: {observed}"

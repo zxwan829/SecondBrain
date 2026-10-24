@@ -149,7 +149,7 @@ def main():
         raise AssertionError(f"Writer FD allowlist mismatch: {extra_fds}, expected {[writer.root_fd]}")
 
     install_minimal_seccomp()
-    print(f"SECCOMP_READY uid={os.geteuid()} gid={os.getegid()} landlock_abi={abi} fd_allowlist=1", flush=True)
+    print(f"SECCOMP_READY uid={WRITER_UID} gid={WRITER_GID} landlock_abi={abi} fd_allowlist=1", flush=True)
 
     receipt = writer.publish(signed, CONTENT)
     if receipt.get("status") != "published" or receipt.get("operation_id") != grant["operation_id"]:
