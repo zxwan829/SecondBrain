@@ -1,12 +1,12 @@
 # Progress Log
 
-## 2026-10-24 — P4-1/P4-3 合成收口与下一项 Brief 执行
+## 2026-10-24 — P4-1/P4-3 合成收口与 Journal 队列审计
 
 - **main：** 当前 `4d4577eb43a9e66e607e416bed75600e814cfd0a`，正常合入 #210、#230、#231。无生产部署、真实个人文件、真实 Vault/NAS、模型费用或 Writer/Promote 操作。
 - **P4-1 多格式 Capture：** #210 HEAD `d0dee983295efef44e1f2ad0ea45c72cfb6591ed` 通过独立复审和 Linux D077 run [#40055008815](https://github.com/zxwan829/SecondBrain/actions/runs/40055008815)：Ubuntu 24.04/Python 3.12/pypdf 6.21.2，Memory preflight 14 passed，Core 615 passed/51 subtests，compileall/diff-check PASS。#231 test-only exact HEAD `f139fee0ba97f1097dd7d9d30fd3d6c0d3cfb5df` 独立复审 PASS 后合并 `4d4577eb`；聚焦测试 35 passed/4 subtests，补成功 `.txt`/`.md` 上传及完整 `capture_context` Raw 保留、Review 内容和来源/context 元数据。现有合成 P4-1 缺口审计未发现额外可安全复验项；真实文件质量仍 NOT RUN。
 - **P4-3 Notes：** #230 exact HEAD `11581b7d8bde64c3968c8fa2be7e297d168f7240` 独立复审 PASS_WITH_LIMITS 后以 `ee4eadb09bac7053f24e00f2cdee98ec4099b062` 合入。Linux run [#40055285712](https://github.com/zxwan829/SecondBrain/actions/runs/40055285712) exact SHA success：Web 483 passed，typecheck/build、trace sanitizer、隔离 Core+Chromium journey、844×390 short-landscape modal/control bounds 通过。仅为合成视口验收；真机 picker/touch/IME、真实 Notes/Vault 和 Mac↔NAS Obsidian sync 未测。
 - **P4-5 Trash：** #216 exact HEAD `c0f6a6c0e8e8defd416f6191a763c05628fd5345` 的 Linux D077 run [#40055253536](https://github.com/zxwan829/SecondBrain/actions/runs/40055253536) success：Memory 14 passed，Core 625 passed/51 subtests；只验证临时合成路径。仍因 C2 物理 root 策略和登录 owner session 默认 `notes.delete/restore` 授权语义未冻结而阻止合入/UI；没有访问真实 Vault/NAS。
-- **P3-4/P3-5 审计与 NEXT：** P3-4 `approved_import` 已在 main 由 #225 实现，独立精确-main 定向组合 36 passed；不另造实现。P3-5 `/api/activity` 已有 Journal/Task/Project/Brief/Memory/Capture 来源；Review/Promote/Agent/Skill 需先冻结 DTO 与权限预检，Hermes session 读取不作为当前默认实现。下一项为用户已授权的 #138 Journal GET 合成 loopback 契约刻画，仅测试、不改业务行为。完整 V1、P5 生产安全与 P6 用户验收仍 NOT DONE。
+- **P3-4/P3-5 审计与 NEXT：** P3-4 `approved_import` 已由 #207 实现；#225 仅修正一个 stale 501 测试断言。独立精确-main 定向组合 36 passed；不另造实现。P3-5 `/api/activity` 已有 Journal/Task/Project/Brief/Memory/Capture 来源；Review/Promote/Agent/Skill 需先冻结 DTO 与权限预检，Hermes session 读取不作为当前默认实现。下一项为用户已授权的 #138 Journal GET 合成 loopback 契约刻画，仅测试、不改业务行为。完整 V1、P5 生产安全与 P6 用户验收仍 NOT DONE。
 
 ## 2026-10-24 — 统一主 Agent 集成复核与 P4 收口更新
 
