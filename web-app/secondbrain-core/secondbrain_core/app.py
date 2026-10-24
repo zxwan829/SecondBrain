@@ -10,11 +10,13 @@ from starlette.staticfiles import StaticFiles
 from .modules.app_auth import AppSessionAuth
 from .modules.auto_organize import OrganizerControlStore, create_auto_organize_router
 from .modules.capture import CaptureService, create_capture_router, create_inbox_entry_router
+from .modules.capture_suggestion_binding import TrustedCaptureSuggestionBindingAuthority
 from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.personal_memory import PersonalMemoryStore, create_personal_memory_router
 from .modules.personal_learning import PersonalLearningPipeline
 from .modules.chat_activity import ChatActivityStore, create_chat_activity_router
+from .modules.chat_knowledge import ChatKnowledgeCitationStore
 from .modules.journal import JournalStore, create_journal_router
 from .modules.journal_source_options import (
     JournalSourceOptionsService,
@@ -27,17 +29,21 @@ from .modules.projects_source_read import ProjectsSourceReadStore
 from .modules.daily_brief_store import DailyBriefRecordReadStore
 from .modules.daily_brief_import import DailyBriefAuditStore, DailyBriefImportStore
 from .modules.calendar_read import create_calendar_read_router
+from .modules.planning import PlanningCandidateService, PlanningCandidateStore, create_planning_router
 from .modules.notes import configured_notes_store, create_notes_router
 from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
 from .modules.vocabulary import VocabularyStore, create_vocabulary_router
 from .modules.inbox_proposals import InboxProposalStore, InboxProposalSources, create_inbox_proposal_router
 from .modules.organizer_engine import OrganizerRunner
+from .modules.chat_cost_gate import ChatCostGate
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
 from .modules.review_promote.core_auth import CorePromoteAuth
 from .modules.review_promote.provenance import PromoteProvenanceVerifier
 from .modules.review_promote.subprocess_worker_client import SubprocessPromoteWorker
 from .modules.web_app import create_web_app_router
+from .modules.context_preview import create_context_preview_router
+from .modules.companion_suggestions import CompanionSuggestionStore, create_companion_suggestions_router
 
 
 def create_app():
@@ -103,6 +109,7 @@ def create_app():
     organizer = OrganizerRunner(approval_root, review_root, hermes,
                                 model=organizer_controls.load_model(),
                                 scheduler_enabled=organizer_options["scheduler_enabled"])
+    chat_cost_gate = ChatCostGate.from_environment(organizer.state)
     capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root,
                              processors=MultimodalCaptureProcessors(hermes))
     notes_store = configured_notes_store(
@@ -131,24 +138,61 @@ def create_app():
             learning = PersonalLearningPipeline(memory_store)
 
     chat_activity_store = ChatActivityStore(Path(approval_root) / "chat-activity")
+    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,
+                                           operations_root=promote_operations_path)
+    knowledge_read_store = KnowledgeReadStore(knowledge_root, provenance_verifier=provenance)
+    chat_knowledge_citation_store = ChatKnowledgeCitationStore(
+        Path(approval_root) / "chat-knowledge-citations", knowledge_read_store)
     journal_root = os.environ.get("SB_JOURNAL_ROOT", "").strip()
     journal_store = JournalStore(journal_root) if journal_root else None
     task_root = os.environ.get("SB_TASK_ROOT", "").strip()
     task_store = TaskStore(task_root) if task_root else None
     projects_root = os.environ.get("SB_PROJECTS_INDEX_ROOT", "").strip()
     projects_store = ProjectsSourceReadStore(projects_root or None)
+    companion_projects_store = ProjectsSourceReadStore(
+        projects_root or None, max_entries=50, max_file_bytes=64 * 1024,
+        max_total_bytes=2 * 1024 * 1024,
+    )
+    companion_store = CompanionSuggestionStore(Path(approval_root) / "companion-suggestions")
     daily_brief_root = os.environ.get("SB_DAILY_BRIEF_STORE_ROOT", "").strip()
     daily_brief_store = DailyBriefRecordReadStore(daily_brief_root or None)
     daily_brief_import_store = DailyBriefImportStore(daily_brief_root or None)
     daily_brief_audit_store = DailyBriefAuditStore(os.path.join(approval_root, "daily-brief-audit.jsonl"))
+    planning_candidate_store = PlanningCandidateStore(approval_root)
+    planning_candidate_service = PlanningCandidateService(
+        auth, hermes, task_store, projects_store, journal_store, planning_candidate_store,
+    )
 
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
+    app.state.app_auth = auth
+    app.state.capture_service = capture
+    app.state.personal_memory_store = memory_store
+    app.state.knowledge_read_store = knowledge_read_store
+    app.state.task_store = task_store
+    app.state.projects_source_store = projects_store
+    app.state.companion_suggestion_store = companion_store
+    app.state.daily_brief_audit_store = daily_brief_audit_store
+    app.state.chat_knowledge_citation_store = chat_knowledge_citation_store
+    app.state.planning_candidate_store = planning_candidate_store
+    app.state.planning_candidate_service = planning_candidate_service
+    # No trusted Hermes source adapter or Core consent ledger is configured.
+    # Keep the internal candidate fail-closed and expose no HTTP route.
+    app.state.capture_suggestion_binding_authority = TrustedCaptureSuggestionBindingAuthority()
     journal_source_options = JournalSourceOptionsService(journal_store, auth)
     app.state.journal_source_options_service = journal_source_options
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
-    app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root,
-                                             organizer, personal_learning=learning))
+    app.include_router(create_web_app_router(
+        auth, hermes, service, review_root, knowledge_root, organizer,
+        personal_learning=learning, knowledge_store=knowledge_read_store,
+        citation_store=chat_knowledge_citation_store, chat_cost_gate=chat_cost_gate,
+    ))
+    app.include_router(create_context_preview_router(
+        auth, hermes, memory_store, knowledge_read_store,
+    ))
+    app.include_router(create_companion_suggestions_router(
+        auth, companion_store, task_store, companion_projects_store,
+    ))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
     app.include_router(create_inbox_entry_router(
@@ -162,6 +206,8 @@ def create_app():
     app.include_router(create_task_router(auth, task_store, hermes, chat_activity_store))
     app.include_router(create_projects_activity_router(
         auth, journal_store, task_store, projects_store=projects_store, notes_store=notes_store,
+        daily_brief_audit_store=daily_brief_audit_store, memory_store=memory_store,
+        capture_service=capture,
     ))
     app.include_router(create_daily_brief_agent_health_router(
         auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,
@@ -170,11 +216,10 @@ def create_app():
     ))
     app.include_router(create_journal_source_options_router(journal_source_options))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
+    app.include_router(create_planning_router(planning_candidate_service))
     app.include_router(create_notes_router(auth, notes_store))
-    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,
-                                           operations_root=promote_operations_path)
     app.include_router(create_knowledge_read_router(
-        auth, KnowledgeReadStore(knowledge_root, provenance_verifier=provenance)))
+        auth, knowledge_read_store))
     app.include_router(create_vocabulary_router(auth, vocabulary_store))
     app.include_router(create_inbox_proposal_router(
         auth, inbox_proposals, inbox_proposal_sources, vocabulary_store,
@@ -194,10 +239,18 @@ def create_app():
     @app.middleware("http")
     async def security_headers(request, call_next):
         response = await call_next(request)
-        if (request.url.path in {
+        # Core API payloads are owner-scoped or authentication/authorization
+        # decisions. Default them to non-cacheable, including error responses
+        # returned before route handlers can attach response headers. Existing
+        # route-specific directives (for example SSE no-transform) are kept.
+        if request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "private, no-store")
+        if (request.url.path.startswith("/api/daily-brief") or request.url.path in {
                 "/api/promote/auth/unlock", "/api/promote/auth/lock",
                 "/api/promote/review/preview", "/api/promote/review/confirm",
         } or request.url.path.startswith("/api/promote/operations/")):
+            response.headers["Cache-Control"] = "private, no-store"
+        if request.url.path.endswith("/knowledge-citations"):
             response.headers["Cache-Control"] = "private, no-store"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")

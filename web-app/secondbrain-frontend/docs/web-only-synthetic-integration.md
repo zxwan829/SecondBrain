@@ -64,3 +64,25 @@ The App-level test reproduced an unintended `GET /api/home` at `/review` while l
 - The synthetic Promote success fixture proves frontend request/response handling only. It is not evidence of Promote being enabled, a write occurring, or Core output correctness.
 - No real filesystem Promote output hash, service-side idempotency, cross-process claim, Core restart recovery, actual Hermes adapter, UID/ACL/mount, or B3 readiness was exercised here.
 - Full integration and production readiness remain unclaimed. A ChatGPT review is required before merge; no merge, deployment, NAS access, or real data access is part of this candidate.
+
+## Main-base Chat Inbox receipt deep link (2026-10-21)
+
+On current main `acae01a9ab0394724366314040eb8278d4ad30d1`, PR #130 is already merged and Chat sends an explicit `journal_intent` to `POST /api/inbox/entries`, verifies the opaque receipt with `GET /api/inbox/entries/{inbox_id}`, then links to `/inbox#capture-{id}`. Before this slice, that hash opened the Inbox scope chooser, which did not load the linked entry or expose its current Core status.
+
+The Web route now recognizes only the exact 32-character opaque hash and performs only the matching status GET. It renders no original or Raw content. The response parser binds `inbox_id`, `source_ref.capture_id`, intent, event ID, timestamps, consent evidence, known status, and the optional Review path/SHA pair. An unverified or malformed response fails closed and does not expose a source link. HTTP 401/403/404/5xx and network failure use fixed safe messages and allow a read-only retry.
+
+If Core returns both its bounded Review-root-relative path and a valid SHA-256, the entry screen offers that exact source. The Review route carries the captured source SHA; Web compares it to the current Review list version and then checks the detail response path/SHA against that list version before rendering. A changed list version or detail response with a different hash is not opened. The Review page still owns its existing explicit preview, unlock, confirmation, operation-status and Knowledge-search interactions; this slice introduces no write API and does not enable Promote.
+
+Current synthetic regression commands:
+
+```sh
+npm test -- --run src/inbox-entry.test.ts src/web-synthetic-integration.test.tsx src/chat-inbox-flow.test.tsx src/ReviewPage.promote.test.tsx
+npm test
+npm run typecheck
+npm run build
+git diff --check
+```
+
+The new route and source-drift tests use mocked HTTP in Vitest. After the initial PR draft, a separate synthetic localhost Core+Vite proxy check was executed and recorded in Issue #96 comment #6307519013: Core `create_app()` ran under Uvicorn on `127.0.0.1:8000`; Vite served the frontend and proxied authenticated Inbox POST/GET requests. Shell/module, login/session and exact POST→GET returned HTTP 200/202/200 as expected; all data stayed under a fresh temporary root and Promote remained OFF. This is transport/schema evidence, not browser UI execution.
+
+For this 2026-10-21 slice the final status is `CORE_VITE_HTTP=PASS`, `UI_BROWSER=NOT RUN / BLOCKED_ENV`, `UI_CLICK=NOT RUN`, `THREE_VIEWPORT=NOT RUN`, and production Hermes S1/S2/S3 `NOT RUN`. No browser was launched; the existing Edge/Chromium stop gate remains in effect. The localhost check does not establish production provenance, consent ledger, admission, Promote, or user acceptance.

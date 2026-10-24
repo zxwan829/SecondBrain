@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchHome, type Home } from './api/home';
 import { adaptHome, type DataKind, type ListItem } from './api/home-adapter';
-import { DEMO_KPI_DELTAS, DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
+import { DEMO_SOURCE_SPLIT, DEMO_WEATHER } from './demo-data';
 import { parseReviewDocument, ReviewMarkdown } from './ReviewMarkdown';
 import aiCubeUrl from './assets/ai-cube-user.png';
 import hermesOrbUrl from './assets/hermes-planet-user.png';
@@ -22,9 +22,22 @@ import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLa
 import { isExplicitJournalIntent } from './journal-intent';
 import { parseExplicitTaskCommand } from './task-intent';
 import { activityTimeLabel, mergeChatTimeline, type ChatActivity, type ChatHistoryMessage } from './chat-activity';
+import { citationErrorBundle, parseKnowledgeCitationBundle, readCitationRunLocators, rememberCitationRun,
+  type CitationRunLocator, type KnowledgeCitationBundle } from './chat-knowledge-citations';
 import { V1ReadOnlyPage } from './V1ReadOnlyPages';
 import { V1BriefHealthPage } from './V1BriefHealthPages';
 import { CalendarPage } from './CalendarPage';
+import { journalInboxAttemptKey, journalInboxFailureLabel, journalInboxReceiptKey,
+  makeJournalInboxAttempt, parseJournalInboxAttempt, parseJournalInboxGet,
+  parseJournalInboxPostReceipt, parseJournalInboxReceipt,
+  type JournalInboxAttempt, type JournalInboxReceipt } from './chat-inbox';
+import { inboxEntryErrorLabel, inboxEntryStatusLabel, parseVerifiedInboxEntry } from './inbox-entry';
+import { ChatKnowledgeCitations } from './ChatKnowledgeCitations';
+import { ChatContextPreview, ChatNaturalCandidates } from './ChatContextPreview';
+import { ChatGroundingCandidates } from './ChatGroundingCandidates';
+import { fetchContextCandidates, fetchContextPreview, type ContextPreview } from './chat-context-preview';
+import { PersonalMemoryPage } from './PersonalMemoryPage';
+import { PlanningPanel } from './PlanningPanel';
 
 type Locale = 'zh-CN' | 'en';
 type Page = string;
@@ -60,6 +73,21 @@ type CaptureSummary = {
 };
 type InboxScope = 'capture' | 'drafts' | null;
 
+function organizerRunMessage(value: unknown, locale: Locale): string {
+  const en = locale === 'en';
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return en ? 'Organizer result could not be verified. Check its status before running again.' : '整理结果暂无法核验。请先查看 Organizer 状态，不要立即重复执行。';
+  }
+  const result = value as { status?: unknown; draft_count?: unknown };
+  if (result.status === 'no_new_messages') return en ? 'No new messages to organize.' : '没有新增对话，无需整理。';
+  if (result.status === 'already_running') return en ? 'An organization job is already running.' : '已有整理任务正在运行。';
+  if (result.status === 'no_candidates') return en ? 'Organization finished; no Review drafts were produced.' : '整理完成，没有可生成的 Review 草稿。';
+  if (result.status === 'completed' && Number.isInteger(result.draft_count) && (result.draft_count as number) >= 0) {
+    return en ? `Organization finished; ${result.draft_count} drafts added.` : `整理完成，新增 ${result.draft_count} 条 Review 草稿。`;
+  }
+  return en ? 'Organizer result could not be verified. Check its status before running again.' : '整理结果暂无法核验。请先查看 Organizer 状态，不要立即重复执行。';
+}
+
 function capturedAtMillis(value?: string | null): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
@@ -87,6 +115,11 @@ function capturedAtLabel(value: string | null | undefined, locale: Locale): stri
     }).format(new Date(time));
   }
   return new Date(time).toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
+}
+
+function inboxEntryIdFromHash(hash: string): string | null {
+  const match = /^#capture-([0-9a-f]{32})$/i.exec(hash);
+  return match?.[1].toLowerCase() ?? null;
 }
 
 function isVisionDescriptionOnly(item: CaptureItem) {
@@ -141,11 +174,11 @@ const messages = {
   'zh-CN': {
     brand: 'SecondBrain', workspace: '你的工作台', subtitle: '一眼掌握当前状态，专注今日最重要的事情',
     home: '首页', chat: '对话', today: '今日', calendar: '日历', inbox: '收件箱', review: '待审核', projects: '项目',
-    knowledge: '知识库', brief: '简报', agentHealth: 'Agent 状态', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', settings: '设置',
+    knowledge: '知识库', brief: '简报', agentHealth: 'Agent 状态', activity: '动态', journal: '日记', notes: '笔记', vocabulary: '标签与类型', memory: '个人记忆', settings: '设置',
     projectOverview: '项目概览', knowledgeOverview: '知识总览', agent: '智能助手', online: '在线',
     todayDescription: '专注当下，记录并推进你的重要事项',
     returnedItems: 'API 返回条目', agentSupport: 'SecondBrain V1', source: '数据来源',
-    emptyTitle: '暂无今日记录', emptyDescription: '你可以记录日程，想法或待办事项', create: '新建记录',
+    emptyTitle: '暂无今日记录', emptyDescription: '可以先添加待办，查看今天的日程。', create: '新建待办',
     empty: '暂无内容', notConnected: '功能即将上线', notConnectedTitle: '功能即将上线',
     notConnectedDescription: '接入后将为你提供每日重点和重要更新', waiting: '待我处理',
     recentKnowledge: '最近知识', quick: '快捷操作', quickDescription: '常用能力，一键直达',
@@ -154,6 +187,7 @@ const messages = {
     demoTrend: '趋势示意', demoSources: '来源占比示意', pending: '待审核', apiEntries: 'API 返回条目',
     unavailable: '尚未统计', noTodayData: '今日数据结构暂不可识别', technicalItems: 'Home API 当前返回的是项目目录文件，尚非业务项目列表。',
     viewAll: '查看全部', viewCalendar: '查看完整日历', reviewStatus: '待审核', projectType: '项目条目', knowledgeType: '知识条目',
+    openProjects: '打开项目', openKnowledge: '打开知识库', openReview: '打开待审核', openBrief: '打开每日简报', openActivity: '打开动态', openAgentHealth: '查看 Agent 状态', retryHome: '重试加载',
     statusUnavailable: '状态未提供', demoDelta: '趋势示意',
     briefDescription: '每日为你生成关键信息摘要', activityDescription: '聚合与你协作的动态',
     chatDescription: '与 SecondBrain 对话', reviewDescription: '查看待处理内容',
@@ -173,11 +207,11 @@ const messages = {
   en: {
     brand: 'SecondBrain', workspace: 'Your workspace', subtitle: 'See your current state and focus on what matters today',
     home: 'Home', chat: 'Chat', today: 'Today', calendar: 'Calendar', inbox: 'Inbox', review: 'Review', projects: 'Projects',
-    knowledge: 'Knowledge', brief: 'Brief', agentHealth: 'Agent Health', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', settings: 'Settings',
+    knowledge: 'Knowledge', brief: 'Brief', agentHealth: 'Agent Health', activity: 'Activity', journal: 'Journal', notes: 'Notes', vocabulary: 'Tags & Types', memory: 'Personal Memory', settings: 'Settings',
     projectOverview: 'Project overview', knowledgeOverview: 'Knowledge overview', agent: 'AI assistant', online: 'Online',
     todayDescription: 'Stay present, capture ideas, and move important things forward.',
     returnedItems: 'API entries', agentSupport: 'SecondBrain V1', source: 'Data source',
-    emptyTitle: 'Nothing planned today', emptyDescription: 'Capture a schedule, idea, or task when you are ready', create: 'New entry',
+    emptyTitle: 'Nothing planned today', emptyDescription: 'Add a task or check today’s calendar.', create: 'New task',
     empty: 'Nothing here yet', notConnected: 'Coming soon', notConnectedTitle: 'Coming soon',
     notConnectedDescription: 'Daily highlights and important updates will appear here once connected', waiting: 'Waiting for me',
     recentKnowledge: 'Recent knowledge', quick: 'Quick actions', quickDescription: 'Your most-used destinations',
@@ -187,6 +221,7 @@ const messages = {
     apiEntries: 'API returned entries', unavailable: 'Not available', noTodayData: 'Today data shape is not recognized',
     technicalItems: 'The Home API currently returns project-directory files, not business project records.',
     viewAll: 'View all', viewCalendar: 'View full calendar', reviewStatus: 'Pending review', projectType: 'Project entry', knowledgeType: 'Knowledge entry',
+    openProjects: 'Open Projects', openKnowledge: 'Open Knowledge', openReview: 'Open Review', openBrief: 'Open Daily Brief', openActivity: 'Open Activity', openAgentHealth: 'View Agent Health', retryHome: 'Retry loading',
     statusUnavailable: 'Status unavailable', demoDelta: 'illustrative change',
     briefDescription: 'A daily summary of the information that matters', activityDescription: 'A view of the work happening around you',
     chatDescription: 'Talk with SecondBrain', reviewDescription: 'Review items waiting for you',
@@ -220,6 +255,7 @@ const navItems = [
   { id: 'journal', key: 'journal', icon: 'journal', section: 'library', route: '/journal' },
   { id: 'notes', key: 'notes', icon: 'notes', section: 'library', route: '/notes' },
   { id: 'vocabulary', key: 'vocabulary', icon: 'check', section: 'library', route: '/vocabulary' },
+  { id: 'memory', key: 'memory', icon: 'brain', section: 'library', route: '/memory' },
   { id: 'settings', key: 'settings', icon: 'settings', section: 'bottom', route: '/settings' },
 ] as const;
 
@@ -297,6 +333,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const [locale, setLocale] = useState<Locale>(() => localStorage.getItem('secondbrain.locale') === 'en' ? 'en' : 'zh-CN');
   const [home, setHome] = useState<Home | null>(null);
   const [error, setError] = useState(false);
+  const [homeRetryRevision, setHomeRetryRevision] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [page, setPage] = useState<Page>(() => pageFromPath(location.pathname, enableNotes));
   const pageRef = useRef(page);
@@ -346,10 +383,13 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     if (homeRequestStarted.current && previousPage !== 'knowledge') return;
     let mounted = true;
     let completed = false;
+    const controller = new AbortController();
     homeRequestStarted.current = true;
-    fetchHome().then((data) => { completed = true; if (mounted) setHome(data); }).catch(() => { completed = true; if (mounted) setError(true); });
-    return () => { mounted = false; if (!completed) homeRequestStarted.current = false; };
-  }, [isKnowledgePage, isHomePage, isSingleSourceInboxPath, isInboxRoute]);
+    setHome(null);
+    setError(false);
+    fetchHome(controller.signal).then((data) => { completed = true; if (mounted) setHome(data); }).catch(() => { completed = true; if (mounted && !controller.signal.aborted) setError(true); });
+    return () => { mounted = false; controller.abort(); if (!completed) homeRequestStarted.current = false; };
+  }, [homeRetryRevision, isKnowledgePage, isHomePage, isSingleSourceInboxPath, isInboxRoute]);
   const registerNotesNavigationGuard = useCallback((guard: (() => boolean) | null) => {
     notesNavigationGuard.current = guard;
   }, []);
@@ -503,35 +543,37 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           </div>
           <div className="header-actions">
             <ClockWeather locale={locale} />
-            <span className={`header-agent ${view.agentStatus ? 'is-real' : 'is-unavailable'}`}><i />{view.agentStatus ? localizeStatus(view.agentStatus, locale) : t.unavailable}</span>
+            <span className={`header-agent ${view.agentStatus === 'online' ? 'is-real' : 'is-unavailable'}`}><i />{view.agentStatus === 'online' ? localizeStatus(view.agentStatus, locale) : view.agentStatus === 'not_configured' ? (locale === 'en' ? 'Not configured' : '未配置') : t.unavailable}</span>
             <button type="button" className="locale-button desktop-locale" onClick={changeLocale}>{t.localeLabel}<Icon name="chevron" size={13} /></button>
             <button type="button" className="settings-button" onClick={onLogout} title={t.coreLock} aria-label={t.coreLock}><Icon name="settings" size={17} /></button>
           </div>
         </header>
 
-        {error && <div className="error-state" role="alert">{locale === 'en' ? 'Home data could not be loaded. Try reloading the page.' : '暂时无法加载 Home 数据，请刷新页面重试。'}</div>}
+        {error && <div className="error-state" role="alert">{locale === 'en' ? 'Home data could not be loaded.' : '暂时无法加载 Home 数据。'} <button type="button" onClick={() => { homeRequestStarted.current = false; setHome(null); setError(false); setHomeRetryRevision((value) => value + 1); }}>{t.retryHome}</button></div>}
 
         <section className="overview-visual" aria-label={t.projectOverview}>
-          <KpiCard icon="folder" tone="blue" title={t.projectOverview} value={view.projectSource === 'UNAVAILABLE' ? '—' : String(view.projectItems.length)} detail={view.projectSource === 'REAL' ? t.returnedItems : t.unavailable} source={view.projectSource} chart="bars" locale={locale} demoDelta={view.source === 'REAL' ? DEMO_KPI_DELTAS.projects : undefined} />
-          <KpiCard icon="book" tone="violet" title={t.knowledgeOverview} value={view.source === 'UNAVAILABLE' ? t.unavailable : String(view.knowledgeItems.length)} detail={t.returnedItems} source={view.source} chart="line" locale={locale} demoDelta={view.source === 'REAL' ? DEMO_KPI_DELTAS.knowledge : undefined} />
-          <KpiCard icon="brain" tone="teal" title={t.agent} value={view.agentStatus ? localizeStatus(view.agentStatus, locale) : '—'} detail={view.agentStatus ? 'Hermes · REAL' : t.unavailable} source={view.agentSource} chart="orb" locale={locale} />
+          <KpiCard icon="folder" tone="blue" title={t.projectOverview} value={view.projectSource === 'UNAVAILABLE' ? '—' : String(view.projectItems.length)} detail={view.projectSource === 'REAL' ? t.returnedItems : t.unavailable} source={view.projectSource} chart="bars" locale={locale} />
+          <KpiCard icon="book" tone="violet" title={t.knowledgeOverview} value={view.knowledgeSource === 'UNAVAILABLE' ? '—' : String(view.knowledgeItems.length)} detail={view.knowledgeSource === 'REAL' ? t.returnedItems : t.unavailable} source={view.knowledgeSource} chart="line" locale={locale} />
+          <KpiCard icon="brain" tone="teal" title={t.agent} value={view.agentStatus ? localizeStatus(view.agentStatus, locale) : '—'} detail={view.agentStatus === 'online' ? 'Hermes · REAL' : t.unavailable} source={view.agentSource} chart="orb" locale={locale} />
           <Donut locale={locale} />
         </section>
 
         <section className="primary-grid" aria-label={t.today}>
-          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} />
-          <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} />
+          <TodayCard state={view.today} locale={locale} onViewCalendar={() => navigate('calendar')} onCreateTask={() => {
+            pushAppPath('/today?create=1'); setPage('today'); setRouteRevision((value) => value + 1); setMenuOpen(false);
+          }} />
+          <ReviewCard title={t.waiting} items={view.review} pendingCount={view.pendingCount} source={view.reviewSource} locale={locale} onOpen={() => navigate('review')} />
         </section>
 
         <section className="secondary-grid" aria-label={t.projects}>
-          <ListCard id="projects" title={t.projects} items={view.projectItems} kind="project" source={view.projectSource} locale={locale} />
-          <ListCard id="knowledge" title={t.recentKnowledge} items={view.knowledgeItems} kind="knowledge" source={view.knowledgeSource} locale={locale} />
-          <AgentCard status={view.agentStatus} locale={locale} />
+          <ListCard id="projects" title={t.projects} items={view.projectItems} kind="project" source={view.projectSource} locale={locale} onOpen={() => navigate('projects')} openLabel={t.openProjects} />
+          <ListCard id="knowledge" title={t.recentKnowledge} items={view.knowledgeItems} kind="knowledge" source={view.knowledgeSource} locale={locale} onOpen={() => navigate('knowledge')} openLabel={t.openKnowledge} />
+          <AgentCard status={view.agentStatus} locale={locale} onOpen={() => navigate('agent-health')} />
         </section>
 
         <section className="info-grid">
-          <ConnectedPlaceholder id="brief" title={t.brief} description={t.briefDescription} locale={locale} icon="file" />
-          <ConnectedPlaceholder id="activity" title={t.activity} description={t.activityDescription} locale={locale} icon="activity" />
+          <HomeDestinationCard id="brief" title={t.brief} description={t.briefDescription} label={t.openBrief} icon="file" onOpen={() => navigate('brief')} />
+          <HomeDestinationCard id="activity" title={t.activity} description={t.activityDescription} label={t.openActivity} icon="activity" onOpen={() => navigate('activity')} />
         </section>
 
         <section className="quick-strip" aria-labelledby="quick-title">
@@ -540,21 +582,79 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
             <ActionCard icon="message" tone="action-blue" title={t.chat} description={t.chatDescription} onClick={() => navigate('chat')} />
             <ActionCard icon="check" tone="action-violet" title={t.review} description={t.reviewDescription} onClick={() => navigate('review')} />
             <ActionCard icon="capture" tone="action-teal" title={t.capture} description={t.captureDescription} onClick={() => navigate('chat')} />
-            <ActionCard icon="journal" tone="action-slate" title={t.newJournal} description={t.journalDescription} soon={t.soon} />
+            <ActionCard icon="journal" tone="action-slate" title={t.newJournal} description={t.journalDescription} onClick={() => navigate('journal')} />
           </div>
         </section>
 
-        </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
-          : page === 'inbox' ? <InboxScopePage locale={locale} scope={inboxScope} onScopeChange={setInboxScope}
+        </> : page === 'review' ? <ReviewPage key={routeRevision} locale={locale} initialReviewPath={new URLSearchParams(location.search).get('review_path')}
+          expectedReviewSha256={new URLSearchParams(location.search).get('source_sha256')} pushHistory={pushAppPath} onBack={() => navigate('home')} />
+          : page === 'inbox' ? inboxEntryIdFromHash(location.hash)
+            ? <InboxEntryStatusPage key={inboxEntryIdFromHash(location.hash)} locale={locale} inboxId={inboxEntryIdFromHash(location.hash)!}
+              onBack={() => { history.replaceState(history.state, '', '/inbox'); setInboxScope(null); setRouteRevision((value) => value + 1); }}
+              onReview={(path, sha256) => { const query = new URLSearchParams({ review_path: path, source_sha256: sha256 }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
+            : <InboxScopePage locale={locale} scope={inboxScope} onScopeChange={setInboxScope}
             onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }}
             onOpenDraft={(path) => { const query = new URLSearchParams({ collection: 'drafts', path }); pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1); }} />
           : page === 'chat' ? <ChatPage locale={locale} blankMode={location.pathname === '/chat/blank'} onGoInbox={() => navigate('inbox')}
             onGoJournal={() => navigate('journal')} onGoToday={() => navigate('today')} />
             : page === 'settings' ? <AutomationSettingsPage locale={locale} />
+            : page === 'memory' ? <PersonalMemoryPage key={routeRevision} locale={locale} />
             : <div className="chat-empty" role="status">{locale === 'en' ? 'This Personal OS module is not connected yet.' : '此 Personal OS 模块尚未接入。'}</div>}
       </section>
     </main>
   );
+}
+
+export function InboxEntryStatusPage({ locale, inboxId, onBack, onReview }: {
+  locale: Locale; inboxId: string; onBack: () => void; onReview: (path: string, sha256: string) => void;
+}) {
+  const en = locale === 'en';
+  const [entry, setEntry] = useState<ReturnType<typeof parseVerifiedInboxEntry>>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setLoading(true); setEntry(null); setError('');
+    void fetch(`/api/inbox/entries/${encodeURIComponent(inboxId)}`, { credentials: 'same-origin', signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw Object.assign(new Error('inbox_status_unavailable'), { status: response.status });
+        const payload = await response.json().catch(() => null);
+        const verified = parseVerifiedInboxEntry(payload, inboxId);
+        if (!verified) throw Object.assign(new Error('inbox_status_unverified'), { status: 0 });
+        if (active) setEntry(verified);
+      })
+      .catch((cause) => {
+        if (!active || controller.signal.aborted) return;
+        const status = typeof cause?.status === 'number' && cause.status > 0 ? cause.status : null;
+        setError(inboxEntryErrorLabel(status, en));
+      })
+      .finally(() => { if (active && !controller.signal.aborted) setLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [en, inboxId, revision]);
+
+  return <section className="capture-page" aria-labelledby="inbox-entry-title">
+    <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p>
+      <h1 id="inbox-entry-title">{en ? 'Inbox entry status' : 'Inbox 条目状态'}</h1>
+      <p className="workspace-subtitle">{en ? 'Only the linked entry status is requested. Original content is not loaded here.' : '仅查询此链接对应条目的状态；此页不会读取原文。'}</p></div>
+      <button type="button" className="capture-secondary" onClick={onBack}>{en ? 'Back to Inbox' : '返回收件箱'}</button></header>
+    {loading && <p role="status">{en ? 'Checking status for this exact Inbox ID…' : '正在核对该 Inbox ID 对应的状态…'}</p>}
+    {error && <div role="alert" className="capture-alert"><p>{error}</p>
+      <button type="button" onClick={() => setRevision((value) => value + 1)}>{en ? 'Retry status check' : '重试状态核验'}</button></div>}
+    {entry && <article className="inbox-item" aria-label={en ? 'Inbox status' : 'Inbox 状态'}>
+      <div className="inbox-item-main"><div><h2>{en ? 'Core Inbox status checked' : 'Core Inbox 状态已核对'}</h2>
+        <p>{en ? 'Intent' : '收录意图'}: {entry.intent} · {en ? 'Source' : '来源'}: {entry.sourceChannel}</p>
+        <p>{en ? 'Captured' : '收录时间'}: {capturedAtLabel(entry.capturedAt, locale)}</p></div>
+        <span className={`capture-status status-${entry.status}`}>{inboxEntryStatusLabel(entry.status, en)}</span></div>
+      <p role="status">{en ? 'This is an Inbox state only. It does not mean a Journal, Knowledge, or Project write has completed.' : '这只表示 Inbox 状态，不代表 Journal、Knowledge 或 Project 已完成写入。'}</p>
+      {entry.reviewPath && entry.reviewSha256
+        ? <button type="button" className="capture-primary" onClick={() => onReview(entry.reviewPath!, entry.reviewSha256!)}>{en ? 'Open Review source with matching version' : '打开版本匹配的 Review 来源'}</button>
+        : <p role="status">{en ? 'No version-matched Review source link is available.' : '当前没有提供版本匹配的 Review 来源链接。'}</p>}
+      <button type="button" className="capture-secondary" onClick={() => setRevision((value) => value + 1)}>{en ? 'Refresh status' : '刷新状态'}</button>
+    </article>}
+  </section>;
 }
 
 function InboxScopePage({ locale, scope, onScopeChange, onReview, onOpenDraft }: { locale: Locale; scope: InboxScope; onScopeChange: (scope: InboxScope) => void; onReview: (reviewPath: string) => void; onOpenDraft: (path: string) => void }) {
@@ -595,6 +695,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
   const detailRevision = useRef(0);
   const selectedCaptureId = useRef<string | null>(null);
   const summaryRevision = useRef(0);
+  const organizerStatusRevision = useRef(0);
   const organizerController = useRef<AbortController | null>(null);
 
   const loadSummary = useCallback(async (signal?: AbortSignal) => {
@@ -632,6 +733,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
       selectedCaptureId.current = null;
       detailController.current?.abort();
       organizerController.current?.abort();
+      organizerStatusRevision.current += 1;
       window.clearInterval(timer);
       window.removeEventListener('sb-inbox-refresh', refresh);
     };
@@ -640,15 +742,16 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
   const refreshOrganizerStatus = useCallback(async () => {
     const signal = organizerController.current?.signal;
     if (!signal || signal.aborted) return;
+    const revision = ++organizerStatusRevision.current;
     try {
       const response = await fetch('/api/automation/organize/status', { credentials: 'same-origin', signal });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const value = await response.json() as { blocked_reason?: unknown; execution_available?: unknown };
-      if (signal.aborted) return;
+      if (signal.aborted || revision !== organizerStatusRevision.current) return;
       setOrganizeReason(typeof value.blocked_reason === 'string' ? value.blocked_reason : '');
       setOrganizeAvailable(value.execution_available === true);
     } catch (cause) {
-      if (!signal.aborted) {
+      if (!signal.aborted && revision === organizerStatusRevision.current) {
         setOrganizeAvailable(false);
         setOrganizeReason(cause instanceof Error ? cause.message : (en ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
       }
@@ -682,9 +785,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
       const response = await fetch('/api/automation/organize/run', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error('organizer_run_failed');
-      const label = value.status === 'no_new_messages' ? (en ? 'No new messages to organize.' : '没有新增对话，无需整理。')
-        : value.status === 'already_running' ? (en ? 'An organization job is already running.' : '已有整理任务正在运行。')
-          : (en ? `Organization finished; ${Number(value.draft_count ?? 0)} drafts added.` : `整理完成，新增 ${Number(value.draft_count ?? 0)} 条 Review 草稿。`);
+      const label = organizerRunMessage(value, locale);
       setOrganizeMessage(label);
       window.dispatchEvent(new Event('sb-inbox-refresh'));
     } catch {
@@ -798,27 +899,39 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
   const [organizeBusy, setOrganizeBusy] = useState(false);
   const [organizeMessage, setOrganizeMessage] = useState('');
   const [anchorFeedback, setAnchorFeedback] = useState('');
+  const inboxLoadRevision = useRef(0);
   const load = async (showLoading = false) => {
+    const revision = ++inboxLoadRevision.current;
     if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/inbox', { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const value = await response.json();
+      if (revision !== inboxLoadRevision.current) return;
       setItems(sortByCapturedAt(Array.isArray(value.items) ? value.items : [], (item: CaptureItem) => item.capture_id));
-    } catch { setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
-    finally { setLoading(false); }
+    } catch { if (revision === inboxLoadRevision.current) setError(locale === 'en' ? 'Inbox could not be loaded.' : '收件箱暂时无法加载。'); }
+    finally { if (revision === inboxLoadRevision.current) setLoading(false); }
   };
   useEffect(() => {
     void load(true);
-    void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => response.json()).then((value) => {
+    void fetch('/api/automation/organize/status', { credentials: 'same-origin' }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }).then((value) => {
       if (value && typeof value.blocked_reason === 'string') setOrganizeReason(value.blocked_reason);
       setOrganizeAvailable(value?.execution_available === true);
-    }).catch(() => setOrganizeReason(locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+    }).catch((cause) => {
+      setOrganizeAvailable(false);
+      const status = cause instanceof Error ? /^HTTP (\d{3})$/.exec(cause.message)?.[1] : undefined;
+      setOrganizeReason(status
+        ? (locale === 'en' ? `Organizer status could not be verified (HTTP ${status}); action remains disabled.` : `自动整理状态无法验证（HTTP ${status}），操作保持禁用。`)
+        : (locale === 'en' ? 'The organization runner is unavailable.' : '自动整理执行器当前不可用。'));
+    });
     const refresh = () => void load();
     window.addEventListener('sb-inbox-refresh', refresh);
     const timer = window.setInterval(refresh, 5000);
-    return () => { window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
+    return () => { inboxLoadRevision.current += 1; window.removeEventListener('sb-inbox-refresh', refresh); window.clearInterval(timer); };
   }, []);
   useEffect(() => {
     const match = window.location.hash.match(/^#capture-([a-f\d]{32})$/i);
@@ -866,9 +979,7 @@ export function InboxPage({ locale, onReview, children }: { locale: Locale; onRe
       const response = await fetch('/api/automation/organize/run', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       const value = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error('organizer_run_failed');
-      const label = value.status === 'no_new_messages' ? (text ? 'No new messages to organize.' : '没有新增对话，无需整理。')
-        : value.status === 'already_running' ? (text ? 'An organization job is already running.' : '已有整理任务正在运行。')
-          : (text ? `Organization finished; ${Number(value.draft_count ?? 0)} drafts added.` : `整理完成，新增 ${Number(value.draft_count ?? 0)} 条 Review 草稿。`);
+      const label = organizerRunMessage(value, locale);
       setOrganizeMessage(label); window.dispatchEvent(new Event('sb-inbox-refresh'));
     } catch {
       setOrganizeMessage(text ? 'Organization could not be completed; check its status and try again.' : '整理未能完成，请查看运行状态后再试。');
@@ -932,7 +1043,7 @@ function captureStatus(status: string, en: boolean) {
   return captureStatusLabel(status, en ? 'en' : 'zh-CN');
 }
 
-export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHistory = (path: string) => history.pushState({}, '', path) }: { locale: Locale; onBack: () => void; initialReviewPath?: string | null; pushHistory?: (path: string) => void }) {
+export function ReviewPage({ locale, onBack, initialReviewPath = null, expectedReviewSha256 = null, pushHistory = (path: string) => history.pushState({}, '', path) }: { locale: Locale; onBack: () => void; initialReviewPath?: string | null; expectedReviewSha256?: string | null; pushHistory?: (path: string) => void }) {
   const t = messages[locale];
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
@@ -985,7 +1096,9 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
       setStatus(t.coreConnected.replace('{count}', String(nextItems.length)));
       if (requestedReviewPath) {
         const selected = nextItems.find((item) => item.review_path === requestedReviewPath);
-        if (selected && !controller.signal.aborted) await loadDetail(selected);
+        if (selected && expectedReviewSha256 && selected.review_sha256 !== expectedReviewSha256) {
+          setDetail(null); setStatus(locale === 'en' ? 'The linked Review source has changed; no source content was opened.' : '关联的 Review 来源版本已变化；未打开来源正文。');
+        } else if (selected && !controller.signal.aborted) await loadDetail(selected);
         else { setDetail(null); setStatus(locale === 'en' ? 'The requested Review item could not be found.' : '找不到指定的 Review 条目。'); }
       } else {
         setDetail(null);
@@ -1017,6 +1130,9 @@ export function ReviewPage({ locale, onBack, initialReviewPath = null, pushHisto
       const safePath = item.review_path.split('/').map(encodeURIComponent).join('/');
       const result = await request<ReviewDetail>(`/review/items/${safePath}`, { signal: controller.signal });
       if (controller.signal.aborted || sequence !== detailRequestSequence.current) return;
+      if (result.review_path !== item.review_path || result.review_sha256 !== item.review_sha256) {
+        throw Object.assign(new Error(locale === 'en' ? 'Review source changed while opening; no content was shown.' : '打开时 Review 来源版本发生变化；未展示来源正文。'), { status: 409 });
+      }
       setDetail({ ...result, captured_at: result.captured_at ?? item.captured_at ?? null });
     } catch (error) {
       if (controller.signal.aborted || sequence !== detailRequestSequence.current) return;
@@ -1182,6 +1298,15 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const [selected, setSelected] = useState(() => blankMode ? blankState.selectedSessionId : '');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activities, setActivities] = useState<ChatActivity[]>([]);
+  const [citationBundles, setCitationBundles] = useState<KnowledgeCitationBundle[]>([]);
+  const [citationHistoryLoading, setCitationHistoryLoading] = useState(false);
+  const [citationPersistenceIssue, setCitationPersistenceIssue] = useState(false);
+  const [contextPreview, setContextPreview] = useState<ContextPreview | null>(null);
+  const [contextPreviewLoading, setContextPreviewLoading] = useState(false);
+  const [contextPreviewError, setContextPreviewError] = useState('');
+  const [naturalContext, setNaturalContext] = useState<ContextPreview | null>(null);
+  const [naturalContextLoading, setNaturalContextLoading] = useState(false);
+  const [naturalContextError, setNaturalContextError] = useState('');
   const timeline = mergeChatTimeline(messages, activities);
   const [input, setInput] = useState('');
   const [progress, setProgress] = useState('');
@@ -1198,6 +1323,13 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const [captureFeedback, setCaptureFeedback] = useState('');
   const [captureSourceId, setCaptureSourceId] = useState('');
   const [captureBusy, setCaptureBusy] = useState(false);
+  const [journalInboxAttempt, setJournalInboxAttempt] = useState<JournalInboxAttempt | null>(null);
+  const [journalInboxReceipt, setJournalInboxReceipt] = useState<JournalInboxReceipt | null>(null);
+  const [journalInboxStatus, setJournalInboxStatus] = useState('');
+  const [journalInboxFeedback, setJournalInboxFeedback] = useState('');
+  const journalInboxAttemptsRef = useRef(new Map<string, JournalInboxAttempt>());
+  const journalInboxSubmittingRef = useRef(false);
+  const journalInboxSequenceRef = useRef(0);
   const [inputMode, setInputMode] = useState<'chat' | 'capture'>('chat');
   const [pendingAttachment, setPendingAttachment] = useState<File | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState('');
@@ -1208,8 +1340,28 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const selectedSessionRef = useRef(blankMode ? blankState.selectedSessionId : '');
   const selectionIntentRef = useRef(0);
   const contentLoadRef = useRef(0);
+  const citationHistoryAbortRef = useRef<AbortController | null>(null);
+  const contextPreviewAbortRef = useRef<AbortController | null>(null);
+  const contextPreviewSequenceRef = useRef(0);
+  const naturalContextAbortRef = useRef<AbortController | null>(null);
+  const naturalContextSequenceRef = useRef(0);
+  const citationFrameByRunRef = useRef(new Map<string, string>());
   const activityRetryRef = useRef<{ sessionId: string; text: string; key: string; kind: 'journal' | 'task' } | null>(null);
   const captureRequestSequence = useRef(0);
+
+  useEffect(() => () => {
+    citationHistoryAbortRef.current?.abort();
+    contextPreviewSequenceRef.current += 1;
+    contextPreviewAbortRef.current?.abort();
+    naturalContextSequenceRef.current += 1;
+    naturalContextAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    contextPreviewSequenceRef.current += 1;
+    contextPreviewAbortRef.current?.abort();
+    setContextPreview(null); setContextPreviewLoading(false); setContextPreviewError('');
+  }, [input]);
 
   useEffect(() => {
     if (!pendingAttachment?.type.startsWith('image/')) { setPendingPreview(''); return; }
@@ -1293,6 +1445,102 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     } catch { sessionStorage.removeItem(pendingActivityKey(sessionId)); }
   };
 
+  const resetJournalInboxView = () => {
+    journalInboxSequenceRef.current += 1;
+    setJournalInboxAttempt(null); setJournalInboxReceipt(null); setJournalInboxStatus(''); setJournalInboxFeedback('');
+  };
+
+  const verifyJournalInboxReceipt = async (receipt: JournalInboxReceipt, sequence: number) => {
+    try {
+      const response = await fetch(`/api/inbox/entries/${encodeURIComponent(receipt.inboxId)}`, { credentials: 'same-origin' });
+      const payload = await response.json().catch(() => ({})) as unknown;
+      if (!response.ok) {
+        if (selectedSessionRef.current === receipt.sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxStatus('');
+          setJournalInboxFeedback(en ? `Inbox returned HTTP ${response.status} for the read-only status check. The POST was accepted; no Journal entry was created. Retry status verification later.` : `Inbox 状态只读核验返回 HTTP ${response.status}。此前 POST 已受理，但没有创建 Journal 日记；可稍后重新核验。`);
+        }
+        return;
+      }
+      const status = parseJournalInboxGet(payload, receipt);
+      if (!status) {
+        if (selectedSessionRef.current === receipt.sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxStatus('');
+          setJournalInboxFeedback(en ? 'Core returned a different or incomplete Inbox entry. The Journal was not created.' : 'Core 返回了其他或不完整的 Inbox 记录；尚未创建日记。');
+        }
+        return;
+      }
+      if (selectedSessionRef.current !== receipt.sessionId || sequence !== journalInboxSequenceRef.current) return;
+      setJournalInboxReceipt(receipt); setJournalInboxStatus(status);
+      setJournalInboxFeedback(en ? 'Original text is in the pending Inbox. No Journal entry has been created.' : '原文已进入待处理 Inbox；尚未创建 Journal 日记。');
+      journalInboxAttemptsRef.current.delete(receipt.sessionId);
+      try { sessionStorage.removeItem(journalInboxAttemptKey(receipt.sessionId)); } catch { /* the exact receipt remains available */ }
+    } catch {
+      if (selectedSessionRef.current === receipt.sessionId && sequence === journalInboxSequenceRef.current) {
+        setJournalInboxStatus(''); setJournalInboxFeedback(en ? 'Inbox accepted the original text, but the read-only status check had no confirmed response. No Journal entry was created; retry status verification later.' : 'Inbox 已受理原文，但状态只读核验未收到确定响应。没有创建 Journal 日记；可稍后重新核验。');
+      }
+    }
+  };
+
+  const loadJournalInboxState = (sessionId: string) => {
+    let attempt: JournalInboxAttempt | null = null;
+    let receipt: JournalInboxReceipt | null = null;
+    try {
+      attempt = parseJournalInboxAttempt(sessionStorage.getItem(journalInboxAttemptKey(sessionId)), sessionId);
+      receipt = parseJournalInboxReceipt(sessionStorage.getItem(journalInboxReceiptKey(sessionId)), sessionId);
+      if (!attempt && sessionStorage.getItem(journalInboxAttemptKey(sessionId))) sessionStorage.removeItem(journalInboxAttemptKey(sessionId));
+      if (!receipt && sessionStorage.getItem(journalInboxReceiptKey(sessionId))) sessionStorage.removeItem(journalInboxReceiptKey(sessionId));
+    } catch { /* keep the UI fail-closed when tab storage is unavailable */ }
+    if (attempt) journalInboxAttemptsRef.current.set(sessionId, attempt);
+    else journalInboxAttemptsRef.current.delete(sessionId);
+    setJournalInboxAttempt(attempt); setJournalInboxReceipt(receipt); setJournalInboxStatus('');
+    setJournalInboxFeedback(attempt ? (en ? 'The prior result is not confirmed. The original text, event ID, time, and full request are retained for an exact retry.' : '上次结果尚未确认；原文、事件 ID、时间和完整请求均已保留，可原样重试。') : '');
+    if (attempt) setInput((current) => current || attempt!.body.original_text);
+    if (receipt) {
+      const sequence = ++journalInboxSequenceRef.current;
+      setJournalInboxFeedback(en ? 'Checking the exact Inbox entry; no Journal write will be made.' : '正在核对确切的 Inbox 记录；不会写入 Journal。');
+      void verifyJournalInboxReceipt(receipt, sequence);
+    }
+  };
+
+  const restoreCitationReferences = async (sessionId: string, contentRequestId: number) => {
+    citationHistoryAbortRef.current?.abort();
+    const controller = new AbortController();
+    citationHistoryAbortRef.current = controller;
+    const locators = blankMode ? [] : readCitationRunLocators(sessionId);
+    if (!locators.length) {
+      if (contentRequestId === contentLoadRef.current && selectedSessionRef.current === sessionId) {
+        setCitationBundles([]);
+        setCitationHistoryLoading(false);
+      }
+      return;
+    }
+    setCitationBundles([]);
+    setCitationHistoryLoading(true);
+    const restored: KnowledgeCitationBundle[] = [];
+    for (const locator of locators) {
+      if (controller.signal.aborted) return;
+      try {
+        const response = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(locator.run_id)}/knowledge-citations`, {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) {
+          restored.push(citationErrorBundle(locator, response.status));
+          continue;
+        }
+        const payload: unknown = await response.json();
+        restored.push(parseKnowledgeCitationBundle(payload, locator) ?? citationErrorBundle(locator, 502));
+      } catch (cause) {
+        if (controller.signal.aborted || (cause instanceof DOMException && cause.name === 'AbortError')) return;
+        restored.push(citationErrorBundle(locator, 503));
+      }
+    }
+    if (controller.signal.aborted || contentRequestId !== contentLoadRef.current
+      || selectedSessionRef.current !== sessionId) return;
+    setCitationBundles(restored);
+    setCitationHistoryLoading(false);
+  };
+
   const loadSessionContent = async (sessionId: string) => {
     if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     const requestId = ++contentLoadRef.current;
@@ -1301,6 +1549,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       api<Record<string, unknown>>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/activities`),
     ]);
     if (requestId !== contentLoadRef.current || selectedSessionRef.current !== sessionId) return;
+    loadJournalInboxState(sessionId);
     if (historyResult.status === 'fulfilled') {
       const payload = historyResult.value;
       const raw = Array.isArray(payload.messages) ? payload.messages : Array.isArray(payload.items) ? payload.items : Array.isArray(payload) ? payload : [];
@@ -1347,6 +1596,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     if (historyResult.status === 'rejected') setError(historyResult.reason instanceof Error
       ? chatFailureLabel(historyResult.reason.message, locale) : chatFailureLabel('Could not load session history', locale));
     else if (activityResult.status === 'rejected') setError(en ? 'System operation history is temporarily unavailable.' : '系统操作历史暂时不可用。');
+    void restoreCitationReferences(sessionId, requestId);
   };
 
   const resetCaptureState = () => {
@@ -1358,14 +1608,66 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
   const selectSession = async (sessionId: string) => {
     if (blankMode && !blankSessionIdsRef.current.has(sessionId)) return;
     selectionIntentRef.current += 1;
+    journalInboxSequenceRef.current += 1;
     abortRef.current?.abort(); abortRef.current = null;
-    resetCaptureState(); setBusy(false); setRunId(''); setProgress('');
+    resetCaptureState(); resetJournalInboxView(); setBusy(false); setRunId(''); setProgress('');
+    citationHistoryAbortRef.current?.abort(); setCitationBundles([]); setCitationHistoryLoading(false); setCitationPersistenceIssue(false);
+    contextPreviewSequenceRef.current += 1; contextPreviewAbortRef.current?.abort();
+    setContextPreview(null); setContextPreviewLoading(false); setContextPreviewError('');
+    naturalContextSequenceRef.current += 1; naturalContextAbortRef.current?.abort();
+    setNaturalContext(null); setNaturalContextLoading(false); setNaturalContextError('');
     selectedSessionRef.current = sessionId;
     setSelected(sessionId);
     if (blankMode) persistBlankChatState([...blankSessionIdsRef.current], sessionId);
     else localStorage.setItem('secondbrain.chat.session', sessionId);
     setError(''); setMessages([]); setActivities([]); setInput('');
     try { await loadSessionContent(sessionId); } catch (cause) { setError(cause instanceof Error ? chatFailureLabel(cause.message, locale) : chatFailureLabel('Could not load session history', locale)); }
+  };
+
+  const previewContext = async () => {
+    const sessionId = selectedSessionRef.current;
+    if (!sessionId || blankMode || busy) return;
+    contextPreviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    contextPreviewAbortRef.current = controller;
+    const sequence = ++contextPreviewSequenceRef.current;
+    setContextPreview(null); setContextPreviewError(''); setContextPreviewLoading(true);
+    try {
+      const result = await fetchContextPreview(sessionId, input, controller.signal);
+      if (controller.signal.aborted || sequence !== contextPreviewSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      setContextPreview(result);
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== contextPreviewSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      const status = (cause as Error & { status?: number }).status;
+      setContextPreviewError(status === 401
+        ? (en ? 'Sign in again to check authorized context.' : '请重新登录后再核验获准的上下文。')
+        : status === 403 ? (en ? 'Context access was denied. Refresh to check current permissions.' : '上下文访问已被拒绝；权限变化后请重新核验。')
+          : status === 400 ? (en ? 'Enter a query between 1 and 200 characters.' : '请输入 1 到 200 个字符的查询内容。')
+            : status === 404 ? (en ? 'This session is unavailable.' : '此会话不可用。')
+              : status === 503 ? (en ? 'Authorized sources are temporarily unavailable.' : '获准来源暂时不可用。')
+                : (en ? 'Context could not be verified. No metadata is shown.' : '上下文未能核验，未展示任何元数据。'));
+    } finally {
+      if (sequence === contextPreviewSequenceRef.current) setContextPreviewLoading(false);
+    }
+  };
+
+  const checkNaturalContext = async (sessionId: string, userInput: string) => {
+    if (blankMode || !userInput.trim() || [...userInput.trim()].length > 2000) return;
+    naturalContextAbortRef.current?.abort();
+    const controller = new AbortController(); naturalContextAbortRef.current = controller;
+    const sequence = ++naturalContextSequenceRef.current;
+    setNaturalContext(null); setNaturalContextError(''); setNaturalContextLoading(true);
+    try {
+      const result = await fetchContextCandidates(sessionId, userInput, controller.signal);
+      if (!controller.signal.aborted && sequence === naturalContextSequenceRef.current && selectedSessionRef.current === sessionId) setNaturalContext(result);
+    } catch (cause) {
+      if (controller.signal.aborted || sequence !== naturalContextSequenceRef.current || selectedSessionRef.current !== sessionId) return;
+      const status = (cause as Error & { status?: number }).status;
+      setNaturalContextError(status === 401 ? (en ? 'Sign in again to check related sources.' : '请重新登录后查看相关来源。')
+        : status === 403 ? (en ? 'Source access was denied; no candidates are shown.' : '来源访问被拒绝，未展示候选。')
+          : status === 404 ? (en ? 'This session is unavailable.' : '此会话不可用。')
+            : en ? 'Related sources could not be verified. Chat continued without them.' : '无法核验相关来源；对话已继续，未展示候选。');
+    } finally { if (sequence === naturalContextSequenceRef.current) setNaturalContextLoading(false); }
   };
 
   const pollRun = async (activeRun: string, sessionId: string) => {
@@ -1452,14 +1754,14 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         const nextSelected = stillCurrent ? id : selectedSessionRef.current;
         persistBlankChatState(ids, nextSelected);
         if (stillCurrent) {
-          resetCaptureState();
+          resetCaptureState(); resetJournalInboxView();
           selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
         }
         return;
       }
       await reloadSessions(id);
       if (selectionIntent !== selectionIntentRef.current) return;
-      resetCaptureState();
+      resetCaptureState(); resetJournalInboxView();
       selectedSessionRef.current = id; setSelected(id); setMessages([]); setActivities([]); setInput('');
       localStorage.setItem('secondbrain.chat.session', id);
     } catch (cause) {
@@ -1489,7 +1791,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     const payload = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
     const sessionId = String(payload.session_id ?? '');
     if (!sessionId) throw new Error('Hermes did not return a session identifier');
-    resetCaptureState();
+    resetCaptureState(); resetJournalInboxView();
     selectedSessionRef.current = sessionId; setSelected(sessionId); setMessages([]); setActivities([]);
     localStorage.setItem('secondbrain.chat.session', sessionId);
     await reloadSessions(sessionId);
@@ -1573,6 +1875,94 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     }
   };
 
+  const submitJournalIntentToInbox = async (originalText: string) => {
+    if (journalInboxSubmittingRef.current) return;
+    journalInboxSubmittingRef.current = true;
+    setError(''); setBusy(true); setProgress(en ? 'Saving the original text to Inbox…' : '正在将原文保存到 Inbox…');
+    let sessionId = '';
+    let attempt: JournalInboxAttempt | null = null;
+    let sequence = 0;
+    try {
+      sessionId = await ensureSelectedSession();
+      attempt = journalInboxAttemptsRef.current.get(sessionId) ?? null;
+      if (!attempt) {
+        try { attempt = parseJournalInboxAttempt(sessionStorage.getItem(journalInboxAttemptKey(sessionId)), sessionId); }
+        catch { attempt = null; }
+      }
+      if (attempt && attempt.body.original_text !== originalText) {
+        if (selectedSessionRef.current === sessionId) {
+          setJournalInboxAttempt(attempt);
+          setJournalInboxFeedback(en ? 'A prior Inbox result is still unknown. Restore its exact text before retrying; no new request was sent.' : '上一条 Inbox 结果仍未知。请先恢复完全相同的原文再重试；本次没有发送新请求。');
+        }
+        return;
+      }
+      if (!attempt) {
+        attempt = makeJournalInboxAttempt(sessionId, originalText, crypto.randomUUID(), new Date().toISOString());
+      }
+      journalInboxAttemptsRef.current.set(sessionId, attempt);
+      // Persist the complete immutable request before every send so storage
+      // failures cannot leave a retryable in-memory request that was never made durable.
+      sessionStorage.setItem(journalInboxAttemptKey(sessionId), JSON.stringify(attempt));
+      if (selectedSessionRef.current === sessionId) {
+        setJournalInboxAttempt(attempt); setJournalInboxReceipt(null); setJournalInboxStatus('');
+        setJournalInboxFeedback(en ? 'Submitting the exact original text to the pending Inbox; this does not create a Journal entry.' : '正在将完全相同的原文提交到待处理 Inbox；此操作不会创建 Journal 日记。');
+      }
+      sequence = ++journalInboxSequenceRef.current;
+      const response = await fetch('/api/inbox/entries', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: attempt.bodyJson });
+      const payload = await response.json().catch(() => ({})) as unknown;
+      if (response.status !== 202) {
+        if (selectedSessionRef.current === sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxStatus(''); setJournalInboxFeedback(journalInboxFailureLabel(response.status, en)); setProgress('');
+        }
+        return;
+      }
+      const accepted = parseJournalInboxPostReceipt(payload, attempt);
+      if (!accepted) {
+        if (selectedSessionRef.current === sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxStatus(''); setJournalInboxFeedback(en ? 'Core returned an unverified acceptance. The exact request and original text are retained for safe retry.' : 'Core 返回的受理回执无法核验；完整请求和原文已保留，可安全重试。'); setProgress('');
+        }
+        return;
+      }
+      const receipt: JournalInboxReceipt = { sessionId, inboxId: accepted.inboxId,
+        sourceEventId: attempt.body.source_event_id, occurredAt: attempt.body.occurred_at };
+      try {
+        sessionStorage.setItem(journalInboxReceiptKey(sessionId), JSON.stringify(receipt));
+        sessionStorage.removeItem(journalInboxAttemptKey(sessionId));
+        journalInboxAttemptsRef.current.delete(sessionId);
+      } catch {
+        if (selectedSessionRef.current === sessionId && sequence === journalInboxSequenceRef.current) {
+          setJournalInboxReceipt(receipt); setJournalInboxStatus('');
+          setJournalInboxFeedback(en ? 'Core accepted the Inbox entry, but this tab could not persist its receipt. Your text remains available; retry uses the same event identity.' : 'Core 已受理 Inbox 原文，但当前标签页无法保存回执；输入内容仍保留，重试会复用同一事件身份。');
+          setProgress('');
+        }
+        return;
+      }
+      if (selectedSessionRef.current === sessionId && sequence === journalInboxSequenceRef.current) {
+        setJournalInboxAttempt(null); setJournalInboxReceipt(receipt); setJournalInboxStatus('');
+        setJournalInboxFeedback(en ? 'Original text is in the pending Inbox. No Journal entry has been created.' : '原文已进入待处理 Inbox；尚未创建 Journal 日记。');
+        setProgress('');
+        setInput((current) => current === originalText ? '' : current);
+      }
+      await verifyJournalInboxReceipt(receipt, sequence);
+    } catch {
+      if (sessionId && attempt) journalInboxAttemptsRef.current.set(sessionId, attempt);
+      if (sessionId && selectedSessionRef.current === sessionId && (!sequence || sequence === journalInboxSequenceRef.current)) {
+        setJournalInboxAttempt(attempt); setJournalInboxStatus('');
+        setJournalInboxFeedback(sequence
+          ? journalInboxFailureLabel(null, en)
+          : (en ? 'Could not safely retain the exact request in this tab, so nothing was sent. Retry only after storage is available.' : '无法在当前标签页安全保存完整请求，因此没有发送任何写入；请等存储可用后再重试。'));
+        setProgress('');
+      } else if (!sessionId) {
+        setError(en ? 'Could not prepare the Inbox request. Your original text is still in the composer.' : '无法准备 Inbox 请求；原文仍保留在输入框中。');
+        setProgress('');
+      }
+    } finally {
+      journalInboxSubmittingRef.current = false;
+      setBusy(false);
+    }
+  };
+
   const send = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = input.trim();
@@ -1582,7 +1972,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       return;
     }
     if (!pendingAttachment && isExplicitJournalIntent(input)) {
-      await submitExplicitActivity('journal', input);
+      await submitJournalIntentToInbox(input);
       return;
     }
     const taskCommand = !pendingAttachment ? parseExplicitTaskCommand(input) : null;
@@ -1602,7 +1992,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         const created = await api<Record<string, unknown>>('/api/chat/sessions', { method: 'POST', body: '{}' });
         sessionId = String(created.session_id ?? '');
         if (!sessionId) throw new Error('Hermes did not return a session identifier');
-        resetCaptureState(); selectedSessionRef.current = sessionId; setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
+        resetCaptureState(); resetJournalInboxView(); selectedSessionRef.current = sessionId; setSelected(sessionId); localStorage.setItem('secondbrain.chat.session', sessionId);
         await reloadSessions(sessionId);
       }
       const idempotencyKey = crypto.randomUUID();
@@ -1611,7 +2001,9 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
       });
       const activeRun = String(started.run_id ?? '');
       if (!activeRun) throw new Error('Hermes did not return a run identifier');
+      if (!blankMode && !pendingAttachment) void checkNaturalContext(sessionId, prompt);
       startedRunId = activeRun;
+      if (!blankMode && !rememberCitationRun({ session_id: sessionId, run_id: activeRun })) setCitationPersistenceIssue(true);
       setInput('');
       setRunId(activeRun); setProgress(en ? 'Connected to Hermes' : '已连接 Hermes');
       if (!blankMode) {
@@ -1635,7 +2027,22 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         try { payload = JSON.parse(data.join('\n')) as Record<string, unknown>; } catch { payload = { text: data.join('\n') }; }
         const eventName = String(payload.event ?? 'message');
         const name = String(payload.name ?? payload.tool_name ?? payload.tool ?? 'tool');
-        if (eventName === 'message.delta' || eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
+        if (eventName === 'knowledge.citations') {
+          const locator: CitationRunLocator = { session_id: sessionId, run_id: activeRun };
+          const parsed = parseKnowledgeCitationBundle(payload, locator);
+          if (!parsed) {
+            setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), citationErrorBundle(locator, 502)]);
+          } else {
+            const fingerprint = JSON.stringify(parsed);
+            const previous = citationFrameByRunRef.current.get(activeRun);
+            if (previous && previous !== fingerprint) {
+              setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), citationErrorBundle(locator, 409)]);
+            } else if (!previous) {
+              citationFrameByRunRef.current.set(activeRun, fingerprint);
+              setCitationBundles((current) => [...current.filter((bundle) => bundle.run_id !== activeRun), parsed]);
+            }
+          }
+        } else if (eventName === 'message.delta' || eventName === 'assistant.delta' || eventName === 'response.output_text.delta' || eventName === 'text.delta') {
           const delta = String(payload.delta ?? payload.text ?? payload.output_text ?? payload.content ?? '');
           if (delta) setMessages((current) => current.map((message, index) => index === current.length - 1 && message.role === 'assistant' ? { ...message, text: message.text + delta } : message));
         } else if (eventName.startsWith('tool.')) {
@@ -1860,6 +2267,31 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
           </div>
           {item.activity.detail && <small>{item.activity.detail}</small>}
         </article>)}{!timeline.length && <div className="chat-empty">{en ? 'Continue a Hermes session or start a new conversation.' : '继续 Hermes 会话，或开始新的对话。'}</div>}</div>
+      {!blankMode && <ChatContextPreview preview={contextPreview} loading={contextPreviewLoading} error={contextPreviewError}
+        onRefresh={() => void previewContext()} disabled={!selected || busy || input.trim().length === 0 || [...input.trim()].length > 200} locale={locale} />}
+      {!blankMode && <ChatNaturalCandidates preview={naturalContext} loading={naturalContextLoading} error={naturalContextError} locale={locale} />}
+      {!blankMode && <ChatGroundingCandidates sessionId={selected} query={input} locale={locale} disabled={!selected || busy} />}
+      <ChatKnowledgeCitations bundles={citationBundles.filter((bundle) => bundle.session_id === selected)} loading={citationHistoryLoading}
+        persistenceIssue={citationPersistenceIssue} locale={locale} />
+      {!blankMode && selected && <PlanningPanel key={selected} locale={locale} sessionId={selected} />}
+      {journalInboxAttempt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent retry status' : '日记意图重试状态'}>
+        <h3>{en ? 'Inbox save is not confirmed' : 'Inbox 保存结果尚未确认'}</h3>
+        <p role="alert">{journalInboxFeedback || (en ? 'The original text and exact request are retained.' : '原文和完整请求已保留。')}</p>
+        <button type="button" disabled={busy} onClick={() => void submitJournalIntentToInbox(journalInboxAttempt.body.original_text)}>{en ? 'Retry the same request' : '使用同一请求重试'}</button>
+      </section>}
+      {journalInboxReceipt?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Journal intent Inbox receipt' : '日记意图 Inbox 回执'}>
+        <h3>{en ? 'Original text saved to Inbox' : '原文已保存到 Inbox'}</h3>
+        <p>{en ? 'This is a pending Inbox entry only. No Journal entry has been created.' : '这只表示原文进入待处理 Inbox；尚未创建 Journal 日记。'}</p>
+        {journalInboxStatus && <p role="status">{en ? 'Verified Inbox status' : '已核验 Inbox 状态'}: {journalInboxStatus}</p>}
+        {journalInboxFeedback && !journalInboxStatus && <p role="alert">{journalInboxFeedback}</p>}
+        <button type="button" disabled={busy} onClick={() => {
+          const sequence = ++journalInboxSequenceRef.current;
+          setJournalInboxStatus('');
+          setJournalInboxFeedback(en ? 'Checking the exact Inbox entry using a read-only request…' : '正在通过只读请求核对确切的 Inbox 记录…');
+          void verifyJournalInboxReceipt(journalInboxReceipt, sequence);
+        }}>{en ? 'Refresh Inbox status' : '刷新 Inbox 状态'}</button>
+        {journalInboxStatus && <a href={`/inbox#capture-${encodeURIComponent(journalInboxReceipt.inboxId)}`}>{en ? 'Open Inbox entry' : '打开 Inbox 条目'}</a>}
+      </section>}
       {captureSuggestion?.sessionId === selected && <section className="chat-capture-suggestion" aria-label={en ? 'Hermes capture suggestion' : 'Hermes 收录建议'}>
         <h3>{en ? 'Hermes suggests saving this to Inbox' : 'Hermes 建议将以下内容收录到 Inbox'}</h3>
         <p>{en ? 'A chat suggestion and typed confirmation are not Core approval. Verify a current Core-approved proposal before submitting.' : '聊天建议和输入确认短语都不等于 Core 批准；提交前必须核验仍有效的 Core 批准记录。'}</p>
@@ -2105,31 +2537,31 @@ function ModuleTitle({ title, icon, trailing }: { title: string; icon: string; t
   return <div className="module-title"><span className={`module-icon ${icon}`}><Icon name={icon} size={17} /></span><h2>{title}</h2>{trailing ?? <span className="module-menu" aria-hidden="true">•••</span>}</div>;
 }
 
-function TodayCard({ state, locale, onViewCalendar }: { state: ReturnType<typeof adaptHome>['today']; locale: Locale; onViewCalendar: () => void }) {
+function TodayCard({ state, locale, onViewCalendar, onCreateTask }: { state: ReturnType<typeof adaptHome>['today']; locale: Locale; onViewCalendar: () => void; onCreateTask: () => void }) {
   const t = messages[locale];
   return <article className="dashboard-card today-card" id="today">
     <img className="today-background" src={todayLandscapeUrl} alt="" aria-hidden="true" />
     <ModuleTitle title={t.today} icon="calendar" trailing={<button type="button" className="card-link" onClick={onViewCalendar} aria-label={t.viewCalendar}>{t.viewAll}<Icon name="chevron" size={14} /></button>} />
     <p className="today-description">{t.todayDescription}</p>
     {state.kind === 'content' ? <div className="today-items">{state.items.map((item, index) => <div className="today-item" key={`${item.title}-${index}`}><span className="timeline-dot"/><strong>{item.title}</strong></div>)}</div>
-      : state.kind === 'empty' ? <IllustratedEmpty locale={locale} />
-      : <div className="unknown-state"><span className="unknown-icon">?</span><strong>{t.noTodayData}</strong><small>UNAVAILABLE</small></div>}
+      : state.kind === 'empty' ? <IllustratedEmpty locale={locale} onCreateTask={onCreateTask} />
+      : <div className="unknown-state"><span className="unknown-icon">?</span><strong>{t.noTodayData}</strong><small>UNAVAILABLE</small><button type="button" className="coming-button" onClick={onCreateTask}>{t.create}</button></div>}
   </article>;
 }
 
-function IllustratedEmpty({ locale }: { locale: Locale }) {
+function IllustratedEmpty({ locale, onCreateTask }: { locale: Locale; onCreateTask: () => void }) {
   const t = messages[locale];
   return <div className="illustrated-empty">
     <div className="empty-calendar"><Icon name="calendar" size={37} /></div>
     <strong>{t.emptyTitle}</strong><p>{t.emptyDescription}</p>
-    <button type="button" className="coming-button" disabled><Icon name="capture" size={15} />{t.create}<small>{t.soon}</small></button>
+    <button type="button" className="coming-button" onClick={onCreateTask}><Icon name="capture" size={15} />{t.create}</button>
   </div>;
 }
 
-function ReviewCard({ title, items, pendingCount, source, locale }: { title: string; items: ListItem[]; pendingCount: number | null; source: DataKind; locale: Locale }) {
+function ReviewCard({ title, items, pendingCount, source, locale, onOpen }: { title: string; items: ListItem[]; pendingCount: number | null; source: DataKind; locale: Locale; onOpen: () => void }) {
   const t = messages[locale];
   return <article className="dashboard-card review-card" id="waiting">
-    <ModuleTitle title={title} icon="check" trailing={<span className="review-count">{pendingCount === null ? '—' : pendingCount} <small>{t.pending}</small></span>} />
+    <ModuleTitle title={title} icon="check" trailing={<><span className="review-count">{pendingCount === null ? '—' : pendingCount} <small>{t.pending}</small></span><button type="button" className="card-link" onClick={onOpen} aria-label={t.openReview}>{t.viewAll}<Icon name="chevron" size={14} /></button></>} />
     <div className="card-subheading"><span className="status-light" />{source === 'REAL' ? `${items.length} ${locale === 'en' ? 'items' : '条待审核内容'}` : t.unavailable} <span className={`source-badge ${source === 'REAL' ? 'real' : 'unavailable'}`}>{source}</span></div>
     {items.length ? <div className="review-list">{items.slice(0, 5).map((item, index) => <div className="review-row" key={`${item.title}-${index}`}>
       <span className={`review-icon review-tone-${index % 4}`}><Icon name={index % 2 ? 'file' : 'check'} size={14} /></span>
@@ -2146,13 +2578,13 @@ function formatDate(value: ListItem['updated'], locale: Locale) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString(locale === 'en' ? 'en-US' : 'zh-CN', { month: 'numeric', day: 'numeric' });
 }
 
-function ListCard({ id, title, items, kind, source, locale }: { id: string; title: string; items: ListItem[]; kind: 'project' | 'knowledge'; source: DataKind; locale: Locale }) {
+function ListCard({ id, title, items, kind, source, locale, onOpen, openLabel }: { id: string; title: string; items: ListItem[]; kind: 'project' | 'knowledge'; source: DataKind; locale: Locale; onOpen: () => void; openLabel: string }) {
   const t = messages[locale];
   const icon = kind === 'project' ? 'folder' : 'book';
   const label = kind === 'project' ? t.projectType : t.knowledgeType;
   const technical = kind === 'project' && source === 'UNAVAILABLE';
   return <article className={`dashboard-card list-card ${kind}-card`} id={id}>
-    <ModuleTitle title={title} icon={icon} trailing={<span className="section-count">{source === 'REAL' ? items.length : t.unavailable} <small>{source === 'REAL' ? t.apiEntries : source}</small></span>} />
+    <ModuleTitle title={title} icon={icon} trailing={<><span className="section-count">{source === 'REAL' ? items.length : t.unavailable} <small>{source === 'REAL' ? t.apiEntries : source}</small></span><button type="button" className="card-link" aria-label={openLabel} onClick={onOpen}>{t.viewAll}<Icon name="chevron" size={14} /></button></>} />
     {technical && <p className="semantic-note">{t.technicalItems}</p>}
     {items.length ? <div className="list-items">{items.slice(0, 4).map((item, index) => <div className="list-row" key={`${item.title}-${index}`}>
       <span className={`list-icon list-tone-${index % 4}`}><Icon name={icon} size={14} /></span>
@@ -2163,21 +2595,23 @@ function ListCard({ id, title, items, kind, source, locale }: { id: string; titl
   </article>;
 }
 
-function AgentCard({ status, locale }: { status: string | null; locale: Locale }) {
+function AgentCard({ status, locale, onOpen }: { status: string | null; locale: Locale; onOpen: () => void }) {
   const t = messages[locale];
+  const online = status === 'online';
+  const label = online ? t.online : status === 'not_configured' ? (locale === 'en' ? 'Not configured' : '未配置') : t.unavailable;
   return <article className="dashboard-card agent-card">
-    <ModuleTitle title={t.agent} icon="brain" trailing={<span className={`agent-pill ${status ? 'is-online' : ''}`}><i />{status ? t.online : t.unavailable}</span>} />
-    <div className="agent-visual"><div className="agent-copy"><strong>{t.agentSupport}</strong><small>{status ? `${localizeStatus(status, locale)} · REAL` : t.unavailable}</small></div><img className="agent-crystal" src={aiCubeUrl} alt="" aria-hidden="true" /></div>
+    <ModuleTitle title={t.agent} icon="brain" trailing={<><span className={`agent-pill ${online ? 'is-online' : ''}`}><i />{label}</span><button type="button" className="card-link" aria-label={t.openAgentHealth} onClick={onOpen}>{t.viewAll}<Icon name="chevron" size={14} /></button></>} />
+    <div className="agent-visual"><div className="agent-copy"><strong>{t.agentSupport}</strong><small>{online ? `${localizeStatus(status, locale)} · REAL` : label}</small></div><img className="agent-crystal" src={aiCubeUrl} alt="" aria-hidden="true" /></div>
     <div className="agent-visual-caption"><span className="source-badge demo">DEMO</span><span>{locale === 'en' ? 'Visual identity' : '视觉主图'}</span></div>
-    <div className="agent-footer"><span><i className={status ? 'online' : ''} />{locale === 'en' ? 'Runtime status' : '运行状态'}</span><strong>{status ? localizeStatus(status, locale) : '—'}</strong></div>
+    <div className="agent-footer"><span><i className={online ? 'online' : ''} />{locale === 'en' ? 'Runtime status' : '运行状态'}</span><strong>{online ? localizeStatus(status, locale) : label}</strong></div>
   </article>;
 }
 
-function ConnectedPlaceholder({ id, title, description, locale, icon }: { id: string; title: string; description: string; locale: Locale; icon: string }) {
-  const t = messages[locale];
+function HomeDestinationCard({ id, title, description, label, icon, onOpen }: { id: string; title: string; description: string; label: string; icon: string; onOpen: () => void }) {
   return <article className="dashboard-card connected-card" id={id}>
-    <ModuleTitle title={title} icon={icon} trailing={<span className="coming-pill">{t.soon}</span>} />
-    <div className="connected-content"><div className="connected-graphic"><Icon name={icon} size={30} /><span /><span /></div><div><strong>{t.notConnectedTitle}</strong><p>{description}</p></div></div>
+    <ModuleTitle title={title} icon={icon} trailing={<button type="button" className="card-link" aria-label={label} onClick={onOpen}>{label}<Icon name="chevron" size={14} /></button>} />
+    <div className="connected-content"><div className="connected-graphic"><Icon name={icon} size={30} /><span /><span /></div><div><strong>{title}</strong><p>{description}</p></div></div>
+    <button type="button" className="v1-page-retry" onClick={onOpen}>{label}</button>
   </article>;
 }
 

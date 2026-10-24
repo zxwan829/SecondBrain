@@ -23,6 +23,11 @@ export type KnowledgeDetail = {
   provenance_status: KnowledgeProvenanceStatus;
 };
 
+export type KnowledgeSource =
+  | { status: 'available'; provenance_status: 'verified'; source: { kind: 'review'; ref: string; sha256: string; request_id: string } }
+  | { status: 'missing'; provenance_status: 'missing'; source: null }
+  | { status: 'unavailable'; provenance_status: 'unverified'; source: null };
+
 export class KnowledgeApiError extends Error {
   constructor(readonly status: number) {
     super(`Knowledge request failed (${status})`);
@@ -53,6 +58,29 @@ function isSearchItem(value: unknown): value is KnowledgeSearchItem {
     && isProvenanceStatus(item.provenance_status);
 }
 
+function isSafeReviewRef(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512
+    && !value.startsWith('/') && !/[\\\u0000-\u001f\u007f]/.test(value)
+    && value.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+}
+
+function isKnowledgeSource(value: unknown): value is KnowledgeSource {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  const keys = Object.keys(result).sort();
+  if (keys.join(',') !== 'provenance_status,source,status') return false;
+  if (result.status === 'missing') return result.provenance_status === 'missing' && result.source === null;
+  if (result.status === 'unavailable') return result.provenance_status === 'unverified' && result.source === null;
+  if (result.status !== 'available' || result.provenance_status !== 'verified'
+    || !result.source || typeof result.source !== 'object' || Array.isArray(result.source)) return false;
+  const source = result.source as Record<string, unknown>;
+  if (Object.keys(source).sort().join(',') !== 'kind,ref,request_id,sha256'
+    || source.kind !== 'review' || !isSafeReviewRef(source.ref)
+    || typeof source.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(source.sha256)
+    || typeof source.request_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(source.request_id)) return false;
+  return true;
+}
+
 export const knowledgeApi = {
   async search(query: string, signal: AbortSignal): Promise<KnowledgeSearchResult> {
     const params = new URLSearchParams({ q: query, limit: '50' });
@@ -72,5 +100,11 @@ export const knowledgeApi = {
       throw new KnowledgeApiError(502);
     }
     return detail;
+  },
+
+  async source(id: string, signal: AbortSignal): Promise<KnowledgeSource> {
+    const source = await requestJson<unknown>(`/api/knowledge/items/${encodeURIComponent(id)}/source`, signal);
+    if (!isKnowledgeSource(source)) throw new KnowledgeApiError(502);
+    return source;
   },
 };

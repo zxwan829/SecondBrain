@@ -27,6 +27,9 @@ from .channel_identity import authenticated_web_identity
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_TEXT_CHARS = 200_000
+MAX_CAPTURE_STATE_BYTES = 1024 * 1024
+MAX_ACTIVITY_CAPTURE_STATE_FILES = 500
+MAX_ACTIVITY_CAPTURE_BYTES = 2 * 1024 * 1024
 MAX_DISPLAY_FILENAME_CHARS = 255
 MAX_WEB_BYTES = 5 * 1024 * 1024
 MAX_REDIRECTS = 4
@@ -243,6 +246,7 @@ class CaptureService:
                 or state_info.st_uid != os.geteuid() or state_info.st_mode & 0o077
                 or not os.access(self.state_root, os.W_OK)):
             raise RuntimeError("Capture state directory must be private and writable by the Core UID")
+        self._state_root_identity = (state_info.st_dev, state_info.st_ino)
 
     @staticmethod
     def _validate_root(path, allow_missing=False):
@@ -283,16 +287,46 @@ class CaptureService:
                 pass
 
     def _read_state(self, path):
+        if (not isinstance(path, Path) or path.parent != self.state_root
+                or not re.fullmatch(r"[0-9a-f]{32}\.json", path.name)):
+            return None
+        root_fd = None
+        state_fd = None
         try:
-            info = path.lstat()
-            if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+            root_fd = os.open(self.state_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0))
+            root_info = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.geteuid()
+                    or root_info.st_mode & 0o077
+                    or (root_info.st_dev, root_info.st_ino) != self._state_root_identity):
                 raise ValueError
-            value = json.loads(path.read_text(encoding="utf-8"))
+            state_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                               | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+            info = os.fstat(state_fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or info.st_size > MAX_CAPTURE_STATE_BYTES):
+                raise ValueError
+            chunks, total = [], 0
+            while True:
+                chunk = os.read(state_fd, min(65536, MAX_CAPTURE_STATE_BYTES + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > MAX_CAPTURE_STATE_BYTES:
+                    raise ValueError
+            value = json.loads(b"".join(chunks).decode("utf-8"))
             if not isinstance(value, dict):
                 raise ValueError
             return value
-        except (OSError, ValueError, json.JSONDecodeError):
+        except (OSError, ValueError, UnicodeError, json.JSONDecodeError, RecursionError):
             return None
+        finally:
+            if state_fd is not None:
+                os.close(state_fd)
+            if root_fd is not None:
+                os.close(root_fd)
 
     def list(self, limit=100):
         result = []
@@ -331,6 +365,93 @@ class CaptureService:
             })
         result.sort(key=lambda item: (item["captured_at"] or "", item["capture_id"] or ""), reverse=True)
         return result[:limit]
+
+    def read_activity_events(self):
+        """Read a stable, bounded projection of authoritative Capture state.
+
+        This is deliberately separate from ``list``: Activity reads must not
+        repair interrupted Capture work or touch Raw/Review artifacts. A
+        directory beyond the fixed file budget is reported incomplete without
+        selecting an arbitrary subset as if it were a stable history.
+        """
+        root_fd = None
+        try:
+            root_fd = os.open(self.state_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0))
+            root_before = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_before.st_mode) or root_before.st_uid != os.geteuid()
+                    or root_before.st_mode & 0o077
+                    or (root_before.st_dev, root_before.st_ino) != self._state_root_identity):
+                return [], False
+
+            names = []
+            with os.scandir(os.dup(root_fd)) as entries:
+                for entry in entries:
+                    if re.fullmatch(r"[0-9a-f]{32}\.json", entry.name):
+                        if len(names) >= MAX_ACTIVITY_CAPTURE_STATE_FILES:
+                            return [], False
+                        names.append(entry.name)
+            names.sort()
+
+            total_bytes = 0
+            events = []
+            complete = True
+            for name in names:
+                fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+                try:
+                    before = os.fstat(fd)
+                    if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                            or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                            or before.st_size < 0 or before.st_size > MAX_CAPTURE_STATE_BYTES
+                            or total_bytes + before.st_size > MAX_ACTIVITY_CAPTURE_BYTES):
+                        return [], False
+                    chunks, size = [], 0
+                    while size <= before.st_size:
+                        chunk = os.read(fd, min(65536, before.st_size + 1 - size))
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                        size += len(chunk)
+                    after = os.fstat(fd)
+                    if (size != before.st_size
+                            or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                                before.st_ctime_ns)
+                            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+                                after.st_ctime_ns)):
+                        return [], False
+                    total_bytes += size
+                finally:
+                    os.close(fd)
+
+                try:
+                    value = json.loads(b"".join(chunks).decode("utf-8"))
+                except (UnicodeError, json.JSONDecodeError, RecursionError):
+                    complete = False
+                    continue
+                capture_id = value.get("capture_id") if isinstance(value, dict) else None
+                source_type = value.get("source_type") if isinstance(value, dict) else None
+                status = value.get("status") if isinstance(value, dict) else None
+                captured_at = value.get("captured_at") if isinstance(value, dict) else None
+                if (capture_id != name[:-5] or not isinstance(source_type, str)
+                        or source_type not in SUMMARY_SOURCE_TYPES or not isinstance(status, str)
+                        or status not in SUMMARY_STATUSES or not isinstance(captured_at, str)
+                        or len(captured_at) > 64):
+                    complete = False
+                    continue
+                events.append({"capture_id": capture_id, "captured_at": captured_at,
+                               "status": status})
+
+            root_after = os.fstat(root_fd)
+            if ((root_before.st_dev, root_before.st_ino, root_before.st_mtime_ns, root_before.st_ctime_ns)
+                    != (root_after.st_dev, root_after.st_ino, root_after.st_mtime_ns, root_after.st_ctime_ns)):
+                return [], False
+            return events, complete
+        except OSError:
+            return [], False
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
 
     def get(self, capture_id):
         path = self._state_path(capture_id)

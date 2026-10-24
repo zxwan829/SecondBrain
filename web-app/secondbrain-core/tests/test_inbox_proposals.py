@@ -55,7 +55,16 @@ class InboxProposalStoreTests(unittest.TestCase):
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(lambda args: decide(*args), [("approved_recorded", "race-a"), ("rejected", "race-b")]))
-        self.assertCountEqual(outcomes, ["approved_recorded", 412])
+        self.assertEqual(outcomes.count(412), 1)
+        winner = next((outcome for outcome in outcomes if outcome != 412), None)
+        self.assertIn(winner, {"approved_recorded", "rejected"})
+        persisted = self.store.get(project["proposal_id"])
+        self.assertEqual(persisted["status"], winner)
+        self.assertEqual(persisted["version"], 2)
+        decisions = [event for event in persisted["history"]
+                     if event["event"] in {"approved_recorded", "rejected"}]
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["event"], winner)
 
     def test_source_change_stales_records_and_idempotency_reuse_conflicts(self):
         created = self.create()
