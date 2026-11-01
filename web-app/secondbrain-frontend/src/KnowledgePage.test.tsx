@@ -266,6 +266,36 @@ describe('Knowledge read-only page', () => {
     expect(screen.queryByText('No documents match this folder and tag selection.')).toBeNull();
   });
 
+  it('clears all visible Knowledge caches on search denial and ignores a late folder response', async () => {
+    let finishFolder!: (response: Response) => void;
+    const pendingFolder = new Promise<Response>((resolve) => { finishFolder = resolve; });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const parsed = new URL(String(input), 'http://localhost');
+      if (parsed.pathname.endsWith('/folders')) {
+        const path = parsed.searchParams.get('path') ?? '';
+        if (path === 'Work') return pendingFolder;
+        return foldersResponse('', [{ name: 'Work', path: 'Work' }]);
+      }
+      if (parsed.pathname.endsWith('/browse')) return browseResponse('', [{
+        id: 'browse-private', path: 'Work/Private.md', title: 'Stale browse entry', updated: '2026-11-02T00:00:00Z', tags: [], metadata_status: 'ok',
+      }]);
+      if (parsed.pathname.endsWith('/search')) return new Response('{}', { status: 403 });
+      return new Response('{}', { status: 404 });
+    });
+
+    render(<KnowledgePage locale="en" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand Work' }));
+    expect(await screen.findByRole('button', { name: /Stale browse entry/ })).toBeTruthy();
+    submitSearch('Denied query');
+    expect((await screen.findAllByRole('alert')).some((alert) => /not authorized/.test(alert.textContent ?? ''))).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Work' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Stale browse entry/ })).toBeNull();
+
+    await act(async () => { finishFolder(foldersResponse('Work', [{ name: 'Leaked child', path: 'Work/Leaked child' }])); await pendingFolder; });
+    expect(screen.queryByRole('button', { name: 'Leaked child' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Work' })).toBeNull();
+  });
+
   it('retries the exact failed browse page without resetting its offset', async () => {
     const browseUrls: string[] = [];
     let browseCount = 0;

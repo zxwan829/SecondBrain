@@ -387,6 +387,23 @@ class KnowledgeReadTests(unittest.TestCase):
         self.assertEqual(second_page.json()["offset"], 1)
         self.assertNotEqual(second_page.json()["items"][0]["id"], item["id"])
 
+    def test_frontmatter_comment_after_tags_key_is_not_counted_as_a_tag(self):
+        self.write("comment.md", "---\ntags: # explanatory comment\n---\n# Commented tags\n")
+        self.login()
+
+        unfiltered = self.client.get("/api/knowledge/browse", headers=self.headers)
+        self.assertEqual(unfiltered.status_code, 200, unfiltered.text)
+        item = unfiltered.json()["items"][0]
+        self.assertEqual(item["title"], "Commented tags")
+        self.assertEqual(item["tags"], [])
+        self.assertEqual(item["metadata_status"], "ok")
+        self.assertNotIn("# explanatory comment", {facet["name"] for facet in unfiltered.json()["tag_facets"]})
+
+        comment_filter = self.client.get("/api/knowledge/browse", params={"tag": "# explanatory comment"},
+                                         headers=self.headers)
+        self.assertEqual(comment_filter.status_code, 200, comment_filter.text)
+        self.assertEqual(comment_filter.json()["total"], 0)
+
     def test_folder_browser_marks_unsupported_frontmatter_and_truncated_counts_partial(self):
         self.write("good.md", "---\ntags: [safe]\n---\n# Good\n")
         self.write("bad.md", "---\ntags: [safe]\ntags: [hidden]\n---\n# Unsupported\n")

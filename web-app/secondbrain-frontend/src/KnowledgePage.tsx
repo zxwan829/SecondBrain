@@ -53,6 +53,8 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
   const requestSequence = useRef(0);
   const browseRequest = useRef<AbortController | null>(null);
   const browseSequence = useRef(0);
+  const folderRequests = useRef(new Map<string, AbortController>());
+  const accessEpoch = useRef(0);
 
   function beginRequest() {
     activeRequest.current?.abort();
@@ -68,10 +70,38 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
     activeRequest.current = null;
   }
 
+  function clearKnowledgeAfterAccessFailure(status: number) {
+    accessEpoch.current += 1;
+    invalidateRequests();
+    browseRequest.current?.abort();
+    browseRequest.current = null;
+    browseSequence.current += 1;
+    for (const controller of folderRequests.current.values()) controller.abort();
+    folderRequests.current.clear();
+    setFolderTree({});
+    setFolderTreePartial({});
+    setFolderTreeError(null);
+    setExpandedFolders([]);
+    setItems([]);
+    setBrowse(null);
+    setSelected(null);
+    setDetail(null);
+    setSource(null);
+    setPartial(false);
+    setSearchStatus('idle');
+    setBrowseStatus('error');
+    setBrowseError(status);
+    setDetailStatus('idle');
+    setSourceStatus('idle');
+    setErrorStatus(status);
+  }
+
   useEffect(() => () => {
     invalidateRequests();
     browseRequest.current?.abort();
     browseSequence.current += 1;
+    for (const controller of folderRequests.current.values()) controller.abort();
+    folderRequests.current.clear();
   }, []);
 
   async function search(term = query) {
@@ -99,7 +129,9 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
       setSelected(null);
       setDetail(null);
       setSearchStatus('error');
-      setErrorStatus(error instanceof KnowledgeApiError ? error.status : null);
+      const status = error instanceof KnowledgeApiError ? error.status : null;
+      setErrorStatus(status);
+      if (status === 401 || status === 403) clearKnowledgeAfterAccessFailure(status);
     }
   }
 
@@ -123,12 +155,7 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
       setDetailStatus('error');
       setErrorStatus(status);
       if (status === 401 || status === 403 || status === 503) {
-        setItems([]);
-        setSelected(null);
-        setBrowse(null);
-        setBrowseStatus('error');
-        setBrowseError(status);
-        setSearchStatus('idle');
+        clearKnowledgeAfterAccessFailure(status);
       }
     }
   }
@@ -167,10 +194,7 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
       setBrowseStatus('error');
       setBrowseError(error instanceof KnowledgeApiError ? error.status : null);
       if (error instanceof KnowledgeApiError && [401, 403, 503].includes(error.status)) {
-        setFolderTree({});
-        setItems([]);
-        setSearchStatus('idle');
-        setErrorStatus(error.status);
+        clearKnowledgeAfterAccessFailure(error.status);
       }
     }
   }
@@ -186,28 +210,25 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
     }
     setExpandedFolders((current) => [...current, path]);
     if (folderTree[path]) return;
+    folderRequests.current.get(path)?.abort();
     const controller = new AbortController();
+    folderRequests.current.set(path, controller);
+    const epoch = accessEpoch.current;
     try {
       const result = await knowledgeApi.folders(path, controller.signal);
+      if (controller.signal.aborted || epoch !== accessEpoch.current) return;
       setFolderTree((current) => ({ ...current, [path]: result.folders }));
       setFolderTreePartial((current) => ({ ...current, [path]: result.status === 'partial' }));
       setFolderTreeError(null);
     } catch (error) {
+      if (controller.signal.aborted || epoch !== accessEpoch.current) return;
       const status = error instanceof KnowledgeApiError ? error.status : null;
       setFolderTreeError(status === 401 || status === 403 || status === 503 ? null : status);
       if (status === 401 || status === 403 || status === 503) {
-        setFolderTree({});
-        setFolderTreePartial({});
-        setFolderTreePartial({});
-        setBrowse(null);
-        setBrowseStatus('error');
-        setBrowseError(status);
-        setItems([]);
-        setSelected(null);
-        setDetail(null);
-        setSearchStatus('idle');
-        setErrorStatus(status);
+        clearKnowledgeAfterAccessFailure(status);
       }
+    } finally {
+      if (folderRequests.current.get(path) === controller) folderRequests.current.delete(path);
     }
   }
 
@@ -233,7 +254,9 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
       if (sequence !== requestSequence.current || controller.signal.aborted) return;
       setSource(null);
       setSourceStatus('error');
-      setErrorStatus(error instanceof KnowledgeApiError ? error.status : null);
+      const status = error instanceof KnowledgeApiError ? error.status : null;
+      setErrorStatus(status);
+      if (status === 401 || status === 403 || status === 503) clearKnowledgeAfterAccessFailure(status);
     }
   }
 

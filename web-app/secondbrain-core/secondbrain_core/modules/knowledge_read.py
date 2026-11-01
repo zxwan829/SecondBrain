@@ -137,7 +137,11 @@ def _parse_frontmatter_tags(payload):
     index = tag_indexes[0]
     raw = lines[index].split(":", 1)[1].strip()
     values = []
-    if not raw:
+    if raw.startswith("#"):
+        # A YAML comment after the key is an empty tag value, not a tag.
+        # Treating the comment text as a real tag corrupts both facets and filters.
+        values = []
+    elif not raw:
         cursor = index + 1
         while cursor < end and lines[cursor].startswith("  - "):
             raw_item = lines[cursor][4:].strip()
