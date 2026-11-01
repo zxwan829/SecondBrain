@@ -11,7 +11,7 @@ import uuid
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 
-from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, Request, Response, UploadFile, File
 from PIL import Image, UnidentifiedImageError
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}\.md$", re.I)
@@ -25,6 +25,9 @@ MAX_NOTES_BROWSE_DEPTH = 32
 MAX_NOTES_BROWSE_TOTAL_BYTES = 16 * 1024 * 1024
 DEFAULT_NOTES_BROWSE_LIMIT = 20
 MAX_NOTES_BROWSE_LIMIT = 50
+MAX_NOTES_BROWSE_TAG_FILTERS = 12
+MAX_NOTES_BROWSE_TAGS_PER_NOTE = 100
+MAX_NOTES_BROWSE_TAG_FACETS = 200
 _VISUAL_FILENAME = re.compile(r"^[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json$")
 _VISUAL_KINDS = {"mindmap", "excalidraw"}
 
@@ -44,6 +47,15 @@ def _notes_browse_parts(value: str) -> list[str]:
             or re.search(r"%(?:2e|2f|5c|25(?:2e|2f|5c))", value.lower())):
         raise HTTPException(status_code=400, detail="Invalid Notes browse path")
     return parts
+
+
+def _next_browse_entry(iterator):
+    try:
+        return next(iterator), False
+    except StopIteration:
+        return None, False
+    except OSError:
+        return None, True
 
 
 def markdown_safety(content: str) -> list[str]:
@@ -494,18 +506,18 @@ class NotesStore:
             raise HTTPException(status_code=503, detail="Notes collection is unavailable") from exc
 
     @staticmethod
-    def _browse_note_at(directory_fd, filename, relative, fallback, remaining_bytes):
+    def _browse_note_at(directory_fd, filename, relative, fallback, remaining_bytes, *, include_tags=False):
         try:
             fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
         except OSError:
-            return None, 0, False
+            return None, 0, False, False
         try:
             before = os.fstat(fd)
             if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
                     or before.st_mode & 0o077 or before.st_nlink > 1
                     or before.st_size < 0 or before.st_size > MAX_MARKDOWN_BYTES
                     or before.st_size > remaining_bytes):
-                return None, 0, False
+                return None, 0, False, False
             chunks = []
             remaining = MAX_MARKDOWN_BYTES + 1
             while remaining:
@@ -519,15 +531,32 @@ class NotesStore:
             if (len(data) > MAX_MARKDOWN_BYTES or len(data) > remaining_bytes
                     or before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns
                     or before.st_ctime_ns != after.st_ctime_ns):
-                return None, len(data), False
+                return None, len(data), False, False
             try:
                 content = data.decode("utf-8")
             except UnicodeDecodeError:
-                return None, len(data), False
+                return None, len(data), False, False
             title = next((line[2:].strip() for line in content.splitlines() if line.startswith("# ")), fallback)
-            return {"path": relative, "title": title or fallback}, len(data), True
+            row = {"path": relative, "title": title or fallback}
+            metadata_supported = True
+            if include_tags:
+                try:
+                    _, tags = _note_properties(content)
+                    tags = list(dict.fromkeys(tag for tag in tags if tag.strip()))
+                    if (len(tags) > MAX_NOTES_BROWSE_TAGS_PER_NOTE
+                            or any(any(unicodedata.category(char).startswith("C") for char in tag)
+                                   or len(tag.encode("utf-8")) > 200
+                                   for tag in tags)):
+                        raise HTTPException(status_code=422, detail="Note tags are unsupported")
+                    row.update({"tags": tags, "metadata_status": "ok"})
+                except HTTPException:
+                    row.update({"tags": [], "metadata_status": "unsupported"})
+                    metadata_supported = False
+            return row, len(data), True, metadata_supported
         except OSError:
-            return None, 0, False
+            return None, 0, False, False
+        except UnicodeError:
+            return None, 0, False, False
         finally:
             os.close(fd)
 
@@ -546,39 +575,43 @@ class NotesStore:
             entries_seen = 0
             complete = True
             try:
-                entries = os.scandir(root_fd)
-            except OSError:
-                entries = None
-                complete = False
-            if entries is not None:
-                with entries:
-                    iterator = iter(entries)
-                    while True:
-                        if entries_seen >= MAX_NOTES_BROWSE_ENTRIES:
-                            complete = False
-                            break
-                        try:
-                            entry = next(iterator)
-                        except StopIteration:
-                            break
-                        entries_seen += 1
-                        if entry.name.startswith("."):
-                            continue
-                        if not _DRAFT_ID.fullmatch(entry.name):
-                            complete = False
-                            continue
-                        try:
-                            info = os.stat(entry.name, dir_fd=root_fd, follow_symlinks=False)
-                        except OSError:
-                            complete = False
-                            continue
-                        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
-                                or info.st_mode & 0o022):
-                            complete = False
-            os.close(root_fd)
-            return {"source_kind": source_kind, "collection": collection, "path": path,
-                    "status": "ok" if complete else "partial", "folders": [],
-                    "scan": {"entries": entries_seen, "complete": complete}}
+                try:
+                    entries = os.scandir(root_fd)
+                except OSError:
+                    entries = None
+                    complete = False
+                if entries is not None:
+                    with entries:
+                        iterator = iter(entries)
+                        while True:
+                            if entries_seen >= MAX_NOTES_BROWSE_ENTRIES:
+                                complete = False
+                                break
+                            entry, iterator_failed = _next_browse_entry(iterator)
+                            if iterator_failed:
+                                complete = False
+                                break
+                            if entry is None:
+                                break
+                            entries_seen += 1
+                            if entry.name.startswith("."):
+                                continue
+                            if not _DRAFT_ID.fullmatch(entry.name):
+                                complete = False
+                                continue
+                            try:
+                                info = os.stat(entry.name, dir_fd=root_fd, follow_symlinks=False)
+                            except OSError:
+                                complete = False
+                                continue
+                            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                                    or info.st_mode & 0o022):
+                                complete = False
+                return {"source_kind": source_kind, "collection": collection, "path": path,
+                        "status": "ok" if complete else "partial", "folders": [],
+                        "scan": {"entries": entries_seen, "complete": complete}}
+            finally:
+                os.close(root_fd)
         folder_fd = None
         try:
             folder_fd = self._open_browse_directory(root_fd, path)
@@ -597,9 +630,11 @@ class NotesStore:
                         if entries_seen >= MAX_NOTES_BROWSE_ENTRIES:
                             complete = False
                             break
-                        try:
-                            entry = next(iterator)
-                        except StopIteration:
+                        entry, iterator_failed = _next_browse_entry(iterator)
+                        if iterator_failed:
+                            complete = False
+                            break
+                        if entry is None:
                             break
                         entries_seen += 1
                         name = entry.name
@@ -633,7 +668,8 @@ class NotesStore:
                 os.close(folder_fd)
             os.close(root_fd)
 
-    def browse(self, collection, path="", offset=0, limit=DEFAULT_NOTES_BROWSE_LIMIT):
+    def browse(self, collection, path="", offset=0, limit=DEFAULT_NOTES_BROWSE_LIMIT,
+               tags=None, match="and"):
         if collection not in self.roots:
             raise HTTPException(status_code=404, detail="Notes collection not found")
         parts = _notes_browse_parts(path)
@@ -643,96 +679,66 @@ class NotesStore:
                 or offset > MAX_NOTES_BROWSE_ENTRIES or not isinstance(limit, int)
                 or isinstance(limit, bool) or not 1 <= limit <= MAX_NOTES_BROWSE_LIMIT):
             raise HTTPException(status_code=400, detail="Invalid Notes browse page")
+        if match not in {"and", "or"}:
+            raise HTTPException(status_code=400, detail="Invalid Notes tag match mode")
+        if tags is None:
+            tags = []
+        if (not isinstance(tags, (list, tuple)) or len(tags) > MAX_NOTES_BROWSE_TAG_FILTERS
+                or any(not isinstance(tag, str) or not tag
+                       or any(unicodedata.category(char).startswith("C") for char in tag)
+                       or len(tag.encode("utf-8")) > 200 for tag in tags)):
+            raise HTTPException(status_code=400, detail="Invalid Notes tag filters")
+        tags = list(dict.fromkeys(tags))
+        if collection == "drafts" and tags:
+            raise HTTPException(status_code=400, detail="Draft tag browsing is not supported")
         root_fd = self._browse_root_fd(collection)
         source_kind = "drafts" if collection == "drafts" else "notes"
         if root_fd is None:
             return {"source_kind": source_kind, "collection": collection, "path": path,
                     "status": "ok", "items": [], "total": 0, "total_complete": True,
                     "offset": offset, "limit": limit, "next_offset": None,
+                    "tag_facets": [], "tag_facets_complete": True,
                     "scan": {"entries": 0, "bytes": 0, "complete": True}}
 
         entries_seen = 0
         bytes_read = 0
-        complete = True
+        scan_complete = True
+        metadata_complete = True
         rows = []
 
         def add_note(directory_fd, filename, relative, fallback):
-            nonlocal bytes_read, complete
+            nonlocal bytes_read, scan_complete, metadata_complete
             remaining = MAX_NOTES_BROWSE_TOTAL_BYTES - bytes_read
-            row, used_bytes, valid = self._browse_note_at(
-                directory_fd, filename, relative, fallback, remaining)
+            include_tags = collection != "drafts"
+            row, used_bytes, valid, metadata_supported = self._browse_note_at(
+                directory_fd, filename, relative, fallback, remaining, include_tags=include_tags)
             bytes_read += used_bytes
             if not valid:
-                complete = False
+                scan_complete = False
             elif row is not None:
+                if include_tags and not metadata_supported:
+                    metadata_complete = False
                 rows.append(row)
 
-        if collection == "drafts":
+        def visit(directory_fd, prefix, depth=0):
+            nonlocal entries_seen, scan_complete
             try:
-                entries = os.scandir(root_fd)
+                entries = os.scandir(directory_fd)
             except OSError:
-                entries = None
-                complete = False
-            if entries is not None:
-                with entries:
-                    iterator = iter(entries)
-                    while True:
-                        if entries_seen >= MAX_NOTES_BROWSE_ENTRIES or bytes_read >= MAX_NOTES_BROWSE_TOTAL_BYTES:
-                            complete = False
-                            break
-                        try:
-                            entry = next(iterator)
-                        except StopIteration:
-                            break
-                        entries_seen += 1
-                        note_id = entry.name
-                        if not _DRAFT_ID.fullmatch(note_id):
-                            if not note_id.startswith("."):
-                                complete = False
-                            continue
-                        try:
-                            info = os.stat(note_id, dir_fd=root_fd, follow_symlinks=False)
-                        except OSError:
-                            complete = False
-                            continue
-                        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-                            complete = False
-                            continue
-                        if info.st_uid != os.geteuid() or info.st_mode & 0o022:
-                            complete = False
-                            continue
-                        try:
-                            note_dir_fd = self._open_browse_child(root_fd, note_id)
-                        except HTTPException:
-                            complete = False
-                            continue
-                        try:
-                            add_note(note_dir_fd, "note.md", note_id, note_id)
-                        finally:
-                            os.close(note_dir_fd)
-        else:
+                scan_complete = False
+                return
             try:
-                start_fd = self._open_browse_directory(root_fd, path)
-            except Exception:
-                os.close(root_fd)
-                raise
-
-            def visit(directory_fd, prefix, depth=0):
-                nonlocal entries_seen, complete
-                try:
-                    entries = os.scandir(directory_fd)
-                except OSError:
-                    complete = False
-                    return
                 with entries:
                     iterator = iter(entries)
                     while True:
                         if entries_seen >= MAX_NOTES_BROWSE_ENTRIES or bytes_read >= MAX_NOTES_BROWSE_TOTAL_BYTES:
-                            complete = False
+                            scan_complete = False
                             return
-                        try:
-                            entry = next(iterator)
-                        except StopIteration:
+                        entry, iterator_failed = _next_browse_entry(iterator)
+                        if iterator_failed:
+                            scan_complete = False
+                            return
+                        if entry is None:
                             return
                         entries_seen += 1
                         name = entry.name
@@ -742,23 +748,23 @@ class NotesStore:
                             name_bytes = name.encode("utf-8")
                             info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
                         except (OSError, UnicodeError):
-                            complete = False
+                            scan_complete = False
                             continue
                         if stat.S_ISLNK(info.st_mode):
-                            complete = False
+                            scan_complete = False
                             continue
                         relative = f"{prefix}/{name}" if prefix else name
                         if len(name_bytes) > 255 or len(relative.encode("utf-8")) > 4096:
-                            complete = False
+                            scan_complete = False
                             continue
                         if stat.S_ISDIR(info.st_mode):
                             if depth >= MAX_NOTES_BROWSE_DEPTH or info.st_uid != os.geteuid() or info.st_mode & 0o022:
-                                complete = False
+                                scan_complete = False
                                 continue
                             try:
                                 child_fd = self._open_browse_child(directory_fd, name)
                             except HTTPException:
-                                complete = False
+                                scan_complete = False
                                 continue
                             try:
                                 visit(child_fd, relative, depth + 1)
@@ -768,25 +774,102 @@ class NotesStore:
                         if not name.lower().endswith(".md"):
                             continue
                         if not stat.S_ISREG(info.st_mode):
-                            complete = False
+                            scan_complete = False
                             continue
                         add_note(directory_fd, name, relative, Path(name).stem)
+            except OSError:
+                scan_complete = False
 
-            try:
-                visit(start_fd, path)
-            finally:
-                os.close(start_fd)
+        try:
+            if collection == "drafts":
+                try:
+                    entries = os.scandir(root_fd)
+                except OSError:
+                    entries = None
+                    scan_complete = False
+                if entries is not None:
+                    try:
+                        with entries:
+                            iterator = iter(entries)
+                            while True:
+                                if entries_seen >= MAX_NOTES_BROWSE_ENTRIES or bytes_read >= MAX_NOTES_BROWSE_TOTAL_BYTES:
+                                    scan_complete = False
+                                    break
+                                entry, iterator_failed = _next_browse_entry(iterator)
+                                if iterator_failed:
+                                    scan_complete = False
+                                    break
+                                if entry is None:
+                                    break
+                                entries_seen += 1
+                                note_id = entry.name
+                                if not _DRAFT_ID.fullmatch(note_id):
+                                    if not note_id.startswith("."):
+                                        scan_complete = False
+                                    continue
+                                try:
+                                    info = os.stat(note_id, dir_fd=root_fd, follow_symlinks=False)
+                                except OSError:
+                                    scan_complete = False
+                                    continue
+                                if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                                    scan_complete = False
+                                    continue
+                                if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+                                    scan_complete = False
+                                    continue
+                                try:
+                                    note_dir_fd = self._open_browse_child(root_fd, note_id)
+                                except HTTPException:
+                                    scan_complete = False
+                                    continue
+                                try:
+                                    add_note(note_dir_fd, "note.md", note_id, note_id)
+                                finally:
+                                    os.close(note_dir_fd)
+                    except OSError:
+                        scan_complete = False
+            else:
+                start_fd = self._open_browse_directory(root_fd, path)
+                try:
+                    visit(start_fd, path)
+                finally:
+                    os.close(start_fd)
+        finally:
+            os.close(root_fd)
 
-        os.close(root_fd)
         rows.sort(key=lambda item: item["path"])
-        page = rows[offset:offset + limit]
-        has_more = offset + limit < len(rows)
+        tag_counts = {}
+        for row in rows:
+            for tag in row.get("tags", []):
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        sorted_tag_names = sorted(tag_counts, key=lambda value: (value.casefold(), value))
+        tag_facets_complete = len(sorted_tag_names) <= MAX_NOTES_BROWSE_TAG_FACETS
+        visible_tag_names = sorted_tag_names[:MAX_NOTES_BROWSE_TAG_FACETS]
+        counts_complete = scan_complete and metadata_complete and tag_facets_complete
+        tag_facets = [{"name": name, "count": tag_counts[name], "count_complete": counts_complete}
+                      for name in visible_tag_names]
+        if collection == "drafts":
+            filtered = rows
+        elif not tags:
+            filtered = rows
+        elif match == "and":
+            filtered = [row for row in rows if row.get("metadata_status") == "ok"
+                        and all(tag in row["tags"] for tag in tags)]
+        else:
+            filtered = [row for row in rows if row.get("metadata_status") == "ok"
+                        and any(tag in row["tags"] for tag in tags)]
+        total_complete = scan_complete and metadata_complete
+        status = "partial" if not scan_complete or not metadata_complete or not tag_facets_complete else "ok"
+        page = filtered[offset:offset + limit]
+        has_more = offset + limit < len(filtered)
         return {"source_kind": source_kind, "collection": collection, "path": path,
-                "status": "ok" if complete else "partial", "items": page,
-                "total": len(rows), "total_complete": complete,
+                "status": status, "items": page,
+                "total": len(filtered), "total_complete": total_complete,
                 "offset": offset, "limit": limit,
                 "next_offset": offset + limit if has_more else None,
-                "scan": {"entries": entries_seen, "bytes": bytes_read, "complete": complete}}
+                "tag_facets": tag_facets, "tag_facets_complete": tag_facets_complete,
+                "scan": {"entries": entries_seen, "bytes": bytes_read, "complete": scan_complete}}
 
     def create(self, content):
         self._validate(content)
@@ -1236,9 +1319,14 @@ def create_notes_router(auth, store, vocabulary_store=None):
 
     @router.get("/{collection}/browse")
     def browse(request: Request, response: Response, collection: str, path: str = "",
-               offset: int = 0, limit: int = DEFAULT_NOTES_BROWSE_LIMIT):
+               offset: int = 0, limit: int = DEFAULT_NOTES_BROWSE_LIMIT,
+               tag: list[str] = Query(default=[]), match: str = "and"):
         require_browse(request, response)
-        return store.browse(collection, path, offset, limit)
+        try:
+            return store.browse(collection, path, offset, limit, tags=tag, match=match)
+        except HTTPException as exc:
+            exc.headers = {**(exc.headers or {}), "Cache-Control": "private, no-store"}
+            raise
 
     @router.get("/{collection}/{relative:path}/history")
     def history(request: Request, collection: str, relative: str):

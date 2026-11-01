@@ -1,10 +1,12 @@
 export type Note = { collection: string; path: string; content: string; etag: string; read_only: boolean; safety_reasons: string[] };
 export type NoteCollection = { id: string; kind: 'drafts' | 'authorized' };
 export type NotesBrowseFolder = { name: string; path: string };
-export type NotesBrowseItem = { path: string; title: string };
+export type NotesTagFacet = { name: string; count: number; count_complete: boolean };
+export type NotesBrowseItem = { path: string; title: string; tags?: string[]; metadata_status?: 'ok' | 'unsupported' };
 export type NotesBrowseResult = {
   source_kind: 'notes' | 'drafts'; collection: string; path: string; status: 'ok' | 'partial';
   items: NotesBrowseItem[]; total: number; total_complete: boolean; offset: number; limit: number;
+  tag_facets: NotesTagFacet[]; tag_facets_complete: boolean;
   next_offset: number | null; scan: { entries: number; bytes: number; complete: boolean };
 };
 export type NotesFoldersResult = {
@@ -68,21 +70,33 @@ export const notesApi = {
       return result;
     });
   },
-  browse: (collection: string, path: string, offset: number, signal: AbortSignal) => {
+  browse: (collection: string, path: string, offset: number, signal: AbortSignal,
+    tags: string[] = [], match: 'and' | 'or' = 'and') => {
     const params = new URLSearchParams({ path, offset: String(offset), limit: '20' });
+    tags.forEach((tag) => params.append('tag', tag));
+    params.set('match', match);
     return json<unknown>(`/api/notes/${encodeURIComponent(collection)}/browse?${params}`, { signal }).then((value) => {
       if (!value || typeof value !== 'object') throw contractError();
       const result = value as NotesBrowseResult;
       const expectedKind = collection === 'drafts' ? 'drafts' : 'notes';
       if (result.source_kind !== expectedKind || result.collection !== collection || result.path !== path
         || !['ok', 'partial'].includes(result.status) || !Array.isArray(result.items)
-        || !result.items.every((item) => item && isRelativeNotePath(item.path) && typeof item.title === 'string' && item.title.length <= 200)
+        || !result.items.every((item) => item && isRelativeNotePath(item.path) && typeof item.title === 'string' && item.title.length <= 200
+          && (collection === 'drafts' || (Array.isArray(item.tags) && item.tags.length <= 100
+            && item.tags.every((tag) => typeof tag === 'string' && tag.length > 0 && new TextEncoder().encode(tag).length <= 200
+              && !/[\u0000-\u001f\u007f-\u009f]/u.test(tag))
+            && ['ok', 'unsupported'].includes(item.metadata_status ?? ''))))
         || !isNonNegativeInteger(result.total) || typeof result.total_complete !== 'boolean'
+        || !Array.isArray(result.tag_facets) || result.tag_facets.length > 200
+        || !result.tag_facets.every((facet) => facet && typeof facet.name === 'string' && facet.name.length > 0
+          && facet.name.length <= 200 && isNonNegativeInteger(facet.count) && typeof facet.count_complete === 'boolean')
+        || typeof result.tag_facets_complete !== 'boolean'
         || result.offset !== offset || result.limit !== 20
         || (result.next_offset !== null && (!isNonNegativeInteger(result.next_offset) || result.next_offset !== offset + 20))
         || !result.scan || !isNonNegativeInteger(result.scan.entries) || !isNonNegativeInteger(result.scan.bytes)
         || typeof result.scan.complete !== 'boolean') throw contractError();
       if (collection === 'drafts' && result.items.some((item) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.path))) throw contractError();
+      if (collection === 'drafts' && (result.tag_facets.length > 0 || tags.length > 0)) throw contractError();
       return result;
     });
   },

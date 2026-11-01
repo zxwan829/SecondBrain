@@ -73,10 +73,11 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(page["collection"], "personal")
         self.assertEqual(page["total"], 2)
         self.assertTrue(page["total_complete"])
-        self.assertEqual(page["items"], [{"path": "中文研究/乙.md", "title": "乙笔记"}])
+        self.assertEqual(page["items"], [{"path": "中文研究/乙.md", "title": "乙笔记", "tags": [], "metadata_status": "ok"}])
         self.assertEqual(page["next_offset"], 1)
         second = self.store.browse("personal", "中文研究", offset=1, limit=1)
-        self.assertEqual(second["items"], [{"path": "中文研究/甲.md", "title": "甲笔记"}])
+        self.assertEqual(second["items"], [{"path": "中文研究/甲.md", "title": "甲笔记",
+                                             "tags": [], "metadata_status": "ok"}])
         self.assertEqual(self.store.read("personal", second["items"][0]["path"])["content"], "# 甲笔记\n\n合成内容。\n")
         with self.assertRaises(HTTPException) as traversal:
             self.store.browse("personal", "../")
@@ -117,6 +118,120 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(page["source_kind"], "drafts")
         self.assertEqual(page["items"], [{"path": draft["path"], "title": "Synthetic Draft"}])
         self.assertEqual(page["total_complete"], False)
+
+    def test_notes_browse_reports_real_folder_tags_and_filters_and_or_without_sending_bodies(self):
+        scope = self.ordinary / "中文资料"
+        nested = scope / "子目录"
+        nested.mkdir(mode=0o700, parents=True)
+        documents = {
+            scope / "甲.md": '---\ntags: ["AI", "研究"]\n---\n# 甲笔记\nprivate-body-a\n',
+            nested / "乙.md": '---\ntags:\n  - "AI"\n---\n# 乙笔记\nprivate-body-b\n',
+            nested / "丙.md": '---\ntags: {invalid: yaml}\n---\n# 丙笔记\nprivate-body-c\n',
+            scope / "无标签.md": "# 无标签\nprivate-body-d\n",
+        }
+        for path, content in documents.items():
+            path.write_text(content, encoding="utf-8")
+            path.chmod(0o600)
+
+        all_notes = self.store.browse("personal", "中文资料")
+        self.assertEqual(all_notes["status"], "partial")
+        self.assertFalse(all_notes["total_complete"])
+        self.assertTrue(all_notes["scan"]["complete"])
+        self.assertFalse(all_notes["tag_facets"][0]["count_complete"])
+        self.assertEqual({facet["name"]: facet["count"] for facet in all_notes["tag_facets"]}, {"AI": 2, "研究": 1})
+        unsupported = next(item for item in all_notes["items"] if item["path"].endswith("丙.md"))
+        self.assertEqual(unsupported["metadata_status"], "unsupported")
+        self.assertEqual(unsupported["tags"], [])
+        serialized = json.dumps(all_notes, ensure_ascii=False)
+        self.assertNotIn("private-body-", serialized)
+
+        and_result = self.store.browse("personal", "中文资料", tags=["AI", "研究"], match="and")
+        self.assertEqual([item["path"] for item in and_result["items"]], ["中文资料/甲.md"])
+        self.assertEqual(and_result["total"], 1)
+        self.assertFalse(and_result["total_complete"])
+        or_result = self.store.browse("personal", "中文资料", tags=["AI", "研究"], match="or")
+        self.assertEqual({item["path"] for item in or_result["items"]}, {"中文资料/甲.md", "中文资料/子目录/乙.md"})
+        self.assertFalse(or_result["total_complete"])
+        with self.assertRaises(HTTPException) as unsupported_draft_filter:
+            self.store.browse("drafts", tags=["AI"])
+        self.assertEqual(unsupported_draft_filter.exception.status_code, 400)
+        with self.assertRaises(HTTPException) as invalid_unicode_filter:
+            self.store.browse("personal", tags=["\ud800"])
+        self.assertEqual(invalid_unicode_filter.exception.status_code, 400)
+
+    def test_notes_browse_iterator_error_returns_partial_and_closes_root_fd(self):
+        note = self.ordinary / "first.md"
+        note.write_text('# First\n', encoding="utf-8")
+        note.chmod(0o600)
+        root_fd = self.store._browse_root_fd("personal")
+        real_scandir = os.scandir
+
+        class FailingScan:
+            def __init__(self, fd):
+                self.inner = real_scandir(fd)
+                self.iterator = iter(self.inner)
+                self.yielded = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.inner.close()
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                if self.yielded:
+                    raise OSError("synthetic directory iterator failure")
+                self.yielded = True
+                return next(self.iterator)
+
+        failed = False
+
+        def scanned(target):
+            nonlocal failed
+            if not failed:
+                failed = True
+                return FailingScan(target)
+            return real_scandir(target)
+
+        with patch.object(self.store, "_browse_root_fd", return_value=root_fd), \
+                patch("secondbrain_core.modules.notes.os.scandir", side_effect=scanned):
+            result = self.store.browse("personal")
+        self.assertEqual(result["status"], "partial")
+        self.assertFalse(result["total_complete"])
+        self.assertFalse(result["scan"]["complete"])
+        with self.assertRaises(OSError):
+            os.fstat(root_fd)
+
+    def test_drafts_folder_iterator_error_returns_partial_and_closes_root_fd(self):
+        root_fd = self.store._browse_root_fd("drafts")
+        real_scandir = os.scandir
+
+        class FailingScan:
+            def __init__(self, fd):
+                self.inner = real_scandir(fd)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.inner.close()
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                raise OSError("synthetic draft folder iterator failure")
+
+        with patch.object(self.store, "_browse_root_fd", return_value=root_fd), \
+                patch("secondbrain_core.modules.notes.os.scandir", side_effect=lambda target: FailingScan(target)):
+            result = self.store.folders("drafts")
+        self.assertEqual(result["status"], "partial")
+        self.assertFalse(result["scan"]["complete"])
+        with self.assertRaises(OSError):
+            os.fstat(root_fd)
 
     def test_conflict_and_unsupported_markdown_never_overwrite(self):
         note = self.store.create("# Original\n")
@@ -262,7 +377,7 @@ class NotesStoreTests(unittest.TestCase):
         directory = self.ordinary / "项目资料"
         directory.mkdir(mode=0o700)
         note = directory / "会议记录.md"
-        note.write_text("# 合成会议记录\n", encoding="utf-8")
+        note.write_text('---\ntags: ["API"]\n---\n# 合成会议记录\n', encoding="utf-8")
         note.chmod(0o600)
         app = FastAPI()
         app.include_router(create_notes_router(SessionAuth(), self.store))
@@ -283,10 +398,20 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(folders.json()["folders"], [{"name": "项目资料", "path": "项目资料"}])
         browse = client.get(url)
         self.assertEqual(browse.status_code, 200, browse.text)
-        self.assertEqual(browse.json()["items"], [{"path": "项目资料/会议记录.md", "title": "合成会议记录"}])
+        self.assertEqual(browse.json()["items"], [{"path": "项目资料/会议记录.md", "title": "合成会议记录", "tags": ["API"], "metadata_status": "ok"}])
+        filtered = client.get(url + "&tag=API&match=and")
+        self.assertEqual(filtered.status_code, 200, filtered.text)
+        self.assertEqual(filtered.json()["items"][0]["tags"], ["API"])
+        self.assertEqual(filtered.json()["items"][0]["metadata_status"], "ok")
+        self.assertEqual(filtered.json()["tag_facets"], [{"name": "API", "count": 1, "count_complete": True}])
+        self.assertTrue(filtered.json()["tag_facets_complete"])
+        self.assertEqual(filtered.headers.get("cache-control"), "private, no-store")
+        unsupported_draft_filter = client.get("/api/notes/drafts/browse?tag=API")
+        self.assertEqual(unsupported_draft_filter.status_code, 400)
+        self.assertEqual(unsupported_draft_filter.headers.get("cache-control"), "private, no-store")
         detail = client.get("/api/notes/personal/%E9%A1%B9%E7%9B%AE%E8%B5%84%E6%96%99/%E4%BC%9A%E8%AE%AE%E8%AE%B0%E5%BD%95.md")
         self.assertEqual(detail.status_code, 200, detail.text)
-        self.assertEqual(detail.json()["content"], "# 合成会议记录\n")
+        self.assertEqual(detail.json()["content"], '---\ntags: ["API"]\n---\n# 合成会议记录\n')
         self.assertEqual(detail.headers.get("etag"), f'"{self.store._digest(note.read_text(encoding="utf-8"))}"')
 
     def test_confirmed_properties_update_only_managed_frontmatter_with_etag_and_history(self):

@@ -43,6 +43,9 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
   const [path, setPath] = useState('');
   const [folders, setFolders] = useState<NotesFoldersResult | null>(null);
   const [browse, setBrowse] = useState<NotesBrowseResult | null>(null);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagMatch, setTagMatch] = useState<'and' | 'or'>('and');
+  const [showAllTags, setShowAllTags] = useState(false);
   const [selected, setSelected] = useState<NotesBrowseItem | null>(null);
   const [content, setContent] = useState('');
   const [busy, setBusy] = useState(false);
@@ -66,6 +69,7 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
     invalidate();
     setCollections([]); setCollectionId(''); setPath('');
     setFolders(null); setBrowse(null); setSelected(null); setContent('');
+    setSelectedTags([]); setTagMatch('and'); setShowAllTags(false);
     setBusy(false); setError(null); setDetailError(null);
   }, [invalidate]);
 
@@ -100,18 +104,20 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
     return () => invalidate();
   }, [source, clearSource, loadCollections, invalidate]);
 
-  const loadFolder = useCallback(async (targetPath: string, targetCollection = collectionId, offset = 0) => {
+  const loadFolder = useCallback(async (targetPath: string, targetCollection = collectionId, offset = 0,
+    tags: string[] = [], match: 'and' | 'or' = 'and') => {
     if (!targetCollection) return;
     controller.current?.abort(); detailController.current?.abort();
     detailSequence.current += 1; detailController.current = null;
     const request = new AbortController(); controller.current = request;
     const current = ++sequence.current;
     setBusy(true); setPath(targetPath); setFolders(null); setBrowse(null); setSelected(null); setContent('');
+    setSelectedTags(tags); setTagMatch(match);
     setError(null); setDetailError(null);
     try {
       const [folderResult, browseResult] = await Promise.all([
         notesApi.folders(targetCollection, targetPath, request.signal),
-        notesApi.browse(targetCollection, targetPath, offset, request.signal),
+        notesApi.browse(targetCollection, targetPath, offset, request.signal, tags, match),
       ]);
       if (request.signal.aborted || current !== sequence.current) return;
       setFolders(folderResult); setBrowse(browseResult);
@@ -124,6 +130,17 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
       if (!request.signal.aborted && current === sequence.current) setBusy(false);
     }
   }, [clearSource, collectionId, onGlobalAuthFailure]);
+
+  const loadNewFolder = (targetPath: string, targetCollection = collectionId) => {
+    setShowAllTags(false);
+    void loadFolder(targetPath, targetCollection, 0, [], 'and');
+  };
+
+  const toggleTag = (tag: string) => {
+    const next = selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag];
+    if (next.length > 12) return;
+    void loadFolder(path, collectionId, 0, next, tagMatch);
+  };
 
   useEffect(() => {
     if (source !== 'knowledge' && collection) void loadFolder('', collection.id);
@@ -171,28 +188,55 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
             {collections.filter((item) => item.kind === 'authorized').map((item) => <option key={item.id} value={item.id}>{item.id}</option>)}
           </select></label>}
       </header>
-      {error !== null && <div role="alert" className="knowledge-error"><p>{noteError(error, locale)}</p><button type="button" onClick={() => collection ? void loadFolder(path, collection.id) : void loadCollections()}>{en ? 'Retry' : '重试'}</button></div>}
+      {error !== null && <div role="alert" className="knowledge-error"><p>{noteError(error, locale)}</p><button type="button" onClick={() => collection ? void loadFolder(path, collection.id, 0, selectedTags, tagMatch) : void loadCollections()}>{en ? 'Retry' : '重试'}</button></div>}
       {!error && !collection && !busy && <p className="knowledge-empty">{source === 'drafts' ? (en ? 'No Drafts source is available.' : '当前没有可浏览的草稿来源。') : (en ? 'No authorized Notes source is available.' : '当前没有已授权的普通笔记来源。')}</p>}
       {busy && <p role="status">{en ? 'Loading source…' : '正在读取来源…'}</p>}
       {collection && <div className="notes-read-grid">
         <aside className="notes-read-folders" aria-label={en ? 'Folders' : '文件夹'}>
-          <button type="button" aria-current={path === '' ? 'page' : undefined} onClick={() => void loadFolder('')}>{en ? 'Root' : '根目录'}</button>
-          {folders?.folders.map((folder) => <button key={folder.path} type="button" aria-current={path === folder.path ? 'page' : undefined} onClick={() => void loadFolder(folder.path)}>{folder.name}</button>)}
+          <button type="button" aria-current={path === '' ? 'page' : undefined} onClick={() => loadNewFolder('')}>{en ? 'Root' : '根目录'}</button>
+          {folders?.folders.map((folder) => <button key={folder.path} type="button" aria-current={path === folder.path ? 'page' : undefined} onClick={() => loadNewFolder(folder.path)}>{folder.name}</button>)}
           {folders?.status === 'partial' && <small role="status">{en ? 'Folder listing is partial.' : '目录列表不完整。'}</small>}
         </aside>
         <section className="notes-read-content" aria-label={en ? 'Notes' : '笔记列表'}>
           <nav className="notes-read-breadcrumb" aria-label={en ? 'Current folder' : '当前位置'}>
-            <button type="button" onClick={() => void loadFolder('')}>{en ? 'Root' : '根目录'}</button>
+            <button type="button" onClick={() => loadNewFolder('')}>{en ? 'Root' : '根目录'}</button>
             {path.split('/').filter(Boolean).map((segment, index, parts) => {
               const target = parts.slice(0, index + 1).join('/');
-              return <React.Fragment key={target}><span aria-hidden="true">/</span><button type="button" aria-current={index === parts.length - 1 ? 'page' : undefined} onClick={() => void loadFolder(target)}>{segment}</button></React.Fragment>;
+              return <React.Fragment key={target}><span aria-hidden="true">/</span><button type="button" aria-current={index === parts.length - 1 ? 'page' : undefined} onClick={() => loadNewFolder(target)}>{segment}</button></React.Fragment>;
             })}
           </nav>
-          {browse?.status === 'partial' && <p role="status" className="knowledge-notice">{en ? 'This bounded scan is partial; totals are incomplete.' : '本次有界扫描不完整，数量不是完整总数。'}</p>}
+          {browse?.status === 'partial' && <p role="status" className="knowledge-notice">{browse.scan.complete
+            ? (en ? 'Some note metadata or tag counts are incomplete; unsupported notes remain visible.' : '部分笔记元数据或标签计数不完整；无法识别元数据的笔记仍会显示。')
+            : (en ? 'This bounded folder scan is partial; document totals may be incomplete.' : '本次有界目录扫描不完整，文档总数可能不完整。')}</p>}
+          {browse && source === 'notes' && <>
+            <div className="knowledge-folder-heading"><h3>{path || (en ? 'All Notes' : '全部普通笔记')}</h3>
+              <span>{browse.total_complete ? browse.total : `${browse.total}+`}</span></div>
+            <div className="knowledge-tag-bar" aria-label={en ? 'Filter Notes by tags' : '按标签筛选普通笔记'}>
+              <strong>{en ? 'Tags' : '标签'}</strong>
+              {browse.tag_facets.length === 0 && <span>{en ? 'No supported frontmatter tags found.' : '没有发现可识别的 Frontmatter 标签。'}</span>}
+              {(showAllTags ? browse.tag_facets : browse.tag_facets.slice(0, 10)).map((facet) => <label key={facet.name}>
+                <input type="checkbox" checked={selectedTags.includes(facet.name)} disabled={!selectedTags.includes(facet.name) && selectedTags.length >= 12}
+                  onChange={() => toggleTag(facet.name)} />
+                <span>{facet.name}</span><small>{facet.count_complete ? facet.count : `${facet.count}+`}</small>
+              </label>)}
+              {browse.tag_facets.length > 10 && <button type="button" onClick={() => setShowAllTags((current) => !current)}>
+                {showAllTags ? (en ? 'Show fewer' : '收起标签') : (en ? `Show all (${browse.tag_facets.length})` : `显示全部（${browse.tag_facets.length}）`)}
+              </button>}
+              {browse.tag_facets_complete === false && <small role="status">{en ? 'Tag list is incomplete.' : '标签列表不完整。'}</small>}
+              {selectedTags.length > 1 && <label className="knowledge-match-mode">{en ? 'Match' : '匹配'}
+                <select aria-label={en ? 'Tag match mode' : '标签匹配方式'} value={tagMatch}
+                  onChange={(event) => void loadFolder(path, collection.id, 0, selectedTags, event.target.value as 'and' | 'or')}>
+                  <option value="and">AND</option><option value="or">OR</option>
+                </select>
+              </label>}
+            </div>
+          </>}
           {browse?.items.map((item) => <button className="notes-read-item" key={`${source}:${collection.id}:${item.path}`} type="button" aria-pressed={selected?.path === item.path} onClick={() => void openNote(item)}>
-            <strong>{item.title}</strong><small>{item.path}</small></button>)}
+            <strong>{item.title}</strong><small>{item.path}</small>
+            {source === 'notes' && <small>{item.metadata_status === 'unsupported' ? (en ? 'Tags unavailable: unsupported metadata' : '标签不可用：元数据格式不支持') : item.tags?.join(' · ') || (en ? 'No tags' : '无标签')}</small>}
+          </button>)}
           {browse && browse.items.length === 0 && <p className="knowledge-empty">{en ? 'No readable Markdown files in this folder.' : '此目录没有可读取的 Markdown 文件。'}</p>}
-          {browse?.next_offset !== null && browse?.next_offset !== undefined && browse.total_complete && <button type="button" onClick={() => void loadFolder(path, collection.id, browse.next_offset!)}>{en ? 'Next page' : '下一页'}</button>}
+          {browse?.next_offset !== null && browse?.next_offset !== undefined && <button type="button" onClick={() => void loadFolder(path, collection.id, browse.next_offset!, selectedTags, tagMatch)}>{en ? 'Next page' : '下一页'}</button>}
           {detailError !== null && <div role="alert" className="knowledge-error">{noteError(detailError, locale)}</div>}
           {selected && content && <article className="notes-read-detail"><h3>{selected.title}</h3><p>{selected.path}</p><ReviewMarkdown source={content} preserveLines /></article>}
         </section>

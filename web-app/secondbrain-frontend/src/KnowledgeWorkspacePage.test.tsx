@@ -8,8 +8,11 @@ const folders = (collection = 'notes', path = '', values: Array<{ name: string; 
   source_kind: collection === 'drafts' ? 'drafts' : 'notes', collection, path, status: 'ok', folders: values,
   scan: { entries: values.length, complete: true },
 });
-const browse = (collection = 'notes', path = '', items: Array<{ path: string; title: string }> = []) => ({
-  source_kind: collection === 'drafts' ? 'drafts' : 'notes', collection, path, status: 'ok', items,
+const browse = (collection = 'notes', path = '', items: Array<{ path: string; title: string; tags?: string[]; metadata_status?: 'ok' | 'unsupported' }> = [],
+  facets: Array<{ name: string; count: number; count_complete: boolean }> = []) => ({
+  source_kind: collection === 'drafts' ? 'drafts' : 'notes', collection, path, status: 'ok',
+  items: collection === 'drafts' ? items : items.map((item) => ({ tags: [], metadata_status: 'ok' as const, ...item })),
+  tag_facets: collection === 'drafts' ? [] : facets, tag_facets_complete: true,
   total: items.length, total_complete: true, offset: 0, limit: 20, next_offset: null,
   scan: { entries: items.length, bytes: 20, complete: true },
 });
@@ -99,5 +102,72 @@ describe('Knowledge unified read-only workspace', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Stale child/ }));
     // A 401 from a selected document invalidates the whole App session.
     await waitFor(() => expect(onGlobalAuthFailure).toHaveBeenCalled());
+  });
+
+  it('filters ordinary Notes with real facets, AND/OR, bounded facets and resets selection on folder changes', async () => {
+    const browseUrls: string[] = [];
+    const facets = [
+      { name: 'AI', count: 3, count_complete: true },
+      { name: 'Research', count: 2, count_complete: false },
+      ...Array.from({ length: 9 }, (_, index) => ({ name: `Tag${index}`, count: 1, count_complete: true })),
+    ];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/notes') return Promise.resolve(response({ collections: [{ id: 'notes', kind: 'authorized' }] }));
+      if (url.includes('/folders')) return Promise.resolve(response(folders('notes', '', [{ name: '子目录', path: '子目录' }])));
+      if (url.includes('/browse')) {
+        browseUrls.push(url);
+        const params = new URL(url, 'http://localhost').searchParams;
+        return Promise.resolve(response(browse('notes', params.get('path') ?? '', [
+          { path: params.get('path') ? '子目录/双标签.md' : '双标签.md', title: '双标签', tags: ['AI', 'Research'], metadata_status: 'ok' },
+        ], facets)));
+      }
+      return Promise.resolve(response({}, 404));
+    });
+    render(<KnowledgeWorkspacePage locale="en" onGlobalAuthFailure={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Notes' }));
+    expect(await screen.findByRole('checkbox', { name: /AI/ })).toBeTruthy();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(10);
+    expect(screen.getByText('2+')).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: /AI/ }));
+    await waitFor(() => expect(new URL(browseUrls.at(-1)!, 'http://localhost').searchParams.getAll('tag')).toEqual(['AI']));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Research/ }));
+    await waitFor(() => {
+      const params = new URL(browseUrls.at(-1)!, 'http://localhost').searchParams;
+      expect(params.getAll('tag')).toEqual(['AI', 'Research']);
+      expect(params.get('match')).toBe('and');
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tag match mode' }), { target: { value: 'or' } });
+    await waitFor(() => expect(new URL(browseUrls.at(-1)!, 'http://localhost').searchParams.get('match')).toBe('or'));
+    fireEvent.click(screen.getByRole('button', { name: '子目录' }));
+    await waitFor(() => {
+      const params = new URL(browseUrls.at(-1)!, 'http://localhost').searchParams;
+      expect(params.get('path')).toBe('子目录');
+      expect(params.getAll('tag')).toEqual([]);
+      expect(params.get('match')).toBe('and');
+    });
+  });
+
+  it('does not invent Draft tags and preserves partial metadata diagnostics', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/notes') return Promise.resolve(response({ collections: [{ id: 'notes', kind: 'authorized' }, { id: 'drafts', kind: 'drafts' }] }));
+      if (url.includes('/folders')) return Promise.resolve(response(folders(url.includes('/drafts/') ? 'drafts' : 'notes')));
+      if (url.includes('/browse')) {
+        const isDraft = url.includes('/drafts/');
+        return Promise.resolve(response({ ...browse(isDraft ? 'drafts' : 'notes', '', isDraft
+          ? [{ path: '123e4567-e89b-12d3-a456-426614174000', title: 'Draft' }]
+          : [{ path: 'unsupported.md', title: 'Unsupported', tags: [], metadata_status: 'unsupported' }]),
+        status: isDraft ? 'ok' : 'partial', total_complete: true, tag_facets_complete: !isDraft }));
+      }
+      return Promise.resolve(response({}, 404));
+    });
+    render(<KnowledgeWorkspacePage locale="en" onGlobalAuthFailure={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Notes' }));
+    expect(await screen.findByText(/Tags unavailable: unsupported metadata/)).toBeTruthy();
+    expect(screen.getByText(/metadata or tag counts are incomplete/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Drafts' }));
+    await screen.findByRole('button', { name: /Draft/ });
+    expect(screen.queryByRole('checkbox')).toBeNull();
   });
 });
