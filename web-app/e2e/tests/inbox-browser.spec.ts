@@ -247,7 +247,7 @@ async function configurePage(page: Page) {
       (url.pathname === '/api/notes' && ['GET', 'POST'].includes(route.request().method()))
       || (route.request().method() === 'GET' && url.pathname === '/api/notes/drafts')
       || (['GET', 'PUT'].includes(route.request().method())
-        && /^\/api\/notes\/drafts\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(url.pathname))
+        && /^\/api\/notes\/drafts\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(url.pathname))
     );
     if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
       && !briefPath && !journalSourcePath && !sourceListPath && !homePath && !healthPath
@@ -654,7 +654,7 @@ for (const viewport of viewports) {
     expect(createNoteResponse.status(), 'notes_create').toBe(200);
     const createdNote = await createNoteResponse.json() as { collection: string; path: string };
     expect(createdNote.collection).toBe('drafts');
-    expect(createdNote.path).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(createdNote.path).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     const editor = page.locator('.ProseMirror');
     await expect(editor).toBeVisible();
 

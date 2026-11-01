@@ -364,6 +364,17 @@ def test_http_smoke_library_allowlist_rejects_unknown_queries_and_nested_routes(
     assert not allowed("GET", "/api/notes/notes/x/browse?path=x&offset=0&limit=20&match=and")
     assert not allowed("GET", "/api/notes/notes/folders/secret.md?path=x")
     assert not allowed("GET", "/api/notes/notes/%E4%B8%AD%E6%96%87%E8%B5%84%E6%96%99/%E4%B8%8D%E5%9C%A8%E7%99%BD%E5%90%8D%E5%8D%95.md")
+    assert allowed("GET", "/api/notes/drafts/123e4567-e89b-42d3-a456-426614174000")
+    assert not allowed("GET", "/api/notes/drafts/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+
+
+def test_rejected_library_request_diagnostic_never_contains_query_values():
+    secret = "SYNTHETIC_QUERY_SECRET"
+    diagnostic = module._format_rejected_library_request({
+        "method": "GET", "path": f"/api/notes?token={secret}&content={secret}",
+    })
+    assert secret not in diagnostic
+    assert diagnostic == "GET /api/notes (query_present=True, query_count=2)"
 
 
 def test_three_viewport_workspace_journeys_include_sources_pagination_denial_and_drafts():
