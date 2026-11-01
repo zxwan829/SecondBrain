@@ -15,7 +15,7 @@ import { PromotePreviewPanel } from './PromotePreviewPanel';
 const NotesPage = lazy(() => import('./NotesPage').then((module) => ({ default: module.NotesPage })));
 const VocabularyPage = lazy(() => import('./VocabularyPage').then((module) => ({ default: module.VocabularyPage })));
 const UnifiedInboxPage = lazy(() => import('./UnifiedInboxPage').then((module) => ({ default: module.UnifiedInboxPage })));
-const KnowledgePage = lazy(() => import('./KnowledgePage').then((module) => ({ default: module.KnowledgePage })));
+const KnowledgeWorkspacePage = lazy(() => import('./KnowledgeWorkspacePage').then((module) => ({ default: module.KnowledgeWorkspacePage })));
 const notesFeatureEnabled = () => import.meta.env.VITE_ENABLE_NOTES === 'true';
 import { parseRunToolApproval, type RunToolApprovalCard } from './chat-approval';
 import { apiFailureLabel, captureFailureLabel, captureStatusLabel, chatFailureLabel, chatStatusLabel, chatToolStageLabel, isImageOcrDescriptionUnavailable, reviewStatusLabel } from './user-messages';
@@ -299,7 +299,7 @@ export function App() {
 
   if (authenticated === null) return <div className="app-login"><p>SecondBrain</p><span>正在检查登录状态…</span></div>;
   if (!authenticated) return <main className="app-login"><div className="app-login-card"><span className="brand-mark"><Icon name="brain" size={21} /></span><p className="eyebrow">SECONDBRAIN</p><h1>欢迎回来</h1><p>登录后进入你的个人工作台。</p><form onSubmit={login}><label htmlFor="app-password">{messages['zh-CN'].corePassphrase}</label><input id="app-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><button type="submit" disabled={authBusy || !password}>{authBusy ? '正在登录…' : '登录'}</button></form>{authError && <p role="alert" className="auth-error">{authError}</p>}</div></main>;
-  return <WorkspaceApp onLogout={async () => { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setAuthenticated(false); }} />;
+  return <WorkspaceApp onSessionExpired={() => setAuthenticated(false)} onLogout={async () => { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setAuthenticated(false); }} />;
 }
 
 type BlankChatState = { sessionIds: string[]; selectedSessionId: string };
@@ -328,7 +328,7 @@ function loginFailureMessage(status: number): string {
   return `登录请求被拒绝（HTTP ${status}）。`;
 }
 
-function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
+function WorkspaceApp({ onLogout, onSessionExpired }: { onLogout: () => void; onSessionExpired: () => void }) {
   const enableNotes = notesFeatureEnabled();
   const [locale, setLocale] = useState<Locale>(() => localStorage.getItem('secondbrain.locale') === 'en' ? 'en' : 'zh-CN');
   const [home, setHome] = useState<Home | null>(null);
@@ -521,7 +521,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
         {page === 'brief' || page === 'agent-health' ? <V1BriefHealthPage page={page} locale={locale} />
           : page === 'projects' || page === 'activity' ? <V1ReadOnlyPage page={page} locale={locale} />
           : page === 'calendar' ? <CalendarPage locale={locale} />
-          : page === 'knowledge' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Knowledge…' : '正在加载知识库…'}</div>}><KnowledgePage locale={locale} /></Suspense>
+          : page === 'knowledge' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading Knowledge workspace…' : '正在加载知识工作区…'}</div>}><KnowledgeWorkspacePage locale={locale} onGlobalAuthFailure={onSessionExpired} /></Suspense>
           : page === 'vocabulary' ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading vocabulary…' : '正在加载词库…'}</div>}><VocabularyPage locale={locale} /></Suspense>
           : page === 'journal' ? <JournalPage /> : page === 'notes' ? (!notesGateChecked
           ? <div role="status">{locale === 'en' ? 'Checking Notes availability…' : '正在检查笔记状态…'}</div>

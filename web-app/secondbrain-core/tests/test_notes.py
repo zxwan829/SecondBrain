@@ -49,6 +49,75 @@ class NotesStoreTests(unittest.TestCase):
             self.store.read("knowledge", "secret.md")
         self.assertEqual(denied.exception.status_code, 404)
 
+    def test_bounded_read_only_notes_browse_handles_chinese_paths_and_paging(self):
+        folder = self.ordinary / "中文研究"
+        folder.mkdir(mode=0o700)
+        (folder / "甲.md").write_text("# 甲笔记\n\n合成内容。\n", encoding="utf-8")
+        (folder / "乙.md").write_text("# 乙笔记\n", encoding="utf-8")
+        (folder / "甲.md").chmod(0o600)
+        (folder / "乙.md").chmod(0o600)
+        hidden = self.ordinary / ".private"
+        hidden.mkdir(mode=0o700)
+        (hidden / "hidden.md").write_text("# Hidden\n")
+        (hidden / "hidden.md").chmod(0o600)
+        attachment_dir = folder / "attachments"
+        attachment_dir.mkdir(mode=0o700)
+        (attachment_dir / "ignored.md").write_text("# Attachment\n")
+        (attachment_dir / "ignored.md").chmod(0o600)
+
+        folders = self.store.folders("personal")
+        self.assertEqual(folders["status"], "ok")
+        self.assertEqual(folders["folders"], [{"name": "中文研究", "path": "中文研究"}])
+        page = self.store.browse("personal", "中文研究", offset=0, limit=1)
+        self.assertEqual(page["source_kind"], "notes")
+        self.assertEqual(page["collection"], "personal")
+        self.assertEqual(page["total"], 2)
+        self.assertTrue(page["total_complete"])
+        self.assertEqual(page["items"], [{"path": "中文研究/乙.md", "title": "乙笔记"}])
+        self.assertEqual(page["next_offset"], 1)
+        second = self.store.browse("personal", "中文研究", offset=1, limit=1)
+        self.assertEqual(second["items"], [{"path": "中文研究/甲.md", "title": "甲笔记"}])
+        self.assertEqual(self.store.read("personal", second["items"][0]["path"])["content"], "# 甲笔记\n\n合成内容。\n")
+        with self.assertRaises(HTTPException) as traversal:
+            self.store.browse("personal", "../")
+        self.assertEqual(traversal.exception.status_code, 400)
+
+    def test_browse_marks_symlinks_and_scan_limits_partial_without_reading_external_data(self):
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir(mode=0o700)
+        secret = outside / "secret.md"
+        secret.write_text("# Outside\n", encoding="utf-8")
+        secret.chmod(0o600)
+        (self.ordinary / "linked").symlink_to(outside, target_is_directory=True)
+        partial = self.store.browse("personal")
+        self.assertEqual(partial["status"], "partial")
+        self.assertFalse(partial["total_complete"])
+        self.assertEqual(partial["items"], [])
+        self.assertEqual(secret.read_text(encoding="utf-8"), "# Outside\n")
+
+        for name in ("one.md", "two.md"):
+            note = self.ordinary / name
+            note.write_text(f"# {name}\n", encoding="utf-8")
+            note.chmod(0o600)
+        with patch("secondbrain_core.modules.notes.MAX_NOTES_BROWSE_ENTRIES", 1):
+            limited = self.store.browse("personal")
+        self.assertEqual(limited["status"], "partial")
+        self.assertFalse(limited["scan"]["complete"])
+        self.assertEqual(limited["scan"]["entries"], 1)
+
+    def test_drafts_browse_exposes_only_uuid_note_documents_not_internal_folders(self):
+        draft = self.store.create("# Synthetic Draft\n")
+        malformed = self.drafts / ("a" * 36)
+        malformed.mkdir(mode=0o700)
+        (malformed / "note.md").write_text("# Must not be listed\n", encoding="utf-8")
+        (malformed / "note.md").chmod(0o600)
+        folders = self.store.folders("drafts")
+        self.assertEqual(folders["folders"], [])
+        page = self.store.browse("drafts")
+        self.assertEqual(page["source_kind"], "drafts")
+        self.assertEqual(page["items"], [{"path": draft["path"], "title": "Synthetic Draft"}])
+        self.assertEqual(page["total_complete"], False)
+
     def test_conflict_and_unsupported_markdown_never_overwrite(self):
         note = self.store.create("# Original\n")
         with self.assertRaises(HTTPException) as stale:
@@ -181,6 +250,44 @@ class NotesStoreTests(unittest.TestCase):
                               headers={"If-Match": f'"{saved.json()["etag"]}"',
                                        "If-Asset-Match": fetched.headers["etag"]})
         self.assertEqual(replaced.status_code, 200)
+
+    def test_notes_browse_http_contract_is_session_scoped_no_store_and_keeps_unicode_detail_read_only(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+                if action == "notes.read" and request.headers.get("x-deny-read") == "true":
+                    raise HTTPException(status_code=403, detail="Notes read permission required")
+
+        directory = self.ordinary / "项目资料"
+        directory.mkdir(mode=0o700)
+        note = directory / "会议记录.md"
+        note.write_text("# 合成会议记录\n", encoding="utf-8")
+        note.chmod(0o600)
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        url = "/api/notes/personal/browse?path=%E9%A1%B9%E7%9B%AE%E8%B5%84%E6%96%99"
+
+        anonymous = client.get(url)
+        self.assertEqual(anonymous.status_code, 401)
+        self.assertEqual(anonymous.headers.get("cache-control"), "private, no-store")
+        client.cookies.set("session", "owner")
+        denied = client.get(url, headers={"x-deny-read": "true"})
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.headers.get("cache-control"), "private, no-store")
+
+        folders = client.get("/api/notes/personal/folders")
+        self.assertEqual(folders.status_code, 200, folders.text)
+        self.assertEqual(folders.headers.get("cache-control"), "private, no-store")
+        self.assertEqual(folders.json()["folders"], [{"name": "项目资料", "path": "项目资料"}])
+        browse = client.get(url)
+        self.assertEqual(browse.status_code, 200, browse.text)
+        self.assertEqual(browse.json()["items"], [{"path": "项目资料/会议记录.md", "title": "合成会议记录"}])
+        detail = client.get("/api/notes/personal/%E9%A1%B9%E7%9B%AE%E8%B5%84%E6%96%99/%E4%BC%9A%E8%AE%AE%E8%AE%B0%E5%BD%95.md")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["content"], "# 合成会议记录\n")
+        self.assertEqual(detail.headers.get("etag"), f'"{self.store._digest(note.read_text(encoding="utf-8"))}"')
 
     def test_confirmed_properties_update_only_managed_frontmatter_with_etag_and_history(self):
         class SessionAuth:

@@ -26,7 +26,7 @@ function provenanceLabel(status: KnowledgeSearchItem['provenance_status'], local
   return locale === 'en' ? 'No verified source recorded' : '没有已验证的来源记录';
 }
 
-export function KnowledgePage({ locale }: { locale: Locale }) {
+export function KnowledgePage({ locale, onGlobalAuthFailure }: { locale: Locale; onGlobalAuthFailure?: () => void }) {
   const en = locale === 'en';
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<KnowledgeSearchItem[]>([]);
@@ -131,6 +131,7 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
       setSearchStatus('error');
       const status = error instanceof KnowledgeApiError ? error.status : null;
       setErrorStatus(status);
+      if (status === 401) onGlobalAuthFailure?.();
       if (status === 401 || status === 403) clearKnowledgeAfterAccessFailure(status);
     }
   }
@@ -157,6 +158,7 @@ export function KnowledgePage({ locale }: { locale: Locale }) {
       if (status === 401 || status === 403 || status === 503) {
         clearKnowledgeAfterAccessFailure(status);
       }
+      if (status === 401) onGlobalAuthFailure?.();
     }
   }
 
