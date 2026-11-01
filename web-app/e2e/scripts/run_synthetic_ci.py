@@ -102,9 +102,12 @@ ALLOW_FAILURE_SCREENSHOT_PUBLICATION = False
 
 
 def _sanitize_path(path: str) -> str:
+    path_part, separator, query = path.partition("?")
+    notes_route = re.match(r"^/api/notes/(notes|archive)(/.*)?$", path_part)
+    if notes_route and (notes_route.group(2) or "") not in {"", "/folders", "/browse"}:
+        path_part = f"/api/notes/{notes_route.group(1)}/<synthetic-relative-path>"
+    path = f"{path_part}{separator}{query}"
     path = KNOWLEDGE_ITEM_PATH.sub("/api/knowledge/items/<opaque-id>", path)
-    path = re.sub(r"/api/notes/(notes|archive)/(?!(?:folders|browse)(?:/|\?|$))[^?#]+",
-                  r"/api/notes/\1/<synthetic-relative-path>", path)
     return OPAQUE_ID.sub("<opaque-id>", path)
 
 
@@ -885,6 +888,59 @@ def _assert_exact_brief_file_set(root: Path, date_file_name: str) -> int:
     return len(names)
 
 
+def _library_request_allowlisted(method: str, raw_path: str) -> bool:
+    parsed = urlsplit(raw_path)
+    path = urllib.parse.unquote(parsed.path)
+    query = tuple(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    knowledge_browse = {
+        (("path", folder), ("match", match), ("offset", "0"), ("limit", "20"))
+        for folder in ("", "中文项目") for match in ("and", "or")
+    } | {
+        (("path", "中文项目"), ("match", match), ("offset", "0"), ("limit", "20"), ("tag", "AI"), ("tag", "研究"))
+        for match in ("and", "or")
+    }
+    notes_folder_queries = {(('path', ''),), (('path', '中文资料'),)}
+    notes_browse_queries = {
+        (("path", folder), ("offset", offset), ("limit", "20"), ("match", match))
+        for folder in ("", "中文资料") for offset in ("0", "20") for match in ("and", "or")
+    } | {
+        (("path", "中文资料"), ("offset", "0"), ("limit", "20"), ("match", match), ("tag", "AI"), ("tag", "研究"))
+        for match in ("and", "or")
+    } | {(('path', '中文资料'),)}
+    endpoint_queries = {
+        "/api/knowledge/folders": {(('path', ''),), (('path', '中文项目'),)},
+        "/api/knowledge/browse": knowledge_browse,
+        "/api/notes/notes/folders": notes_folder_queries,
+        "/api/notes/notes/browse": notes_browse_queries,
+        "/api/notes/archive/folders": notes_folder_queries,
+        "/api/notes/archive/browse": notes_browse_queries,
+        "/api/notes/drafts/folders": {(('path', ''),)},
+        "/api/notes/drafts/browse": {
+            (('path', ''), ('offset', offset), ('limit', '20'), ('match', 'and')) for offset in ('0', '20')
+        },
+    }
+    if path in endpoint_queries:
+        return method == "GET" and query in endpoint_queries[path]
+    if path == "/api/notes":
+        return method in {"GET", "POST"} and not query
+    if path == "/api/notes/drafts":
+        return method == "GET" and not query
+    if path == "/api/knowledge/items/<opaque-id>":
+        return False  # Only sanitized paths reach this branch; check raw token below.
+    if path.startswith("/api/knowledge/items/"):
+        return method == "GET" and not query and bool(re.fullmatch(
+            r"/api/knowledge/items/v1\.[A-Za-z0-9_-]+\.[0-9a-f]{32}", path))
+    note_detail_paths = {
+        f"/api/notes/notes/中文资料/笔记-{name}.md"
+        for name in ("双标签", "单标签", "无标签", "不支持元数据", *(f"{index:02}" for index in range(5, 23)))
+    } | {"/api/notes/archive/中文资料/同名笔记.md"}
+    if path in note_detail_paths:
+        return method == "GET" and not query
+    if re.fullmatch(r"/api/notes/drafts/[0-9a-f-]{36}", path):
+        return method in {"GET", "PUT"} and not query
+    return not path.startswith(("/api/knowledge", "/api/notes"))
+
+
 def http_smoke(password_path: Path, dirs: dict[str, Path], library_fixture: dict[str, dict[str, bytes]]) -> list[dict]:
     """Exercise real Core HTTP through Vite without launching a browser."""
     jar = http.cookiejar.CookieJar()
@@ -907,7 +963,8 @@ def http_smoke(password_path: Path, dirs: dict[str, Path], library_fixture: dict
         except urllib.error.HTTPError as error:
             status, payload = error.code, error.read()
         request_log.append({"method": method, "path": _sanitize_path(path),
-                            "status": status, "elapsed_ms": round((time.monotonic() - started) * 1000)})
+                            "status": status, "elapsed_ms": round((time.monotonic() - started) * 1000),
+                            "library_request_allowed": _library_request_allowlisted(method, path)})
         parsed = None
         try:
             parsed = json.loads(payload) if payload else None
@@ -1155,55 +1212,9 @@ def http_smoke(password_path: Path, dirs: dict[str, Path], library_fixture: dict
         f"/api/daily-brief/source-options/journal?date={day}", brief_path,
         "/api/daily-brief",
     }
-    def allowed_library_request(entry: dict) -> bool:
-        method = entry.get("method")
-        parsed = urlsplit(entry.get("path", ""))
-        path = urllib.parse.unquote(parsed.path)
-        query_values = tuple(__import__("urllib.parse").parse.parse_qsl(parsed.query, keep_blank_values=True))
-        knowledge_browse = {path_query for path_query in (
-            (("path", "中文项目"), ("match", "and"), ("offset", "0"), ("limit", "20")),
-            (("path", "中文项目"), ("match", "and"), ("offset", "0"), ("limit", "20"), ("tag", "AI"), ("tag", "研究")),
-            (("path", "中文项目"), ("match", "or"), ("offset", "0"), ("limit", "20"), ("tag", "AI"), ("tag", "研究")),
-        )}
-        notes_browse = {
-            (("path", "中文资料"), ("offset", "0"), ("limit", "20"), ("match", "and"), ("tag", "AI"), ("tag", "研究")),
-            (("path", "中文资料"), ("offset", "0"), ("limit", "20"), ("match", "or"), ("tag", "AI"), ("tag", "研究")),
-            (("path", "中文资料"), ("offset", "20"), ("limit", "20"), ("match", "and")),
-            (("path", "中文资料"),),
-        }
-        if path in {"/api/knowledge/folders", "/api/knowledge/browse", "/api/notes/notes/folders",
-                    "/api/notes/notes/browse", "/api/notes/archive/folders", "/api/notes/archive/browse",
-                    "/api/notes/drafts/folders", "/api/notes/drafts/browse"}:
-            expected_query = {
-                "/api/knowledge/folders": {(('path', ''),)},
-                "/api/knowledge/browse": knowledge_browse,
-                "/api/notes/notes/folders": {(('path', ''),)},
-                "/api/notes/notes/browse": notes_browse,
-                "/api/notes/archive/folders": {(('path', ''),)},
-                "/api/notes/archive/browse": {(('path', ''), ('offset', '0'), ('limit', '20'), ('match', 'and'))},
-                "/api/notes/drafts/folders": {(('path', ''),)},
-                "/api/notes/drafts/browse": {(('path', ''), ('offset', '0'), ('limit', '20'), ('match', 'and'))},
-            }[path]
-            return method == "GET" and query_values in expected_query
-        if path in {"/api/notes", "/api/notes/drafts"}:
-            return (path == "/api/notes" and method in {"GET", "POST"}
-                    and (not parsed.query or method == "GET")
-                    or path == "/api/notes/drafts" and method == "GET" and not parsed.query)
-        if path == "/api/knowledge/items/<opaque-id>":
-            return method == "GET" and not parsed.query
-        if path.startswith("/api/notes/"):
-            allowed_detail = re.fullmatch(r"/api/notes/(?:notes|archive)/<synthetic-relative-path>", path)
-            allowed_draft = re.fullmatch(r"/api/notes/drafts/(?:[0-9a-f-]{36}|<opaque-id>)", path)
-            return ((allowed_detail is not None and method == "GET" and not parsed.query)
-                    or (allowed_draft is not None and method in {"GET", "PUT"} and not parsed.query))
-        return not path.startswith("/api/knowledge") and not path.startswith("/api/notes")
-
-    rejected_library = next((entry for entry in request_log if not allowed_library_request(entry)), None)
+    rejected_library = next((entry for entry in request_log if not entry["library_request_allowed"]), None)
     if rejected_library:
-        rejected_url = urlsplit(rejected_library.get("path", ""))
-        rejected_path = urllib.parse.unquote(rejected_url.path)
-        query_keys = sorted({key[:40] for key, _ in urllib.parse.parse_qsl(rejected_url.query, keep_blank_values=True)})
-        raise RuntimeError(f"HTTP smoke called a non-allowlisted Knowledge or Notes endpoint: {rejected_library.get('method')} {_sanitize_path(rejected_url.path)} (query_keys={query_keys}, ordinary_detail={bool(re.fullmatch(r'/api/notes/(?:notes|archive)/<synthetic-relative-path>', rejected_path))})")
+        raise RuntimeError(f"HTTP smoke called a non-allowlisted Knowledge or Notes endpoint: {rejected_library.get('method')} {_sanitize_path(rejected_library.get('path', ''))}")
     if any(entry["path"].startswith(("/api/journal/entries", "/api/capture")) for entry in request_log):
         raise RuntimeError("HTTP smoke unexpectedly called a protected target API")
     if any(entry["path"].startswith(("/api/tasks", "/api/projects", "/api/daily-brief"))

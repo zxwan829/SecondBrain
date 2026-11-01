@@ -130,6 +130,12 @@ def test_knowledge_opaque_ids_are_removed_from_paths_and_traces():
     assert module._sanitize_url(
         "/api/notes/notes/%E4%B8%AD%E6%96%87%E8%B5%84%E6%96%99/%E7%AC%94%E8%AE%B0.md"
     ) == "/api/notes/notes/<synthetic-relative-path>"
+    assert module._sanitize_url(
+        "/api/notes/notes/folders/private-subtree/secret.md?path=secret"
+    ) == "/api/notes/notes/<synthetic-relative-path>"
+    assert module._sanitize_url(
+        "/api/notes/notes/browse/private-subtree/secret.md?path=secret"
+    ) == "/api/notes/notes/<synthetic-relative-path>"
 
 
 def test_workflow_uploads_only_exact_sanitized_directory_and_is_manual_read_only():
@@ -341,10 +347,23 @@ def test_browser_fixture_allowlists_only_exact_synthetic_notes_routes():
     assert "const knowledgeDetailPath = method === 'GET'" in browser_spec
     assert "const notesFoldersPath = Boolean(collectionMatch)" in browser_spec
     assert "const notesBrowsePath = Boolean(collectionMatch)" in browser_spec
+    assert "notesRelativePath === 'folders'" in browser_spec
+    assert "notesRelativePath === 'browse'" in browser_spec
     assert "const draftsFoldersPath = method === 'GET'" in browser_spec
     assert "queryHasOnly(['path', 'match', 'offset', 'limit'], ['tag'])" in browser_spec
     assert "(notes|archive)" in browser_spec
     assert "url.pathname.startsWith('/api/knowledge')" not in browser_spec
+
+
+def test_http_smoke_library_allowlist_rejects_unknown_queries_and_nested_routes():
+    allowed = module._library_request_allowlisted
+    assert allowed("GET", "/api/notes")
+    assert not allowed("GET", "/api/notes?unexpected=1")
+    assert not allowed("POST", "/api/notes?unexpected=1")
+    assert allowed("GET", "/api/notes/notes/browse?path=%E4%B8%AD%E6%96%87%E8%B5%84%E6%96%99&offset=0&limit=20&match=and")
+    assert not allowed("GET", "/api/notes/notes/x/browse?path=x&offset=0&limit=20&match=and")
+    assert not allowed("GET", "/api/notes/notes/folders/secret.md?path=x")
+    assert not allowed("GET", "/api/notes/notes/%E4%B8%AD%E6%96%87%E8%B5%84%E6%96%99/%E4%B8%8D%E5%9C%A8%E7%99%BD%E5%90%8D%E5%8D%95.md")
 
 
 def test_three_viewport_workspace_journeys_include_sources_pagination_denial_and_drafts():

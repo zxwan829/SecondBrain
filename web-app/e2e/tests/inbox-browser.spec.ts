@@ -196,9 +196,9 @@ async function configurePage(page: Page) {
     const collectionMatch = decodedPath.match(/^\/api\/notes\/(notes|archive)(?:\/(.*))?$/);
     const notesCollection = collectionMatch?.[1] ?? '';
     const notesRelativePath = collectionMatch?.[2] ?? '';
-    const notesFoldersPath = Boolean(collectionMatch) && decodedPath.endsWith('/folders') && method === 'GET'
+    const notesFoldersPath = Boolean(collectionMatch) && notesRelativePath === 'folders' && method === 'GET'
       && exactParams({ path: params.get('path') ?? '' }) && ['', '中文资料'].includes(params.get('path') ?? '');
-    const notesBrowsePath = Boolean(collectionMatch) && decodedPath.endsWith('/browse') && method === 'GET'
+    const notesBrowsePath = Boolean(collectionMatch) && notesRelativePath === 'browse' && method === 'GET'
       && queryHasOnly(['path', 'offset', 'limit', 'match'], ['tag'])
       && ['', '中文资料'].includes(params.get('path') ?? '')
       && ['0', '20'].includes(params.get('offset') ?? '') && params.get('limit') === '20'
