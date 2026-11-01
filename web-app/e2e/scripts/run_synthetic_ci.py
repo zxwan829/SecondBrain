@@ -1328,13 +1328,15 @@ def main() -> int:
         journal_mutated_files = sum(
             name not in journal_after or journal_after.get(name) != contents for name, contents in journal_fixture.items()
         ) + sum(name not in journal_fixture for name in journal_after)
+        # Library roots are read-only test inputs: detect mutation even when a
+        # browser assertion fails, rather than only validating them on PASS.
+        assert_library_fixtures_unchanged(dirs, library_fixture)
         today_brief_name = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
         brief_file_set_verified = False
         if test_returncode == 0:
             expected_raw = 1 if options.http_smoke_only else 3
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
-            assert_library_fixtures_unchanged(dirs, library_fixture)
             assert_journal_fixture_unchanged(dirs["journal"], journal_fixture)
             if not options.http_smoke_only and journal_after != journal_fixture:
                 raise RuntimeError("synthetic Journal source changed during Brief acceptance")
