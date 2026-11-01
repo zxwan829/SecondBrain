@@ -154,7 +154,7 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
     { id: 'drafts', label: en ? 'Drafts' : '草稿' },
   ];
 
-  return <main className="knowledge-workspace">
+  return <section className="knowledge-workspace">
     <header className="knowledge-workspace-header">
       <div><p className="eyebrow">{en ? 'LIBRARY' : '资料库'}</p><h1>{en ? 'Knowledge workspace' : '知识工作区'}</h1>
         <p>{en ? 'Browse each source within its own access and write boundary.' : '各来源保持独立的身份、权限与写入边界。'}</p></div>
@@ -167,7 +167,7 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
         <div><h2>{source === 'drafts' ? (en ? 'Drafts' : '草稿') : (en ? 'Authorized Notes' : '已授权笔记')}</h2>
           <p>{en ? 'Read-only. Selection and content are not persisted.' : '只读浏览；选中项与正文不会被持久化。'}</p></div>
         {source === 'notes' && collections.filter((item) => item.kind === 'authorized').length > 1 && <label>{en ? 'Collection' : '目录'}
-          <select value={collectionId} onChange={(event) => { setCollectionId(event.target.value); void loadFolder('', event.target.value); }}>
+          <select value={collectionId} onChange={(event) => setCollectionId(event.target.value)}>
             {collections.filter((item) => item.kind === 'authorized').map((item) => <option key={item.id} value={item.id}>{item.id}</option>)}
           </select></label>}
       </header>
@@ -181,7 +181,13 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
           {folders?.status === 'partial' && <small role="status">{en ? 'Folder listing is partial.' : '目录列表不完整。'}</small>}
         </aside>
         <section className="notes-read-content" aria-label={en ? 'Notes' : '笔记列表'}>
-          <p className="notes-read-path">{path || (en ? 'Root' : '根目录')}</p>
+          <nav className="notes-read-breadcrumb" aria-label={en ? 'Current folder' : '当前位置'}>
+            <button type="button" onClick={() => void loadFolder('')}>{en ? 'Root' : '根目录'}</button>
+            {path.split('/').filter(Boolean).map((segment, index, parts) => {
+              const target = parts.slice(0, index + 1).join('/');
+              return <React.Fragment key={target}><span aria-hidden="true">/</span><button type="button" aria-current={index === parts.length - 1 ? 'page' : undefined} onClick={() => void loadFolder(target)}>{segment}</button></React.Fragment>;
+            })}
+          </nav>
           {browse?.status === 'partial' && <p role="status" className="knowledge-notice">{en ? 'This bounded scan is partial; totals are incomplete.' : '本次有界扫描不完整，数量不是完整总数。'}</p>}
           {browse?.items.map((item) => <button className="notes-read-item" key={`${source}:${collection.id}:${item.path}`} type="button" aria-pressed={selected?.path === item.path} onClick={() => void openNote(item)}>
             <strong>{item.title}</strong><small>{item.path}</small></button>)}
@@ -192,5 +198,5 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
         </section>
       </div>}
     </section>}
-  </main>;
+  </section>;
 }

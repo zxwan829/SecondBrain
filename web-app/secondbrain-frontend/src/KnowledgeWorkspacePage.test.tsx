@@ -45,14 +45,14 @@ describe('Knowledge unified read-only workspace', () => {
     expect(setItem).not.toHaveBeenCalled();
   });
 
-  it('clears the selected source after a permission denial and never retains stale content', async () => {
+  it.each([403, 503])('clears the selected source after HTTP %i and never retains stale content', async (deniedStatus) => {
     let failRead = false;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url === '/api/notes') return response({ collections: [{ id: 'notes', kind: 'authorized' }] });
       if (url.includes('/folders')) return response(folders());
       if (url.includes('/browse')) return response(browse('notes', '', [{ path: 'private-test.md', title: 'Old content' }]));
-      if (url.endsWith('/private-test.md')) return failRead ? response({ detail: 'denied' }, 403)
+      if (url.endsWith('/private-test.md')) return failRead ? response({ detail: 'denied' }, deniedStatus)
         : response({ collection: 'notes', path: 'private-test.md', content: 'old-body-marker', etag: 'b'.repeat(64), read_only: true, safety_reasons: [] });
       return response({}, 404);
     });
@@ -64,7 +64,8 @@ describe('Knowledge unified read-only workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: /Old content/ }));
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(screen.queryByText('old-body-marker')).toBeNull();
-    expect(screen.getByText(/not authorized/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Old content/ })).toBeNull();
+    expect(screen.getByText(deniedStatus === 403 ? /not authorized/i : /temporarily unavailable/i)).toBeTruthy();
   });
 
   it('expires the full App session on 401 and ignores a late response from a superseded folder', async () => {
@@ -89,7 +90,7 @@ describe('Knowledge unified read-only workspace', () => {
     holdChild = true;
     fireEvent.click(screen.getByRole('button', { name: 'Child' }));
     await waitFor(() => expect(releaseOld).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'Root' }));
+    fireEvent.click(screen.getByRole('navigation', { name: 'Current folder' }).querySelector('button')!);
     await waitFor(() => expect(screen.queryByText('Stale child')).toBeNull());
     await act(async () => { releaseOld(response(browse('notes', 'Child', [{ path: 'Child/stale.md', title: 'Stale child' }]))); });
     expect(screen.queryByText('Stale child')).toBeNull();
