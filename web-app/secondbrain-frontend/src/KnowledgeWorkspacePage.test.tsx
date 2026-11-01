@@ -170,4 +170,64 @@ describe('Knowledge unified read-only workspace', () => {
     await screen.findByRole('button', { name: /Draft/ });
     expect(screen.queryByRole('checkbox')).toBeNull();
   });
+
+  it('retries the failed Notes page at the same offset before continuing pagination', async () => {
+    const offsets: string[] = [];
+    let failSecondPage = true;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/notes') return Promise.resolve(response({ collections: [{ id: 'notes', kind: 'authorized' }] }));
+      if (url.includes('/folders')) return Promise.resolve(response(folders()));
+      if (url.includes('/browse')) {
+        const params = new URL(url, 'http://localhost').searchParams;
+        const offset = Number(params.get('offset'));
+        offsets.push(String(offset));
+        if (offset === 20 && failSecondPage) { failSecondPage = false; return Promise.resolve(response({ detail: 'temporary' }, 503)); }
+        const items = offset === 0
+          ? Array.from({ length: 20 }, (_, index) => ({ path: `page1-${index}.md`, title: `Page 1 item ${index}` }))
+          : Array.from({ length: 5 }, (_, index) => ({ path: `page2-${index}.md`, title: `Page 2 item ${index}` }));
+        return Promise.resolve(response({ ...browse('notes', '', items), offset, total: 25, next_offset: offset === 0 ? 20 : null }));
+      }
+      return Promise.resolve(response({}, 404));
+    });
+    render(<KnowledgeWorkspacePage locale="en" onGlobalAuthFailure={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Notes' }));
+    expect(await screen.findByRole('button', { name: /Page 1 item 0/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: /Page 2 item 0/ })).toBeTruthy();
+    expect(offsets.slice(-3)).toEqual(['0', '20', '20']);
+  });
+
+  it('clears and invalidates the prior collection immediately when switching Notes sources', async () => {
+    const reads: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/notes') return Promise.resolve(response({ collections: [
+        { id: 'notes-a', kind: 'authorized' }, { id: 'notes-b', kind: 'authorized' },
+      ] }));
+      if (url.includes('/folders')) return Promise.resolve(response(folders(url.includes('/notes-b/') ? 'notes-b' : 'notes-a')));
+      if (url.includes('/browse')) {
+        const isB = url.includes('/notes-b/');
+        return Promise.resolve(response(browse(isB ? 'notes-b' : 'notes-a', '', [
+          isB ? { path: 'new.md', title: 'New collection item' } : { path: 'same.md', title: 'Old collection item' },
+        ])));
+      }
+      if (url.endsWith('/same.md')) {
+        reads.push(url);
+        return Promise.resolve(response({ collection: 'notes-a', path: 'same.md', content: 'old-collection-body', etag: 'c'.repeat(64), read_only: true, safety_reasons: [] }));
+      }
+      return Promise.resolve(response({}, 404));
+    });
+    render(<KnowledgeWorkspacePage locale="en" onGlobalAuthFailure={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Notes' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Old collection item/ }));
+    expect(await screen.findByText('old-collection-body')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Collection'), { target: { value: 'notes-b' } });
+    expect(screen.queryByRole('button', { name: /Old collection item/ })).toBeNull();
+    expect(screen.queryByText('old-collection-body')).toBeNull();
+    expect(await screen.findByRole('button', { name: /New collection item/ })).toBeTruthy();
+    expect(reads).toEqual(['/api/notes/notes-a/same.md']);
+  });
 });

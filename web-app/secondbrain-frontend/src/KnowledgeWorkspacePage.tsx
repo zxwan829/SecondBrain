@@ -41,6 +41,7 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
   const [collections, setCollections] = useState<NoteCollection[]>([]);
   const [collectionId, setCollectionId] = useState('');
   const [path, setPath] = useState('');
+  const [browseOffset, setBrowseOffset] = useState(0);
   const [folders, setFolders] = useState<NotesFoldersResult | null>(null);
   const [browse, setBrowse] = useState<NotesBrowseResult | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -68,6 +69,7 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
   const clearSource = useCallback(() => {
     invalidate();
     setCollections([]); setCollectionId(''); setPath('');
+    setBrowseOffset(0);
     setFolders(null); setBrowse(null); setSelected(null); setContent('');
     setSelectedTags([]); setTagMatch('and'); setShowAllTags(false);
     setBusy(false); setError(null); setDetailError(null);
@@ -112,6 +114,7 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
     const request = new AbortController(); controller.current = request;
     const current = ++sequence.current;
     setBusy(true); setPath(targetPath); setFolders(null); setBrowse(null); setSelected(null); setContent('');
+    setBrowseOffset(offset);
     setSelectedTags(tags); setTagMatch(match);
     setError(null); setDetailError(null);
     try {
@@ -140,6 +143,15 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
     const next = selectedTags.includes(tag) ? selectedTags.filter((item) => item !== tag) : [...selectedTags, tag];
     if (next.length > 12) return;
     void loadFolder(path, collectionId, 0, next, tagMatch);
+  };
+
+  const changeCollection = (nextCollection: string) => {
+    if (nextCollection === collectionId) return;
+    invalidate();
+    setCollectionId(nextCollection); setPath(''); setBrowseOffset(0);
+    setFolders(null); setBrowse(null); setSelected(null); setContent('');
+    setSelectedTags([]); setTagMatch('and'); setShowAllTags(false);
+    setError(null); setDetailError(null); setBusy(true);
   };
 
   useEffect(() => {
@@ -184,11 +196,11 @@ export function KnowledgeWorkspacePage({ locale, onGlobalAuthFailure }: { locale
         <div><h2>{source === 'drafts' ? (en ? 'Drafts' : '草稿') : (en ? 'Authorized Notes' : '已授权笔记')}</h2>
           <p>{en ? 'Read-only. Selection and content are not persisted.' : '只读浏览；选中项与正文不会被持久化。'}</p></div>
         {source === 'notes' && collections.filter((item) => item.kind === 'authorized').length > 1 && <label>{en ? 'Collection' : '目录'}
-          <select value={collectionId} onChange={(event) => setCollectionId(event.target.value)}>
+          <select value={collectionId} onChange={(event) => changeCollection(event.target.value)}>
             {collections.filter((item) => item.kind === 'authorized').map((item) => <option key={item.id} value={item.id}>{item.id}</option>)}
           </select></label>}
       </header>
-      {error !== null && <div role="alert" className="knowledge-error"><p>{noteError(error, locale)}</p><button type="button" onClick={() => collection ? void loadFolder(path, collection.id, 0, selectedTags, tagMatch) : void loadCollections()}>{en ? 'Retry' : '重试'}</button></div>}
+      {error !== null && <div role="alert" className="knowledge-error"><p>{noteError(error, locale)}</p><button type="button" onClick={() => collection ? void loadFolder(path, collection.id, browseOffset, selectedTags, tagMatch) : void loadCollections()}>{en ? 'Retry' : '重试'}</button></div>}
       {!error && !collection && !busy && <p className="knowledge-empty">{source === 'drafts' ? (en ? 'No Drafts source is available.' : '当前没有可浏览的草稿来源。') : (en ? 'No authorized Notes source is available.' : '当前没有已授权的普通笔记来源。')}</p>}
       {busy && <p role="status">{en ? 'Loading source…' : '正在读取来源…'}</p>}
       {collection && <div className="notes-read-grid">
