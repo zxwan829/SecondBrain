@@ -121,6 +121,17 @@ def test_trace_sanitizer_drops_bodies_headers_queries_and_attachments(tmp_path):
         assert '"status":202' in trace
 
 
+def test_knowledge_opaque_ids_are_removed_from_paths_and_traces():
+    opaque_path = "/api/knowledge/items/v1.dGVzdC9jaGluZXNlL21k.0123456789abcdef0123456789abcdef"
+    assert module._sanitize_url(opaque_path) == "/api/knowledge/items/<opaque-id>"
+    sanitized = module.clean_trace_value({"type": "request", "method": "GET", "url": opaque_path})
+    assert sanitized["url"] == "/api/knowledge/items/<opaque-id>"
+    assert "dGVzdC9jaGluZXNlL21k" not in json.dumps(sanitized)
+    assert module._sanitize_url(
+        "/api/notes/notes/%E4%B8%AD%E6%96%87%E8%B5%84%E6%96%99/%E7%AC%94%E8%AE%B0.md"
+    ) == "/api/notes/notes/<synthetic-relative-path>"
+
+
 def test_workflow_uploads_only_exact_sanitized_directory_and_is_manual_read_only():
     workflow = (Path(__file__).parents[3] / ".github" / "workflows" / "a-web-playwright-synthetic.yml").read_text()
     runner = SCRIPT.read_text()
@@ -229,6 +240,17 @@ def test_failure_diagnostic_can_include_bounded_daily_brief_get_statuses():
         module._validate_failure_diagnostics([diagnostic])
 
 
+def test_failure_diagnostic_can_include_bounded_knowledge_and_notes_browse_statuses():
+    diagnostic = {"viewport": "tablet-820x1180", "stage": "notes_workspace",
+                  "code": "assertion_failed", "assertion_id": "notes_permission_denial",
+                  "activity_get_statuses": [], "knowledge_read_statuses": [200, 200, 200, 200],
+                  "notes_browse_statuses": [200, 403]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_browse_statuses"] = [200, "403"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
 def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
     stages_and_assertions = [
         ("post_revocation_navigation", "home_after_revocation"),
@@ -314,6 +336,31 @@ def test_browser_fixture_allowlists_only_exact_synthetic_notes_routes():
     assert "url.pathname === '/api/notes/drafts'" in browser_spec
     assert "^\\/api\\/notes\\/drafts\\/[0-9a-f]{8}" in browser_spec
     assert "url.pathname.startsWith('/api/notes')" not in browser_spec
+    assert "const knowledgeFoldersPath = method === 'GET'" in browser_spec
+    assert "const knowledgeBrowsePath = method === 'GET'" in browser_spec
+    assert "const knowledgeDetailPath = method === 'GET'" in browser_spec
+    assert "const notesFoldersPath = Boolean(collectionMatch)" in browser_spec
+    assert "const notesBrowsePath = Boolean(collectionMatch)" in browser_spec
+    assert "const draftsFoldersPath = method === 'GET'" in browser_spec
+    assert "queryHasOnly(['path', 'match', 'offset', 'limit'], ['tag'])" in browser_spec
+    assert "(notes|archive)" in browser_spec
+    assert "url.pathname.startsWith('/api/knowledge')" not in browser_spec
+
+
+def test_three_viewport_workspace_journeys_include_sources_pagination_denial_and_drafts():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    for assertion in (
+        "knowledge_tags_and", "knowledge_tags_or", "notes_workspace_tags_and",
+        "notes_workspace_tags_or", "notes_pagination_failure", "notes_pagination_retry",
+        "notes_permission_denial", "notes_collection_change", "drafts_no_tags",
+    ):
+        assert assertion in browser_spec
+    assert "setViewportSize(viewport)" in browser_spec
+    assert "await route.abort('blockedbyclient')" in browser_spec
+    assert "document.documentElement.scrollWidth" in browser_spec
+    assert "document.body.scrollWidth" in browser_spec
+    assert "knowledge_read_statuses: observed?.knowledgeReadStatuses ?? []" in browser_spec
+    assert "notes_browse_statuses: observed?.notesBrowseStatuses ?? []" in browser_spec
 
 
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():

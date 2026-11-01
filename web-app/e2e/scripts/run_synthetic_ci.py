@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import http.cookiejar
 import argparse
@@ -24,7 +25,7 @@ import uuid
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -35,6 +36,7 @@ ARTIFACTS = E2E / "artifacts-sanitized"
 CORE_URL = ""
 WEB_URL = ""
 OPAQUE_ID = __import__("re").compile(r"(?i)\b(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{32})\b")
+KNOWLEDGE_ITEM_PATH = __import__("re").compile(r"/api/knowledge/items/v1\.[A-Za-z0-9_-]+\.[0-9a-f]{32}(?:/source)?")
 REPORT_ID = __import__("re").compile(r"(?i)\b(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\b")
 SENSITIVE_KEYS = ("header", "cookie", "authorization", "bearer", "token", "credential", "passphrase",
                   "postdata", "post_data", "body", "content", "snapshot", "params", "value", "text",
@@ -62,7 +64,8 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
     "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
     "agent_health", "today", "journal", "calendar", "notes_navigation",
-    "notes_create", "notes_edit_save", "notes_reopen", "viewport_layout",
+    "notes_create", "notes_edit_save", "notes_reopen", "knowledge_browse",
+    "notes_workspace", "drafts_workspace", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 FAILURE_DIAGNOSTIC_ASSERTIONS = {
@@ -76,9 +79,14 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "today_api_response", "journal_navigation", "journal_api_response",
     "calendar_navigation", "calendar_api_response", "home_api_response",
     "layout_home", "layout_projects", "layout_activity", "layout_agent_health",
-    "layout_today", "layout_journal", "layout_calendar",
+    "layout_today", "layout_journal", "layout_calendar", "layout_knowledge",
     "notes_navigation", "notes_navigation_link", "notes_collections", "notes_create", "notes_save",
     "notes_readback", "layout_notes",
+    "knowledge_workspace", "knowledge_folder", "knowledge_tags_and",
+    "knowledge_tags_or", "knowledge_detail", "notes_workspace_navigation",
+    "notes_workspace_tags_and", "notes_workspace_tags_or", "notes_workspace_detail",
+    "notes_collection_change", "notes_permission_denial", "notes_pagination_failure",
+    "notes_pagination_retry", "drafts_workspace_navigation", "drafts_no_tags",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
     "daily_brief_open_prepare", "daily_brief_sources", "daily_brief_journal_action",
     "daily_brief_journal_source", "daily_brief_preview",
@@ -91,6 +99,13 @@ MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_SCREENSHOT_WIDTH = 2048
 MAX_SCREENSHOT_HEIGHT = 1600
 ALLOW_FAILURE_SCREENSHOT_PUBLICATION = False
+
+
+def _sanitize_path(path: str) -> str:
+    path = KNOWLEDGE_ITEM_PATH.sub("/api/knowledge/items/<opaque-id>", path)
+    path = re.sub(r"/api/notes/(notes|archive)/(?!(?:folders|browse)(?:/|\?|$))[^?#]+",
+                  r"/api/notes/\1/<synthetic-relative-path>", path)
+    return OPAQUE_ID.sub("<opaque-id>", path)
 
 
 def ephemeral_port() -> int:
@@ -111,14 +126,14 @@ def clean_trace_value(value):
                 if parts.scheme and parts.hostname not in {"127.0.0.1", "localhost"}:
                     result[key] = "<blocked-origin>"
                 else:
-                    result[key] = OPAQUE_ID.sub("<opaque-id>", parts.path or child.split("?", 1)[0])
+                    result[key] = _sanitize_path(parts.path or child.split("?", 1)[0])
                 continue
             result[key] = clean_trace_value(child)
         return result
     if isinstance(value, list):
         return [clean_trace_value(item) for item in value]
     if isinstance(value, str):
-        return OPAQUE_ID.sub("<opaque-id>", value)
+        return _sanitize_path(value)
     return value
 
 
@@ -155,7 +170,7 @@ def _sanitize_url(value: str) -> str:
     except ValueError:
         return "<redacted-url>"
     if not parts.scheme or not parts.netloc:
-        return OPAQUE_ID.sub("<opaque-id>", value.split("?", 1)[0].split("#", 1)[0])
+        return _sanitize_path(value.split("?", 1)[0].split("#", 1)[0])
     try:
         host = parts.hostname
         port = parts.port
@@ -166,7 +181,7 @@ def _sanitize_url(value: str) -> str:
     netloc = f"[{host}]" if host and ":" in host else str(host)
     if port is not None:
         netloc += f":{port}"
-    return f"{parts.scheme}://{netloc}{OPAQUE_ID.sub('<opaque-id>', parts.path)}"
+    return f"{parts.scheme}://{netloc}{_sanitize_path(parts.path)}"
 
 
 def _sanitize_junit(path: Path) -> None:
@@ -226,9 +241,10 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
     seen_viewports = set()
     for entry in value:
         base_keys = {"viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
-        allowed_shapes = {frozenset(base_keys), frozenset(base_keys | {"notes_collection_statuses"}),
-                          frozenset(base_keys | {"daily_brief_get_statuses"}),
-                          frozenset(base_keys | {"notes_collection_statuses", "daily_brief_get_statuses"})}
+        status_fields = {"notes_collection_statuses", "daily_brief_get_statuses",
+                         "knowledge_read_statuses", "notes_browse_statuses"}
+        allowed_shapes = {frozenset(base_keys | set(selected)) for size in range(len(status_fields) + 1)
+                          for selected in __import__("itertools").combinations(status_fields, size)}
         if not isinstance(entry, dict) or frozenset(entry) not in allowed_shapes:
             raise RuntimeError("failure diagnostic fields rejected; upload withheld")
         viewport = entry["viewport"]
@@ -238,6 +254,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         activity_statuses = entry["activity_get_statuses"]
         notes_statuses = entry.get("notes_collection_statuses", [])
         brief_statuses = entry.get("daily_brief_get_statuses", [])
+        knowledge_statuses = entry.get("knowledge_read_statuses", [])
+        notes_browse_statuses = entry.get("notes_browse_statuses", [])
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
@@ -251,6 +269,12 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in brief_statuses)
+                or not isinstance(knowledge_statuses, list) or len(knowledge_statuses) > 4
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in knowledge_statuses)
+                or not isinstance(notes_browse_statuses, list) or len(notes_browse_statuses) > 4
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in notes_browse_statuses)
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
         seen_viewports.add(viewport)
@@ -260,6 +284,10 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
             normalized["notes_collection_statuses"] = notes_statuses
         if "daily_brief_get_statuses" in entry:
             normalized["daily_brief_get_statuses"] = brief_statuses
+        if "knowledge_read_statuses" in entry:
+            normalized["knowledge_read_statuses"] = knowledge_statuses
+        if "notes_browse_statuses" in entry:
+            normalized["notes_browse_statuses"] = notes_browse_statuses
         validated.append(normalized)
     return validated
 
@@ -343,9 +371,10 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
             except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
                 raise RuntimeError("failure diagnostic JSON rejected; upload withheld") from error
             base_keys = {"schema_version", "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
-            allowed_shapes = {frozenset(base_keys), frozenset(base_keys | {"notes_collection_statuses"}),
-                              frozenset(base_keys | {"daily_brief_get_statuses"}),
-                              frozenset(base_keys | {"notes_collection_statuses", "daily_brief_get_statuses"})}
+            status_fields = {"notes_collection_statuses", "daily_brief_get_statuses",
+                             "knowledge_read_statuses", "notes_browse_statuses"}
+            allowed_shapes = {frozenset(base_keys | set(selected)) for size in range(len(status_fields) + 1)
+                              for selected in __import__("itertools").combinations(status_fields, size)}
             if (not isinstance(raw, dict) or frozenset(raw) not in allowed_shapes
                     or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 2
                     or raw.get("viewport") != viewport):
@@ -359,6 +388,9 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
                 diagnostics[-1]["notes_collection_statuses"] = raw["notes_collection_statuses"]
             if "daily_brief_get_statuses" in raw:
                 diagnostics[-1]["daily_brief_get_statuses"] = raw["daily_brief_get_statuses"]
+            for field in ("knowledge_read_statuses", "notes_browse_statuses"):
+                if field in raw:
+                    diagnostics[-1][field] = raw[field]
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
@@ -712,6 +744,62 @@ def assert_no_business_files(root: Path, label: str) -> None:
         raise RuntimeError(f"source-protection check failed: {label} contains {len(files)} file(s)")
 
 
+def _tree_snapshot(root: Path) -> dict[str, bytes]:
+    """Capture an exact synthetic source baseline without following links."""
+    snapshot: dict[str, bytes] = {}
+    for item in sorted(root.rglob("*")):
+        if item.is_symlink():
+            raise RuntimeError("synthetic source contains a symlink")
+        if item.is_dir():
+            continue
+        if not item.is_file():
+            raise RuntimeError("synthetic source contains a non-regular entry")
+        snapshot[item.relative_to(root).as_posix()] = item.read_bytes()
+    return snapshot
+
+
+def _write_private(path: Path, value: str) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.write_text(value, encoding="utf-8")
+    os.chmod(path, 0o600)
+
+
+def seed_knowledge_and_notes(dirs: dict[str, Path]) -> dict[str, dict[str, bytes]]:
+    """Create bounded Chinese synthetic fixtures for read-only library browsing."""
+    knowledge_folder = dirs["knowledge"] / "中文项目"
+    _write_private(knowledge_folder / "双标签.md", '---\ntags: [AI, 研究]\n---\n# 合成知识双标签\n详情正文仅在显式打开后显示。\n')
+    _write_private(knowledge_folder / "单标签.md", '---\ntags: [AI]\n---\n# 合成知识单标签\n')
+    _write_private(knowledge_folder / "无标签.md", "# 合成知识无标签\n")
+    _write_private(knowledge_folder / "不支持元数据.md",
+                   '---\ntags: [AI]\ntags: [隐藏]\n---\n# 合成知识不支持元数据\n')
+
+    ordinary_root = dirs["notes_authorized"]
+    notes_folder = ordinary_root / "中文资料"
+    _write_private(notes_folder / "笔记-双标签.md", '---\ntags: [AI, 研究]\n---\n# 合成普通笔记双标签\n普通笔记正文仅在显式打开后显示。\n')
+    _write_private(notes_folder / "笔记-单标签.md", '---\ntags: [AI]\n---\n# 合成普通笔记单标签\n')
+    _write_private(notes_folder / "笔记-无标签.md", "# 合成普通笔记无标签\n")
+    _write_private(notes_folder / "笔记-不支持元数据.md",
+                   '---\ntags: [AI]\ntags: [隐藏]\n---\n# 合成普通笔记不支持元数据\n')
+    for index in range(5, 23):
+        _write_private(notes_folder / f"笔记-{index:02}.md", f"---\ntags: [AI]\n---\n# 合成分页笔记 {index:02}\n")
+
+    archive_root = dirs["notes_archive"]
+    _write_private(archive_root / "中文资料" / "同名笔记.md",
+                   "# 合成归档同名笔记\n来源标识：archive\n")
+    return {
+        "knowledge": _tree_snapshot(dirs["knowledge"]),
+        "notes": _tree_snapshot(ordinary_root),
+        "archive": _tree_snapshot(archive_root),
+    }
+
+
+def assert_library_fixtures_unchanged(dirs: dict[str, Path], baseline: dict[str, dict[str, bytes]]) -> None:
+    for name, directory in (("knowledge", dirs["knowledge"]), ("notes", dirs["notes_authorized"]),
+                            ("archive", dirs["notes_archive"])):
+        if _tree_snapshot(directory) != baseline[name]:
+            raise RuntimeError(f"synthetic {name} read-only fixture changed during browser acceptance")
+
+
 def seed_daily_brief_sources(dirs: dict[str, Path]) -> dict[str, bytes]:
     """Seed one synthetic row in each frozen Brief source; never use external data."""
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -797,7 +885,7 @@ def _assert_exact_brief_file_set(root: Path, date_file_name: str) -> int:
     return len(names)
 
 
-def http_smoke(password_path: Path) -> list[dict]:
+def http_smoke(password_path: Path, dirs: dict[str, Path], library_fixture: dict[str, dict[str, bytes]]) -> list[dict]:
     """Exercise real Core HTTP through Vite without launching a browser."""
     jar = http.cookiejar.CookieJar()
     client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
@@ -818,7 +906,7 @@ def http_smoke(password_path: Path) -> list[dict]:
             status, payload = response.status, response.read()
         except urllib.error.HTTPError as error:
             status, payload = error.code, error.read()
-        request_log.append({"method": method, "path": OPAQUE_ID.sub("<opaque-id>", path),
+        request_log.append({"method": method, "path": _sanitize_path(path),
                             "status": status, "elapsed_ms": round((time.monotonic() - started) * 1000)})
         parsed = None
         try:
@@ -845,8 +933,77 @@ def http_smoke(password_path: Path) -> list[dict]:
         raise RuntimeError("synthetic App session check failed")
 
     status, collections, _ = request("GET", "/api/notes")
-    if status != 200 or collections != {"collections": [{"id": "drafts", "kind": "drafts"}]}:
-        raise RuntimeError("synthetic Notes collections read did not return the private Drafts collection")
+    expected_collections = {"collections": [
+        {"id": "drafts", "kind": "drafts"}, {"id": "notes", "kind": "authorized"},
+        {"id": "archive", "kind": "authorized"},
+    ]}
+    if status != 200 or collections != expected_collections:
+        raise RuntimeError("synthetic Notes collections did not return exactly the isolated sources")
+
+    def query(path: str, pairs: list[tuple[str, str]]) -> str:
+        return f"{path}?{urlencode(pairs)}"
+
+    status, folders, _ = request("GET", query("/api/knowledge/folders", [("path", "")]))
+    if status != 200 or folders.get("folders", [])[0].get("name") != "中文项目":
+        raise RuntimeError("synthetic Knowledge folder listing failed")
+    status, knowledge, _ = request("GET", query("/api/knowledge/browse", [
+        ("path", "中文项目"), ("match", "and"), ("offset", "0"), ("limit", "20"),
+    ]))
+    if status != 200 or knowledge.get("total") != 4 or knowledge.get("status") != "partial":
+        raise RuntimeError("synthetic Knowledge browse did not preserve partial metadata state")
+    status, knowledge_and, _ = request("GET", query("/api/knowledge/browse", [
+        ("path", "中文项目"), ("match", "and"), ("offset", "0"), ("limit", "20"),
+        ("tag", "AI"), ("tag", "研究"),
+    ]))
+    if status != 200 or knowledge_and.get("total") != 1:
+        raise RuntimeError("synthetic Knowledge AND tag filtering failed")
+    status, knowledge_or, _ = request("GET", query("/api/knowledge/browse", [
+        ("path", "中文项目"), ("match", "or"), ("offset", "0"), ("limit", "20"),
+        ("tag", "AI"), ("tag", "研究"),
+    ]))
+    if status != 200 or knowledge_or.get("total") != 2:
+        raise RuntimeError("synthetic Knowledge OR tag filtering failed")
+    item_id = knowledge_and["items"][0]["id"]
+    status, detail, _ = request("GET", f"/api/knowledge/items/{urllib.parse.quote(item_id, safe='')}")
+    if status != 200 or "详情正文仅在显式打开后显示" not in detail.get("content", ""):
+        raise RuntimeError("synthetic Knowledge item detail read failed")
+    status, notes_folders, _ = request("GET", query("/api/notes/notes/folders", [("path", "")]))
+    if status != 200 or notes_folders.get("folders", [])[0].get("name") != "中文资料":
+        raise RuntimeError("synthetic ordinary Notes folder listing failed")
+    status, notes_and, _ = request("GET", query("/api/notes/notes/browse", [
+        ("path", "中文资料"), ("offset", "0"), ("limit", "20"), ("match", "and"),
+        ("tag", "AI"), ("tag", "研究"),
+    ]))
+    if status != 200 or notes_and.get("total") != 1:
+        raise RuntimeError("synthetic ordinary Notes AND tag filtering failed")
+    status, notes_or, _ = request("GET", query("/api/notes/notes/browse", [
+        ("path", "中文资料"), ("offset", "0"), ("limit", "20"), ("match", "or"),
+        ("tag", "AI"), ("tag", "研究"),
+    ]))
+    if status != 200 or notes_or.get("total") != 20:
+        raise RuntimeError("synthetic ordinary Notes OR tag filtering failed")
+    status, notes_page, _ = request("GET", query("/api/notes/notes/browse", [
+        ("path", "中文资料"), ("offset", "20"), ("limit", "20"), ("match", "and"),
+    ]))
+    if status != 200 or notes_page.get("offset") != 20 or not notes_page.get("items"):
+        raise RuntimeError("synthetic ordinary Notes pagination failed")
+    note_path = "中文资料/笔记-双标签.md"
+    status, note, _ = request("GET", f"/api/notes/notes/{urllib.parse.quote(note_path, safe='/')}")
+    if status != 200 or "普通笔记正文仅在显式打开后显示" not in note.get("content", ""):
+        raise RuntimeError("synthetic ordinary Notes detail read failed")
+    status, archive, _ = request("GET", f"/api/notes/archive/{urllib.parse.quote('中文资料/同名笔记.md', safe='/')}")
+    if status != 200 or "来源标识：archive" not in archive.get("content", ""):
+        raise RuntimeError("synthetic Notes collection identity change fixture failed")
+    status, drafts, _ = request("GET", query("/api/notes/drafts/browse", [
+        ("path", ""), ("offset", "0"), ("limit", "20"), ("match", "and"),
+    ]))
+    if status != 200 or drafts.get("tag_facets") != []:
+        raise RuntimeError("synthetic Drafts must remain untagged")
+    anonymous = urllib.request.build_opener()
+    status, _, _ = request("GET", query("/api/notes/notes/browse", [("path", "中文资料")]), opener=anonymous)
+    if status != 401:
+        raise RuntimeError("ordinary Notes anonymous request was not denied")
+    assert_library_fixtures_unchanged(dirs, library_fixture)
     initial_note = "# Synthetic HTTP note\n\nInitial body.\n"
     status, note, _ = request("POST", "/api/notes", {"content": initial_note})
     if (status != 200 or not isinstance(note, dict) or note.get("collection") != "drafts"
@@ -998,8 +1155,56 @@ def http_smoke(password_path: Path) -> list[dict]:
         f"/api/daily-brief/source-options/journal?date={day}", brief_path,
         "/api/daily-brief",
     }
-    if any(entry["path"].startswith(("/api/journal/entries", "/api/knowledge", "/api/capture"))
-           for entry in request_log):
+    def allowed_library_request(entry: dict) -> bool:
+        method = entry.get("method")
+        parsed = urlsplit(entry.get("path", ""))
+        path = urllib.parse.unquote(parsed.path)
+        query_values = tuple(__import__("urllib.parse").parse.parse_qsl(parsed.query, keep_blank_values=True))
+        knowledge_browse = {path_query for path_query in (
+            (("path", "中文项目"), ("match", "and"), ("offset", "0"), ("limit", "20")),
+            (("path", "中文项目"), ("match", "and"), ("offset", "0"), ("limit", "20"), ("tag", "AI"), ("tag", "研究")),
+            (("path", "中文项目"), ("match", "or"), ("offset", "0"), ("limit", "20"), ("tag", "AI"), ("tag", "研究")),
+        )}
+        notes_browse = {
+            (("path", "中文资料"), ("offset", "0"), ("limit", "20"), ("match", "and"), ("tag", "AI"), ("tag", "研究")),
+            (("path", "中文资料"), ("offset", "0"), ("limit", "20"), ("match", "or"), ("tag", "AI"), ("tag", "研究")),
+            (("path", "中文资料"), ("offset", "20"), ("limit", "20"), ("match", "and")),
+            (("path", "中文资料"),),
+        }
+        if path in {"/api/knowledge/folders", "/api/knowledge/browse", "/api/notes/notes/folders",
+                    "/api/notes/notes/browse", "/api/notes/archive/folders", "/api/notes/archive/browse",
+                    "/api/notes/drafts/folders", "/api/notes/drafts/browse"}:
+            expected_query = {
+                "/api/knowledge/folders": {(('path', ''),)},
+                "/api/knowledge/browse": knowledge_browse,
+                "/api/notes/notes/folders": {(('path', ''),)},
+                "/api/notes/notes/browse": notes_browse,
+                "/api/notes/archive/folders": {(('path', ''),)},
+                "/api/notes/archive/browse": {(('path', ''), ('offset', '0'), ('limit', '20'), ('match', 'and'))},
+                "/api/notes/drafts/folders": {(('path', ''),)},
+                "/api/notes/drafts/browse": {(('path', ''), ('offset', '0'), ('limit', '20'), ('match', 'and'))},
+            }[path]
+            return method == "GET" and query_values in expected_query
+        if path in {"/api/notes", "/api/notes/drafts"}:
+            return (path == "/api/notes" and method in {"GET", "POST"}
+                    and (not parsed.query or method == "GET")
+                    or path == "/api/notes/drafts" and method == "GET" and not parsed.query)
+        if path == "/api/knowledge/items/<opaque-id>":
+            return method == "GET" and not parsed.query
+        if path.startswith("/api/notes/"):
+            allowed_detail = re.fullmatch(r"/api/notes/(?:notes|archive)/<synthetic-relative-path>", path)
+            allowed_draft = re.fullmatch(r"/api/notes/drafts/(?:[0-9a-f-]{36}|<opaque-id>)", path)
+            return ((allowed_detail is not None and method == "GET" and not parsed.query)
+                    or (allowed_draft is not None and method in {"GET", "PUT"} and not parsed.query))
+        return not path.startswith("/api/knowledge") and not path.startswith("/api/notes")
+
+    rejected_library = next((entry for entry in request_log if not allowed_library_request(entry)), None)
+    if rejected_library:
+        rejected_url = urlsplit(rejected_library.get("path", ""))
+        rejected_path = urllib.parse.unquote(rejected_url.path)
+        query_keys = sorted({key[:40] for key, _ in urllib.parse.parse_qsl(rejected_url.query, keep_blank_values=True)})
+        raise RuntimeError(f"HTTP smoke called a non-allowlisted Knowledge or Notes endpoint: {rejected_library.get('method')} {_sanitize_path(rejected_url.path)} (query_keys={query_keys}, ordinary_detail={bool(re.fullmatch(r'/api/notes/(?:notes|archive)/<synthetic-relative-path>', rejected_path))})")
+    if any(entry["path"].startswith(("/api/journal/entries", "/api/capture")) for entry in request_log):
         raise RuntimeError("HTTP smoke unexpectedly called a protected target API")
     if any(entry["path"].startswith(("/api/tasks", "/api/projects", "/api/daily-brief"))
            and entry["path"] not in allowed_source_paths for entry in request_log):
@@ -1040,9 +1245,10 @@ def main() -> int:
     log_files = []
     result = 1
     try:
-        dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs", "notes")}
+        dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs", "notes", "notes_authorized", "notes_archive")}
         for path in dirs.values():
             path.mkdir(mode=0o700)
+        library_fixture = seed_knowledge_and_notes(dirs)
         journal_fixture = seed_daily_brief_sources(dirs)
         password_path = root / "app-password"
         password_path.write_text(secrets.token_urlsafe(32) + "\n", encoding="utf-8")
@@ -1059,6 +1265,10 @@ def main() -> int:
             "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
             "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
+            "SB_NOTES_AUTHORIZED_ROOTS": json.dumps({
+                "notes": str(dirs["notes_authorized"]),
+                "archive": str(dirs["notes_archive"]),
+            }),
             "SB_APP_PASSWORD_FILE": str(password_path),
             "SB_DASHBOARD_ORIGINS": WEB_URL,
             "SB_CORE_ALLOWED_HOSTS": "127.0.0.1,localhost",
@@ -1099,7 +1309,7 @@ def main() -> int:
         python = subprocess.run([sys.executable, "--version"], cwd=E2E, check=True, capture_output=True, text=True).stdout.strip()
         request_log = None
         if options.http_smoke_only:
-            request_log = http_smoke(password_path)
+            request_log = http_smoke(password_path, dirs, library_fixture)
             (raw_artifacts / "local-http-request-metadata.json").write_text(json.dumps(request_log, indent=2) + "\n", encoding="utf-8")
             test_returncode = 0
         else:
@@ -1124,7 +1334,7 @@ def main() -> int:
             expected_raw = 1 if options.http_smoke_only else 3
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
-            assert_no_business_files(dirs["knowledge"], "Knowledge root")
+            assert_library_fixtures_unchanged(dirs, library_fixture)
             assert_journal_fixture_unchanged(dirs["journal"], journal_fixture)
             if not options.http_smoke_only and journal_after != journal_fixture:
                 raise RuntimeError("synthetic Journal source changed during Brief acceptance")

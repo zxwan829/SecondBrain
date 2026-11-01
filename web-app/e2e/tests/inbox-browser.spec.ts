@@ -17,6 +17,7 @@ type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
   | 'daily_brief_readback' | 'permission_revocation' | 'post_revocation_navigation'
   | 'notes_navigation' | 'notes_create' | 'notes_edit_save' | 'notes_reopen'
+  | 'knowledge_browse' | 'notes_workspace' | 'drafts_workspace'
   | 'agent_health' | 'today' | 'journal' | 'calendar' | 'viewport_layout';
 type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
   | 'home_after_projects' | 'home_to_activity' | 'activity_heading'
@@ -32,8 +33,14 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
   | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
+  | 'knowledge_workspace' | 'knowledge_folder' | 'knowledge_tags_and' | 'knowledge_tags_or'
+  | 'knowledge_detail' | 'notes_workspace_navigation' | 'notes_workspace_tags_and'
+  | 'notes_workspace_tags_or' | 'notes_workspace_detail' | 'notes_collection_change'
+  | 'notes_permission_denial' | 'notes_pagination_failure' | 'notes_pagination_retry'
+  | 'drafts_workspace_navigation' | 'drafts_no_tags'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
-  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_no_horizontal_overflow';
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_knowledge'
+  | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -48,11 +55,12 @@ async function expectSuccessfulGet(
   responsePromise: Promise<Response | null>,
   observed: Awaited<ReturnType<typeof configurePage>>,
   assertion: DiagnosticAssertion,
-) {
+): Promise<Response> {
   observed.setDiagnosticAssertion(assertion);
   const response = await responsePromise;
   expect(response, `${assertion}_observed`).not.toBeNull();
   expect(response?.status(), assertion).toBe(200);
+  return response!;
 }
 
 async function expectNoHorizontalOverflow(
@@ -73,7 +81,11 @@ async function expectNoHorizontalOverflow(
 
 function safePath(value: string): string {
   const url = new URL(value, baseUrl);
-  return url.pathname.replace(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{32}/gi, '<opaque-id>');
+  let pathname = url.pathname.replace(/^\/api\/knowledge\/items\/v1\.[A-Za-z0-9_-]+\.[0-9a-f]{32}$/i, '/api/knowledge/items/<opaque-id>');
+  pathname = pathname.replace(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[0-9a-f]{32}/gi, '<opaque-id>');
+  const noteRoute = pathname.match(/^\/api\/notes\/(notes|archive)\/(.+)$/);
+  if (noteRoute && !['folders', 'browse'].includes(noteRoute[2])) pathname = `/api/notes/${noteRoute[1]}/<synthetic-relative-path>`;
+  return pathname;
 }
 
 async function configurePage(page: Page) {
@@ -89,6 +101,8 @@ async function configurePage(page: Page) {
   let dailyBriefPostCount = 0;
   let lastDailyBriefBody: Record<string, unknown> | null = null;
   let activityReadRevoked = false;
+  let failNotesPageOnce = false;
+  let denyNotesBrowseOnce = false;
   let failureStage: FailureStage = 'login';
   let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
@@ -156,12 +170,56 @@ async function configurePage(page: Page) {
       }
       return;
     }
-    const inboxPath = /^\/api\/inbox\/entries(?:\/[0-9a-f]{32})?$/.test(url.pathname)
-      && ['GET', 'POST'].includes(route.request().method());
-    const authPath = ['/api/auth/session', '/api/auth/login', '/api/auth/logout'].includes(url.pathname);
+    const method = route.request().method();
     const params = url.searchParams;
     const exactParams = (expected: Record<string, string>) => Array.from(params.keys()).length === Object.keys(expected).length
       && Object.entries(expected).every(([key, value]) => params.get(key) === value);
+    const queryHasOnly = (required: string[], repeated: string[] = []) => {
+      const keys = Array.from(params.keys());
+      return required.every((key) => params.getAll(key).length === 1)
+        && keys.every((key) => required.includes(key) || repeated.includes(key));
+    };
+    const decodedPath = (() => { try { return decodeURIComponent(url.pathname); } catch { return ''; } })();
+    const knowledgeFoldersPath = method === 'GET' && url.pathname === '/api/knowledge/folders'
+      && exactParams({ path: params.get('path') ?? '' })
+      && ['', '中文项目'].includes(params.get('path') ?? '');
+    const knowledgeBrowsePath = method === 'GET' && url.pathname === '/api/knowledge/browse'
+      && queryHasOnly(['path', 'match', 'offset', 'limit'], ['tag'])
+      && ['', '中文项目'].includes(params.get('path') ?? '')
+      && ['and', 'or'].includes(params.get('match') ?? '') && params.get('offset') === '0'
+      && params.get('limit') === '20' && params.getAll('tag').length <= 2
+      && new Set(params.getAll('tag')).size === params.getAll('tag').length
+      && params.getAll('tag').every((tag) => ['AI', '研究'].includes(tag));
+    const knowledgeDetailPath = method === 'GET' && /^\/api\/knowledge\/items\/v1\.[A-Za-z0-9_-]+\.[0-9a-f]{32}$/i.test(url.pathname)
+      && params.size === 0;
+    const knowledgePath = knowledgeFoldersPath || knowledgeBrowsePath || knowledgeDetailPath;
+    const collectionMatch = decodedPath.match(/^\/api\/notes\/(notes|archive)(?:\/(.*))?$/);
+    const notesCollection = collectionMatch?.[1] ?? '';
+    const notesRelativePath = collectionMatch?.[2] ?? '';
+    const notesFoldersPath = Boolean(collectionMatch) && decodedPath.endsWith('/folders') && method === 'GET'
+      && exactParams({ path: params.get('path') ?? '' }) && ['', '中文资料'].includes(params.get('path') ?? '');
+    const notesBrowsePath = Boolean(collectionMatch) && decodedPath.endsWith('/browse') && method === 'GET'
+      && queryHasOnly(['path', 'offset', 'limit', 'match'], ['tag'])
+      && ['', '中文资料'].includes(params.get('path') ?? '')
+      && ['0', '20'].includes(params.get('offset') ?? '') && params.get('limit') === '20'
+      && ['and', 'or'].includes(params.get('match') ?? '') && params.getAll('tag').length <= 2
+      && new Set(params.getAll('tag')).size === params.getAll('tag').length
+      && params.getAll('tag').every((tag) => ['AI', '研究'].includes(tag));
+    const notesDetailPath = Boolean(collectionMatch) && method === 'GET' && params.size === 0
+      && (notesCollection === 'notes'
+        ? ['中文资料/笔记-双标签.md', '中文资料/笔记-单标签.md', '中文资料/笔记-无标签.md',
+          '中文资料/笔记-不支持元数据.md', ...Array.from({ length: 18 }, (_, index) => `中文资料/笔记-${String(index + 5).padStart(2, '0')}.md`)]
+          .includes(notesRelativePath)
+        : notesRelativePath === '中文资料/同名笔记.md');
+    const notesWorkspacePath = notesFoldersPath || notesBrowsePath || notesDetailPath;
+    const draftsBrowsePath = method === 'GET' && url.pathname === '/api/notes/drafts/browse'
+      && exactParams({ path: '', offset: params.get('offset') ?? '', limit: '20', match: 'and' })
+      && ['0', '20'].includes(params.get('offset') ?? '');
+    const draftsFoldersPath = method === 'GET' && url.pathname === '/api/notes/drafts/folders'
+      && exactParams({ path: '' });
+    const inboxPath = /^\/api\/inbox\/entries(?:\/[0-9a-f]{32})?$/.test(url.pathname)
+      && ['GET', 'POST'].includes(route.request().method());
+    const authPath = ['/api/auth/session', '/api/auth/login', '/api/auth/logout'].includes(url.pathname);
     const briefPath = route.request().method() === 'GET' && url.pathname === '/api/daily-brief'
       ? exactParams({ date: params.get('date') ?? '', timezone: 'Asia/Shanghai' })
         && /^\d{4}-\d{2}-\d{2}$/.test(params.get('date') ?? '')
@@ -193,7 +251,8 @@ async function configurePage(page: Page) {
     );
     if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
       && !briefPath && !journalSourcePath && !sourceListPath && !homePath && !healthPath
-      && !activityPath && !calendarPath && !journalPath && !taskListPath && !notesPath) {
+      && !activityPath && !calendarPath && !journalPath && !taskListPath && !notesPath
+      && !knowledgePath && !notesWorkspacePath && !draftsBrowsePath && !draftsFoldersPath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
       return;
@@ -203,6 +262,18 @@ async function configurePage(page: Page) {
       // revoke API. This same-origin synthetic denial verifies the Web's
       // fail-closed response to a revoked activity.read capability.
       await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ detail: 'activity.read revoked in synthetic fixture' }) });
+      return;
+    }
+    if (denyNotesBrowseOnce && notesBrowsePath) {
+      denyNotesBrowseOnce = false;
+      await route.fulfill({ status: 403, contentType: 'application/json',
+        body: JSON.stringify({ detail: 'notes.read revoked in synthetic fixture' }) });
+      return;
+    }
+    if (failNotesPageOnce && notesBrowsePath && notesCollection === 'notes' && params.get('offset') === '20') {
+      failNotesPageOnce = false;
+      await route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ detail: 'synthetic transient page failure' }) });
       return;
     }
     if (url.pathname === '/api/inbox/entries' && route.request().method() === 'POST' && firstInboxResponse) {
@@ -239,9 +310,16 @@ async function configurePage(page: Page) {
       && request.path === '/api/notes').map((request) => request.status).slice(-4); },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
+    get knowledgeReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && request.path.startsWith('/api/knowledge/')).map((request) => request.status).slice(-4); },
+    get notesBrowseStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && (request.path === '/api/notes/notes/browse' || request.path === '/api/notes/archive/browse'))
+      .map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
     setActivityReadRevoked(revoked: boolean) { activityReadRevoked = revoked; },
+    failNextNotesPage() { failNotesPageOnce = true; },
+    denyNextNotesBrowse() { denyNotesBrowseOnce = true; },
   };
 }
 
@@ -605,6 +683,182 @@ for (const viewport of viewports) {
     await expect(page.locator('.ProseMirror')).toContainText(syntheticNoteBody);
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
 
+    // Real Core-backed, read-only Library journey. The runner seeds only its
+    // disposable Knowledge/ordinary Notes roots; the single Draft above is
+    // also created through the authenticated UI in this same viewport.
+    observed.setFailureStage('knowledge_browse');
+    if (viewport.width <= 760) {
+      const menu = page.locator('.mobile-menu-button');
+      if (await menu.getAttribute('aria-expanded') === 'false') await menu.click();
+      await expect(menu).toHaveAttribute('aria-expanded', 'true');
+    }
+    observed.setDiagnosticAssertion('knowledge_workspace');
+    await page.locator('.sidebar nav').getByRole('button', { name: '知识库', exact: true }).click();
+    await expect(page).toHaveURL(/\/knowledge(?:\?.*)?$/);
+    await expect(page.getByRole('heading', { name: '知识工作区' })).toBeVisible();
+    const knowledgeRootFolders = waitForGetResponse(page, '/api/knowledge/folders', (params) =>
+      params.get('path') === '' && Array.from(params.keys()).length === 1);
+    const knowledgeRootBrowse = waitForGetResponse(page, '/api/knowledge/browse', (params) =>
+      params.get('path') === '' && params.get('match') === 'and' && params.get('offset') === '0');
+    // The page mounted with the click above; assert both initial Core calls
+    // through event listeners armed before the next explicit root selection.
+    await page.locator('.knowledge-folder-tree').getByRole('button', { name: '全部知识', exact: true }).click();
+    observed.setDiagnosticAssertion('knowledge_folder');
+    const knowledgeFolderResponse = await expectSuccessfulGet(knowledgeRootFolders, observed, 'knowledge_folder');
+    const knowledgeRootBrowseResponse = await expectSuccessfulGet(knowledgeRootBrowse, observed, 'knowledge_workspace');
+    expect(knowledgeFolderResponse.headers()['cache-control']).toBe('private, no-store');
+    expect(knowledgeRootBrowseResponse.headers()['cache-control']).toBe('private, no-store');
+    await expect(page.locator('.knowledge-tag-bar')).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: '部分元数据或计数不完整' })).toBeVisible();
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_knowledge');
+
+    observed.setDiagnosticAssertion('knowledge_folder');
+    await page.locator('.knowledge-folder-tree').getByRole('button', { name: '中文项目', exact: true }).click();
+    await expect(page.locator('.knowledge-browse-list .knowledge-result')).toHaveCount(4);
+    await expect(page.locator('.knowledge-browse-list')).not.toContainText('详情正文仅在显式打开后显示');
+    const knowledgeTags = page.locator('.knowledge-tag-bar');
+    await knowledgeTags.locator('label').filter({ hasText: 'AI' }).locator('input').check();
+    await knowledgeTags.locator('label').filter({ hasText: '研究' }).locator('input').check();
+    observed.setDiagnosticAssertion('knowledge_tags_and');
+    await expect(page.locator('.knowledge-browse-list .knowledge-result')).toHaveCount(1);
+    await expect(page.locator('.knowledge-detail')).not.toContainText('合成知识双标签\n');
+    await knowledgeTags.locator('.knowledge-match-mode select').selectOption('or');
+    observed.setDiagnosticAssertion('knowledge_tags_or');
+    await expect(page.locator('.knowledge-browse-list .knowledge-result')).toHaveCount(2);
+    await expect(page.locator('.knowledge-browse-list .knowledge-result').filter({ hasText: '不支持元数据' })).toHaveCount(0);
+    const knowledgeDetailResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+      && /^\/api\/knowledge\/items\/v1\.[A-Za-z0-9_-]+\.[0-9a-f]{32}$/i.test(new URL(response.url()).pathname), { timeout: 5000 });
+    observed.setDiagnosticAssertion('knowledge_detail');
+    await page.locator('.knowledge-browse-list .knowledge-result').filter({ hasText: '合成知识双标签' }).click();
+    const knowledgeDetail = await knowledgeDetailResponse;
+    expect(knowledgeDetail.status(), 'knowledge_detail').toBe(200);
+    expect(knowledgeDetail.headers()['cache-control']).toBe('private, no-store');
+    await expect(page.locator('.knowledge-detail')).toContainText('合成知识双标签');
+    const knowledgeDetailPayload = await knowledgeDetail.json() as { content: string };
+    expect(knowledgeDetailPayload.content).toContain('合成知识双标签');
+    expect(knowledgeDetailPayload.content).toContain('详情正文仅在显式打开后显示');
+    await page.locator('.knowledge-folder-tree').getByRole('button', { name: '全部知识', exact: true }).click();
+    await expect(page.locator('.knowledge-detail')).not.toContainText('详情正文仅在显式打开后显示');
+    await page.locator('.knowledge-folder-tree').getByRole('button', { name: '中文项目', exact: true }).click();
+    await expect(page.locator('.knowledge-browse-list .knowledge-result')).toHaveCount(4);
+    await expect(page.locator('.knowledge-browse-list .knowledge-result')
+      .filter({ hasText: '标签不可用：元数据格式不支持' })).toHaveCount(1);
+
+    observed.setFailureStage('notes_workspace');
+    const ordinaryNotesTab = page.getByRole('button', { name: '普通笔记', exact: true });
+    const collectionsResponse = waitForGetResponse(page, '/api/notes');
+    const notesRootBrowse = waitForGetResponse(page, '/api/notes/notes/browse', (params) =>
+      params.get('path') === '' && params.get('offset') === '0');
+    observed.setDiagnosticAssertion('notes_workspace_navigation');
+    await ordinaryNotesTab.click();
+    await expectSuccessfulGet(collectionsResponse, observed, 'notes_workspace_navigation');
+    await expect(page.getByRole('heading', { name: '已授权笔记' })).toBeVisible();
+    await expectSuccessfulGet(notesRootBrowse, observed, 'notes_workspace_navigation');
+    const notesFolderBrowse = waitForGetResponse(page, '/api/notes/notes/browse', (params) =>
+      params.get('path') === '中文资料' && params.get('offset') === '0');
+    await page.locator('.notes-read-folders').getByRole('button', { name: '中文资料', exact: true }).click();
+    const notesFolderBrowseResponse = await expectSuccessfulGet(notesFolderBrowse, observed, 'notes_workspace_navigation');
+    expect(notesFolderBrowseResponse.headers()['cache-control']).toBe('private, no-store');
+    await expect(page.locator('.notes-read-item')).toHaveCount(20);
+    await expect(page.getByRole('status').filter({ hasText: '部分笔记元数据或标签计数不完整' })).toBeVisible();
+    await expect(page.locator('.notes-read-item').filter({ hasText: '标签不可用：元数据格式不支持' })).toHaveCount(1);
+    const ordinaryTags = page.locator('.notes-read-content .knowledge-tag-bar');
+    await ordinaryTags.locator('label').filter({ hasText: 'AI' }).locator('input').check();
+    await ordinaryTags.locator('label').filter({ hasText: '研究' }).locator('input').check();
+    observed.setDiagnosticAssertion('notes_workspace_tags_and');
+    await expect(page.locator('.notes-read-item')).toHaveCount(1);
+    await ordinaryTags.getByLabel('标签匹配方式').selectOption('or');
+    observed.setDiagnosticAssertion('notes_workspace_tags_or');
+    await expect(page.locator('.notes-read-item')).toHaveCount(20);
+    const notesDetailResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+      && decodeURIComponent(new URL(response.url()).pathname) === '/api/notes/notes/中文资料/笔记-双标签.md', { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_workspace_detail');
+    await page.locator('.notes-read-item').filter({ hasText: '笔记-双标签.md' }).click();
+    const notesDetail = await notesDetailResponse;
+    expect(notesDetail.status(), 'notes_workspace_detail').toBe(200);
+    expect(notesDetail.headers()['cache-control']).toBe('private, no-store');
+    await expect(page.locator('.notes-read-detail')).toContainText('合成普通笔记双标签');
+    await page.locator('.notes-read-folders').getByRole('button', { name: '根目录', exact: true }).click();
+    await expect(page.locator('.notes-read-detail')).toHaveCount(0);
+    await expect(page.locator('.notes-read-content input[type="checkbox"]:checked')).toHaveCount(0);
+    await page.locator('.notes-read-folders').getByRole('button', { name: '中文资料', exact: true }).click();
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_knowledge');
+
+    // Removing both filters restores the full 22-item folder. Its second page
+    // fails once with an explicit synthetic 503, keeps offset 20, then retries.
+    await ordinaryTags.locator('label').filter({ hasText: 'AI' }).locator('input').uncheck();
+    await ordinaryTags.locator('label').filter({ hasText: '研究' }).locator('input').uncheck();
+    await expect(page.locator('.notes-read-item')).toHaveCount(20);
+    observed.setFailureStage('notes_workspace');
+    observed.failNextNotesPage();
+    const failedPageResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/notes/notes/browse'
+      && new URL(response.url()).searchParams.get('offset') === '20', { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_pagination_failure');
+    await page.getByRole('button', { name: '下一页', exact: true }).click();
+    expect((await failedPageResponse).status(), 'notes_pagination_failure').toBe(503);
+    await expect(page.getByRole('alert')).toContainText('此来源暂不可用');
+    await expect(page.locator('.notes-read-item')).toHaveCount(0);
+    const retriedPageResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/notes/notes/browse'
+      && new URL(response.url()).searchParams.get('offset') === '20', { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_pagination_retry');
+    await page.getByRole('button', { name: '重试', exact: true }).click();
+    expect((await retriedPageResponse).status(), 'notes_pagination_retry').toBe(200);
+    await expect(page.locator('.notes-read-item')).toHaveCount(2);
+    await expect(page.locator('.notes-read-item').filter({ hasText: '笔记-21.md' })).toHaveCount(1);
+
+    observed.setDiagnosticAssertion('notes_collection_change');
+    await page.getByLabel('目录').selectOption('archive');
+    await expect(page.locator('.notes-read-detail')).toHaveCount(0);
+    await expect(page.getByText('合成普通笔记双标签')).toHaveCount(0);
+    await expect(page.locator('.notes-read-folders').getByRole('button', { name: '中文资料', exact: true })).toBeVisible();
+    await page.locator('.notes-read-folders').getByRole('button', { name: '中文资料', exact: true }).click();
+    await expect(page.locator('.notes-read-item')).toHaveCount(1);
+    await expect(page.locator('.notes-read-item').filter({ hasText: '同名笔记.md' })).toHaveCount(1);
+    const archiveReadResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+      && decodeURIComponent(new URL(response.url()).pathname) === '/api/notes/archive/中文资料/同名笔记.md', { timeout: 5000 });
+    await page.locator('.notes-read-item').filter({ hasText: '同名笔记.md' }).click();
+    expect((await archiveReadResponse).status(), 'notes_collection_change').toBe(200);
+    await expect(page.locator('.notes-read-detail')).toContainText('来源标识：archive');
+    await expect(page.locator('.notes-read-item')).not.toContainText('来源标识：archive');
+
+    observed.denyNextNotesBrowse();
+    const deniedNotesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/notes/archive/browse', { timeout: 5000 });
+    observed.setDiagnosticAssertion('notes_permission_denial');
+    await page.locator('.notes-read-folders').getByRole('button', { name: '根目录', exact: true }).click();
+    expect((await deniedNotesResponse).status(), 'notes_permission_denial').toBe(403);
+    await expect(page.getByRole('alert')).toContainText('此来源未获授权');
+    await expect(page.locator('.notes-read-detail')).toHaveCount(0);
+    await expect(page.getByText('来源标识：archive')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_knowledge');
+
+    observed.setFailureStage('drafts_workspace');
+    const draftsTab = page.getByRole('button', { name: '草稿', exact: true });
+    const draftsBrowse = waitForGetResponse(page, '/api/notes/drafts/browse', (params) =>
+      params.get('offset') === '0' && params.get('path') === '');
+    observed.setDiagnosticAssertion('drafts_workspace_navigation');
+    await draftsTab.click();
+    await expect(page.getByRole('heading', { name: '草稿', exact: true })).toBeVisible();
+    const draftsBrowseResponse = await expectSuccessfulGet(draftsBrowse, observed, 'drafts_workspace_navigation');
+    expect(draftsBrowseResponse.headers()['cache-control']).toBe('private, no-store');
+    observed.setDiagnosticAssertion('drafts_no_tags');
+    await expect(page.locator('.notes-read-content .knowledge-tag-bar')).toHaveCount(0);
+    await expect(page.locator('.notes-read-content input[type="checkbox"]')).toHaveCount(0);
+    await expect(page.locator('.notes-read-item')).not.toHaveCount(0);
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_knowledge');
+    expect(observed.blockedOrigins.size, 'library request allowlist').toBe(0);
+    for (const [path, expectedStatus] of [
+      ['/api/knowledge/folders', 200], ['/api/knowledge/browse', 200],
+      ['/api/knowledge/items/<opaque-id>', 200], ['/api/notes/notes/folders', 200],
+      ['/api/notes/notes/browse', 200], ['/api/notes/archive/browse', 403],
+      ['/api/notes/drafts/browse', 200],
+    ] as const) {
+      expect(observed.requestRecords.some((request) => request.method === 'GET'
+        && request.path === path && request.status === expectedStatus), `${path} status ${expectedStatus}`).toBe(true);
+    }
+
     // Exercise the real Notes dialog layout CSS against each accepted viewport.
     // This uses only static synthetic markup; Notes save/reopen is covered by
     // the separate localhost HTTP and component tests.
@@ -663,6 +917,8 @@ test.afterEach(async ({ page }, testInfo) => {
       activity_get_statuses: observed?.activityReadStatuses ?? [],
       notes_collection_statuses: observed?.notesCollectionReadStatuses ?? [],
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
+      knowledge_read_statuses: observed?.knowledgeReadStatuses ?? [],
+      notes_browse_statuses: observed?.notesBrowseStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);
