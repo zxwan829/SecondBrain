@@ -18,6 +18,15 @@ function sourceResponse(value: unknown) {
   return new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
+function foldersResponse(path: string, folders: Array<{ name: string; path: string }> = []) {
+  return new Response(JSON.stringify({ status: 'ok', path, folders, scan: { entries: folders.length, complete: true } }), { status: 200 });
+}
+
+function browseResponse(path = '', items: Array<Record<string, unknown>> = [], tags: Array<{ name: string; count: number; count_complete: boolean }> = []) {
+  return new Response(JSON.stringify({ status: 'ok', path, tag_facets: tags, items, total: items.length, total_complete: true,
+    offset: 0, limit: 20, next_offset: null, scan: { entries: items.length, complete: true } }), { status: 200 });
+}
+
 function submitSearch(value = 'Needle') {
   fireEvent.change(screen.getByRole('searchbox', { name: /搜索关键词|Search terms/ }), { target: { value } });
   fireEvent.click(screen.getByRole('button', { name: /搜索|Search/ }));
@@ -32,12 +41,12 @@ describe('Knowledge read-only page', () => {
   it('makes no request until a non-empty search is explicitly submitted', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(searchResponse());
     render(<KnowledgePage locale="zh-CN" />);
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.some(([url]) => String(url).includes('/api/knowledge/search'))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: '搜索' }));
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.some(([url]) => String(url).includes('/api/knowledge/search'))).toBe(false);
     fireEvent.change(screen.getByRole('searchbox', { name: '搜索关键词' }), { target: { value: '  ' } });
     fireEvent.click(screen.getByRole('button', { name: '搜索' }));
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.some(([url]) => String(url).includes('/api/knowledge/search'))).toBe(false);
   });
 
   it('uses the frozen API contract, opens only a selected result and renders Markdown as safe React text', async () => {
@@ -52,10 +61,11 @@ describe('Knowledge read-only page', () => {
     render(<KnowledgePage locale="zh-CN" />);
     submitSearch();
     expect(await screen.findByRole('button', { name: /Synthetic Alpha/ })).toBeTruthy();
-    expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe('/api/knowledge/search?q=Needle&limit=50');
-    expect(calls[0].init?.credentials).toBe('same-origin');
-    expect(calls[0].init?.cache).toBe('no-store');
+    const searchCalls = calls.filter((call) => call.url.startsWith('/api/knowledge/search?'));
+    expect(searchCalls).toHaveLength(1);
+    expect(searchCalls[0].url).toBe('/api/knowledge/search?q=Needle&limit=50');
+    expect(searchCalls[0].init?.credentials).toBe('same-origin');
+    expect(searchCalls[0].init?.cache).toBe('no-store');
     expect(calls.some((call) => call.url.endsWith('/source'))).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: /Synthetic Alpha/ }));
@@ -64,7 +74,7 @@ describe('Knowledge read-only page', () => {
     expect(screen.queryByText(/来源已验证/)).toBeNull();
     expect(document.querySelector('script')).toBeNull();
     expect(screen.getByText('<script>window.bad = true</script>')).toBeTruthy();
-    expect(calls.map((call) => call.url)).toEqual([
+    expect(calls.filter((call) => !call.url.startsWith('/api/knowledge/folders?') && !call.url.startsWith('/api/knowledge/browse?')).map((call) => call.url)).toEqual([
       '/api/knowledge/search?q=Needle&limit=50', '/api/knowledge/items/opaque-a',
     ]);
   });
@@ -176,12 +186,12 @@ describe('Knowledge read-only page', () => {
   });
 
   it('shows truncated coverage without implying complete results and clears query without fetching', async () => {
-    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(searchResponse([itemA], 'truncated'));
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(searchResponse([itemA], 'truncated')));
     render(<KnowledgePage locale="en" />);
     submitSearch('Needle');
     expect(await screen.findByText(/Results are partial/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls.filter(([url]) => String(url).startsWith('/api/knowledge/search?'))).toHaveLength(1);
     expect(screen.queryByText('Synthetic Alpha')).toBeNull();
     expect((screen.getByRole('searchbox', { name: 'Search terms' }) as HTMLInputElement).value).toBe('');
   });
@@ -203,11 +213,84 @@ describe('Knowledge read-only page', () => {
     await waitFor(() => expect(calls.some((call) => call.url.includes('q=Old'))).toBe(true));
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search terms' }), { target: { value: 'New' } });
     fireEvent.click(screen.getByRole('button', { name: 'Searching…' }));
-    expect(calls[0].signal?.aborted).toBe(true);
+    expect(calls.find((call) => call.url.includes('q=Old'))?.signal?.aborted).toBe(true);
     expect(await screen.findByRole('button', { name: /Synthetic Beta/ })).toBeTruthy();
     await act(async () => { finishOld(searchResponse([itemA])); await oldSearch; });
     expect(screen.getByRole('button', { name: /Synthetic Beta/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Synthetic Alpha/ })).toBeNull();
+  });
+
+  it('browses real folder and tag responses, resets filters on folder change, and opens through the existing item endpoint', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const browseItem = { id: 'browse-id', path: 'Work/Note.md', title: 'Synthetic Note', updated: '2026-11-02T00:00:00Z', tags: ['AI', '研究'], metadata_status: 'ok' };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      calls.push({ url, init });
+      const parsed = new URL(url, 'http://localhost');
+      if (parsed.pathname.endsWith('/folders')) return foldersResponse(parsed.searchParams.get('path') ?? '', parsed.searchParams.get('path') ? [] : [{ name: 'Work', path: 'Work' }]);
+      if (parsed.pathname.endsWith('/browse')) return browseResponse(parsed.searchParams.get('path') ?? '', parsed.searchParams.get('path') === 'Work' ? [browseItem] : [], [
+        { name: 'AI', count: 1, count_complete: true }, { name: '研究', count: 1, count_complete: true },
+      ]);
+      if (parsed.pathname === '/api/knowledge/items/browse-id') return detailResponse('browse-id', '# Opened synthetic note');
+      return new Response('{}', { status: 404 });
+    });
+    render(<KnowledgePage locale="zh-CN" />);
+    await screen.findByRole('button', { name: 'Expand Work' });
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }));
+    expect(await screen.findByRole('button', { name: /Synthetic Note/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: /AI/ }));
+    expect(await screen.findByRole('checkbox', { name: /AI/ })).toBeTruthy();
+    await waitFor(() => expect(calls.some((call) => call.url.includes('/api/knowledge/browse?path=Work&match=and&offset=0&limit=20&tag=AI'))).toBe(true));
+    fireEvent.click(screen.getByRole('checkbox', { name: /研究/ }));
+    expect(await screen.findByRole('combobox', { name: '匹配' })).toBeTruthy();
+    fireEvent.change(screen.getByRole('combobox', { name: '匹配' }), { target: { value: 'or' } });
+    await waitFor(() => expect(calls.some((call) => call.url.includes('match=or'))).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: '全部知识' }));
+    await screen.findByRole('checkbox', { name: /AI/ });
+    expect((screen.getByRole('checkbox', { name: /AI/ }) as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByRole('combobox', { name: '匹配' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Synthetic Note/ }));
+    expect(await screen.findByRole('heading', { name: 'Opened synthetic note' })).toBeTruthy();
+    const browseCall = calls.find((call) => call.url.includes('/api/knowledge/browse?'))!;
+    expect(browseCall.init?.cache).toBe('no-store');
+    expect(browseCall.init?.credentials).toBe('same-origin');
+    expect(calls.some((call) => call.url === '/api/knowledge/items/browse-id')).toBe(true);
+  });
+
+  it('surfaces browse authorization errors and does not invent empty results', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 403 }));
+    render(<KnowledgePage locale="en" />);
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByText(/not authorized/)).toBeTruthy();
+    expect(screen.queryByText('No documents match this folder and tag selection.')).toBeNull();
+  });
+
+  it('retries the exact failed browse page without resetting its offset', async () => {
+    const browseUrls: string[] = [];
+    let browseCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      const parsed = new URL(url, 'http://localhost');
+      if (parsed.pathname.endsWith('/folders')) return foldersResponse(parsed.searchParams.get('path') ?? '');
+      if (parsed.pathname.endsWith('/browse')) {
+        browseUrls.push(url);
+        browseCount += 1;
+        if (browseCount === 2) return new Response('{}', { status: 503 });
+        const offset = Number(parsed.searchParams.get('offset'));
+        return new Response(JSON.stringify({ status: 'ok', path: '', tag_facets: [], items: [], total: 40,
+          total_complete: true, offset, limit: 20, next_offset: offset === 0 ? 20 : null,
+          scan: { entries: 40, complete: true } }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    render(<KnowledgePage locale="en" />);
+    await screen.findByRole('button', { name: 'Next' });
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(browseCount).toBe(3));
+    expect(new URL(browseUrls[1], 'http://localhost').searchParams.get('offset')).toBe('20');
+    expect(new URL(browseUrls[2], 'http://localhost').searchParams.get('offset')).toBe('20');
   });
 
   it('keeps only the current selection when detail requests resolve out of order', async () => {
@@ -244,7 +327,7 @@ describe('Knowledge read-only page', () => {
     expect(await screen.findByRole('heading', { name: 'Previous private-looking body' })).toBeTruthy();
     failDetail = true;
     fireEvent.click(screen.getByRole('button', { name: /Synthetic Alpha/ }));
-    expect((await screen.findByRole('alert')).textContent).toMatch(/request was not authorized/);
+    expect((await screen.findAllByRole('alert')).some((alert) => /request was not authorized/.test(alert.textContent ?? ''))).toBe(true);
     expect(screen.queryByRole('heading', { name: 'Previous private-looking body' })).toBeNull();
     expect(screen.queryByText('Synthetic Alpha')).toBeNull();
     expect(screen.queryByText('Synthetic Beta')).toBeNull();

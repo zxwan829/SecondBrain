@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.testclient import TestClient
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -328,6 +328,145 @@ class KnowledgeReadTests(unittest.TestCase):
         with self.assertRaises(Exception) as unavailable:
             linked_store.search("Safe", 10)
         self.assertEqual(getattr(unavailable.exception, "status_code", None), 503)
+
+    def test_folder_browser_returns_real_frontmatter_tags_and_supports_and_or_filters(self):
+        root_note = self.write("Projects/Alpha.md", '---\ntags: ["研究", "AI"]\n---\n# Alpha\nPrivate body must not be listed.\n')
+        self.write("Projects/sub/Field.md", "---\ntags:\n  - 研究\n  - Obsidian\n---\n# Field\n")
+        self.write("Projects/sub/Other.md", "---\ntags: [AI]\n---\n# Other\n")
+        self.write("Projects/No-tags.md", "# No tags\n")
+        before = hashlib.sha256(root_note.read_bytes()).hexdigest()
+        self.login()
+
+        folders = self.client.get("/api/knowledge/folders?path=Projects", headers=self.headers)
+        self.assertEqual(folders.status_code, 200, folders.text)
+        self.assertEqual(folders.headers["cache-control"], "private, no-store")
+        self.assertEqual(folders.json(), {"status": "ok", "path": "Projects",
+                                         "folders": [{"name": "sub", "path": "Projects/sub"}],
+                                         "scan": {"entries": 3, "complete": True}})
+
+        unfiltered = self.client.get("/api/knowledge/browse", params={"path": "Projects"}, headers=self.headers)
+        self.assertEqual(unfiltered.status_code, 200, unfiltered.text)
+        self.assertEqual(unfiltered.json()["total"], 4)
+        no_tags = next(item for item in unfiltered.json()["items"] if item["title"] == "No tags")
+        self.assertEqual(no_tags["tags"], [])
+
+        and_result = self.client.get("/api/knowledge/browse", params=[
+            ("path", "Projects"), ("tag", "研究"), ("tag", "AI"), ("match", "and"), ("limit", "1")
+        ], headers=self.headers)
+        self.assertEqual(and_result.status_code, 200, and_result.text)
+        self.assertEqual(and_result.headers["cache-control"], "private, no-store")
+        self.assertEqual(and_result.json()["status"], "ok")
+        self.assertEqual(and_result.json()["total"], 1)
+        self.assertTrue(and_result.json()["total_complete"])
+        self.assertEqual(and_result.json()["items"][0]["path"], "Projects/Alpha.md")
+        self.assertEqual(and_result.json()["items"][0]["tags"], ["AI", "研究"])
+
+        or_result = self.client.get("/api/knowledge/browse", params=[
+            ("path", "Projects"), ("tag", "研究"), ("tag", "AI"), ("match", "or"), ("limit", "1")
+        ], headers=self.headers)
+        self.assertEqual(or_result.status_code, 200, or_result.text)
+        payload = or_result.json()
+        self.assertEqual(payload["total"], 3)
+        self.assertEqual(payload["next_offset"], 1)
+        self.assertEqual(payload["tag_facets"], [
+            {"name": "AI", "count": 2, "count_complete": True},
+            {"name": "Obsidian", "count": 1, "count_complete": True},
+            {"name": "研究", "count": 2, "count_complete": True},
+        ])
+        item = payload["items"][0]
+        self.assertEqual(set(item), {"id", "path", "title", "updated", "tags", "metadata_status"})
+        self.assertEqual(self.store.detail(item["id"])["content"], root_note.read_text())
+        self.assertNotIn(str(self.root), or_result.text)
+        self.assertNotIn("Private body must not be listed", or_result.text)
+        self.assertEqual(hashlib.sha256(root_note.read_bytes()).hexdigest(), before)
+        second_page = self.client.get("/api/knowledge/browse", params=[
+            ("path", "Projects"), ("tag", "研究"), ("tag", "AI"), ("match", "or"),
+            ("offset", "1"), ("limit", "1")
+        ], headers=self.headers)
+        self.assertEqual(second_page.status_code, 200, second_page.text)
+        self.assertEqual(second_page.json()["offset"], 1)
+        self.assertNotEqual(second_page.json()["items"][0]["id"], item["id"])
+
+    def test_folder_browser_marks_unsupported_frontmatter_and_truncated_counts_partial(self):
+        self.write("good.md", "---\ntags: [safe]\n---\n# Good\n")
+        self.write("bad.md", "---\ntags: [safe]\ntags: [hidden]\n---\n# Unsupported\n")
+        self.login()
+        response = self.client.get("/api/knowledge/browse", headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "partial")
+        self.assertFalse(payload["total_complete"])
+        self.assertTrue(all(not facet["count_complete"] for facet in payload["tag_facets"]))
+        unsupported = next(item for item in payload["items"] if item["title"] == "Unsupported")
+        self.assertEqual(unsupported["metadata_status"], "unsupported")
+        self.assertEqual(unsupported["tags"], [])
+
+        with patch("secondbrain_core.modules.knowledge_read.MAX_SCAN_ENTRIES", 1):
+            limited = self.client.get("/api/knowledge/browse", headers=self.headers)
+        self.assertEqual(limited.status_code, 200, limited.text)
+        self.assertEqual(limited.json()["status"], "partial")
+        self.assertFalse(limited.json()["scan"]["complete"])
+        self.assertFalse(limited.json()["total_complete"])
+
+    def test_folder_browser_distinguishes_yaml_null_from_unsupported_boolean_tags(self):
+        self.write("null-tags.md", "---\ntags: null\n---\n# Null tags\n")
+        self.write("boolean-tags.md", "---\ntags: true\n---\n# Boolean tags\n")
+        self.login()
+        response = self.client.get("/api/knowledge/browse", headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "partial")
+        null_item = next(item for item in payload["items"] if item["title"] == "Null tags")
+        self.assertEqual(null_item["metadata_status"], "ok")
+        self.assertEqual(null_item["tags"], [])
+        boolean_item = next(item for item in payload["items"] if item["title"] == "Boolean tags")
+        self.assertEqual(boolean_item["metadata_status"], "unsupported")
+        self.assertEqual(boolean_item["tags"], [])
+
+    def test_folder_browser_bounds_facet_cardinality_without_claiming_complete_counts(self):
+        self.write("first.md", "---\ntags: [one]\n---\n# First\n")
+        self.write("second.md", "---\ntags: [two]\n---\n# Second\n")
+        self.login()
+        with patch("secondbrain_core.modules.knowledge_read.MAX_TAG_FACETS", 1):
+            response = self.client.get("/api/knowledge/browse", headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "partial")
+        self.assertFalse(payload["total_complete"])
+        self.assertEqual(len(payload["tag_facets"]), 1)
+        self.assertFalse(payload["tag_facets"][0]["count_complete"])
+
+    def test_folder_browser_rejects_unauthorized_traversal_and_symlink_scopes(self):
+        outside = self.base / "outside-folder"
+        outside.mkdir(mode=0o700)
+        (outside / "secret.md").write_text("secret")
+        (self.root / "linked-folder").symlink_to(outside, target_is_directory=True)
+        unauthorized = self.client.get("/api/knowledge/browse", headers=self.headers)
+        self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(unauthorized.headers.get("cache-control"), "private, no-store")
+        self.login()
+        for invalid in ("../outside-folder", "%2e%2e/outside-folder", "%252e%252e/outside-folder", "/"):
+            response = self.client.get("/api/knowledge/folders", params={"path": invalid}, headers=self.headers)
+            self.assertEqual(response.status_code, 400, (invalid, response.text))
+        linked = self.client.get("/api/knowledge/browse", params={"path": "linked-folder"}, headers=self.headers)
+        self.assertEqual(linked.status_code, 404)
+        self.assertNotIn("secret", linked.text)
+
+    def test_folder_endpoints_require_knowledge_read_and_preserve_no_store(self):
+        self.write("note.md", "# Synthetic\n")
+        self.login()
+        with patch.object(self.auth, "require_action", wraps=self.auth.require_action) as require_action:
+            self.client.get("/api/knowledge/folders", headers=self.headers)
+            self.client.get("/api/knowledge/browse", headers=self.headers)
+        require_action.assert_any_call(unittest.mock.ANY, "knowledge.read")
+
+    def test_folder_endpoints_fail_closed_on_revoked_knowledge_read_grant(self):
+        self.login()
+        with patch.object(self.auth, "require_action", side_effect=HTTPException(status_code=403, detail="Action is not enabled")):
+            for endpoint in ("/api/knowledge/folders", "/api/knowledge/browse"):
+                denied = self.client.get(endpoint, headers=self.headers)
+                self.assertEqual(denied.status_code, 403)
+                self.assertEqual(denied.headers.get("cache-control"), "private, no-store")
 
 
 if __name__ == "__main__":
