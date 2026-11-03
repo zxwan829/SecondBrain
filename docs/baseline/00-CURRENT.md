@@ -1,12 +1,16 @@
 ---
 created: 2026-09-30
-updated: 2026-10-24
+updated: 2026-11-03
 status: current
 source: GitHub SecondBrain Monorepo
 ---
 # SecondBrain — 当前交付基线（V1 + Personal Intelligence）
 
 > 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
+
+## 2026-11-03 当前状态：VNext 工作台隔离原型开发中
+
+GitHub `main` 当前基线为 `54a94d5c2b00c809604f25721580d45bcf8483a0`。Issue [#260](https://github.com/zxwan829/SecondBrain/issues/260) 的 VNext 工作台首版正在独立本地分支 `codex/vnext-workbench-20261103` 上开发；范围为合成数据预览，不调用 Core、不改变任务 API/数据库，不代表正式 UI 冻结解除。该分支、验证结果和本地预览均未发布，GitHub `main` 本文件仍保持旧状态。现场保全和验证结论见 Issue #260 最新执行评论。
 
 ## 2026-10-24 当前状态与唯一 NEXT：V1 第一阶段已部署，待用户体验验收
 

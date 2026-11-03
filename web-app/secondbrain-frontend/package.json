@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:vnext": "vite --config vite.vnext.config.ts --host 127.0.0.1 --port 4182 --strictPort",
+    "build:vnext": "vite build --config vite.vnext.config.ts",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "test": "vitest run",
