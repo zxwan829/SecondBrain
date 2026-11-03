@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-03 — V1 首轮真实用户体验准备与线上只读复核
+
+- **基线：** GitHub `main` `9c37cea6babd933d488f2adab546e4b761860abf`；NAS App revision 为 `ce247d0c2f014c67f407c7b8721022da6afe2753`。Hermes 无 SecondBrain revision label，Image ID 与 2026-10-24 快照一致。GitHub compare 确认 SecondBrain App/Core 的 `ce247d0c..9c37cea` 只有文档差异、无源码变化。NAS Compose SHA 与 2026-10-24 快照一致。
+- **线上只读证据：** App running/healthy、RestartCount 0、UID/GID `1026:100`；Hermes running、RestartCount 0。HTTPS `/health`、`/`、`/login`、`/notes` 200；匿名 session、Task、Capture summary、Knowledge search、Promote API 401。Hermes loopback 与 App→Hermes health 均 200。实测 Promote=false、Knowledge RO、Private 未挂载、App/Core Weixin 开关未设置为开启；Hermes safe root 保持三个获准捕获目录。未登录、未读取业务正文/Secret/Private、未写生产数据或执行模型调用。
+- **隔离测试：** 独立浅 Clone `main`；前端定向 9 个文件 **255 passed**，Core Capture/Task/BFF/Notes **104 passed + 4 subtests**；typecheck、Vite build 通过（既有单个大 chunk >500 kB 警告）。GitHub Actions [#41657897177](https://github.com/zxwan829/SecondBrain/actions/runs/41657897177) 固定 checkout `9c37cea6` 并核对 SHA；Ubuntu 24.04 workflow 全部步骤成功，包含全量 Web tests/typecheck/build、sanitized artifact gate 及真实 localhost Core HTTP + Linux Chromium。三项浏览器旅程在 1440×1000、820×1180、390×844 各 PASS；精确 768px 未运行。Hermes 为 fixture-only、Promote=false、Knowledge 文件为 0、Journal 未改写；脱敏 JUnit 为 3 tests / 0 failures，未上传截图。
+- **第一轮可验收范围：** 线上版本无需为了追 main 文档 SHA 重部署。登录/只读页面入口可用；Task 持久化与 Capture/Inbox scope 有合成验证；Knowledge/Notes、Chat/真实模型、真实 Task/Capture/Review 操作尚无用户验收。Chat 真实回答涉及个人会话/模型数据出站和费用；Promote、Writer、Weixin 继续关闭。
+- **结论：** `PARTIAL / BLOCKED_ON_USER_SCOPE_ACCEPTANCE`。可准备用户本人开始体验，但必须先明确接受登录后的指定模块数据读取；如测试持久化需同意创建合成 Task/Capture；真实模型 Chat 需另外确认模型与费用上限。完整状态、入口和逐项验收步骤见 `00-CURRENT.md`。
+
 ## 2026-10-24 — V1 第一阶段 NAS 部署与健康验收
 
 - 将 GitHub main `ce247d0c2f014c67f407c7b8721022da6afe2753` 对应 App/Core 与固定 Hermes v0.22.2/D078/Weixin 镜像部署到 DS920+。Actions #40075395885 artifact 的 ZIP、镜像包、内部 `SHA256SUMS`、Docker Image IDs、App revision label、Hermes upstream/overlay labels 全部匹配。

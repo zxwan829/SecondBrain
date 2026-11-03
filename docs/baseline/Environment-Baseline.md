@@ -6,6 +6,16 @@ type: environment-baseline
 ---
 # Environment Baseline
 
+## 2026-11-03 只读运行复核（V1 首轮体验准备）
+
+- **范围：** NAS SSH 只读查看容器列表/inspect、指定非敏感开关、挂载目标与权限、Compose 摘要；对线上 HTTPS 仅发无凭据 GET。未读取 Secret、Compose 正文、Vault/Private、用户正文或生产目录文件；没有登录、写入、模型调用或服务变更。
+- **源码基线：** GitHub `main` 为 `9c37cea6babd933d488f2adab546e4b761860abf`。App revision label 为 `ce247d0c2f014c67f407c7b8721022da6afe2753`；Hermes 容器没有 SecondBrain revision label，其 Image ID 与 2026-10-24 已记录快照一致。GitHub compare 确认 SecondBrain `ce247d0c..9c37cea` 的 5 个提交只修改 4 份文档，没有 App/Core 源码差异。正式 Compose SHA-256 为 `0aedb4b104870ddc5ce23a2f1adde10b84b51bf06f7e35d3377356bcc5a84708`，与 2026-10-24 快照一致。
+- **App：** `secondbrain-app:candidate-ce247d0c2f014c67f407c7b8721022da6afe2753`，Image ID `sha256:e201c93c7f19ec1ac15f742659ce023a0f12228fd846035090e42f6e69d3cec5`，running/healthy，RestartCount 0，运行身份 `1026:100`，启动时间 `2026-10-29T15:08:31Z`，只发布 `127.0.0.1:9120->8000`。容器挂载 `/knowledge` 为 RO，Private 未挂载；Capture Inbox、Review、Core state 仅挂载到其既有应用路径。Secret 仍以只读文件引用挂载，本轮未读取。
+- **Hermes：** `secondbrain-hermes:candidate-ce247d0c2f014c67f407c7b8721022da6afe2753`，Image ID `sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821`，running，RestartCount 0，Docker 未配置 healthcheck，运行身份 root；只发布 `192.168.3.27:9119->9119`。Hermes 的 `/secondbrain` 根挂载 RO，Private 未挂载；可写挂载仅为既有 Inbox/Review 捕获路径。`HERMES_WRITE_SAFE_ROOT` 实际值为 `/secondbrain-write/00-Inbox:/secondbrain-write/10-Review:/knowledge-assets/00-Inbox`。
+- **安全开关：** App/Core `SB_PROMOTE_ENABLED=false`；App/Core `SB_WEIXIN_INBOX_ENABLED` 未设置（未观察到开启值）。未更改 API Terminal、Writer、Promote、Weixin 或权限。
+- **运行探测：** 当前网络对 `https://zxwan520.com:63013` 的无凭据 GET：`/health`、`/`、`/login`、`/notes` 均 200；匿名 `/api/auth/session`、`/api/tasks`、`/api/inbox/summary`、`/api/knowledge/search`、`/api/promote/status` 均 401。NAS 内 Hermes `127.0.0.1:8642/health` 与 App 容器到 `http://hermes:8642/health` 均 200。通过 HTTPS 反向代理的 App health 为 200；容器内直接访问 App HTTP 端口返回 400，未绕过来源校验。
+- **生产操作与验收：** 未登录真实账号，未请求任何认证后的业务数据；未读写真实 Task、Inbox、Review、Knowledge 或 Notes；未调用模型、渠道、Writer/Promote。SecondBrain App 源码与 main 一致；Hermes 版本/镜像仅按 Image ID 与最近快照匹配，实际个人业务流程和当前用户浏览器仍待用户验收。
+
 ## 最新生产部署与验收（2026-10-24；V1 第一阶段）
 
 - **发布来源：** GitHub `main` `ce247d0c2f014c67f407c7b8721022da6afe2753`；Actions [#40075395885](https://github.com/zxwan829/SecondBrain/actions/runs/40075395885)，artifact `12553425795`。ZIP SHA-256 `4ad0b8eb26eb93ebfcf71f18667487122203ef54f31db4c1cd5dffcf5fc7de37`；镜像包 `secondbrain-candidate-images.tar.gz` SHA-256 `079c99c444be8867ccb4396f5344bc859bbc57ffd2d4a9542b0b6543d7329fce`，内部 `SHA256SUMS` 已在本机与 NAS 校验。App 镜像 ID `sha256:e201c93c7f19ec1ac15f742659ce023a0f12228fd846035090e42f6e69d3cec5`，revision label 与 main SHA 相同。Hermes 镜像 ID `sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821`，版本 `0.22.2`，上游源码 `d923a5eb487a17c0a68801bba9ef0f56c81040a8`，D078/Weixin overlay SHA-256 `eb20ef03146b1a15eda7659327f777377fefe8584ce45bc5fef3ba1be406d353`。
