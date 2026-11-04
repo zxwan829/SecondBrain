@@ -34,7 +34,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
   | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat'
-  | 'chat_session' | 'chat_context_preview' | 'chat_grounding' | 'chat_planning' | 'chat_attachment'
+  | 'chat_session' | 'chat_context_preview' | 'chat_preview_request' | 'chat_preview_result'
+  | 'chat_grounding' | 'chat_planning' | 'chat_attachment'
   | 'chat_composer' | 'chat_run' | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
@@ -671,8 +672,15 @@ for (const viewport of viewports) {
     await expect(input).toBeVisible();
     const query = '这是一条仅供浏览器验收的合成问题';
     await input.fill(query);
-    observed.setDiagnosticAssertion('chat_context_preview');
+    observed.setDiagnosticAssertion('chat_preview_request');
+    const previewResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === 'POST' && new URL(response.url()).pathname.endsWith('/context-preview');
+    });
     await preview.getByRole('button', { name: '检索可用上下文' }).click();
+    const previewResponse = await previewResponsePromise;
+    expect(previewResponse.status(), 'chat_preview_http_status').toBe(200);
+    observed.setDiagnosticAssertion('chat_preview_result');
     await expect(preview.getByText('找到可展示的来源元数据')).toBeVisible();
     await expect(preview.getByText('synthetic-memory-source-01')).toBeVisible();
     observed.setDiagnosticAssertion('chat_grounding');
