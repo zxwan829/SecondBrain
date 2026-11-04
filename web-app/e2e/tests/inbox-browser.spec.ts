@@ -688,6 +688,8 @@ for (const viewport of viewports) {
         composerVisible: composer.bottom > 0 && composer.top < innerHeight };
     });
     expect(opened.panelHeight, 'chat_tools_opened_height').toBeGreaterThan(collapsed.contextHeight);
+    expect(opened.messageHeight, 'chat_messages_remain_visible_when_tools_open').toBeGreaterThan(100);
+    expect(opened.messageScrollHeight, 'chat_history_remains_scrollable_when_tools_open').toBeGreaterThan(opened.messageClientHeight);
     expect(opened.composerVisible, 'chat_composer_available_when_open').toBe(true);
     await input.scrollIntoViewIfNeeded();
     await expect(input).toBeInViewport();

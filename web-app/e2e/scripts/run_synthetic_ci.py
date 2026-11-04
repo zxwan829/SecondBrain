@@ -645,7 +645,16 @@ def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: 
                     child.unlink(missing_ok=True)
         elif not publish_root.exists():
             publish_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        raise RuntimeError("report validation failed; artifact upload withheld") from error
+        reason = str(error)
+        # Surface only a short, path-free validator message so a withheld
+        # report can be diagnosed from Actions logs. Never echo arbitrary OS
+        # exceptions, paths, or report contents.
+        if (type(error) is RuntimeError and re.fullmatch(r"[A-Za-z0-9 _.-]{1,120}", reason)
+                and not any(marker in reason.lower() for marker in ("token", "cookie", "secret", "password", "authorization"))):
+            safe_detail = f" ({reason})"
+        else:
+            safe_detail = f" ({type(error).__name__})"
+        raise RuntimeError(f"report validation failed; artifact upload withheld{safe_detail}") from error
 
 
 def artifact_run_directory() -> Path:
