@@ -10,7 +10,7 @@ source: GitHub SecondBrain Monorepo
 
 ## 当前快照
 
-- **审计基准 main：** `bf008da450b546f2497c66e0fe5c091fa0337e5d`（2026-11-04；GitHub `main`，含 PR #270/#271 文档状态更新）；#269 运行代码及生产镜像固定基准为 `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`。
+- **部署核验基准 main：** `bf008da450b546f2497c66e0fe5c091fa0337e5d`（2026-11-04 部署时的 GitHub `main`，含 PR #270/#271 文档更新；之后 PR #272 仅更新部署记录）；#269 运行代码及生产镜像固定基准为 `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`。
 - **总体：** V1 尚未完成。GitHub main 的代码/文档状态不代表生产部署、真实数据验证或用户验收。
 - **最近已核验生产快照：** 2026-11-04 App 已运行 revision `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`、Image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`、running/healthy；Compose SHA-256 为 `3c9b1892d5a0f155050055545789c910f63db6a910007ee1a8c1b6436ee61c77`。#269 部署只变更 App image；Hermes 容器、镜像和启动时间保持不变。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-04 部署后实测）：** Promote=false、App Knowledge 挂载只读、Private 未挂载；App UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`，两个 Secret 文件只读挂载。Compose 除 App image 外未改。Hermes 安全边界未变。详情见 `Environment-Baseline.md`。
@@ -75,7 +75,7 @@ source: GitHub SecondBrain Monorepo
 
 ## 主要风险与验收边界
 
-- GitHub main、生产代码和用户验收分开记录：生产 App 运行 PR #269 revision `d06e3f3b`；当前 main `bf008da4` 在该代码之后只增加 #270/#271 文档状态提交。2026-11-04 部署后已核验 App 健康及安全边界；新版 UI 的用户浏览器验收仍待执行。
+- GitHub main、生产代码和用户验收分开记录：生产 App 运行 PR #269 revision `d06e3f3b`；主线在该运行代码之后的已合并变化为部署及状态文档更新，没有额外生产代码部署。2026-11-04 部署后已核验 App 健康及安全边界；新版 UI 的用户浏览器验收仍待执行。
 - #261 远端隔离分支的 CI 失败（Actions #41334785303 有 4 项旧/待核断言失败）；尚无 PR，Chromium Gate 未运行，不能合并。
 - #74 的安全范围修复已合并并部署，剩余用户验收未完成；#30 真实模型记忆故障和 #78 生产审批边界仍未解除。
 - D084 历史浏览器业务验收仍无新证据（旧宽范围 Issue #44 已按未计划关闭，不是验收完成）。
