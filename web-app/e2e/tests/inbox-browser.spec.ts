@@ -697,7 +697,7 @@ for (const viewport of viewports) {
     const previewResponse = await previewResponsePromise;
     expect(previewResponse.status(), 'chat_preview_http_status').toBe(200);
     observed.setDiagnosticAssertion('chat_preview_result_status');
-    await expect(preview.getByText('找到可展示的来源元数据')).toBeVisible();
+    await expect(preview.locator('[role="status"]').filter({ hasText: '找到可展示的来源元数据' }).first()).toBeVisible();
     observed.setDiagnosticAssertion('chat_preview_result_source');
     await expect(preview.getByText('synthetic-memory-source-01')).toBeVisible();
     observed.setDiagnosticAssertion('chat_grounding');
