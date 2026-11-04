@@ -15,7 +15,7 @@ source: GitHub SecondBrain Monorepo
 - **最近已核验生产快照：** 2026-11-03 只读核验确认 App revision 为 `ce247d0c2f014c67f407c7b8721022da6afe2753`；Hermes Image ID 与 2026-10-24 已记录镜像一致（Hermes 容器无 SecondBrain revision label）。GitHub main `9c37cea6` 与 App 发布 SHA 的差异只有 5 个文档提交、无应用源码差异。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-03 实测）：** `SB_PROMOTE_ENABLED=false`、App Knowledge 挂载只读、Private 未挂载；App/Core 的 Weixin 开关环境变量未设置为开启；Hermes 写安全根仅为 3 个获准捕获目录。具体挂载与值见 `Environment-Baseline.md`。
 - **开发阶段：** V1 首轮真实用户体验准备。新功能不因准备验收而自动启动；仅处理影响五个体验场景的 P0/P1 阻断。
-- **本阶段状态：** `PARTIAL / BLOCKED_ON_USER_SCOPE_ACCEPTANCE`。健康、代码比对和隔离测试已完成；Codex 未登录或读写生产个人数据，也未调用模型。真实 UAT 前需用户确认数据读取范围、合成写入及模型/费用选项。
+- **本阶段状态：** `PARTIAL / CHAT_BLOCKED_ON_RUNTIME_SECURITY`。用户已完成多数页面的首轮生产 UAT，并以明确合成内容验证 Task 和 Capture→Inbox→Review 写入/回读；真实模型 Chat 尚未调用。Hermes 运行文件缺少预期 fail-closed 补丁特征，隔离候选镜像构建及测试尚未成功。既有健康检查不等于真实 Chat 验收。
 
 ## 能力状态
 
@@ -39,9 +39,16 @@ source: GitHub SecondBrain Monorepo
 | 响应式 / 多端 / Obsidian 同步 | main 有响应式样式 | Linux Chromium 合成旅程在 1440×1000、820×1180、390×844 通过；精确 768px 未运行；同步未复测 | 真机/当前用户浏览器体验与 Mac↔NAS 双向同步未验收 |
 | Security / Writer / Promote / Private | main 有 fail-closed 与受控写入相关代码；D090 Writer 候选未合入 | Promote=false、App Knowledge RO、Private 未挂载；Hermes safe root 三个捕获目录；`SB_WEIXIN_INBOX_ENABLED` 未设置 | 跨进程/OS 隔离及正式 Promote 未验收；不在本轮开启 |
 
+## 2026-11-04 首轮用户 UAT 与安全阻断补记
+
+- 用户登录实测：Task 创建/完成/恢复、Capture 文本原文保存→Inbox→Review 持久化、Knowledge 搜索/阅读、Journal 2026-10-18 历史正文、Chat 历史会话读取均有页面证据；本项只代表相应有限旅程，不代表整个 V1 功能通过。
+- Notes 历史版本可预览但未执行恢复；回收站界面可打开，Trash 根未配置；Projects 与 Daily Brief 缺可信数据源/配置；笔记新建保存和日记追加写入未运行；旧 V1 UI 可用性问题统一留给 #260 VNext 讨论，不阻断上述核心安全收口。
+- **P0 Chat 阻断：** Codex 在生产 Hermes 镜像 `sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821` 的 `_pre_tool_block` 中未发现 `PRE_TOOL_CALL_HOOK_UNAVAILABLE` 补丁标记；配置确认 API toolset 为 `file,skills,vision`（Terminal disabled），但 Guard 运行注册与文件写审批尚未完成当轮证明。尚无实际安全绕过事件证据；因安全保证不足，真实 Chat 暂不放行。
+- Codex 已确认固定补丁/构建脚本在 GitHub main，**固定源码已检出、fail-closed 定向测试 6/6 通过并完成补丁范围独立复审；PR #265 的 GitHub Actions 已进入测试运行，但第二次 CI 仍失败（Weixin 加密测试环境缺少有效 cryptography/AES 依赖，58 passed、3 failed），候选镜像和产物尚未生成，镜像/流程最终独立审查尚未完成**。无生产变更授权，未更改生产；本轮不宣称安全缺陷已修复。
+
 ## 唯一 NEXT
 
-由用户先确认首轮体验授权范围：登录后会读取所选模块的个人数据；是否允许创建合成 Task/Capture；是否允许一次真实模型 Chat 及对应模型/费用上限。确认后由用户本人使用现有线上 App 完成验收；Codex 不代为登录、读写个人资料或调用模型。未经选择仍保持 Promote/Writer/Weixin 关闭。
+**唯一工程 NEXT：** Codex 先修复 PR #265 中 Weixin 加密测试依赖后推进隔离 Actions，构建候选镜像并核对镜像内实际执行文件/哈希、Guard/工具审批边界及独立审查。**本阶段不改生产、不调用付费模型。** 如果验证成功，提交 Hermes-only 最小生产授权包（影响、备份、回滚）；用户批准后才由 Codex 部署并复核运行代码。**用户验收 NEXT：** 安全门禁实际通过后，由用户本人以既有约 ¥5 测试预算验证新 Chat 会话、模型回复、刷新恢复；此预算不是提供商硬费用上限。其余首轮页面 UAT 结论在相关 Issue 中收口，笔记新建保存/日记追加仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
 ## 核心任务队列
 
