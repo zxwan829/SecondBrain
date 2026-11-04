@@ -618,7 +618,7 @@ for (const viewport of viewports) {
     const toolsPanel = page.locator('.chat-context-tools');
     const messages = page.locator('.chat-message-list');
     const input = page.locator('.chat-composer textarea');
-    const composer = page.locator('.chat-composer');
+    const chatComposer = page.locator('.chat-composer');
     await expect(toolsPanel).toBeVisible();
     await expect(toolsPanel).not.toHaveAttribute('open', '');
     await expect(toolsPanel.locator('summary')).toHaveText('上下文与工具');
@@ -724,8 +724,8 @@ for (const viewport of viewports) {
     expect(capped.scrollHeight, 'chat_composer_internal_scroll').toBeGreaterThan(capped.clientHeight);
     expect(capped.overflowY, 'chat_composer_overflow_style').toBe('auto');
     expect(capped.maxHeight, 'chat_composer_css_cap').toBe('160px');
-    await composer.getByRole('button', { name: '发送', exact: true }).scrollIntoViewIfNeeded();
-    await expect(composer.getByRole('button', { name: '发送', exact: true })).toBeInViewport();
+    await chatComposer.getByRole('button', { name: '发送', exact: true }).scrollIntoViewIfNeeded();
+    await expect(chatComposer.getByRole('button', { name: '发送', exact: true })).toBeInViewport();
 
     await page.getByRole('button', { name: '发送', exact: true }).click();
     await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
