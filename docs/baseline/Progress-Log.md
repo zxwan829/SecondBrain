@@ -1,5 +1,12 @@
 # Progress Log
 
+## 2026-11-04 — PR #269 App-only 发布候选准备（未部署）
+
+- **主线与 UAT：** PR #269 已于 merge commit `d06e3f3bde2cf8ee260992644c2ae5d67aeef362` 合并；Ubuntu 24.04 三视口浏览器 Gate [#41785664124](https://github.com/zxwan829/SecondBrain/actions/runs/41785664124) PASS。用户此前已完成有限真实 Chat 回复与刷新恢复；#269 新 UI 尚未部署，生产新版 UI 用户验收仍 NOT RUN。跨会话记忆和其余 V1 业务状态不变。
+- **候选工件：** 精确 SHA 构建/启动检查 [#41788688422](https://github.com/zxwan829/SecondBrain/actions/runs/41788688422) SUCCESS；App image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`，config/OCI digest 与 revision label 对应 d06，平台 linux/amd64。Actions artifact `13301449533` digest `sha256:e6040f9c7262b8477169ef0e5fd8a1a1e7959d1b2857e423dd33c0cae7a89b9c`；从双镜像归档分离出的 App-only 包 SHA-256 `49905f26e9fc7780a1a58be693f7d1558b989421291ffcfa417a3856674e684a`。包结构和全部 App blobs 独立校验通过；无 Hermes tag/manifest 引用。隔离容器 `/health`、`/notes` 与 Promote=false 通过。
+- **只读生产核对与独立复审：** 当前 Compose SHA `0aedb4b104870ddc5ce23a2f1adde10b84b51bf06f7e35d3377356bcc5a84708`；App ce247d0c healthy，旧 image ID `sha256:e201c93c7f19ec1ac15f742659ce023a0f12228fd846035090e42f6e69d3cec5` 存在。挂载、身份、端口、依赖网络和 Promote/Weixin 边界已白名单核实；计划仅改 App image，并只重建 `secondbrain-app`。未导入镜像、未建立 NAS 备份、未改 Compose 或重启。独立 Reviewer 对候选归档 PASS，对 App-only 部署范围条件 PASS；获授权后仍须核验实际候选语义 diff 仅含 App image，并校验 Compose 快照 SHA、候选 Image ID、旧 App image ID 及部署前后 Hermes ID/StartedAt；回滚只恢复 App Compose 且保留 Core state。
+- **授权边界与 NEXT：** 生产 image import、Compose 备份/切换及 App 重建仍须用户明确批准；细节见 `00-CURRENT.md` 与 `Environment-Baseline.md`。批准并部署、健康核验后由用户验收 #269 新 UI；随后推进下一项 V1 核心 UAT。VNext 保持 FROZEN。
+
 ## 2026-11-03 — V1 首轮真实用户体验准备与线上只读复核
 
 - **基线：** GitHub `main` `9c37cea6babd933d488f2adab546e4b761860abf`；NAS App revision 为 `ce247d0c2f014c67f407c7b8721022da6afe2753`。Hermes 无 SecondBrain revision label，Image ID 与 2026-10-24 快照一致。GitHub compare 确认 SecondBrain App/Core 的 `ce247d0c..9c37cea` 只有文档差异、无源码变化。NAS Compose SHA 与 2026-10-24 快照一致。

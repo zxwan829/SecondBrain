@@ -1,10 +1,18 @@
 ---
 created: 2026-09-28
-updated: 2026-10-24
+updated: 2026-11-04
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
+
+## 2026-11-04 #269 App-only 发布准备（未部署）
+
+- **源码与候选：** GitHub `main`/PR #269 merge SHA 为 `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`。相对当前生产 revision `ce247d0c2f014c67f407c7b8721022da6afe2753`，运行时应用改动仅 `web-app/secondbrain-frontend/src/App.tsx` 与 `src/styles/app.css`；Core、Hermes、依赖和 Dockerfile 无代码差异，没有数据迁移。其余差异仅为合成测试/探针与文档。
+- **构建和隔离启动：** Ubuntu 24.04 Actions [#41788688422](https://github.com/zxwan829/SecondBrain/actions/runs/41788688422) 在精确 HEAD `d06e3f3b` 成功。App 镜像构建、隔离网络/只读根文件系统/`1026:100` 启动、`/health` 为 ok、`/notes` 200 及 `SB_PROMOTE_ENABLED=false` 均 PASS。固定 Hermes 步骤也通过既有 smoke；生产 Hermes 未变更。
+- **App 镜像与工件：** tag `secondbrain-app:candidate-d06e3f3bde2cf8ee260992644c2ae5d67aeef362`；image/config ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`；OCI manifest digest `sha256:e2bacc0e6b72ed29116e3ec29c44abaafd458dcf9048168f521307399399ddd7`；revision label 与目标 SHA 一致；平台 `linux/amd64`。GitHub artifact ID `13301449533`、digest `sha256:e6040f9c7262b8477169ef0e5fd8a1a1e7959d1b2857e423dd33c0cae7a89b9c`，原包 `SHA256SUMS` 校验通过（包内镜像归档 SHA-256 `8a150cebff3dbf4920b4116ea82c37174af5a6addf0e72185329889ef5aba31c`）。提取后的 App-only OCI/Docker 兼容归档 SHA-256 为 `49905f26e9fc7780a1a58be693f7d1558b989421291ffcfa417a3856674e684a`；仅含 App image，配置 digest、索引、manifest 和所有引用层 SHA 校验通过，无 Hermes 引用。Actions 原始工件保留 14 日。
+- **当前生产只读基线：** App image ID `sha256:e201c93c7f19ec1ac15f742659ce023a0f12228fd846035090e42f6e69d3cec5`、revision `ce247d0c`、running/healthy、UID/GID `1026:100`、restart count 0、仅发布 `127.0.0.1:9120→8000`。Compose SHA-256 `0aedb4b104870ddc5ce23a2f1adde10b84b51bf06f7e35d3377356bcc5a84708`；服务为 `hermes` 与 `secondbrain-app`，App 依赖 Hermes `service_started`，默认网络；挂载为 Core state、Review、Inbox 可写，Knowledge 只读，两个 Secret 文件只读，未挂载 Private。Promote 仍 false，Weixin 开关未设为开启。实际配置的 App 环境字段名、端口、依赖、网络、挂载及权限均已白名单读取；未输出环境值或 Secret。
+- **部署与回滚边界：** NAS 当前已存在的 App 镜像已验证可用作回滚目标；Compose 当前 App image tag 为 `secondbrain-app:candidate-ce247d0c2f014c67f407c7b8721022da6afe2753`。计划变更仅将该行替换为上述 d06 候选，并用 `docker compose ... up -d --no-deps --no-build --force-recreate --pull never secondbrain-app` 单独重建 App。用户未授权前没有导入候选、复制/写入生产备份、修改 Compose 或重启服务；获授权后才保存当前 Compose 及 SHA-256，再执行切换。失败时仅恢复该 Compose 快照并用已验证的 ce247d0c 镜像单独重建 App；不回滚 Core state、不触碰 Hermes 或其他数据。
 
 ## 2026-11-03 只读运行复核（V1 首轮体验准备）
 
