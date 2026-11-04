@@ -44,7 +44,7 @@ jobs:
           git -C /tmp/hermes-agent-test-source apply --unidiff-zero --check "$GITHUB_WORKSPACE/web-app/hermes-agent/patches/v0.22.2/weixin-media-download-budget.patch"
           git -C /tmp/hermes-agent-test-source apply --unidiff-zero "$GITHUB_WORKSPACE/web-app/hermes-agent/patches/v0.22.2/weixin-media-download-budget.patch"
           python3 -m venv /tmp/hermes-test-venv
-          /tmp/hermes-test-venv/bin/pip install pytest pytest-asyncio -e /tmp/hermes-agent-test-source
+          /tmp/hermes-test-venv/bin/pip install pytest pytest-asyncio ruamel.yaml requests psutil -e /tmp/hermes-agent-test-source
           /tmp/hermes-test-venv/bin/python -m pytest -q \
             /tmp/hermes-agent-test-source/tests/agent/test_tool_executor_pre_tool_dispatch.py \
             /tmp/hermes-agent-test-source/tests/gateway/test_weixin.py \
