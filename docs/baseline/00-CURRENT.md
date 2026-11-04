@@ -15,7 +15,7 @@ source: GitHub SecondBrain Monorepo
 - **最近已核验生产快照：** 2026-11-03 只读核验确认 App revision 为 `ce247d0c2f014c67f407c7b8721022da6afe2753`；Hermes Image ID 与 2026-10-24 已记录镜像一致（Hermes 容器无 SecondBrain revision label）。GitHub main `9c37cea6` 与 App 发布 SHA 的差异只有 5 个文档提交、无应用源码差异。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-03 实测）：** `SB_PROMOTE_ENABLED=false`、App Knowledge 挂载只读、Private 未挂载；App/Core 的 Weixin 开关环境变量未设置为开启；Hermes 写安全根仅为 3 个获准捕获目录。具体挂载与值见 `Environment-Baseline.md`。
 - **开发阶段：** V1 首轮真实用户体验准备。新功能不因准备验收而自动启动；仅处理影响五个体验场景的 P0/P1 阻断。
-- **本阶段状态：** `PARTIAL / CHAT_BLOCKED_ON_RUNTIME_SECURITY`。用户已完成多数页面的首轮生产 UAT，并以明确合成内容验证 Task 和 Capture→Inbox→Review 写入/回读；真实模型 Chat 尚未调用。生产 Hermes 的执行文件经重新核验与固定源码应用 fail-closed 补丁后的文件 SHA-256 一致，先前“缺少补丁”判断已撤回；Guard 活动注册、File/Skills 审批及 Chat 基础链路仍待运行核验。既有健康检查不等于真实 Chat 验收。
+- **本阶段状态：** `PARTIAL / READY_FOR_LIMITED_CHAT_UAT`。用户已完成多数页面的首轮生产 UAT，并以明确合成内容验证 Task 和 Capture→Inbox→Review 写入/回读；真实模型 Chat 尚未调用。生产 Hermes 的执行文件经重新核验与固定源码应用 fail-closed 补丁后的文件 SHA-256 一致，先前“缺少补丁”判断已撤回；2026-11-04 生产 Plugin Doctor 注册与策略探针、App→Hermes health 及固定 Hermes 真实 Agent 隔离 API Run 审批/SSE 集成验证已完成；真实模型回复和刷新恢复待用户验收。既有健康检查不等于真实 Chat 验收。
 
 ## 能力状态
 
@@ -49,7 +49,9 @@ source: GitHub SecondBrain Monorepo
 
 ## 唯一 NEXT
 
-**唯一工程 NEXT：** Codex 在现有生产 Hermes 上完成最小只读/合成运行核验：确认 D078 Guard 活动加载与 Hook 注册、File 写审批强制路径、Skills 保护、Terminal 禁用、原有挂载权限，以及 App→Hermes Chat/SSE 基础链路。先复用已确认补丁的现网镜像，不再为补丁重建或申请部署。若证据显示具体缺陷，仅针对该缺陷设计最小修复；任何新增生产变更须与既有具体授权范围一致。PR #265 可以作为备用构建基础设施独立收口，不阻断现网核验。**用户验收 NEXT：** 通过运行门禁后，由用户本人使用约 ¥5 测试预算验证新 Chat 会话、模型回复和刷新恢复；该预算非供应商硬上限。Notes 新建保存和 Journal 追加仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
+**READY_FOR_LIMITED_CHAT_UAT：** 用户本人在正式 Web 新建 Chat 会话，发送无个人信息的普通问题，确认真实模型回答后刷新并恢复对话。沿用已批准约 ¥5 测试预算；该预算不是供应商硬费用上限。出现工具审批卡时可拒绝；本次不要求文件写入。真实模型/SSE 浏览器体验与刷新恢复仍 NOT RUN；#30 跨会话记忆、Companion、Notes/Journal 写入及其他未验收功能不因本次放行而通过。Promote/Writer/Weixin 保持关闭。
+
+2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
 ## 核心任务队列
 
