@@ -448,7 +448,8 @@ for (const viewport of viewports) {
       expect(collapsed.ordered, 'chat_grid_visual_order').toBe(true);
       await toolsPanel.locator('summary').click();
       await expect(toolsPanel).toHaveAttribute('open', '');
-      expect(await toolsPanel.locator('section').count(), 'chat_tools_content_rendered').toBeGreaterThan(0);
+      const openedHeight = await toolsPanel.evaluate((element) => element.getBoundingClientRect().height);
+      expect(openedHeight, 'chat_tools_opened_height').toBeGreaterThan(collapsed.contextHeight);
       await expect(input).toBeVisible();
       await toolsPanel.locator('summary').click();
       await expect(toolsPanel).not.toHaveAttribute('open', '');
