@@ -35,7 +35,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
   | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat'
   | 'chat_session' | 'chat_context_preview' | 'chat_preview_button_visible' | 'chat_preview_button_enabled'
-  | 'chat_preview_button_in_viewport' | 'chat_preview_request' | 'chat_preview_result'
+  | 'chat_preview_button_in_viewport' | 'chat_preview_request' | 'chat_preview_result_status' | 'chat_preview_result_source'
   | 'chat_grounding' | 'chat_planning' | 'chat_attachment'
   | 'chat_composer' | 'chat_run' | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
@@ -696,8 +696,9 @@ for (const viewport of viewports) {
     await previewButton.click();
     const previewResponse = await previewResponsePromise;
     expect(previewResponse.status(), 'chat_preview_http_status').toBe(200);
-    observed.setDiagnosticAssertion('chat_preview_result');
+    observed.setDiagnosticAssertion('chat_preview_result_status');
     await expect(preview.getByText('找到可展示的来源元数据')).toBeVisible();
+    observed.setDiagnosticAssertion('chat_preview_result_source');
     await expect(preview.getByText('synthetic-memory-source-01')).toBeVisible();
     observed.setDiagnosticAssertion('chat_grounding');
     await grounding.getByRole('button', { name: '核对 Knowledge 来源' }).click();
