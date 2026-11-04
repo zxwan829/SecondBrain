@@ -304,7 +304,9 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
     if (len(testcase_viewports) != len(FAILURE_JUNIT_TESTCASE_VIEWPORTS)
             or set(testcase_viewports) != set(FAILURE_JUNIT_TESTCASE_VIEWPORTS.values())
             or len(set(testcase_viewports)) != len(testcase_viewports)):
-        raise RuntimeError("failure diagnostic JUnit testcase set rejected; upload withheld")
+        safe_observed = ",".join(testcase_viewports)
+        safe_failed = ",".join(failed_viewports)
+        raise RuntimeError(f"failure diagnostic JUnit testcase set rejected; upload withheld; count={len(testcase_viewports)}; observed={safe_observed}; failed={safe_failed}")
     failed_viewport_set = set(failed_viewports)
     if summary_path.exists():
         if summary_path.stat().st_size > 4096 or not summary_path.is_file():
@@ -649,7 +651,7 @@ def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: 
         # Surface only a short, path-free validator message so a withheld
         # report can be diagnosed from Actions logs. Never echo arbitrary OS
         # exceptions, paths, or report contents.
-        if (type(error) is RuntimeError and re.fullmatch(r"[A-Za-z0-9 _.:;()'-]{1,160}", reason)
+        if (type(error) is RuntimeError and re.fullmatch(r"[A-Za-z0-9 _.,:=;()'-]{1,220}", reason)
                 and "/" not in reason and "\\" not in reason
                 and not any(marker in reason.lower() for marker in ("token", "cookie", "secret", "password", "authorization"))):
             safe_detail = f" ({reason})"
