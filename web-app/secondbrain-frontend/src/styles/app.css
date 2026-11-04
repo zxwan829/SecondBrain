@@ -722,7 +722,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .chat-conversation > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--sb-border); }
 .chat-conversation > header > div { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 .chat-conversation > header h2 { max-width: 100%; margin: 5px 0 0; overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.chat-conversation > header button { padding: 8px 12px; }
+.chat-conversation > header button { flex: 0 0 auto; padding: 8px 12px; white-space: nowrap; }
 .chat-message-list { display: flex; flex-direction: column; gap: 15px; min-height: 0; overflow: auto; padding: 22px 2px; }
 .chat-message { max-width: min(88%, 780px); padding: 13px 15px; border: 1px solid var(--sb-border); border-radius: 13px; background: var(--sb-surface); }
 .chat-message.user { align-self: flex-end; border-color: rgb(56 189 248 / 28%); background: rgb(8 47 73 / 42%); }

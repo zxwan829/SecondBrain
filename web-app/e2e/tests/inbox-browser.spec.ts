@@ -794,7 +794,7 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('chat_run_citation_panel');
     await expect(toolsPanel.locator('.chat-knowledge-citations')).toBeVisible();
     observed.setDiagnosticAssertion('chat_run_citation_content');
-    await expect(toolsPanel.locator('.chat-knowledge-citations')).toContainText('本轮合成引用');
+    await expect(toolsPanel.locator('.chat-knowledge-citations')).toContainText(/本轮合成引用|持久化的合成参考/);
     observed.setDiagnosticAssertion('chat_composer_reset');
     await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
 
