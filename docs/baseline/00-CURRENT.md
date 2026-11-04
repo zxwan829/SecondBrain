@@ -44,11 +44,11 @@ source: GitHub SecondBrain Monorepo
 - 用户登录实测：Task 创建/完成/恢复、Capture 文本原文保存→Inbox→Review 持久化、Knowledge 搜索/阅读、Journal 2026-10-18 历史正文、Chat 历史会话读取均有页面证据；本项只代表相应有限旅程，不代表整个 V1 功能通过。
 - Notes 历史版本可预览但未执行恢复；回收站界面可打开，Trash 根未配置；Projects 与 Daily Brief 缺可信数据源/配置；笔记新建保存和日记追加写入未运行；旧 V1 UI 可用性问题统一留给 #260 VNext 讨论，不阻断上述核心安全收口。
 - **P0 Chat 阻断：** Codex 在生产 Hermes 镜像 `sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821` 的 `_pre_tool_block` 中未发现 `PRE_TOOL_CALL_HOOK_UNAVAILABLE` 补丁标记；配置确认 API toolset 为 `file,skills,vision`（Terminal disabled），但 Guard 运行注册与文件写审批尚未完成当轮证明。尚无实际安全绕过事件证据；因安全保证不足，真实 Chat 暂不放行。
-- Codex 已确认固定补丁/构建脚本在 GitHub main，**但固定源码检出不完整、pytest 环境缺失，使隔离测试、候选镜像、独立审查均未完成**。无生产变更授权，未更改生产；本轮不宣称安全缺陷已修复。
+- Codex 已确认固定补丁/构建脚本在 GitHub main，**固定源码已检出、fail-closed 定向测试 6/6 通过并完成补丁范围独立复审；PR #265 的 GitHub Actions 已进入测试运行，但第二次 CI 仍失败（Weixin 加密测试环境缺少有效 cryptography/AES 依赖，58 passed、3 failed），候选镜像和产物尚未生成，镜像/流程最终独立审查尚未完成**。无生产变更授权，未更改生产；本轮不宣称安全缺陷已修复。
 
 ## 唯一 NEXT
 
-**唯一工程 NEXT：** Codex 先在隔离环境补齐 Hermes v0.22.2 固定源码、测试依赖，证明已有 fail-closed 补丁可应用并通过异常拦截定向测试；构建候选镜像并核对镜像内实际执行文件/哈希、Guard/工具审批边界及独立审查。**本阶段不改生产、不调用付费模型。** 如果验证成功，提交 Hermes-only 最小生产授权包（影响、备份、回滚）；用户批准后才由 Codex 部署并复核运行代码。**用户验收 NEXT：** 安全门禁实际通过后，由用户本人以既有约 ¥5 测试预算验证新 Chat 会话、模型回复、刷新恢复；此预算不是提供商硬费用上限。其余首轮页面 UAT 结论在相关 Issue 中收口，笔记新建保存/日记追加仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
+**唯一工程 NEXT：** Codex 先修复 PR #265 中 Weixin 加密测试依赖后推进隔离 Actions，构建候选镜像并核对镜像内实际执行文件/哈希、Guard/工具审批边界及独立审查。**本阶段不改生产、不调用付费模型。** 如果验证成功，提交 Hermes-only 最小生产授权包（影响、备份、回滚）；用户批准后才由 Codex 部署并复核运行代码。**用户验收 NEXT：** 安全门禁实际通过后，由用户本人以既有约 ¥5 测试预算验证新 Chat 会话、模型回复、刷新恢复；此预算不是提供商硬费用上限。其余首轮页面 UAT 结论在相关 Issue 中收口，笔记新建保存/日记追加仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
 ## 核心任务队列
 
