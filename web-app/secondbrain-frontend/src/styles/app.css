@@ -718,7 +718,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .chat-session-list button:hover, .chat-session-list button.is-selected { border-color: var(--sb-border); background: var(--sb-surface); }
 .chat-session-list strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .chat-session-list small { color: var(--sb-muted); font-size: 11px; }
-.chat-conversation { display: grid; grid-template-rows: auto minmax(180px, 1fr) auto auto; min-width: 0; max-width: 1200px; width: 100%; min-height: calc(100vh - 48px); margin: 0 auto; padding: 22px clamp(15px, 3vw, 38px); }
+.chat-conversation { display: grid; grid-template-rows: auto minmax(180px, 1fr); grid-auto-rows: min-content; min-width: 0; max-width: 1200px; width: 100%; min-height: calc(100vh - 48px); margin: 0 auto; padding: 22px clamp(15px, 3vw, 38px); }
 .chat-conversation > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--sb-border); }
 .chat-conversation > header h2 { margin: 5px 0 0; font-size: 18px; }
 .chat-conversation > header button { padding: 8px 12px; }
