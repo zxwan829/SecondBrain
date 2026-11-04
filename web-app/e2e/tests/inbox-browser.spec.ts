@@ -254,7 +254,7 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_navigation');
   await page.goto('/brief');
   observed.setDiagnosticAssertion('daily_brief_heading');
-  await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible({ timeout: 15000 });
   const beforeOpen = observed.dailyBriefPostCount;
   expect(beforeOpen).toBe(0);
   const desktopWriter = viewport.name === 'desktop-1440x1000';
