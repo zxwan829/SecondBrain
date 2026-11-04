@@ -33,7 +33,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
-  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_no_horizontal_overflow';
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -426,6 +426,38 @@ for (const viewport of viewports) {
     observed.setFailureStage('ordinary_chat');
     await page.getByRole('button', { name: '创建合成会话' }).click();
     await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
+    if (viewport.name === 'desktop-1440x1000') {
+      // Real React ChatPage with fixture-only Hermes, never a real account/model.
+      observed.setDiagnosticAssertion('layout_chat');
+      const toolsPanel = page.locator('.chat-context-tools');
+      const messages = page.locator('.chat-message-list');
+      const input = page.locator('.chat-composer textarea');
+      await expect(toolsPanel).toBeVisible();
+      await expect(toolsPanel).not.toHaveAttribute('open', '');
+      await expect(toolsPanel.locator('summary')).toHaveText('上下文与工具');
+      await expect(input).toHaveAttribute('rows', '1');
+      const collapsed = await page.evaluate(() => {
+        const messages = document.querySelector('.chat-message-list')!.getBoundingClientRect();
+        const context = document.querySelector('.chat-context-tools')!.getBoundingClientRect();
+        const composer = document.querySelector('.chat-composer')!.getBoundingClientRect();
+        return { messageHeight: messages.height, contextHeight: context.height,
+          ordered: messages.bottom <= context.top && context.bottom <= composer.top };
+      });
+      expect(collapsed.messageHeight, 'chat_messages_remain_primary').toBeGreaterThan(180);
+      expect(collapsed.contextHeight, 'chat_context_collapsed_height').toBeLessThan(80);
+      expect(collapsed.ordered, 'chat_grid_visual_order').toBe(true);
+      await toolsPanel.locator('summary').click();
+      await expect(toolsPanel).toHaveAttribute('open', '');
+      await expect(toolsPanel.locator('.chat-knowledge-citations')).toHaveCount(1);
+      await expect(input).toBeVisible();
+      await toolsPanel.locator('summary').click();
+      await expect(toolsPanel).not.toHaveAttribute('open', '');
+      await input.fill('第一行\\n第二行\\n第三行');
+      const expandedInputHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
+      expect(expandedInputHeight, 'chat_composer_auto_grows').toBeGreaterThan(35);
+      await input.fill('');
+      await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
+    }
     const postsBeforeOrdinaryChat = observed.inboxPostCount;
     await composer.fill(`普通聊天合成文本 ${randomUUID()}`);
     await page.getByRole('button', { name: '发送' }).click();
