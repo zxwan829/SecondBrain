@@ -427,7 +427,17 @@ for (const viewport of viewports) {
     await page.getByRole('button', { name: '创建合成会话' }).click();
     await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
     if (viewport.name === 'desktop-1440x1000') {
-      // Real React ChatPage with fixture-only Hermes, never a real account/model.
+      // Blank mode intentionally omits auxiliary panels. Exercise the regular
+      // Chat page with a fixture session before returning to the blank journey.
+      const sessionsFixture = async (route: import('@playwright/test').Route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [
+          { session_id: 'synthetic-layout-session', title: '合成超长会话标题'.repeat(12), updated_at: '2026-11-04T00:00:00Z' },
+        ] }) });
+      };
+      await page.route('**/api/chat/sessions?*', sessionsFixture);
+      await page.goto('/chat');
+      await expect(page.locator('.chat-session-list strong')).toBeVisible();
       observed.setDiagnosticAssertion('layout_chat');
       const toolsPanel = page.locator('.chat-context-tools');
       const messages = page.locator('.chat-message-list');
@@ -458,6 +468,9 @@ for (const viewport of viewports) {
       expect(expandedInputHeight, 'chat_composer_auto_grows').toBeGreaterThan(35);
       await input.fill('');
       await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
+      await page.unroute('**/api/chat/sessions?*', sessionsFixture);
+      await page.goto('/chat/blank');
+      await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
     }
     const postsBeforeOrdinaryChat = observed.inboxPostCount;
     await composer.fill(`普通聊天合成文本 ${randomUUID()}`);
