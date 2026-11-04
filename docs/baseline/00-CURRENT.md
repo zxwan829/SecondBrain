@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-11-03
+updated: 2026-11-04
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -15,7 +15,7 @@ source: GitHub SecondBrain Monorepo
 - **最近已核验生产快照：** 2026-11-03 只读核验确认 App revision 为 `ce247d0c2f014c67f407c7b8721022da6afe2753`；Hermes Image ID 与 2026-10-24 已记录镜像一致（Hermes 容器无 SecondBrain revision label）。GitHub main `9c37cea6` 与 App 发布 SHA 的差异只有 5 个文档提交、无应用源码差异。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-03 实测）：** `SB_PROMOTE_ENABLED=false`、App Knowledge 挂载只读、Private 未挂载；App/Core 的 Weixin 开关环境变量未设置为开启；Hermes 写安全根仅为 3 个获准捕获目录。具体挂载与值见 `Environment-Baseline.md`。
 - **开发阶段：** V1 首轮真实用户体验准备。新功能不因准备验收而自动启动；仅处理影响五个体验场景的 P0/P1 阻断。
-- **本阶段状态：** `PARTIAL / CHAT_BLOCKED_ON_RUNTIME_SECURITY`。用户已完成多数页面的首轮生产 UAT，并以明确合成内容验证 Task 和 Capture→Inbox→Review 写入/回读；真实模型 Chat 尚未调用。Hermes 运行文件缺少预期 fail-closed 补丁特征，隔离候选镜像构建及测试尚未成功。既有健康检查不等于真实 Chat 验收。
+- **本阶段状态：** `PARTIAL / CHAT_BLOCKED_ON_RUNTIME_SECURITY`。用户已完成多数页面的首轮生产 UAT，并以明确合成内容验证 Task 和 Capture→Inbox→Review 写入/回读；真实模型 Chat 尚未调用。生产 Hermes 的执行文件经重新核验与固定源码应用 fail-closed 补丁后的文件 SHA-256 一致，先前“缺少补丁”判断已撤回；Guard 活动注册、File/Skills 审批及 Chat 基础链路仍待运行核验。既有健康检查不等于真实 Chat 验收。
 
 ## 能力状态
 
@@ -43,12 +43,13 @@ source: GitHub SecondBrain Monorepo
 
 - 用户登录实测：Task 创建/完成/恢复、Capture 文本原文保存→Inbox→Review 持久化、Knowledge 搜索/阅读、Journal 2026-10-18 历史正文、Chat 历史会话读取均有页面证据；本项只代表相应有限旅程，不代表整个 V1 功能通过。
 - Notes 历史版本可预览但未执行恢复；回收站界面可打开，Trash 根未配置；Projects 与 Daily Brief 缺可信数据源/配置；笔记新建保存和日记追加写入未运行；旧 V1 UI 可用性问题统一留给 #260 VNext 讨论，不阻断上述核心安全收口。
-- **P0 Chat 阻断：** Codex 在生产 Hermes 镜像 `sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821` 的 `_pre_tool_block` 中未发现 `PRE_TOOL_CALL_HOOK_UNAVAILABLE` 补丁标记；配置确认 API toolset 为 `file,skills,vision`（Terminal disabled），但 Guard 运行注册与文件写审批尚未完成当轮证明。尚无实际安全绕过事件证据；因安全保证不足，真实 Chat 暂不放行。
-- Codex 已确认固定补丁/构建脚本在 GitHub main，**固定源码已检出、fail-closed 定向测试 6/6 通过并完成补丁范围独立复审；PR #265 的 GitHub Actions 已进入测试运行，但第二次 CI 仍失败（Weixin 加密测试环境缺少有效 cryptography/AES 依赖，58 passed、3 failed），候选镜像和产物尚未生成，镜像/流程最终独立审查尚未完成**。无生产变更授权，未更改生产；本轮不宣称安全缺陷已修复。
+- **Chat 实际核验纠错（2026-11-04）：** 此前把模块级字符串常量 `PRE_TOOL_CALL_HOOK_UNAVAILABLE` 错误地要求出现在 `_pre_tool_block` 函数体内，误判生产 Hermes 镜像缺失 fail-closed 补丁。随后由 Codex 直接核验生产容器，确认执行文件 SHA-256 为 `b600d5bf028e5500c04b8a899f49882769e52a110fe1b633d624454a94d92c40`，与固定源码应用补丁后的完整执行文件一致，且异常分支引用阻断常量。**正式撤回缺补丁结论，不因该误报重建生产 Hermes；本次未部署或回滚。**
+- **CI 实测：** PR #265 / Actions [41759672367](https://github.com/zxwan829/SecondBrain/actions/runs/41759672367) 已成功构建候选镜像并上传 artifact；其构建流程仍是候选/备用资产，不是当前生产必须替换的证据。artifact 独立完整性校验与最终流程复审尚未完成，PR 未合并。fail-closed 定向测试 6/6 通过；不把其结果扩展为整个 Guard 和审批运行时通过。
+- **当前真实 Chat 阻断：** 生产 Guard 活动 Hook 注册、File 写入审批实际执行路径、Skills 保护和 Chat 基础 SSE 链路仍需最小定向运行核验；API Terminal 配置为禁用。未调用付费模型，真实 Chat 用户 UAT 仍 NOT RUN。允许在既有授权内仅作无敏感数据、无付费调用的精确核验；失败才针对证据修复，不允许无故重建容器。
 
 ## 唯一 NEXT
 
-**唯一工程 NEXT：** Codex 先修复 PR #265 中 Weixin 加密测试依赖后推进隔离 Actions，构建候选镜像并核对镜像内实际执行文件/哈希、Guard/工具审批边界及独立审查。**本阶段不改生产、不调用付费模型。** 如果验证成功，提交 Hermes-only 最小生产授权包（影响、备份、回滚）；用户批准后才由 Codex 部署并复核运行代码。**用户验收 NEXT：** 安全门禁实际通过后，由用户本人以既有约 ¥5 测试预算验证新 Chat 会话、模型回复、刷新恢复；此预算不是提供商硬费用上限。其余首轮页面 UAT 结论在相关 Issue 中收口，笔记新建保存/日记追加仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
+**唯一工程 NEXT：** Codex 在现有生产 Hermes 上完成最小只读/合成运行核验：确认 D078 Guard 活动加载与 Hook 注册、File 写审批强制路径、Skills 保护、Terminal 禁用、原有挂载权限，以及 App→Hermes Chat/SSE 基础链路。先复用已确认补丁的现网镜像，不再为补丁重建或申请部署。若证据显示具体缺陷，仅针对该缺陷设计最小修复；任何新增生产变更须与既有具体授权范围一致。PR #265 可以作为备用构建基础设施独立收口，不阻断现网核验。**用户验收 NEXT：** 通过运行门禁后，由用户本人使用约 ¥5 测试预算验证新 Chat 会话、模型回复和刷新恢复；该预算非供应商硬上限。Notes 新建保存和 Journal 追加仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
 ## 核心任务队列
 
