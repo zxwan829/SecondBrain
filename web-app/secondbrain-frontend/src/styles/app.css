@@ -895,7 +895,6 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .automation-blocked { padding: 12px; border-left: 3px solid #e6b85c; color: #e5d6b3; background: rgb(117 77 13 / 14%); }
 @media (max-width: 700px) { .inbox-header-actions { justify-items: start; max-width: none; } .inbox-header-actions small { text-align: left; } .organizer-settings-grid, .organizer-budget-grid, .automation-status-list { grid-template-columns: 1fr; } .organizer-budget-settings { grid-column: auto; } }
 @media (max-width: 900px) { .chat-page { grid-template-columns: 1fr; height: auto; min-height: 100vh; } .chat-sessions { border-right: 0; border-bottom: 1px solid var(--sb-border); padding: 12px; } .chat-session-list { display: flex; max-height: 90px; overflow-x: auto; } .chat-session-list button { min-width: 150px; } .chat-conversation { height: 72vh; min-height: 0; padding: 14px; } }
-@media (max-width: 600px) { .chat-context-tools[open] { max-height: min(24vh, 220px); } }
 .empty-inline { display: flex; align-items: center; gap: 8px; min-height: 58px; color: #91a3bf; font-size: var(--sb-type-body); }
 .empty-inline span { color: #75a6ff; font-size: 18px; }
 .today-card { display: flex; flex-direction: column; }
@@ -1177,6 +1176,7 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 
 .chat-context-tools { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--sb-border); border-radius: 10px; padding: 8px 12px; }
 .chat-context-tools[open] { max-height: min(38vh, 360px); overflow: auto; }
+@media (max-width: 600px) { .chat-context-tools[open] { max-height: min(24vh, 220px); } }
 .chat-context-tools > summary { cursor: pointer; color: var(--sb-text-soft); }
 .chat-session-list button { grid-template-columns: minmax(0, 1fr); }
 .chat-session-list strong { display: block; min-width: 0; }

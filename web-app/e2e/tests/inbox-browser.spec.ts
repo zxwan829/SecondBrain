@@ -38,7 +38,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'chat_preview_button_in_viewport' | 'chat_preview_request' | 'chat_preview_result_status' | 'chat_preview_result_source'
   | 'chat_grounding' | 'chat_planning' | 'chat_attachment'
   | 'chat_composer' | 'chat_run' | 'chat_run_waiting' | 'chat_run_completed' | 'chat_run_status_count'
-  | 'chat_run_candidates' | 'chat_run_citations' | 'chat_composer_reset'
+  | 'chat_run_candidates' | 'chat_run_citations' | 'chat_run_citation_panel' | 'chat_run_citation_content' | 'chat_composer_reset'
   | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
@@ -720,8 +720,12 @@ for (const viewport of viewports) {
     const journalSources = planning.locator('fieldset').filter({ hasText: 'Journal 来源' });
     await journalSources.scrollIntoViewIfNeeded();
     await expect(journalSources).toContainText(/\d{4}-\d{2}-\d{2}/);
-    await planning.scrollIntoViewIfNeeded();
-    expect(await toolsPanel.evaluate((element) => element.scrollTop), 'chat_tools_panel_internal_scroll').toBeGreaterThan(0);
+    const toolsScroll = await toolsPanel.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return { top: element.scrollTop, height: element.clientHeight, content: element.scrollHeight };
+    });
+    expect(toolsScroll.content, 'chat_tools_panel_content_exceeds_view').toBeGreaterThan(toolsScroll.height);
+    expect(toolsScroll.top, 'chat_tools_panel_internal_scroll').toBeGreaterThan(0);
     const opened = await page.evaluate(() => {
       const panel = document.querySelector('.chat-context-tools')!.getBoundingClientRect();
       const messages = document.querySelector('.chat-message-list')!;
@@ -787,7 +791,9 @@ for (const viewport of viewports) {
     await expect(page.getByText('已完成', { exact: true })).toHaveCount(1);
     observed.setDiagnosticAssertion('chat_run_candidates');
     await expect(toolsPanel.getByRole('region', { name: '可能相关的来源' })).toContainText('没有匹配的来源');
-    observed.setDiagnosticAssertion('chat_run_citations');
+    observed.setDiagnosticAssertion('chat_run_citation_panel');
+    await expect(toolsPanel.locator('.chat-knowledge-citations')).toBeVisible();
+    observed.setDiagnosticAssertion('chat_run_citation_content');
     await expect(toolsPanel.locator('.chat-knowledge-citations')).toContainText('本轮合成引用');
     observed.setDiagnosticAssertion('chat_composer_reset');
     await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
