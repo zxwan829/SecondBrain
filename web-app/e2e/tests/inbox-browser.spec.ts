@@ -497,6 +497,35 @@ for (const viewport of viewports) {
         releaseEvents();
         await page.unroute('**/api/chat/runs/*/events', delayedEvents);
       }
+      // Stop a separate synthetic run and verify that the UI returns to send.
+      let releaseStoppedEvents!: () => void;
+      const stoppedGate = new Promise<void>((resolve) => { releaseStoppedEvents = resolve; });
+      const stoppedEvents = async (route: import('@playwright/test').Route) => {
+        await stoppedGate;
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {\"event\":\"run.cancelled\"}\n\n' }).catch(() => {});
+      };
+      const stopFixture = async (route: import('@playwright/test').Route) => {
+        releaseStoppedEvents();
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
+      };
+      const stoppedStatus = async (route: import('@playwright/test').Route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
+      };
+      await page.route('**/api/chat/runs/*', stoppedStatus);
+      await page.route('**/api/chat/runs/*/events', stoppedEvents);
+      await page.route('**/api/chat/runs/*/stop', stopFixture);
+      try {
+        await input.fill('合成停止测试');
+        await page.getByRole('button', { name: '发送', exact: true }).click();
+        await expect(page.getByRole('button', { name: '停止', exact: true })).toBeEnabled();
+        await page.getByRole('button', { name: '停止', exact: true }).click();
+        await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
+      } finally {
+        releaseStoppedEvents();
+        await page.unroute('**/api/chat/runs/*/events', stoppedEvents);
+        await page.unroute('**/api/chat/runs/*/stop', stopFixture);
+        await page.unroute('**/api/chat/runs/*', stoppedStatus);
+      }
       await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
       await page.unroute('**/api/chat/sessions?*', sessionsFixture);
       await page.goto('/chat/blank');
