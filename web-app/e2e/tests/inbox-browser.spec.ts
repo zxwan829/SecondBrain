@@ -668,7 +668,6 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('chat_planning');
     await planning.scrollIntoViewIfNeeded();
     await expect(planning).toBeVisible();
-    expect(await toolsPanel.evaluate((element) => element.scrollTop), 'chat_tools_panel_internal_scroll').toBeGreaterThan(0);
     await expect(input).toBeVisible();
     const query = '这是一条仅供浏览器验收的合成问题';
     await input.fill(query);
@@ -688,6 +687,8 @@ for (const viewport of viewports) {
     await expect(planning.getByText('Synthetic planning project')).toBeVisible();
     await planning.getByRole('button', { name: '读取获准 Journal 来源' }).click();
     await expect(planning.locator('fieldset').filter({ hasText: 'Journal 来源' })).toContainText(/\d{4}-\d{2}-\d{2}/);
+    await planning.scrollIntoViewIfNeeded();
+    expect(await toolsPanel.evaluate((element) => element.scrollTop), 'chat_tools_panel_internal_scroll').toBeGreaterThan(0);
     const opened = await page.evaluate(() => {
       const panel = document.querySelector('.chat-context-tools')!.getBoundingClientRect();
       const messages = document.querySelector('.chat-message-list')!;
