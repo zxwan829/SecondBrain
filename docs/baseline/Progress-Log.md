@@ -1421,3 +1421,11 @@ Implemented and verified route-scoped full-bleed styling for `/secondbrain`. Her
 - Hermes 容器 057324a9e438969320e84d7c3cbad58e3f010637d7dd00d5967123b034eada79、镜像 ID sha256:b99b1762631846d5ed3f8648ccc2c7ef2625b004234bbf276add2f8855357e9a、启动时间和 RestartCount 均未变化。Journal、Task、chat-activity 根仍为 1026:100 / 0700；Review 与 Capture Inbox RW、Knowledge RO、Core state RW；未发现 Private 挂载；SB_PROMOTE_ENABLED=false。没有扩大权限、写入 Journal/Task 业务数据或清理资产。
 - 生产登录态业务验收未完成：Edge 自动化在浏览器扩展界面阻断；没有提交表单、创建 Session 或写入记录。因而 Journal/Task 系统操作卡、刷新恢复、跨 Session 隔离和幂等重试保持 NOT VERIFIED。没有调用真实/付费模型。后续需恢复浏览器自动化后，使用新空白 Session 与唯一合成数据续验；不要读取或修改现有私人会话和真实 Journal/Task 内容。
 - 代码提交/PR #49 已在 main；本日志和 CURRENT、Environment-Baseline 的本次事实更新单独提交，生产镜像 Push 不涉及 GitHub 代码变更，也不代表浏览器用户验收。
+
+## 2026-11-04 — Chat 有限 UAT 最后一项隔离集成验证
+
+复用此前真实 AIAgent API Run 草稿，固定 Hermes d923a5eb 与已验证补丁，在隔离 HERMES_HOME 中 discovery 加载 D078 Guard。仅替换 OpenAI 客户端返回值，保留真实会话循环、dispatcher、Hook、文件 handler、Gateway approval 与 aiohttp API/SSE。原先单项 PASS 的提前检查已移除：它曾在模型调用前检查文件；新测试等待 approval.request 或 Run 终态。
+
+三场景 **3 passed in 12.13s**：deny / once / skills。记录原 path_guard 调用及返回值；审批前文件不存在，真实 POST approval deny 后文件仍不存在；once 对照通过真实文件 handler 写入 synthetic；Skills 原 Guard 返回 skills_write_gate，未发审批、无文件，Run 正常结束。独立 Reviewer 只读复核通过，未发现阻断性假阳性。Python 3.12 隔离环境补充 snowballstemmer，并将 Path.home 定位到合成用户目录以满足固定源码的真实 home I/O 禁止器；HERMES_EXEC_ASK=1 对应实际 Gateway 启动行为。无真实用户目录访问、外部模型、生产更改。
+
+状态推进 READY_FOR_LIMITED_CHAT_UAT；真实模型回复与浏览器刷新恢复由用户验收，跨会话记忆 #30 未通过。脚本复制到固定 Hermes tests/gateway 后运行 pytest；设置 SB_D078_PLUGIN_SOURCE 指向本仓库 web-app/hermes-agent/d078-guard。
