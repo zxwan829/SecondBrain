@@ -1,11 +1,10 @@
 # Progress Log
 
-## 2026-11-04 — PR #269 App-only 发布候选准备（未部署）
+## 2026-11-04 — PR #269 App-only 部署与运行验收
 
-- **主线与 UAT：** PR #269 已于 merge commit `d06e3f3bde2cf8ee260992644c2ae5d67aeef362` 合并；Ubuntu 24.04 三视口浏览器 Gate [#41785664124](https://github.com/zxwan829/SecondBrain/actions/runs/41785664124) PASS。用户此前已完成有限真实 Chat 回复与刷新恢复；#269 新 UI 尚未部署，生产新版 UI 用户验收仍 NOT RUN。跨会话记忆和其余 V1 业务状态不变。
-- **候选工件：** 精确 SHA 构建/启动检查 [#41788688422](https://github.com/zxwan829/SecondBrain/actions/runs/41788688422) SUCCESS；App image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`，config/OCI digest 与 revision label 对应 d06，平台 linux/amd64。Actions artifact `13301449533` digest `sha256:e6040f9c7262b8477169ef0e5fd8a1a1e7959d1b2857e423dd33c0cae7a89b9c`；从双镜像归档分离出的 App-only 包 SHA-256 `49905f26e9fc7780a1a58be693f7d1558b989421291ffcfa417a3856674e684a`。包结构和全部 App blobs 独立校验通过；无 Hermes tag/manifest 引用。隔离容器 `/health`、`/notes` 与 Promote=false 通过。
-- **只读生产核对与独立复审：** 当前 Compose SHA `0aedb4b104870ddc5ce23a2f1adde10b84b51bf06f7e35d3377356bcc5a84708`；App ce247d0c healthy，旧 image ID `sha256:e201c93c7f19ec1ac15f742659ce023a0f12228fd846035090e42f6e69d3cec5` 存在。挂载、身份、端口、依赖网络和 Promote/Weixin 边界已白名单核实；计划仅改 App image，并只重建 `secondbrain-app`。未导入镜像、未建立 NAS 备份、未改 Compose 或重启。独立 Reviewer 对候选归档 PASS，对 App-only 部署范围条件 PASS；获授权后仍须核验实际候选语义 diff 仅含 App image，并校验 Compose 快照 SHA、候选 Image ID、旧 App image ID 及部署前后 Hermes ID/StartedAt；回滚只恢复 App Compose 且保留 Core state。
-- **授权边界与 NEXT：** 生产 image import、Compose 备份/切换及 App 重建仍须用户明确批准；细节见 `00-CURRENT.md` 与 `Environment-Baseline.md`。批准并部署、健康核验后由用户验收 #269 新 UI；随后推进下一项 V1 核心 UAT。VNext 保持 FROZEN。
+- **合并与候选：** PR #269 merge SHA `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`；Ubuntu 24.04 三视口浏览器 Gate [#41785664124](https://github.com/zxwan829/SecondBrain/actions/runs/41785664124) PASS。精确 SHA 构建/隔离启动 [#41788688422](https://github.com/zxwan829/SecondBrain/actions/runs/41788688422) SUCCESS；生产 App Image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`，平台 linux/amd64。App-only 包 SHA-256 `49905f26e9fc7780a1a58be693f7d1558b989421291ffcfa417a3856674e684a`，镜像结构及 blobs 校验通过，无 Hermes 引用。
+- **生产部署与回滚：** 经用户批准，仅更新 Compose App image 并重建 `secondbrain-app`。首次探针错误识别 mount 序列化格式及 Host，触发脚本自动回滚；旧 App 恢复 healthy，Core state 未变，Hermes 容器 ID/镜像/启动时间不变。修正探针后重试成功。最终 App revision d06、running/healthy、UID/GID `1026:100`、端口 `127.0.0.1:9120→8000`；Compose SHA-256 `3c9b1892d5a0f155050055545789c910f63db6a910007ee1a8c1b6436ee61c77`，语义差异仅 App image。`/health`、`/`、`/login`、`/notes` 200，匿名 session 401，App→Hermes health 200；挂载、只读 Knowledge、Private 未挂载、Promote=false 保持。未调用模型或改业务数据。
+- **恢复材料与用户验收：** 发布前 Compose 快照位于 `/volume1/docker/secondbrain/rollback/chat-ui-d06-20261104T0721Z/compose.yaml`（root:root 0600，原 SHA `0aedb4b104870ddc5ce23a2f1adde10b84b51bf06f7e35d3377356bcc5a84708`）；App-only 候选归档在 NAS candidates 路径，SHA 与上方一致。回滚只恢复 Compose 并重建 App，保留 Core state，不触碰 Hermes。生产运行门禁通过不等于新版 UI 用户验收：用户仍需进行桌面浏览器验收；完成后再推进 Notes 保存、Journal 追加等 V1 UAT。跨会话记忆未验收，VNext FROZEN。
 
 ## 2026-11-03 — V1 首轮真实用户体验准备与线上只读复核
 
