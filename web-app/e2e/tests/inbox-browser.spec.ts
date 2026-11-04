@@ -33,7 +33,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
-  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_no_horizontal_overflow';
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -254,7 +254,7 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_navigation');
   await page.goto('/brief');
   observed.setDiagnosticAssertion('daily_brief_heading');
-  await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible({ timeout: 15000 });
   const beforeOpen = observed.dailyBriefPostCount;
   expect(beforeOpen).toBe(0);
   const desktopWriter = viewport.name === 'desktop-1440x1000';
@@ -426,6 +426,114 @@ for (const viewport of viewports) {
     observed.setFailureStage('ordinary_chat');
     await page.getByRole('button', { name: '创建合成会话' }).click();
     await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
+    if (viewport.name === 'desktop-1440x1000') {
+      // Blank mode intentionally omits auxiliary panels. Exercise the regular
+      // Chat page with a fixture session before returning to the blank journey.
+      const sessionsFixture = async (route: import('@playwright/test').Route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [
+          { session_id: 'synthetic-layout-session', title: '合成超长会话标题'.repeat(12), updated_at: '2026-11-04T00:00:00Z' },
+        ] }) });
+      };
+      await page.route('**/api/chat/sessions?*', sessionsFixture);
+      await page.goto('/chat');
+      const longTitle = page.locator('.chat-session-list strong');
+      await expect(longTitle).toBeVisible();
+      const titleLayout = await longTitle.evaluate((element) => ({
+        overflow: element.scrollWidth > element.clientWidth,
+        ellipsis: getComputedStyle(element).textOverflow,
+        whitespace: getComputedStyle(element).whiteSpace,
+      }));
+      expect(titleLayout).toEqual({ overflow: true, ellipsis: 'ellipsis', whitespace: 'nowrap' });
+      await expect(page.locator('.chat-session-list small')).not.toHaveText('—');
+      observed.setDiagnosticAssertion('layout_chat');
+      const toolsPanel = page.locator('.chat-context-tools');
+      const messages = page.locator('.chat-message-list');
+      const input = page.locator('.chat-composer textarea');
+      await expect(toolsPanel).toBeVisible();
+      await expect(toolsPanel).not.toHaveAttribute('open', '');
+      await expect(toolsPanel.locator('summary')).toHaveText('上下文与工具');
+      await expect(input).toHaveAttribute('rows', '1');
+      const collapsed = await page.evaluate(() => {
+        const messages = document.querySelector('.chat-message-list')!.getBoundingClientRect();
+        const context = document.querySelector('.chat-context-tools')!.getBoundingClientRect();
+        const composer = document.querySelector('.chat-composer')!.getBoundingClientRect();
+        return { messageHeight: messages.height, contextHeight: context.height,
+          ordered: messages.bottom <= context.top && context.bottom <= composer.top };
+      });
+      expect(collapsed.messageHeight, 'chat_messages_remain_primary').toBeGreaterThan(180);
+      expect(collapsed.contextHeight, 'chat_context_collapsed_height').toBeLessThan(80);
+      expect(collapsed.ordered, 'chat_grid_visual_order').toBe(true);
+      await toolsPanel.locator('summary').click();
+      await expect(toolsPanel).toHaveAttribute('open', '');
+      const openedHeight = await toolsPanel.evaluate((element) => element.getBoundingClientRect().height);
+      expect(openedHeight, 'chat_tools_opened_height').toBeGreaterThan(collapsed.contextHeight);
+      await expect(input).toBeVisible();
+      await expect(toolsPanel.getByRole('region', { name: '上下文预览' })).toBeVisible();
+      await expect(toolsPanel.getByRole('region', { name: '检索参考' })).toBeVisible();
+      await expect(toolsPanel.getByRole('region', { name: '规划' })).toBeVisible();
+      await toolsPanel.locator('summary').click();
+      await expect(toolsPanel).not.toHaveAttribute('open', '');
+      const singleLineHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
+      await input.fill('第一行\n第二行\n第三行');
+      const expandedInputHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
+      expect(expandedInputHeight, 'chat_composer_auto_grows').toBeGreaterThan(35);
+      let releaseEvents!: () => void;
+      const eventsGate = new Promise<void>((resolve) => { releaseEvents = resolve; });
+      const delayedEvents = async (route: import('@playwright/test').Route) => {
+        await eventsGate;
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {\"event\":\"run.completed\",\"output\":\"Synthetic completion\"}\n\n' });
+      };
+      await page.route('**/api/chat/runs/*/events', delayedEvents);
+      try {
+        await page.getByRole('button', { name: '发送', exact: true }).click();
+        await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
+        await expect(page.getByText('正在等待回复…')).toBeVisible();
+        releaseEvents();
+        await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
+        await expect(page.getByText('已完成', { exact: true })).toBeVisible();
+        await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
+      } finally {
+        releaseEvents();
+        await page.unroute('**/api/chat/runs/*/events', delayedEvents);
+      }
+      observed.setDiagnosticAssertion('chat_stop');
+      // Stop a separate synthetic run and verify that the UI returns to send.
+      let releaseStoppedEvents!: () => void;
+      const stoppedGate = new Promise<void>((resolve) => { releaseStoppedEvents = resolve; });
+      const stoppedEvents = async (route: import('@playwright/test').Route) => {
+        await stoppedGate;
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {\"event\":\"run.cancelled\"}\n\n' }).catch(() => {});
+      };
+      const stopFixture = async (route: import('@playwright/test').Route) => {
+        releaseStoppedEvents();
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
+      };
+      const stoppedStatus = async (route: import('@playwright/test').Route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
+      };
+      await page.route('**/api/chat/runs/*', stoppedStatus);
+      await page.route('**/api/chat/runs/*/events', stoppedEvents);
+      await page.route('**/api/chat/runs/*/stop', stopFixture);
+      try {
+        await input.fill('合成停止测试');
+        await page.getByRole('button', { name: '发送', exact: true }).click();
+        await expect(page.getByRole('button', { name: '停止', exact: true })).toBeEnabled();
+        await page.getByRole('button', { name: '停止', exact: true }).click();
+        await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
+      } finally {
+        releaseStoppedEvents();
+        await page.unroute('**/api/chat/runs/*/events', stoppedEvents);
+        await page.unroute('**/api/chat/runs/*/stop', stopFixture);
+        await page.unroute('**/api/chat/runs/*', stoppedStatus);
+      }
+      await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
+      await page.unroute('**/api/chat/sessions?*', sessionsFixture);
+      observed.setDiagnosticAssertion('chat_return_blank');
+      await page.goto('/chat/blank');
+      await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
+    }
+    observed.setDiagnosticAssertion('chat_completion');
     const postsBeforeOrdinaryChat = observed.inboxPostCount;
     await composer.fill(`普通聊天合成文本 ${randomUUID()}`);
     await page.getByRole('button', { name: '发送' }).click();

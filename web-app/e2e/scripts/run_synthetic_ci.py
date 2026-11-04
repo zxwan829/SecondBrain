@@ -78,7 +78,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "layout_home", "layout_projects", "layout_activity", "layout_agent_health",
     "layout_today", "layout_journal", "layout_calendar",
     "notes_navigation", "notes_navigation_link", "notes_collections", "notes_create", "notes_save",
-    "notes_readback", "layout_notes",
+    "notes_readback", "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
     "daily_brief_open_prepare", "daily_brief_sources", "daily_brief_journal_action",
     "daily_brief_journal_source", "daily_brief_preview",
