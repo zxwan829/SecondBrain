@@ -34,7 +34,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
   | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat'
-  | 'chat_session' | 'chat_context_preview' | 'chat_preview_request' | 'chat_preview_result'
+  | 'chat_session' | 'chat_context_preview' | 'chat_preview_button_visible' | 'chat_preview_button_enabled'
+  | 'chat_preview_button_in_viewport' | 'chat_preview_request' | 'chat_preview_result'
   | 'chat_grounding' | 'chat_planning' | 'chat_attachment'
   | 'chat_composer' | 'chat_run' | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
@@ -679,12 +680,15 @@ for (const viewport of viewports) {
     await expect(input).toBeVisible();
     const query = '这是一条仅供浏览器验收的合成问题';
     await input.fill(query);
-    observed.setDiagnosticAssertion('chat_preview_request');
     const previewButton = preview.getByRole('button', { name: '检索可用上下文' });
+    observed.setDiagnosticAssertion('chat_preview_button_visible');
     await expect(previewButton).toBeVisible();
+    observed.setDiagnosticAssertion('chat_preview_button_enabled');
     await expect(previewButton).toBeEnabled();
+    observed.setDiagnosticAssertion('chat_preview_button_in_viewport');
     const previewButtonRight = await previewButton.evaluate((element) => element.getBoundingClientRect().right);
     expect(previewButtonRight, 'chat_context_action_in_viewport').toBeLessThanOrEqual(await page.evaluate(() => innerWidth));
+    observed.setDiagnosticAssertion('chat_preview_request');
     const previewResponsePromise = page.waitForResponse((response) => {
       const request = response.request();
       return request.method() === 'POST' && new URL(response.url()).pathname.endsWith('/context-preview');
