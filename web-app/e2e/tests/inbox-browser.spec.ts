@@ -622,6 +622,13 @@ for (const viewport of viewports) {
     const messages = page.locator('.chat-message-list');
     const input = page.locator('.chat-composer textarea');
     const chatComposer = page.locator('.chat-composer');
+    const conversationTitle = page.locator('.chat-conversation > header h2');
+    await expect(conversationTitle).toBeVisible();
+    expect(await conversationTitle.evaluate((element) => ({
+      overflow: element.scrollWidth > element.clientWidth,
+      ellipsis: getComputedStyle(element).textOverflow,
+      whitespace: getComputedStyle(element).whiteSpace,
+    }))).toEqual({ overflow: true, ellipsis: 'ellipsis', whitespace: 'nowrap' });
     await expect(toolsPanel).toBeVisible();
     await expect(toolsPanel).not.toHaveAttribute('open', '');
     await expect(toolsPanel.locator('summary')).toHaveText('上下文与工具');
@@ -673,11 +680,16 @@ for (const viewport of viewports) {
     const query = '这是一条仅供浏览器验收的合成问题';
     await input.fill(query);
     observed.setDiagnosticAssertion('chat_preview_request');
+    const previewButton = preview.getByRole('button', { name: '检索可用上下文' });
+    await expect(previewButton).toBeVisible();
+    await expect(previewButton).toBeEnabled();
+    const previewButtonRight = await previewButton.evaluate((element) => element.getBoundingClientRect().right);
+    expect(previewButtonRight, 'chat_context_action_in_viewport').toBeLessThanOrEqual(await page.evaluate(() => innerWidth));
     const previewResponsePromise = page.waitForResponse((response) => {
       const request = response.request();
       return request.method() === 'POST' && new URL(response.url()).pathname.endsWith('/context-preview');
     });
-    await preview.getByRole('button', { name: '检索可用上下文' }).click();
+    await previewButton.click();
     const previewResponse = await previewResponsePromise;
     expect(previewResponse.status(), 'chat_preview_http_status').toBe(200);
     observed.setDiagnosticAssertion('chat_preview_result');
