@@ -1,0 +1,95 @@
+name: Hermes v0.22.2 fail-closed candidate
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/hermes-failclosed-image.yml
+      - web-app/hermes-agent/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-failclosed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-verify:
+    if: github.repository == 'zxwan829/SecondBrain'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: d923a5eb487a17c0a68801bba9ef0f56c81040a8
+          path: hermes-agent-source
+          persist-credentials: false
+      - name: Verify runner and pinned source
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          test "$(git -C hermes-agent-source rev-parse HEAD)" = d923a5eb487a17c0a68801bba9ef0f56c81040a8
+          docker version --format '{{.Server.Version}}'
+      - name: Apply patches and run focused Hermes regression tests
+        run: |
+          set -euo pipefail
+          cp -a hermes-agent-source /tmp/hermes-agent-test-source
+          git -C /tmp/hermes-agent-test-source apply --unidiff-zero --check "$GITHUB_WORKSPACE/web-app/hermes-agent/patches/v0.22.2/pre-tool-hook-fail-closed.patch"
+          git -C /tmp/hermes-agent-test-source apply --unidiff-zero "$GITHUB_WORKSPACE/web-app/hermes-agent/patches/v0.22.2/pre-tool-hook-fail-closed.patch"
+          git -C /tmp/hermes-agent-test-source apply --unidiff-zero --check "$GITHUB_WORKSPACE/web-app/hermes-agent/patches/v0.22.2/weixin-media-download-budget.patch"
+          git -C /tmp/hermes-agent-test-source apply --unidiff-zero "$GITHUB_WORKSPACE/web-app/hermes-agent/patches/v0.22.2/weixin-media-download-budget.patch"
+          python3 -m venv /tmp/hermes-test-venv
+          /tmp/hermes-test-venv/bin/pip install pytest pytest-asyncio -e /tmp/hermes-agent-test-source
+          /tmp/hermes-test-venv/bin/python -m pytest -q \
+            /tmp/hermes-agent-test-source/tests/agent/test_tool_executor_pre_tool_dispatch.py \
+            /tmp/hermes-agent-test-source/tests/gateway/test_weixin.py \
+            /tmp/hermes-agent-test-source/tests/gateway/test_weixin_secret_scope.py \
+            /tmp/hermes-agent-test-source/tests/gateway/test_weixin_typing.py
+          python3 -m unittest discover -s web-app/hermes-agent/d078-guard/tests -p 'test_*.py'
+          grep -F 'api_server: [file, skills, vision]' web-app/hermes-agent/config.d078.yaml
+          ! grep -E 'api_server:.*terminal' web-app/hermes-agent/config.d078.yaml
+      - name: Build candidate with the repository build script
+        run: |
+          set -euo pipefail
+          web-app/hermes-agent/patches/v0.22.2/build-fixed-image.sh \
+            "$GITHUB_WORKSPACE/hermes-agent-source" \
+            "secondbrain-hermes:failclosed-${GITHUB_SHA}"
+      - name: Verify image contents and write evidence
+        env:
+          IMAGE: secondbrain-hermes:failclosed-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate-evidence
+          docker image inspect "$IMAGE" --format '{{.Id}} {{.Os}}/{{.Architecture}} {{index .Config.Labels "io.secondbrain.hermes.source-commit"}} {{index .Config.Labels "io.secondbrain.hermes.patch-sha256"}}' | tee candidate-evidence/image.txt
+          docker run --rm --network none --entrypoint python3 "$IMAGE" -c '
+          import ast,hashlib
+          p="/opt/hermes/agent/tool_executor.py"
+          s=open(p,encoding="utf-8").read(); t=ast.parse(s)
+          n=next(x for x in t.body if isinstance(x,ast.FunctionDef) and x.name=="_pre_tool_block")
+          f="\n".join(s.splitlines()[n.lineno-1:n.end_lineno])
+          assert "PRE_TOOL_CALL_HOOK_UNAVAILABLE" in f
+          print("executor_file_sha256="+hashlib.sha256(open(p,"rb").read()).hexdigest())
+          print("pre_tool_block_sha256="+hashlib.sha256(f.encode()).hexdigest())
+          print("fail_closed_marker=present")
+          print("api_toolset_template=verified-in-repository-config.d078.yaml")
+          '
+          sha256sum \
+            web-app/hermes-agent/patches/v0.22.2/pre-tool-hook-fail-closed.patch \
+            web-app/hermes-agent/patches/v0.22.2/weixin-media-download-budget.patch \
+            > candidate-evidence/patches.sha256
+          printf 'source_commit=%s\nworkflow_commit=%s\n' \
+            d923a5eb487a17c0a68801bba9ef0f56c81040a8 "$GITHUB_SHA" \
+            > candidate-evidence/source.txt
+          docker save "$IMAGE" -o candidate-evidence/hermes-candidate.tar
+          sha256sum candidate-evidence/hermes-candidate.tar > candidate-evidence/image-tar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hermes-failclosed-candidate-${{ github.sha }}
+          path: candidate-evidence/
+          if-no-files-found: error
+          retention-days: 30
