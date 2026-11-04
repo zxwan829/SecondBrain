@@ -15,7 +15,7 @@ source: GitHub SecondBrain Monorepo
 - **最近已核验生产快照：** 2026-11-03 只读核验确认 App revision 为 `ce247d0c2f014c67f407c7b8721022da6afe2753`；Hermes Image ID 与 2026-10-24 已记录镜像一致（Hermes 容器无 SecondBrain revision label）。GitHub main `9c37cea6` 与 App 发布 SHA 的差异只有 5 个文档提交、无应用源码差异。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-03 实测）：** `SB_PROMOTE_ENABLED=false`、App Knowledge 挂载只读、Private 未挂载；App/Core 的 Weixin 开关环境变量未设置为开启；Hermes 写安全根仅为 3 个获准捕获目录。具体挂载与值见 `Environment-Baseline.md`。
 - **开发阶段：** V1 首轮真实用户体验准备。新功能不因准备验收而自动启动；仅处理影响五个体验场景的 P0/P1 阻断。
-- **本阶段状态：** `PARTIAL / READY_FOR_LIMITED_CHAT_UAT`。用户已完成多数页面的首轮生产 UAT，并以明确合成内容验证 Task 和 Capture→Inbox→Review 写入/回读；真实模型 Chat 尚未调用。生产 Hermes 的执行文件经重新核验与固定源码应用 fail-closed 补丁后的文件 SHA-256 一致，先前“缺少补丁”判断已撤回；2026-11-04 生产 Plugin Doctor 注册与策略探针、App→Hermes health 及固定 Hermes 真实 Agent 隔离 API Run 审批/SSE 集成验证已完成；真实模型回复和刷新恢复待用户验收。既有健康检查不等于真实 Chat 验收。
+- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS`。用户已完成多数页面的首轮生产 UAT，并以明确合成内容验证 Task 和 Capture→Inbox→Review 写入/回读；真实模型 Chat 已由用户在正式 Web 成功调用并获得回复，用户确认刷新后会话及回答保留。生产 Hermes 的执行文件经重新核验与固定源码应用 fail-closed 补丁后的文件 SHA-256 一致，先前“缺少补丁”判断已撤回；2026-11-04 生产 Plugin Doctor 注册与策略探针、App→Hermes health 及固定 Hermes 真实 Agent 隔离 API Run 审批/SSE 集成验证已完成；真实模型回复与刷新恢复的有限用户验收已完成；跨会话记忆和其他 V1 业务未验收。
 
 ## 能力状态
 
@@ -49,7 +49,9 @@ source: GitHub SecondBrain Monorepo
 
 ## 唯一 NEXT
 
-**READY_FOR_LIMITED_CHAT_UAT：** 用户本人在正式 Web 新建 Chat 会话，发送无个人信息的普通问题，确认真实模型回答后刷新并恢复对话。沿用已批准约 ¥5 测试预算；该预算不是供应商硬费用上限。出现工具审批卡时可拒绝；本次不要求文件写入。真实模型/SSE 浏览器体验与刷新恢复仍 NOT RUN；#30 跨会话记忆、Companion、Notes/Journal 写入及其他未验收功能不因本次放行而通过。Promote/Writer/Weixin 保持关闭。
+**有限 Chat UAT 已由用户完成（2026-11-04）：** 正式 Web 新建会话，发送「请用两句话介绍水循环的三个主要阶段」，Hermes 返回完整回答、Run 显示已完成、发送按钮恢复；用户随后确认刷新后提问与回答仍在。基础问答及会话持久化 PASS。此次为用户反馈及截图证据，尚非全自动端到端验收；#30 跨会话记忆、Companion、Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
+
+**当前工程 NEXT（限定 V1 Chat UI）：** 仅在隔离分支完成对话页五个辅助面板默认折叠、历史会话标题单行统一及截断、连接状态去重和输入框压缩；保留来源检索、规划、附件、Capture、Run/SSE 原有能力。具体需求与用户截图验收见 [#260 的 2026-11-04 Chat 小修记录](https://github.com/zxwan829/SecondBrain/issues/260#issuecomment-6621667699)。该范围不解冻 VNext，未获生产部署授权；完成 PR 后用户验收。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
