@@ -10,7 +10,7 @@ source: GitHub SecondBrain Monorepo
 
 ## 当前快照
 
-- **审计基准 main：** `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`（2026-11-04；GitHub `main`，PR #269 merge commit）。
+- **审计基准 main：** `02dcf9707bdf08df5bea77a79e7206aae4159194`（2026-11-04；GitHub `main`，含 PR #270 文档更新）；#269 运行代码及候选镜像固定基准为 `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`。
 - **总体：** V1 尚未完成。GitHub main 的代码/文档状态不代表生产部署、真实数据验证或用户验收。
 - **最近已核验生产快照：** 2026-11-04 只读核验确认 App 仍运行 revision `ce247d0c2f014c67f407c7b8721022da6afe2753`、Image ID `sha256:e201c93c7f19ec1ac15f742659ce023a0f12228fd846035090e42f6e69d3cec5`、healthy；Compose SHA-256 为 `0aedb4b104870ddc5ce23a2f1adde10b84b51bf06f7e35d3377356bcc5a84708`。main `d06e3f3b` 相对生产仅有 Chat 前端 `App.tsx`/CSS 运行代码差异，其余差异是合成测试与文档。Hermes 未变更。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-03 实测）：** `SB_PROMOTE_ENABLED=false`、App Knowledge 挂载只读、Private 未挂载；App/Core 的 Weixin 开关环境变量未设置为开启；Hermes 写安全根仅为 3 个获准捕获目录。具体挂载与值见 `Environment-Baseline.md`。
