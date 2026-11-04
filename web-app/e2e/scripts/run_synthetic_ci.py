@@ -649,7 +649,8 @@ def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: 
         # Surface only a short, path-free validator message so a withheld
         # report can be diagnosed from Actions logs. Never echo arbitrary OS
         # exceptions, paths, or report contents.
-        if (type(error) is RuntimeError and re.fullmatch(r"[A-Za-z0-9 _.-]{1,120}", reason)
+        if (type(error) is RuntimeError and re.fullmatch(r"[A-Za-z0-9 _.:;()'-]{1,160}", reason)
+                and "/" not in reason and "\\" not in reason
                 and not any(marker in reason.lower() for marker in ("token", "cookie", "secret", "password", "authorization"))):
             safe_detail = f" ({reason})"
         else:
