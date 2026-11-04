@@ -677,6 +677,8 @@ for (const viewport of viewports) {
 
     const planning = toolsPanel.getByRole('region', { name: '规划' });
     observed.setDiagnosticAssertion('chat_planning');
+    await planning.scrollIntoViewIfNeeded();
+    expect(await toolsPanel.evaluate((element) => element.scrollTop), 'chat_tools_panel_internal_scroll').toBeGreaterThan(0);
     await planning.getByRole('button', { name: '开始规划' }).click();
     await planning.getByRole('button', { name: '读取待办和项目候选' }).click();
     await expect(planning.getByText('Synthetic planning task')).toBeVisible();
