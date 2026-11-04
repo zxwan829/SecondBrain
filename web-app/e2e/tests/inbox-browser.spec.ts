@@ -33,7 +33,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
-  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat' | 'layout_no_horizontal_overflow';
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -497,6 +497,7 @@ for (const viewport of viewports) {
         releaseEvents();
         await page.unroute('**/api/chat/runs/*/events', delayedEvents);
       }
+      observed.setDiagnosticAssertion('chat_stop');
       // Stop a separate synthetic run and verify that the UI returns to send.
       let releaseStoppedEvents!: () => void;
       const stoppedGate = new Promise<void>((resolve) => { releaseStoppedEvents = resolve; });
@@ -528,9 +529,11 @@ for (const viewport of viewports) {
       }
       await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
       await page.unroute('**/api/chat/sessions?*', sessionsFixture);
+      observed.setDiagnosticAssertion('chat_return_blank');
       await page.goto('/chat/blank');
       await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
     }
+    observed.setDiagnosticAssertion('chat_completion');
     const postsBeforeOrdinaryChat = observed.inboxPostCount;
     await composer.fill(`普通聊天合成文本 ${randomUUID()}`);
     await page.getByRole('button', { name: '发送' }).click();
