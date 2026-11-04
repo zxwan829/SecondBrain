@@ -463,10 +463,12 @@ for (const viewport of viewports) {
       await expect(input).toBeVisible();
       await toolsPanel.locator('summary').click();
       await expect(toolsPanel).not.toHaveAttribute('open', '');
+      const singleLineHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
       await input.fill('第一行\n第二行\n第三行');
       const expandedInputHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
       expect(expandedInputHeight, 'chat_composer_auto_grows').toBeGreaterThan(35);
       await input.fill('');
+      await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
       await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
       await page.unroute('**/api/chat/sessions?*', sessionsFixture);
       await page.goto('/chat/blank');
