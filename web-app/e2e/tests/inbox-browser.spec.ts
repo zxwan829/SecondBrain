@@ -33,7 +33,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
-  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat'
+  | 'chat_session' | 'chat_context_preview' | 'chat_grounding' | 'chat_planning' | 'chat_attachment'
+  | 'chat_composer' | 'chat_run' | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -646,6 +648,7 @@ for (const viewport of viewports) {
     await messages.evaluate((element) => { element.scrollTop = 0; });
     console.info(`CHAT_UI_COLLAPSED ${JSON.stringify(collapsed)}`);
 
+    observed.setDiagnosticAssertion('chat_session');
     await sessionButtons.nth(1).click();
     await expect(page.getByText('第二会话合成回答。')).toBeVisible();
     await expect(page.getByText(/synthetic history line 70/)).toHaveCount(0);
@@ -654,22 +657,26 @@ for (const viewport of viewports) {
 
     await toolsPanel.locator('summary').click();
     await expect(toolsPanel).toHaveAttribute('open', '');
+    observed.setDiagnosticAssertion('chat_context_preview');
     await expect(toolsPanel.getByRole('region', { name: '上下文预览' })).toBeVisible();
     await expect(toolsPanel.locator('.chat-context-preview[aria-label="检索参考"]')).toBeVisible();
     await expect(toolsPanel.getByRole('region', { name: '规划' })).toBeVisible();
     await expect(input).toBeVisible();
     const query = '这是一条仅供浏览器验收的合成问题';
     await input.fill(query);
+    observed.setDiagnosticAssertion('chat_context_preview');
     const preview = toolsPanel.getByRole('region', { name: '上下文预览' });
     await preview.getByRole('button', { name: '检索可用上下文' }).click();
     await expect(preview.getByText('找到可展示的来源元数据')).toBeVisible();
     await expect(preview.getByText('synthetic-memory-source-01')).toBeVisible();
+    observed.setDiagnosticAssertion('chat_grounding');
     const grounding = toolsPanel.locator('.chat-context-preview[aria-label="检索参考"]');
     await grounding.getByRole('button', { name: '核对 Knowledge 来源' }).click();
     await expect(grounding.getByText('找到已核验来源。')).toBeVisible();
     await expect(grounding.getByText('合成检索来源')).toBeVisible();
 
     const planning = toolsPanel.getByRole('region', { name: '规划' });
+    observed.setDiagnosticAssertion('chat_planning');
     await planning.getByRole('button', { name: '开始规划' }).click();
     await planning.getByRole('button', { name: '读取待办和项目候选' }).click();
     await expect(planning.getByText('Synthetic planning task')).toBeVisible();
@@ -695,6 +702,7 @@ for (const viewport of viewports) {
     await expect(input).toBeInViewport();
     console.info(`CHAT_UI_EXPANDED ${JSON.stringify(opened)}`);
 
+    observed.setDiagnosticAssertion('chat_attachment');
     await page.locator('.chat-composer input[type="file"]').setInputFiles({
       name: 'synthetic-chat-attachment.txt', mimeType: 'text/plain', buffer: Buffer.from('synthetic attachment only'),
     });
@@ -706,6 +714,7 @@ for (const viewport of viewports) {
     await page.getByRole('group', { name: '输入去向' }).getByRole('button', { name: '对话' }).click();
     await expect(input).toBeVisible();
 
+    observed.setDiagnosticAssertion('chat_composer');
     const singleLineHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
     await input.fill('第一行\n第二行\n第三行');
     const expandedInputHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
@@ -727,6 +736,7 @@ for (const viewport of viewports) {
     await chatComposer.getByRole('button', { name: '发送', exact: true }).scrollIntoViewIfNeeded();
     await expect(chatComposer.getByRole('button', { name: '发送', exact: true })).toBeInViewport();
 
+    observed.setDiagnosticAssertion('chat_run');
     await page.getByRole('button', { name: '发送', exact: true }).click();
     await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
     await expect(page.getByText('正在等待回复…', { exact: true })).toHaveCount(1);
@@ -763,6 +773,7 @@ for (const viewport of viewports) {
     await page.getByRole('button', { name: '发送', exact: true }).click();
     await expect(page.locator('.chat-progress')).toHaveText('已完成');
 
+    observed.setDiagnosticAssertion('chat_reload');
     await page.reload();
     await expect(page.locator('.chat-context-tools')).not.toHaveAttribute('open', '');
     await expect(page.locator('.chat-session-list button').first()).toContainText('合成超长会话标题');
