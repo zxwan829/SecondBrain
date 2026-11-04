@@ -37,7 +37,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'chat_session' | 'chat_context_preview' | 'chat_preview_button_visible' | 'chat_preview_button_enabled'
   | 'chat_preview_button_in_viewport' | 'chat_preview_request' | 'chat_preview_result_status' | 'chat_preview_result_source'
   | 'chat_grounding' | 'chat_planning' | 'chat_attachment'
-  | 'chat_composer' | 'chat_run' | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
+  | 'chat_composer' | 'chat_run' | 'chat_run_waiting' | 'chat_run_completed' | 'chat_run_status_count'
+  | 'chat_run_candidates' | 'chat_run_citations' | 'chat_composer_reset'
+  | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -708,10 +710,16 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('chat_planning');
     await planning.getByRole('button', { name: '开始规划' }).click();
     await planning.getByRole('button', { name: '读取待办和项目候选' }).click();
-    await expect(planning.getByText('Synthetic planning task')).toBeVisible();
-    await expect(planning.getByText('Synthetic planning project')).toBeVisible();
+    const planningTask = planning.getByText('Synthetic planning task');
+    await planningTask.scrollIntoViewIfNeeded();
+    await expect(planningTask).toBeVisible();
+    const planningProject = planning.getByText('Synthetic planning project');
+    await planningProject.scrollIntoViewIfNeeded();
+    await expect(planningProject).toBeVisible();
     await planning.getByRole('button', { name: '读取获准 Journal 来源' }).click();
-    await expect(planning.locator('fieldset').filter({ hasText: 'Journal 来源' })).toContainText(/\d{4}-\d{2}-\d{2}/);
+    const journalSources = planning.locator('fieldset').filter({ hasText: 'Journal 来源' });
+    await journalSources.scrollIntoViewIfNeeded();
+    await expect(journalSources).toContainText(/\d{4}-\d{2}-\d{2}/);
     await planning.scrollIntoViewIfNeeded();
     expect(await toolsPanel.evaluate((element) => element.scrollTop), 'chat_tools_panel_internal_scroll').toBeGreaterThan(0);
     const opened = await page.evaluate(() => {
@@ -770,12 +778,18 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('chat_run');
     await page.getByRole('button', { name: '发送', exact: true }).click();
     await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
+    observed.setDiagnosticAssertion('chat_run_waiting');
     await expect(page.getByText('正在等待回复…', { exact: true })).toHaveCount(1);
     chat.releaseFirstRunEvents();
+    observed.setDiagnosticAssertion('chat_run_completed');
     await expect(page.locator('.chat-progress')).toHaveText('已完成');
+    observed.setDiagnosticAssertion('chat_run_status_count');
     await expect(page.getByText('已完成', { exact: true })).toHaveCount(1);
+    observed.setDiagnosticAssertion('chat_run_candidates');
     await expect(toolsPanel.getByRole('region', { name: '可能相关的来源' })).toContainText('没有匹配的来源');
+    observed.setDiagnosticAssertion('chat_run_citations');
     await expect(toolsPanel.locator('.chat-knowledge-citations')).toContainText('本轮合成引用');
+    observed.setDiagnosticAssertion('chat_composer_reset');
     await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
 
     observed.setDiagnosticAssertion('layout_chat');
