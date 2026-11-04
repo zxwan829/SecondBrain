@@ -658,9 +658,9 @@ for (const viewport of viewports) {
     await toolsPanel.locator('summary').click();
     await expect(toolsPanel).toHaveAttribute('open', '');
     observed.setDiagnosticAssertion('chat_context_preview');
-    const preview = toolsPanel.getByRole('region', { name: '上下文预览' });
+    const preview = toolsPanel.locator('.chat-context-preview[aria-label="上下文预览"]');
     const grounding = toolsPanel.locator('.chat-context-preview[aria-label="检索参考"]');
-    const planning = toolsPanel.getByRole('region', { name: '规划' });
+    const planning = toolsPanel.locator('.planning-panel');
     await preview.scrollIntoViewIfNeeded();
     await expect(preview).toBeVisible();
     await grounding.scrollIntoViewIfNeeded();
