@@ -437,7 +437,15 @@ for (const viewport of viewports) {
       };
       await page.route('**/api/chat/sessions?*', sessionsFixture);
       await page.goto('/chat');
-      await expect(page.locator('.chat-session-list strong')).toBeVisible();
+      const longTitle = page.locator('.chat-session-list strong');
+      await expect(longTitle).toBeVisible();
+      const titleLayout = await longTitle.evaluate((element) => ({
+        overflow: element.scrollWidth > element.clientWidth,
+        ellipsis: getComputedStyle(element).textOverflow,
+        whitespace: getComputedStyle(element).whiteSpace,
+      }));
+      expect(titleLayout).toEqual({ overflow: true, ellipsis: 'ellipsis', whitespace: 'nowrap' });
+      await expect(page.locator('.chat-session-list small')).not.toHaveText('—');
       observed.setDiagnosticAssertion('layout_chat');
       const toolsPanel = page.locator('.chat-context-tools');
       const messages = page.locator('.chat-message-list');
@@ -461,14 +469,34 @@ for (const viewport of viewports) {
       const openedHeight = await toolsPanel.evaluate((element) => element.getBoundingClientRect().height);
       expect(openedHeight, 'chat_tools_opened_height').toBeGreaterThan(collapsed.contextHeight);
       await expect(input).toBeVisible();
+      await expect(toolsPanel.getByRole('region', { name: '上下文预览' })).toBeVisible();
+      await expect(toolsPanel.getByRole('region', { name: '检索参考' })).toBeVisible();
+      await expect(toolsPanel.getByRole('region', { name: '规划' })).toBeVisible();
       await toolsPanel.locator('summary').click();
       await expect(toolsPanel).not.toHaveAttribute('open', '');
       const singleLineHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
       await input.fill('第一行\n第二行\n第三行');
       const expandedInputHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
       expect(expandedInputHeight, 'chat_composer_auto_grows').toBeGreaterThan(35);
-      await input.fill('');
-      await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
+      let releaseEvents!: () => void;
+      const eventsGate = new Promise<void>((resolve) => { releaseEvents = resolve; });
+      const delayedEvents = async (route: import('@playwright/test').Route) => {
+        await eventsGate;
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {\"event\":\"run.completed\",\"output\":\"Synthetic completion\"}\n\n' });
+      };
+      await page.route('**/api/chat/runs/*/events', delayedEvents);
+      try {
+        await page.getByRole('button', { name: '发送', exact: true }).click();
+        await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
+        await expect(page.getByText('正在等待回复…')).toBeVisible();
+        releaseEvents();
+        await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
+        await expect(page.getByText('已完成', { exact: true })).toBeVisible();
+        await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
+      } finally {
+        releaseEvents();
+        await page.unroute('**/api/chat/runs/*/events', delayedEvents);
+      }
       await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
       await page.unroute('**/api/chat/sessions?*', sessionsFixture);
       await page.goto('/chat/blank');
