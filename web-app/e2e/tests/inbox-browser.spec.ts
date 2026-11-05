@@ -461,7 +461,9 @@ async function inspectOrCreateDailyBrief(
   await page.waitForFunction(() => document.body.innerText.replace(/[^a-z]/gi, '').toLowerCase()
     .includes('syntheticbriefprojectsource'), undefined, { timeout: 15000 });
   const projectSourceText = page.getByText(/Synthetic brief project source/).last();
+  observed.setDiagnosticAssertion('daily_brief_project_count');
   expect(observed.dailyBriefPostCount).toBe(0);
+  observed.setDiagnosticAssertion('daily_brief_sources');
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
   observed.setFailureStage('daily_brief_journal');
