@@ -148,7 +148,7 @@ describe('UnifiedInboxPage', () => {
       return original(input, init);
     });
 
-    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ kind: 'notes', collection: 'drafts', path: singleDraftId }} />);
     const card = (await screen.findByRole('heading', { name: '新建合成会议' })).closest('article') as HTMLElement;
     await waitFor(() => expect(firstSignal).toBeTruthy());
     fireEvent.click(within(card).getByRole('button', { name: '生成确定性 Mock 建议' }));
@@ -163,7 +163,7 @@ describe('UnifiedInboxPage', () => {
 
   it('keeps every request bound to one Draft through creation, approval, preview, execution, history, and refresh', async () => {
     const request = vi.mocked(fetch);
-    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ kind: 'notes', collection: 'drafts', path: singleDraftId }} />);
 
     const sourceHeading = await screen.findByRole('heading', { name: '新建合成会议' });
     expect(sourceHeading.closest('article')?.textContent).toContain(`drafts/${singleDraftId}`);
@@ -189,7 +189,7 @@ describe('UnifiedInboxPage', () => {
 
     cleanup();
     request.mockClear();
-    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ kind: 'notes', collection: 'drafts', path: singleDraftId }} />);
     expect(await screen.findByRole('heading', { name: '新建合成会议' })).toBeTruthy();
     expect(await screen.findByText(/已执行 · journal:2026-10-18/)).toBeTruthy();
     expect(request.mock.calls.some(([url]) => String(url) === '/api/inbox?limit=100' || String(url) === '/api/notes' || String(url) === '/api/notes/drafts')).toBe(false);
@@ -214,7 +214,7 @@ describe('UnifiedInboxPage', () => {
       if (String(input) === `/api/notes/drafts/${singleDraftId}`) return ok({ collection: 'drafts', path: '00000000-0000-4000-8000-000000000999', content: 'wrong source', etag: 'synthetic-etag', read_only: false, safety_reasons: [] });
       return original(input, init);
     });
-    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ kind: 'notes', collection: 'drafts', path: singleDraftId }} />);
     expect(await screen.findByText('Core 返回了其他 Draft；未展示任何收件箱来源。')).toBeTruthy();
     expect(request.mock.calls.some(([url]) => String(url).startsWith('/api/inbox/proposals'))).toBe(false);
     expect(screen.queryByRole('heading', { name: '新建合成会议' })).toBeNull();
@@ -231,7 +231,7 @@ describe('UnifiedInboxPage', () => {
       }
       return original(input, init);
     });
-    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ kind: 'notes', collection: 'drafts', path: singleDraftId }} />);
     const card = (await screen.findByRole('heading', { name: '新建合成会议' })).closest('article') as HTMLElement;
     const suggest = within(card).getByRole('button', { name: '生成确定性 Mock 建议' });
     fireEvent.click(suggest);
@@ -251,7 +251,7 @@ describe('UnifiedInboxPage', () => {
       if (String(input).startsWith('/api/inbox/proposals?')) return ok({ proposals: [{ proposal_id: 'proposal-other', source_kind: 'notes', source_id: 'drafts:other', collection: 'drafts', path: 'other', kind: 'journal', status: 'suggested', version: 1, source_version: 'synthetic-etag', target_execution_status: 'not_executed', suggestion: { original: { value: 'wrong' }, current: { value: 'wrong' } } }] });
       return original(input, init);
     });
-    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ collection: 'drafts', path: singleDraftId }} />);
+    render(<UnifiedInboxPage locale="zh-CN" onReview={vi.fn()} showSyntheticCaptureDemo={false} singleSourceMode singleSource={{ kind: 'notes', collection: 'drafts', path: singleDraftId }} />);
     const card = (await screen.findByRole('heading', { name: '新建合成会议' })).closest('article') as HTMLElement;
     expect(await within(card).findByText(/Core 返回了绑定到其他来源的提案/)).toBeTruthy();
     expect(within(card).queryByLabelText('待人工逐项审批的建议')).toBeNull();

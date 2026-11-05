@@ -114,6 +114,95 @@ describe('A Web-only synthetic UI to HTTP integration', () => {
       || call.url === '/api/promote/auth/unlock' || call.url === '/api/promote/review/confirm')).toBe(false);
   });
 
+  it('continues a completed explicit Chat Journal Inbox entry through separately approved Journal append', async () => {
+    const inboxId = '8'.repeat(32);
+    const command = '请帮我记录到日记里：合成日记正文，不含任何个人信息。';
+    const journalDate = '2026-11-06';
+    vi.stubEnv('VITE_ENABLE_NOTES', 'false');
+    history.replaceState({}, '', `/inbox#capture-${inboxId}`);
+    const calls: Array<{ url: string; method: string; body?: any }> = [];
+    const proposals: Array<Record<string, any>> = [];
+    let journalPreviewBody: Record<string, any> | null = null;
+    let journalPreviewHash = '';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method || 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ url, method, body });
+      if (url === '/api/auth/session') return json({ authenticated: true });
+      if (url === `/api/inbox/entries/${inboxId}`) return json({
+        inbox_id: inboxId, status: 'completed', captured_at: '2026-11-06T01:00:00Z', occurred_at: '2026-11-06T00:59:59Z',
+        source: { channel: 'web', event_id: 'synthetic-chat-event' }, intent: 'journal_intent',
+        consent_evidence: { kind: 'authenticated_app_explicit_action', subject: 'synthetic-user', recorded_at: '2026-11-06T01:00:00Z' },
+        approved_proposal: null, source_ref: { capture_id: inboxId, review_path: null, review_sha256: null },
+      });
+      if (url === `/api/capture/${inboxId}`) return json({ capture_id: inboxId, raw_path: 'synthetic-journal.md', status: 'completed',
+        display_filename: 'Synthetic Journal.md', content_preview: command, captured_at: '2026-11-06T01:00:00Z' });
+      if (url === `/api/inbox/proposals?source_kind=capture&source_id=${inboxId}`) return json({ proposals });
+      if (url === '/api/inbox/proposals' && method === 'POST') {
+        expect(body).toEqual({ source_kind: 'capture', source_id: inboxId });
+        for (const kind of ['type', 'tags', 'journal', 'review', 'project']) proposals.push({
+          proposal_id: `synthetic-${kind}`, ...body, kind, status: 'suggested', version: 1,
+          source_version: 'synthetic-source-version', target_execution_status: 'not_executed',
+          suggestion: { original: { value: kind === 'journal' ? command : 'synthetic suggestion' }, current: { value: kind === 'journal' ? command : 'synthetic suggestion' } },
+          history: [],
+        });
+        return json({ proposals, status: 'created' });
+      }
+      if (url.endsWith('/decision') && method === 'POST') {
+        const proposal = proposals.find((item) => url.includes(item.proposal_id));
+        if (!proposal) return json({ detail: 'proposal not found' }, 404);
+        proposal.status = body.decision; proposal.version += 1;
+        return json({ proposal });
+      }
+      if (url.endsWith('/execution-preview') && method === 'POST') {
+        const proposal = proposals.find((item) => url.includes(item.proposal_id));
+        if (!proposal || proposal.status !== 'approved_recorded') return json({ detail: 'approval required' }, 403);
+        journalPreviewBody = { date: body.target_date || journalDate, text: body.target_text || command };
+        journalPreviewHash = 'b'.repeat(64);
+        return json({
+          status: 'ready', proposal_id: 'synthetic-journal', kind: 'journal', proposal_version: 2, vocabulary_version: 1,
+          source_summary: { source_kind: 'capture', source_ref: inboxId, source_version: 'synthetic-source-version', source_content_sha256: 'a'.repeat(64) },
+          target_action: 'journal.append', target: journalPreviewBody, preview_sha256: journalPreviewHash,
+        });
+      }
+      if (url.endsWith('/execute') && method === 'POST') {
+        const proposal = proposals.find((item) => url.includes(item.proposal_id));
+        if (!proposal) return json({ detail: 'proposal not found' }, 404);
+        if (proposal.kind !== 'journal' || proposal.status !== 'approved_recorded' || body.confirmed !== true
+          || body.preview_sha256 !== journalPreviewHash || body.target_date !== journalPreviewBody?.date
+          || body.target_text !== journalPreviewBody?.text) return json({ detail: 'approval or exact preview mismatch' }, 409);
+        proposal.target_execution_status = 'executed';
+        proposal.execution = { status: 'executed', target_uri: `journal:${journalDate}` };
+        return json({ proposal, duplicate: false });
+      }
+      return json({ detail: `unmatched synthetic route: ${url}` }, 404);
+    });
+
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: 'Inbox 条目状态' })).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: '审核并写入 Journal' }));
+
+    const card = (await screen.findByRole('heading', { name: 'Synthetic Journal.md' })).closest('article') as HTMLElement;
+    expect(await screen.findByText(/Journal 审批和目标确认与 Inbox 收录同意相互独立/)).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: '生成确定性 Mock 建议' }));
+    fireEvent.click(await within(card).findByRole('button', { name: '记录审批（不执行）' }));
+    expect(await within(card).findByText(/决定已记录到 Core；这只记录审批，不会排队或执行/)).toBeTruthy();
+    expect(calls.some((call) => call.url.endsWith('/execute'))).toBe(false);
+    fireEvent.click(within(card).getByRole('button', { name: '准备目标预览' }));
+    expect(await within(card).findByLabelText('目标正文（将按此内容写入）')).toBeTruthy();
+    fireEvent.click(within(card).getByRole('button', { name: '确认并执行' }));
+    expect(await within(card).findByText(`已执行 · journal:${journalDate}`)).toBeTruthy();
+    expect(calls.some((call) => call.url === '/api/journal/entries')).toBe(false);
+    expect(calls.filter((call) => call.url.endsWith('/execute'))).toHaveLength(1);
+    expect(calls.find((call) => call.url.endsWith('/execute'))?.body).toEqual({
+      target_date: journalDate, target_text: command, confirmed: true, preview_sha256: 'b'.repeat(64),
+    });
+    expect(calls.some((call) => call.url === '/api/inbox/entries' && call.method === 'POST')).toBe(false);
+    expect(calls.some((call) => call.url.startsWith('/api/notes/'))).toBe(false);
+    expect(calls.some((call) => call.url === '/api/inbox?limit=100')).toBe(false);
+  });
+
   it('requires explicit Inbox, Review, Promote, search and detail actions and preserves the exact mocked contract', async () => {
     vi.stubEnv('VITE_ENABLE_NOTES', 'false');
     localStorage.clear(); sessionStorage.clear();

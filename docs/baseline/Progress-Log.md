@@ -1,5 +1,12 @@
 # Progress Log
 
+## 2026-11-06 — #287 Chat→Inbox→Journal / Chat→Task 工程闭环
+
+- **#30 状态切换：** `PARTIAL / LIMITED_REAL_MODEL_UAT`，6/10 Runs；剩余额度不结转，不再调用。因果归属与冲突处理仍 UNKNOWN/NOT RUN；不阻断本工作包。PR #277 生产 Notes/Journal 状态继续为 `PARTIAL`，未重跑生产验证。
+- **实现：** Chat 对话新增明确、消息开头的中文 Journal/Task 请求表达；叙述性提及和无分隔符的模糊 Task 文字继续进入普通 Chat。Journal 意图先走现有 D086 Inbox 原文与持久化回读；完成条目现可进入精确单 Capture 审批页，复用现有 Journal proposal→单独 `approved_recorded`→绑定来源/版本的 `journal.append` 预览→用户确认执行，不直写 Journal API，不把 Inbox 同意等同 Journal 执行授权。Capture 单来源页只读取精确 ID，未启用 Notes 时仍可用；不枚举 Notes 或全量 Inbox。Task 创建复用现有 Task API 和幂等键，并保留原命令/失败重试。
+- **验证与交付：** 前端 6 个定向套件 194 passed；`npm run typecheck` 与 Vite production build 通过（存在 >500 kB chunk 提示）；Core 定向 Inbox/Proposal/Journal/Task/BFF 回归 54 passed、38 deselected。独立 Review PASS；其提出的测试夹具 P2 已修复：合成执行端现在要求已批准 Journal proposal、`confirmed=true`、预览哈希和日期/正文完全匹配，并精确断言请求体；修复后集成文件 11/11 通过。GitHub Ubuntu 24.04 Chromium Gate [Actions #42076994861](https://github.com/zxwan829/SecondBrain/actions/runs/42076994861) 对固定 SHA `3f3c0d0752f638625a04fb55131bff279e2b2a72` 全部通过，含 Web 回归、typecheck/build、artifact 脱敏与隔离 Core+Web 浏览器验收；之后仅更新正式记录，应用代码未变，最终 PR HEAD 为 `355197c8c625b8ba66c5e38f4a60888813494e8f`。PR [#289](https://github.com/zxwan829/SecondBrain/pull/289) 等待合并。`git diff --check` 通过。测试使用合成响应与 Core 临时测试存储；没有 NAS/生产、真实 Vault/业务数据、付费模型、权限或配置变更。
+- **边界/状态：** 本记录的 Chat→Inbox→Journal UI 集成旅程以合成 API 响应验证；Core Journal/Proposal/Task 的真实路由、持久化/幂等由既有临时存储 API 测试分别覆盖，不将它们合称生产端到端。真实 Hermes 自然理解与实际用户 Chat、NAS/Obsidian Journal 同步及生产 UAT均 `NOT RUN`；固定命令路由测试不代表真实模型自然语言效果。VNext 仍 FROZEN。
+
 ## 2026-11-05 — #30 跨会话真实模型有限 UAT（6 Runs）
 
 - **通道与授权：** 用户确认 SecondBrain 与挂载 Knowledge 仅含测试资料，并允许通过现有 Core→Hermes 执行本次自然检索和 citation 元数据保存；不改 NAS 配置、容器、权限或补丁。活动模型 `zai-org/GLM-4.5-Air`，provider `custom`（SiliconFlow）。共发起 6/10 次获准 Run。本轮仅主动创建并审计虚构标记 `ZetaQuill-7391` 的记录；未主动读取其他记录正文、Secret、Private 或其他目录。用户确认环境内容均为测试资料；但生产 `instructions_for()` 可在正常 Run 中读取/评分已有 active memory，本轮未取得逐 Run 所选上下文，因此其他现存 memory 是否进入模型上下文 **UNKNOWN**。
