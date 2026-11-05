@@ -17,6 +17,14 @@
 - **计费预检：** 历史资料曾记录 Hermes 默认 `zai-org/GLM-4.5-Air` / SiliconFlow，但本次安全 metadata 未提供实时有效 model 或账户余额，不能当作当前确认。供应商公开页当前列示 GLM-4.5-Air 输入 `$0.14/M`、输出 `$0.86/M`；这只能作单价参考，不能证明生产当前模型、账户可用余额、单次实际 tokens 或账单。
 - **状态与下一步：** 跨会话真实模型验收 `BLOCKED_BEFORE_RUN`，分项均 `NOT RUN`：保存与回读、自然召回/模型采用、无关过滤、纠正、撤销、冲突处理。恢复前需先有可验证的单记录范围控制，并单独完成有效模型/计费元数据预检；不得放宽其他记忆隔离。没有修改代码或生产配置。
 
+## 2026-11-05 — #30 PMO 更正后的现有模型通道预检（Knowledge 边界待授权）
+
+- **裁定更正：** Issue #30 comment `6659497939` 明确撤回先前要求的独立 JSONL 根/白名单前置；用户确认项目尚未投入正式使用，NAS 为开发/部署/验收环境且没有业务数据。保留 PR #284 的隔离测试，不再扩建隔离层。本条记录更正后事实，不抹除上一条 `BLOCKED_BEFORE_RUN` 的历史。
+- **运行与计费：** 经 SSH 只读取 SecondBrain App/Hermes 的目标容器状态、App 镜像 tag、Hermes 活动配置的 `model.default` / `model.provider` / endpoint host。App tag 标识 `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Hermes 为 `zai-org/GLM-4.5-Air`、`custom`、`api.siliconflow.cn`。SiliconFlow [官方型号页](https://www.siliconflow.com/models/glm-4-5-air) 当前列示输入 `$0.14/M tokens`、输出 `$0.86/M tokens`。Core `HermesAPI.get_run()` 固定字段白名单不含 `usage`；SSE 是原样转发，现阶段没有取得余额或逐 Run 账单证据。费率用于按 usage 估算，不能当作账户余额/硬限额。未读 Secret、Cookie 或其他配置字段。
+- **数据边界预检：** 只从 `/var/lib/secondbrain-core/personal-memory/personal-memory.jsonl` 读取所需审计元数据，不输出/查看记忆正文：共 2 个 memory、2 个 `create` 事件，来源 `user_message`，类别 `preference`、状态 `active`、fact kind `user_stated`，最晚时间 `2026-10-17T01:32:48Z`；没有显式 `test`/`uat` source_ref 标记。依据用户确认的环境阶段，继续按未投入业务使用处理；后续仅操作本轮唯一虚构 UAT 记录，不查询旧记忆正文。生产容器/配置/挂载/权限未修改。
+- **真实链路阻断与纠正：** 用户在既有 Edge 完成登录；转到 `/chat/blank` 后未创建 Session。代码核验发现每个已认证 Chat Run 在启动 Hermes 前都会按输入调用 `knowledge_store.chat_recall()`（限 3 条、单条 8 KiB、总计 16 KiB），并将已验证引用的路径/标题/哈希写入本地 citation store；正文不进入 Hermes `run_body`。`/chat/blank` 只不加载普通会话列表，不隔离该后端检索。Issue #30 PMO 未授权读取 Knowledge，故在新授权前不运行真实模型。另一次 CUA 登录后状态观察自动返回 Home 的完整 accessibility tree，意外暴露了超出本任务范围的 Home 内容；未再访问或复述、未作为证据。这是执行范围失误，已停止扩大访问并如实记录。
+- **状态与最小决策：** 真实 Run `0/10`、费用 `0`、无测试 Session/Memory 写入、无配置/容器变更。继续使用现有 Core→Hermes 链路需用户明确允许：最多 10 个虚构提示触发 Core 对 Knowledge 的有界本地只读检索，并允许新合成 Run 的 citation store 保存命中条目的路径/标题/哈希；Knowledge 正文不发送给模型或输出。若不允许，当前无不修改生产权限/代码而跳过 Knowledge 的正式 Chat Run 路径。Private/Vault/Notes/Journal 等仍排除，实际 usage/费用若运行后不能从 SSE/账户元数据取得则标 UNKNOWN。
+
 ## 2026-11-05 — PR #277 生产 Notes / Journal 合成 UAT（部分通过）
 
 - **固定运行目标：** 生产 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`，运行且 healthy；Compose SHA-256 `f5760550d5d9fe197cd58bd07c77bc178fb04fec27a9e990342d642530ace020`。本轮未改变配置、镜像、容器、权限或挂载；Hermes 容器/镜像不变，未调用模型。
