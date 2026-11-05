@@ -681,8 +681,8 @@ class WebAppBffTests(unittest.TestCase):
         store_update = self.app.state.task_store.update
         attempts = {"count": 0}
 
-        def commit_then_drop_response(task_id, body, idempotency_key=None):
-            result = store_update(task_id, body, idempotency_key=idempotency_key)
+        def commit_then_drop_response(task_id, body, **kwargs):
+            result = store_update(task_id, body, **kwargs)
             attempts["count"] += 1
             if attempts["count"] == 1:
                 raise HTTPException(status_code=503, detail="synthetic lost response after commit")
@@ -705,6 +705,51 @@ class WebAppBffTests(unittest.TestCase):
         )
         self.assertEqual(changed.status_code, 409)
         self.assertEqual(self.calls, [])
+
+    def test_chat_task_update_activity_recovers_after_projection_failure_and_is_session_scoped(self):
+        self.login()
+        create_headers = {"Origin": "https://testserver", "Idempotency-Key": "chat-task-update-create"}
+        created = self.client.post("/api/tasks", json={"title": "截止日更新合成任务", "due_date": "2026-11-08",
+            "original_command": "添加待办：截止日更新合成任务", "session_id": "session-1"}, headers=create_headers)
+        self.assertEqual(created.status_code, 200, created.text)
+        task = created.json()["task"]
+        update_headers = {"Origin": "https://testserver", "Idempotency-Key": "chat-task-update-once"}
+        update_body = {"due_date": "2026-11-10", "expected_updated_at": task["updated_at"], "session_id": "session-1",
+                       "original_command": "修改待办“截止日更新合成任务”的截止日期为2026-11-10"}
+        with patch.object(self.app.state.chat_activity_store, "upsert",
+                          side_effect=HTTPException(status_code=500, detail="synthetic projection failure")):
+            first = self.client.patch(f"/api/tasks/{task['id']}", json=update_body, headers=update_headers)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["task"]["due_date"], "2026-11-10")
+        self.assertEqual(first.json()["activity"]["operation_id"], "chat-task-update-once")
+
+        # The activity can be rebuilt from the authoritative Task ledger even
+        # when the initial projection write failed and no PATCH retry occurred.
+        recovered_before_retry = self.client.get("/api/chat/sessions/session-1/activities").json()["activities"]
+        self.assertEqual(len([item for item in recovered_before_retry
+                              if item["operation_id"] == "chat-task-update-once"]), 1)
+
+        # A keyed retry returns the committed Task and reconstructs its Chat activity.
+        replay = self.client.patch(f"/api/tasks/{task['id']}", json=update_body, headers=update_headers)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json(), first.json())
+        activities = self.client.get("/api/chat/sessions/session-1/activities").json()["activities"]
+        update_events = [item for item in activities if item["operation_id"] == "chat-task-update-once"]
+        self.assertEqual(len(update_events), 1)
+        self.assertEqual(update_events[0]["original_text"], update_body["original_command"])
+        self.assertEqual(update_events[0]["task_due_date"], "2026-11-10")
+        self.assertEqual(update_events[0]["session_id"], "session-1")
+        altered_attribution = self.client.patch(f"/api/tasks/{task['id']}",
+            json={**update_body, "session_id": "session-3", "original_command": "另一会话中的不同命令"},
+            headers=update_headers)
+        self.assertEqual(altered_attribution.status_code, 409)
+        self.assertNotIn("activity", altered_attribution.json())
+        other_session_events = self.client.get("/api/chat/sessions/session-3/activities").json()["activities"]
+        self.assertFalse(any(item["operation_id"] == "chat-task-update-once" for item in other_session_events))
+        self.assertEqual(replay.json(), first.json())
+        self.assertFalse(any(request.url.path == "/v1/runs" for request in self.calls))
+        self.assertTrue(all(request.method == "GET" and request.url.path in
+                            {"/api/sessions/session-1", "/api/sessions/session-3"} for request in self.calls))
 
     def test_session_activity_is_durable_idempotent_session_scoped_and_reconciled(self):
         self.login()

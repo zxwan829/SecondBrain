@@ -328,6 +328,13 @@ class TaskStore:
         def operation(data):
             items = [task_activity(task, session_id) for task in data["tasks"]
                      if task.get("session_id") == session_id and task.get("operation_id")]
+            for record in data["idempotency"].values():
+                if (not isinstance(record, dict) or record.get("operation") != "task.update"
+                        or record.get("session_id") != session_id or not isinstance(record.get("activity_task"), dict)):
+                    continue
+                items.append(task_activity({**record["activity_task"],
+                    "operation_id": record.get("operation_id"),
+                    "original_command": record.get("original_command", "")}, session_id))
             return [item for item in items if item], False
         return self._with_lock(operation)
 
@@ -409,7 +416,7 @@ class TaskStore:
 
         return self._with_lock(operation)
 
-    def update(self, task_id, body, idempotency_key=None):
+    def update(self, task_id, body, idempotency_key=None, session_id=None, original_command=None):
         if not isinstance(body, dict) or not body:
             raise HTTPException(status_code=400, detail="Task changes are required")
         expected = body.get("expected_updated_at")
@@ -429,13 +436,25 @@ class TaskStore:
             changes["due_date"] = _valid_date(changes["due_date"])
         if "status" in changes and changes["status"] not in {"open", "completed"}:
             raise HTTPException(status_code=400, detail="Task status must be open or completed")
+        if session_id is not None:
+            if not isinstance(session_id, str) or not session_id:
+                raise HTTPException(status_code=400, detail="A valid Chat Session is required")
+            if (not isinstance(original_command, str) or not original_command.strip()
+                    or len(original_command.encode("utf-8")) > 16_384):
+                raise HTTPException(status_code=400, detail="The original Chat command is invalid")
         key_hash = self._key_hash(idempotency_key) if idempotency_key is not None else None
         fingerprint = None
         if key_hash is not None:
-            fingerprint = hashlib.sha256(json.dumps({
+            fingerprint_payload = {
                 "operation": "task.update", "task_id": task_id,
                 "expected_updated_at": expected, "changes": changes,
-            }, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+            }
+            # Preserve the existing non-Chat Task API fingerprint so an
+            # outstanding generic Task retry remains replayable after upgrade.
+            if session_id is not None:
+                fingerprint_payload.update(session_id=session_id, original_command=original_command)
+            fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True, ensure_ascii=False,
+                                                    separators=(",", ":")).encode("utf-8")).hexdigest()
 
         def operation(data):
             if key_hash is not None:
@@ -449,7 +468,10 @@ class TaskStore:
                     if (replay_task is None
                             or replay_task.get("updated_at") != prior.get("result_updated_at")):
                         raise HTTPException(status_code=409, detail="Task changed after the keyed update; reload before retrying")
-                    return {"task": replay_task}, False
+                    replay = {"task": replay_task}
+                    if session_id is not None:
+                        replay["operation"] = prior
+                    return replay, False
 
             task = next((item for item in data["tasks"] if item["id"] == task_id), None)
             if task is None:
@@ -480,6 +502,9 @@ class TaskStore:
                 data["idempotency"][key_hash] = {
                     "operation": "task.update", "fingerprint": fingerprint,
                     "task_id": task_id, "result_updated_at": stamp,
+                    "operation_id": idempotency_key, "session_id": session_id,
+                    "original_command": original_command,
+                    "activity_task": {key: task.get(key) for key in ("id", "title", "due_date", "status", "created_at", "updated_at")},
                 }
             previous_values = {key: previous[key] for key in changes}
 
@@ -493,7 +518,10 @@ class TaskStore:
                 if key_hash is not None:
                     data["idempotency"].pop(key_hash, None)
 
-            return {"task": task}, True, rollback
+            result = {"task": task}
+            if key_hash is not None and session_id is not None:
+                result["operation"] = data["idempotency"][key_hash]
+            return result, True, rollback
 
         return self._with_lock(operation)
 
@@ -552,11 +580,37 @@ def create_task_router(auth, store, hermes=None, activity_store=None):
         return result
 
     @router.patch("/{task_id}")
-    def update_task(request: Request, task_id: str, body: dict):
+    async def update_task(request: Request, task_id: str, body: dict):
         auth.require_action(request, "task.write")
         configured()
         if not re.fullmatch(r"[0-9a-f]{32}", task_id):
             raise HTTPException(status_code=404, detail="Task not found")
-        return store.update(task_id, body, idempotency_key=request.headers.get("idempotency-key"))
+        session_id = body.get("session_id")
+        original_command = body.get("original_command")
+        if session_id is not None:
+            if not isinstance(session_id, str) or not session_id or hermes is None:
+                raise HTTPException(status_code=400, detail="A valid Chat Session is required")
+            if not isinstance(original_command, str) or not original_command.strip():
+                raise HTTPException(status_code=400, detail="The original Chat command is required")
+            await hermes.get_session(session_id)
+        result = store.update(task_id, body, idempotency_key=request.headers.get("idempotency-key"),
+                              session_id=session_id, original_command=original_command)
+        key = request.headers.get("idempotency-key", "")
+        operation = result.pop("operation", {}) if session_id else {}
+        if session_id and activity_store is not None and key:
+            activity_task = operation.get("activity_task") or result["task"]
+            event = task_activity({**activity_task, "operation_id": operation.get("operation_id", key),
+                                   "original_command": operation.get("original_command", original_command),
+                                   "created_at": operation.get("result_updated_at", activity_task.get("updated_at", _now()))},
+                                  operation.get("session_id", session_id))
+            if event:
+                try:
+                    activity_store.upsert(event)
+                except HTTPException:
+                    # The idempotent Task ledger remains authoritative; the
+                    # activity API can rebuild this projection on the next read.
+                    pass
+                result["activity"] = event
+        return result
 
     return router
