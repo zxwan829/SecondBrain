@@ -1096,6 +1096,11 @@ for (const viewport of viewports) {
       observed.setNotesReadbackFailure(payload.detail);
     }
     expect(readNoteResponse.status(), 'notes_readback').toBe(200);
+    const persistedNote = await readNoteResponse.json() as { content?: unknown };
+    observed.setDiagnosticAssertion('notes_readback_payload');
+    expect(typeof persistedNote.content === 'string' && persistedNote.content.includes(syntheticNoteBody),
+      'notes_readback_payload').toBe(true);
+    observed.setDiagnosticAssertion('notes_readback');
     await expect(page.locator('.ProseMirror')).toContainText(syntheticNoteBody);
     if (viewport.name === 'desktop-1440x1000') {
       // Seed only the isolated synthetic Draft with metadata via the same
