@@ -1,8 +1,8 @@
 ---
-updated: 2026-10-24
+updated: 2026-11-05
 status: pmo-delivery-plan
 owner: PMO
-tracking: https://github.com/zxwan829/SecondBrain/issues/76
+tracking: 00-CURRENT.md
 ---
 # SecondBrain 完整 V1 交付规划：六阶段、统一主 Agent 与 Web/Core 工作包
 
@@ -12,7 +12,7 @@ tracking: https://github.com/zxwan829/SecondBrain/issues/76
 
 本计划应用户要求，对完整 V1 剩余工作进行重排。它保留既有阶段一、二、三的业务含义，追加阶段四、五、六；不是从零重建，也不把已经合并的模块重新开发。阶段是交付包，不是六道必须顺序排队的施工队列。已有阶段内的合成 PASS 保留，真实能力、生产与用户验收另行完成。
 
-**唯一状态与 NEXT 入口仍为 [00-CURRENT.md](00-CURRENT.md)**。本文件维护详细工作分解、依赖及验收；[#76](https://github.com/zxwan829/SecondBrain/issues/76) 管总控，A [#96](https://github.com/zxwan829/SecondBrain/issues/96)、B [#97](https://github.com/zxwan829/SecondBrain/issues/97) 管任务和证据。实施前读取各 Issue 最新有效评论，不只看旧正文。文件合入前，本计划为已发布 PMO 排程候选；不能声称 main 文档已更新。
+**唯一状态、近期执行顺序与 NEXT 入口为 [00-CURRENT.md](00-CURRENT.md)**，其中“近期执行规划（2026-11-05 PMO 更新）”规定现行工作包和编辑器/Obsidian/检索框架建议。本文件保留完整 V1 P1—P6 分解、依赖和验收标准，不维护第二份当前队列。#76/#96/#97 与下文旧 A/B 排程、历史收口表仅供追溯，不再作为启动/派单入口；主 Agent 接续 CURRENT 指向的现有业务 Issue/PR。后续历史快照及波次不代表当前状态；正式规格与安全边界仍按现行基线执行。
 
 ### 1.1 2026-10-22 固定核验快照
 
