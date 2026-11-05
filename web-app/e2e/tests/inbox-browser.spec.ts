@@ -459,17 +459,7 @@ async function inspectOrCreateDailyBrief(
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
   observed.setDiagnosticAssertion('daily_brief_project_source');
   await page.waitForFunction(() => document.body.innerText.includes('Synthetic brief project source'), undefined, { timeout: 15000 });
-  observed.setDiagnosticAssertion('daily_brief_project_label');
-  const projectSourceTarget = await page.evaluate(() => {
-    const label = Array.from(document.querySelectorAll('label')).find((candidate) =>
-      candidate.textContent?.includes('Synthetic brief project source'));
-    if (!label || getComputedStyle(label).visibility !== 'visible') return null;
-    const bounds = label.getBoundingClientRect();
-    return bounds.width > 0 && bounds.height > 0
-      ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
-      : null;
-  });
-  expect(projectSourceTarget).not.toBeNull();
+  const projectSourceText = page.getByText(/Synthetic brief project source/).last();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
@@ -484,7 +474,7 @@ async function inspectOrCreateDailyBrief(
 
   await page.getByRole('checkbox', { name: /Task · Synthetic brief task source/ }).check();
   observed.setDiagnosticAssertion('daily_brief_project_click');
-  await page.mouse.click(projectSourceTarget!.x, projectSourceTarget!.y);
+  await projectSourceText.click({ timeout: 15000 });
   observed.setDiagnosticAssertion('daily_brief_project_checked');
   await journalSource.check();
   await page.getByLabel(/简报正文/).fill('Synthetic manually approved daily brief');
