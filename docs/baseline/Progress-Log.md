@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-05 — #30 真实模型跨会话记忆验收预检（未发起 Run）
+
+- **授权与计数：** Issue #30 最新 PMO 评论 `6658720963` 明确授权最多 10 次真实付费模型 Run。本轮实际 Run `0/10`，无模型费用；未创建生产 Session/Memory，未访问 Chat、Memory、Notes、Journal、Knowledge 或 Vault 页面数据，未改生产环境。
+- **安全预检证据：** GitHub `main` 为 `e61eb8d510ad726c137f971f048cdd801c1123c5`。生产最近记录 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`、healthy，Hermes 未随 App 部署变更；之前安全检查的 `/api/auth/session` 为 authenticated，`/api/agent/health` 为 online（均为本次之前的当日记录）。
+- **真实阻断：** `web-app/secondbrain-core/secondbrain_core/modules/personal_learning.py` 的 `instructions_for()` 在每次 Chat Run 中先调用 `store._read_events()` 读取事件流，再用原始记忆正文对最多 20 条 active 记录打分；匹配项会放入 Hermes `instructions`。`personal_memory.py::active_view()` 自身也读取完整事件流；现有 Chat Run 没有精确 memory-ID allowlist。故仅使用唯一 UAT 前缀不能保证其他既有记忆正文不被该生产链路读取/评分或被选中发送。Issue 指令要求无法保证时先停，故在付费 Run 和生产写入前停止；未打开会展示全量记忆的页面，也未查询现有 Memory。
+- **计费预检：** 历史资料曾记录 Hermes 默认 `zai-org/GLM-4.5-Air` / SiliconFlow，但本次安全 metadata 未提供实时有效 model 或账户余额，不能当作当前确认。供应商公开页当前列示 GLM-4.5-Air 输入 `$0.14/M`、输出 `$0.86/M`；这只能作单价参考，不能证明生产当前模型、账户可用余额、单次实际 tokens 或账单。
+- **状态与下一步：** 跨会话真实模型验收 `BLOCKED_BEFORE_RUN`，分项均 `NOT RUN`：保存与回读、自然召回/模型采用、无关过滤、纠正、撤销、冲突处理。恢复前需先有可验证的单记录范围控制，并单独完成有效模型/计费元数据预检；不得放宽其他记忆隔离。没有修改代码或生产配置。
+
 ## 2026-11-05 — PR #277 生产 Notes / Journal 合成 UAT（部分通过）
 
 - **固定运行目标：** 生产 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`，运行且 healthy；Compose SHA-256 `f5760550d5d9fe197cd58bd07c77bc178fb04fec27a9e990342d642530ace020`。本轮未改变配置、镜像、容器、权限或挂载；Hermes 容器/镜像不变，未调用模型。
