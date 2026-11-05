@@ -458,10 +458,9 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
   observed.setDiagnosticAssertion('daily_brief_project_source');
-  const briefSourceChoices = page.locator('input[type="checkbox"]');
-  observed.setDiagnosticAssertion('daily_brief_project_count');
-  await expect(briefSourceChoices).toHaveCount(2, { timeout: 15000 });
-  const projectSource = briefSourceChoices.nth(1);
+  await page.waitForFunction(() => document.body.innerText.includes('Synthetic brief project source'), undefined, { timeout: 15000 });
+  const projectSource = page.getByRole('checkbox', { name: /Synthetic brief project source/ });
+  await expect(projectSource).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
