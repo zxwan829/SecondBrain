@@ -2323,7 +2323,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
         <button type="button" disabled={captureBusy} onClick={() => void verifyCaptureReceipt(captureReceipt, ++captureRequestSequence.current)}>{en ? 'Refresh Core status' : '刷新 Core 状态'}</button>
         {captureSourceId && <a href={`/inbox#capture-${encodeURIComponent(captureSourceId)}`}>{en ? 'Open Inbox source' : '打开 Inbox 来源'}</a>}
       </section>}
-      {progress && <div className="chat-progress" role="status">{progress}</div>}{error && <p className="chat-error" role="alert">{error}</p>}
+      {progress && progress !== error && <div className="chat-progress" role="status">{progress}</div>}{error && <p className="chat-error" role="alert">{error}</p>}
       {pendingApproval && <section className="terminal-approval-card" aria-labelledby="terminal-approval-title">
         <h3 id="terminal-approval-title">{en ? 'Run action approval' : '运行操作审批'}</h3>
         <p>{pendingApproval.scope}</p>

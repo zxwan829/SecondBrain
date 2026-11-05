@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request, type Response } from '@playwright/test';
+import { expect, test, type Page, type Request, type Response, type Route } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -30,10 +30,20 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
-  | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
+  | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source'
+  | 'daily_brief_project_count' | 'daily_brief_project_label'
+  | 'daily_brief_project_click' | 'daily_brief_project_checked'
+  | 'daily_brief_sources'
+  | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
-  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
+  | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat'
+  | 'chat_session' | 'chat_context_preview' | 'chat_preview_button_visible' | 'chat_preview_button_enabled'
+  | 'chat_preview_button_in_viewport' | 'chat_preview_request' | 'chat_preview_result_status' | 'chat_preview_result_source'
+  | 'chat_grounding' | 'chat_planning' | 'chat_attachment'
+  | 'chat_composer' | 'chat_run' | 'chat_run_waiting' | 'chat_run_completed' | 'chat_run_status_count'
+  | 'chat_run_candidates' | 'chat_run_citations' | 'chat_run_citation_panel' | 'chat_run_citation_content' | 'chat_composer_reset'
+  | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -69,6 +79,174 @@ async function expectNoHorizontalOverflow(
   }));
   expect(widths.viewport).toBe(viewport.width);
   expect(Math.max(widths.document, widths.body), assertion).toBeLessThanOrEqual(widths.viewport);
+}
+
+async function installChatUiFixtures(page: Page) {
+  const firstSession = 'synthetic-layout-session';
+  const secondSession = 'synthetic-secondary-session';
+  const longHistory = Array.from({ length: 70 }, (_, index) =>
+    `synthetic history line ${index + 1} ${'SYNTHETIC '.repeat(10)}`).join('\n');
+  const sessions = [
+    { session_id: firstSession, title: '合成超长会话标题'.repeat(12), updated_at: '2026-11-04T00:00:00Z' },
+    { session_id: secondSession, title: '第二个合成会话', updated_at: '2026-11-03T00:00:00Z' },
+  ];
+  type SyntheticMessage = { id: string; session_id: string; role: 'user' | 'assistant'; timestamp: string; text: string };
+  const messages = new Map<string, SyntheticMessage[]>([
+    [firstSession, [
+      { id: 'synthetic-history-user-01', session_id: firstSession, role: 'user', timestamp: '2026-11-04T00:00:00Z', text: '合成历史问题：请显示长消息滚动。' },
+      { id: 'synthetic-history-assistant-01', session_id: firstSession, role: 'assistant', timestamp: '2026-11-04T00:01:00Z', text: longHistory },
+    ]],
+    [secondSession, [
+      { id: 'synthetic-history-user-02', session_id: secondSession, role: 'user', timestamp: '2026-11-03T00:00:00Z', text: '第二会话合成问题。' },
+      { id: 'synthetic-history-assistant-02', session_id: secondSession, role: 'assistant', timestamp: '2026-11-03T00:01:00Z', text: '第二会话合成回答。' },
+    ]],
+  ]);
+  const runStatuses = new Map<string, { status: string; sessionId: string }>();
+  let nextOutcome: 'completed' | 'failed' | 'running' = 'completed';
+  let runSequence = 0;
+  let sessionSequence = 0;
+  let releaseFirstRunEvents!: () => void;
+  const firstRunEventsGate = new Promise<void>((resolve) => { releaseFirstRunEvents = resolve; });
+
+  const registrations: Array<{ url: string | RegExp; handler: (route: Route) => Promise<void> }> = [];
+  const register = async (url: string | RegExp, handler: (route: Route) => Promise<void>) => {
+    await page.route(url, handler);
+    registrations.push({ url, handler });
+  };
+  const json = (route: Route, body: unknown, status = 200, headers: Record<string, string> = {}) =>
+    route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(body) });
+
+  await register('**/api/chat/sessions?*', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    await json(route, { sessions });
+  });
+  await register('**/api/chat/sessions', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    const sessionId = `synthetic-new-session-${++sessionSequence}`;
+    sessions.unshift({ session_id: sessionId, title: `新建合成会话 ${sessionSequence}`, updated_at: '2026-11-04T00:02:00Z' });
+    messages.set(sessionId, []);
+    await json(route, { session_id: sessionId }, 201);
+  });
+  await register('**/api/chat/sessions/*/messages', async (route) => {
+    const match = new URL(route.request().url()).pathname.match(/\/api\/chat\/sessions\/([^/]+)\/messages$/);
+    if (route.request().method() !== 'GET' || !match) return route.fallback();
+    await json(route, { messages: messages.get(decodeURIComponent(match[1])) ?? [] });
+  });
+  await register('**/api/chat/sessions/*/runs', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    const match = new URL(route.request().url()).pathname.match(/\/api\/chat\/sessions\/([^/]+)\/runs$/);
+    const body = route.request().postDataJSON() as { input?: unknown };
+    if (!match || typeof body.input !== 'string') return json(route, { detail: 'invalid synthetic run' }, 400);
+    const sessionId = decodeURIComponent(match[1]);
+    const runId = `synthetic-ui-run-${++runSequence}`;
+    runStatuses.set(runId, { status: nextOutcome, sessionId });
+    if (nextOutcome !== 'running') {
+      const timestamp = new Date().toISOString();
+      const current = messages.get(sessionId) ?? [];
+      current.push({ id: `${runId}-user`, session_id: sessionId, role: 'user', timestamp, text: body.input });
+      current.push({ id: `${runId}-assistant`, session_id: sessionId, role: 'assistant', timestamp, text: nextOutcome === 'completed' ? '合成完成回复：流式消息已恢复。' : '' });
+      messages.set(sessionId, current);
+    }
+    await json(route, { run_id: runId }, 201);
+  });
+  await register('**/api/chat/sessions/*/context-preview', async (route) => {
+    const match = new URL(route.request().url()).pathname.match(/\/api\/chat\/sessions\/([^/]+)\/context-preview$/);
+    if (route.request().method() !== 'POST' || !match) return route.fallback();
+    const sessionId = decodeURIComponent(match[1]);
+    await json(route, { schema_version: 'context.v1', request_id: 'synthetic-context-request', session_id: sessionId,
+      evaluated_at: '2026-11-04T00:00:00Z', status: 'available',
+      source_status: { personal_memory: 'available', knowledge: 'none' }, items: [{
+        source_kind: 'personal_memory', source_id: 'synthetic-memory-source-01', source_version: 'synthetic-version-1',
+        sha256: 'a'.repeat(64), source_timestamp: '2026-11-04T00:00:00Z', fact_kind: 'preference',
+        verification_status: 'user_confirmed', state: 'active', expires_at: null,
+      }] }, 200, { 'Cache-Control': 'private, no-store' });
+  });
+  await register('**/api/chat/sessions/*/context-candidates', async (route) => {
+    const match = new URL(route.request().url()).pathname.match(/\/api\/chat\/sessions\/([^/]+)\/context-candidates$/);
+    if (route.request().method() !== 'POST' || !match) return route.fallback();
+    const sessionId = decodeURIComponent(match[1]);
+    await json(route, { schema_version: 'context.v1', request_id: 'synthetic-related-request', session_id: sessionId,
+      evaluated_at: '2026-11-04T00:00:00Z', status: 'none',
+      source_status: { personal_memory: 'none', knowledge: 'none' }, items: [] }, 200,
+    { 'Cache-Control': 'private, no-store' });
+  });
+  await register('**/api/chat/sessions/*/grounding-candidates', async (route) => {
+    const match = new URL(route.request().url()).pathname.match(/\/api\/chat\/sessions\/([^/]+)\/grounding-candidates$/);
+    if (route.request().method() !== 'POST' || !match) return route.fallback();
+    await json(route, { event: 'knowledge.grounding-candidates', version: 1,
+      session_id: decodeURIComponent(match[1]), status: 'available', answer_attribution: 'not_established',
+      items: [{ citation_id: 'synthetic-citation-01', title: '合成检索来源', sha256: 'b'.repeat(64),
+        knowledge_status: 'version_verified', provenance_status: 'verified' }] }, 200,
+    { 'Cache-Control': 'private, no-store' });
+  });
+  await register('**/api/chat/sessions/*/runs/*/knowledge-citations', async (route) => {
+    const match = new URL(route.request().url()).pathname.match(/\/api\/chat\/sessions\/([^/]+)\/runs\/([^/]+)\/knowledge-citations$/);
+    if (route.request().method() !== 'GET' || !match) return route.fallback();
+    await json(route, { event: 'knowledge.citations', version: 1, session_id: decodeURIComponent(match[1]),
+      run_id: decodeURIComponent(match[2]), status: 'available', citations: [{ citation_id: 'synthetic-citation-02',
+        title: '持久化的合成参考', sha256: 'c'.repeat(64), knowledge_status: 'version_verified', provenance_status: 'verified' }] });
+  });
+  await register('**/api/tasks?*', async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== 'GET' || url.search !== '?status=all') return route.fallback();
+    await json(route, { tasks: [{ source_ref: { id: 'a'.repeat(32), version: 'd'.repeat(64) },
+      title: 'Synthetic planning task', status: 'open', due_date: null }] });
+  });
+  await register('**/api/projects?*', async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== 'GET' || url.search !== '?limit=50&offset=0') return route.fallback();
+    await json(route, { status: 'real', items: [{ source_ref: { id: 'synthetic-project-01', version: 'e'.repeat(64) },
+      title: 'Synthetic planning project', status: 'active' }] });
+  });
+  await register('**/api/daily-brief/source-options/journal?*', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const date = new URL(route.request().url()).searchParams.get('date') ?? '2026-11-04';
+    await json(route, { status: 'real', items: [{ id: `${date}:${'f'.repeat(64)}`, version: 'f'.repeat(64), date }] });
+  });
+  await register('**/api/chat/runs/*/events', async (route) => {
+    const runId = new URL(route.request().url()).pathname.split('/').at(-2) ?? '';
+    const run = runStatuses.get(runId);
+    if (!run) return route.fallback();
+    if (runId === 'synthetic-ui-run-1') await firstRunEventsGate;
+    if (run.status === 'running') {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"event":"tool.started","tool":"synthetic"}\n\n' });
+      return;
+    }
+    if (run.status === 'failed') {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"event":"run.failed","error":"Synthetic failure"}\n\n' });
+      return;
+    }
+    const citation = { event: 'knowledge.citations', version: 1, run_id: runId, session_id: run.sessionId,
+      status: 'available', citations: [{ citation_id: 'synthetic-citation-03', title: '本轮合成引用', sha256: '9'.repeat(64),
+        knowledge_status: 'version_verified', provenance_status: 'verified' }] };
+    await route.fulfill({ status: 200, contentType: 'text/event-stream', body: [
+      { event: 'message.delta', delta: '合成流式回复。' }, citation,
+      { event: 'run.completed', output: '合成完成回复：流式消息已恢复。' },
+    ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('') });
+  });
+  await register('**/api/chat/runs/*/stop', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    const runId = new URL(route.request().url()).pathname.split('/').at(-2) ?? '';
+    const run = runStatuses.get(runId);
+    if (run) run.status = 'cancelled';
+    await json(route, { status: 'cancelled' });
+  });
+  await register('**/api/chat/runs/*', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() !== 'GET' || path.endsWith('/events') || path.endsWith('/stop')) return route.fallback();
+    const runId = path.split('/').at(-1) ?? '';
+    await json(route, { status: runStatuses.get(runId)?.status ?? 'completed' });
+  });
+
+  return {
+    firstSession,
+    secondSession,
+    releaseFirstRunEvents() { releaseFirstRunEvents(); },
+    setNextRunOutcome(outcome: 'completed' | 'failed' | 'running') { nextOutcome = outcome; },
+    async cleanup() {
+      for (const registration of registrations.reverse()) await page.unroute(registration.url, registration.handler);
+    },
+  };
 }
 
 function safePath(value: string): string {
@@ -255,6 +433,8 @@ async function inspectOrCreateDailyBrief(
   await page.goto('/brief');
   observed.setDiagnosticAssertion('daily_brief_heading');
   await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible({ timeout: 15000 });
+  const journalSourceReadsBeforeBrief = observed.requestRecords.filter((item) => item.method === 'GET'
+    && item.path === '/api/daily-brief/source-options/journal').length;
   const beforeOpen = observed.dailyBriefPostCount;
   expect(beforeOpen).toBe(0);
   const desktopWriter = viewport.name === 'desktop-1440x1000';
@@ -268,12 +448,26 @@ async function inspectOrCreateDailyBrief(
   expect(observed.dailyBriefPostCount).toBe(0);
   observed.setFailureStage('daily_brief_sources');
   observed.setDiagnosticAssertion('daily_brief_open_prepare');
+  const taskSourcesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === '/api/tasks'
+    && new URL(response.url()).search === '?status=all');
+  const projectSourcesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === '/api/projects'
+    && new URL(response.url()).search === '?limit=50&offset=0');
   await page.getByRole('button', { name: '手动准备简报' }).click();
-  observed.setDiagnosticAssertion('daily_brief_sources');
+  expect((await taskSourcesResponse).status()).toBe(200);
+  expect((await projectSourcesResponse).status()).toBe(200);
+  observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
-  await expect(page.getByRole('checkbox', { name: /Synthetic brief project source/ })).toBeVisible();
+  observed.setDiagnosticAssertion('daily_brief_project_source');
+  await page.waitForFunction(() => document.body.innerText.replace(/[^a-z]/gi, '').toLowerCase()
+    .includes('syntheticbriefprojectsource'), undefined, { timeout: 15000 });
+  const projectSourceText = page.getByText(/Synthetic brief project source/).last();
+  observed.setDiagnosticAssertion('daily_brief_project_count');
   expect(observed.dailyBriefPostCount).toBe(0);
-  expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
+  observed.setDiagnosticAssertion('daily_brief_sources');
+  expect(observed.requestRecords.filter((item) => item.method === 'GET'
+    && item.path === '/api/daily-brief/source-options/journal')).toHaveLength(journalSourceReadsBeforeBrief);
 
   observed.setFailureStage('daily_brief_journal');
   observed.setDiagnosticAssertion('daily_brief_journal_action');
@@ -281,11 +475,15 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_journal_source');
   const journalSource = page.getByRole('checkbox', { name: /Journal 来源 1/ });
   await expect(journalSource).toBeVisible();
+  expect(observed.requestRecords.filter((item) => item.method === 'GET'
+    && item.path === '/api/daily-brief/source-options/journal').length).toBeGreaterThan(journalSourceReadsBeforeBrief);
   await expect(page.getByText('Synthetic Journal source fixture; never read or published by the UI.')).toHaveCount(0);
   expect(observed.dailyBriefPostCount).toBe(0);
 
   await page.getByRole('checkbox', { name: /Task · Synthetic brief task source/ }).check();
-  await page.getByRole('checkbox', { name: /Project · Synthetic brief project source/ }).check();
+  observed.setDiagnosticAssertion('daily_brief_project_click');
+  await projectSourceText.click({ timeout: 15000 });
+  observed.setDiagnosticAssertion('daily_brief_project_checked');
   await journalSource.check();
   await page.getByLabel(/简报正文/).fill('Synthetic manually approved daily brief');
   await page.getByLabel('分类（逗号分隔）').fill('合成验收');
@@ -426,113 +624,252 @@ for (const viewport of viewports) {
     observed.setFailureStage('ordinary_chat');
     await page.getByRole('button', { name: '创建合成会话' }).click();
     await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
-    if (viewport.name === 'desktop-1440x1000') {
-      // Blank mode intentionally omits auxiliary panels. Exercise the regular
-      // Chat page with a fixture session before returning to the blank journey.
-      const sessionsFixture = async (route: import('@playwright/test').Route) => {
-        if (route.request().method() !== 'GET') return route.fallback();
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [
-          { session_id: 'synthetic-layout-session', title: '合成超长会话标题'.repeat(12), updated_at: '2026-11-04T00:00:00Z' },
-        ] }) });
-      };
-      await page.route('**/api/chat/sessions?*', sessionsFixture);
-      await page.goto('/chat');
-      const longTitle = page.locator('.chat-session-list strong');
-      await expect(longTitle).toBeVisible();
-      const titleLayout = await longTitle.evaluate((element) => ({
-        overflow: element.scrollWidth > element.clientWidth,
-        ellipsis: getComputedStyle(element).textOverflow,
-        whitespace: getComputedStyle(element).whiteSpace,
-      }));
-      expect(titleLayout).toEqual({ overflow: true, ellipsis: 'ellipsis', whitespace: 'nowrap' });
-      await expect(page.locator('.chat-session-list small')).not.toHaveText('—');
-      observed.setDiagnosticAssertion('layout_chat');
-      const toolsPanel = page.locator('.chat-context-tools');
-      const messages = page.locator('.chat-message-list');
-      const input = page.locator('.chat-composer textarea');
-      await expect(toolsPanel).toBeVisible();
-      await expect(toolsPanel).not.toHaveAttribute('open', '');
-      await expect(toolsPanel.locator('summary')).toHaveText('上下文与工具');
-      await expect(input).toHaveAttribute('rows', '1');
-      const collapsed = await page.evaluate(() => {
-        const messages = document.querySelector('.chat-message-list')!.getBoundingClientRect();
-        const context = document.querySelector('.chat-context-tools')!.getBoundingClientRect();
-        const composer = document.querySelector('.chat-composer')!.getBoundingClientRect();
-        return { messageHeight: messages.height, contextHeight: context.height,
-          ordered: messages.bottom <= context.top && context.bottom <= composer.top };
-      });
-      expect(collapsed.messageHeight, 'chat_messages_remain_primary').toBeGreaterThan(180);
-      expect(collapsed.contextHeight, 'chat_context_collapsed_height').toBeLessThan(80);
-      expect(collapsed.ordered, 'chat_grid_visual_order').toBe(true);
-      await toolsPanel.locator('summary').click();
-      await expect(toolsPanel).toHaveAttribute('open', '');
-      const openedHeight = await toolsPanel.evaluate((element) => element.getBoundingClientRect().height);
-      expect(openedHeight, 'chat_tools_opened_height').toBeGreaterThan(collapsed.contextHeight);
-      await expect(input).toBeVisible();
-      await expect(toolsPanel.getByRole('region', { name: '上下文预览' })).toBeVisible();
-      await expect(toolsPanel.getByRole('region', { name: '检索参考' })).toBeVisible();
-      await expect(toolsPanel.getByRole('region', { name: '规划' })).toBeVisible();
-      await toolsPanel.locator('summary').click();
-      await expect(toolsPanel).not.toHaveAttribute('open', '');
-      const singleLineHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
-      await input.fill('第一行\n第二行\n第三行');
-      const expandedInputHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
-      expect(expandedInputHeight, 'chat_composer_auto_grows').toBeGreaterThan(35);
-      let releaseEvents!: () => void;
-      const eventsGate = new Promise<void>((resolve) => { releaseEvents = resolve; });
-      const delayedEvents = async (route: import('@playwright/test').Route) => {
-        await eventsGate;
-        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {\"event\":\"run.completed\",\"output\":\"Synthetic completion\"}\n\n' });
-      };
-      await page.route('**/api/chat/runs/*/events', delayedEvents);
-      try {
-        await page.getByRole('button', { name: '发送', exact: true }).click();
-        await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
-        await expect(page.getByText('正在等待回复…')).toBeVisible();
-        releaseEvents();
-        await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
-        await expect(page.getByText('已完成', { exact: true })).toBeVisible();
-        await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
-      } finally {
-        releaseEvents();
-        await page.unroute('**/api/chat/runs/*/events', delayedEvents);
-      }
-      observed.setDiagnosticAssertion('chat_stop');
-      // Stop a separate synthetic run and verify that the UI returns to send.
-      let releaseStoppedEvents!: () => void;
-      const stoppedGate = new Promise<void>((resolve) => { releaseStoppedEvents = resolve; });
-      const stoppedEvents = async (route: import('@playwright/test').Route) => {
-        await stoppedGate;
-        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {\"event\":\"run.cancelled\"}\n\n' }).catch(() => {});
-      };
-      const stopFixture = async (route: import('@playwright/test').Route) => {
-        releaseStoppedEvents();
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
-      };
-      const stoppedStatus = async (route: import('@playwright/test').Route) => {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'cancelled' }) });
-      };
-      await page.route('**/api/chat/runs/*', stoppedStatus);
-      await page.route('**/api/chat/runs/*/events', stoppedEvents);
-      await page.route('**/api/chat/runs/*/stop', stopFixture);
-      try {
-        await input.fill('合成停止测试');
-        await page.getByRole('button', { name: '发送', exact: true }).click();
-        await expect(page.getByRole('button', { name: '停止', exact: true })).toBeEnabled();
-        await page.getByRole('button', { name: '停止', exact: true }).click();
-        await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
-      } finally {
-        releaseStoppedEvents();
-        await page.unroute('**/api/chat/runs/*/events', stoppedEvents);
-        await page.unroute('**/api/chat/runs/*/stop', stopFixture);
-        await page.unroute('**/api/chat/runs/*', stoppedStatus);
-      }
-      await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
-      await page.unroute('**/api/chat/sessions?*', sessionsFixture);
-      observed.setDiagnosticAssertion('chat_return_blank');
-      await page.goto('/chat/blank');
-      await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
-    }
+    // Exercise the regular Chat page in the same Linux Chromium journeys, using
+    // session-, Run-, context-, planning- and citation-only synthetic fixtures.
+    const chat = await installChatUiFixtures(page);
+    observed.setFailureStage('ordinary_chat');
+    observed.setDiagnosticAssertion('layout_chat');
+    await page.goto('/chat');
+    const sessionButtons = page.locator('.chat-session-list button');
+    const longTitle = sessionButtons.first().locator('strong');
+    await expect(longTitle).toBeVisible();
+    const titleLayout = await longTitle.evaluate((element) => ({
+      overflow: element.scrollWidth > element.clientWidth,
+      ellipsis: getComputedStyle(element).textOverflow,
+      whitespace: getComputedStyle(element).whiteSpace,
+      date: element.parentElement?.querySelector('small')?.textContent?.trim() ?? '',
+      expectedDate: new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date('2026-11-04T00:00:00Z')),
+    }));
+    expect(titleLayout).toEqual({ overflow: true, ellipsis: 'ellipsis', whitespace: 'nowrap', date: titleLayout.expectedDate, expectedDate: titleLayout.expectedDate });
+    const secondDate = await sessionButtons.nth(1).locator('small').textContent();
+    expect(secondDate?.trim()).toMatch(/^\d{1,2}\/\d{1,2}$/);
+    expect(await sessionButtons.first().locator('small').textContent()).toMatch(/^\d{1,2}\/\d{1,2}$/);
+
+    const toolsPanel = page.locator('.chat-context-tools');
+    const messages = page.locator('.chat-message-list');
+    const input = page.locator('.chat-composer textarea');
+    const chatComposer = page.locator('.chat-composer');
+    const conversationTitle = page.locator('.chat-conversation > header h2');
+    await expect(conversationTitle).toBeVisible();
+    expect(await conversationTitle.evaluate((element) => ({
+      overflow: element.scrollWidth > element.clientWidth,
+      ellipsis: getComputedStyle(element).textOverflow,
+      whitespace: getComputedStyle(element).whiteSpace,
+    }))).toEqual({ overflow: true, ellipsis: 'ellipsis', whitespace: 'nowrap' });
+    await expect(toolsPanel).toBeVisible();
+    await expect(toolsPanel).not.toHaveAttribute('open', '');
+    await expect(toolsPanel.locator('summary')).toHaveText('上下文与工具');
+    await expect(input).toHaveAttribute('rows', '1');
+    const collapsed = await page.evaluate(() => {
+      const messages = document.querySelector('.chat-message-list')!.getBoundingClientRect();
+      const context = document.querySelector('.chat-context-tools')!.getBoundingClientRect();
+      const composer = document.querySelector('.chat-composer')!.getBoundingClientRect();
+      const title = document.querySelector('.chat-session-list strong')!;
+      return { viewport: { width: innerWidth, height: innerHeight }, messageHeight: messages.height,
+        contextHeight: context.height, messageScrollHeight: document.querySelector('.chat-message-list')!.scrollHeight,
+        messageClientHeight: document.querySelector('.chat-message-list')!.clientHeight,
+        ordered: messages.bottom <= context.top && context.bottom <= composer.top,
+        titleOverflow: title.scrollWidth > title.clientWidth,
+        titleTextOverflow: getComputedStyle(title).textOverflow, titleWhiteSpace: getComputedStyle(title).whiteSpace };
+    });
+    expect(collapsed.messageHeight, 'chat_messages_remain_primary').toBeGreaterThan(180);
+    expect(collapsed.contextHeight, 'chat_context_collapsed_height').toBeLessThan(80);
+    expect(collapsed.ordered, 'chat_grid_visual_order').toBe(true);
+    expect(collapsed.messageScrollHeight, 'chat_long_history_scrollable').toBeGreaterThan(collapsed.messageClientHeight);
+    await messages.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    expect(await messages.evaluate((element) => element.scrollTop), 'chat_history_scroll_position').toBeGreaterThan(0);
+    await page.getByText('synthetic history line 70', { exact: false }).last().scrollIntoViewIfNeeded();
+    await expect(page.getByText(/synthetic history line 70/).last()).toBeInViewport();
+    await messages.evaluate((element) => { element.scrollTop = 0; });
+    console.info(`CHAT_UI_COLLAPSED ${JSON.stringify(collapsed)}`);
+
+    observed.setDiagnosticAssertion('chat_session');
+    await sessionButtons.nth(1).click();
+    await expect(page.getByText('第二会话合成回答。')).toBeVisible();
+    await expect(page.getByText(/synthetic history line 70/)).toHaveCount(0);
+    await sessionButtons.first().click();
+    await expect(page.getByText(/synthetic history line 70/)).toBeVisible();
+
+    await toolsPanel.locator('summary').click();
+    await expect(toolsPanel).toHaveAttribute('open', '');
+    observed.setDiagnosticAssertion('chat_context_preview');
+    const preview = toolsPanel.locator('.chat-context-preview[aria-label="上下文预览"]');
+    const grounding = toolsPanel.locator('.chat-context-preview[aria-label="检索参考"]');
+    const planning = toolsPanel.locator('.planning-panel');
+    await preview.scrollIntoViewIfNeeded();
+    await expect(preview).toBeVisible();
+    await grounding.scrollIntoViewIfNeeded();
+    await expect(grounding).toBeVisible();
+    observed.setDiagnosticAssertion('chat_planning');
+    await planning.scrollIntoViewIfNeeded();
+    await expect(planning).toBeVisible();
+    await expect(input).toBeVisible();
+    const query = '这是一条仅供浏览器验收的合成问题';
+    await input.fill(query);
+    const previewButton = preview.getByRole('button', { name: '检索可用上下文' });
+    observed.setDiagnosticAssertion('chat_preview_button_visible');
+    await expect(previewButton).toBeVisible();
+    observed.setDiagnosticAssertion('chat_preview_button_enabled');
+    await expect(previewButton).toBeEnabled();
+    observed.setDiagnosticAssertion('chat_preview_button_in_viewport');
+    const previewButtonRight = await previewButton.evaluate((element) => element.getBoundingClientRect().right);
+    expect(previewButtonRight, 'chat_context_action_in_viewport').toBeLessThanOrEqual(await page.evaluate(() => innerWidth));
+    observed.setDiagnosticAssertion('chat_preview_request');
+    const previewResponsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      return request.method() === 'POST' && new URL(response.url()).pathname.endsWith('/context-preview');
+    });
+    await previewButton.click();
+    const previewResponse = await previewResponsePromise;
+    expect(previewResponse.status(), 'chat_preview_http_status').toBe(200);
+    observed.setDiagnosticAssertion('chat_preview_result_status');
+    await expect(preview.locator('[role="status"]').filter({ hasText: '找到可展示的来源元数据' }).first()).toBeVisible();
+    observed.setDiagnosticAssertion('chat_preview_result_source');
+    await expect(preview.getByText('synthetic-memory-source-01')).toBeVisible();
+    observed.setDiagnosticAssertion('chat_grounding');
+    await grounding.getByRole('button', { name: '核对 Knowledge 来源' }).click();
+    await expect(grounding.getByText('找到已核验来源。')).toBeVisible();
+    await expect(grounding.getByText('合成检索来源')).toBeVisible();
+
+    observed.setDiagnosticAssertion('chat_planning');
+    await planning.getByRole('button', { name: '开始规划' }).click();
+    await planning.getByRole('button', { name: '读取待办和项目候选' }).click();
+    const planningTask = planning.getByText('Synthetic planning task');
+    await planningTask.scrollIntoViewIfNeeded();
+    await expect(planningTask).toBeVisible();
+    const planningProject = planning.getByText('Synthetic planning project');
+    await planningProject.scrollIntoViewIfNeeded();
+    await expect(planningProject).toBeVisible();
+    await planning.getByRole('button', { name: '读取获准 Journal 来源' }).click();
+    const journalSources = planning.locator('fieldset').filter({ hasText: 'Journal 来源' });
+    await journalSources.scrollIntoViewIfNeeded();
+    await expect(journalSources).toContainText(/\d{4}-\d{2}-\d{2}/);
+    const toolsScroll = await toolsPanel.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return { top: element.scrollTop, height: element.clientHeight, content: element.scrollHeight };
+    });
+    expect(toolsScroll.content, 'chat_tools_panel_content_exceeds_view').toBeGreaterThan(toolsScroll.height);
+    expect(toolsScroll.top, 'chat_tools_panel_internal_scroll').toBeGreaterThan(0);
+    const opened = await page.evaluate(() => {
+      const panel = document.querySelector('.chat-context-tools')!.getBoundingClientRect();
+      const messages = document.querySelector('.chat-message-list')!;
+      const composer = document.querySelector('.chat-composer')!.getBoundingClientRect();
+      const textarea = document.querySelector('.chat-composer textarea')!.getBoundingClientRect();
+      return { panelHeight: panel.height, messageHeight: messages.getBoundingClientRect().height,
+        messageScrollHeight: messages.scrollHeight, messageClientHeight: messages.clientHeight,
+        composerTop: composer.top, composerBottom: composer.bottom, inputTop: textarea.top, inputBottom: textarea.bottom,
+        viewportHeight: innerHeight, documentScrollHeight: document.documentElement.scrollHeight,
+        composerVisible: composer.bottom > 0 && composer.top < innerHeight };
+    });
+    expect(opened.panelHeight, 'chat_tools_opened_height').toBeGreaterThan(collapsed.contextHeight);
+    expect(opened.messageHeight, 'chat_messages_remain_visible_when_tools_open').toBeGreaterThan(100);
+    expect(opened.messageScrollHeight, 'chat_history_remains_scrollable_when_tools_open').toBeGreaterThan(opened.messageClientHeight);
+    expect(opened.composerVisible, 'chat_composer_available_when_open').toBe(true);
+    await input.scrollIntoViewIfNeeded();
+    await expect(input).toBeInViewport();
+    console.info(`CHAT_UI_EXPANDED ${JSON.stringify(opened)}`);
+
+    observed.setDiagnosticAssertion('chat_attachment');
+    await page.locator('.chat-composer input[type="file"]').setInputFiles({
+      name: 'synthetic-chat-attachment.txt', mimeType: 'text/plain', buffer: Buffer.from('synthetic attachment only'),
+    });
+    await page.getByRole('button', { name: '切换到收录' }).click();
+    const captureComposer = page.getByRole('region', { name: '快速收录' });
+    await expect(captureComposer.locator('.unified-attachment')).toContainText('synthetic-chat-attachment.txt');
+    await captureComposer.getByRole('button', { name: '移除附件' }).click();
+    await expect(captureComposer.locator('.unified-attachment')).toHaveCount(0);
+    await page.getByRole('group', { name: '输入去向' }).getByRole('button', { name: '对话' }).click();
+    await expect(input).toBeVisible();
+
+    observed.setDiagnosticAssertion('chat_composer');
+    const singleLineHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
+    await input.fill('第一行\n第二行\n第三行');
+    const expandedInputHeight = await input.evaluate((element) => element.getBoundingClientRect().height);
+    expect(expandedInputHeight, 'chat_composer_auto_grows').toBeGreaterThan(singleLineHeight + 8);
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseOrigin });
+    const pastedText = Array.from({ length: 24 }, (_, index) => `合成粘贴行 ${index + 1}`).join('\n');
+    await input.fill('');
+    await page.evaluate(async (text) => navigator.clipboard.writeText(text), pastedText);
+    await input.click();
+    await input.press('Control+V');
+    await expect(input).toHaveValue(pastedText);
+    const capped = await input.evaluate((element) => ({ height: element.getBoundingClientRect().height,
+      scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, overflowY: getComputedStyle(element).overflowY,
+      maxHeight: getComputedStyle(element).maxHeight }));
+    expect(capped.height, 'chat_composer_max_height').toBeLessThanOrEqual(161);
+    expect(capped.scrollHeight, 'chat_composer_internal_scroll').toBeGreaterThan(capped.clientHeight);
+    expect(capped.overflowY, 'chat_composer_overflow_style').toBe('auto');
+    expect(capped.maxHeight, 'chat_composer_css_cap').toBe('160px');
+    await chatComposer.getByRole('button', { name: '发送', exact: true }).scrollIntoViewIfNeeded();
+    await expect(chatComposer.getByRole('button', { name: '发送', exact: true })).toBeInViewport();
+
+    observed.setDiagnosticAssertion('chat_run');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
+    observed.setDiagnosticAssertion('chat_run_waiting');
+    await expect(page.getByText('正在等待回复…', { exact: true })).toHaveCount(1);
+    chat.releaseFirstRunEvents();
+    observed.setDiagnosticAssertion('chat_run_completed');
+    await expect(page.locator('.chat-progress')).toHaveText('已完成');
+    observed.setDiagnosticAssertion('chat_run_status_count');
+    await expect(page.getByText('已完成', { exact: true })).toHaveCount(1);
+    observed.setDiagnosticAssertion('chat_run_candidates');
+    await expect(toolsPanel.getByRole('region', { name: '可能相关的来源' })).toContainText('没有匹配的来源');
+    observed.setDiagnosticAssertion('chat_run_citation_panel');
+    await expect(toolsPanel.locator('.chat-knowledge-citations')).toBeVisible();
+    observed.setDiagnosticAssertion('chat_run_citation_content');
+    await expect(toolsPanel.locator('.chat-knowledge-citations')).toContainText(/本轮合成引用|持久化的合成参考/);
+    observed.setDiagnosticAssertion('chat_composer_reset');
+    await expect.poll(() => input.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(singleLineHeight + 1);
+
+    observed.setDiagnosticAssertion('layout_chat');
+    await chat.setNextRunOutcome('failed');
+    const failedPrompt = '失败后可恢复的合成问题';
+    await input.fill(failedPrompt);
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    const failureText = (await page.getByRole('alert').textContent())?.trim() ?? '';
+    expect(failureText, 'chat_failure_message_present').not.toBe('');
+    await expect(page.getByText(failureText, { exact: true }), 'chat_failure_not_duplicated').toHaveCount(1);
+    await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
+    await expect(input).toHaveValue(failedPrompt);
+
+    await chat.setNextRunOutcome('running');
+    await input.fill('合成取消测试');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(page.getByRole('button', { name: '停止', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: '停止', exact: true }).click();
+    await expect(page.getByRole('button', { name: '发送', exact: true })).toBeVisible();
+    await expect(page.locator('.chat-progress')).toHaveText('已停止');
+    await expect(input).toHaveValue('');
+
+    await chat.setNextRunOutcome('completed');
+    await input.fill('取消后可继续的合成消息');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(page.locator('.chat-progress')).toHaveText('已完成');
+
+    observed.setDiagnosticAssertion('chat_reload');
+    await page.reload();
+    await expect(page.locator('.chat-context-tools')).not.toHaveAttribute('open', '');
+    await expect(page.locator('.chat-session-list button').first()).toContainText('合成超长会话标题');
+    await expect(page.getByText('取消后可继续的合成消息')).toBeVisible();
+    await expect(page.getByText('合成完成回复：流式消息已恢复。').last()).toBeVisible();
+    await expect(page.locator('.chat-knowledge-citations')).toContainText('持久化的合成参考');
+
+    await page.locator('.chat-session-heading').getByRole('button', { name: '新对话' }).click();
+    await expect(page.getByRole('heading', { name: '新建合成会话 1' })).toBeVisible();
+    await expect(page.locator('.chat-empty')).toBeVisible();
+    await page.locator('.chat-session-list button').filter({ hasText: '第二个合成会话' }).click();
+    await expect(page.getByText('第二会话合成回答。')).toBeVisible();
+    await page.locator('.chat-session-list button').filter({ hasText: '合成超长会话标题' }).click();
+    await expect(page.getByText('取消后可继续的合成消息')).toBeVisible();
+    await page.reload();
+    await expect(page.getByText('取消后可继续的合成消息')).toBeVisible();
+    await expectNoHorizontalOverflow(page, observed, viewport, 'layout_chat');
+    await chat.cleanup();
+    observed.setDiagnosticAssertion('layout_chat');
+    await page.goto('/chat/blank');
+    await expect(page.getByRole('heading', { name: '合成会话 2' })).toBeVisible();
     observed.setDiagnosticAssertion('chat_completion');
     const postsBeforeOrdinaryChat = observed.inboxPostCount;
     await composer.fill(`普通聊天合成文本 ${randomUUID()}`);

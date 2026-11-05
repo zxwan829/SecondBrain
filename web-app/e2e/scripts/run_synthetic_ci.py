@@ -76,11 +76,21 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "today_api_response", "journal_navigation", "journal_api_response",
     "calendar_navigation", "calendar_api_response", "home_api_response",
     "layout_home", "layout_projects", "layout_activity", "layout_agent_health",
-    "layout_today", "layout_journal", "layout_calendar",
+    "layout_today", "layout_journal", "layout_calendar", "chat_session",
+    "chat_context_preview", "chat_preview_button_visible", "chat_preview_button_enabled",
+    "chat_preview_button_in_viewport", "chat_preview_request", "chat_preview_result_status",
+    "chat_preview_result_source",
+    "chat_grounding", "chat_planning", "chat_attachment",
+    "chat_composer", "chat_run", "chat_run_waiting", "chat_run_completed", "chat_run_status_count",
+    "chat_run_candidates", "chat_run_citations", "chat_run_citation_panel", "chat_run_citation_content",
+    "chat_composer_reset", "chat_reload",
     "notes_navigation", "notes_navigation_link", "notes_collections", "notes_create", "notes_save",
     "notes_readback", "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
-    "daily_brief_open_prepare", "daily_brief_sources", "daily_brief_journal_action",
+    "daily_brief_open_prepare", "daily_brief_task_source", "daily_brief_project_source",
+    "daily_brief_project_count", "daily_brief_project_label", "daily_brief_project_visible",
+    "daily_brief_project_click", "daily_brief_project_checked",
+    "daily_brief_sources", "daily_brief_journal_action",
     "daily_brief_journal_source", "daily_brief_preview",
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
     "calendar_api_requests",
@@ -304,7 +314,9 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
     if (len(testcase_viewports) != len(FAILURE_JUNIT_TESTCASE_VIEWPORTS)
             or set(testcase_viewports) != set(FAILURE_JUNIT_TESTCASE_VIEWPORTS.values())
             or len(set(testcase_viewports)) != len(testcase_viewports)):
-        raise RuntimeError("failure diagnostic JUnit testcase set rejected; upload withheld")
+        safe_observed = ",".join(testcase_viewports)
+        safe_failed = ",".join(failed_viewports)
+        raise RuntimeError(f"failure diagnostic JUnit testcase set rejected; upload withheld; count={len(testcase_viewports)}; observed={safe_observed}; failed={safe_failed}")
     failed_viewport_set = set(failed_viewports)
     if summary_path.exists():
         if summary_path.stat().st_size > 4096 or not summary_path.is_file():
@@ -645,7 +657,17 @@ def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: 
                     child.unlink(missing_ok=True)
         elif not publish_root.exists():
             publish_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        raise RuntimeError("report validation failed; artifact upload withheld") from error
+        reason = str(error)
+        # Surface only a short, path-free validator message so a withheld
+        # report can be diagnosed from Actions logs. Never echo arbitrary OS
+        # exceptions, paths, or report contents.
+        if (type(error) is RuntimeError and re.fullmatch(r"[A-Za-z0-9 _.,:=;()'-]{1,220}", reason)
+                and "/" not in reason and "\\" not in reason
+                and not any(marker in reason.lower() for marker in ("token", "cookie", "secret", "password", "authorization"))):
+            safe_detail = f" ({reason})"
+        else:
+            safe_detail = f" ({type(error).__name__})"
+        raise RuntimeError(f"report validation failed; artifact upload withheld{safe_detail}") from error
 
 
 def artifact_run_directory() -> Path:
