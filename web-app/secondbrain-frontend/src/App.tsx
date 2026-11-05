@@ -152,7 +152,7 @@ export function scrollReviewItemIntoView(container: HTMLElement, target: HTMLEle
 }
 
 function pageFromPath(path: string, enableNotes: boolean): Page {
-  if (path === '/inbox/source') return enableNotes ? 'inbox-source' : 'home';
+  if (path === '/inbox/source') return 'inbox-source';
   const route = navItems.find((item) => 'route' in item && item.route !== '/' &&
     (path === item.route || path.startsWith(`${item.route}/`)));
   if (route?.id === 'notes' && !enableNotes) return 'home';
@@ -168,6 +168,19 @@ export function singleDraftSourceFromSearch(search: string): { collection: 'draf
   const path = params.get('path') || '';
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(path)
     ? { collection: 'drafts', path } : null;
+}
+
+type SingleInboxSource = { kind: 'notes'; collection: 'drafts'; path: string } | { kind: 'capture'; captureId: string };
+
+export function singleInboxSourceFromSearch(search: string): SingleInboxSource | null {
+  const params = new URLSearchParams(search);
+  if (params.getAll('source_kind').length === 1 && params.get('source_kind') === 'capture'
+    && params.getAll('source_id').length === 1 && [...params.keys()].every((key) => key === 'source_kind' || key === 'source_id')) {
+    const captureId = params.get('source_id') || '';
+    return /^[0-9a-f]{32}$/i.test(captureId) ? { kind: 'capture', captureId: captureId.toLowerCase() } : null;
+  }
+  const draft = singleDraftSourceFromSearch(search);
+  return draft ? { kind: 'notes', ...draft } : null;
 }
 
 const messages = {
@@ -349,7 +362,7 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   const isInboxRoute = location.pathname === '/inbox' || location.pathname.startsWith('/inbox/');
   const isKnowledgePage = page === 'knowledge';
   const isHomePage = page === 'home';
-  const singleSource = isSingleSourceInboxPath ? singleDraftSourceFromSearch(location.search) : null;
+  const singleSource = isSingleSourceInboxPath ? singleInboxSourceFromSearch(location.search) : null;
   const notesNavigationGuard = useRef<(() => boolean) | null>(null);
   const navigationIndex = useRef(typeof history.state?.sbNavigationIndex === 'number' ? history.state.sbNavigationIndex as number : 0);
   const t = messages[locale];
@@ -406,7 +419,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   }, []);
   useEffect(() => {
     const onPop = (event: PopStateEvent) => {
-      const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/') || location.pathname === '/inbox/source';
+      const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/')
+        || location.pathname === '/inbox/source' && singleSource?.kind === 'notes';
       if (pageRef.current === 'notes' && !isNotesPath && notesNavigationGuard.current && !notesNavigationGuard.current()) {
         const targetIndex = typeof event.state?.sbNavigationIndex === 'number' ? event.state.sbNavigationIndex as number : null;
         const direction = targetIndex === null ? -1 : Math.sign(targetIndex - navigationIndex.current);
@@ -419,16 +433,16 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, [enableNotes]);
+  }, [enableNotes, singleSource?.kind]);
 
   useEffect(() => {
     if (!enableNotes) return;
     // Notes availability is checked only after an explicit Notes or single-source
     // Inbox route. The authenticated shell must not read the Notes collection
     // just to render unrelated pages or discover whether the nav item is usable.
-    if (page !== 'notes' && !isSingleSourceInboxPath) return;
+    if (page !== 'notes' && !(isSingleSourceInboxPath && singleSource?.kind === 'notes')) return;
     if (isInboxRoute && !isSingleSourceInboxPath) return;
-    if (isSingleSourceInboxPath) {
+    if (isSingleSourceInboxPath && singleSource?.kind === 'notes') {
       // The exact-source Notes read is the Core permission check for this isolated route.
       // Do not fetch the Notes collections endpoint as a route-level preflight.
       setNotesAvailable(true); setNotesGateChecked(true);
@@ -441,16 +455,17 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
       if (active) { setNotesAvailable(false); setNotesGateChecked(true); }
     });
     return () => { active = false; };
-  }, [enableNotes, isSingleSourceInboxPath, isInboxRoute, page]);
+  }, [enableNotes, isSingleSourceInboxPath, isInboxRoute, page, singleSource?.kind]);
 
   useEffect(() => {
-    const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/') || location.pathname === '/inbox/source';
+    const isNotesPath = location.pathname === '/notes' || location.pathname.startsWith('/notes/')
+      || location.pathname === '/inbox/source' && singleSource?.kind === 'notes';
     if (isNotesPath && (!enableNotes || (notesGateChecked && !notesAvailable))) {
       history.replaceState(history.state, '', '/');
       setPage('home');
       setRouteRevision((value) => value + 1);
     }
-  }, [enableNotes, notesAvailable, notesGateChecked, routeRevision]);
+  }, [enableNotes, notesAvailable, notesGateChecked, routeRevision, singleSource?.kind]);
 
   const view = useMemo(() => adaptHome(home), [home]);
   const changeLocale = () => setLocale((current) => current === 'zh-CN' ? 'en' : 'zh-CN');
@@ -531,8 +546,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
             pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1);
           }} /></Suspense>
           : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
-          : page === 'inbox-source' ? (enableNotes && (notesAvailable || isSingleSourceInboxPath)
-            ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading selected Draft…' : '正在加载所选 Draft…'}</div>}><UnifiedInboxPage key={singleSource ? `${singleSource.collection}:${singleSource.path}` : 'invalid-source'} locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} showSyntheticCaptureDemo={false} singleSourceMode singleSource={singleSource} /></Suspense>
+          : page === 'inbox-source' ? (singleSource?.kind === 'capture' || enableNotes && (notesAvailable || singleSource?.kind === 'notes' || singleSource === null)
+            ? <Suspense fallback={<div role="status">{locale === 'en' ? 'Loading selected Inbox source…' : '正在加载所选 Inbox 来源…'}</div>}><UnifiedInboxPage key={singleSource?.kind === 'notes' ? `${singleSource.collection}:${singleSource.path}` : singleSource?.kind === 'capture' ? `capture:${singleSource.captureId}` : 'invalid-source'} locale={locale} onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} showSyntheticCaptureDemo={false} singleSourceMode singleSource={singleSource} /></Suspense>
             : <div role="status">{locale === 'en' ? 'Notes is unavailable.' : '笔记功能当前不可用。'}</div>)
           : page === 'today' ? <TaskPage locale={locale} /> : page === 'home' ? <>
         <header className="workspace-header">
@@ -591,8 +606,10 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
           : page === 'inbox' ? inboxEntryIdFromHash(location.hash)
             ? <InboxEntryStatusPage key={inboxEntryIdFromHash(location.hash)} locale={locale} inboxId={inboxEntryIdFromHash(location.hash)!}
               onBack={() => { history.replaceState(history.state, '', '/inbox'); setInboxScope(null); setRouteRevision((value) => value + 1); }}
+              onJournalReview={(captureId) => { const query = new URLSearchParams({ source_kind: 'capture', source_id: captureId }); pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1); }}
               onReview={(path, sha256) => { const query = new URLSearchParams({ review_path: path, source_sha256: sha256 }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }} />
             : <InboxScopePage locale={locale} scope={inboxScope} onScopeChange={setInboxScope}
+            onJournalReview={(captureId) => { const query = new URLSearchParams({ source_kind: 'capture', source_id: captureId }); pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1); }}
             onReview={(path) => { const query = new URLSearchParams({ review_path: path }); pushAppPath(`/review?${query}`); setPage('review'); setRouteRevision((value) => value + 1); }}
             onOpenDraft={(path) => { const query = new URLSearchParams({ collection: 'drafts', path }); pushAppPath(`/inbox/source?${query}`); setPage('inbox-source'); setRouteRevision((value) => value + 1); }} />
           : page === 'chat' ? <ChatPage locale={locale} blankMode={location.pathname === '/chat/blank'} onGoInbox={() => navigate('inbox')}
@@ -605,8 +622,8 @@ function WorkspaceApp({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-export function InboxEntryStatusPage({ locale, inboxId, onBack, onReview }: {
-  locale: Locale; inboxId: string; onBack: () => void; onReview: (path: string, sha256: string) => void;
+export function InboxEntryStatusPage({ locale, inboxId, onBack, onReview, onJournalReview }: {
+  locale: Locale; inboxId: string; onBack: () => void; onReview: (path: string, sha256: string) => void; onJournalReview?: (captureId: string) => void;
 }) {
   const en = locale === 'en';
   const [entry, setEntry] = useState<ReturnType<typeof parseVerifiedInboxEntry>>(null);
@@ -649,6 +666,7 @@ export function InboxEntryStatusPage({ locale, inboxId, onBack, onReview }: {
         <p>{en ? 'Captured' : '收录时间'}: {capturedAtLabel(entry.capturedAt, locale)}</p></div>
         <span className={`capture-status status-${entry.status}`}>{inboxEntryStatusLabel(entry.status, en)}</span></div>
       <p role="status">{en ? 'This is an Inbox state only. It does not mean a Journal, Knowledge, or Project write has completed.' : '这只表示 Inbox 状态，不代表 Journal、Knowledge 或 Project 已完成写入。'}</p>
+      {entry.intent === 'journal_intent' && entry.status === 'completed' && onJournalReview && <button type="button" className="capture-primary" onClick={() => onJournalReview(entry.inboxId)}>{en ? 'Review Journal entry' : '审核并写入 Journal'}</button>}
       {entry.reviewPath && entry.reviewSha256
         ? <button type="button" className="capture-primary" onClick={() => onReview(entry.reviewPath!, entry.reviewSha256!)}>{en ? 'Open Review source with matching version' : '打开版本匹配的 Review 来源'}</button>
         : <p role="status">{en ? 'No version-matched Review source link is available.' : '当前没有提供版本匹配的 Review 来源链接。'}</p>}
@@ -657,11 +675,11 @@ export function InboxEntryStatusPage({ locale, inboxId, onBack, onReview }: {
   </section>;
 }
 
-function InboxScopePage({ locale, scope, onScopeChange, onReview, onOpenDraft }: { locale: Locale; scope: InboxScope; onScopeChange: (scope: InboxScope) => void; onReview: (reviewPath: string) => void; onOpenDraft: (path: string) => void }) {
+function InboxScopePage({ locale, scope, onScopeChange, onReview, onOpenDraft, onJournalReview }: { locale: Locale; scope: InboxScope; onScopeChange: (scope: InboxScope) => void; onReview: (reviewPath: string) => void; onOpenDraft: (path: string) => void; onJournalReview?: (captureId: string) => void }) {
   const en = locale === 'en';
   if (scope === 'capture') return <section className="capture-page" aria-labelledby="inbox-title">
     <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{en ? 'Capture pending' : 'Capture 待处理'}</h1></div><button type="button" className="capture-secondary" onClick={() => onScopeChange(null)}>{en ? 'Change scope' : '更换范围'}</button></header>
-    <ScopedCaptureInbox locale={locale} onReview={onReview} />
+    <ScopedCaptureInbox locale={locale} onReview={onReview} onJournalReview={onJournalReview} />
   </section>;
   if (scope === 'drafts') return <section className="capture-page" aria-labelledby="inbox-title">
     <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> INBOX</p><h1 id="inbox-title">{en ? 'Notes Drafts' : 'Notes Draft 草稿'}</h1></div><button type="button" className="capture-secondary" onClick={() => onScopeChange(null)}>{en ? 'Change scope' : '更换范围'}</button></header>
@@ -676,7 +694,7 @@ function InboxScopePage({ locale, scope, onScopeChange, onReview, onOpenDraft }:
   </section>;
 }
 
-function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (reviewPath: string) => void }) {
+function ScopedCaptureInbox({ locale, onReview, onJournalReview }: { locale: Locale; onReview: (reviewPath: string) => void; onJournalReview?: (captureId: string) => void }) {
   const en = locale === 'en';
   const [items, setItems] = useState<CaptureSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -857,7 +875,7 @@ function ScopedCaptureInbox({ locale, onReview }: { locale: Locale; onReview: (r
     </article>) : <p className="capture-empty">{en ? 'No Capture entries.' : '没有 Capture 条目。'}</p>}</div>
     {detailLoading && <p role="status">{en ? 'Loading selected Capture…' : '正在加载所选 Capture…'}</p>}
     {detailError && <p role="alert" className="capture-alert">{detailError}</p>}
-    {detail && <CapturePreview item={detail} locale={locale} content={detail.content_preview ?? null} error="" onClose={() => { detailController.current?.abort(); detailRevision.current += 1; selectedCaptureId.current = null; setRetrying(false); setDetail(null); setDetailError(''); }} onReview={onReview}
+    {detail && <CapturePreview item={detail} locale={locale} content={detail.content_preview ?? null} error="" onClose={() => { detailController.current?.abort(); detailRevision.current += 1; selectedCaptureId.current = null; setRetrying(false); setDetail(null); setDetailError(''); }} onReview={onReview} onJournalReview={onJournalReview}
       onRetry={detail.status === 'partial_success' ? () => void retryCapture() : undefined} retrying={retrying} />}
   </>;
 }
@@ -1016,7 +1034,7 @@ function isSafeHttpUrl(value: string): boolean {
   catch { return false; }
 }
 
-function CapturePreview({ item, locale, content, error, onClose, onReview, onRetry, retrying = false }: { item: CaptureItem; locale: Locale; content: string | null; error: string; onClose: () => void; onReview: (path: string) => void; onRetry?: () => void; retrying?: boolean }) {
+function CapturePreview({ item, locale, content, error, onClose, onReview, onJournalReview, onRetry, retrying = false }: { item: CaptureItem; locale: Locale; content: string | null; error: string; onClose: () => void; onReview: (path: string) => void; onJournalReview?: (captureId: string) => void; onRetry?: () => void; retrying?: boolean }) {
   const en = locale === 'en';
   const displayFilename = captureDisplayFilename(item, locale);
   const kind = previewKind(item.raw_path);
@@ -1034,7 +1052,7 @@ function CapturePreview({ item, locale, content, error, onClose, onReview, onRet
         {kind === 'audio' && <audio controls preload="metadata" src={url}>{en ? 'Audio playback is not supported by this browser.' : '当前浏览器不支持此音频播放。'}</audio>}
         {kind === 'unsupported' && <p>{en ? 'This file type cannot be previewed here. Download the original file instead.' : '此类型暂不支持站内预览，可下载原件查看。'}</p>}
       </div>
-      <footer><a className="capture-secondary" href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>{item.review_path && <button type="button" className="capture-primary" onClick={() => onReview(item.review_path!)}>{en ? 'View related Review' : '查看对应 Review'}</button>}{onRetry && <button type="button" className="capture-primary" onClick={onRetry} disabled={retrying}>{retrying ? (en ? 'Retrying…' : '重试中…') : (en ? 'Retry selected Capture' : '重试此 Capture')}</button>}<button type="button" className="capture-secondary" onClick={onClose}>{en ? 'Close' : '关闭'}</button></footer>
+      <footer><a className="capture-secondary" href={`/api/inbox/${encodeURIComponent(item.capture_id)}/raw`} download>{en ? 'Download original' : '下载原件'}</a>{item.review_path && <button type="button" className="capture-primary" onClick={() => onReview(item.review_path!)}>{en ? 'View related Review' : '查看对应 Review'}</button>}{onJournalReview && item.status === 'completed' && <button type="button" className="capture-primary" onClick={() => onJournalReview(item.capture_id)}>{en ? 'Review Journal entry' : '审核并写入 Journal'}</button>}{onRetry && <button type="button" className="capture-primary" onClick={onRetry} disabled={retrying}>{retrying ? (en ? 'Retrying…' : '重试中…') : (en ? 'Retry selected Capture' : '重试此 Capture')}</button>}<button type="button" className="capture-secondary" onClick={onClose}>{en ? 'Close' : '关闭'}</button></footer>
     </section>
   </div>;
 }
