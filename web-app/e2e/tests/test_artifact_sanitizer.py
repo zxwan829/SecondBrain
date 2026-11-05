@@ -154,7 +154,7 @@ def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
     config = (E2E / "playwright.config.ts").read_text()
     browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
     assert "runs-on: ubuntu-24.04" in workflow
-    assert "npx playwright install --with-deps chromium" in workflow
+    assert "npx playwright install chromium" in workflow
     assert "screenshot: 'only-on-failure'" in config
     assert "serviceWorkers: 'block'" in config
     assert "ALLOW_FAILURE_SCREENSHOT_PUBLICATION = (" in runner
