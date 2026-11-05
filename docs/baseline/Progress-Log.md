@@ -1,13 +1,21 @@
 # Progress Log
 
+## 2026-11-05 — #30 跨会话真实模型有限 UAT（6 Runs）
+
+- **通道与授权：** 用户确认 SecondBrain 与挂载 Knowledge 仅含测试资料，并允许通过现有 Core→Hermes 执行本次自然检索和 citation 元数据保存；不改 NAS 配置、容器、权限或补丁。活动模型 `zai-org/GLM-4.5-Air`，provider `custom`（SiliconFlow）。共发起 6/10 次获准 Run。本轮仅主动创建并审计虚构标记 `ZetaQuill-7391` 的记录；未主动读取其他记录正文、Secret、Private 或其他目录。用户确认环境内容均为测试资料；但生产 `instructions_for()` 可在正常 Run 中读取/评分已有 active memory，本轮未取得逐 Run 所选上下文，因此其他现存 memory 是否进入模型上下文 **UNKNOWN**。
+- **实际模型结果（观察值，不证明单一记忆因果）：** (1) 保存偏好后，模型确认希望每条清单项以蓝色方块开头；(2) 新会话问“给我写一个 ZetaQuill-7391 的简短清单示例”，模型给出 `□` 方框清单但没有颜色，观察为 **PARTIAL**；(3) 无关火星奥林匹斯山问题正常作答，未提及偏好，观察为 **PASS**；(4) 用户将偏好纠正为清单前缀 `ZETA-STAR-7391`，模型确认新值替换旧值，观察为 **PASS**；(5) 新会话问同类清单项，模型实际以 `ZETA-STAR-7391:` 开头，观察为 **PASS**；(6) 撤销后新会话再问，模型表示缺少 ZetaQuill 上下文并请求说明，没有复述旧值或新值，观察为 **PASS**。这些输出是否由本轮目标记忆单独导致均 **UNKNOWN**，因为未取得逐 Run 选中上下文；冲突处理未运行。
+- **存储核验：** 仅筛选唯一合成标记对应的记忆事件并输出元数据：3 条、同一记录 revision 1/2/3，operation `create → correct → revoked`，最终状态 revoked；没有读取或输出其他行正文。撤销后无 active 版本。
+- **用量与费用：** 生产 Chat UI/Core 当前未向本次可见结果暴露逐 Run input/output token usage；账户余额/账单未读取。活动模型供应商页面列示 `$0.14/M` 输入、`$0.86/M` 输出，但缺少实际 token 数，故实际用量与费用 **UNKNOWN**；不以公开单价或估算冒充账单。只确认 6 个用户发起 Run，未从 API 取得 provider 内部可能的附加计费请求数。
+- **结论与范围：** #30 真实模型观察 **PARTIAL**：输出层面纠正、纠正后召回、无关过滤、撤销符合预期；原始偏好漏了颜色，冲突测试未执行。因逐 Run memory context 未记录，不能把这些观察归因于目标记忆本身。未改代码或生产配置、未部署、未主动读取 Secret/Private 或其他记录正文；App/Hermes 保持原配置。用户已明确允许本轮 Knowledge 检索，PR #285 原“需另行授权”的阻断已解除。
+
 ## 2026-11-05 — #30 独立合成 JSONL 测试隔离（无生产/无模型）
 
 - **固定开发基线：** GitHub `main` `10bf24bd8a182c80bb6513a5dca6b521bdf6f2ea`。生产最近记录 revision 为 `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；该 revision 与 main 的 Core runtime source diff 为空，本次未改生产运行代码。此前 PR #283 已将 `0/10` Run 与数据隔离阻断正式记录。
 - **隔离入口：** 复用 `create_app()` 已有 `SB_PERSONAL_MEMORY_ROOT` 启动注入，不新增运行时配置或第二记忆源。集成测试在 `tempfile` 下预先创建权限 `0700` 且初始为空的 `isolated-uat/40-Memory`，使用 `patch.dict(..., clear=True)` 设置全部测试环境，之后才构造 Core；`app.state.personal_memory_store.root` 精确等于该临时根。测试在 Core 初始化前包装 `PersonalMemoryStore._read_events_unlocked`，逐次校验其 `self.path` 解析结果都位于该临时根，覆盖构造后的读取、写操作校验和 Chat 相关性筛选；唯一被读取的 JSONL 路径为该根下的 `personal-memory.jsonl`。
 - **请求链与数据断言：** 经真实 FastAPI Core `/api/personal-memory` create/correct/revoke、`/api/chat/sessions` 和 `/api/chat/sessions/{id}/runs` 路由；只使用一条虚构 `ZetaQuill-7391` 偏好，事件文件仅 3 条、同一 memory ID、操作序列 create→correct→revoked。实际 Core BFF→HermesAPI 的 `/v1/runs` 请求由本地 `httpx.MockTransport` 截获（没有真实 Hermes 或模型请求）：相关请求 payload 恰含一条合成记忆；无关问题、撤销后的问题没有 `instructions`；纠正后仅含新文本，不含旧值。缺失 `SB_PERSONAL_MEMORY_ROOT` 或指向不存在目录时 `create_app()` 启动失败，测试未产生任何 `/v1/runs` 请求。
 - **验证：** 隔离记忆相关测试此前为 **65 passed**。首次 GitHub Linux 完整 Core suite 暴露两处既有 Activity 测试断言遗漏已存在的 `review`、`promote` 来源；按 API 当前精确顺序更新来源期望，并让原六个可撤销来源的 I/O 计数只针对已仪表化存储。无生产逻辑变化、未删除断言。修正后本地完整 Core suite **657 passed、5 skipped、59 subtests passed**；隔离记忆及两处 Activity 集成定向组合 **67 passed**。`git diff --check` 通过。由于仅测试/文档改动，不需生产部署；无真实 Session/Memory 数据访问、Run、费用或配置变更。
-- **模型与计费预检方案：** 本任务禁止生产访问，故现行 model ID、provider 账户余额仍 `UNKNOWN`。后续经单独授权时，优先从脱敏的 Hermes model selector/status 元数据取得 exact model/provider；单价从该 provider 官方价目页核对；每个获准 Run 记录精确 usage/token 与 Run 数，调用失败/重试/额外模型调用均计数并按预算立即停。仅当账户余额可从无 Secret 的只读余额界面/接口确认时记录，否则标 `UNKNOWN`；公开费率与 Core 本地软预留均不是供应商硬费用上限。
-- **下一步边界：** 本测试证明隔离 Core 实例可将单条合成 JSONL 记忆传递到 Mock Hermes 请求，不证明真实模型采用或生产链隔离。生产行为保持旧路径不变；增量独立复审 PASS，PR 当前头的 GitHub Linux 完整 Core suite PASS。PR 合并后先完成无 Secret 的模型/provider/账户余额与 usage 可见性核验、官方单价核对及独立合成 JSONL→Hermes 通道确认；如果无需生产变更，再按既有最多 10 次 Run 授权限定范围。此前 Run 授权仍未使用，本子任务不调用模型。
+- **模型与计费通道预检（只读静态证据）：** 当前有效 model ID、provider、账户余额和实际 usage 仍 `UNKNOWN`。`web-app/secondbrain-core/.env.example` 仅声明 Compose 内 `SB_HERMES_API_URL=http://hermes:8642` 与只读 Secret 文件路径模板；D078 config fragment 不选择 Chat 模型。Core `HermesAPI.capabilities()` 只取 `/v1/capabilities`，`get_run()` 的输出字段白名单不含 `usage`；SSE 虽透传事件，但仓库无证据证明实时 Chat 流包含可核验 provider 账单数据。唯一历史真实模型元数据见 Issue #30 comment `6228113053`：2026-10-17 一个旧 Run 记录 `zai-org/GLM-4.5-Air`、Provider `custom`，该 Run token/费用 UNKNOWN，不代表当前模型。现有 `.github/workflows/d077-hermes-live.yml` 是手动历史实验：跑官方 Hermes 临时容器并由 runner proxy 直连 SiliconFlow，脚本固定 `deepseek-ai/DeepSeek-V4-Flash`，直接调 Hermes `/v1/runs` 而非 Core BFF；最多 15 个合成 turn/60 provider requests，启用 background review，本地 `$0.22` 是估算软限而非供应商硬限额。它不满足当前≤10 Run 限额，也不验证 Core 真实链路；本轮未执行。
+- **下一步边界：** PR #284 已合并（`ec053b46913cbd9d80a46da5f983b1419c144b72`）；隔离 Core→Mock Hermes PASS 不证明真实模型采用。当前缺少无需生产访问的有效模型/provider 与账户 usage 元数据，也没有现成的 Core→真实 Hermes 非生产路径。唯一后续为一次性读取当前生效模型/provider 的非秘密字段及 provider 余额/usage 摘要；获得授权前不进 NAS/生产、不读 Secret、不调用模型。确认模型后核对官方单价，再决定既有≤10 Run授权能否在隔离 Core→Hermes链路中安全使用。
 
 ## 2026-11-05 — #30 真实模型跨会话记忆验收预检（未发起 Run）
 
@@ -16,6 +24,14 @@
 - **真实阻断：** `web-app/secondbrain-core/secondbrain_core/modules/personal_learning.py` 的 `instructions_for()` 在每次 Chat Run 中先调用 `store._read_events()` 读取事件流，再用原始记忆正文对最多 20 条 active 记录打分；匹配项会放入 Hermes `instructions`。`personal_memory.py::active_view()` 自身也读取完整事件流；现有 Chat Run 没有精确 memory-ID allowlist。故仅使用唯一 UAT 前缀不能保证其他既有记忆正文不被该生产链路读取/评分或被选中发送。Issue 指令要求无法保证时先停，故在付费 Run 和生产写入前停止；未打开会展示全量记忆的页面，也未查询现有 Memory。
 - **计费预检：** 历史资料曾记录 Hermes 默认 `zai-org/GLM-4.5-Air` / SiliconFlow，但本次安全 metadata 未提供实时有效 model 或账户余额，不能当作当前确认。供应商公开页当前列示 GLM-4.5-Air 输入 `$0.14/M`、输出 `$0.86/M`；这只能作单价参考，不能证明生产当前模型、账户可用余额、单次实际 tokens 或账单。
 - **状态与下一步：** 跨会话真实模型验收 `BLOCKED_BEFORE_RUN`，分项均 `NOT RUN`：保存与回读、自然召回/模型采用、无关过滤、纠正、撤销、冲突处理。恢复前需先有可验证的单记录范围控制，并单独完成有效模型/计费元数据预检；不得放宽其他记忆隔离。没有修改代码或生产配置。
+
+## 2026-11-05 — #30 PMO 更正后的现有模型通道预检（Knowledge 边界待授权）
+
+- **裁定更正：** Issue #30 comment `6659497939` 明确撤回先前要求的独立 JSONL 根/白名单前置；用户确认项目尚未投入正式使用，NAS 为开发/部署/验收环境且没有业务数据。保留 PR #284 的隔离测试，不再扩建隔离层。本条记录更正后事实，不抹除上一条 `BLOCKED_BEFORE_RUN` 的历史。
+- **运行与计费：** 经 SSH 只读取 SecondBrain App/Hermes 的目标容器状态、App 镜像 tag、Hermes 活动配置的 `model.default` / `model.provider` / endpoint host。App tag 标识 `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Hermes 为 `zai-org/GLM-4.5-Air`、`custom`、`api.siliconflow.cn`。SiliconFlow [官方型号页](https://www.siliconflow.com/models/glm-4-5-air) 当前列示输入 `$0.14/M tokens`、输出 `$0.86/M tokens`。Core `HermesAPI.get_run()` 固定字段白名单不含 `usage`；SSE 是原样转发，现阶段没有取得余额或逐 Run 账单证据。费率用于按 usage 估算，不能当作账户余额/硬限额。未读 Secret、Cookie 或其他配置字段。
+- **数据边界预检：** 只从 `/var/lib/secondbrain-core/personal-memory/personal-memory.jsonl` 读取所需审计元数据，不输出/查看记忆正文：共 2 个 memory、2 个 `create` 事件，来源 `user_message`，类别 `preference`、状态 `active`、fact kind `user_stated`，最晚时间 `2026-10-17T01:32:48Z`；没有显式 `test`/`uat` source_ref 标记。依据用户确认的环境阶段，继续按未投入业务使用处理；后续仅操作本轮唯一虚构 UAT 记录，不查询旧记忆正文。NAS 运行容器/配置/挂载/权限未修改。
+- **真实链路阻断与纠正：** 用户在既有 Edge 完成登录；转到 `/chat/blank` 后未创建 Session。代码核验发现每个已认证 Chat Run 在启动 Hermes 前都会按输入调用 `knowledge_store.chat_recall()`（限 3 条、单条 8 KiB、总计 16 KiB），并将已验证引用的路径/标题/哈希写入本地 citation store；正文不进入 Hermes `run_body`。`/chat/blank` 只不加载普通会话列表，不隔离该后端检索。Issue #30 PMO 未授权读取 Knowledge，故在新授权前不运行真实模型。另一次 CUA 登录后状态观察自动返回 Home 的完整 accessibility tree，意外暴露了超出本任务范围的 Home 内容；未再访问或复述、未作为证据。这是执行范围失误，已停止扩大访问并如实记录。
+- **状态与最小决策：** 真实 Run `0/10`、费用 `0`、无测试 Session/Memory 写入、无配置/容器变更。继续使用现有 Core→Hermes 链路需用户明确允许：最多 10 个虚构提示触发 Core 对 Knowledge 的有界本地只读检索，并允许新合成 Run 的 citation store 保存命中条目的路径/标题/哈希；Knowledge 正文不发送给模型或输出。若不允许，当前无不修改生产权限/代码而跳过 Knowledge 的正式 Chat Run 路径。Private/Vault/Notes/Journal 等仍排除，实际 usage/费用若运行后不能从 SSE/账户元数据取得则标 UNKNOWN。
 
 ## 2026-11-05 — PR #277 生产 Notes / Journal 合成 UAT（部分通过）
 

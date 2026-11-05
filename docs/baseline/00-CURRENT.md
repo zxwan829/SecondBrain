@@ -27,7 +27,7 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|---|
 | App Shell / 登录与路由 | main 有 Shell、鉴权与路由实现 | HTTPS `/health`、`/`、`/login`、`/notes` 为 200；匿名 session、Tasks、Capture summary、Knowledge search、Promote API 均为 401；用户已在 2026-11-04 登录并完成部分真实页面操作 | 本轮有限登录旅程通过；未覆盖所有模块/路由，完整跨页体验仍待验收 |
 | Home | main 有 Home 页面与部分聚合 | HTTPS `/` 返回 200；未认证浏览器不执行 App 内容聚合 | 动态 Home 完整聚合未验收；首次从 `/` 登录会读取聚合数据，体验时可直接打开目标模块 |
-| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；PR #32 已修复情境偏好截断；合成 Core JSONL→相关性选择→Hermes `/v1/runs` 请求传递通过；D077 Companion 仅部分实现 | 最近文档记录 App revision `7272b738`、App→Hermes health 200；本轮不复核生产；此前基础真实 Chat 回复及刷新恢复 PASS（发生于旧 revision `d06e3f3b`）；#269/#274 Ubuntu Chromium 工程 Gate PASS | 人工视觉 UAT `USER_WAIVED / NOT RUN`；真实模型是否采用跨会话记忆、纠正后的真实回答和 Companion 仍 NOT RUN/未验收 |
+| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；PR #32 已修复情境偏好截断；合成 Core JSONL→相关性选择→Hermes `/v1/runs` 请求传递通过；D077 Companion 仅部分实现 | App revision `7272b738`；本轮沿现有 Core→Hermes 完成 6 次合成真实模型 Run；详见本节与 Progress Log | #30 真实模型行为观察为 PARTIAL：无关问题未提及偏好、纠正后回答使用新值、撤销后未复述偏好，初始自然召回缺颜色；因未记录逐 Run 注入上下文，目标记忆因果归属 UNKNOWN；冲突处理未运行。人工视觉 UAT `USER_WAIVED / NOT RUN` |
 | Today / Calendar / Journal / Task | main 有页面/API 的部分实现；显式 Task API 与持久化实现存在 | 用户于 2026-11-04 实测 Task 创建、完成及恢复；PR #277 Journal 生产合成日写入两条不同 key 的记录并刷新/API 回读通过 | Notes/Journal 合成 UAT 部分通过；生产同 key replay NOT RUN，真实数据/用户验收未通过；完整 Calendar 未验收 |
 | Capture：文本 / Markdown / TXT | main 有 Raw→Review 路径及文本入口；`/inbox` 使用显式 Capture/Notes scope | 用户已用合成内容验证文本 Capture→Inbox→Review 保存、回读、关联及刷新持久化；Linux Chromium Inbox capture/retry/source-protection 三视口通过；#269 未改该旅程代码 | 仅限上述文本 Capture 旅程；附件、URL 和 Promote 未验收/不在本次操作范围 |
 | Capture：URL / Web | main 有抓取与 Review 路径 | 本轮未提交 URL 或读取 Raw/Review 数据 | 多站点、失败恢复和用户流程仍未完整验收 |
@@ -90,9 +90,9 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 ## 唯一 NEXT
 
-**已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上；新版 UI 的工程浏览器 Gate 已 PASS，但人工视觉 UAT 为 `USER_WAIVED / NOT RUN`，不得记为 `USER_UAT_PASS`。#30 跨会话记忆、Companion、真实 Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
+**已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上；新版 UI 的工程浏览器 Gate 已 PASS，但人工视觉 UAT 为 `USER_WAIVED / NOT RUN`，不得记为 `USER_UAT_PASS`。#30 跨会话有限真实模型 UAT 于 2026-11-05 部分通过（6 Runs），细节与限制见下；Companion、冲突处理及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
-**唯一 NEXT（#30 独立 JSONL 隔离已实现；真实模型验收仍未运行）：** PR #284 将既有 `SB_PERSONAL_MEMORY_ROOT` 接入独立合成 Core 实例；在 Core 启动前建立空临时根，实际 Core 记忆 API 与 `/api/chat/.../runs` 仅使用该 JSONL，BFF→HermesAPI 请求由本地 MockTransport 截获。相关/无关请求、纠正、撤销及缺失/无效范围 fail-closed 均有断言；没有新增正式记忆源、生产运行代码或生产访问。首次 GitHub Core suite 失败的两项是既有 Activity 测试未包含已实现的 `review`、`promote` 来源；已更新精确来源期望，保留六项可撤销来源的先读后拒绝计数。此前最多 10 次付费 Run 授权保持 10/10 未使用；本子任务未访问生产、未部署、未调用模型。模型 ID/provider 及账户余额仍 UNKNOWN。PR 合并后唯一后续工作是先做无 Secret 的实际模型/provider 与账户余额/usage 可见性预检、核对 provider 官方单价，并确认能在独立合成 JSONL 环境连接受控 Hermes 模型通道；再按现存 Run 授权和明确范围决定是否开展真实模型验收。公开单价或本地软预算不是硬费用上限；若该通道必须使用生产数据/配置或写入生产，另行提交影响与回滚方案并先获授权。PR #277 Notes/Journal UAT 仍 `PARTIAL`；Hermes、Core JSONL 权威与生产配置保持不变。Promote/Writer/Weixin 关闭，VNext 保持 FROZEN。
+**唯一 NEXT（#30 有限真实模型 UAT 结果确认）：** 6/10 次授权 Run 的回答观察、撤销状态及 token/费用未知项已记录于本文件和 Progress Log。首次清单回答没有体现颜色；纠正后的回答使用新标记；撤销后未复述新旧值；无关问题未提及偏好。**因现有运行管道可在每次 Run 中读取/评分其他 active memory，而本轮没有审计这些旧记录正文或逐 Run 的最终注入上下文，目标记忆对各回答的因果归属 UNKNOWN；本轮只核验了新建合成记忆的 create/correct/revoked 事件。** 冲突处理未运行，实际 usage/费用 UNKNOWN，故 #30 整体 `PARTIAL`。PR #285 已更新最终证据，待普通文档 PR 复审/门禁收口。**唯一后续决策：** 用户决定是否接受当前结果，或授权使用剩余 4 次额度，在不读取/输出其他记录正文的前提下先用最窄可行方式记录选中上下文，再复验冲突和自然遵循；决定前不再调用模型。PR #277 Notes/Journal UAT 仍 `PARTIAL`；Promote/Writer/Weixin 关闭，VNext 保持 FROZEN。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
@@ -103,7 +103,7 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 1. [#261 Knowledge 文件夹与标签筛选](https://github.com/zxwan829/SecondBrain/issues/261) — 仅隔离开发；候选分支的 CI 未通过，Chromium Gate 未运行，尚无 PR；不得合入或接触真实 Vault。
 2. [#74 Inbox 请求范围隔离风险](https://github.com/zxwan829/SecondBrain/issues/74) — 范围隔离修复 PR #79 已合入，包含于当前生产 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Linux 合成浏览器通过，未登录读取生产 Inbox；Issue 保持开放至用户验收。
 3. [#75 M1 幂等重放与浏览器请求证据](https://github.com/zxwan829/SecondBrain/issues/75) — 历史生产证据缺口尚未重新核验；任何生产复测需单独授权。
-4. [#30 跨会话记忆召回故障](https://github.com/zxwan829/SecondBrain/issues/30) — 根因/真实链路仍未确认；任何模型或生产复测按单独授权执行。
+4. [#30 跨会话记忆召回故障](https://github.com/zxwan829/SecondBrain/issues/30) — 合成真实模型 UAT 部分通过；初始偏好自然召回遗漏颜色、冲突场景未测，详见本轮记录。
 5. [#78 Review→Promote 安全闭环](https://github.com/zxwan829/SecondBrain/issues/78) — 仅记录剩余设计/隔离实现；生产 Writer、Promote 与真实 Knowledge 写入需单独授权。
 6. [#46 Markdown 可视化编辑器](https://github.com/zxwan829/SecondBrain/issues/46) — 保留既有产品目标，先明确低风险、可回滚的范围与用户验收。
 7. [#260 VNext 工作台产品基线与隔离原型](https://github.com/zxwan829/SecondBrain/issues/260) — 产品讨论/原型冻结入口；不表示批准整站替换或生产切换。
@@ -120,7 +120,7 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 - GitHub main、生产代码和用户验收分开记录：PR #277 固定源码 SHA `7272b738` 已部署并通过运行门禁；生产合成 Notes/Journal UAT 为 `PARTIAL`（Journal 同 key replay NOT RUN），真实业务数据与用户 UAT 仍 `NOT RUN`。本轮另发生可访问性快照显示既有业务摘要/列表标题的读取范围偏差，详情见本阶段状态和环境记录。#269/#274 工程浏览器 Gate PASS，用户明确放弃旧版 Chat UI 人工视觉验收，状态 `USER_WAIVED / NOT RUN`。PR #279 与本轮状态记录只更新文档，不改变生产 App image。
 - #261 远端隔离分支的 CI 失败（Actions #41334785303 有 4 项旧/待核断言失败）；尚无 PR，Chromium Gate 未运行，不能合并。
-- #74 的安全范围修复已合并并部署，剩余用户验收未完成；#30 真实模型记忆故障和 #78 生产审批边界仍未解除。
+- #74 的安全范围修复已合并并部署，剩余用户验收未完成；#30 首次自然召回仅部分遵循且冲突场景未测；#78 生产审批边界仍未解除。
 - D084 历史浏览器业务验收仍无新证据（旧宽范围 Issue #44 已按未计划关闭，不是验收完成）。
 - 新版 Chat UI 用户视觉验收、真实 Vault/Private 检查、OS 权限和安全架构变更均未执行；Chat UI 人工验收 `USER_WAIVED / NOT RUN`。#269 部署于 2026-11-04 完成，#274 App-only 更新于 2026-11-05 完成。Notes/Journal 隔离测试不构成生产写入或真实业务数据验收。
 
