@@ -219,6 +219,20 @@ def test_failure_diagnostic_can_include_bounded_notes_collection_statuses():
         module._validate_failure_diagnostics([diagnostic])
 
 
+def test_failure_diagnostic_can_include_bounded_note_item_read_failure():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_reopen", "code": "assertion_failed",
+                  "assertion_id": "notes_readback", "activity_get_statuses": [200],
+                  "notes_item_read_statuses": [403], "notes_readback_failure": "note_file_permissions_unsafe"}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_item_read_statuses"] = [600]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["notes_item_read_statuses"] = [403]
+    diagnostic["notes_readback_failure"] = "raw error text"
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
 def test_failure_diagnostic_can_include_bounded_daily_brief_get_statuses():
     diagnostic = {"viewport": "mobile-390x844", "stage": "daily_brief_read", "code": "timeout",
                   "assertion_id": "daily_brief_saved_readback", "activity_get_statuses": [200, 403],

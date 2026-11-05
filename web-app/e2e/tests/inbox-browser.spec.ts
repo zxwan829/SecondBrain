@@ -270,6 +270,7 @@ async function configurePage(page: Page) {
   let dailyBriefPostCount = 0;
   let lastDailyBriefBody: Record<string, unknown> | null = null;
   let activityReadRevoked = false;
+  let notesReadbackFailure: string | null = null;
   let failureStage: FailureStage = 'login';
   let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
@@ -420,10 +421,25 @@ async function configurePage(page: Page) {
       && request.path === '/api/activity').map((request) => request.status).slice(-4); },
     get notesCollectionReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/notes').map((request) => request.status).slice(-4); },
+    get notesItemReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && /^\/api\/notes\/drafts\/<opaque-id>$/.test(request.path)).map((request) => request.status).slice(-4); },
+    get notesReadbackFailure() { return notesReadbackFailure; },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
+    setNotesReadbackFailure(detail: unknown) {
+      const known: Record<string, string> = {
+        'App session required': 'session_required',
+        'Action is not enabled': 'action_not_enabled',
+        'Draft directory permissions are unsafe': 'draft_directory_permissions_unsafe',
+        'Directory permissions are unsafe': 'directory_permissions_unsafe',
+        'Note file permissions or size are unsafe': 'note_file_permissions_unsafe',
+        'Note could not be opened safely': 'note_open_rejected',
+        'Note not found': 'note_not_found',
+      };
+      notesReadbackFailure = typeof detail === 'string' ? known[detail] ?? 'other' : 'other';
+    },
     setActivityReadRevoked(revoked: boolean) { activityReadRevoked = revoked; },
   };
 }
@@ -1075,6 +1091,10 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('notes_readback');
     await page.getByRole('button', { name: syntheticNoteBody, exact: true }).click();
     const readNoteResponse = await readNoteResponsePromise;
+    if (readNoteResponse.status() !== 200) {
+      const payload = await readNoteResponse.json().catch(() => ({})) as { detail?: unknown };
+      observed.setNotesReadbackFailure(payload.detail);
+    }
     expect(readNoteResponse.status(), 'notes_readback').toBe(200);
     await expect(page.locator('.ProseMirror')).toContainText(syntheticNoteBody);
     if (viewport.name === 'desktop-1440x1000') {
@@ -1262,6 +1282,8 @@ test.afterEach(async ({ page }, testInfo) => {
       assertion_id: observed?.diagnosticAssertion ?? 'test_setup',
       activity_get_statuses: observed?.activityReadStatuses ?? [],
       notes_collection_statuses: observed?.notesCollectionReadStatuses ?? [],
+      notes_item_read_statuses: observed?.notesItemReadStatuses ?? [],
+      notes_readback_failure: observed?.notesReadbackFailure ?? null,
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }

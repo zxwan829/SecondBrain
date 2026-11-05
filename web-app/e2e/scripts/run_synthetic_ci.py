@@ -239,9 +239,12 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
     seen_viewports = set()
     for entry in value:
         base_keys = {"viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
-        allowed_shapes = {frozenset(base_keys), frozenset(base_keys | {"notes_collection_statuses"}),
-                          frozenset(base_keys | {"daily_brief_get_statuses"}),
-                          frozenset(base_keys | {"notes_collection_statuses", "daily_brief_get_statuses"})}
+        optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
+                         "notes_item_read_statuses", "notes_readback_failure")
+        allowed_shapes = {
+            frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
+            for mask in range(1 << len(optional_keys))
+        }
         if not isinstance(entry, dict) or frozenset(entry) not in allowed_shapes:
             raise RuntimeError("failure diagnostic fields rejected; upload withheld")
         viewport = entry["viewport"]
@@ -250,6 +253,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         assertion_id = entry["assertion_id"]
         activity_statuses = entry["activity_get_statuses"]
         notes_statuses = entry.get("notes_collection_statuses", [])
+        notes_item_statuses = entry.get("notes_item_read_statuses", [])
+        notes_readback_failure = entry.get("notes_readback_failure")
         brief_statuses = entry.get("daily_brief_get_statuses", [])
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
@@ -261,6 +266,15 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(notes_statuses, list) or len(notes_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in notes_statuses)
+                or not isinstance(notes_item_statuses, list) or len(notes_item_statuses) > 4
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in notes_item_statuses)
+                or (notes_readback_failure is not None and (
+                    not isinstance(notes_readback_failure, str) or notes_readback_failure not in {
+                        "session_required", "action_not_enabled", "draft_directory_permissions_unsafe",
+                        "directory_permissions_unsafe", "note_file_permissions_unsafe", "note_open_rejected",
+                        "note_not_found", "other",
+                    }))
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in brief_statuses)
@@ -271,6 +285,10 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                       "assertion_id": assertion_id, "activity_get_statuses": activity_statuses}
         if "notes_collection_statuses" in entry:
             normalized["notes_collection_statuses"] = notes_statuses
+        if "notes_item_read_statuses" in entry:
+            normalized["notes_item_read_statuses"] = notes_item_statuses
+        if "notes_readback_failure" in entry:
+            normalized["notes_readback_failure"] = notes_readback_failure
         if "daily_brief_get_statuses" in entry:
             normalized["daily_brief_get_statuses"] = brief_statuses
         validated.append(normalized)
@@ -358,9 +376,12 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
             except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
                 raise RuntimeError("failure diagnostic JSON rejected; upload withheld") from error
             base_keys = {"schema_version", "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
-            allowed_shapes = {frozenset(base_keys), frozenset(base_keys | {"notes_collection_statuses"}),
-                              frozenset(base_keys | {"daily_brief_get_statuses"}),
-                              frozenset(base_keys | {"notes_collection_statuses", "daily_brief_get_statuses"})}
+            optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
+                             "notes_item_read_statuses", "notes_readback_failure")
+            allowed_shapes = {
+                frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
+                for mask in range(1 << len(optional_keys))
+            }
             if (not isinstance(raw, dict) or frozenset(raw) not in allowed_shapes
                     or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 2
                     or raw.get("viewport") != viewport):
@@ -372,6 +393,10 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
             })
             if "notes_collection_statuses" in raw:
                 diagnostics[-1]["notes_collection_statuses"] = raw["notes_collection_statuses"]
+            if "notes_item_read_statuses" in raw:
+                diagnostics[-1]["notes_item_read_statuses"] = raw["notes_item_read_statuses"]
+            if "notes_readback_failure" in raw:
+                diagnostics[-1]["notes_readback_failure"] = raw["notes_readback_failure"]
             if "daily_brief_get_statuses" in raw:
                 diagnostics[-1]["daily_brief_get_statuses"] = raw["daily_brief_get_statuses"]
 
