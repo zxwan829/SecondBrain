@@ -31,7 +31,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_navigation_link' | 'notes_collections'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
   | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_count' | 'daily_brief_project_label'
-  | 'daily_brief_project_visible' | 'daily_brief_project_source' | 'daily_brief_sources'
+  | 'daily_brief_project_visible' | 'daily_brief_project_click' | 'daily_brief_project_checked'
+  | 'daily_brief_project_source' | 'daily_brief_sources'
   | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
@@ -478,7 +479,9 @@ async function inspectOrCreateDailyBrief(
   expect(observed.dailyBriefPostCount).toBe(0);
 
   await page.getByRole('checkbox', { name: /Task · Synthetic brief task source/ }).check();
+  observed.setDiagnosticAssertion('daily_brief_project_click');
   await projectSourceLabel.click();
+  observed.setDiagnosticAssertion('daily_brief_project_checked');
   await expect(projectSource).toBeChecked();
   await journalSource.check();
   await page.getByLabel(/简报正文/).fill('Synthetic manually approved daily brief');
