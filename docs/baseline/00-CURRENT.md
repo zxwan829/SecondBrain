@@ -92,7 +92,7 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 **已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上；新版 UI 的工程浏览器 Gate 已 PASS，但人工视觉 UAT 为 `USER_WAIVED / NOT RUN`，不得记为 `USER_UAT_PASS`。#30 跨会话有限真实模型 UAT 于 2026-11-05 部分通过（6 Runs），细节与限制见下；Companion、冲突处理及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
-**唯一 NEXT（#30 有限真实模型 UAT 结果确认）：** 6/10 次已授权 Run 的自然召回、无关过滤、纠正、撤销结果及 token/费用未知项已记录于本文件和 Progress Log；PR #285 需同步最终证据并按普通文档 PR 门禁收口。#30 整体 `PARTIAL`：初始偏好没有完整体现颜色，冲突处理未运行。**唯一后续决策：** 用户决定是否接受当前部分结果，或用剩余 4 次授权 Run 继续做冲突场景与偏好自然遵循复验；在该决定前不再调用模型。PR #277 Notes/Journal UAT 仍 `PARTIAL`；Promote/Writer/Weixin 关闭，VNext 保持 FROZEN。
+**唯一 NEXT（#30 有限真实模型 UAT 结果确认）：** 6/10 次授权 Run 的回答观察、撤销状态及 token/费用未知项已记录于本文件和 Progress Log。首次清单回答没有体现颜色；纠正后的回答使用新标记；撤销后未复述新旧值；无关问题未提及偏好。**因现有运行管道可在每次 Run 中读取/评分其他 active memory，而本轮没有审计这些旧记录正文或逐 Run 的最终注入上下文，目标记忆对各回答的因果归属 UNKNOWN；本轮只核验了新建合成记忆的 create/correct/revoked 事件。** 冲突处理未运行，实际 usage/费用 UNKNOWN，故 #30 整体 `PARTIAL`。PR #285 已更新最终证据，待普通文档 PR 复审/门禁收口。**唯一后续决策：** 用户决定是否接受当前结果，或授权使用剩余 4 次额度，在不读取/输出其他记录正文的前提下先用最窄可行方式记录选中上下文，再复验冲突和自然遵循；决定前不再调用模型。PR #277 Notes/Journal UAT 仍 `PARTIAL`；Promote/Writer/Weixin 关闭，VNext 保持 FROZEN。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
