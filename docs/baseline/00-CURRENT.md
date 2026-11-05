@@ -15,7 +15,7 @@ source: GitHub SecondBrain Monorepo
 - **最近已核验生产快照：** 2026-11-04 App 已运行 revision `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`、Image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`、running/healthy；Compose SHA-256 为 `3c9b1892d5a0f155050055545789c910f63db6a910007ee1a8c1b6436ee61c77`。#269 部署只变更 App image；Hermes 容器、镜像和启动时间保持不变。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-04 部署后实测）：** Promote=false、App Knowledge 挂载只读、Private 未挂载；App UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`，两个 Secret 文件只读挂载。Compose 除 App image 外未改。Hermes 安全边界未变。详情见 `Environment-Baseline.md`。
 - **开发阶段：** V1 首轮体验收口。#269 已部署，等待用户验收新版 Chat UI；VNext 保持冻结。
-- **PR #274 工程验收：** Daily Brief 合成旅程的 Journal 请求断言已按页面阶段改为基线计数；完整 Ubuntu 24.04 Chromium Gate [Actions #41967382741](https://github.com/zxwan829/SecondBrain/actions/runs/41967382741) 在 PR HEAD `d2e99ee5c7fc36c6ec32c0855903f392ed1ddf6c` 通过，独立审查 PASS。PR #274 尚待合并；未部署生产。此工程 Gate 不替代新版 Chat UI 用户验收。
+- **PR #274 工程验收：** Daily Brief 合成旅程的 Journal 请求断言已按页面阶段改为基线计数；含状态记录的最新 PR HEAD `9de2c5db8c3095e12c18663b2d0dbbdf5290f81d` 通过完整 Ubuntu 24.04 Chromium Gate [Actions #41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277)，独立审查 PASS。PR #274 已合并，merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704`；未部署生产。此工程 Gate 不替代新版 Chat UI 用户验收。
 - **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / NEW_UI_USER_UAT_PENDING`。PR #269 合并、Linux 三视口 Gate、精确 SHA 候选构建和隔离启动均 PASS，2026-11-04 已完成 App-only 部署及运行健康/安全核验。此前有限真实模型 Chat 回复和刷新恢复由用户在旧 UI 完成；新版 UI 生产体验尚未执行。Task 与 Capture→Inbox→Review 的既有有限旅程状态保留；跨会话记忆及其他 V1 业务仍未验收。
 
 ## 能力状态
