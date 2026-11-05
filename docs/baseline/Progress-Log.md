@@ -1,5 +1,12 @@
 # Progress Log
 
+## 2026-11-05 — PR #277 App-only NAS 部署与验证
+
+- **固定目标与候选：** PR #277 merge SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Ubuntu Chromium Gate [#42007023705](https://github.com/zxwan829/SecondBrain/actions/runs/42007023705) PASS，固定 SHA 构建 [#42009466695](https://github.com/zxwan829/SecondBrain/actions/runs/42009466695) SUCCESS。Artifact digest 与下载内容匹配；App-only 镜像归档内部 SHA-256 `caa8829243d4cd1a85e2730ee963559bdb8ef3e7998aab2a892f7c1cff2d50ef`，image ID `sha256:d73bb0fb73b77a728c4f6eecde44c8309695abb573e00048c6ba3affb50fc1e1`、平台 `linux/amd64`、revision 与 SHA 一致。NAS 仅加载 App 镜像。
+- **部署与回滚材料：** 部署前 Compose SHA `21fcb91e6b4233ef7a680fa4cfe16577b8c43f266d577ee2da0b2be11390c520` 已即时备份并逐字节哈希匹配，快照在受限目录。目标 Compose 结构化比较确认只变 App image；部署后 Compose SHA `f5760550d5d9fe197cd58bd07c77bc178fb04fec27a9e990342d642530ace020`。若需恢复，仅将该快照还原并对 App 指向已保留的 `268ccae` 镜像执行定向重建；不回滚数据或触碰 Hermes。未演练回滚。
+- **生产验证：** App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`，Image ID 与候选一致，running/healthy、RestartCount 0。`/health`、`/`、`/login`、`/notes` 均 200；匿名 Session/Notes/Journal API 均 401；App→Hermes health 200。Knowledge RO、Private 未挂载、Promote=false、Notes 授权根 `{}`、Journal/Notes 根仍为既有独立 `0700` Core-state 子目录。Hermes 容器 ID、镜像、启动时间未变化，其他容器未重建。
+- **范围边界：** 未读写真实 Notes/Journal/Knowledge/Private 数据，未调用模型；未改变挂载、权限、Secret、端口或服务拓扑。Journal 是 Core-state JSONL，未证明与 Obsidian `50-Journal` 同步。部署/运行 Gate 通过不等于真实 Notes/Journal 用户验收，仍为 NOT RUN。
+
 ## 2026-11-05 — Notes 保存与 Journal 追加隔离工程闭环（PR #277）
 
 - **Notes：** 复用现有受控 Drafts API 与真实 Core+Web 合成浏览器旅程，三视口均新建 Draft、保存编辑并刷新后重新读取一致；已有前端失败/版本冲突用例确认失败时保留输入且不报成功。未授权任何真实 Vault collection。
