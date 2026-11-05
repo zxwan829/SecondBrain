@@ -455,7 +455,9 @@ async function inspectOrCreateDailyBrief(
     observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
     observed.setDiagnosticAssertion('daily_brief_project_source');
-  await expect(page.getByRole('checkbox', { name: /Synthetic brief project source/ })).toBeVisible();
+  const projectSource = page.locator('label').filter({ hasText: 'Synthetic brief project source' }).locator('input[type="checkbox"]');
+  await expect(projectSource).toHaveCount(1);
+  await expect(projectSource).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
@@ -469,7 +471,7 @@ async function inspectOrCreateDailyBrief(
   expect(observed.dailyBriefPostCount).toBe(0);
 
   await page.getByRole('checkbox', { name: /Task · Synthetic brief task source/ }).check();
-  await page.getByRole('checkbox', { name: /Project · Synthetic brief project source/ }).check();
+  await projectSource.check();
   await journalSource.check();
   await page.getByLabel(/简报正文/).fill('Synthetic manually approved daily brief');
   await page.getByLabel('分类（逗号分隔）').fill('合成验收');
