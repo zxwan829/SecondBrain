@@ -120,7 +120,10 @@ def test_real_core_source_action_grant_revoke_precedes_io_and_recovers(tmp_path,
                                 json={"password": "synthetic-action-revocation-password"})
             assert login.status_code == 200
             activity_url = f"/api/activity?from={day}&to={day}&timezone=UTC"
-            expected_sources = {"journal", "tasks", "projects", "daily_brief", "personal_memory", "capture"}
+            expected_sources = {
+                "journal", "tasks", "projects", "daily_brief", "personal_memory", "capture",
+                "review", "promote",
+            }
             expected_kinds = {"journal", "task", "project", "daily_brief", "personal_memory", "capture"}
             baseline = client.get(activity_url, headers={"Origin": origin})
             assert baseline.status_code == 200, baseline.text
@@ -148,8 +151,11 @@ def test_real_core_source_action_grant_revoke_precedes_io_and_recovers(tmp_path,
                 denied_kind = {"tasks": "task", "projects": "project"}.get(source, source)
                 assert {row["kind"] for row in body["items"]} == expected_kinds - {denied_kind}
                 assert read_calls[source] == before[source]
+                # Review/Promote are configured but not part of this loop's
+                # six session-revocable, individually instrumented stores.
                 for allowed in expected_sources - {source}:
-                    assert read_calls[allowed] == before[allowed] + 1
+                    if allowed in read_calls:
+                        assert read_calls[allowed] == before[allowed] + 1
 
                 restored = client.patch("/api/auth/session/actions", headers={"Origin": origin},
                                         json={"action": action, "granted": True})
