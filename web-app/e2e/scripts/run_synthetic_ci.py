@@ -88,6 +88,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_readback", "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
     "daily_brief_open_prepare", "daily_brief_task_source", "daily_brief_project_source",
+    "daily_brief_project_count", "daily_brief_project_label", "daily_brief_project_visible",
     "daily_brief_sources", "daily_brief_journal_action",
     "daily_brief_journal_source", "daily_brief_preview",
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",

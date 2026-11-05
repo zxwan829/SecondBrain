@@ -30,7 +30,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
-  | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source' | 'daily_brief_sources'
+  | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_count' | 'daily_brief_project_label'
+  | 'daily_brief_project_visible' | 'daily_brief_project_source' | 'daily_brief_sources'
   | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
@@ -456,9 +457,12 @@ async function inspectOrCreateDailyBrief(
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
     observed.setDiagnosticAssertion('daily_brief_project_source');
   const briefSourceChoices = page.locator('input[type="checkbox"]');
+  observed.setDiagnosticAssertion('daily_brief_project_count');
   await expect(briefSourceChoices).toHaveCount(2);
   const projectSource = briefSourceChoices.nth(1);
+  observed.setDiagnosticAssertion('daily_brief_project_label');
   await expect(projectSource.locator('xpath=..')).toContainText('Project · Synthetic brief project source');
+  observed.setDiagnosticAssertion('daily_brief_project_visible');
   await expect(projectSource).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
