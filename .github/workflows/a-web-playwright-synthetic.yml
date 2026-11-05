@@ -47,7 +47,8 @@ jobs:
           npm ci --prefix web-app/e2e
       - name: Install Linux Chromium
         working-directory: web-app/e2e
-        run: npx playwright install --with-deps chromium
+        # Avoid apt repository updates; browser launch below verifies runtime deps.
+        run: npx playwright install chromium
       - name: Run Web regression and type checks
         working-directory: web-app/secondbrain-frontend
         run: |
