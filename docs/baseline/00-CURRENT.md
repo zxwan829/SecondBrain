@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-11-05
+updated: 2026-11-06
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -92,7 +92,9 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 **已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上；新版 UI 的工程浏览器 Gate 已 PASS，但人工视觉 UAT 为 `USER_WAIVED / NOT RUN`，不得记为 `USER_UAT_PASS`。#30 跨会话有限真实模型 UAT 于 2026-11-05 部分通过（6 Runs），细节与限制见下；Companion、冲突处理及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
-**唯一 NEXT（#30 有限真实模型 UAT 结果确认）：** 6/10 次授权 Run 的回答观察、撤销状态及 token/费用未知项已记录于本文件和 Progress Log。首次清单回答没有体现颜色；纠正后的回答使用新标记；撤销后未复述新旧值；无关问题未提及偏好。**因现有运行管道可在每次 Run 中读取/评分其他 active memory，而本轮没有审计这些旧记录正文或逐 Run 的最终注入上下文，目标记忆对各回答的因果归属 UNKNOWN；本轮只核验了新建合成记忆的 create/correct/revoked 事件。** 冲突处理未运行，实际 usage/费用 UNKNOWN，故 #30 整体 `PARTIAL`。PR #285 已于 2026-11-05 合并，merge commit `fd8fadb54dcf981dbd70b124a567ac7c90257e1a`。**唯一后续决策：** 用户决定是否接受当前结果，或授权使用剩余 4 次额度，在不读取/输出其他记录正文的前提下先用最窄可行方式记录选中上下文，再复验冲突和自然遵循；决定前不再调用模型。PR #277 Notes/Journal UAT 仍 `PARTIAL`；Promote/Writer/Weixin 关闭，VNext 保持 FROZEN.
+**阶段收口（工作包 3 / Issue #30）：** PMO 已于 2026-11-06 [正式裁定](https://github.com/zxwan829/SecondBrain/issues/30#issuecomment-6663061801)接受本轮为 `PARTIAL / LIMITED_REAL_MODEL_UAT`，不宣称完整 PASS 或用户验收。实际使用 6/10 次付费 Run：首次自然召回用了方框但遗漏蓝色，无关问题未受偏好干扰，纠正后新会话使用新标记，撤销后不再复述失效偏好。合成记忆有 create→correct→revoked 事件链，最终状态 revoked；逐 Run 注入上下文及因果归属 UNKNOWN，冲突处理 NOT RUN，实际 token usage、账户账单及费用 UNKNOWN。**本轮停止追加 Run，剩余 4 次不再执行，也不自动结转为其他任务授权。** 代码/状态 PR #285、#286 已合并；#30 保留尚未完全验收的项目缺口。
+
+**唯一 NEXT（工作包 4：自然对话与日常记录）：** 用户已明确批准继续非生产开发，以 [Issue #287](https://github.com/zxwan829/SecondBrain/issues/287) 为本包唯一执行入口。Codex 主 Agent 依照 D077/D086 与现有 V1 规格，先核验并复用已有 Chat→Core Inbox 原文收录→独立确认后按日 Journal append，以及自然语言 Task 创建/查询/更新/完成的业务链路；优先修复重复确认、持久化回执、幂等重放、来源/授权隔离及刷新恢复的真实缺口。目标为合成环境的最小代码闭环、定向测试、独立 Review、合格普通 PR 合并与状态更新；当前状态 **已授权开工 / 实施及验收尚未完成**。**不授权**生产 NAS/容器/权限/真实 Vault 变更、付费模型 Run、Obsidian `50-Journal` 同步、Writer/Promote/Weixin 启用或 VNext/BlockSuite 正式集成。PR #277 Notes/Journal 生产合成 UAT 仍 `PARTIAL`、同 key replay `NOT RUN`。Promote/Writer/Weixin 保持关闭，VNext 保持 FROZEN.
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
