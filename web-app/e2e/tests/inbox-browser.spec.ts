@@ -17,6 +17,7 @@ type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
   | 'daily_brief_readback' | 'permission_revocation' | 'post_revocation_navigation'
   | 'notes_navigation' | 'notes_create' | 'notes_edit_save' | 'notes_reopen'
+  | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen'
   | 'notes_blocksuite_open' | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen'
   | 'agent_health' | 'today' | 'journal' | 'calendar' | 'viewport_layout';
 type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
@@ -32,6 +33,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections' | 'notes_blocksuite_open'
   | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
+  | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
   | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source'
   | 'daily_brief_project_count' | 'daily_brief_project_label'
@@ -1110,11 +1112,15 @@ for (const viewport of viewports) {
       // Seed only the isolated synthetic Draft with metadata via the same
       // authenticated Core Notes API, then exercise the real BlockSuite editor.
       const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
+      observed.setFailureStage('notes_frontmatter_seed');
+      observed.setDiagnosticAssertion('notes_frontmatter_seed');
       const seeded = await page.request.put(`${baseUrl}/api/notes/drafts/${createdNote.path}`, {
         headers: { 'If-Match': readNoteResponse.headers()['etag'] ?? '' },
         data: { content: syntheticFrontmatter },
       });
       expect(seeded.status(), 'notes_seed_synthetic_frontmatter').toBe(200);
+      observed.setFailureStage('notes_frontmatter_reopen');
+      observed.setDiagnosticAssertion('notes_frontmatter_reopen');
       await page.reload();
       const frontmatterRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });

@@ -62,7 +62,8 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
     "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
     "agent_health", "today", "journal", "calendar", "notes_navigation",
-    "notes_create", "notes_edit_save", "notes_reopen", "notes_blocksuite_open",
+    "notes_create", "notes_edit_save", "notes_reopen", "notes_frontmatter_seed",
+    "notes_frontmatter_reopen", "notes_blocksuite_open",
     "notes_blocksuite_edit", "notes_blocksuite_reopen", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
@@ -88,6 +89,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "chat_composer_reset", "chat_reload",
     "notes_navigation", "notes_navigation_link", "notes_collections", "notes_create", "notes_save",
     "notes_readback", "notes_readback_payload", "notes_readback_editor_missing",
+    "notes_frontmatter_seed", "notes_frontmatter_reopen",
     "notes_blocksuite_open", "notes_blocksuite_edit", "notes_blocksuite_reopen",
     "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
