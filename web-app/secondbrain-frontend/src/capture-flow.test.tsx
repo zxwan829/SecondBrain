@@ -584,7 +584,7 @@ describe('D075.1 capture interactions', () => {
   it('restores persisted activity after reload and filters it when switching sessions', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
     window.localStorage.setItem('secondbrain.chat.session', 'session-a');
-    const request = vi.fn(async (url: string) => {
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [
         { session_id: 'session-a', title: 'A' }, { session_id: 'session-b', title: 'B' },
       ] });
@@ -861,7 +861,7 @@ describe('D075.1 capture interactions', () => {
 
   it('keeps ordinary chat input on the Hermes run route', async () => {
     window.localStorage.clear(); window.sessionStorage.clear();
-    const request = vi.fn(async (url: string) => {
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
       if (url === '/api/chat/sessions') return ok({ session_id: 'session-synthetic' });
       if (url === '/api/chat/sessions/session-synthetic/runs') return ok({ run_id: 'run-synthetic' });
@@ -990,6 +990,138 @@ describe('D075.1 capture interactions', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     await waitFor(() => expect(request).toHaveBeenCalledWith('/api/chat/sessions/session-task-synthetic/runs', expect.objectContaining({ method: 'POST' })));
     expect(request).not.toHaveBeenCalledWith('/api/tasks', expect.anything());
+  });
+
+  it('answers an explicit today-open Task query from the Task API without starting a Hermes Run', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-task-query' });
+      if (url === `/api/tasks?status=open&due_date=${today}`) return ok({ tasks: [
+        { id: 'a'.repeat(32), title: '准备评审', due_date: today, status: 'open' },
+        { id: 'b'.repeat(32), title: '发送简报', due_date: today, status: 'open' },
+      ] });
+      return ok({ messages: [], activities: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: '查询今天未完成的待办' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText(/准备评审[\s\S]*发送简报/)).toBeTruthy();
+    expect(request).toHaveBeenCalledWith(`/api/tasks?status=open&due_date=${today}`, expect.anything());
+    expect(request.mock.calls.some(([url]) => String(url).includes('/runs'))).toBe(false);
+    expect(request.mock.calls.some(([url, init]) => String(url) === '/api/tasks' && init?.method === 'POST')).toBe(false);
+  });
+
+  it('completes only one exact-title Task and sends an idempotent, session-bound PATCH', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const taskId = 'd'.repeat(32); const updatedAt = '2026-11-05T10:00:00Z';
+    let updateActivity: Record<string, unknown> | null = null;
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-task-complete' });
+      if (url === '/api/tasks?status=all') return ok({ tasks: [{ id: taskId, title: '提交设计稿', due_date: null, status: 'open', updated_at: updatedAt }] });
+      if (url === `/api/tasks/${taskId}` && init?.method === 'PATCH') return ok({ task: { id: taskId, title: '提交设计稿', due_date: null,
+        status: 'completed', updated_at: '2026-11-06T10:00:00Z' }, activity: updateActivity = { event_id: 'task:update-1', operation_id: 'update-1',
+          session_id: 'session-task-complete', kind: 'task', status: 'succeeded', original_text: '请把待办“提交设计稿”标记为已完成',
+          occurred_at: '2026-11-06T10:00:00Z', task_id: taskId, task_title: '提交设计稿', task_status: 'completed' } });
+      if (url === '/api/chat/sessions/session-task-complete/activities') return ok({ activities: updateActivity ? [updateActivity] : [] });
+      return ok({ messages: [], activities: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: '请把待办“提交设计稿”标记为已完成' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText('提交设计稿 · 已完成')).toBeTruthy();
+    const patchCall = request.mock.calls.find(([url, init]) => String(url) === `/api/tasks/${taskId}` && init?.method === 'PATCH');
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({ status: 'completed', expected_updated_at: updatedAt,
+      session_id: 'session-task-complete', original_command: '请把待办“提交设计稿”标记为已完成' });
+    expect(new Headers(patchCall?.[1]?.headers).get('Idempotency-Key')).toBeTruthy();
+    expect(request.mock.calls.some(([url]) => String(url).includes('/runs'))).toBe(false);
+  });
+
+  it('changes the due date only for one exact-title Task and preserves the current version', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const taskId = '7'.repeat(32); const updatedAt = '2026-11-05T12:00:00Z';
+    let updateActivity: Record<string, unknown> | null = null;
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-task-due' });
+      if (url === '/api/tasks?status=all') return ok({ tasks: [{ id: taskId, title: '整理会议纪要', status: 'open', due_date: '2026-11-08', updated_at: updatedAt }] });
+      if (url === `/api/tasks/${taskId}` && init?.method === 'PATCH') return ok({ task: { id: taskId, title: '整理会议纪要', status: 'open', due_date: '2026-11-10', updated_at: '2026-11-06T12:00:00Z' },
+        activity: updateActivity = { event_id: 'task:due-update', operation_id: 'due-update', session_id: 'session-task-due', kind: 'task',
+          status: 'succeeded', original_text: '修改待办“整理会议纪要”的截止日期为2026-11-10', occurred_at: '2026-11-06T12:00:00Z',
+          task_id: taskId, task_title: '整理会议纪要', task_due_date: '2026-11-10', task_status: 'open' } });
+      if (url === '/api/chat/sessions/session-task-due/activities') return ok({ activities: updateActivity ? [updateActivity] : [] });
+      return ok({ messages: [], activities: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: '修改待办“整理会议纪要”的截止日期为2026-11-10' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText('整理会议纪要 · 未完成')).toBeTruthy();
+    const patchCall = request.mock.calls.find(([url, init]) => String(url) === `/api/tasks/${taskId}` && init?.method === 'PATCH');
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({ due_date: '2026-11-10', expected_updated_at: updatedAt,
+      session_id: 'session-task-due', original_command: '修改待办“整理会议纪要”的截止日期为2026-11-10' });
+    expect(new Headers(patchCall?.[1]?.headers).get('Idempotency-Key')).toBeTruthy();
+  });
+
+  it('does not mutate same-title Tasks when explicit completion is ambiguous', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-task-ambiguous' });
+      if (url === '/api/tasks?status=all') return ok({ tasks: [
+        { id: 'e'.repeat(32), title: '复核文档', status: 'open', updated_at: '2026-11-05T10:00:00Z' },
+        { id: 'f'.repeat(32), title: '复核文档', status: 'open', updated_at: '2026-11-05T11:00:00Z' },
+      ] });
+      return ok({ messages: [], activities: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    fireEvent.change(await screen.findByPlaceholderText('发送消息给 Hermes…'), { target: { value: '完成待办：复核文档' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('有多个待办标题相同；未进行修改');
+    expect(request.mock.calls.some(([url, init]) => String(url).startsWith('/api/tasks/') && init?.method === 'PATCH')).toBe(false);
+    expect(request.mock.calls.some(([url]) => String(url).includes('/runs'))).toBe(false);
+  });
+
+  it('reuses the same update key after a lost Task PATCH response', async () => {
+    window.localStorage.clear(); window.sessionStorage.clear();
+    const taskId = '9'.repeat(32); const updatedAt = '2026-11-05T10:00:00Z'; let patches = 0;
+    let updateActivity: Record<string, unknown> | null = null;
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/sessions?limit=50&offset=0') return ok({ sessions: [] });
+      if (url === '/api/chat/sessions') return ok({ session_id: 'session-task-retry' });
+      if (url === '/api/tasks?status=all') return ok({ tasks: [{ id: taskId, title: '整理会议纪要', status: 'open', due_date: null, updated_at: updatedAt }] });
+      if (url === `/api/tasks/${taskId}` && init?.method === 'PATCH') {
+        patches += 1;
+        const body = JSON.parse(String(init.body));
+        if (patches === 1) return new Response(JSON.stringify({ detail: 'synthetic response lost after commit' }), { status: 503 });
+        return ok({ task: { id: taskId, title: '整理会议纪要', status: 'completed', due_date: null, updated_at: '2026-11-06T10:00:00Z' },
+          activity: updateActivity = { event_id: `task:${new Headers(init.headers).get('Idempotency-Key')}`, operation_id: new Headers(init.headers).get('Idempotency-Key'),
+            session_id: body.session_id, kind: 'task', status: 'succeeded', original_text: body.original_command,
+            occurred_at: '2026-11-06T10:00:00Z', task_id: taskId, task_title: '整理会议纪要', task_status: 'completed' } });
+      }
+      if (url === '/api/chat/sessions/session-task-retry/activities') return ok({ activities: updateActivity ? [updateActivity] : [] });
+      return ok({ messages: [], activities: [] });
+    });
+    vi.stubGlobal('fetch', request);
+    render(<ChatPage locale="zh-CN" onGoInbox={vi.fn()} />);
+    const input = await screen.findByPlaceholderText('发送消息给 Hermes…');
+    fireEvent.change(input, { target: { value: '完成待办：整理会议纪要' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('服务暂时不可用');
+    expect((input as HTMLTextAreaElement).value).toBe('完成待办：整理会议纪要');
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    expect(await screen.findByText('整理会议纪要 · 已完成')).toBeTruthy();
+    const patchCalls = request.mock.calls.filter(([url, init]) => String(url) === `/api/tasks/${taskId}` && init?.method === 'PATCH');
+    expect(patchCalls).toHaveLength(2);
+    expect(new Headers(patchCalls[0][1]?.headers).get('Idempotency-Key')).toBe(new Headers(patchCalls[1][1]?.headers).get('Idempotency-Key'));
+    expect(request.mock.calls.filter(([url]) => String(url) === '/api/tasks?status=all')).toHaveLength(1);
   });
 
   it('preserves edited text and a replaced attachment when switching modes repeatedly', async () => {

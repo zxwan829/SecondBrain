@@ -1900,6 +1900,106 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     }
   };
 
+  const submitTaskCommand = async (originalText: string, command: NonNullable<ReturnType<typeof parseExplicitTaskCommand>>) => {
+    if (command.operation === 'create') {
+      await submitExplicitActivity('task', originalText, command);
+      return;
+    }
+    setError(''); setBusy(true); setProgress(en ? 'Checking tasks…' : '正在核对待办…');
+    let sessionId = '';
+    try {
+      sessionId = await ensureSelectedSession();
+      if (command.operation === 'list_today_open') {
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const response = await fetch(`/api/tasks?status=open&due_date=${today}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        const payload = await response.json().catch(() => ({})) as { detail?: string; tasks?: Array<{ id?: string; title?: string; due_date?: string | null; status?: string }> };
+        if (!response.ok) throw new Error(apiFailureLabel(payload.detail, response.status, locale, 'chat'));
+        const tasks = Array.isArray(payload.tasks) ? payload.tasks.filter((task) => typeof task.id === 'string' && typeof task.title === 'string') : [];
+        const detail = tasks.length ? tasks.map((task) => `• ${task.title}`).join('\n') : (en ? 'No unfinished tasks due today.' : '今天没有未完成的待办。');
+        updateVisibleActivity(sessionId, { event_id: `task-query:${crypto.randomUUID()}`, operation_id: crypto.randomUUID(), session_id: sessionId,
+          kind: 'task', status: 'succeeded', original_text: originalText, occurred_at: new Date().toISOString(),
+          task_title: en ? `Today's unfinished tasks (${tasks.length})` : `今天未完成待办（${tasks.length}）`, detail });
+        if (selectedSessionRef.current === sessionId) { setInput(''); setProgress(''); }
+        return;
+      }
+
+      type SavedUpdate = { session_id?: string; operation_id?: string; text?: string; kind?: string; task_id?: string;
+        expected_updated_at?: string; changes?: { status?: 'completed'; due_date?: string } };
+      let saved: SavedUpdate | null = null;
+      try { saved = JSON.parse(sessionStorage.getItem(pendingActivityKey(sessionId)) ?? 'null'); } catch { saved = null; }
+      const retrySaved = saved?.session_id === sessionId && saved.text === originalText && saved.kind === 'task.update'
+        && typeof saved.task_id === 'string' && typeof saved.expected_updated_at === 'string' && saved.changes;
+      let taskId = retrySaved ? saved!.task_id! : '';
+      let expectedUpdatedAt = retrySaved ? saved!.expected_updated_at! : '';
+      let changes: NonNullable<SavedUpdate['changes']> = retrySaved ? saved!.changes! : {};
+      if (!retrySaved) {
+        const list = await fetch('/api/tasks?status=all', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        const payload = await list.json().catch(() => ({})) as { detail?: string; tasks?: Array<{ id?: string; title?: string; due_date?: string | null; status?: 'open' | 'completed'; updated_at?: string }> };
+        if (!list.ok) throw new Error(apiFailureLabel(payload.detail, list.status, locale, 'chat'));
+        const matches = (Array.isArray(payload.tasks) ? payload.tasks : []).filter((task) => task.title?.trim() === command.title
+          && typeof task.id === 'string' && typeof task.updated_at === 'string');
+        if (matches.length === 0) throw new Error(en ? 'No Task has that exact title. Nothing was changed.' : '没有找到标题完全匹配的待办；未进行修改。');
+        if (matches.length > 1) throw new Error(en ? 'More than one Task has that title. Nothing was changed; use a more specific title.' : '有多个待办标题相同；未进行修改，请补充更具体的标题。');
+        const task = matches[0];
+        if (command.operation === 'complete' && task.status === 'completed') {
+          updateVisibleActivity(sessionId, { event_id: `task-already:${task.id}`, operation_id: `task-already:${task.id}`, session_id: sessionId,
+            kind: 'task', status: 'succeeded', original_text: originalText, occurred_at: new Date().toISOString(), task_id: task.id,
+            task_title: task.title, task_due_date: task.due_date, task_status: 'completed', detail: en ? 'Already completed; no update was sent.' : '该待办已完成；没有再次写入。' });
+          if (selectedSessionRef.current === sessionId) { setInput(''); setProgress(''); }
+          return;
+        }
+        if (command.operation === 'set_due_date' && task.due_date === command.due_date) {
+          updateVisibleActivity(sessionId, { event_id: `task-unchanged:${task.id}`, operation_id: `task-unchanged:${task.id}`, session_id: sessionId,
+            kind: 'task', status: 'succeeded', original_text: originalText, occurred_at: new Date().toISOString(), task_id: task.id,
+            task_title: task.title, task_due_date: task.due_date, task_status: task.status, detail: en ? 'The due date already matches; no update was sent.' : '截止日期已经一致；没有再次写入。' });
+          if (selectedSessionRef.current === sessionId) { setInput(''); setProgress(''); }
+          return;
+        }
+        taskId = task.id!; expectedUpdatedAt = task.updated_at!;
+        changes = command.operation === 'complete' ? { status: 'completed' } : { due_date: command.due_date };
+      }
+      const retry = activityRetryRef.current?.sessionId === sessionId && activityRetryRef.current.text === originalText
+        && activityRetryRef.current.kind === 'task' ? activityRetryRef.current.key
+          : retrySaved ? String(saved?.operation_id ?? crypto.randomUUID()) : crypto.randomUUID();
+      activityRetryRef.current = { sessionId, text: originalText, key: retry, kind: 'task' };
+      sessionStorage.setItem(pendingActivityKey(sessionId), JSON.stringify({ session_id: sessionId, operation_id: retry,
+        text: originalText, kind: 'task.update', task_id: taskId, expected_updated_at: expectedUpdatedAt, changes }));
+      updateVisibleActivity(sessionId, { event_id: `pending:${retry}`, operation_id: retry, session_id: sessionId, kind: 'task',
+        status: 'processing', original_text: originalText, occurred_at: new Date().toISOString(), transient: true });
+      const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, { method: 'PATCH', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': retry },
+        body: JSON.stringify({ ...changes, expected_updated_at: expectedUpdatedAt, session_id: sessionId, original_command: originalText }) });
+      const result = await response.json().catch(() => ({})) as { detail?: string; task?: { id?: string; title?: string; due_date?: string | null; status?: 'open' | 'completed'; updated_at?: string }; activity?: ChatActivity };
+      if (!response.ok) {
+        if (response.status === 401) { window.location.reload(); return; }
+        const conflict = response.status === 409;
+        if (conflict) { clearPendingActivity(sessionId, retry); activityRetryRef.current = null; }
+        updateVisibleActivity(sessionId, result.activity ?? { event_id: `${conflict ? 'local:task' : 'pending'}:${retry}`, operation_id: retry,
+          session_id: sessionId, kind: 'task', status: response.status >= 500 ? 'unknown' : 'failed', original_text: originalText,
+          occurred_at: new Date().toISOString(), transient: !conflict, detail: result.detail });
+        if (selectedSessionRef.current === sessionId) { setInput(originalText); setProgress(''); setError(conflict
+          ? (en ? 'The Task changed while you were reviewing it. Nothing was overwritten; retry the command against the current Task.' : '待办在核对期间发生变化；没有覆盖旧值，请针对最新待办重新发送命令。')
+          : apiFailureLabel(result.detail, response.status, locale, 'chat')); }
+        return;
+      }
+      const task = result.task;
+      const activity = result.activity ?? { event_id: `task:${retry}`, operation_id: retry, session_id: sessionId, kind: 'task' as const,
+        status: 'succeeded' as const, original_text: originalText, occurred_at: task?.updated_at ?? new Date().toISOString(),
+        task_id: task?.id ?? taskId, task_title: task?.title ?? command.title, task_due_date: task?.due_date ?? null,
+        task_status: task?.status ?? (changes.status ?? 'open') };
+      updateVisibleActivity(sessionId, activity); clearPendingActivity(sessionId, retry); activityRetryRef.current = null;
+      if (selectedSessionRef.current === sessionId) { setInput(''); setProgress(''); }
+      await loadSessionContent(sessionId);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : (en ? 'Task request failed.' : '待办请求失败。');
+      if (sessionId && activityRetryRef.current) updateVisibleActivity(sessionId, { event_id: `pending:${activityRetryRef.current.key}`,
+        operation_id: activityRetryRef.current.key, session_id: sessionId, kind: 'task', status: 'unknown', original_text: originalText,
+        occurred_at: new Date().toISOString(), transient: true });
+      if (!sessionId || selectedSessionRef.current === sessionId) { setProgress(''); setError(message); setInput(originalText); }
+    } finally { setBusy(false); }
+  };
+
   const submitJournalIntentToInbox = async (originalText: string) => {
     if (journalInboxSubmittingRef.current) return;
     journalInboxSubmittingRef.current = true;
@@ -2002,7 +2102,7 @@ export function ChatPage({ locale, blankMode = false, onGoInbox, onGoJournal = (
     }
     const taskCommand = !pendingAttachment ? parseExplicitTaskCommand(input) : null;
     if (taskCommand) {
-      await submitExplicitActivity('task', input, taskCommand);
+      await submitTaskCommand(input, taskCommand);
       return;
     }
     setError(''); setBusy(true); setProgress(en ? 'Starting…' : '正在启动…');
