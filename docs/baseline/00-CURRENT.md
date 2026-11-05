@@ -10,14 +10,14 @@ source: GitHub SecondBrain Monorepo
 
 ## 当前快照
 
-- **最新代码与生产版本：** GitHub main `9ee5a7c78ef191abcca788e834b367668f579a20`（包含状态 PR #278）；生产 App 已部署 PR #277 固定源码 SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`。文档提交不改变 App 部署目标。
+- **最新代码与生产版本：** GitHub main 已包含 PR #279 部署记录；生产 App 仍运行 PR #277 固定源码 SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`。本轮状态记录 PR 仅更新文档，不改变 App 部署目标。
 - **总体：** V1 尚未完成。GitHub main 的代码/文档状态不代表生产部署、真实数据验证或用户验收。
 - **最近已核验生产快照：** 2026-11-05 PR #277 部署后，App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`、Image ID `sha256:d73bb0fb73b77a728c4f6eecde44c8309695abb573e00048c6ba3affb50fc1e1`、running/healthy；Compose SHA-256 `f5760550d5d9fe197cd58bd07c77bc178fb04fec27a9e990342d642530ace020`。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-05 部署后复核）：** Promote=false、Weixin 未开启、App Knowledge 挂载只读、Private 未挂载；App UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`，两个 Secret 文件只读挂载。归一化 Compose 仅 App image 改变；Hermes 容器、镜像与启动时间未变。详情见 `Environment-Baseline.md`。
 - **开发阶段：** V1 核心业务闭环收口。#269/#274 App-only UI 已部署；工程浏览器 Gate PASS，用户已明确放弃旧版 Chat UI 人工视觉验收，状态为 `USER_WAIVED / NOT RUN`（绝不记为 `USER_UAT_PASS`）；VNext 保持冻结。
 - **PR #274 工程验收与部署：** Daily Brief 合成旅程的 Journal 请求断言按页面阶段记录基线；完整 Gate [Actions #41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) PASS、独立审查 PASS。PR #274 固定 merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704` 已于 2026-11-05 部署，生产健康和安全门禁通过。工程 Gate 与部署验证都不替代新版 Chat UI 用户验收。
-- **PR #277 App-only 部署：** 固定 merge SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82` 于 2026-11-05 部署；App Image ID `sha256:d73bb0fb73b77a728c4f6eecde44c8309695abb573e00048c6ba3affb50fc1e1`，running/healthy。Compose 仅 App image 变化；Hermes、挂载、权限及真实业务数据未改。上线后无凭据页面 smoke 与匿名 API 401 通过；未进行真实 Notes/Journal 写入或用户验收。回滚快照、归档和验证明细见 `Environment-Baseline.md`。
-- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / CHAT_UI_ENGINEERING_GATE_PASS / USER_WAIVED_NOT_RUN / NOTES_JOURNAL_ISOLATED_ENGINEERING_PASS / PR277_DEPLOYED_AND_VERIFIED / NOTES_JOURNAL_PRODUCTION_DATA_UAT_NOT_RUN`。PR #269、#274、#277 App 均已合并部署；PR #277 生产健康及安全核验通过。新版 Chat UI 人工视觉 UAT 由用户明确放弃，仍为 `NOT RUN`，不是用户验收通过。Notes/Journal 隔离旅程通过；本次未写真实 Notes/Journal 数据，生产业务数据及用户验收仍 `NOT RUN`。Task 与 Capture→Inbox→Review 的既有有限旅程状态保留；跨会话记忆及其他 V1 业务仍未验收。
+- **PR #277 App-only 部署与生产合成 UAT：** 固定 merge SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82` 已部署，App running/healthy；Compose 仅 App image 变化，Hermes、挂载及权限不变。生产合成 UAT 部分通过：Notes Draft 新建、编辑、保存、刷新重开及精确 API 回读通过；Journal 空白合成日期新增两条不同幂等键记录，刷新后两条按序回读。相同幂等键重放仍 NOT RUN，故整项 UAT 尚未通过。详情见 `Environment-Baseline.md`。
+- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / CHAT_UI_ENGINEERING_GATE_PASS / USER_WAIVED_NOT_RUN / NOTES_JOURNAL_ISOLATED_ENGINEERING_PASS / PR277_DEPLOYED_AND_VERIFIED / NOTES_JOURNAL_PRODUCTION_SYNTHETIC_UAT_PARTIAL / UAT_SCOPE_DEVIATION_REVIEW_REQUIRED`。PR #269、#274、#277 App 均已合并部署；PR #277 生产健康及安全核验通过。Notes Draft 与 Journal 部分生产合成旅程通过；Journal 同 key replay 尚未运行。另：登录后页面自动落至 Home，一次完整可访问性快照包含现有业务摘要；此前 Notes 页快照包含列表标题。未打开既有记录详情，未修改/删除记录或将内容保存、外发；但这超出本轮仅处理合成数据的读取边界。已停止进一步页面数据读取；需用户决定是否继续生产 UAT。Chat UI 人工视觉 UAT 仍 `USER_WAIVED / NOT RUN`，不是用户验收通过；其他 V1 未验收项保持原状。
 
 ## 能力状态
 
@@ -27,14 +27,14 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|---|
 | App Shell / 登录与路由 | main 有 Shell、鉴权与路由实现 | HTTPS `/health`、`/`、`/login`、`/notes` 为 200；匿名 session、Tasks、Capture summary、Knowledge search、Promote API 均为 401；用户已在 2026-11-04 登录并完成部分真实页面操作 | 本轮有限登录旅程通过；未覆盖所有模块/路由，完整跨页体验仍待验收 |
 | Home | main 有 Home 页面与部分聚合 | HTTPS `/` 返回 200；未认证浏览器不执行 App 内容聚合 | 动态 Home 完整聚合未验收；首次从 `/` 登录会读取聚合数据，体验时可直接打开目标模块 |
-| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；D077 Companion 仅部分实现 | App revision `268ccae7` 已部署；App→Hermes health 200；此前基础真实 Chat 回复及刷新恢复 PASS；#269/#274 Ubuntu Chromium 工程 Gate PASS | 人工视觉 UAT `USER_WAIVED / NOT RUN`（非 `USER_UAT_PASS`）；跨会话记忆、学习/纠正和 Companion 未验收 |
-| Today / Calendar / Journal / Task | main 有页面/API 的部分实现；显式 Task API 与持久化实现存在 | 用户于 2026-11-04 实测 Task 创建、完成及恢复；PR #277 Notes/Journal Core、前端及三视口 Ubuntu Chromium 隔离旅程 PASS | 仅上述 Task 为用户旅程 PASS；Notes/Journal 生产写入与用户验收未执行；完整 Calendar 未验收 |
+| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；D077 Companion 仅部分实现 | 当前 App revision `7272b738`；App→Hermes health 200；此前基础真实 Chat 回复及刷新恢复 PASS（发生于旧 revision `d06e3f3b`）；#269/#274 Ubuntu Chromium 工程 Gate PASS | 人工视觉 UAT `USER_WAIVED / NOT RUN`（非 `USER_UAT_PASS`）；跨会话记忆、学习/纠正和 Companion 未验收 |
+| Today / Calendar / Journal / Task | main 有页面/API 的部分实现；显式 Task API 与持久化实现存在 | 用户于 2026-11-04 实测 Task 创建、完成及恢复；PR #277 Journal 生产合成日写入两条不同 key 的记录并刷新/API 回读通过 | Notes/Journal 合成 UAT 部分通过；生产同 key replay NOT RUN，真实数据/用户验收未通过；完整 Calendar 未验收 |
 | Capture：文本 / Markdown / TXT | main 有 Raw→Review 路径及文本入口；`/inbox` 使用显式 Capture/Notes scope | 用户已用合成内容验证文本 Capture→Inbox→Review 保存、回读、关联及刷新持久化；Linux Chromium Inbox capture/retry/source-protection 三视口通过；#269 未改该旅程代码 | 仅限上述文本 Capture 旅程；附件、URL 和 Promote 未验收/不在本次操作范围 |
 | Capture：URL / Web | main 有抓取与 Review 路径 | 本轮未提交 URL 或读取 Raw/Review 数据 | 多站点、失败恢复和用户流程仍未完整验收 |
 | Capture：PDF / 图片 / 音频 | main 有 PDF/OCR 与图片处理的部分实现；音频处理未闭环 | 本次未处理生产附件；生产质量 UNKNOWN | 合成 OCR 不等于真实文件验收；STT 后端/真实样本仍阻断 |
 | 微信输入渠道（P4-2 / D087） | main 有渠道相关来源；D086 合成 Authority/Consent PR 不等同微信渠道实现 | 插件文件存在但 `not enabled`，Core 微信开关为 false；未扫码/收发消息 | **未接入、未用户验收**；真实渠道另行授权 |
 | Review / Approval | main 有 Review 与受控审批部分实现 | 匿名 Promote API 为 401；本次未登录查看或执行审批 | 用户登录后可检查授权范围内 Review；端到端 Approval→Knowledge 未完成，生产 Promote 关闭 |
-| Knowledge / Notes / 标签 | main 有只读检索、Notes 与词库；PR #242 已合入（#55 完成） | `/notes` 200、匿名 Notes API 与 Knowledge search 均为 401；未读取 Vault/正文 | 用户对已授权 Knowledge 的搜索/打开待验收；真实笔记写入不在本轮范围 |
+| Knowledge / Notes / 标签 | main 有只读检索、Notes 与词库；PR #242 已合入（#55 完成） | Notes Draft 合成记录在生产通过新建、编辑、保存、刷新重开与 API 回读；授权集合仅 Drafts，Knowledge 集合负向请求返回 404；未访问 Vault/Knowledge 正文 | 仅 Notes Draft 合成 UAT PASS；真实 Vault collection/笔记写入未运行，Knowledge 用户验收待完成 |
 | Projects | main 有读接口与页面的部分实现 | 未核验项目数据旅程 | 真实来源完整性和用户验收 UNKNOWN |
 | Daily Brief | main 有读接口与页面的部分实现 | 未执行简报数据或模型旅程 | 真实生成、数据来源及用户验收 UNKNOWN |
 | Activity / Agent Health | main 有部分 Activity 与健康状态实现；来源覆盖不完整 | 未做登录态或业务数据核验 | 来源范围、状态准确性和用户验收未完成 |
@@ -92,7 +92,7 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 **已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上；新版 UI 的工程浏览器 Gate 已 PASS，但人工视觉 UAT 为 `USER_WAIVED / NOT RUN`，不得记为 `USER_UAT_PASS`。#30 跨会话记忆、Companion、真实 Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
-**唯一 NEXT（接续工作包 1 收口，同时启动 2/3 的隔离准备）：** PR #277 固定 SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82` 已部署并通过运行门禁，准备有限 Notes/Journal UAT 的具体数据范围、操作及预期结果；真实业务 UAT 仍待单独授权，未获授权不操作。等待期间继续 Hermes 补丁/扩展盘点与 #30 保存→检索→传递→采用的源码、现有证据及隔离合成诊断，提出最小修复与必要验证，不因 UAT 等待而全线停工。Journal 为 Core-state JSONL，不代表 Obsidian `50-Journal` 同步；Vault 路径/同步需另行确认。Promote/Writer/Weixin 保持关闭，真实模型/生产/真实数据权限不因本规划扩大，VNext 保持 FROZEN。
+**唯一 NEXT（生产 UAT 暂停待用户裁定）：** Notes Draft 合成旅程 PASS；Journal 两条不同幂等键的追加、回读及刷新 PASS；同 key replay `NOT RUN`。登录导航的 Home 自动展示及 Notes 列表可访问性快照造成了本轮范围外的有限业务摘要/标题读取偏差；未打开详情、修改/删除。摘要/标题曾显示在本次自动化工具输出中；未主动复制或导出到文件、GitHub 或其他服务，已停止页面读取。请先裁定是否接受该偏差记录并允许继续同 key replay 验证。若继续，只能复用已认证的正式 App/API 入口；不得读取/导出 Cookie、注入脚本或绕过鉴权。Journal 是 Core-state JSONL，不代表 Obsidian `50-Journal` 同步；不访问 Vault。Promote/Writer/Weixin 保持关闭，VNext 保持 FROZEN；本任务收口前不启动其他工作包。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
@@ -118,7 +118,7 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 ## 主要风险与验收边界
 
-- GitHub main、生产代码和用户验收分开记录：PR #277 固定源码 SHA `7272b738` 已部署并通过运行门禁；生产 Notes/Journal 真实业务验收与用户 UAT 仍 `NOT RUN`。#269/#274 工程浏览器 Gate PASS，用户明确放弃旧版 Chat UI 人工视觉验收，状态 `USER_WAIVED / NOT RUN`。PR #278 与本次状态记录只更新文档，不改变生产 App image。
+- GitHub main、生产代码和用户验收分开记录：PR #277 固定源码 SHA `7272b738` 已部署并通过运行门禁；生产合成 Notes/Journal UAT 为 `PARTIAL`（Journal 同 key replay NOT RUN），真实业务数据与用户 UAT 仍 `NOT RUN`。本轮另发生可访问性快照显示既有业务摘要/列表标题的读取范围偏差，详情见本阶段状态和环境记录。#269/#274 工程浏览器 Gate PASS，用户明确放弃旧版 Chat UI 人工视觉验收，状态 `USER_WAIVED / NOT RUN`。PR #279 与本轮状态记录只更新文档，不改变生产 App image。
 - #261 远端隔离分支的 CI 失败（Actions #41334785303 有 4 项旧/待核断言失败）；尚无 PR，Chromium Gate 未运行，不能合并。
 - #74 的安全范围修复已合并并部署，剩余用户验收未完成；#30 真实模型记忆故障和 #78 生产审批边界仍未解除。
 - D084 历史浏览器业务验收仍无新证据（旧宽范围 Issue #44 已按未计划关闭，不是验收完成）。
