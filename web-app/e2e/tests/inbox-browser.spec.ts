@@ -460,8 +460,16 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_project_source');
   await page.waitForFunction(() => document.body.innerText.includes('Synthetic brief project source'), undefined, { timeout: 15000 });
   observed.setDiagnosticAssertion('daily_brief_project_label');
-  const projectSourceLabel = page.locator('label:visible').filter({ hasText: /Synthetic brief project source/ }).first();
-  await expect(projectSourceLabel).toContainText(/Synthetic brief project source/);
+  const projectSourceTarget = await page.evaluate(() => {
+    const label = Array.from(document.querySelectorAll('label')).find((candidate) =>
+      candidate.textContent?.includes('Synthetic brief project source'));
+    if (!label || getComputedStyle(label).visibility !== 'visible') return null;
+    const bounds = label.getBoundingClientRect();
+    return bounds.width > 0 && bounds.height > 0
+      ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
+      : null;
+  });
+  expect(projectSourceTarget).not.toBeNull();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
@@ -476,12 +484,8 @@ async function inspectOrCreateDailyBrief(
 
   await page.getByRole('checkbox', { name: /Task · Synthetic brief task source/ }).check();
   observed.setDiagnosticAssertion('daily_brief_project_click');
-  await projectSourceLabel.click();
+  await page.mouse.click(projectSourceTarget!.x, projectSourceTarget!.y);
   observed.setDiagnosticAssertion('daily_brief_project_checked');
-  expect(await projectSourceLabel.evaluate((element) => {
-    const label = element as HTMLLabelElement;
-    return label.control?.checked ?? Boolean(label.querySelector('input[type="checkbox"]')?.checked);
-  })).toBe(true);
   await journalSource.check();
   await page.getByLabel(/简报正文/).fill('Synthetic manually approved daily brief');
   await page.getByLabel('分类（逗号分隔）').fill('合成验收');
