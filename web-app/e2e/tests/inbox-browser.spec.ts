@@ -453,7 +453,9 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_navigation');
   await page.goto('/brief');
   observed.setDiagnosticAssertion('daily_brief_heading');
-  await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible({ timeout: 15000 });
+  const briefHeading = page.locator('#brief-title');
+  await expect(briefHeading).toBeVisible({ timeout: 15000 });
+  await expect(briefHeading).toHaveText(/每日简报|Daily Brief/);
   const journalSourceReadsBeforeBrief = observed.requestRecords.filter((item) => item.method === 'GET'
     && item.path === '/api/daily-brief/source-options/journal').length;
   const beforeOpen = observed.dailyBriefPostCount;
@@ -1101,7 +1103,7 @@ for (const viewport of viewports) {
     expect(typeof persistedNote.content === 'string' && persistedNote.content.includes(syntheticNoteBody),
       'notes_readback_payload').toBe(true);
     observed.setDiagnosticAssertion('notes_readback');
-    await expect(page.locator('.ProseMirror')).toContainText(syntheticNoteBody);
+    await expect(page.locator('.notes-document .notes-prose')).toContainText(syntheticNoteBody, { timeout: 15000 });
     if (viewport.name === 'desktop-1440x1000') {
       // Seed only the isolated synthetic Draft with metadata via the same
       // authenticated Core Notes API, then exercise the real BlockSuite editor.
