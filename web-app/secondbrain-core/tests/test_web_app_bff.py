@@ -15,6 +15,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from secondbrain_core.app import create_app
 from secondbrain_core.modules.hermes_api import HermesAPI
 from secondbrain_core.modules.journal import JournalStore
+from secondbrain_core.modules.personal_memory import MemoryStoreError, PersonalMemoryStore
 from secondbrain_core.modules.run_approvals import APPROVAL_PREFIX, FILE_WRITE_APPROVAL_PREFIX
 from secondbrain_core.modules.auto_organize import OrganizerControlStore, OrganizeSettingsStore, next_scheduled_at
 from datetime import datetime, timezone
@@ -197,6 +198,150 @@ class WebAppBffTests(unittest.TestCase):
         })
         self.assertEqual(created.status_code, 201, created.text)
         enabled_client.close()
+
+    def test_synthetic_memory_run_uses_only_independent_jsonl_root(self):
+        memory_root = self.root / "isolated-uat" / "40-Memory"
+        memory_root.mkdir(mode=0o700, parents=True)
+        memory_root.chmod(0o700)
+        self.assertEqual(list(memory_root.iterdir()), [])
+        env = {**self.env,
+               "SB_PERSONAL_MEMORY_ENABLED": "true",
+               "SB_PERSONAL_LEARNING_ENABLED": "true",
+               "SB_PERSONAL_MEMORY_ROOT": str(memory_root)}
+        reads = []
+        original_unlocked_read = PersonalMemoryStore._read_events_unlocked
+
+        def track_unlocked_store_read(instance):
+            path = instance.path.resolve()
+            reads.append(path)
+            self.assertTrue(path.is_relative_to(memory_root.resolve()))
+            return original_unlocked_read(instance)
+
+        read_patch = patch.object(PersonalMemoryStore, "_read_events_unlocked", track_unlocked_store_read)
+        read_patch.start()
+
+        scoped_client = None
+        try:
+            with patch.dict(os.environ, env, clear=True), \
+                    patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+                scoped_app = create_app()
+            store = scoped_app.state.personal_memory_store
+            self.assertEqual(store.root.resolve(), memory_root.resolve())
+            self.assertFalse(store.path.exists())
+            scoped_client = TestClient(scoped_app, base_url="https://testserver")
+
+            login = scoped_client.post("/api/auth/login", json={"password": "one-owner-test-password"},
+                                       headers={"Origin": "https://testserver"})
+            self.assertEqual(login.status_code, 200, login.text)
+            created = scoped_client.post("/api/personal-memory", headers={
+                "Origin": "https://testserver",
+            }, json={
+                "content": {"text": "整理虚构项目 ZetaQuill-7391 的技术说明时，偏好先给简短结论。"},
+                "category": "preference", "fact_kind": "user_stated",
+                "source_type": "user_message",
+                "source_ref": "synthetic-session-7391:message-1",
+                "idempotency_key": "uat-zetaquill-create",
+            })
+            self.assertEqual(created.status_code, 201, created.text)
+            memory_id = created.json()["memory_id"]
+
+            session = scoped_client.post("/api/chat/sessions", json={}, headers={
+                "Origin": "https://testserver",
+            })
+            self.assertEqual(session.status_code, 200, session.text)
+            session_id = session.json()["session_id"]
+
+            def start_synthetic_run(input_text, key):
+                response = scoped_client.post(f"/api/chat/sessions/{session_id}/runs", json={
+                    "input": input_text,
+                }, headers={"Origin": "https://testserver", "Idempotency-Key": key})
+                self.assertEqual(response.status_code, 200, response.text)
+                request = next(call for call in reversed(self.calls) if call.url.path == "/v1/runs")
+                return json.loads(request.content)
+
+            def memory_context(payload):
+                start = payload["instructions"].index("<personal_memory_json>") + len("<personal_memory_json>")
+                end = payload["instructions"].index("</personal_memory_json>", start)
+                return json.loads(payload["instructions"][start:end])
+
+            related = start_synthetic_run(
+                "继续整理 ZetaQuill-7391 的技术说明；我偏好先看到什么？",
+                "uat-zetaquill-recall",
+            )
+            self.assertIn("ZetaQuill-7391", related["instructions"])
+            self.assertIn("先给简短结论", related["instructions"])
+            self.assertEqual(len(memory_context(related)), 1)
+            self.assertEqual(memory_context(related)[0]["text"],
+                             "整理虚构项目 ZetaQuill-7391 的技术说明时，偏好先给简短结论。")
+
+            unrelated = start_synthetic_run(
+                "How does sourdough fermentation work?", "uat-zetaquill-unrelated")
+            self.assertNotIn("instructions", unrelated)
+
+            corrected = scoped_client.post(f"/api/personal-memory/{memory_id}/correct", headers={
+                "Origin": "https://testserver",
+            }, json={
+                "content": {"text": "整理虚构项目 ZetaQuill-7391 的技术说明时，偏好先给两条要点。"},
+                "source_type": "user_message", "source_ref": "synthetic-session-7391:message-2",
+                "expected_revision": 1, "idempotency_key": "uat-zetaquill-correct",
+            })
+            self.assertEqual(corrected.status_code, 200, corrected.text)
+            corrected_run = start_synthetic_run(
+                "继续整理 ZetaQuill-7391 的技术说明；我偏好先看到什么？",
+                "uat-zetaquill-corrected-recall",
+            )
+            self.assertIn("先给两条要点", corrected_run["instructions"])
+            self.assertNotIn("先给简短结论", corrected_run["instructions"])
+            self.assertEqual(len(memory_context(corrected_run)), 1)
+            self.assertEqual(memory_context(corrected_run)[0]["text"],
+                             "整理虚构项目 ZetaQuill-7391 的技术说明时，偏好先给两条要点。")
+
+            revoked = scoped_client.post(f"/api/personal-memory/{memory_id}/revoke", headers={
+                "Origin": "https://testserver",
+            }, json={
+                "source_type": "user_message", "source_ref": "synthetic-session-7391:message-3",
+                "expected_revision": 2, "idempotency_key": "uat-zetaquill-revoke",
+            })
+            self.assertEqual(revoked.status_code, 200, revoked.text)
+            revoked_run = start_synthetic_run(
+                "继续整理 ZetaQuill-7391 的技术说明；我偏好先看到什么？",
+                "uat-zetaquill-revoked-recall",
+            )
+            self.assertNotIn("instructions", revoked_run)
+
+            self.assertTrue(reads)
+            self.assertEqual(set(reads), {store.path.resolve()})
+            events = [json.loads(line) for line in store.path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(events), 3)
+            self.assertEqual({event["memory_id"] for event in events}, {memory_id})
+            self.assertEqual([event["operation"] for event in events], ["create", "correct", "revoked"])
+
+            run_requests = [request for request in self.calls if request.url.path == "/v1/runs"]
+            self.assertEqual(len(run_requests), 4)
+            run_payloads = [json.loads(request.content) for request in run_requests]
+            self.assertNotIn("UNRELATED_OR_PRODUCTION_MEMORY", json.dumps(run_payloads))
+        finally:
+            read_patch.stop()
+            if scoped_client is not None:
+                scoped_client.close()
+
+    def test_synthetic_memory_run_scope_fails_closed_before_app_or_run(self):
+        base_env = {**self.env,
+                    "SB_PERSONAL_MEMORY_ENABLED": "true",
+                    "SB_PERSONAL_LEARNING_ENABLED": "true"}
+        missing_scope = {**base_env, "SB_PERSONAL_MEMORY_ROOT": ""}
+        with patch.dict(os.environ, missing_scope, clear=True), \
+                patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+            with self.assertRaisesRegex(RuntimeError, "absolute SB_PERSONAL_MEMORY_ROOT"):
+                create_app()
+
+        invalid_root = self.root / "does-not-exist" / "40-Memory"
+        with patch.dict(os.environ, {**base_env, "SB_PERSONAL_MEMORY_ROOT": str(invalid_root)}, clear=True), \
+                patch("secondbrain_core.app.HermesAPI", return_value=self.hermes):
+            with self.assertRaises(MemoryStoreError):
+                create_app()
+
+        self.assertFalse(any(request.url.path == "/v1/runs" for request in self.calls))
 
     def test_chat_run_retrieves_only_verified_references_and_restores_bound_citations(self):
         self.login()
