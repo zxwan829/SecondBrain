@@ -27,6 +27,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'calendar_heading' | 'calendar_api_requests' | 'projects_navigation' | 'projects_api_response'
   | 'activity_navigation' | 'agent_health_navigation' | 'agent_health_api_response'
   | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
+  | 'journal_append' | 'journal_saved_readback' | 'journal_refresh_readback'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
@@ -361,6 +362,8 @@ async function configurePage(page: Page) {
       && /^\d{4}-\d{2}-\d{2}$/.test(params.get('to') ?? '');
     const journalPath = route.request().method() === 'GET' && /^\/api\/journal\/\d{4}-\d{2}-\d{2}$/.test(url.pathname)
       && params.size === 0;
+    const journalAppendPath = route.request().method() === 'POST' && url.pathname === '/api/journal/entries'
+      && params.size === 0;
     const taskListPath = route.request().method() === 'GET' && url.pathname === '/api/tasks'
       && exactParams({ status: 'open' });
     const notesPath = params.size === 0 && (
@@ -371,7 +374,7 @@ async function configurePage(page: Page) {
     );
     if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
       && !briefPath && !journalSourcePath && !sourceListPath && !homePath && !healthPath
-      && !activityPath && !calendarPath && !journalPath && !taskListPath && !notesPath) {
+      && !activityPath && !calendarPath && !journalPath && !journalAppendPath && !taskListPath && !notesPath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
       return;
@@ -974,6 +977,30 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('journal_heading');
     await expect(page.getByRole('heading', { name: '日记' })).toBeVisible();
     await expectSuccessfulGet(journalResponsePromise, observed, 'journal_api_response');
+
+    const journalDate = page.getByLabel('日期');
+    const day = await journalDate.inputValue();
+    const syntheticJournalText = `记一下：合成浏览器追加 ${viewport.name} ${randomUUID()}`;
+    await page.getByLabel('自然语言记录').fill(syntheticJournalText);
+    const refreshedAfterAppend = waitForGetResponse(page, `/api/journal/${day}`);
+    const appendResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/journal/entries',
+    { timeout: 5000 });
+    observed.setDiagnosticAssertion('journal_append');
+    await page.getByRole('button', { name: '追加原话', exact: true }).click();
+    const appendResponse = await appendResponsePromise;
+    expect(appendResponse.status(), 'journal_append').toBe(200);
+    expect((await appendResponse.json()).status, 'journal_append_receipt').toBe('created');
+    observed.setDiagnosticAssertion('journal_saved_readback');
+    await expect(page.getByText(syntheticJournalText, { exact: true })).toBeVisible();
+    expect(await refreshedAfterAppend, 'journal_saved_readback_request').not.toBeNull();
+
+    const reloadReadback = page.waitForResponse((response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === `/api/journal/${day}`, { timeout: 5000 });
+    await page.reload();
+    observed.setDiagnosticAssertion('journal_refresh_readback');
+    expect((await reloadReadback).status(), 'journal_refresh_readback').toBe(200);
+    await expect(page.getByText(syntheticJournalText, { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_journal');
     await returnHomeFromNavigation(page, viewport, observed, 'home_after_journal');
     observed.setFailureStage('calendar');

@@ -250,6 +250,9 @@ def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
         ("today", "today_api_response"),
         ("journal", "journal_navigation"),
         ("journal", "journal_api_response"),
+        ("journal", "journal_append"),
+        ("journal", "journal_saved_readback"),
+        ("journal", "journal_refresh_readback"),
         ("calendar", "calendar_navigation"),
         ("calendar", "calendar_api_response"),
         ("viewport_layout", "layout_home"),
@@ -314,6 +317,15 @@ def test_browser_fixture_allowlists_only_exact_synthetic_notes_routes():
     assert "url.pathname === '/api/notes/drafts'" in browser_spec
     assert "^\\/api\\/notes\\/drafts\\/[0-9a-f]{8}" in browser_spec
     assert "url.pathname.startsWith('/api/notes')" not in browser_spec
+
+
+def test_browser_fixture_allows_only_explicit_journal_read_and_append_routes():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "const journalPath = route.request().method() === 'GET'" in browser_spec
+    assert "const journalAppendPath = route.request().method() === 'POST' && url.pathname === '/api/journal/entries'" in browser_spec
+    assert "!journalPath && !journalAppendPath" in browser_spec
+    assert "url.pathname.startsWith('/api/journal')" not in browser_spec
+    assert "journal_refresh_readback" in browser_spec
 
 
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():

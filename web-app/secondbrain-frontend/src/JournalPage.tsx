@@ -83,7 +83,10 @@ export function JournalPage() {
       setNotice(result.status === 'duplicate' ? '这条请求已保存，未重复追加。' : '已追加到当日日记。');
       if (currentDay.current === submittedDay) await load(submittedDay);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Journal 保存失败。请重试。');
+      const detail = failure instanceof Error ? failure.message : '';
+      setError(detail.startsWith('Journal ')
+        ? detail
+        : 'Journal 保存失败（网络异常）。原文仍保留；请检查连接后使用相同内容重试。');
     } finally { setSaving(false); }
   };
 

@@ -14,9 +14,9 @@ source: GitHub SecondBrain Monorepo
 - **总体：** V1 尚未完成。GitHub main 的代码/文档状态不代表生产部署、真实数据验证或用户验收。
 - **最近已核验生产快照：** 2026-11-05 App revision `268ccae7255c1e2f4fea057d9630d40d7dcca704`、Image ID `sha256:ad2b5a71f97d8de40fbcfeefd720c13f579eae74422943082bf78d27f4678461`、running/healthy；Compose SHA-256 为 `21fcb91e6b4233ef7a680fa4cfe16577b8c43f266d577ee2da0b2be11390c520`。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-05 部署后实测）：** Promote=false、Weixin 未开启、App Knowledge 挂载只读、Private 未挂载；App UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`，两个 Secret 文件只读挂载。Compose 归一化后（App image 替换为固定占位值）SHA-256 与部署前一致；Hermes 容器、镜像与启动时间未变。详情见 `Environment-Baseline.md`。
-- **开发阶段：** V1 首轮体验收口。#269/#274 App-only UI 已部署，等待用户验收新版 Chat UI；VNext 保持冻结。
+- **开发阶段：** V1 核心业务闭环收口。#269/#274 App-only UI 已部署；工程浏览器 Gate PASS，用户已明确放弃旧版 Chat UI 人工视觉验收，状态为 `USER_WAIVED / NOT RUN`（绝不记为 `USER_UAT_PASS`）；VNext 保持冻结。
 - **PR #274 工程验收与部署：** Daily Brief 合成旅程的 Journal 请求断言按页面阶段记录基线；完整 Gate [Actions #41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) PASS、独立审查 PASS。PR #274 固定 merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704` 已于 2026-11-05 部署，生产健康和安全门禁通过。工程 Gate 与部署验证都不替代新版 Chat UI 用户验收。
-- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / NEW_UI_USER_UAT_PENDING`。PR #269 与 #274 均已合并并部署，生产健康/安全门禁通过；此前有限真实模型 Chat 回复和刷新恢复由用户在旧 UI 完成，新版 UI 生产视觉与交互验收仍待用户执行。Task 与 Capture→Inbox→Review 的既有有限旅程状态保留；跨会话记忆及其他 V1 业务仍未验收。
+- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / CHAT_UI_ENGINEERING_GATE_PASS / USER_WAIVED_NOT_RUN / NOTES_JOURNAL_ISOLATED_ENGINEERING_PASS`。PR #269 与 #274 均已合并并部署，生产健康/安全核验及 Ubuntu Chromium 工程 Gate 通过；新版 Chat UI 人工视觉 UAT 由用户明确放弃，仍为 `NOT RUN`，不是用户验收通过。PR #277 的 Notes Draft / Journal 隔离 API 与 Ubuntu Chromium 持久化旅程已通过；真实生产写入和业务数据验收未运行。Task 与 Capture→Inbox→Review 的既有有限旅程状态保留；跨会话记忆及其他 V1 业务仍未验收。
 
 ## 能力状态
 
@@ -26,8 +26,8 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|---|
 | App Shell / 登录与路由 | main 有 Shell、鉴权与路由实现 | HTTPS `/health`、`/`、`/login`、`/notes` 为 200；匿名 session、Tasks、Capture summary、Knowledge search、Promote API 均为 401；用户已在 2026-11-04 登录并完成部分真实页面操作 | 本轮有限登录旅程通过；未覆盖所有模块/路由，完整跨页体验仍待验收 |
 | Home | main 有 Home 页面与部分聚合 | HTTPS `/` 返回 200；未认证浏览器不执行 App 内容聚合 | 动态 Home 完整聚合未验收；首次从 `/` 登录会读取聚合数据，体验时可直接打开目标模块 |
-| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；D077 Companion 仅部分实现 | App revision `268ccae7` 已部署；App→Hermes health 200；此前基础真实 Chat 回复及刷新恢复 PASS | #269/#274 新 UI 用户验收待做；跨会话记忆、学习/纠正和 Companion 未验收 |
-| Today / Calendar / Journal / Task | main 有页面/API 的部分实现；显式 Task API 与持久化实现存在 | 用户于 2026-11-04 实测 Task 创建、完成及恢复；合成前端/Core 回归通过 | 仅上述 Task 旅程 PASS；完整 Calendar 与 Journal 追加闭环未验收 |
+| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；D077 Companion 仅部分实现 | App revision `268ccae7` 已部署；App→Hermes health 200；此前基础真实 Chat 回复及刷新恢复 PASS；#269/#274 Ubuntu Chromium 工程 Gate PASS | 人工视觉 UAT `USER_WAIVED / NOT RUN`（非 `USER_UAT_PASS`）；跨会话记忆、学习/纠正和 Companion 未验收 |
+| Today / Calendar / Journal / Task | main 有页面/API 的部分实现；显式 Task API 与持久化实现存在 | 用户于 2026-11-04 实测 Task 创建、完成及恢复；PR #277 Notes/Journal Core、前端及三视口 Ubuntu Chromium 隔离旅程 PASS | 仅上述 Task 为用户旅程 PASS；Notes/Journal 生产写入与用户验收未执行；完整 Calendar 未验收 |
 | Capture：文本 / Markdown / TXT | main 有 Raw→Review 路径及文本入口；`/inbox` 使用显式 Capture/Notes scope | 用户已用合成内容验证文本 Capture→Inbox→Review 保存、回读、关联及刷新持久化；Linux Chromium Inbox capture/retry/source-protection 三视口通过；#269 未改该旅程代码 | 仅限上述文本 Capture 旅程；附件、URL 和 Promote 未验收/不在本次操作范围 |
 | Capture：URL / Web | main 有抓取与 Review 路径 | 本轮未提交 URL 或读取 Raw/Review 数据 | 多站点、失败恢复和用户流程仍未完整验收 |
 | Capture：PDF / 图片 / 音频 | main 有 PDF/OCR 与图片处理的部分实现；音频处理未闭环 | 本次未处理生产附件；生产质量 UNKNOWN | 合成 OCR 不等于真实文件验收；STT 后端/真实样本仍阻断 |
@@ -43,16 +43,16 @@ source: GitHub SecondBrain Monorepo
 ## 2026-11-04 首轮用户 UAT 与 Chat 安全核验收口
 
 - 用户登录实测：Task 创建/完成/恢复、Capture 文本原文保存→Inbox→Review 持久化、Knowledge 搜索/阅读、Journal 2026-10-18 历史正文、Chat 历史会话读取均有页面证据；本项只代表相应有限旅程，不代表整个 V1 功能通过。
-- Notes 历史版本可预览但未执行恢复；回收站界面可打开，Trash 根未配置；Projects 与 Daily Brief 缺可信数据源/配置；笔记新建保存和日记追加写入未运行。旧 V1 UI 问题统一追踪于 #260；VNext 保持冻结，尚未启动开发。
+- Notes 历史版本可预览但未执行恢复；回收站界面可打开，Trash 根未配置；Projects 与 Daily Brief 缺可信数据源/配置。笔记保存与 Journal 追加在隔离合成环境的 Core/API/浏览器工程验证结果见本轮 PR；这不代表生产写入授权或真实数据验收。旧 V1 UI 问题统一追踪于 #260；VNext 保持冻结，尚未启动开发。
 - **Chat 实际核验纠错（2026-11-04）：** 此前把模块级字符串常量 `PRE_TOOL_CALL_HOOK_UNAVAILABLE` 错误地要求出现在 `_pre_tool_block` 函数体内，误判生产 Hermes 镜像缺失 fail-closed 补丁。随后由 Codex 直接核验生产容器，确认执行文件 SHA-256 为 `b600d5bf028e5500c04b8a899f49882769e52a110fe1b633d624454a94d92c40`，与固定源码应用补丁后的完整执行文件一致，且异常分支引用阻断常量。**正式撤回缺补丁结论，不因该误报重建生产 Hermes；本次未部署或回滚。**
 - **#269 合并、部署与用户验收边界：** PR [#269](https://github.com/zxwan829/SecondBrain/pull/269) merge commit `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`；三视口 Linux Chromium Gate [Actions #41785664124](https://github.com/zxwan829/SecondBrain/actions/runs/41785664124) PASS；精确 SHA 构建 [Actions #41788688422](https://github.com/zxwan829/SecondBrain/actions/runs/41788688422) SUCCESS。App image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`，`linux/amd64`。原始 artifact `13301449533` / digest `sha256:e6040f9c7262b8477169ef0e5fd8a1a1e7959d1b2857e423dd33c0cae7a89b9c`；NAS App-only 包 SHA-256 `49905f26e9fc7780a1a58be693f7d1558b989421291ffcfa417a3856674e684a`。App-only 部署与健康/安全检查通过；新版 UI 的用户实际体验仍 NOT RUN。
 - **Chat 安全与基础 UAT：** 此前的插件活动 Hook/策略探针、真实 Hermes AIAgent API Run 审批/拒绝/Skills 集成测试、App→Hermes health 与真实模型普通文本回复/刷新恢复均已有通过记录；此前“缺少 fail-closed 补丁”判断已正式撤回。上述有限证据不代表跨会话记忆、完整 Companion 或所有工具场景验收。
 
 ## 唯一 NEXT
 
-**已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上，不代表 2026-11-05 部署的 `268ccae7` 新版 UI 已验收。#30 跨会话记忆、Companion、Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
+**已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上；新版 UI 的工程浏览器 Gate 已 PASS，但人工视觉 UAT 为 `USER_WAIVED / NOT RUN`，不得记为 `USER_UAT_PASS`。#30 跨会话记忆、Companion、真实 Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
-**唯一 NEXT（用户验收 #269/#274 新版 Chat UI）：** 正式 Web 已运行固定部署目标 `268ccae7`。请用户本人在桌面浏览器验收默认折叠/展开、五组辅助面板可用性、长标题截断、长消息滚动、输入增长/复位、发送/等待/停止/完成及刷新恢复。#274 的三视口合成浏览器 Gate 和生产健康/安全检查均通过，但不代表用户视觉与交互验收。新版 UI 用户验收完成后，再领取下一项 V1 核心业务 UAT（优先评估 Notes 保存与 Journal 追加写入）。#30 跨会话记忆仍未验收；VNext 保持 FROZEN。
+**唯一 NEXT（决定是否申请生产 Notes/Journal 写入验收）：** PR #277 已通过隔离工程门禁；本轮没有修改生产或真实业务数据。最近有记录的环境基线显示 Notes Drafts 仅在 Core 私有 state 中，`SB_NOTES_AUTHORIZED_ROOTS={}`，未授权真实 Vault；当前记录的生产挂载列表没有独立 Journal 根，且本轮未实时检查生产。若要验证真实生产写入，需先单独授权 App-only 部署/配置与专用 Journal 目录 RW 边界核验；Knowledge 保持 RO、Private 不挂载、Promote/Writer 关闭。真实数据 UAT 再单独授权。#30 跨会话记忆仍未验收；VNext 保持 FROZEN。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
@@ -76,11 +76,11 @@ source: GitHub SecondBrain Monorepo
 
 ## 主要风险与验收边界
 
-- GitHub main、生产代码和用户验收分开记录：生产 App 运行 PR #274 固定 revision `268ccae7`；main `de5edff` 比该目标多出的 PR #275 仅更新文档。2026-11-05 部署后已核验 App 健康及安全边界；新版 UI 的用户浏览器验收仍待执行。
+- GitHub main、生产代码和用户验收分开记录：2026-11-05 本轮开始时最新 main 为 `ef4cabd36f7ee5f63db0fde2275d9ad29686ef07`；生产 App 仍运行 PR #274 固定 revision `268ccae7`。该部署时 main `de5edff` 比目标多出的 PR #275 仅更新文档。部署后已核验 App 健康及安全边界；#269/#274 工程浏览器 Gate PASS，用户明确放弃旧版 Chat UI 人工视觉验收，状态 `USER_WAIVED / NOT RUN`。
 - #261 远端隔离分支的 CI 失败（Actions #41334785303 有 4 项旧/待核断言失败）；尚无 PR，Chromium Gate 未运行，不能合并。
 - #74 的安全范围修复已合并并部署，剩余用户验收未完成；#30 真实模型记忆故障和 #78 生产审批边界仍未解除。
 - D084 历史浏览器业务验收仍无新证据（旧宽范围 Issue #44 已按未计划关闭，不是验收完成）。
-- 新版 Chat UI 用户浏览器验收、真实 Vault/Private 检查、OS 权限和安全架构变更均未在本轮执行；#269 部署于 2026-11-04 完成，#274 App-only 更新于 2026-11-05 完成。
+- 新版 Chat UI 用户视觉验收、真实 Vault/Private 检查、OS 权限和安全架构变更均未执行；Chat UI 人工验收 `USER_WAIVED / NOT RUN`。#269 部署于 2026-11-04 完成，#274 App-only 更新于 2026-11-05 完成。Notes/Journal 隔离测试不构成生产写入或真实业务数据验收。
 
 ## 导航
 

@@ -73,7 +73,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "journal_heading", "home_after_journal", "calendar_heading", "layout_no_horizontal_overflow",
     "projects_navigation", "projects_api_response", "activity_navigation",
     "agent_health_navigation", "agent_health_api_response", "today_navigation",
-    "today_api_response", "journal_navigation", "journal_api_response",
+    "today_api_response", "journal_navigation", "journal_api_response", "journal_append",
+    "journal_saved_readback", "journal_refresh_readback",
     "calendar_navigation", "calendar_api_response", "home_api_response",
     "layout_home", "layout_projects", "layout_activity", "layout_agent_health",
     "layout_today", "layout_journal", "layout_calendar", "chat_session",
@@ -780,10 +781,43 @@ def seed_daily_brief_sources(dirs: dict[str, Path]) -> dict[str, bytes]:
     return {item.name: item.read_bytes() for item in dirs["journal"].iterdir() if item.is_file()}
 
 
-def assert_journal_fixture_unchanged(root: Path, baseline: dict[str, bytes]) -> None:
+def assert_journal_fixture_unchanged(root: Path, baseline: dict[str, bytes], *,
+                                     expected_browser_appends: int = 0) -> None:
     current = _read_regular_file_snapshot(root)
-    if current != baseline:
-        raise RuntimeError("synthetic Journal source changed during Brief acceptance")
+    if expected_browser_appends == 0:
+        if current != baseline:
+            raise RuntimeError("synthetic Journal source changed during Brief acceptance")
+        return
+    if len(baseline) != 1 or len(current) != 3 or not set(baseline).issubset(current):
+        raise RuntimeError("synthetic Journal file set changed during browser acceptance")
+    name = next(iter(baseline))
+    expected_locks = {".operations.lock", f".{name[:-6]}.lock"}
+    if set(current) != set(baseline) | expected_locks:
+        raise RuntimeError("synthetic Journal lock file set changed unexpectedly")
+    for lock_name in expected_locks:
+        lock_path = root / lock_name
+        if lock_path.stat().st_mode & 0o777 != 0o600 or current[lock_name] != b"":
+            raise RuntimeError("synthetic Journal lock file permissions or contents are unsafe")
+    before = baseline[name]
+    after = current[name]
+    if not after.startswith(before) or not before.endswith(b"\n"):
+        raise RuntimeError("pre-existing synthetic Journal entry was changed or removed")
+    appended = after[len(before):].splitlines()
+    if len(appended) != expected_browser_appends:
+        raise RuntimeError("unexpected synthetic Journal append count")
+    operations = set()
+    for line in appended:
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise RuntimeError("synthetic Journal append is not valid JSONL") from error
+        if (not isinstance(row, dict) or row.get("source") != "web_app_explicit_intent"
+                or not isinstance(row.get("original_text"), str)
+                or not row["original_text"].startswith("记一下：合成浏览器追加 ")
+                or not isinstance(row.get("operation_id"), str) or not row["operation_id"]
+                or row["operation_id"] in operations or row.get("date") != name[:-6]):
+            raise RuntimeError("synthetic Journal append was outside the browser test allowlist")
+        operations.add(row["operation_id"])
 
 
 def _read_regular_file_snapshot(root: Path) -> dict[str, bytes]:
@@ -1147,9 +1181,10 @@ def main() -> int:
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
-            assert_journal_fixture_unchanged(dirs["journal"], journal_fixture)
-            if not options.http_smoke_only and journal_after != journal_fixture:
-                raise RuntimeError("synthetic Journal source changed during Brief acceptance")
+            expected_journal_appends = 0 if options.http_smoke_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
+            assert_journal_fixture_unchanged(
+                dirs["journal"], journal_fixture, expected_browser_appends=expected_journal_appends,
+            )
             _assert_exact_brief_file_set(dirs["briefs"], today_brief_name)
             brief_file_set_verified = True
         brief_directory_files = sum(
