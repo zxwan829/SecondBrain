@@ -1,5 +1,11 @@
 # Progress Log
 
+## 2026-11-06 — #287 工程收口：Chat Task 查询与更新合并
+
+- **实现与修复：** PR #289 已合并（`deab530b13ee755609a9375ee22449913ef1ed4a`），交付 Chat→Inbox→Journal 的显式收录与独立 Journal 审批链。后续 PR [#291](https://github.com/zxwan829/SecondBrain/pull/291) 合并（`814c04b7abb343620014da65d83c9f1b075b4141`），补齐今天未完成 Task 查询、按唯一精确标题完成及修改截止日期。Task 更新使用既有专用 API、task.write、乐观版本和幂等键；异步投影可从原子 Task 账本恢复。独立 Review 发现并促使修复一个会话归属缺陷：同 key 但改变 Session/原命令原本可能返回错误归属活动；现将二者纳入 Chat-scoped fingerprint 与原子记录，异归属重放 409。
+- **验证与复审：** 前端 Capture/Task 定向套件 96 passed，Core BFF + Task Store + projection 套件 55 passed；typecheck、build 通过（既有大 chunk 提示）。独立 Reviewer 最终 PASS。Ubuntu 24.04 Chromium Gate [Actions #42080651081](https://github.com/zxwan829/SecondBrain/actions/runs/42080651081) 在固定源码 SHA `d4b0ee62a354499ae51f0d89b21d0362a0df3c79` 全部通过，包含前端回归、Core+Web 浏览器合成旅程和 artifact 脱敏；构建工作流校验了实际 checkout SHA。#289 Gate [Actions #42076994861](https://github.com/zxwan829/SecondBrain/actions/runs/42076994861) 亦通过。
+- **状态边界：** #287 工程目标 `WP4_ENGINEERING_COMPLETE`。输入解析为有限、明确的消息开头命令，不代表真实模型自然语言理解；真实模型、NAS/Obsidian 同步、生产写入及用户业务 UAT 均 `NOT RUN`。本轮无生产修改、无付费模型调用、无 Vault/真实业务数据访问；#30 仍 `PARTIAL` 且剩余 4 Run 不结转；#277 生产 Notes/Journal UAT 仍 `PARTIAL`，同 key replay 未执行。Promote/Writer/Weixin 关闭，VNext FROZEN。唯一后续工作包按排程为 #46；本轮未启动。
+
 ## 2026-11-06 — #287 Chat→Inbox→Journal / Chat→Task 工程闭环
 
 - **#30 状态切换：** `PARTIAL / LIMITED_REAL_MODEL_UAT`，6/10 Runs；剩余额度不结转，不再调用。因果归属与冲突处理仍 UNKNOWN/NOT RUN；不阻断本工作包。PR #277 生产 Notes/Journal 状态继续为 `PARTIAL`，未重跑生产验证。
