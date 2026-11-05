@@ -433,6 +433,8 @@ async function inspectOrCreateDailyBrief(
   await page.goto('/brief');
   observed.setDiagnosticAssertion('daily_brief_heading');
   await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible({ timeout: 15000 });
+  const journalSourceReadsBeforeBrief = observed.requestRecords.filter((item) => item.method === 'GET'
+    && item.path === '/api/daily-brief/source-options/journal').length;
   const beforeOpen = observed.dailyBriefPostCount;
   expect(beforeOpen).toBe(0);
   const desktopWriter = viewport.name === 'desktop-1440x1000';
@@ -464,7 +466,8 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_project_count');
   expect(observed.dailyBriefPostCount).toBe(0);
   observed.setDiagnosticAssertion('daily_brief_sources');
-  expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
+  expect(observed.requestRecords.filter((item) => item.method === 'GET'
+    && item.path === '/api/daily-brief/source-options/journal')).toHaveLength(journalSourceReadsBeforeBrief);
 
   observed.setFailureStage('daily_brief_journal');
   observed.setDiagnosticAssertion('daily_brief_journal_action');
@@ -472,6 +475,8 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_journal_source');
   const journalSource = page.getByRole('checkbox', { name: /Journal 来源 1/ });
   await expect(journalSource).toBeVisible();
+  expect(observed.requestRecords.filter((item) => item.method === 'GET'
+    && item.path === '/api/daily-brief/source-options/journal').length).toBeGreaterThan(journalSourceReadsBeforeBrief);
   await expect(page.getByText('Synthetic Journal source fixture; never read or published by the UI.')).toHaveCount(0);
   expect(observed.dailyBriefPostCount).toBe(0);
 
