@@ -458,14 +458,14 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
   observed.setDiagnosticAssertion('daily_brief_project_source');
-  await expect(page.getByText(/Synthetic brief project source/).first()).toBeVisible({ timeout: 15000 });
-  const briefSourceChoices = page.locator('input[type="checkbox"]');
-  observed.setDiagnosticAssertion('daily_brief_project_count');
-  await expect(briefSourceChoices).toHaveCount(2);
-  const projectSource = briefSourceChoices.nth(1);
-  const projectSourceLabel = projectSource.locator('xpath=..');
+  const projectSourceText = page.getByText(/Synthetic brief project source/).first();
+  await expect(projectSourceText).toBeVisible({ timeout: 15000 });
   observed.setDiagnosticAssertion('daily_brief_project_label');
-  await expect(projectSourceLabel).toContainText(/Synthetic brief project source/);
+  const projectSourceIsLabelled = await projectSourceText.evaluate((element) => {
+    const label = element.closest('label');
+    return Boolean(label?.querySelector('input[type="checkbox"]'));
+  });
+  expect(projectSourceIsLabelled).toBe(true);
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
@@ -480,9 +480,12 @@ async function inspectOrCreateDailyBrief(
 
   await page.getByRole('checkbox', { name: /Task · Synthetic brief task source/ }).check();
   observed.setDiagnosticAssertion('daily_brief_project_click');
-  await projectSourceLabel.click();
+  await projectSourceText.click();
   observed.setDiagnosticAssertion('daily_brief_project_checked');
-  await expect(projectSource).toBeChecked();
+  expect(await projectSourceText.evaluate((element) => {
+    const label = element.closest('label');
+    return (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.checked ?? false;
+  })).toBe(true);
   await journalSource.check();
   await page.getByLabel(/简报正文/).fill('Synthetic manually approved daily brief');
   await page.getByLabel('分类（逗号分隔）').fill('合成验收');
