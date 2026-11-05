@@ -27,7 +27,7 @@ source: GitHub SecondBrain Monorepo
 |---|---|---|---|
 | App Shell / 登录与路由 | main 有 Shell、鉴权与路由实现 | HTTPS `/health`、`/`、`/login`、`/notes` 为 200；匿名 session、Tasks、Capture summary、Knowledge search、Promote API 均为 401；用户已在 2026-11-04 登录并完成部分真实页面操作 | 本轮有限登录旅程通过；未覆盖所有模块/路由，完整跨页体验仍待验收 |
 | Home | main 有 Home 页面与部分聚合 | HTTPS `/` 返回 200；未认证浏览器不执行 App 内容聚合 | 动态 Home 完整聚合未验收；首次从 `/` 登录会读取聚合数据，体验时可直接打开目标模块 |
-| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；PR #32 已修复情境偏好截断；合成 Core JSONL→相关性选择→Hermes `/v1/runs` 请求传递通过；D077 Companion 仅部分实现 | App revision `7272b738`；本轮沿现有 Core→Hermes 完成 6 次合成真实模型 Run；详见本节与 Progress Log | 跨会话真实模型 UAT 部分通过：无关过滤、纠正后召回、撤销通过；首次自然召回仅部分遵循；冲突处理未运行。人工视觉 UAT `USER_WAIVED / NOT RUN` |
+| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；PR #32 已修复情境偏好截断；合成 Core JSONL→相关性选择→Hermes `/v1/runs` 请求传递通过；D077 Companion 仅部分实现 | App revision `7272b738`；本轮沿现有 Core→Hermes 完成 6 次合成真实模型 Run；详见本节与 Progress Log | #30 真实模型行为观察为 PARTIAL：无关问题未提及偏好、纠正后回答使用新值、撤销后未复述偏好，初始自然召回缺颜色；因未记录逐 Run 注入上下文，目标记忆因果归属 UNKNOWN；冲突处理未运行。人工视觉 UAT `USER_WAIVED / NOT RUN` |
 | Today / Calendar / Journal / Task | main 有页面/API 的部分实现；显式 Task API 与持久化实现存在 | 用户于 2026-11-04 实测 Task 创建、完成及恢复；PR #277 Journal 生产合成日写入两条不同 key 的记录并刷新/API 回读通过 | Notes/Journal 合成 UAT 部分通过；生产同 key replay NOT RUN，真实数据/用户验收未通过；完整 Calendar 未验收 |
 | Capture：文本 / Markdown / TXT | main 有 Raw→Review 路径及文本入口；`/inbox` 使用显式 Capture/Notes scope | 用户已用合成内容验证文本 Capture→Inbox→Review 保存、回读、关联及刷新持久化；Linux Chromium Inbox capture/retry/source-protection 三视口通过；#269 未改该旅程代码 | 仅限上述文本 Capture 旅程；附件、URL 和 Promote 未验收/不在本次操作范围 |
 | Capture：URL / Web | main 有抓取与 Review 路径 | 本轮未提交 URL 或读取 Raw/Review 数据 | 多站点、失败恢复和用户流程仍未完整验收 |
