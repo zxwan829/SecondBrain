@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-11-05 — PR #277 生产 Notes / Journal 合成 UAT（部分通过）
+
+- **固定运行目标：** 生产 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`，运行且 healthy；Compose SHA-256 `f5760550d5d9fe197cd58bd07c77bc178fb04fec27a9e990342d642530ace020`。本轮未改变配置、镜像、容器、权限或挂载；Hermes 容器/镜像不变，未调用模型。
+- **唯一合成前缀：** `SB-UAT-20261105-57c00fe12af44edab907fbd1f8b326ff`。Notes Draft ID `57924f04-f176-4aac-85c4-64586a11bbac`：创建、两次编辑保存、刷新重开及 API 回读通过；合成正文 SHA-256 `16d1b33147a0fb2fcaf03d83411cf16d1f950bef05266b6117f3e586c120dbb3`。Draft 专用根文件 `0600 / 1026:100`。
+- **Journal：** 写入前确认 `2099-12-30.jsonl` 不存在，只通过正式已认证 UI 新增两条显式合成原话，采用不同操作键。页面刷新和精确日期 API 回读均为两条且顺序 A→B；该日期文件仅有两条本轮合成行，SHA-256 `df8538178277a05f277155797116ed575d50e1269e8e3f138cb8a0613af5ba98`，权限 `0600 / 1026:100`。
+- **授权/隔离：** 匿名 Session/Notes/Journal API 为 401；已认证 Notes collection 仅 `drafts`，对唯一合成不存在路径的 Knowledge collection 请求返回 404。Knowledge 挂载只读、Private 未挂载、Notes 授权根 `{}`、Promote=false。未打开既有记录详情，未修改/删除任何既有记录，未访问 Obsidian Vault/Knowledge/Private。
+- **执行偏差：** 用户登录后 App 自动导航至 Home；一次完整 AX 快照包含现有业务摘要，较早的 Notes 快照包含已有列表标题。这些摘要/标题曾进入本次自动化工具输出；未打开记录详情，未主动复制/导出到文件、GitHub 或其他服务，也未修改或删除任何既有记录。该读取超出授权范围，发现后停止进一步页面读取，状态为 `UAT_SCOPE_DEVIATION_REVIEW_REQUIRED`，需用户裁定后方可继续生产 UAT。
+- **剩余验收缺口：** 同一幂等键的生产重放 `NOT RUN`。前端正式成功路径清空重试键，当前受限 UI 接口无法安全重放自定义 key；未读取登录 Cookie/Secret、未注入脚本或绕过鉴权。已有隔离 Core route 与前端模拟测试证明 duplicate/retry 合同，但不等于生产运行验证。故当前仅 `PARTIAL`，不能标记 `PRODUCTION_SYNTHETIC_UAT_PASS`；是否继续同 key replay 先待用户对上述读取偏差裁定。
+
 ## 2026-11-05 — PR #277 App-only NAS 部署与验证
 
 - **固定目标与候选：** PR #277 merge SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Ubuntu Chromium Gate [#42007023705](https://github.com/zxwan829/SecondBrain/actions/runs/42007023705) PASS，固定 SHA 构建 [#42009466695](https://github.com/zxwan829/SecondBrain/actions/runs/42009466695) SUCCESS。Artifact digest 与下载内容匹配；App-only 镜像归档内部 SHA-256 `caa8829243d4cd1a85e2730ee963559bdb8ef3e7998aab2a892f7c1cff2d50ef`，image ID `sha256:d73bb0fb73b77a728c4f6eecde44c8309695abb573e00048c6ba3affb50fc1e1`、平台 `linux/amd64`、revision 与 SHA 一致。NAS 仅加载 App 镜像。

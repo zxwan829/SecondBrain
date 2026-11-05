@@ -6,6 +6,13 @@ type: environment-baseline
 ---
 # Environment Baseline
 
+## 2026-11-05 PR #277 Notes / Journal 生产合成数据 UAT（部分通过）
+
+- **目标与唯一标识：** 对已部署 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82` 使用合成标识前缀 `SB-UAT-20261105-57c00fe12af44edab907fbd1f8b326ff`。未打开既有 Notes/Journal 详情或修改既有记录；未调用模型。
+- **Notes Draft：** 通过已认证的生产 Web 页面新建 Draft，路径 ID `57924f04-f176-4aac-85c4-64586a11bbac`；两次编辑保存后刷新、重新打开，唯一标题和二次编辑标记仍在；对该确切合成 Draft 的 API GET 回读通过。NAS 精确路径 `/volume1/docker/secondbrain/core-state/notes-drafts/57924f04-f176-4aac-85c4-64586a11bbac/note.md`，大小 296 bytes，SHA-256 `16d1b33147a0fb2fcaf03d83411cf16d1f950bef05266b6117f3e586c120dbb3`，权限 `0600 / 1026:100`。生产 API 集合只含 `drafts`；以唯一不存在的合成路径请求 `knowledge` 集合返回 404；匿名 Session/Notes/Journal 请求均 401。Notes Draft 写入、保存、重开和隔离 PASS；授权 Vault collection 未启用、未触碰。
+- **Journal 专用目录：** 选择 `2099-12-30`；写入前仅检查该日期目标文件不存在，没有列举/读取任何其他 Journal 文件。通过正式已认证 Journal UI 追加两条带上述唯一前缀的合成原话，界面均显示成功；刷新后 UI 与精确日期 API 回读各一条 A/B、共两条，顺序正确。精确存储 `/volume1/docker/secondbrain/core-state/journal/2099-12-30.jsonl` 共 2 行，均匹配唯一前缀，两个不同记录 ID 和不同幂等键；文件 SHA-256 `df8538178277a05f277155797116ed575d50e1269e8e3f138cb8a0613af5ba98`，权限 `0600 / 1026:100`。追加两种不同键、回读和持久化 PASS。
+- **范围偏差与未完成项：** 登录后 App 自动落至 Home，一次完整可访问性快照包含现有业务摘要；此前 Notes 页快照包含列表标题。未打开既有记录详情或修改/删除既有记录；摘要/标题曾显示在本次自动化工具输出中，未主动复制或导出到文件、GitHub 或其他服务。该自动呈现/快照超出“只处理本轮合成数据”的读取边界，记为 `UAT_SCOPE_DEVIATION_REVIEW_REQUIRED`，发现后停止页面读取。同一幂等键生产重放 `NOT RUN`：正式 UI 成功后清空重试键；受限浏览器接口不提供任意自定义请求头的已认证 POST。未读取或转移 Cookie/Secret、未注入脚本或绕过鉴权。隔离 Core/前端测试已有 duplicate/retry 覆盖，但不替代生产同键重放。App 仍为 `running/healthy`，Compose SHA-256 `f5760550d5d9fe197cd58bd07c77bc178fb04fec27a9e990342d642530ace020`；Knowledge RO、Private 未挂载、`SB_NOTES_AUTHORIZED_ROOTS={}`、Promote=false；Hermes 容器及镜像未变。Journal 为 Core-state JSONL，不据此声称与 Obsidian `50-Journal` 同步。总体 `PARTIAL`，不得标记完整生产合成 UAT PASS 或 USER_UAT_PASS；是否继续生产验证待用户裁定。
+
 ## 2026-11-05 PR #277 App-only 生产部署与运行核验
 
 - **固定候选：** PR #277 merge SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Ubuntu Chromium 工程 Gate [#42007023705](https://github.com/zxwan829/SecondBrain/actions/runs/42007023705) SUCCESS，精确 SHA 候选构建 [#42009466695](https://github.com/zxwan829/SecondBrain/actions/runs/42009466695) SUCCESS。App Image ID `sha256:d73bb0fb73b77a728c4f6eecde44c8309695abb573e00048c6ba3affb50fc1e1`、`linux/amd64`、revision label 与目标 SHA 一致。GitHub artifact ID `13406975439` digest `sha256:9a908b729a7a4323517bbb6516b1f145598a683b687319a6e995f6f134f1bb67`，下载件哈希匹配；内部组合镜像包 SHA-256 `1203c22208351a502087320948ae852451e2e6c27ee648eb7e9468fae73ca33e`。组合包经过内容寻址校验后仅提取 App 镜像，App-only archive SHA-256 `caa8829243d4cd1a85e2730ee963559bdb8ef3e7998aab2a892f7c1cff2d50ef`；校验 config/image ID、revision、平台和全部 12 个引用 blob。NAS 只加载了 App tag；没有导入 Hermes 候选。
