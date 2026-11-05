@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-05 — #30 跨会话真实模型有限 UAT（6 Runs）
+
+- **通道与授权：** 用户确认 SecondBrain 与挂载 Knowledge 仅含测试资料，并允许通过现有 Core→Hermes 执行本次自然检索和 citation 元数据保存；不改 NAS 配置、容器、权限或补丁。活动模型 `zai-org/GLM-4.5-Air`，provider `custom`（SiliconFlow）。共发起 6/10 次获准 Run，均用虚构标识 `ZetaQuill-7391`；没有真实个人内容、Secret、Private 或其他目录参与。
+- **实际模型结果：** (1) 保存偏好后，模型确认希望每条清单项以蓝色方块开头；(2) 新会话问“给我写一个 ZetaQuill-7391 的简短清单示例”，模型给出 `□` 方框清单但没有颜色，首次自然召回 **PARTIAL**；(3) 无关火星奥林匹斯山问题正常作答，未提及偏好，过滤 **PASS**；(4) 用户将偏好纠正为清单前缀 `ZETA-STAR-7391`，模型确认新值替换旧值，纠正 **PASS**；(5) 新会话问同类清单项，模型实际以 `ZETA-STAR-7391:` 开头，纠正后召回 **PASS**；(6) 撤销后新会话再问，模型表示缺少 ZetaQuill 上下文并请求说明，没有复述旧值或新值，撤销 **PASS**。冲突处理未运行，不算通过。
+- **存储核验：** 仅筛选唯一合成标记对应的记忆事件并输出元数据：3 条、同一记录 revision 1/2/3，operation `create → correct → revoked`，最终状态 revoked；没有读取或输出其他行正文。撤销后无 active 版本。
+- **用量与费用：** 生产 Chat UI/Core 当前未向本次可见结果暴露逐 Run input/output token usage；账户余额/账单未读取。活动模型供应商页面列示 `$0.14/M` 输入、`$0.86/M` 输出，但缺少实际 token 数，故实际用量与费用 **UNKNOWN**；不以公开单价或估算冒充账单。只确认 6 个用户发起 Run，未从 API 取得 provider 内部可能的附加计费请求数。
+- **结论与范围：** #30 真实记忆验收 **PARTIAL**：纠正、纠正后召回、无关过滤、撤销通过；原始偏好召回未完整保留颜色，冲突测试未执行。未改代码或生产配置、未部署、未读 Secret/Private；App/Hermes 保持原配置。用户已明确允许本轮 Knowledge 检索，PR #285 原“需另行授权”的阻断已解除。
+
 ## 2026-11-05 — #30 独立合成 JSONL 测试隔离（无生产/无模型）
 
 - **固定开发基线：** GitHub `main` `10bf24bd8a182c80bb6513a5dca6b521bdf6f2ea`。生产最近记录 revision 为 `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；该 revision 与 main 的 Core runtime source diff 为空，本次未改生产运行代码。此前 PR #283 已将 `0/10` Run 与数据隔离阻断正式记录。
