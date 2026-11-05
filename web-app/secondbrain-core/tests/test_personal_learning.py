@@ -393,6 +393,53 @@ class PersonalLearningTests(unittest.TestCase):
                                              "instructions": instructions})
         self.assertEqual(captured["idempotency"], "adapter-test-key")
 
+    def test_stored_memory_reaches_constructed_hermes_run_request_only_when_relevant(self):
+        learned_text = "写技术说明时喜欢先给简短结论，再列三条要点"
+        self.store.create(content={"text": learned_text}, category="preference",
+                          fact_kind="user_stated", source_type="user_message",
+                          source_ref="synthetic-session-a:synthetic-message-a")
+        run_requests = []
+
+        def hermes_handler(request):
+            if request.method == "GET" and request.url.path.endswith("/messages"):
+                return httpx.Response(200, json={"data": []})
+            if request.method == "POST" and request.url.path == "/v1/runs":
+                run_requests.append(json.loads(request.content))
+                return httpx.Response(202, json={"run_id": f"synthetic-run-{len(run_requests)}",
+                                                 "status": "started"})
+            return httpx.Response(404)
+
+        hermes = HermesAPI("http://hermes.synthetic", "synthetic-only-key",
+                           httpx.MockTransport(hermes_handler))
+        pipeline = PersonalLearningPipeline(self.store)
+        app = FastAPI()
+        app.include_router(create_web_app_router(
+            FakeAuth(), hermes, object(), self.root, self.root,
+            personal_learning=pipeline,
+        ))
+        client = TestClient(app, base_url="https://testserver")
+
+        related_input = "帮我整理这次测试的说明"
+        related = client.post(
+            "/api/chat/sessions/synthetic-session-b/runs", json={"input": related_input},
+            headers={"Idempotency-Key": "synthetic-related-run"},
+        )
+        self.assertEqual(related.status_code, 200, related.text)
+        unrelated_input = "简单解释一下彩虹形成的原因"
+        unrelated = client.post(
+            "/api/chat/sessions/synthetic-session-c/runs", json={"input": unrelated_input},
+            headers={"Idempotency-Key": "synthetic-unrelated-run"},
+        )
+        self.assertEqual(unrelated.status_code, 200, unrelated.text)
+
+        self.assertEqual(len(run_requests), 2)
+        self.assertEqual(run_requests[0]["input"], related_input)
+        self.assertEqual(run_requests[0]["session_id"], "synthetic-session-b")
+        self.assertIn(learned_text, run_requests[0]["instructions"])
+        self.assertEqual(run_requests[1], {"input": unrelated_input,
+                                           "session_id": "synthetic-session-c"})
+        client.close()
+
 
 if __name__ == "__main__":
     unittest.main()
