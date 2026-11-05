@@ -455,8 +455,10 @@ async function inspectOrCreateDailyBrief(
     observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
     observed.setDiagnosticAssertion('daily_brief_project_source');
-  const projectSource = page.locator('label').filter({ hasText: 'Synthetic brief project source' }).locator('input[type="checkbox"]');
-  await expect(projectSource).toHaveCount(1);
+  const briefSourceChoices = page.locator('input[type="checkbox"]');
+  await expect(briefSourceChoices).toHaveCount(2);
+  const projectSource = briefSourceChoices.nth(1);
+  await expect(projectSource.locator('xpath=..')).toContainText('Project · Synthetic brief project source');
   await expect(projectSource).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
