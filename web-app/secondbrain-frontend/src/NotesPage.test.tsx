@@ -26,6 +26,23 @@ import { NotesPage } from './NotesPage';
 describe('NotesPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
+  it('keeps opaque frontmatter out of the legacy editor and offers BlockSuite for safe body edits', async () => {
+    const note = { collection: 'drafts', path: '中文笔记.md', content: '---\ntags: [合成]\ncustom: 保留\n---\n\n# 正文\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/notes') return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: note.path, title: '中文笔记' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${encodeURIComponent(note.path)}`) return new Response(JSON.stringify(note), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '中文笔记' }));
+    expect(await screen.findByText(/旧版编辑器保持只读/)).toBeTruthy();
+    expect(document.querySelector('.notes-raw-source')?.textContent).toBe(note.content);
+    expect(screen.getByRole('button', { name: 'BlockSuite 编辑器' })).toBeTruthy();
+    expect(screen.queryByLabelText('合成 Markdown 编辑器')).toBeNull();
+  });
+
   it('opens single-source Inbox for the selected Draft only after the unsaved-navigation guard passes', async () => {
     const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Selected Draft\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {

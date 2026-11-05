@@ -62,7 +62,8 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
     "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
     "agent_health", "today", "journal", "calendar", "notes_navigation",
-    "notes_create", "notes_edit_save", "notes_reopen", "viewport_layout",
+    "notes_create", "notes_edit_save", "notes_reopen", "notes_blocksuite_open",
+    "notes_blocksuite_edit", "notes_blocksuite_reopen", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 FAILURE_DIAGNOSTIC_ASSERTIONS = {
@@ -86,7 +87,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "chat_run_candidates", "chat_run_citations", "chat_run_citation_panel", "chat_run_citation_content",
     "chat_composer_reset", "chat_reload",
     "notes_navigation", "notes_navigation_link", "notes_collections", "notes_create", "notes_save",
-    "notes_readback", "layout_notes", "layout_chat",
+    "notes_readback", "notes_blocksuite_open", "notes_blocksuite_edit", "notes_blocksuite_reopen",
+    "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
     "daily_brief_open_prepare", "daily_brief_task_source", "daily_brief_project_source",
     "daily_brief_project_count", "daily_brief_project_label", "daily_brief_project_visible",
@@ -781,6 +783,24 @@ def seed_daily_brief_sources(dirs: dict[str, Path]) -> dict[str, bytes]:
     return {item.name: item.read_bytes() for item in dirs["journal"].iterdir() if item.is_file()}
 
 
+def seed_notes_safety_fixtures(notes_root: Path) -> None:
+    """Create only synthetic Draft files for unsupported syntax/fallback checks."""
+    fixtures = {
+        "wp5-unsafe-markdown.md": (
+            "# WP5 unsafe Markdown fixture\n\n[[Synthetic Wiki Target]]\n"
+            "![[synthetic-embed.png]]\n\n<details><summary>unknown block</summary></details>\n"
+        ),
+        "wp5-attachment-fallback.md": (
+            "# WP5 attachment fallback fixture\n\n"
+            "![synthetic attachment](attachments/synthetic-attachment.png)\n"
+        ),
+    }
+    for name, content in fixtures.items():
+        target = notes_root / name
+        target.write_text(content, encoding="utf-8", newline="")
+        os.chmod(target, 0o600)
+
+
 def assert_journal_fixture_unchanged(root: Path, baseline: dict[str, bytes], *,
                                      expected_browser_appends: int = 0) -> None:
     current = _read_regular_file_snapshot(root)
@@ -1099,6 +1119,7 @@ def main() -> int:
         dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs", "notes")}
         for path in dirs.values():
             path.mkdir(mode=0o700)
+        seed_notes_safety_fixtures(dirs["notes"])
         journal_fixture = seed_daily_brief_sources(dirs)
         password_path = root / "app-password"
         password_path.write_text(secrets.token_urlsafe(32) + "\n", encoding="utf-8")

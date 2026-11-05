@@ -17,6 +17,7 @@ type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
   | 'daily_brief_readback' | 'permission_revocation' | 'post_revocation_navigation'
   | 'notes_navigation' | 'notes_create' | 'notes_edit_save' | 'notes_reopen'
+  | 'notes_blocksuite_open' | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen'
   | 'agent_health' | 'today' | 'journal' | 'calendar' | 'viewport_layout';
 type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
   | 'home_after_projects' | 'home_to_activity' | 'activity_heading'
@@ -29,7 +30,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
   | 'journal_append' | 'journal_saved_readback' | 'journal_refresh_readback'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
-  | 'notes_navigation_link' | 'notes_collections'
+  | 'notes_navigation_link' | 'notes_collections' | 'notes_blocksuite_open'
+  | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
   | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source'
   | 'daily_brief_project_count' | 'daily_brief_project_label'
@@ -1075,6 +1077,132 @@ for (const viewport of viewports) {
     const readNoteResponse = await readNoteResponsePromise;
     expect(readNoteResponse.status(), 'notes_readback').toBe(200);
     await expect(page.locator('.ProseMirror')).toContainText(syntheticNoteBody);
+    if (viewport.name === 'desktop-1440x1000') {
+      // Seed only the isolated synthetic Draft with metadata via the same
+      // authenticated Core Notes API, then exercise the real BlockSuite editor.
+      const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
+      const seeded = await page.request.put(`${baseUrl}/api/notes/drafts/${createdNote.path}`, {
+        headers: { 'If-Match': readNoteResponse.headers()['etag'] ?? '' },
+        data: { content: syntheticFrontmatter },
+      });
+      expect(seeded.status(), 'notes_seed_synthetic_frontmatter').toBe(200);
+      await page.reload();
+      const frontmatterRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
+      await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
+      const rereadFrontmatter = await frontmatterRead;
+      expect(rereadFrontmatter.status(), 'notes_frontmatter_read').toBe(200);
+
+      observed.setFailureStage('notes_blocksuite_open');
+      observed.setDiagnosticAssertion('notes_blocksuite_open');
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const canvas = page.locator('.blocksuite-notes-canvas');
+      await expect(canvas).toBeVisible();
+      await expect(page.getByRole('status').filter({ hasText: 'BlockSuite Page · Core Notes 保存' })).toBeVisible();
+      await expect(canvas).toContainText(syntheticNoteBody);
+      await expect(canvas).toHaveAttribute('data-disabled', 'false');
+      const block = canvas.locator('[contenteditable="true"]').first();
+      await expect(block).toBeVisible();
+
+      observed.setFailureStage('notes_blocksuite_edit');
+      observed.setDiagnosticAssertion('notes_blocksuite_edit');
+      const updatedBody = `WP5 BlockSuite 保存 ${viewport.name}`;
+      const blocksuiteSave = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 10000 });
+      await block.click();
+      await page.keyboard.press('Control+End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type(updatedBody);
+      const saved = await blocksuiteSave;
+      expect(saved.status(), 'notes_blocksuite_save').toBe(200);
+      const savedPayload = await saved.json() as { content: string };
+      expect(savedPayload.content).toContain('title: WP5 synthetic note');
+      expect(savedPayload.content).toContain('custom: preserve-me');
+      expect(savedPayload.content).toContain('wp5-synthetic');
+      expect(savedPayload.content).toContain(updatedBody);
+      await expect(page.getByRole('status').filter({ hasText: '已保存' }).first()).toBeVisible();
+
+      // A concurrent Core edit advances the ETag. The stale editor must receive
+      // 412 and leave that external content intact rather than overwrite it.
+      const concurrentText = 'WP5 synthetic concurrent Core update';
+      const concurrent = await page.request.put(`${baseUrl}/api/notes/drafts/${createdNote.path}`, {
+        headers: { 'If-Match': saved.headers()['etag'] ?? '' },
+        data: { content: `${savedPayload.content}\n${concurrentText}\n` },
+      });
+      expect(concurrent.status(), 'notes_seed_concurrent_update').toBe(200);
+      const staleWrite = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 10000 });
+      await block.click();
+      await page.keyboard.press('Control+End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('WP5 stale browser edit must not replace Core');
+      const rejected = await staleWrite;
+      expect(rejected.status(), 'notes_blocksuite_conflict').toBe(412);
+      await expect(page.getByRole('status').filter({ hasText: '版本冲突' })).toBeVisible();
+      const afterConflict = await page.request.get(`${baseUrl}/api/notes/drafts/${createdNote.path}`);
+      const currentAfterConflict = await afterConflict.json() as { content: string };
+      expect(currentAfterConflict.content).toContain(concurrentText);
+      expect(currentAfterConflict.content).not.toContain('WP5 stale browser edit must not replace Core');
+
+      observed.setFailureStage('notes_blocksuite_reopen');
+      page.once('dialog', (dialog) => void dialog.accept());
+      await page.reload();
+      const blockSuiteRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
+      await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
+      const reread = await blockSuiteRead;
+      expect(reread.status(), 'notes_blocksuite_reopen').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      await expect(page.locator('.blocksuite-notes-canvas')).toContainText(updatedBody);
+      await expect(page.locator('.blocksuite-notes-canvas')).toContainText('preserve-me');
+      const quickSwitchEdit = 'WP5 quick fallback edit preserved';
+      const quickSwitchSave = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 10000 });
+      const reopenedBlock = page.locator('.blocksuite-notes-canvas [contenteditable="true"]').first();
+      await reopenedBlock.click();
+      await page.keyboard.press('Control+End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type(quickSwitchEdit);
+      await page.getByRole('button', { name: '切回旧版编辑器' }).click();
+      const quickSaved = await quickSwitchSave;
+      expect(quickSaved.status(), 'notes_blocksuite_quick_fallback_save').toBe(200);
+      await expect(page.locator('.notes-raw-source')).toContainText(updatedBody);
+      await expect(page.locator('.notes-raw-source')).toContainText(quickSwitchEdit);
+      await expect(page.locator('.notes-raw-source')).toContainText('preserve-me');
+
+      // Setext is accepted by Core but may not be preserved by this Page
+      // adapter. If round-trip comparison rejects it, the UI must keep the
+      // legacy editor and source text available.
+      const latest = await page.request.get(`${baseUrl}/api/notes/drafts/${createdNote.path}`);
+      const latestNote = await latest.json() as { content: string };
+      const setextContent = `${latestNote.content}\nSetext compatibility heading\n===\n`;
+      const setextSeed = await page.request.put(`${baseUrl}/api/notes/drafts/${createdNote.path}`, {
+        headers: { 'If-Match': latest.headers()['etag'] ?? '' }, data: { content: setextContent },
+      });
+      expect(setextSeed.status(), 'notes_seed_setext_fallback').toBe(200);
+      page.once('dialog', (dialog) => void dialog.accept());
+      await page.reload();
+      const fallbackRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
+      await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
+      await fallbackRead;
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      await expect(page.locator('.ProseMirror')).toContainText('Setext compatibility heading');
+
+      observed.setFailureStage('notes_blocksuite_reopen');
+      await page.getByRole('button', { name: 'WP5 attachment fallback fixture', exact: true }).click();
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      await expect(page.locator('.ProseMirror img[alt="synthetic attachment"]')).toBeVisible();
+
+      await page.getByRole('button', { name: 'WP5 unsafe Markdown fixture', exact: true }).click();
+      await expect(page.locator('.notes-raw-source')).toContainText('[[Synthetic Wiki Target]]');
+      await expect(page.locator('.notes-raw-source')).toContainText('![[synthetic-embed.png]]');
+      await expect(page.locator('.notes-raw-source')).toContainText('<details>');
+      await expect(page.locator('.notes-safety')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'BlockSuite 编辑器' })).toHaveCount(0);
+    }
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
 
     // Exercise the real Notes dialog layout CSS against each accepted viewport.

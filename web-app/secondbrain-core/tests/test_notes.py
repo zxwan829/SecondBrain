@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from secondbrain_core.modules.notes import NotesStore, configured_notes_store, create_notes_router, markdown_safety
+from secondbrain_core.modules.notes import NotesStore, configured_notes_store, create_notes_router, markdown_safety, _note_properties, _replace_note_properties
 from secondbrain_core.modules.vocabulary import VocabularyStore
 
 
@@ -48,6 +48,53 @@ class NotesStoreTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as denied:
             self.store.read("knowledge", "secret.md")
         self.assertEqual(denied.exception.status_code, 404)
+
+    def test_unicode_filename_and_opaque_frontmatter_round_trip_without_metadata_changes(self):
+        initial = '\ufeff---\r\n类型: 摘要\r\ntags: [CRM, SecondBrain]\r\ncustom: 保持原样\r\nupdated: 2026-01-01\r\n---\r\n\r\n# 标题\r\n\r\n正文。\r\n'
+        path = self.ordinary / '中文笔记.md'
+        with path.open('w', encoding='utf-8', newline='') as stream:
+            stream.write(initial)
+        path.chmod(0o600)
+        self.assertEqual(_note_properties(initial), ('摘要', ['CRM', 'SecondBrain']))
+        metadata_edit = _replace_note_properties(initial, '笔记', ['NewTag'])
+        self.assertTrue(metadata_edit.startswith('\ufeff---\r\n'))
+        self.assertIn('custom: 保持原样\r\nupdated: 2026-01-01\r\n', metadata_edit)
+        self.assertIn('tags: ["NewTag"]\r\n', metadata_edit)
+        self.assertTrue(metadata_edit.endswith('# 标题\r\n\r\n正文。\r\n'))
+        loaded = self.store.read('personal', '中文笔记.md')
+        self.assertFalse(loaded['read_only'])
+        edited = initial.replace('正文。', '更新后的正文。')
+        saved = self.store.update('personal', '中文笔记.md', edited, loaded['etag'])
+        self.assertEqual(saved['content'], edited)
+        self.assertEqual(path.read_bytes().decode('utf-8'), edited)
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get('session') != 'owner':
+                    raise HTTPException(status_code=401, detail='App session required')
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        client.cookies.set('session', 'owner')
+        route = '/api/notes/personal/%E4%B8%AD%E6%96%87%E7%AC%94%E8%AE%B0.md'
+        read_response = client.get(route)
+        self.assertEqual(read_response.status_code, 200)
+        self.assertEqual(read_response.json()['content'], edited)
+        api_edit = edited.replace('更新后的正文。', 'API 回读后的正文。')
+        api_saved = client.put(route, json={'content': api_edit}, headers={'If-Match': read_response.headers['etag']})
+        self.assertEqual(api_saved.status_code, 200)
+        self.assertEqual(client.get(route).json()['content'], api_edit)
+        with self.assertRaises(HTTPException) as stale:
+            self.store.update('personal', '中文笔记.md', edited + '再次编辑\r\n', loaded['etag'])
+        self.assertEqual(stale.exception.status_code, 412)
+
+    def test_frontmatter_is_opaque_and_cannot_be_changed_by_body_editor(self):
+        initial = '---\n类型: 摘要\ntags:\n  - CRM\ncustom_field: Keep\n---\n\n# Body\n'
+        note = self.store.create(initial)
+        changed_metadata = initial.replace('类型: 摘要', '类型: 笔记').replace('custom_field: Keep', 'custom_field: Lost')
+        with self.assertRaises(HTTPException) as blocked:
+            self.store.update('drafts', note['path'], changed_metadata, note['etag'])
+        self.assertEqual(blocked.exception.status_code, 422)
+        self.assertEqual(self.store.read('drafts', note['path'])['content'], initial)
 
     def test_conflict_and_unsupported_markdown_never_overwrite(self):
         note = self.store.create("# Original\n")
@@ -199,7 +246,9 @@ class NotesStoreTests(unittest.TestCase):
         approval_root = Path(self.temp.name) / "approval"
         approval_root.mkdir(mode=0o700)
         vocab = VocabularyStore(approval_root)
-        vocab.add_tag("SecondBrain", 0, True)
+        vocabulary_state = vocab.add_type("中文自定义类型", 0, True)
+        vocabulary_state = vocab.add_tag("SecondBrain", vocabulary_state["revision"], True)
+        vocabulary_state = vocab.add_tag("中文标签", vocabulary_state["revision"], True)
         app = FastAPI()
         app.include_router(create_notes_router(SessionAuth(), self.store, vocab))
         client = TestClient(app)
@@ -221,14 +270,14 @@ class NotesStoreTests(unittest.TestCase):
         unknown = client.put(url, json={"type": "笔记", "tags": ["not-approved"], "confirmed": True},
                              headers={"If-Match": revision})
         self.assertEqual(unknown.status_code, 409)
-        saved = client.put(url, json={"type": "笔记", "tags": ["SecondBrain", "CRM"], "confirmed": True},
+        saved = client.put(url, json={"type": "中文自定义类型", "tags": ["SecondBrain", "中文标签", "CRM"], "confirmed": True},
                            headers={"If-Match": revision})
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(saved.headers["etag"], f'"{saved.json()["etag"]}"')
         content = saved.json()["content"]
         self.assertIn('custom: "keep me"', content)
-        self.assertIn('类型: "笔记"', content)
-        self.assertIn('tags: ["SecondBrain", "CRM"]', content)
+        self.assertIn('类型: "中文自定义类型"', content)
+        self.assertIn('tags: ["SecondBrain", "中文标签", "CRM"]', content)
         self.assertTrue(content.endswith("\n\n[[Wiki Link]]\n"))
         self.assertEqual(self.store.history("drafts", draft["path"])["versions"][0]["content"], initial)
         stale = client.put(url, json={"type": "摘要", "tags": [], "confirmed": True},

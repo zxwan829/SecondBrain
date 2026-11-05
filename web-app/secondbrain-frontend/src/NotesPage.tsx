@@ -5,9 +5,11 @@ import { notesApi, type Note, type NoteCollection, type NotesTrashItem, type Vis
 import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
 
 const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module) => ({ default: module.VisualAssetDialog })));
+const BlockSuiteMarkdownEditor = lazy(() => import('./BlockSuiteMarkdownEditor').then((module) => ({ default: module.BlockSuiteMarkdownEditor })));
 
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
+const hasOpaqueFrontmatter = (value: string) => /^\ufeff?---\r?\n/.test(value);
 
 export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { onRegisterNavigationGuard?: (guard: (() => boolean) | null) => void; onOpenInboxSource?: (collection: string, path: string) => void }) {
   const [collections, setCollections] = useState<NoteCollection[]>([]);
@@ -15,6 +17,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [items, setItems] = useState<{ path: string; title: string }[]>([]);
   const [note, setNote] = useState<Note | null>(null);
   const [content, setContent] = useState('');
+  const [editorMode, setEditorMode] = useState<'blocksuite' | 'legacy'>('legacy');
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -96,7 +99,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     try {
       const loaded = await notesApi.read(targetCollection, path);
       if (viewRevision.current !== revision) return;
-      setCurrent(loaded, loaded.content); setState('已保存');
+      setCurrent(loaded, loaded.content); setState('已保存'); setEditorMode('legacy');
       setMessage(loaded.read_only ? `此文件含有当前富文本编辑器不能安全往返的语法（${loaded.safety_reasons.join('、')}），已保留原文并设为只读。` : '');
     } catch { if (viewRevision.current === revision) setMessage('笔记读取失败，原有内容未更改。'); }
     finally { if (viewRevision.current === revision) setLoading(false); }
@@ -158,7 +161,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     try {
       const created = await notesApi.create('# 未命名笔记\n\n');
       if (viewRevision.current !== revision) return;
-      setCollection('drafts'); setCurrent(created, created.content); setState('已保存');
+      setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('legacy');
       void refresh('drafts');
     } catch { if (viewRevision.current === revision) setMessage('Drafts 尚未配置，或创建失败；没有创建笔记。'); }
     finally { if (viewRevision.current === revision) setLoading(false); }
@@ -431,6 +434,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
           {note && <button type="button" onClick={() => void trashSelectedNote()} disabled={state !== '已保存' || loading || creatingVisual || savingVisual || visualAsset !== null || unpersistedVisual !== null}>移到回收站</button>}
         </div>
+        {note && !note.read_only && editorMode === 'legacy' && <div className="notes-editor-mode" role="group" aria-label="Markdown 编辑器">
+          <button type="button" onClick={() => setEditorMode('blocksuite')}>BlockSuite 编辑器</button>
+        </div>}
         {restorePreview && <section className="notes-restore-preview" aria-label="历史版本预览">
           <h2>最近历史版本预览</h2><pre>{restorePreview.content}</pre>
           <button type="button" onClick={() => setRestorePreview(null)}>取消</button>
@@ -439,12 +445,16 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         {note && state === '已保存' && !loading && <NotePropertiesPanel key={noteKey(note)} note={note} onSaved={(saved) => {
           setCurrent(saved, saved.content); setState('已保存'); setMessage(''); void refresh(saved.collection);
         }} />}
-        {note ? note.read_only ? <>
-          <div className="notes-safety" role="status">此文件含有当前富文本编辑器不能安全往返的语法（{note.safety_reasons.join('、')}），原始 Markdown 保留只读。</div>
+        {note ? note.read_only || (editorMode === 'legacy' && hasOpaqueFrontmatter(content)) ? <>
+          <div className="notes-safety" role="status">{note.read_only
+            ? `此文件含有当前富文本编辑器不能安全往返的语法（${note.safety_reasons.join('、')}），原始 Markdown 保留只读。`
+            : '此笔记含有不透明 YAML Frontmatter；旧版编辑器保持只读，请切换 BlockSuite 以安全编辑正文。'}</div>
           <pre className="notes-raw-source">{content}</pre>
-        </> : <MarkdownEditor key={noteKey(note)} value={content} disabled={false} onChange={change} onImagePaste={pasteImage}
-          onOpenVisualAsset={openVisual}
-          assetBase={`/api/notes/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`} /> : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
+        </> : editorMode === 'blocksuite' ? <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
+          onFallback={() => { setEditorMode('legacy'); setMessage('BlockSuite 不支持安全往返此笔记，已保留原文并切回旧版编辑器。'); }} /></Suspense>
+          : <MarkdownEditor key={`legacy:${noteKey(note)}`} value={content} disabled={false} onChange={change} onImagePaste={pasteImage}
+            onOpenVisualAsset={openVisual}
+            assetBase={`/api/notes/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`} /> : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
         {message && <p role="alert" className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
         {unpersistedVisual && state === '保存失败' && note && noteKey(note) === noteKey(unpersistedVisual.note) &&
           <button type="button" onClick={() => void retryVisualReference()}>重试保存图形引用</button>}

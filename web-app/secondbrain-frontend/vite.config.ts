@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { vanillaExtractPlugin } from '@vanilla-extract/vite-plugin';
 
 const coreProxyTarget = (globalThis as typeof globalThis & {
     process?: { env?: Record<string, string | undefined> };
@@ -7,7 +8,9 @@ const coreProxyTarget = (globalThis as typeof globalThis & {
 
 export default defineConfig({
     base: '/',
-    plugins: [react({ jsxRuntime: 'classic' })],
+    plugins: [vanillaExtractPlugin(), react({ jsxRuntime: 'classic' })],
+    esbuild: { target: 'es2022', include: /node_modules\/@blocksuite\/.*\.ts$|src\/.*\.tsx?$/ },
+    resolve: { dedupe: ['yjs', 'lit', 'lit-html', '@lit/reactive-element', 'zod'] },
     build: { assetsInlineLimit: 4096 },
     server: {
         proxy: {

@@ -1,0 +1,8 @@
+.blocksuite-notes { display: flex; flex: 1 1 auto; min-height: 420px; flex-direction: column; color: #dce7f7; }
+.blocksuite-notes-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid rgb(151 177 215 / 15%); padding: 8px 0; font-size: 12px; }
+.blocksuite-notes-bar button { border: 1px solid rgb(151 177 215 / 24%); border-radius: 7px; padding: 6px 9px; color: #dce7f7; background: rgb(4 11 22 / 42%); cursor: pointer; }
+.blocksuite-notes-canvas { flex: 1 1 auto; min-height: 400px; overflow: auto; border-radius: 10px; background: #fff; color: #1f2937; --affine-editor-width: 880px; --affine-editor-side-padding: 28px; --affine-editor-bottom-padding: 36px; }
+.blocksuite-notes-canvas editor-host { display: block; min-height: 400px; }
+.blocksuite-notes-canvas affine-page-root { min-height: 400px; color: #1f2937; --affine-text-primary-color: #1f2937; --affine-font-family: ui-sans-serif, system-ui, sans-serif; }
+.blocksuite-notes-canvas [contenteditable="true"] { outline: none; }
+.blocksuite-notes-canvas[data-disabled="true"] { pointer-events: none; opacity: .72; }
