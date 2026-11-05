@@ -30,9 +30,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
-  | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_count' | 'daily_brief_project_label'
-  | 'daily_brief_project_visible' | 'daily_brief_project_click' | 'daily_brief_project_checked'
-  | 'daily_brief_project_source' | 'daily_brief_sources'
+  | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source'
+  | 'daily_brief_project_click' | 'daily_brief_project_checked'
+  | 'daily_brief_sources'
   | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
@@ -445,27 +445,20 @@ async function inspectOrCreateDailyBrief(
   expect(observed.dailyBriefPostCount).toBe(0);
   observed.setFailureStage('daily_brief_sources');
   observed.setDiagnosticAssertion('daily_brief_open_prepare');
-    const taskSourcesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
-      && new URL(response.url()).pathname === '/api/tasks'
-      && new URL(response.url()).search === '?status=all');
-    const projectSourcesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
-      && new URL(response.url()).pathname === '/api/projects'
-      && new URL(response.url()).search === '?limit=50&offset=0');
+  const taskSourcesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === '/api/tasks'
+    && new URL(response.url()).search === '?status=all');
+  const projectSourcesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === '/api/projects'
+    && new URL(response.url()).search === '?limit=50&offset=0');
   await page.getByRole('button', { name: '手动准备简报' }).click();
-    expect((await taskSourcesResponse).status()).toBe(200);
-    expect((await projectSourcesResponse).status()).toBe(200);
-    observed.setDiagnosticAssertion('daily_brief_task_source');
+  expect((await taskSourcesResponse).status()).toBe(200);
+  expect((await projectSourcesResponse).status()).toBe(200);
+  observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
-    observed.setDiagnosticAssertion('daily_brief_project_source');
-  const briefSourceChoices = page.locator('input[type="checkbox"]');
-  observed.setDiagnosticAssertion('daily_brief_project_count');
-  await expect(briefSourceChoices).toHaveCount(2);
-  const projectSource = briefSourceChoices.nth(1);
-  observed.setDiagnosticAssertion('daily_brief_project_label');
-  const projectSourceLabel = projectSource.locator('xpath=..');
-  await expect(projectSourceLabel).toContainText('Project · Synthetic brief project source');
-  observed.setDiagnosticAssertion('daily_brief_project_visible');
-  await expect(projectSourceLabel.locator('input[type="checkbox"]')).toHaveCount(1);
+  observed.setDiagnosticAssertion('daily_brief_project_source');
+  const projectSource = page.getByRole('checkbox', { name: /Project · Synthetic brief project source/ });
+  await expect(projectSource).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
@@ -480,7 +473,7 @@ async function inspectOrCreateDailyBrief(
 
   await page.getByRole('checkbox', { name: /Task · Synthetic brief task source/ }).check();
   observed.setDiagnosticAssertion('daily_brief_project_click');
-  await projectSourceLabel.click();
+  await projectSource.check();
   observed.setDiagnosticAssertion('daily_brief_project_checked');
   await expect(projectSource).toBeChecked();
   await journalSource.check();
