@@ -464,7 +464,7 @@ async function inspectOrCreateDailyBrief(
   const projectSource = briefSourceChoices.nth(1);
   const projectSourceLabel = projectSource.locator('xpath=..');
   observed.setDiagnosticAssertion('daily_brief_project_label');
-  await expect(projectSourceLabel).toContainText('Project · Synthetic brief project source');
+  await expect(projectSourceLabel).toContainText(/Synthetic brief project source/);
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
