@@ -7,7 +7,7 @@
 - **请求链与数据断言：** 经真实 FastAPI Core `/api/personal-memory` create/correct/revoke、`/api/chat/sessions` 和 `/api/chat/sessions/{id}/runs` 路由；只使用一条虚构 `ZetaQuill-7391` 偏好，事件文件仅 3 条、同一 memory ID、操作序列 create→correct→revoked。实际 Core BFF→HermesAPI 的 `/v1/runs` 请求由本地 `httpx.MockTransport` 截获（没有真实 Hermes 或模型请求）：相关请求 payload 恰含一条合成记忆；无关问题、撤销后的问题没有 `instructions`；纠正后仅含新文本，不含旧值。缺失 `SB_PERSONAL_MEMORY_ROOT` 或指向不存在目录时 `create_app()` 启动失败，测试未产生任何 `/v1/runs` 请求。
 - **验证：** 隔离记忆相关测试此前为 **65 passed**。首次 GitHub Linux 完整 Core suite 暴露两处既有 Activity 测试断言遗漏已存在的 `review`、`promote` 来源；按 API 当前精确顺序更新来源期望，并让原六个可撤销来源的 I/O 计数只针对已仪表化存储。无生产逻辑变化、未删除断言。修正后本地完整 Core suite **657 passed、5 skipped、59 subtests passed**；隔离记忆及两处 Activity 集成定向组合 **67 passed**。`git diff --check` 通过。由于仅测试/文档改动，不需生产部署；无真实 Session/Memory 数据访问、Run、费用或配置变更。
 - **模型与计费预检方案：** 本任务禁止生产访问，故现行 model ID、provider 账户余额仍 `UNKNOWN`。后续经单独授权时，优先从脱敏的 Hermes model selector/status 元数据取得 exact model/provider；单价从该 provider 官方价目页核对；每个获准 Run 记录精确 usage/token 与 Run 数，调用失败/重试/额外模型调用均计数并按预算立即停。仅当账户余额可从无 Secret 的只读余额界面/接口确认时记录，否则标 `UNKNOWN`；公开费率与 Core 本地软预留均不是供应商硬费用上限。
-- **下一步边界：** 本测试证明隔离 Core 实例可将单条合成 JSONL 记忆传递到 Mock Hermes 请求，不证明真实模型采用或生产链隔离。生产行为保持旧路径不变；真实付费 Run 仍未执行，先完成该 PR 的独立复审/项目门禁，再向用户提交唯一的真实模型测试通道授权方案。此前最多 10 次 Run 授权本子任务未使用，也不因该测试自动启用。
+- **下一步边界：** 本测试证明隔离 Core 实例可将单条合成 JSONL 记忆传递到 Mock Hermes 请求，不证明真实模型采用或生产链隔离。生产行为保持旧路径不变；增量独立复审 PASS，PR 当前头的 GitHub Linux 完整 Core suite PASS。PR 合并后先完成无 Secret 的模型/provider/账户余额与 usage 可见性核验、官方单价核对及独立合成 JSONL→Hermes 通道确认；如果无需生产变更，再按既有最多 10 次 Run 授权限定范围。此前 Run 授权仍未使用，本子任务不调用模型。
 
 ## 2026-11-05 — #30 真实模型跨会话记忆验收预检（未发起 Run）
 
