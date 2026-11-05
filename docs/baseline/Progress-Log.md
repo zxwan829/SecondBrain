@@ -3,8 +3,8 @@
 ## 2026-11-05 — PR #274 Daily Brief Gate 修复与 Chat UI 合成验收
 
 - **根因与最小修复：** Daily Brief 浏览器旅程把整个多页面 journey 中累计的 Journal source GET 数量误当作 Daily Brief 页面内计数，导致此前已合法加载 Journal 的请求被误判为隐式加载。测试现于 Daily Brief 标题显示后记录计数基线；手动准备阶段断言不增加，显式点击加载后断言计数增加并呈现合成来源。未删除或放宽验收断言，Daily Brief 产品代码未修改。
-- **验证与复审：** 固定 PR HEAD `d2e99ee5c7fc36c6ec32c0855903f392ed1ddf6c` 的 Ubuntu 24.04 Chromium 完整 Gate [Actions #41967382741](https://github.com/zxwan829/SecondBrain/actions/runs/41967382741) SUCCESS；Web 回归、typecheck、build、sanitize 检查及隔离 Core+Web 浏览器旅程均通过，Chat 三视口覆盖保留。独立 Review PASS；指出项目源定位器略脆弱但不影响本次验收，无合并阻断。
-- **状态边界：** PR #274 已通过工程 Gate；生产未修改，当前生产 App 仍为 `d06e3f3b`。合成浏览器通过不等同于生产部署或新版 UI 用户验收；`00-CURRENT.md` 的唯一 NEXT 仍为用户本人验收 #269 新版 Chat UI。VNext 保持 FROZEN。
+- **验证与复审：** 原代码 HEAD `d2e99ee5c7fc36c6ec32c0855903f392ed1ddf6c` 的 Gate [#41967382741](https://github.com/zxwan829/SecondBrain/actions/runs/41967382741) 已通过；最终含本状态记录的 PR HEAD `9de2c5db8c3095e12c18663b2d0dbbdf5290f81d` 再经 Ubuntu 24.04 Chromium 完整 Gate [#41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) SUCCESS。Web 回归、typecheck、build、sanitize 检查及隔离 Core+Web 浏览器旅程均通过，Chat 三视口覆盖保留。独立 Review PASS；指出项目源定位器略脆弱但不影响验收，无合并阻断。
+- **合并与状态边界：** PR #274 于 2026-11-05 合并，merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704`。生产未修改，当前生产 App 仍为 `d06e3f3b`。合成浏览器通过不等同于生产部署或新版 UI 用户验收；`00-CURRENT.md` 的唯一 NEXT 仍为用户本人验收 #269 新版 Chat UI。VNext 保持 FROZEN。
 
 ## 2026-11-04 — PR #269 App-only 部署与运行验收
 
