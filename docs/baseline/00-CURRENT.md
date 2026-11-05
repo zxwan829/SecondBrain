@@ -49,15 +49,56 @@ source: GitHub SecondBrain Monorepo
 - **#269 合并、部署与用户验收边界：** PR [#269](https://github.com/zxwan829/SecondBrain/pull/269) merge commit `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`；三视口 Linux Chromium Gate [Actions #41785664124](https://github.com/zxwan829/SecondBrain/actions/runs/41785664124) PASS；精确 SHA 构建 [Actions #41788688422](https://github.com/zxwan829/SecondBrain/actions/runs/41788688422) SUCCESS。App image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`，`linux/amd64`。原始 artifact `13301449533` / digest `sha256:e6040f9c7262b8477169ef0e5fd8a1a1e7959d1b2857e423dd33c0cae7a89b9c`；NAS App-only 包 SHA-256 `49905f26e9fc7780a1a58be693f7d1558b989421291ffcfa417a3856674e684a`。App-only 部署与健康/安全检查通过；新版 UI 的用户实际体验仍 NOT RUN。
 - **Chat 安全与基础 UAT：** 此前的插件活动 Hook/策略探针、真实 Hermes AIAgent API Run 审批/拒绝/Skills 集成测试、App→Hermes health 与真实模型普通文本回复/刷新恢复均已有通过记录；此前“缺少 fail-closed 补丁”判断已正式撤回。上述有限证据不代表跨会话记忆、完整 Companion 或所有工具场景验收。
 
+## 近期执行规划（2026-11-05 PMO 更新）
+
+**目标：在收口已部署成果的同时，优先证明“跨会话记住、纠正并有效帮助用户”，减少重复审批和 Hermes 长期维护成本，再完成全部 V1。** 本节定义当前工作顺序；[V1 交付规划](V1-Delivery-Plan.md)保留 P1—P6 全量分解与验收标准。下列六个工作包是原阶段的执行重排，不是新增六阶段，不缩减 V1 范围；旧 A/B 波次和 #76/#96/#97 不再作为任务启动入口。VNext 继续冻结。
+
+| 顺序 / 对应原阶段 | 目标与拆解 | 汇合条件与当前状态 |
+|---|---|---|
+| 1. 现有成果收口（P1、P4、P5） | 接续已部署 #277；准备 Notes Draft 创建/编辑/重开与 Journal 追加/回读的有限旅程，明确数据位置、失败恢复、与 Obsidian 的关系；授权后执行业务 UAT 并定向修补 | #277 已部署且运行门禁通过；真实业务 UAT 待单独授权。JSONL 持久化不等于 Obsidian 同步；不重复部署已完成版本 |
+| 2. Hermes 补丁盘点与复用（P2、P5） | 对固定上游版本列出源码补丁、插件、配置及 Core 适配器；逐项记录用途、必要性、上游扩展替代方式、升级验证方法，分类为保留/可迁出/可删除/待验证；以合成数据评估原生记忆接口能否服务现有受控链路 | 交付可追溯到源码/版本的清单与最小建议；未检查的能力标 UNKNOWN。必要安全补丁保留，不以升级整个 Hermes 为前置；盘点结论不自动授权删除补丁或更换记忆权威来源 |
+| 3. 跨会话记忆闭环（P2-1～4） | 接续 #30，沿保存→检索选择→上下文传递→模型采用定位故障；优先最小修复，核验自然召回、纠正、撤销、无关请求及事实回源；只对已证明的缺口比较 Hermes 原生能力或检索改进 | 隔离链路与真实模型证据分开；真实新会话能用正确记忆、纠正后采用新值、撤销后不再使用、无关时不过度召回，才通过对应业务验收。JSONL 写入和 Stub 回答不代替实际效果 |
+| 4. 自然对话与日常记录（P1-2/3、P3） | 梳理 Chat 收录、Journal、Task 的实际确认次数、保存回执和重试；先修现行规格内的重复提示及状态错误；涉及合并确认或改变批准语义，集中提出正式规格修订后实施 | 保留 Core 统一处理、D086 Inbox 原件和专用写入边界；正式 Knowledge 仍须明确批准。用户清楚知道保存了什么、在哪里、是否成功；不能用简化体验之名绕过审批 |
+| 5. 记忆驱动的日常价值（P2-5、P3） | 复用 Task/Project/Journal、Daily Brief、预算与反馈能力；补来源可信的回顾、建议和受控业务动作；Daily Brief 范围为 Task/Project 加 Journal 回顾 | 来源可回查，建议与实际执行区分；主动/被动额度、频次、拒绝与恢复按既有合同验证；真实模型/费用/数据处理仍依对应授权 |
+| 6. 剩余 V1 与完整验收（P1、P4～P6） | 对照全量矩阵补齐 Knowledge 审批闭环、多格式输入、微信、编辑器与文件生命周期、日历/项目、Activity、多端和同步；复用已有实现及有效证据，分组集成 | 每项正式 MUST 有对应能力及验收证据，缺项明确保留；完整 V1 不以 PR 数或部分闭环宣布完成。飞书范围待决按原规格处理，不能静默删减或扩张 |
+
+**并行与汇合：** 工作包 1 等待业务 UAT 授权时，主 Agent 继续工作包 2 的源码盘点与工作包 3 的隔离诊断；两者按具体接口依赖衔接，不必等整份盘点结束。后续无依赖的既有 V1 工作可并行推进。Web/Core/独立 Review 是主 Agent 调度的角色，明确文件所有权与固定 HEAD，避免同时改共享模块。普通错误在包内持续修复，已有有效证据不重复刷全量测试。
+
+**备份恢复贯穿执行（P5/P6）：** 先核对已有文档和配置定义，列清个人记忆、Journal、Task、Notes、Inbox 原件及必要元数据的权威位置，区分不可重建数据与可重建索引；核实备份覆盖、保留与恢复证据，缺证标 UNKNOWN。准备隔离恢复演练与校验步骤；真实 NAS/业务数据读取、备份配置和恢复操作按对应授权执行。Compose 回滚不等于业务数据备份，不为此预建新备份平台。
+
+**技术取舍：** 固定 Hermes 版本是可复现措施；业务定制优先配置、插件和窄适配器。现有必要安全补丁未经替代验证不得移除。Core JSONL 继续作为个人记忆权威；原生记忆的评估不等于启用第二套权威存储。先定位记忆链路失败，再决定是否需要关键词/向量混合检索；不把新数据库或 Runtime 重写当默认前置。
+
+### 当下框架策略：编辑器、Obsidian 与搜索
+
+**下一步不直接正式集成 BlockSuite。** 当前先收口 #277，并推进 Hermes/记忆诊断；编辑器工作接续 #46，先利用已保存试验结果做兼容差距评估。BlockSuite 是候选，不是已批准替换 Tiptap 的正式实现；#260/VNext、已冻结原型不因本规划解冻。不得重新从零做同类编辑器 PoC。以下是后续接口/兼容性设计建议，不构成 Vault 开写、编辑器迁移或新增索引服务授权。
+
+| 领域 | 框架建议与拆解 | 准入 / 汇合条件 |
+|---|---|---|
+| Obsidian 与正文权威 | Vault Markdown 继续作为笔记正文权威；Core-state Draft/Journal 的现状如实标注，先明确与 Inbox/`50-Journal` 的映射再谈同步。支持中文文件名、相对附件、YAML 属性、wiki links、嵌入及未知块的保留策略；脑图/画板源文件通过 Markdown 相对链接关联 | 用代表性合成笔记验证打开→编辑→保存→Obsidian 重开及外部修改→App 重读。验证并发版本冲突、附件引用和失败恢复；不能安全往返的内容只读或源码回退，不静默损坏 |
+| BlockSuite 适配 | 对照上述样本检查现有试验成果；若采用，优先让它作为 Core Notes 接口之上的编辑视图。结构化快照只可作为有版本绑定、可失效的辅助表示，不能与 Markdown 各自独立修改、互相覆盖 | 如核心内容只能由 BlockSuite 专有结构保存，且不能满足 Markdown/Obsidian 无损要求，停止正式替换提案，提出范围取舍供用户确认。不能以“能导出 Markdown”证明双向兼容；正式选型/迁移须获用户体验批准 |
+| 全局检索 | 先盘点复用现有 Knowledge、Notes、Task、Journal、Memory 和 Session 读取能力，设计统一查询/结果合同：来源类型、稳定引用、版本/哈希、标题、受限摘要、位置和可回源链接。保持各数据源权威独立，通过 Core 聚合，必要索引为可重建派生数据 | 先用标题/全文/属性/标签和范围过滤验证基线；逐源接入，不一次遍历所有库。仅索引获授权范围，Private 排除，撤权后及时失效；已建索引或缓存不授予读取权，返回结果与打开来源均重新验权 |
+| AI 搜索与分析 | Hermes 调用 Core 受控检索，取得少量相关证据，按需回源后回答；知识正文作为低信任资料传递，不能升级为系统指令。自然记忆联想和用户显式全局搜索可复用检索适配，但触发、范围与预算分别控制 | 用同一批相关/无关/冲突/过期/撤权样本比较效果、时延和费用；答案需对应具体来源版本，证据不足说明缺口。不得让模型直接扫描全 Vault；分析结果默认是回答/候选，不自动写 Knowledge |
+| 语义检索演进 | 先判断问题出在检索还是上下文传递，再基于代表查询评估关键词+向量/重排。若需要 embedding，沿用版本化来源引用，记录模型/切块版本及失效重建方式 | 数据出站和费用先明确；新依赖、服务或数据副本需论证，不默认新增数据库。索引陈旧、来源删除或权限变化时过滤并回源校验，不返回旧敏感正文 |
+
+**该方向的近期交付物：** 复用已有 Issue/PR 记录一份“现有能力→实际缺口→接口建议→合成样本结果→需裁定事项”清单。记忆链路诊断先行，编辑器兼容差距评估和全局检索合同可在无共享文件冲突时并行；先完成小范围真实接口接线，再扩大数据源。全局检索合同、BlockSuite 能力、Obsidian 同步均未因此被标为已实现或已验收。
+
+### ChatGPT 与 Codex 的任务发布要求
+
+ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交付规划及对应正式规格；优先核查已有实现与 Hermes 扩展能力。ChatGPT 负责目标、验收及重要取舍，Codex 主 Agent 按现有授权自主拆解、实施、集成和接续工作包，普通 PR 审核按 Agent-Rules 执行。
+
+每个长任务明确：用户能力目标、现有基础与实际缺口、可自主推进的范围、依赖/文件所有权、可观察的验收与失败条件、需要另行授权的动作，以及完成后的接续工作。普通调试和必要修复不逐项请示；重大规格冲突、信任/权限拓扑变化、不可逆操作或生产/真实数据/费用授权缺失才升级相应裁定。证据留在现有业务 Issue/PR，当前状态和下一步回写本文件，不新增权威文档或恢复人工 A/B 转发模式。
+
 ## 唯一 NEXT
 
 **已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上；新版 UI 的工程浏览器 Gate 已 PASS，但人工视觉 UAT 为 `USER_WAIVED / NOT RUN`，不得记为 `USER_UAT_PASS`。#30 跨会话记忆、Companion、真实 Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
-**唯一 NEXT（等待另行授权生产 Notes/Journal 业务 UAT）：** PR #277 固定 SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82` 已部署并通过运行健康、安全边界及匿名鉴权核验。真实 Notes/Journal 数据未读取或写入；若要进行生产业务 UAT，须另行明确授权具体数据范围和操作。Journal 为 Core-state JSONL，不代表 Obsidian `50-Journal` 同步；若要求与该 Vault 同步，需先另行确认业务存储路径。#30 跨会话记忆未验收；VNext 保持 FROZEN。
+**唯一 NEXT（接续工作包 1 收口，同时启动 2/3 的隔离准备）：** PR #277 固定 SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82` 已部署并通过运行门禁，准备有限 Notes/Journal UAT 的具体数据范围、操作及预期结果；真实业务 UAT 仍待单独授权，未获授权不操作。等待期间继续 Hermes 补丁/扩展盘点与 #30 保存→检索→传递→采用的源码、现有证据及隔离合成诊断，提出最小修复与必要验证，不因 UAT 等待而全线停工。Journal 为 Core-state JSONL，不代表 Obsidian `50-Journal` 同步；Vault 路径/同步需另行确认。Promote/Writer/Weixin 保持关闭，真实模型/生产/真实数据权限不因本规划扩大，VNext 保持 FROZEN。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
 ## 核心任务队列
+
+以下是未完成事项索引，不按编号代表执行优先级；调度以“近期执行规划”和“唯一 NEXT”为准。
 
 1. [#261 Knowledge 文件夹与标签筛选](https://github.com/zxwan829/SecondBrain/issues/261) — 仅隔离开发；候选分支的 CI 未通过，Chromium Gate 未运行，尚无 PR；不得合入或接触真实 Vault。
 2. [#74 Inbox 请求范围隔离风险](https://github.com/zxwan829/SecondBrain/issues/74) — 范围隔离修复 PR #79 已合入，包含于当前生产 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Linux 合成浏览器通过，未登录读取生产 Inbox；Issue 保持开放至用户验收。
@@ -86,6 +127,7 @@ source: GitHub SecondBrain Monorepo
 ## 导航
 
 - V1 范围与业务契约：[Web App V1](business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture](business-specs/Universal-Capture-Business-Spec.md)
+- V1 全量分解与验收：[V1-Delivery-Plan.md](V1-Delivery-Plan.md)；当前工作顺序与唯一 NEXT 以本文件为准
 - 稳定架构：`Architecture.md`；正式取舍：`Decision-Log.md`
 - 最近已核验运行证据：`Environment-Baseline.md`；历史证据：`Progress-Log.md`
 - 执行与安全边界：`Agent-Rules.md`、仓库根目录 `AGENTS.md`
