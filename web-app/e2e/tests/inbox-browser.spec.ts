@@ -443,7 +443,15 @@ async function inspectOrCreateDailyBrief(
   expect(observed.dailyBriefPostCount).toBe(0);
   observed.setFailureStage('daily_brief_sources');
   observed.setDiagnosticAssertion('daily_brief_open_prepare');
+    const taskSourcesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/tasks'
+      && new URL(response.url()).search === '?status=all');
+    const projectSourcesResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/projects'
+      && new URL(response.url()).search === '?limit=50&offset=0');
   await page.getByRole('button', { name: '手动准备简报' }).click();
+    expect((await taskSourcesResponse).status()).toBe(200);
+    expect((await projectSourcesResponse).status()).toBe(200);
     observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
     observed.setDiagnosticAssertion('daily_brief_project_source');
