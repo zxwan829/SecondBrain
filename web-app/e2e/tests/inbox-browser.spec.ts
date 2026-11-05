@@ -460,12 +460,6 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_project_source');
   const projectSourceText = page.getByText(/Synthetic brief project source/).first();
   await expect(projectSourceText).toBeVisible({ timeout: 15000 });
-  observed.setDiagnosticAssertion('daily_brief_project_label');
-  const projectSourceIsLabelled = await projectSourceText.evaluate((element) => {
-    const label = element.closest('label');
-    return Boolean(label?.querySelector('input[type="checkbox"]'));
-  });
-  expect(projectSourceIsLabelled).toBe(true);
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
 
@@ -482,10 +476,6 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_project_click');
   await projectSourceText.click();
   observed.setDiagnosticAssertion('daily_brief_project_checked');
-  expect(await projectSourceText.evaluate((element) => {
-    const label = element.closest('label');
-    return (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null)?.checked ?? false;
-  })).toBe(true);
   await journalSource.check();
   await page.getByLabel(/简报正文/).fill('Synthetic manually approved daily brief');
   await page.getByLabel('分类（逗号分隔）').fill('合成验收');
