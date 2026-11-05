@@ -458,6 +458,7 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
   observed.setDiagnosticAssertion('daily_brief_project_source');
+  await expect(page.getByText(/Synthetic brief project source/).first()).toBeVisible({ timeout: 15000 });
   const briefSourceChoices = page.locator('input[type="checkbox"]');
   observed.setDiagnosticAssertion('daily_brief_project_count');
   await expect(briefSourceChoices).toHaveCount(2);
