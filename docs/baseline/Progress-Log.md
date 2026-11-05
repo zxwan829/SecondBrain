@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-05 — Notes 保存与 Journal 追加隔离工程闭环（PR #277）
+
+- **Notes：** 复用现有受控 Drafts API 与真实 Core+Web 合成浏览器旅程，三视口均新建 Draft、保存编辑并刷新后重新读取一致；已有前端失败/版本冲突用例确认失败时保留输入且不报成功。未授权任何真实 Vault collection。
+- **Journal：** Ubuntu 24.04 Chromium 三视口通过真实本机 Core API 向临时 Journal 根分别 POST 明确“记一下”原文，收到 `created` 回执，刷新后读回一致。最终合成摘要 `raw_record_count=3`、`journal_source_fixture_files=1`、`journal_files=3`、`journal_mutated_files=3`；验收程序逐字节确认原始 source JSONL 前缀未变，只允许追加三条合成记录及两个空的 `0600` 锁文件。失败诊断只允许固定的 Journal 浏览器断言 ID，路由测试隔离地仅准许无 Query 的指定 GET 日期路由和 POST `/api/journal/entries`。
+- **失败与重试：** 新增 Core 鉴权路由测试，覆盖匿名拒绝、普通聊天文本 422、同 key 重试返回 duplicate、同 key 不同内容 409、原日记记录不变及回读追加行；前端模拟响应丢失，确认保留原文、复用同一幂等键并显示无重复成功提示。过程中发现网络错误原文被直接暴露，已最小修复为中文网络失败反馈，服务端 HTTP/冲突原因仍保留。
+- **验证：** Core `tests/test_journal.py tests/test_notes.py` 24 passed；前端完整 Vitest 41 files / 490 passed；定向 Journal/Notes 前端 28 passed；Artifact sanitizer 59 passed；`npm run typecheck`、`npm run build`、本地隔离 Core+Web HTTP smoke 与 `git diff --check` 通过。Ubuntu 24.04 + Chromium Actions [#42006382893](https://github.com/zxwan829/SecondBrain/actions/runs/42006382893) 在固定 HEAD `58cc6c181207a18445bd7c805fa34d57f197559d` SUCCESS：checkout SHA 校验、全前端回归、类型检查、构建、artifact sanitizer、隔离 Core+Web 浏览器旅程及脱敏产物上传全部通过；JUnit 3/3 viewport pass、0 failures。仅上传既有脱敏 allowlist 下的 JUnit/summary，无截图。独立 Reviewer PASS。
+- **状态边界：** PR [#277](https://github.com/zxwan829/SecondBrain/pull/277) 实现与隔离工程证据；未修改 NAS 生产、Compose、挂载、权限或真实 Notes/Journal 数据，未调用付费模型、未使用真实 Hermes/个人数据，也未改变 Knowledge RO、Private、Promote/Writer、Weixin 或 VNext。工程 PASS 不等于生产写入授权或真实业务用户验收。若需要启用生产 Journal，先单独批准 App-only 配置/部署与 Journal 专用 Core RW 路径核验；Notes 真实 Vault collection 与真实数据验收也需各自授权。Chat #269/#274 人工视觉 UAT 按用户决定记为 `USER_WAIVED / NOT RUN`，不是 `USER_UAT_PASS`。
+
 ## 2026-11-05 — PR #274 App-only 生产部署与运行收口
 
 - **固定目标与构建：** PR #274 merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704`；完整 Chromium Gate [#41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) PASS，精确 SHA 构建/隔离启动 [#41969167078](https://github.com/zxwan829/SecondBrain/actions/runs/41969167078) SUCCESS。候选 App image `sha256:ad2b5a71f97d8de40fbcfeefd720c13f579eae74422943082bf78d27f4678461`，`linux/amd64`，revision 与目标 SHA 一致。Artifact ID `13389067298`；bundle SHA-256 `07ea18a4118526719149b13490f46d275650e668cf396fd4ef8253846e63993b`；只含 App 的导入归档 SHA-256 `a941538e0974b4388fd81e4d753ecf706a0b02f2cb33848e35f5300c8b3cf3bd`。生产仅导入并部署 App image。
