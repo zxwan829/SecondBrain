@@ -45,6 +45,34 @@ describe('JournalPage', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   });
 
+  it('retries a lost response with the same idempotency key and treats replay as one saved entry', async () => {
+    const keys: string[] = [];
+    let posts = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      if (!init?.method || init.method === 'GET') return Response.json({ entries: posts ? [
+        { id: 'a'.repeat(64), created_at: '2026-10-20T01:00:00+08:00', source: 'web_app_explicit_intent', original_text: '记一下：重试不重复' },
+      ] : [] });
+      keys.push(new Headers(init.headers).get('Idempotency-Key') ?? '');
+      posts += 1;
+      if (posts === 1) throw new TypeError('synthetic lost response');
+      return Response.json({ status: 'duplicate', entry: { id: 'a'.repeat(64) } });
+    });
+    render(<JournalPage />);
+    const field = await screen.findByLabelText('自然语言记录');
+    fireEvent.change(field, { target: { value: '记一下：重试不重复' } });
+    fireEvent.click(screen.getByRole('button', { name: '追加原话' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Journal 保存失败');
+    expect((field as HTMLTextAreaElement).value).toBe('记一下：重试不重复');
+    fireEvent.click(screen.getByRole('button', { name: '追加原话' }));
+    expect(await screen.findByText('这条请求已保存，未重复追加。')).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBe(keys[0]);
+    expect(screen.getAllByText('记一下：重试不重复')).toHaveLength(1);
+    expect((field as HTMLTextAreaElement).value).toBe('');
+  });
+
   it('restores the selected Shanghai Journal date and highlights a referenced entry', async () => {
     window.history.replaceState({}, '', '/journal?date=2026-10-20&entry_id=entry-synth');
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ entries: [
