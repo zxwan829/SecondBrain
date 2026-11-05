@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-11-04
+updated: 2026-11-05
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -15,6 +15,7 @@ source: GitHub SecondBrain Monorepo
 - **最近已核验生产快照：** 2026-11-04 App 已运行 revision `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`、Image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`、running/healthy；Compose SHA-256 为 `3c9b1892d5a0f155050055545789c910f63db6a910007ee1a8c1b6436ee61c77`。#269 部署只变更 App image；Hermes 容器、镜像和启动时间保持不变。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-04 部署后实测）：** Promote=false、App Knowledge 挂载只读、Private 未挂载；App UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`，两个 Secret 文件只读挂载。Compose 除 App image 外未改。Hermes 安全边界未变。详情见 `Environment-Baseline.md`。
 - **开发阶段：** V1 首轮体验收口。#269 已部署，等待用户验收新版 Chat UI；VNext 保持冻结。
+- **PR #274 工程验收：** Daily Brief 合成旅程的 Journal 请求断言已按页面阶段改为基线计数；完整 Ubuntu 24.04 Chromium Gate [Actions #41967382741](https://github.com/zxwan829/SecondBrain/actions/runs/41967382741) 在 PR HEAD `d2e99ee5c7fc36c6ec32c0855903f392ed1ddf6c` 通过，独立审查 PASS。PR #274 尚待合并；未部署生产。此工程 Gate 不替代新版 Chat UI 用户验收。
 - **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / NEW_UI_USER_UAT_PENDING`。PR #269 合并、Linux 三视口 Gate、精确 SHA 候选构建和隔离启动均 PASS，2026-11-04 已完成 App-only 部署及运行健康/安全核验。此前有限真实模型 Chat 回复和刷新恢复由用户在旧 UI 完成；新版 UI 生产体验尚未执行。Task 与 Capture→Inbox→Review 的既有有限旅程状态保留；跨会话记忆及其他 V1 业务仍未验收。
 
 ## 能力状态
@@ -51,7 +52,7 @@ source: GitHub SecondBrain Monorepo
 
 **已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。此结果适用于当前生产旧 UI；不代表 #269 新 UI 已验收。#30 跨会话记忆、Companion、Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
-**唯一 NEXT（用户验收 #269 新版 Chat UI）：** 正式 Web 已运行 `d06e3f3b`。请用户本人在桌面浏览器验收默认折叠/展开、五组辅助面板可用性、长标题截断、长消息滚动、输入增长/复位、发送/等待/停止/完成及刷新恢复。新版 UI 用户验收完成后，再领取下一项 V1 核心业务 UAT（优先评估 Notes 保存与 Journal 追加写入）。#30 跨会话记忆仍未验收；VNext 保持 FROZEN。
+**唯一 NEXT（用户验收 #269 新版 Chat UI）：** 正式 Web 已运行 `d06e3f3b`。请用户本人在桌面浏览器验收默认折叠/展开、五组辅助面板可用性、长标题截断、长消息滚动、输入增长/复位、发送/等待/停止/完成及刷新恢复。#274 的三视口合成浏览器 Gate 与完整回归已通过，但不代表生产视觉验收。新版 UI 用户验收完成后，再领取下一项 V1 核心业务 UAT（优先评估 Notes 保存与 Journal 追加写入）。#30 跨会话记忆仍未验收；VNext 保持 FROZEN。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
