@@ -1,10 +1,18 @@
 ---
 created: 2026-09-28
-updated: 2026-11-04
+updated: 2026-11-05
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
+
+## 2026-11-05 PR #274 固定 SHA App-only 部署与运行核验
+
+- **发布目标与构建：** PR #274 merge SHA `268ccae7255c1e2f4fea057d9630d40d7dcca704`；完整 Ubuntu 24.04 Chromium Gate [#41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) SUCCESS。精确 SHA 候选构建 [#41969167078](https://github.com/zxwan829/SecondBrain/actions/runs/41969167078) SUCCESS，workflow head SHA 与目标完全一致；Core credential tests、App 启动/静态 smoke、固定 Hermes smoke 均通过。GitHub artifact `13389067298` / `secondbrain-release-candidate-268ccae7255c1e2f4fea057d9630d40d7dcca704` digest `sha256:46ad55fd068ecb12e17aed129aa099404aa53fc705cb4af62688cfb8a7e73e67`。manifest 确认 `linux/amd64`、App source revision 为目标 SHA、Promote=false、无真实凭据。候选 App Image ID `sha256:ad2b5a71f97d8de40fbcfeefd720c13f579eae74422943082bf78d27f4678461`。构建归档 SHA-256 `07ea18a4118526719149b13490f46d275650e668cf396fd4ef8253846e63993b`；部署前仅提取 App config/layers，App-only Docker archive SHA-256 `a941538e0974b4388fd81e4d753ecf706a0b02f2cb33848e35f5300c8b3cf3bd` 并加载 NAS，未导入或更换 Hermes 镜像。
+- **切换前快照：** 正式 Compose SHA-256 `3c9b1892d5a0f155050055545789c910f63db6a910007ee1a8c1b6436ee61c77`，Compose `config --quiet` 通过，属主/模式 `1026:100 / 0640`。即时回滚目录 `/volume1/docker/secondbrain/rollback/chat-ui-268ccae-predeploy-20261105T044006Z/`（目录 `0700 root:root`）；`compose-before.yaml` 为 `0600 root:root`，SHA 与切换前 live Compose 完全一致。旧 App `secondbrain-app:candidate-d06e3f3bde2cf8ee260992644c2ae5d67aeef362` 仍在 NAS，Image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`。恢复 metadata 和候选 Compose 也保存在受限目录。
+- **切换与 Compose 差异：** 候选 Compose 仅将 App image tag 从 `candidate-d06e3f3b...` 改为 `candidate-268ccae...`；归一化配置（App image 替换为固定占位值）部署前后 SHA-256 均为 `ab40680a6c811d1db9a2787e2c76bddd0031e313e8a9b95e0223b807083b3922`。`config --quiet` 通过。仅执行 `compose up -d --no-deps --no-build --pull never --force-recreate --wait --wait-timeout 120 secondbrain-app`；约 37 秒 healthy。App 容器 ID `519ce635c5d5becb0e3a24d26d6ba335522589f0288177e5ea7e326e752b8b3a`，Image ID 与候选相同，revision label 为目标 SHA，RestartCount 0。部署后 Compose SHA-256 `21fcb91e6b4233ef7a680fa4cfe16577b8c43f266d577ee2da0b2be11390c520`。
+- **生产验证：** App running/healthy，UID/GID `1026:100`，仅发布 `127.0.0.1:9120→8000`。无凭据 GET `/health`、`/`、`/login`、`/notes` 均 200；匿名 `/api/auth/session`、`/api/tasks`、`/api/notes` 均为预期 401。App→Hermes `http://hermes:8642/health` 为 200。部署后 App 挂载保持 `/knowledge` RO、`/review` RW、`/knowledge-assets/00-Inbox` RW、Core state RW、两个 Secret 文件只读挂载；Private 未挂载；`SB_PROMOTE_ENABLED=false`，Weixin 开关未设置。Hermes 容器 ID `a1f6740847641df8b04567ebe2f65a307e4728395570d42b2b3baeba7d45072d`、Image ID `sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821`、StartedAt `2026-10-29T15:08:17.386341569Z`、RestartCount 0；部署前后未变。未读取 Secret/业务正文，未创建真实业务数据或调用模型。
+- **回滚与验收边界：** 快照 SHA 与旧 App 镜像均已实际校验；回滚未触发。回滚时将 `compose-before.yaml` 恢复至正式 Compose，再仅对 `secondbrain-app` 执行相同 `--no-deps --no-build --pull never --force-recreate --wait --wait-timeout 120` 流程，目标旧 Image ID 已确认存在。保留当前 Core state，不回滚数据，不触碰 Hermes。用户新版 UI 视觉/交互验收仍待完成；生产健康检查和工程 Gate 不等于用户验收。
 
 ## 2026-11-04 #269 App-only 部署与运行核验
 
@@ -130,7 +138,7 @@ type: environment-baseline
 - 回滚点 `/volume1/docker/secondbrain/rollback/d078-hermes-hook-failclosed-20261016T173140Z/`：目录 0700，`compose.yaml`（SHA-256 `d2865340ab82fec7086048c55798b3e1c29dabfca3d8999d2ab36b5e94e0c4c9`）、旧 `plugin.yaml`、恢复元数据均 0600。旧官方 Hermes image ID `sha256:02e7aa0e84123fa0e9b22686e7a2bfb7d85fd59821d4d28812a3e07f3061cf41` 保留在 rollback tag `secondbrain-hermes:rollback-v0222-official-20261016T173140Z`。回滚前应重核快照并只恢复 Hermes/manifest；不可回滚 Core state、D077 JSONL 或 App。
 - 上述是运行态与合成权限验证，不代表真实模型、真实个人数据或浏览器学习体验已验收。此前 D078 Stage 1 信息保留在下方历史快照段，凡与本节冲突以本节为当前状态。
 
-本文件记录最近一次经验证的运行快照，并非实时监控。顶部为 2026-11-04 #269 App-only 部署后的最新 App/Compose/Hermes 运行事实；其下 2026-11-03 只读核验、2026-10-24 与更早部署段均为历史快照。Hermes overlay 段是此前核验的 Guard 配置与 Hook 证据，本次仅确认 Hermes 容器/镜像/启动时间未变化，没有重新读取插件文件。下一次生产操作前仍须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 Progress-Log.md 与 Issue #14，不作为现行运行或恢复指令。
+本文件记录最近一次经验证的运行快照，并非实时监控。顶部为 2026-11-05 PR #274 App-only 部署后的最新 App/Compose/Hermes 运行事实；其下 2026-11-04 #269 部署、2026-11-03 只读核验、2026-10-24 与更早部署段均为历史快照。Hermes overlay 段是此前核验的 Guard 配置与 Hook 证据，本次仅确认 Hermes 容器/镜像/启动时间未变化，没有重新读取插件文件。下一次生产操作前仍须重新只读核验。Private 与凭据正文不入库。旧阶段恢复说明和历史资产审计均移交 Progress-Log.md 与 Issue #14，不作为现行运行或恢复指令。
 
 ## 常态运行路径与尚待验证的边界
 

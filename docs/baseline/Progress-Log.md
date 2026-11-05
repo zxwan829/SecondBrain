@@ -1,10 +1,16 @@
 # Progress Log
 
+## 2026-11-05 — PR #274 App-only 生产部署与运行收口
+
+- **固定目标与构建：** PR #274 merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704`；完整 Chromium Gate [#41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) PASS，精确 SHA 构建/隔离启动 [#41969167078](https://github.com/zxwan829/SecondBrain/actions/runs/41969167078) SUCCESS。候选 App image `sha256:ad2b5a71f97d8de40fbcfeefd720c13f579eae74422943082bf78d27f4678461`，`linux/amd64`，revision 与目标 SHA 一致。Artifact ID `13389067298`；bundle SHA-256 `07ea18a4118526719149b13490f46d275650e668cf396fd4ef8253846e63993b`；只含 App 的导入归档 SHA-256 `a941538e0974b4388fd81e4d753ecf706a0b02f2cb33848e35f5300c8b3cf3bd`。生产仅导入并部署 App image。
+- **部署和验证：** NAS App-only 重建约 37 秒后 healthy，容器 `519ce635c5d5becb0e3a24d26d6ba335522589f0288177e5ea7e326e752b8b3a`、Image ID `sha256:ad2b5a71f97d8de40fbcfeefd720c13f579eae74422943082bf78d27f4678461`、revision `268ccae...`、RestartCount 0。Compose 只改 App image；归一化配置 SHA 前后同为 `ab40680a6c811d1db9a2787e2c76bddd0031e313e8a9b95e0223b807083b3922`，部署后原文件 SHA `21fcb91e6b4233ef7a680fa4cfe16577b8c43f266d577ee2da0b2be11390c520`。`/health`、`/`、`/login`、`/notes` 200；匿名 session/tasks/notes 401；App→Hermes health 200。
+- **边界与回滚：** App UID/GID、loopback 端口、Knowledge RO、Private 未挂载、Promote=false、Weixin 未开启、Capture/Review/Core state 既有挂载均保持；Hermes 容器 ID、镜像、StartedAt、RestartCount 未变。发布前 Compose 快照与旧 d06 App image 已验证并保存在 Environment-Baseline 记录的受保护目录；未触发回滚。没有读取 Secret/业务正文、写入真实业务数据或调用模型。新版 Chat UI 用户视觉/交互验收仍 `PENDING`，VNext 仍 FROZEN。
+
 ## 2026-11-05 — PR #274 Daily Brief Gate 修复与 Chat UI 合成验收
 
 - **根因与最小修复：** Daily Brief 浏览器旅程把整个多页面 journey 中累计的 Journal source GET 数量误当作 Daily Brief 页面内计数，导致此前已合法加载 Journal 的请求被误判为隐式加载。测试现于 Daily Brief 标题显示后记录计数基线；手动准备阶段断言不增加，显式点击加载后断言计数增加并呈现合成来源。未删除或放宽验收断言，Daily Brief 产品代码未修改。
 - **验证与复审：** 原代码 HEAD `d2e99ee5c7fc36c6ec32c0855903f392ed1ddf6c` 的 Gate [#41967382741](https://github.com/zxwan829/SecondBrain/actions/runs/41967382741) 已通过；最终含本状态记录的 PR HEAD `9de2c5db8c3095e12c18663b2d0dbbdf5290f81d` 再经 Ubuntu 24.04 Chromium 完整 Gate [#41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) SUCCESS。Web 回归、typecheck、build、sanitize 检查及隔离 Core+Web 浏览器旅程均通过，Chat 三视口覆盖保留。独立 Review PASS；指出项目源定位器略脆弱但不影响验收，无合并阻断。
-- **合并与状态边界：** PR #274 于 2026-11-05 合并，merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704`。生产未修改，当前生产 App 仍为 `d06e3f3b`。合成浏览器通过不等同于生产部署或新版 UI 用户验收；`00-CURRENT.md` 的唯一 NEXT 仍为用户本人验收 #269 新版 Chat UI。VNext 保持 FROZEN。
+- **合并与状态边界：** PR #274 于 2026-11-05 合并，merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704`。此处只记录代码合并时点；同日稍后已完成 App-only 生产部署，详见本日志下一节。合成浏览器与生产部署均不等同新版 UI 用户验收；`00-CURRENT.md` 唯一 NEXT 仍为用户本人验收。VNext 保持 FROZEN。
 
 ## 2026-11-04 — PR #269 App-only 部署与运行验收
 

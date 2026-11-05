@@ -10,23 +10,23 @@ source: GitHub SecondBrain Monorepo
 
 ## 当前快照
 
-- **部署核验基准 main：** `bf008da450b546f2497c66e0fe5c091fa0337e5d`（2026-11-04 部署时的 GitHub `main`，含 PR #270/#271 文档更新；之后 PR #272 仅更新部署记录）；#269 运行代码及生产镜像固定基准为 `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`。
+- **部署前核验基准 main：** `de5edff998e99b7fe7d803f86f14cfe26d203815`（包含 PR #274 与其后仅更新状态文档的 PR #275）；本次生产 App 固定部署目标为 PR #274 merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704`。部署目标未跟随文档 PR #275。
 - **总体：** V1 尚未完成。GitHub main 的代码/文档状态不代表生产部署、真实数据验证或用户验收。
-- **最近已核验生产快照：** 2026-11-04 App 已运行 revision `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`、Image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`、running/healthy；Compose SHA-256 为 `3c9b1892d5a0f155050055545789c910f63db6a910007ee1a8c1b6436ee61c77`。#269 部署只变更 App image；Hermes 容器、镜像和启动时间保持不变。详情见 `Environment-Baseline.md`。
-- **生产安全闸门（2026-11-04 部署后实测）：** Promote=false、App Knowledge 挂载只读、Private 未挂载；App UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`，两个 Secret 文件只读挂载。Compose 除 App image 外未改。Hermes 安全边界未变。详情见 `Environment-Baseline.md`。
-- **开发阶段：** V1 首轮体验收口。#269 已部署，等待用户验收新版 Chat UI；VNext 保持冻结。
-- **PR #274 工程验收：** Daily Brief 合成旅程的 Journal 请求断言已按页面阶段改为基线计数；含状态记录的最新 PR HEAD `9de2c5db8c3095e12c18663b2d0dbbdf5290f81d` 通过完整 Ubuntu 24.04 Chromium Gate [Actions #41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277)，独立审查 PASS。PR #274 已合并，merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704`；未部署生产。此工程 Gate 不替代新版 Chat UI 用户验收。
-- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / NEW_UI_USER_UAT_PENDING`。PR #269 合并、Linux 三视口 Gate、精确 SHA 候选构建和隔离启动均 PASS，2026-11-04 已完成 App-only 部署及运行健康/安全核验。此前有限真实模型 Chat 回复和刷新恢复由用户在旧 UI 完成；新版 UI 生产体验尚未执行。Task 与 Capture→Inbox→Review 的既有有限旅程状态保留；跨会话记忆及其他 V1 业务仍未验收。
+- **最近已核验生产快照：** 2026-11-05 App revision `268ccae7255c1e2f4fea057d9630d40d7dcca704`、Image ID `sha256:ad2b5a71f97d8de40fbcfeefd720c13f579eae74422943082bf78d27f4678461`、running/healthy；Compose SHA-256 为 `21fcb91e6b4233ef7a680fa4cfe16577b8c43f266d577ee2da0b2be11390c520`。详情见 `Environment-Baseline.md`。
+- **生产安全闸门（2026-11-05 部署后实测）：** Promote=false、Weixin 未开启、App Knowledge 挂载只读、Private 未挂载；App UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`，两个 Secret 文件只读挂载。Compose 归一化后（App image 替换为固定占位值）SHA-256 与部署前一致；Hermes 容器、镜像与启动时间未变。详情见 `Environment-Baseline.md`。
+- **开发阶段：** V1 首轮体验收口。#269/#274 App-only UI 已部署，等待用户验收新版 Chat UI；VNext 保持冻结。
+- **PR #274 工程验收与部署：** Daily Brief 合成旅程的 Journal 请求断言按页面阶段记录基线；完整 Gate [Actions #41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) PASS、独立审查 PASS。PR #274 固定 merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704` 已于 2026-11-05 部署，生产健康和安全门禁通过。工程 Gate 与部署验证都不替代新版 Chat UI 用户验收。
+- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / NEW_UI_USER_UAT_PENDING`。PR #269 与 #274 均已合并并部署，生产健康/安全门禁通过；此前有限真实模型 Chat 回复和刷新恢复由用户在旧 UI 完成，新版 UI 生产视觉与交互验收仍待用户执行。Task 与 Capture→Inbox→Review 的既有有限旅程状态保留；跨会话记忆及其他 V1 业务仍未验收。
 
 ## 能力状态
 
 原 V1 MUST/SHOULD 与 D077 Companion 产品合同继续以[Web App V1 业务规格](business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture 业务规格](business-specs/Universal-Capture-Business-Spec.md)、`Decision-Log.md` D077 为准。本矩阵只汇总 main、最近有日期的生产证据和用户验收，不缩减正式范围。D086 合成来源授权/Consent 候选不等于微信渠道；微信输入渠道按 P4-2 / D087 单独记录。
 
-| 模块 | main 代码 / 集成 | 最近已核验生产（2026-11-04） | 用户验收 / 阻断 |
+| 模块 | main 代码 / 集成 | 最近有证据的生产状态 | 用户验收 / 阻断 |
 |---|---|---|---|
 | App Shell / 登录与路由 | main 有 Shell、鉴权与路由实现 | HTTPS `/health`、`/`、`/login`、`/notes` 为 200；匿名 session、Tasks、Capture summary、Knowledge search、Promote API 均为 401；用户已在 2026-11-04 登录并完成部分真实页面操作 | 本轮有限登录旅程通过；未覆盖所有模块/路由，完整跨页体验仍待验收 |
 | Home | main 有 Home 页面与部分聚合 | HTTPS `/` 返回 200；未认证浏览器不执行 App 内容聚合 | 动态 Home 完整聚合未验收；首次从 `/` 登录会读取聚合数据，体验时可直接打开目标模块 |
-| Chat / Hermes / D077 | main 包含 PR #269 Chat UI；D077 Companion 仅部分实现 | App revision `d06e3f3b` 已部署；此前基础真实 Chat 回复及刷新恢复 PASS | #269 新 UI 用户验收待做；跨会话记忆、学习/纠正和 Companion 未验收 |
+| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；D077 Companion 仅部分实现 | App revision `268ccae7` 已部署；App→Hermes health 200；此前基础真实 Chat 回复及刷新恢复 PASS | #269/#274 新 UI 用户验收待做；跨会话记忆、学习/纠正和 Companion 未验收 |
 | Today / Calendar / Journal / Task | main 有页面/API 的部分实现；显式 Task API 与持久化实现存在 | 用户于 2026-11-04 实测 Task 创建、完成及恢复；合成前端/Core 回归通过 | 仅上述 Task 旅程 PASS；完整 Calendar 与 Journal 追加闭环未验收 |
 | Capture：文本 / Markdown / TXT | main 有 Raw→Review 路径及文本入口；`/inbox` 使用显式 Capture/Notes scope | 用户已用合成内容验证文本 Capture→Inbox→Review 保存、回读、关联及刷新持久化；Linux Chromium Inbox capture/retry/source-protection 三视口通过；#269 未改该旅程代码 | 仅限上述文本 Capture 旅程；附件、URL 和 Promote 未验收/不在本次操作范围 |
 | Capture：URL / Web | main 有抓取与 Review 路径 | 本轮未提交 URL 或读取 Raw/Review 数据 | 多站点、失败恢复和用户流程仍未完整验收 |
@@ -50,9 +50,9 @@ source: GitHub SecondBrain Monorepo
 
 ## 唯一 NEXT
 
-**已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。此结果适用于当前生产旧 UI；不代表 #269 新 UI 已验收。#30 跨会话记忆、Companion、Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
+**已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上，不代表 2026-11-05 部署的 `268ccae7` 新版 UI 已验收。#30 跨会话记忆、Companion、Notes/Journal 写入及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
 
-**唯一 NEXT（用户验收 #269 新版 Chat UI）：** 正式 Web 已运行 `d06e3f3b`。请用户本人在桌面浏览器验收默认折叠/展开、五组辅助面板可用性、长标题截断、长消息滚动、输入增长/复位、发送/等待/停止/完成及刷新恢复。#274 的三视口合成浏览器 Gate 与完整回归已通过，但不代表生产视觉验收。新版 UI 用户验收完成后，再领取下一项 V1 核心业务 UAT（优先评估 Notes 保存与 Journal 追加写入）。#30 跨会话记忆仍未验收；VNext 保持 FROZEN。
+**唯一 NEXT（用户验收 #269/#274 新版 Chat UI）：** 正式 Web 已运行固定部署目标 `268ccae7`。请用户本人在桌面浏览器验收默认折叠/展开、五组辅助面板可用性、长标题截断、长消息滚动、输入增长/复位、发送/等待/停止/完成及刷新恢复。#274 的三视口合成浏览器 Gate 和生产健康/安全检查均通过，但不代表用户视觉与交互验收。新版 UI 用户验收完成后，再领取下一项 V1 核心业务 UAT（优先评估 Notes 保存与 Journal 追加写入）。#30 跨会话记忆仍未验收；VNext 保持 FROZEN。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
@@ -76,11 +76,11 @@ source: GitHub SecondBrain Monorepo
 
 ## 主要风险与验收边界
 
-- GitHub main、生产代码和用户验收分开记录：生产 App 运行 PR #269 revision `d06e3f3b`；主线在该运行代码之后的已合并变化为部署及状态文档更新，没有额外生产代码部署。2026-11-04 部署后已核验 App 健康及安全边界；新版 UI 的用户浏览器验收仍待执行。
+- GitHub main、生产代码和用户验收分开记录：生产 App 运行 PR #274 固定 revision `268ccae7`；main `de5edff` 比该目标多出的 PR #275 仅更新文档。2026-11-05 部署后已核验 App 健康及安全边界；新版 UI 的用户浏览器验收仍待执行。
 - #261 远端隔离分支的 CI 失败（Actions #41334785303 有 4 项旧/待核断言失败）；尚无 PR，Chromium Gate 未运行，不能合并。
 - #74 的安全范围修复已合并并部署，剩余用户验收未完成；#30 真实模型记忆故障和 #78 生产审批边界仍未解除。
 - D084 历史浏览器业务验收仍无新证据（旧宽范围 Issue #44 已按未计划关闭，不是验收完成）。
-- 新版 Chat UI 用户浏览器验收、真实 Vault/Private 检查、OS 权限和安全架构变更均未在本轮执行；#269 App-only 生产部署已于 2026-11-04 完成。
+- 新版 Chat UI 用户浏览器验收、真实 Vault/Private 检查、OS 权限和安全架构变更均未在本轮执行；#269 部署于 2026-11-04 完成，#274 App-only 更新于 2026-11-05 完成。
 
 ## 导航
 
