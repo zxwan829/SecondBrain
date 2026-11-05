@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-11-05 — #30 独立合成 JSONL 测试隔离（无生产/无模型）
+
+- **固定开发基线：** GitHub `main` `10bf24bd8a182c80bb6513a5dca6b521bdf6f2ea`。生产最近记录 revision 为 `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；该 revision 与 main 的 Core runtime source diff 为空，本次未改生产运行代码。此前 PR #283 已将 `0/10` Run 与数据隔离阻断正式记录。
+- **隔离入口：** 复用 `create_app()` 已有 `SB_PERSONAL_MEMORY_ROOT` 启动注入，不新增运行时配置或第二记忆源。集成测试在 `tempfile` 下预先创建权限 `0700` 且初始为空的 `isolated-uat/40-Memory`，使用 `patch.dict(..., clear=True)` 设置全部测试环境，之后才构造 Core；`app.state.personal_memory_store.root` 精确等于该临时根。测试在 Core 初始化前包装 `PersonalMemoryStore._read_events_unlocked`，逐次校验其 `self.path` 解析结果都位于该临时根，覆盖构造后的读取、写操作校验和 Chat 相关性筛选；唯一被读取的 JSONL 路径为该根下的 `personal-memory.jsonl`。
+- **请求链与数据断言：** 经真实 FastAPI Core `/api/personal-memory` create/correct/revoke、`/api/chat/sessions` 和 `/api/chat/sessions/{id}/runs` 路由；只使用一条虚构 `ZetaQuill-7391` 偏好，事件文件仅 3 条、同一 memory ID、操作序列 create→correct→revoked。实际 Core BFF→HermesAPI 的 `/v1/runs` 请求由本地 `httpx.MockTransport` 截获（没有真实 Hermes 或模型请求）：相关请求 payload 恰含一条合成记忆；无关问题、撤销后的问题没有 `instructions`；纠正后仅含新文本，不含旧值。缺失 `SB_PERSONAL_MEMORY_ROOT` 或指向不存在目录时 `create_app()` 启动失败，测试未产生任何 `/v1/runs` 请求。
+- **验证：** `tests/test_web_app_bff.py`、`tests/test_personal_learning.py`、`tests/test_personal_memory.py`：**65 passed**；1 条既有 Starlette/httpx TestClient 弃用警告。`git diff --check` 通过。由于仅测试代码/文档有改动，不需生产部署；没有真实 Session/Memory 数据访问、Run、费用或配置变更。
+- **模型与计费预检方案：** 本任务禁止生产访问，故现行 model ID、provider 账户余额仍 `UNKNOWN`。后续经单独授权时，优先从脱敏的 Hermes model selector/status 元数据取得 exact model/provider；单价从该 provider 官方价目页核对；每个获准 Run 记录精确 usage/token 与 Run 数，调用失败/重试/额外模型调用均计数并按预算立即停。仅当账户余额可从无 Secret 的只读余额界面/接口确认时记录，否则标 `UNKNOWN`；公开费率与 Core 本地软预留均不是供应商硬费用上限。
+- **下一步边界：** 本测试证明隔离 Core 实例可将单条合成 JSONL 记忆传递到 Mock Hermes 请求，不证明真实模型采用或生产链隔离。生产行为保持旧路径不变；真实付费 Run 仍未执行，先完成该 PR 的独立复审/项目门禁，再向用户提交唯一的真实模型测试通道授权方案。此前最多 10 次 Run 授权本子任务未使用，也不因该测试自动启用。
+
 ## 2026-11-05 — #30 真实模型跨会话记忆验收预检（未发起 Run）
 
 - **授权与计数：** Issue #30 最新 PMO 评论 `6658720963` 明确授权最多 10 次真实付费模型 Run。本轮实际 Run `0/10`，无模型费用；未创建生产 Session/Memory，未访问 Chat、Memory、Notes、Journal、Knowledge 或 Vault 页面数据，未改生产环境。
