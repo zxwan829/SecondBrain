@@ -30,7 +30,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
-  | 'daily_brief_open_prepare' | 'daily_brief_sources' | 'daily_brief_journal_action'
+  | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source' | 'daily_brief_sources'
+  | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
   | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat'
@@ -443,8 +444,9 @@ async function inspectOrCreateDailyBrief(
   observed.setFailureStage('daily_brief_sources');
   observed.setDiagnosticAssertion('daily_brief_open_prepare');
   await page.getByRole('button', { name: '手动准备简报' }).click();
-  observed.setDiagnosticAssertion('daily_brief_sources');
+    observed.setDiagnosticAssertion('daily_brief_task_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief task source/ })).toBeVisible();
+    observed.setDiagnosticAssertion('daily_brief_project_source');
   await expect(page.getByRole('checkbox', { name: /Synthetic brief project source/ })).toBeVisible();
   expect(observed.dailyBriefPostCount).toBe(0);
   expect(observed.requestRecords.some((item) => item.method === 'GET' && item.path === '/api/daily-brief/source-options/journal')).toBe(false);
