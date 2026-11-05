@@ -31,7 +31,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'journal_append' | 'journal_saved_readback' | 'journal_refresh_readback'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections' | 'notes_blocksuite_open'
-  | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen'
+  | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
   | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source'
   | 'daily_brief_project_count' | 'daily_brief_project_label'
@@ -1102,8 +1102,10 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion('notes_readback_payload');
     expect(typeof persistedNote.content === 'string' && persistedNote.content.includes(syntheticNoteBody),
       'notes_readback_payload').toBe(true);
-    observed.setDiagnosticAssertion('notes_readback');
-    await expect(page.locator('.notes-document .notes-prose')).toContainText(syntheticNoteBody, { timeout: 15000 });
+    const renderedNote = await page.locator('.notes-document .notes-prose').innerText();
+    const editorContainsReadback = renderedNote.includes(syntheticNoteBody);
+    observed.setDiagnosticAssertion(editorContainsReadback ? 'notes_readback' : 'notes_readback_editor_missing');
+    expect(editorContainsReadback, 'notes_readback').toBe(true);
     if (viewport.name === 'desktop-1440x1000') {
       // Seed only the isolated synthetic Draft with metadata via the same
       // authenticated Core Notes API, then exercise the real BlockSuite editor.
