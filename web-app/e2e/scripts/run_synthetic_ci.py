@@ -148,6 +148,30 @@ MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_SCREENSHOT_WIDTH = 2048
 MAX_SCREENSHOT_HEIGHT = 1600
 ALLOW_FAILURE_SCREENSHOT_PUBLICATION = False
+WP5_AUTOSAVE_MARKER = "wp5-conflict-queue"
+WP5_AUTOSAVE_EVENT_NAMES = {
+    "probe-armed", "notes-queue-unsaved", "notes-save-timer-scheduled",
+    "notes-save-timer-cancelled", "notes-save-timer-fired", "notes-queue-saving",
+    "notes-queue-conflict", "notes-queue-saved", "notes-queue-failed",
+    "browser-put-request", "browser-put-response", "browser-put-requestfailed",
+    "test-request-matcher-accepted", "test-response-matcher-accepted",
+    "core-request-received", "core-response", "core-handler-error",
+    "recovery-response-matcher-accepted",
+}
+
+
+def _validate_wp5_autosave_events(events):
+    if (not isinstance(events, list) or len(events) > 24
+            or any(not isinstance(event, dict)
+                   or set(event) not in ({"marker", "at_ms", "event"}, {"marker", "at_ms", "event", "status"})
+                   or event.get("marker") != WP5_AUTOSAVE_MARKER
+                   or type(event.get("at_ms")) is not int or event["at_ms"] < 0
+                   or event.get("event") not in WP5_AUTOSAVE_EVENT_NAMES
+                   or ("status" in event and (type(event["status"]) is not int or not 100 <= event["status"] <= 599))
+                   for event in events)
+            or [event["at_ms"] for event in events] != sorted(event["at_ms"] for event in events)):
+        raise RuntimeError("WP5 autosave event timeline rejected")
+    return events
 
 
 def ephemeral_port() -> int:
@@ -310,15 +334,6 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         page_error_summaries = entry.get("page_error_summaries", [])
         brief_statuses = entry.get("daily_brief_get_statuses", [])
         autosave_events = entry.get("wp5_autosave_events", [])
-        autosave_event_names = {
-            "probe-armed", "notes-queue-unsaved", "notes-save-timer-scheduled",
-            "notes-save-timer-cancelled", "notes-save-timer-fired", "notes-queue-saving",
-            "notes-queue-conflict", "notes-queue-saved", "notes-queue-failed",
-            "browser-put-request", "browser-put-response", "browser-put-requestfailed",
-            "test-request-matcher-accepted", "test-response-matcher-accepted",
-            "core-request-received", "core-response", "core-handler-error",
-            "recovery-response-matcher-accepted",
-        }
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
@@ -373,17 +388,9 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in brief_statuses)
-                or not isinstance(autosave_events, list) or len(autosave_events) > 24
-                or any(not isinstance(event, dict)
-                       or set(event) not in ({"marker", "at_ms", "event"}, {"marker", "at_ms", "event", "status"})
-                       or event.get("marker") != "wp5-conflict-queue"
-                       or type(event.get("at_ms")) is not int or event["at_ms"] < 0
-                       or event.get("event") not in autosave_event_names
-                       or ("status" in event and (type(event["status"]) is not int or not 100 <= event["status"] <= 599))
-                       for event in autosave_events)
-                or [event["at_ms"] for event in autosave_events] != sorted(event["at_ms"] for event in autosave_events)
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
+        autosave_events = _validate_wp5_autosave_events(autosave_events)
         seen_viewports.add(viewport)
         normalized = {"viewport": viewport, "stage": stage, "code": code,
                       "assertion_id": assertion_id, "activity_get_statuses": activity_statuses}
@@ -1294,6 +1301,7 @@ def main() -> int:
     raw_artifacts = root / "playwright-raw"
     raw_artifacts.mkdir(mode=0o700)
     wp5_autosave_core_log = root / "wp5-autosave-core.jsonl"
+    wp5_autosave_browser_log = root / "wp5-autosave-browser.json"
     processes: list[subprocess.Popen] = []
     log_files = []
     result = 1
@@ -1320,6 +1328,7 @@ def main() -> int:
             "SB_E2E_WP5_ROUNDTRIP_ONLY": "true" if options.wp5_roundtrip_only else "false",
             "SB_E2E_WP5_AUTOSAVE_MARKER": "wp5-conflict-queue" if options.wp5_roundtrip_only else "",
             "SB_E2E_WP5_AUTOSAVE_LOG": str(wp5_autosave_core_log) if options.wp5_roundtrip_only else "",
+            "SB_E2E_WP5_AUTOSAVE_BROWSER_LOG": str(wp5_autosave_browser_log) if options.wp5_roundtrip_only else "",
             "SB_E2E_DESKTOP_ONLY": "true" if options.desktop_only else "false",
             "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
@@ -1392,15 +1401,31 @@ def main() -> int:
                         event["status"] = row["status"]
                     core_probe_events.append(event)
                 core_probe_events.sort(key=lambda item: item["at_ms"])
-                print("WP5_AUTOSAVE_CORE_EVENTS " + json.dumps(core_probe_events, separators=(",", ":")))
-                for source in raw_artifacts.rglob("failure-summary.json"):
+            browser_probe_events = []
+            if options.wp5_roundtrip_only and wp5_autosave_browser_log.exists():
+                browser_info = wp5_autosave_browser_log.lstat()
+                if (wp5_autosave_browser_log.is_symlink() or not wp5_autosave_browser_log.is_file()
+                        or browser_info.st_size > 4096 or browser_info.st_uid != os.geteuid()
+                        or browser_info.st_mode & 0o077):
+                    raise RuntimeError("WP5 browser probe log rejected")
+                browser_probe_events = _validate_wp5_autosave_events(
+                    json.loads(wp5_autosave_browser_log.read_text(encoding="utf-8")))
+            failure_summary_paths = list(raw_artifacts.rglob("failure-summary.json"))
+            if options.wp5_roundtrip_only and not browser_probe_events:
+                for source in failure_summary_paths:
                     summary_data = json.loads(source.read_text(encoding="utf-8"))
-                    browser_events = summary_data.get("wp5_autosave_events", [])
-                    browser_limit = max(0, 24 - len(core_probe_events))
-                    summary_data["wp5_autosave_events"] = sorted(
-                        [*browser_events[:browser_limit], *core_probe_events],
-                        key=lambda item: item["at_ms"],
-                    )
+                    browser_probe_events = summary_data.get("wp5_autosave_events", [])
+                    break
+            browser_limit = max(0, 24 - len(core_probe_events))
+            autosave_timeline = _validate_wp5_autosave_events(sorted(
+                [*browser_probe_events[:browser_limit], *core_probe_events],
+                key=lambda item: item["at_ms"],
+            ))
+            if options.wp5_roundtrip_only:
+                print("WP5_AUTOSAVE_TIMELINE " + json.dumps(autosave_timeline, separators=(",", ":")))
+                for source in failure_summary_paths:
+                    summary_data = json.loads(source.read_text(encoding="utf-8"))
+                    summary_data["wp5_autosave_events"] = autosave_timeline
                     source.write_text(json.dumps(summary_data, indent=2) + "\n", encoding="utf-8")
                     os.chmod(source, 0o600)
 

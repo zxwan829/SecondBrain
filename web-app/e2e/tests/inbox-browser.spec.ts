@@ -980,7 +980,10 @@ for (const viewport of activeViewports) {
       });
       observed.wp5AutosaveProbeEvents.push(...browserProbeEvents);
       observed.wp5AutosaveProbeEvents.sort((left, right) => left.at_ms - right.at_ms);
-      console.log(`WP5_AUTOSAVE_EVENTS ${JSON.stringify(observed.wp5AutosaveProbeEvents.slice(0, 24))}`);
+      const browserLog = process.env.SB_E2E_WP5_AUTOSAVE_BROWSER_LOG;
+      if (browserLog) {
+        await writeFile(browserLog, JSON.stringify(observed.wp5AutosaveProbeEvents.slice(0, 24)), { mode: 0o600 });
+      }
       return;
     }
     const composer = page.getByPlaceholder('发送消息给 Hermes…');
