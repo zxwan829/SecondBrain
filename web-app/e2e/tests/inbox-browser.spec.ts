@@ -96,6 +96,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_conflict_probe_seed' | 'wp5_conflict_probe_open' | 'wp5_conflict_probe_initial_read'
   | 'wp5_conflict_probe_canvas'
   | 'wp5_conflict_probe_external_write' | 'wp5_conflict_probe_request_path' | 'wp5_conflict_probe_rejected'
+  | 'wp5_conflict_probe_hooks_ready' | 'wp5_conflict_probe_timer_scheduled' | 'wp5_conflict_probe_timer_fired'
+  | 'wp5_conflict_probe_notes-queue-conflict' | 'wp5_conflict_probe_timeline_bound'
   | 'wp5_conflict_probe_readback' | 'wp5_conflict_probe_reopen' | 'wp5_conflict_probe_recovery_status'
   | 'wp5_conflict_probe_recovery_body' | 'wp5_conflict_probe_recovery_readback'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
@@ -716,7 +718,8 @@ for (const viewport of activeViewports) {
     observations.set(testInfo, observed);
     if (wp5RoundtripOnly || wp5ConflictOnly) {
       await page.addInitScript((marker) => {
-        const state = { marker, active: false, events: [] as { marker: string; at_ms: number; event: string; status?: number }[] };
+        const state = { marker, active: false, timerHookReady: false, observerReady: false,
+          events: [] as { marker: string; at_ms: number; event: string; status?: number }[] };
         const emit = (event: string, status?: number) => {
           if (!state.active || state.events.length >= 24) return;
           state.events.push({ marker: state.marker, at_ms: Date.now(), event, ...(status === undefined ? {} : { status }) });
@@ -725,7 +728,7 @@ for (const viewport of activeViewports) {
         const originalSetTimeout = window.setTimeout.bind(window);
         const originalClearTimeout = window.clearTimeout.bind(window);
         const autosaveTimers = new Set<number>();
-        window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        const observedSetTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
           const isAutosave = state.active && timeout === 900 && typeof handler === 'function';
           if (!isAutosave || typeof handler !== 'function') return originalSetTimeout(handler, timeout, ...args);
           let timerId = 0;
@@ -737,6 +740,8 @@ for (const viewport of activeViewports) {
           emit('notes-save-timer-scheduled');
           return timerId;
         }) as typeof window.setTimeout;
+        window.setTimeout = observedSetTimeout;
+        state.timerHookReady = window.setTimeout === observedSetTimeout;
         window.clearTimeout = ((timerId?: number) => {
           if (timerId !== undefined && autosaveTimers.delete(timerId)) emit('notes-save-timer-cancelled');
           return originalClearTimeout(timerId);
@@ -753,6 +758,7 @@ for (const viewport of activeViewports) {
           if (event && event !== previousState) { previousState = event; emit(event); }
         });
         observer.observe(document, { subtree: true, childList: true, characterData: true });
+        state.observerReady = true;
       }, WP5_PROBE_MARKER);
     }
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
@@ -908,10 +914,22 @@ for (const viewport of activeViewports) {
         if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
           recordProbe('browser-put-requestfailed');
       });
-      await page.evaluate((marker) => {
-        const probe = (window as Window & { __sbWp5AutosaveProbe?: { marker: string; active: boolean } }).__sbWp5AutosaveProbe;
-        if (probe && probe.marker === marker) probe.active = true;
+      page.on('requestfinished', (request) => {
+        if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
+          recordProbe('browser-put-requestfinished');
+      });
+      const probeReady = await page.evaluate((marker) => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: {
+          marker: string; active: boolean; timerHookReady: boolean; observerReady: boolean;
+          events: Wp5ProbeEvent[];
+        } }).__sbWp5AutosaveProbe;
+        if (!probe || probe.marker !== marker) return { found: false, timerHookReady: false, observerReady: false };
+        probe.active = true;
+        probe.events.push({ marker: probe.marker, at_ms: Date.now(), event: 'probe-armed' });
+        return { found: true, timerHookReady: probe.timerHookReady, observerReady: probe.observerReady };
       }, WP5_PROBE_MARKER);
+      observed.setDiagnosticAssertion('wp5_conflict_probe_hooks_ready');
+      expect(probeReady, 'wp5_conflict_probe_hooks_ready').toEqual({ found: true, timerHookReady: true, observerReady: true });
       probeActive = true;
       recordProbe('probe-armed');
 
@@ -929,13 +947,18 @@ for (const viewport of activeViewports) {
       const staleText = 'WP5 stale browser edit must not replace Core';
       await page.keyboard.insertText(staleText);
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_unsaved_state');
-      await expect(page.locator('.notes-document-heading [role="status"]')).toHaveText('未保存', { timeout: 5000 });
+      await page.waitForFunction(() => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
+        return probe?.events.some((event) => event.event === 'notes-queue-unsaved') ?? false;
+      }, { timeout: 5000 });
+      recordProbe('notes-queue-unsaved');
       const staleRequest = await staleRequestPromise;
       expect(new URL(staleRequest.url()).pathname, 'wp5_conflict_probe_request_path').toBe(conflictUrlPath);
       recordProbe('test-request-matcher-accepted');
       const staleResponse = await staleResponsePromise;
       expect(staleResponse.status(), 'wp5_conflict_probe_rejected').toBe(412);
-      await expect(page.getByRole('status').filter({ hasText: '版本冲突' })).toBeVisible();
+      const statusAfterConflict = await page.locator('.notes-document-heading [role="status"]').innerText();
+      expect(statusAfterConflict, 'wp5_conflict_probe_rejected').toBe('版本冲突');
       const coreAfterConflict = await page.evaluate(async (path) => {
         const response = await fetch(path, { credentials: 'same-origin' });
         return { status: response.status, content: response.ok ? (await response.json() as { content: string }).content : '' };
@@ -944,10 +967,34 @@ for (const viewport of activeViewports) {
       expect(coreAfterConflict.content, 'wp5_conflict_probe_readback').toContain(externalText);
       expect(coreAfterConflict.content, 'wp5_conflict_probe_readback').not.toContain(staleText);
 
+      if (wp5ConflictOnly) {
+        const beforeReloadEvents = await page.evaluate(() => {
+          const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
+          return probe?.events ?? [];
+        });
+        observed.wp5AutosaveProbeEvents.push(...beforeReloadEvents);
+        observed.wp5AutosaveProbeEvents.sort((left, right) => left.at_ms - right.at_ms);
+      }
+
       // Leaving the conflict revision clears the blocked queue; a fresh reopen/edit must save normally.
       page.once('dialog', (dialog) => void dialog.accept());
       if (wp5ConflictOnly) await page.reload();
       else await page.getByRole('button', { name: 'WP5 focused roundtrip', exact: true }).click();
+      if (wp5ConflictOnly) {
+        const reopenedProbe = await page.evaluate((marker) => {
+          const probe = (window as Window & { __sbWp5AutosaveProbe?: {
+            marker: string; active: boolean; timerHookReady: boolean; observerReady: boolean;
+            events: Wp5ProbeEvent[];
+          } }).__sbWp5AutosaveProbe;
+          if (!probe || probe.marker !== marker) return { found: false, timerHookReady: false, observerReady: false };
+          probe.active = true;
+          probe.events.push({ marker: probe.marker, at_ms: Date.now(), event: 'browser-probe-armed' });
+          return { found: true, timerHookReady: probe.timerHookReady, observerReady: probe.observerReady };
+        }, WP5_PROBE_MARKER);
+        observed.setDiagnosticAssertion('wp5_conflict_probe_hooks_ready');
+        expect(reopenedProbe, 'wp5_conflict_probe_hooks_ready').toEqual({ found: true, timerHookReady: true, observerReady: true });
+        recordProbe('probe-rearmed');
+      }
       const conflictReopenResponse = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === conflictUrlPath);
       await page.getByRole('button', { name: conflictTitle, exact: true }).click();
@@ -984,6 +1031,16 @@ for (const viewport of activeViewports) {
       });
       observed.wp5AutosaveProbeEvents.push(...browserProbeEvents);
       observed.wp5AutosaveProbeEvents.sort((left, right) => left.at_ms - right.at_ms);
+      for (const [requiredEvent, assertion] of [
+        ['notes-save-timer-scheduled', 'wp5_conflict_probe_timer_scheduled'],
+        ['notes-save-timer-fired', 'wp5_conflict_probe_timer_fired'],
+        ['notes-queue-conflict', 'wp5_conflict_probe_notes-queue-conflict'],
+      ] as const) {
+        observed.setDiagnosticAssertion(assertion);
+        expect(browserProbeEvents.some((event) => event.event === requiredEvent), assertion).toBe(true);
+      }
+      observed.setDiagnosticAssertion('wp5_conflict_probe_timeline_bound');
+      expect(observed.wp5AutosaveProbeEvents.length, 'wp5_conflict_probe_timeline_bound').toBeLessThanOrEqual(24);
       const browserLog = process.env.SB_E2E_WP5_AUTOSAVE_BROWSER_LOG;
       if (browserLog) {
         await writeFile(browserLog, JSON.stringify(observed.wp5AutosaveProbeEvents.slice(0, 24)), { mode: 0o600 });
@@ -1836,7 +1893,7 @@ test.afterEach(async ({ page }, testInfo) => {
           const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
           return probe?.events ?? [];
         }).catch(() => []).then((browserEvents) => [...observed.wp5AutosaveProbeEvents, ...browserEvents]
-          .sort((left, right) => left.at_ms - right.at_ms).slice(0, 32)),
+          .sort((left, right) => left.at_ms - right.at_ms).slice(0, 24)),
       } : {}),
     }, null, 2), { mode: 0o600 });
   }

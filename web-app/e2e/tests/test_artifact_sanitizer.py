@@ -138,6 +138,8 @@ def test_workflow_uploads_only_exact_sanitized_directory_and_is_manual_read_only
     assert "path: web-app/e2e/artifacts-sanitized/${{ github.run_id }}-${{ github.run_attempt }}/" in workflow
     assert "path: web-app/e2e/artifacts/" not in workflow
     assert "path: web-app/e2e/artifacts-raw/" not in workflow
+    assert "wp5_conflict_only:" in workflow
+    assert "--wp5-conflict-only" in workflow and "WP5_CONFLICT_ONLY" in workflow
     assert "if: always()" in workflow and "if-no-files-found: ignore" in workflow
     assert "steps.synthetic.outputs.artifacts_verified == 'true'" in workflow
     assert 'prefix=".artifacts-verified-"' in runner

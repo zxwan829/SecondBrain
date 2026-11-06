@@ -127,7 +127,9 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_focus_api_content_equal", "wp5_focus_reopen_api", "wp5_focus_reopen_content",
     "wp5_focus_saved_status",
     "wp5_conflict_probe_seed", "wp5_conflict_probe_open", "wp5_conflict_probe_initial_read",
-    "wp5_conflict_probe_canvas",
+    "wp5_conflict_probe_canvas", "wp5_conflict_probe_hooks_ready",
+    "wp5_conflict_probe_timer_scheduled", "wp5_conflict_probe_timer_fired",
+    "wp5_conflict_probe_notes-queue-conflict", "wp5_conflict_probe_timeline_bound",
     "wp5_conflict_probe_external_write", "wp5_conflict_probe_request_path", "wp5_conflict_probe_rejected",
     "wp5_conflict_probe_readback", "wp5_conflict_probe_reopen", "wp5_conflict_probe_recovery_status",
     "wp5_conflict_probe_recovery_body", "wp5_conflict_probe_recovery_readback",
@@ -150,10 +152,10 @@ MAX_SCREENSHOT_HEIGHT = 1600
 ALLOW_FAILURE_SCREENSHOT_PUBLICATION = False
 WP5_AUTOSAVE_MARKER = "wp5-conflict-queue"
 WP5_AUTOSAVE_EVENT_NAMES = {
-    "probe-armed", "notes-queue-unsaved", "notes-save-timer-scheduled",
+    "probe-armed", "browser-probe-armed", "probe-rearmed", "notes-queue-unsaved", "notes-save-timer-scheduled",
     "notes-save-timer-cancelled", "notes-save-timer-fired", "notes-queue-saving",
     "notes-queue-conflict", "notes-queue-saved", "notes-queue-failed",
-    "browser-put-request", "browser-put-response", "browser-put-requestfailed",
+    "browser-put-request", "browser-put-response", "browser-put-requestfailed", "browser-put-requestfinished",
     "test-request-matcher-accepted", "test-response-matcher-accepted",
     "core-request-received", "core-response", "core-handler-error",
     "recovery-response-matcher-accepted",
@@ -1419,11 +1421,18 @@ def main() -> int:
                     summary_data = json.loads(source.read_text(encoding="utf-8"))
                     browser_probe_events = summary_data.get("wp5_autosave_events", [])
                     break
-            browser_limit = max(0, 24 - len(core_probe_events))
-            autosave_timeline = _validate_wp5_autosave_events(sorted(
-                [*browser_probe_events[:browser_limit], *core_probe_events],
-                key=lambda item: item["at_ms"],
-            ))
+            autosave_timeline_raw = sorted(
+                [*browser_probe_events, *core_probe_events], key=lambda item: item["at_ms"])
+            if len(autosave_timeline_raw) > 24:
+                raise RuntimeError("WP5 autosave timeline exceeded its event bound")
+            autosave_timeline = _validate_wp5_autosave_events(autosave_timeline_raw)
+            if wp5_probe_mode and test_returncode == 0:
+                core_signature = [(event["event"], event.get("status")) for event in core_probe_events]
+                if core_signature != [
+                    ("core-request-received", None), ("core-response", 412),
+                    ("core-request-received", None), ("core-response", 200),
+                ]:
+                    raise RuntimeError("WP5 Core conflict/recovery status sequence rejected")
             if wp5_probe_mode:
                 print("WP5_AUTOSAVE_TIMELINE " + json.dumps(autosave_timeline, separators=(",", ":")))
                 for source in failure_summary_paths:
