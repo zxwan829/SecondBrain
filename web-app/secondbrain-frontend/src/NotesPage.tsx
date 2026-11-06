@@ -58,7 +58,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
   const blockSuiteFallbackReason = useRef<string | null>(null);
-  const blockSuiteFallbackDiagnostic = useRef<'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'missing_root' | 'blocksuite_error' | 'other' | null>(null);
+  const blockSuiteFallbackDiagnostic = useRef<'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'duplicate_root' | 'duplicate_note' | 'duplicate_paragraph' | 'duplicate_database' | 'duplicate_data_view' | 'duplicate_edgeless_text' | 'duplicate_other' | 'missing_root' | 'blocksuite_error' | 'other' | null>(null);
   const blockSuiteFallbackStage = useRef<'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update' | null>(null);
   const [loading, setLoading] = useState(false);
   const [trashView, setTrashView] = useState(false);
@@ -237,7 +237,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     timer.current = window.setTimeout(() => { void save(target, body, revision, sequence).catch(() => undefined); }, 900);
   };
 
-  const leaveBlockSuite = async (reason?: string, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'missing_root' | 'blocksuite_error' | 'other', stage?: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update') => {
+  const leaveBlockSuite = async (reason?: string, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'duplicate_root' | 'duplicate_note' | 'duplicate_paragraph' | 'duplicate_database' | 'duplicate_data_view' | 'duplicate_edgeless_text' | 'duplicate_other' | 'missing_root' | 'blocksuite_error' | 'other', stage?: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update') => {
     const target = noteRef.current;
     if (reason) window.clearTimeout(timer.current);
     if (!reason && target && contentRef.current !== savedContent.current) {

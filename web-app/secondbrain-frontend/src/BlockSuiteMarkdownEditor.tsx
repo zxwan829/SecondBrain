@@ -66,7 +66,7 @@ function makeManagers() {
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
 export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset, onOpenBlockSuiteResource }: {
-  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'missing_root' | 'blocksuite_error' | 'other', stage?: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update') => void;
+  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'duplicate_root' | 'duplicate_note' | 'duplicate_paragraph' | 'duplicate_database' | 'duplicate_data_view' | 'duplicate_edgeless_text' | 'duplicate_other' | 'missing_root' | 'blocksuite_error' | 'other', stage?: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update') => void;
   onOpenVisualAsset?: (filename: string) => void; onOpenBlockSuiteResource?: (filename: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -178,10 +178,17 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
       } catch (error) {
         if (!disposed) {
           setStatus(error instanceof Error ? error.message : 'BlockSuite 无法安全载入此 Markdown');
-          const diagnostic = error instanceof Error && /illegal constructor/i.test(error.message) ? 'illegal_constructor'
-            : error instanceof Error && /custom element .* not registered|not defined in the custom element registry/i.test(error.message) ? 'missing_custom_element'
-              : error instanceof Error && /already been used with this registry|already defined/i.test(error.message) ? 'custom_element_conflict'
-                : error instanceof Error && /missing root block|no root model/i.test(error.message) ? 'missing_root'
+          const message = error instanceof Error ? error.message.toLowerCase() : '';
+          const diagnostic = /illegal constructor/i.test(message) ? 'illegal_constructor'
+            : /custom element .* not registered|not defined in the custom element registry/i.test(message) ? 'missing_custom_element'
+              : /already been used with this registry|already defined/i.test(message)
+                ? /affine-page-root|affine-edgeless-root/.test(message) ? 'duplicate_root'
+                  : /affine-note/.test(message) ? 'duplicate_note'
+                    : /affine-paragraph/.test(message) ? 'duplicate_paragraph'
+                      : /affine-database/.test(message) ? 'duplicate_database'
+                        : /affine-data-view/.test(message) ? 'duplicate_data_view'
+                          : /affine-edgeless-text/.test(message) ? 'duplicate_edgeless_text' : 'duplicate_other'
+                : /missing root block|no root model/i.test(message) ? 'missing_root'
                   : error instanceof Error && error.name === 'BlockSuiteError' ? 'blocksuite_error' : 'other';
           onFallbackRef.current(fallbackReason, diagnostic, initializationStage);
         }
