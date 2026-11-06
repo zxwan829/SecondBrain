@@ -35,6 +35,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const timer = useRef<number | undefined>(undefined);
   const viewRevision = useRef(0);
   const editSequence = useRef(0);
+  const conflictedSave = useRef<{ key: string; revision: number } | null>(null);
   const visualOpenSequence = useRef(0);
   const noteRef = useRef<Note | null>(null);
   const contentRef = useRef('');
@@ -68,6 +69,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const beginTransition = () => {
     window.clearTimeout(timer.current);
     viewRevision.current += 1;
+    conflictedSave.current = null;
     editSequence.current += 1;
     visualOpenSequence.current += 1;
     setCreatingVisual(false);
@@ -114,6 +116,8 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       // A navigation can happen while this save waits behind another request.
       // Never dispatch a queued write for a document that is no longer active.
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== key) return null;
+      const conflict = conflictedSave.current;
+      if (conflict?.revision === revision && conflict.key === key) return null;
       // Use the most recently confirmed ETag for this note. An older response
       // always advances that ETag before a later queued body is sent.
       const current = noteRef.current;
@@ -131,8 +135,17 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       void refresh(target.collection);
       return saved;
     }).catch((error: unknown) => {
-      if (viewRevision.current === revision && editSequence.current === sequence) {
-        const status = (error as Error & { status?: number }).status;
+      const status = (error as Error & { status?: number }).status;
+      const stillViewingNote = viewRevision.current === revision
+        && noteRef.current !== null
+        && noteKey(noteRef.current) === key;
+      // A 412 is authoritative for this note/revision even if BlockSuite
+      // emitted another debounced projection while the request was in flight.
+      if (stillViewingNote && (status === 412 || editSequence.current === sequence)) {
+        if (status === 412) {
+          conflictedSave.current = { key, revision };
+          window.clearTimeout(timer.current);
+        }
         setState(status === 412 ? '版本冲突' : '保存失败');
         setMessage(status === 412 ? '文件已在其他位置修改。当前输入仍保留；请复制未保存内容后重新载入再合并。' : '保存失败。当前输入仍保留，可检查授权后重试。');
       }
@@ -145,9 +158,15 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   }, [refresh]);
 
   const change = (body: string) => {
-    contentRef.current = body;
-    setContent(body); setState('未保存'); setMessage('');
     const target = noteRef.current;
+    const conflict = conflictedSave.current;
+    const alreadyConflicted = !!target
+      && conflict?.revision === viewRevision.current
+      && conflict.key === noteKey(target);
+    contentRef.current = body;
+    setContent(body);
+    if (alreadyConflicted) return;
+    setState('未保存'); setMessage('');
     if (!target || target.read_only) return;
     window.clearTimeout(timer.current);
     const sequence = ++editSequence.current;
