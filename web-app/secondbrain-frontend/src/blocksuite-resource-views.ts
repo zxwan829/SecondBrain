@@ -1,6 +1,5 @@
 import { ViewExtensionManager } from '@blocksuite/affine-ext-loader';
 import { effects as registerStdEffects } from '@blocksuite/std/effects';
-import { effects as registerRootEffects } from '@blocksuite/affine-block-root/effects';
 import { FoundationViewExtension } from '@blocksuite/affine-foundation/view';
 import { RootViewExtension } from '@blocksuite/affine-block-root/view';
 import { NoteViewExtension } from '@blocksuite/affine-block-note/view';
@@ -55,6 +54,5 @@ const providers = [
 ];
 
 registerStdEffects();
-registerRootEffects();
 export const markdownViewManager = new ViewExtensionManager(providers);
 export const resourceViewManager = markdownViewManager;
