@@ -1045,7 +1045,7 @@ for (const viewport of activeViewports) {
           await page.keyboard.press('Enter');
           await page.keyboard.insertText(' unsaved resource conflict');
           await reopenedDialog.getByRole('button', { name: '保存资源' }).click();
-          await expect(reopenedDialog.getByRole('status')).toContainText('保存失败；修改仍保留');
+          await expect(reopenedDialog.getByRole('status')).toContainText('版本冲突（412）；Core 未覆盖现有资源。当前修改仍保留');
           const close = reopenedDialog.getByRole('button', { name: '关闭' });
           await expect(close).toBeDisabled();
           const firstDownloadPromise = page.waitForEvent('download');
