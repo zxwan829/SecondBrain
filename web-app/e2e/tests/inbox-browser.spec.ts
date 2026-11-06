@@ -1379,11 +1379,15 @@ for (const viewport of viewports) {
       observed.setFailureStage('notes_blocksuite_conflict');
       const concurrentText = 'WP5 synthetic concurrent Core update';
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_seed');
-      const concurrent = await page.request.put(`${baseUrl}/api/notes/drafts/${activeNotePath}`, {
-        headers: { 'If-Match': saved.headers()['etag'] ?? '' },
-        data: { content: `${savedPayload.content}\n${concurrentText}\n` },
-      });
-      const concurrentStatus = concurrent.status();
+      const concurrentResult = await page.evaluate(async ({ path, content, etag }) => {
+        const response = await fetch(`/api/notes/drafts/${path}`, {
+          method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': etag },
+          body: JSON.stringify({ content }),
+        });
+        return { status: response.status };
+      }, { path: activeNotePath, content: `${savedPayload.content}\n${concurrentText}\n`, etag: saved.headers()['etag'] ?? '' });
+      const concurrentStatus = concurrentResult.status;
       observed.setDiagnosticAssertion(concurrentStatus === 200 ? 'notes_conflict_seed_status_200'
         : concurrentStatus === 401 ? 'notes_conflict_seed_status_401'
           : concurrentStatus === 403 ? 'notes_conflict_seed_status_403'
@@ -1392,7 +1396,7 @@ for (const viewport of viewports) {
                 : concurrentStatus === 412 ? 'notes_conflict_seed_status_412'
                   : concurrentStatus === 422 ? 'notes_conflict_seed_status_422'
                     : concurrentStatus === 428 ? 'notes_conflict_seed_status_428' : 'notes_conflict_seed_status_other');
-      expect(concurrent.status(), 'notes_seed_concurrent_update').toBe(200);
+      expect(concurrentStatus, 'notes_seed_concurrent_update').toBe(200);
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_rejected');
       const staleWrite = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
