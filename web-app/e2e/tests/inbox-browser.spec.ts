@@ -940,7 +940,8 @@ for (const viewport of activeViewports) {
         const resourceHost = resourceDialog.locator('.blocksuite-resource-host');
         observed.setDiagnosticAssertion('wp5_resource_content_visible');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_007');
-        await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '可编辑测试画布', { timeout: 15000 });
+        await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '独立 Edgeless 便签', { timeout: 15000 });
+        if (kind === 'edgeless-canvas') await resourceHost.getByText('独立 Edgeless 便签', { exact: true }).dblclick();
         const editable = resourceHost.locator('[contenteditable="true"]:visible').first();
         observed.setDiagnosticAssertion('wp5_resource_editable');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_008');
