@@ -1388,8 +1388,9 @@ def main() -> int:
             raise RuntimeError("Core did not start with Promote and Hermes integrations disabled")
         web_log = (root / "vite.log").open("wb")
         log_files.append(web_log)
+        web_command = ["npx", "--no-install", "vite", "preview"] if os.environ.get("SB_E2E_PRODUCTION_BUILD") == "true" else ["npm", "run", "dev", "--"]
         web = subprocess.Popen([
-            "npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", str(web_port), "--strictPort",
+            *web_command, "--host", "127.0.0.1", "--port", str(web_port), "--strictPort",
         ], cwd=FRONTEND, env=env, stdout=web_log, stderr=subprocess.STDOUT, start_new_session=True)
         processes.append(web)
         wait_http(WEB_URL + "/chat/blank", web, "Vite")
@@ -1512,7 +1513,7 @@ def main() -> int:
             "result": "PASS" if test_returncode == 0 else "FAIL",
             "acceptance_scope": "editor-open-only" if wp5_open_only else "selected-browser-journey",
             "core": "real localhost HTTP",
-            "web": "local Vite",
+            "web": "Vite production build preview" if os.environ.get("SB_E2E_PRODUCTION_BUILD") == "true" else "local Vite",
             "browser": "NOT RUN (local stop gate)" if options.http_smoke_only else "Playwright Linux Chromium (workflow runner only)",
             "promote_enabled": False,
             "hermes": "fixture-only Chat endpoints; no Hermes service or credentials",
