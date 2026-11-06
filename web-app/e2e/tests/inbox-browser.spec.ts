@@ -1423,6 +1423,7 @@ for (const viewport of activeViewports) {
       expect(currentAfterConflict, 'notes_blocksuite_conflict_readback_payload').not.toBeNull();
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_readback');
       expect(currentAfterConflict?.content).toContain(concurrentText);
+      expect(currentAfterConflict?.content).toContain('custom: preserve-me');
       expect(currentAfterConflict?.content).not.toContain('WP5 stale browser edit must not replace Core');
 
       observed.setFailureStage('notes_blocksuite_reopen');
@@ -1439,6 +1440,7 @@ for (const viewport of activeViewports) {
       expect(reread.status(), 'notes_blocksuite_reopen').toBe(200);
       const reopenedPayload = await reread.json() as { content: string };
       expect(reopenedPayload.content).toContain(concurrentText);
+      expect(reopenedPayload.content).toContain('custom: preserve-me');
       expect(reopenedPayload.content).not.toContain('WP5 stale browser edit must not replace Core');
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_entry');
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true })).toBeVisible();
@@ -1449,7 +1451,7 @@ for (const viewport of activeViewports) {
       // after selecting another Note without repeating the full page reload.
       await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
       await expect(reopenedCanvas).toContainText(updatedBody, { timeout: 20000 });
-      await expect(reopenedCanvas).toContainText('preserve-me', { timeout: 20000 });
+      await expect(reopenedCanvas).toContainText(concurrentText, { timeout: 20000 });
       const quickSwitchEdit = 'WP5 quick fallback edit preserved';
       const quickSwitchSave = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
