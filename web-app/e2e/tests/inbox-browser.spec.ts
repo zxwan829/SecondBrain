@@ -929,7 +929,10 @@ for (const viewport of activeViewports) {
           await resourceDialog.getByLabel('选择 Edgeless 图片').setInputFiles({
             name: 'wp5-edgeless-synthetic.png', mimeType: 'image/png', buffer: uploadedBlobBytes,
           });
-          const uploaded = await blobPut;
+          const uploaded = await blobPut.catch(async error => {
+            console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ syntheticUploadStatus: (await resourceDialog.getByRole('status').textContent())?.slice(0, 180) }));
+            throw error;
+          });
           observed.setDiagnosticAssertion('wp5_resource_checkpoint_006');
           expect(uploaded.status(), 'wp5_edgeless_blob_create').toBe(201);
           uploadedBlobUrl = uploaded.url();
