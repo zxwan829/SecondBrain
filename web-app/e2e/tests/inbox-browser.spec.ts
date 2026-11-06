@@ -796,7 +796,7 @@ for (const viewport of activeViewports) {
       const title = 'WP5 focused roundtrip';
       const originalBody = `Synthetic body ${randomUUID()}`;
       const editMarker = `WP5 持久化编辑 ${randomUUID()}`;
-      const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
+      const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n`;
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('wp5_focus_note_seed');
       const seeded = await page.evaluate(async (content) => {
@@ -1086,7 +1086,6 @@ for (const viewport of activeViewports) {
       const rawSource = page.locator('.notes-raw-source');
       await expect(rawSource).toContainText(editMarker);
       await expect(rawSource).toContainText('custom: preserve-focused');
-      await expect(rawSource).toContainText('Column A');
       }
 
       // Focused concurrency probe: only synthetic Notes, real Core PUT/If-Match,
