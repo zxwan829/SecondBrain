@@ -728,6 +728,11 @@ async function readSyntheticPassword(): Promise<string> {
 
 for (const viewport of activeViewports) {
   test(`explicit Inbox capture, retry, conflict and source protection at ${viewport.name}`, async ({ page }, testInfo) => {
+    // The desktop journey includes the full Core Notes round trip, BlockSuite
+    // conflict/recovery, and an unsupported-Markdown preservation probe. Give
+    // that composed journey enough total execution budget without extending
+    // any individual product wait/assertion or weakening its conditions.
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(60_000);
     if ((wp5RoundtripOnly || wp5ConflictOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
