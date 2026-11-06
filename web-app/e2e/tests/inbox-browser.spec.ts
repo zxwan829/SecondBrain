@@ -63,10 +63,12 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_edit_newline' | 'notes_blocksuite_edit_type' | 'notes_blocksuite_edit_save_response'
   | 'notes_blocksuite_edit_response_body' | 'notes_blocksuite_saved_title'
   | 'notes_blocksuite_saved_tag' | 'notes_blocksuite_saved_custom_property'
-  | 'notes_blocksuite_saved_edit_text' | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
+  | 'notes_blocksuite_saved_edit_text' | 'notes_blocksuite_saved_status'
+  | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
   | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
   | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
+  | 'wp5_focus_saved_status'
   | 'wp5_focus_reopen_content' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
@@ -726,6 +728,8 @@ for (const viewport of viewports) {
         'wp5_focus_put_response_content').toBe(true);
       observed.setDiagnosticAssertion('wp5_focus_put_response_matches_request');
       expect(savedPayload.content, 'wp5_focus_put_response_matches_request').toBe(requestBody.content);
+      observed.setDiagnosticAssertion('wp5_focus_saved_status');
+      await expect(page.locator('.notes-document-heading').getByRole('status')).toHaveText('已保存');
 
       observed.setDiagnosticAssertion('wp5_focus_api_readback');
       const readback = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
@@ -1344,6 +1348,7 @@ for (const viewport of viewports) {
       expect(savedPayload.content).toContain('wp5-synthetic');
       observed.setDiagnosticAssertion('notes_blocksuite_saved_edit_text');
       expect(savedPayload.content).toContain(updatedBody);
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_status');
       await expect(page.getByRole('status').filter({ hasText: '已保存' }).first()).toBeVisible();
 
       // A concurrent Core edit advances the ETag. The stale editor must receive
