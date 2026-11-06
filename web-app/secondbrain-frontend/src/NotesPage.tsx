@@ -58,6 +58,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
   const blockSuiteFallbackReason = useRef<string | null>(null);
+  const blockSuiteFallbackDiagnostic = useRef<'illegal_constructor' | 'other' | null>(null);
   const [loading, setLoading] = useState(false);
   const [trashView, setTrashView] = useState(false);
   const [trashItems, setTrashItems] = useState<NotesTrashItem[]>([]);
@@ -235,7 +236,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     timer.current = window.setTimeout(() => { void save(target, body, revision, sequence).catch(() => undefined); }, 900);
   };
 
-  const leaveBlockSuite = async (reason?: string) => {
+  const leaveBlockSuite = async (reason?: string, diagnostic?: 'illegal_constructor' | 'other') => {
     const target = noteRef.current;
     if (reason) window.clearTimeout(timer.current);
     if (!reason && target && contentRef.current !== savedContent.current) {
@@ -247,6 +248,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       catch { /* save() keeps unsaved content and reports its failure before the editor switches. */ }
     }
     blockSuiteFallbackReason.current = reason ?? null;
+    blockSuiteFallbackDiagnostic.current = reason ? diagnostic ?? null : null;
     setEditorMode('source');
     if (reason) setMessage('BlockSuite 无法安全往返此笔记，已保留 Markdown 原文并切换为只读源码视图。');
   };
@@ -857,9 +859,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           <pre className="notes-raw-source">{content}</pre>
         </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
           onOpenVisualAsset={openVisual} onOpenBlockSuiteResource={(filename) => { void openBlockSuiteResource(filename); }}
-          onFallback={(reason) => { void leaveBlockSuite(reason); }} /></Suspense>
+          onFallback={(reason, diagnostic) => { void leaveBlockSuite(reason, diagnostic); }} /></Suspense>
           : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
-        {message && <p role="alert" data-fallback-reason={blockSuiteFallbackReason.current ?? undefined} className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
+        {message && <p role="alert" data-fallback-reason={blockSuiteFallbackReason.current ?? undefined}
+          data-fallback-diagnostic={blockSuiteFallbackDiagnostic.current ?? undefined}
+          className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
         {unpersistedVisual && state === '保存失败' && note && noteKey(note) === noteKey(unpersistedVisual.note) &&
           <button type="button" onClick={() => void retryVisualReference()}>重试保存图形引用</button>}
         {pendingBlockSuiteReference && ['保存失败', '版本冲突'].includes(state) && note && noteKey(note) === noteKey(pendingBlockSuiteReference.note) &&

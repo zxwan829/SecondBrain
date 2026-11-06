@@ -66,7 +66,7 @@ function makeManagers() {
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
 export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset, onOpenBlockSuiteResource }: {
-  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason) => void;
+  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'other') => void;
   onOpenVisualAsset?: (filename: string) => void; onOpenBlockSuiteResource?: (filename: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -171,7 +171,9 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
       } catch (error) {
         if (!disposed) {
           setStatus(error instanceof Error ? error.message : 'BlockSuite 无法安全载入此 Markdown');
-          onFallbackRef.current(fallbackReason);
+          const diagnostic = error instanceof Error && /illegal constructor/i.test(error.message)
+            ? 'illegal_constructor' : 'other';
+          onFallbackRef.current(fallbackReason, diagnostic);
         }
         try { std?.unmount(); } catch { /* Keep workspace disposal fail-safe. */ }
         workspace?.dispose();

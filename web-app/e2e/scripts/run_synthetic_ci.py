@@ -375,7 +375,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                         "vite_error", "fallback_message", "fallback_invalid_frontmatter", "fallback_unsupported_syntax",
                         "fallback_markdown_conversion_error", "fallback_unsafe_roundtrip",
                         "fallback_content_mismatch",
-                        "fallback_view_initialization_error", "blocksuite_canvas", "legacy_editor",
+                        "fallback_view_initialization_error", "fallback_illegal_constructor",
+                        "blocksuite_canvas", "legacy_editor",
                         "app_blank", "canvas_missing", "unavailable",
                     }))
                 or not isinstance(page_error_names, list) or len(page_error_names) > 5
