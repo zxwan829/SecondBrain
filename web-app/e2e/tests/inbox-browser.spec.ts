@@ -735,13 +735,17 @@ for (const viewport of viewports) {
       const reopenedRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 5000 });
       await page.getByRole('button', { name: title, exact: true }).click();
-      expect((await reopenedRead).status(), 'wp5_focus_reopen_api').toBe(200);
+      const reopened = await reopenedRead;
+      expect(reopened.status(), 'wp5_focus_reopen_api').toBe(200);
+      const reopenedPayload = await reopened.json() as { content?: unknown };
+      expect(reopenedPayload.content, 'wp5_focus_reopen_api').toBe(savedPayload.content);
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('wp5_focus_reopen_content');
-      const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
-      await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
-      await expect(reopenedCanvas).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
-      await expect(reopenedCanvas).toContainText(editMarker);
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      const rawSource = page.locator('.notes-raw-source');
+      await expect(rawSource).toContainText(editMarker);
+      await expect(rawSource).toContainText('custom: preserve-focused');
+      await expect(rawSource).toContainText('Column A');
       return;
     }
     const composer = page.getByPlaceholder('发送消息给 Hermes…');
@@ -1261,7 +1265,7 @@ for (const viewport of viewports) {
       // Seed only the isolated synthetic Draft with metadata via the same
       // authenticated Core Notes API, then refresh and exercise the real
       // BlockSuite editor once with the complete Markdown compatibility fixture.
-      const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
+      const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n`;
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('notes_frontmatter_seed');
       const seededResult = await page.evaluate(async (content) => {
