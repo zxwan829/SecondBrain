@@ -830,12 +830,15 @@ for (const viewport of activeViewports) {
       const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string): Promise<string | undefined> => {
         await expect(page.locator('.notes-document-heading [role="status"]'), `wp5_${kind}_note_ready`)
           .toHaveText('已保存', { timeout: 15000 });
+        const createButton = page.getByRole('button', { name: buttonName });
+        observed.setDiagnosticAssertion('wp5_focus_saved_status');
+        await expect(createButton, `wp5_${kind}_create_button_enabled`).toBeEnabled();
         const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources`, { timeout: 15000 });
         const referenceSave = page.waitForResponse((response) => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 15000 });
         observed.setDiagnosticAssertion('wp5_focus_put_received');
-        await page.getByRole('button', { name: buttonName }).click();
+        await createButton.click();
         const created = await resourcePost;
         expect(created.status(), `wp5_resource_${kind}_create`).toBe(200);
         const resourceInfo = await created.json() as { resource_id: string; filename: string; reference: string; etag: string };
