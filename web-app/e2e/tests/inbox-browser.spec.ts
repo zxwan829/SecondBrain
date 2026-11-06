@@ -1715,14 +1715,13 @@ for (const viewport of activeViewports) {
       page.on('request', countProjectionPut);
       await baseline.click();
       await page.keyboard.press('End');
-      await page.keyboard.press('Enter');
-      await page.keyboard.insertText('Dynamic Setext heading');
-      await page.keyboard.press('Enter');
-      await page.keyboard.insertText('===');
+      // Paste one literal two-line Markdown fragment; separate Enter actions
+      // create independent Page blocks and do not represent Setext source.
+      await page.keyboard.insertText('Dynamic Setext heading\n===');
       observed.setDiagnosticAssertion('wp5_unsupported_projection_rejected');
       await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 5000 });
       const fallbackProjection = page.locator('.notes-document .ProseMirror');
-      await expect(fallbackProjection).toContainText('Dynamic Setext heading');
+      await expect(fallbackProjection.getByRole('heading', { name: 'Dynamic Setext heading', exact: true })).toBeVisible();
       observed.setDiagnosticAssertion('wp5_unsupported_projection_preserved');
       await page.waitForTimeout(1000);
       observed.setDiagnosticAssertion('wp5_unsupported_projection_no_core_put');
