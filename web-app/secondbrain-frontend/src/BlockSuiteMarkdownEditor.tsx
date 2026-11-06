@@ -19,6 +19,13 @@ import { InlinePresetStoreExtension } from '@blocksuite/affine-inline-preset/sto
 import { InlinePresetViewExtension } from '@blocksuite/affine-inline-preset/view';
 import { LatexStoreExtension } from '@blocksuite/affine-inline-latex/store';
 import { LatexViewExtension } from '@blocksuite/affine-inline-latex/view';
+import { FootnoteStoreExtension } from '@blocksuite/affine-inline-footnote/store';
+import { FootnoteViewExtension } from '@blocksuite/affine-inline-footnote/view';
+import { LinkStoreExtension } from '@blocksuite/affine-inline-link/store';
+import { LinkViewExtension } from '@blocksuite/affine-inline-link/view';
+import { MentionViewExtension } from '@blocksuite/affine-inline-mention/view';
+import { ReferenceStoreExtension } from '@blocksuite/affine-inline-reference/store';
+import { ReferenceViewExtension } from '@blocksuite/affine-inline-reference/view';
 import { SurfaceStoreExtension } from '@blocksuite/affine-block-surface/store';
 import { SurfaceViewExtension } from '@blocksuite/affine-block-surface/view';
 import { MarkdownAdapter } from '@blocksuite/affine-shared/adapters';
@@ -45,6 +52,7 @@ function makeManagers() {
     FoundationStoreExtension, RootStoreExtension, NoteStoreExtension,
     ParagraphStoreExtension, ListStoreExtension, CodeStoreExtension,
     TableStoreExtension, DividerStoreExtension, InlinePresetStoreExtension, LatexStoreExtension,
+    FootnoteStoreExtension, LinkStoreExtension, ReferenceStoreExtension,
     SurfaceStoreExtension,
   ]);
   stores.configure(NoteStoreExtension, { mode: 'doc' });
@@ -52,6 +60,7 @@ function makeManagers() {
     FoundationViewExtension, RootViewExtension, NoteViewExtension,
     ParagraphViewExtension, ListViewExtension, CodeBlockViewExtension,
     TableViewExtension, DividerViewExtension, InlinePresetViewExtension, LatexViewExtension,
+    FootnoteViewExtension, LinkViewExtension, MentionViewExtension, ReferenceViewExtension,
     SurfaceViewExtension,
   ]);
   return { stores, views };
