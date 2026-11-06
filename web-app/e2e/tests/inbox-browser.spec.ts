@@ -66,6 +66,11 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_saved_edit_text' | 'notes_blocksuite_saved_status'
   | 'notes_blocksuite_conflict_seed' | 'notes_blocksuite_conflict_rejected'
   | 'notes_blocksuite_conflict_ui' | 'notes_blocksuite_conflict_readback'
+  | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
+  | 'notes_conflict_seed_status_403' | 'notes_conflict_seed_status_404'
+  | 'notes_conflict_seed_status_409' | 'notes_conflict_seed_status_412'
+  | 'notes_conflict_seed_status_422' | 'notes_conflict_seed_status_428'
+  | 'notes_conflict_seed_status_other'
   | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
   | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
@@ -1378,6 +1383,15 @@ for (const viewport of viewports) {
         headers: { 'If-Match': saved.headers()['etag'] ?? '' },
         data: { content: `${savedPayload.content}\n${concurrentText}\n` },
       });
+      const concurrentStatus = concurrent.status();
+      observed.setDiagnosticAssertion(concurrentStatus === 200 ? 'notes_conflict_seed_status_200'
+        : concurrentStatus === 401 ? 'notes_conflict_seed_status_401'
+          : concurrentStatus === 403 ? 'notes_conflict_seed_status_403'
+            : concurrentStatus === 404 ? 'notes_conflict_seed_status_404'
+              : concurrentStatus === 409 ? 'notes_conflict_seed_status_409'
+                : concurrentStatus === 412 ? 'notes_conflict_seed_status_412'
+                  : concurrentStatus === 422 ? 'notes_conflict_seed_status_422'
+                    : concurrentStatus === 428 ? 'notes_conflict_seed_status_428' : 'notes_conflict_seed_status_other');
       expect(concurrent.status(), 'notes_seed_concurrent_update').toBe(200);
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_rejected');
       const staleWrite = page.waitForResponse((response) => response.request().method() === 'PUT'
