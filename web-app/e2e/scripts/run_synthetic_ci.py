@@ -934,7 +934,11 @@ def seed_notes_safety_fixtures(notes_root: Path) -> None:
         ),
     }
     for name, content in fixtures.items():
-        target = notes_root / name
+        # Drafts are stored as <UUID>/note.md. Flat Markdown files in the
+        # Drafts root are intentionally invisible to NotesStore.list_notes().
+        draft = notes_root / str(uuid.uuid4())
+        draft.mkdir(mode=0o700)
+        target = draft / "note.md"
         target.write_text(content, encoding="utf-8", newline="")
         os.chmod(target, 0o600)
 
