@@ -144,8 +144,9 @@ def test_workflow_uploads_only_exact_sanitized_directory_and_is_manual_read_only
     assert "os.replace(staging_root, publish_root)" in runner
     assert "SB_E2E_RAW_ARTIFACTS" in runner and "artifacts-sanitized" in runner
     assert "SB_E2E_RAW_ARTIFACTS" in config and "artifacts-raw" in config
-    assert runner.index("wait_for_test_process(test_process)") < runner.index("publish_verified_reports(raw_artifacts, publish_root, password_path)")
-    assert runner.index("publish_verified_reports(raw_artifacts, publish_root, password_path)") < runner.rindex("mark_verified_artifact_output()")
+    publish_call = "publish_verified_reports(raw_artifacts, publish_root, password_path, expected_failure_viewports)"
+    assert runner.index("wait_for_test_process(test_process)") < runner.index(publish_call)
+    assert runner.index(publish_call) < runner.rindex("mark_verified_artifact_output()")
 
 
 def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
