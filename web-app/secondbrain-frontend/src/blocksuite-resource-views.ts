@@ -1,5 +1,4 @@
 import { ViewExtensionManager } from '@blocksuite/affine-ext-loader';
-import { effects as registerStdEffects } from '@blocksuite/std/effects';
 import { FoundationViewExtension } from '@blocksuite/affine-foundation/view';
 import { RootViewExtension } from '@blocksuite/affine-block-root/view';
 import { NoteViewExtension } from '@blocksuite/affine-block-note/view';
@@ -53,54 +52,7 @@ const providers = [
   ViewportOverlayViewExtension,
 ];
 
-registerStdEffects();
-// Some eagerly loaded BlockSuite surfaces register their Lit elements before
-// Notes creates its scope. ViewExtensionProvider tracks effects per class, so
-// mark fully-present package anchors as already effected before each scope is
-// built, while still running each provider's scope-specific setup.
-const registeredEffectAnchors: Array<[typeof providers[number], string]> = [
-  [FoundationViewExtension, 'icon-button'],
-  [RootViewExtension, 'affine-page-root'],
-  [NoteViewExtension, 'affine-note'],
-  [ParagraphViewExtension, 'affine-paragraph'],
-  [ListViewExtension, 'affine-list'],
-  [CodeBlockViewExtension, 'affine-code'],
-  [TableViewExtension, 'affine-table'],
-  [DividerViewExtension, 'affine-divider'],
-  [InlinePresetViewExtension, 'affine-text'],
-  [LatexViewExtension, 'affine-latex'],
-  [FootnoteViewExtension, 'affine-footnote-node'],
-  [LinkViewExtension, 'link-popup'],
-  [MentionViewExtension, 'affine-mention'],
-  [ReferenceViewExtension, 'reference-popup'],
-  [SurfaceViewExtension, 'affine-surface'],
-  [DataViewViewExtension, 'affine-data-view'],
-  [DatabaseViewExtension, 'affine-database'],
-  [ImageViewExtension, 'affine-image'],
-  [EdgelessTextViewExtension, 'affine-edgeless-text'],
-  [BrushViewExtension, 'edgeless-eraser-tool-button'],
-  [ConnectorViewExtension, 'edgeless-connector-tool-button'],
-  [GroupViewExtension, 'edgeless-group-title-editor'],
-  [MindmapViewExtension, 'edgeless-mindmap-tool-button'],
-  [PointerViewExtension, 'edgeless-default-tool-button'],
-  [ShapeViewExtension, 'edgeless-shape-text-editor'],
-  [GfxTextViewExtension, 'edgeless-text-editor'],
-  [EdgelessAutoConnectViewExtension, 'affine-edgeless-auto-connect-widget'],
-  [EdgelessDraggingAreaViewExtension, 'edgeless-dragging-area-rect'],
-  [EdgelessSelectedRectViewExtension, 'edgeless-auto-complete'],
-  [EdgelessToolbarViewExtension, 'edgeless-toolbar-button'],
-  [EdgelessZoomToolbarViewExtension, 'edgeless-zoom-toolbar'],
-  [FrameTitleViewExtension, 'affine-frame-title-editor'],
-  [KeyboardToolbarViewExtension, 'affine-keyboard-tool-panel'],
-  [NoteSlicerViewExtension, 'note-slicer'],
-  [RemoteSelectionViewExtension, 'affine-edgeless-remote-selection-widget'],
-  [ViewportOverlayViewExtension, 'affine-viewport-overlay-widget'],
-];
-export function prepareViewExtensions() {
-  for (const [Provider, anchor] of registeredEffectAnchors) {
-    if (customElements.get(anchor)) Provider.effectRan = true;
-  }
-}
-
+// FoundationViewExtension owns std, rich-text, data-view and shared component
+// effects. Let provider setup run these once; scopes share this manager.
 export const markdownViewManager = new ViewExtensionManager(providers);
 export const resourceViewManager = markdownViewManager;

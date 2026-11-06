@@ -30,7 +30,7 @@ import { SurfaceStoreExtension } from '@blocksuite/affine-block-surface/store';
 import { SurfaceViewExtension } from '@blocksuite/affine-block-surface/view';
 import { MarkdownAdapter } from '@blocksuite/affine-shared/adapters';
 import { StoreExtensionManager } from '@blocksuite/affine-ext-loader';
-import { markdownViewManager, prepareViewExtensions } from './blocksuite-resource-views';
+import { markdownViewManager } from './blocksuite-resource-views';
 import { BlockStdScope } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
 import { blockSuiteMarkdownMatches, blockSuiteMarkdownSupportsEditing, preserveSourceTerminalNewlines, splitOpaqueFrontmatter, type MarkdownParts } from './blocksuite-markdown';
@@ -122,7 +122,6 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         }
         if (disposed || !host.current) { currentWorkspace.dispose(); return; }
         fallbackReason = 'view_initialization_error';
-        prepareViewExtensions();
         const pageExtensions = views.get('page');
         initializationStage = 'scope_create';
         std = new BlockStdScope({ store: store as any, extensions: pageExtensions });

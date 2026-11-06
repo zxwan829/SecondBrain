@@ -860,6 +860,8 @@ for (const viewport of activeViewports) {
       expect(savedPayload.content, 'wp5_focus_api_content_equal').toContain(originalBody);
       expect(savedPayload.content, 'wp5_focus_frontmatter_preserved').toContain('custom: preserve-focused');
 
+      if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
+
       const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string): Promise<string | undefined> => {
         await expect(page.locator('.notes-document-heading [role="status"]'), `wp5_${kind}_note_ready`)
           .toHaveText('已保存', { timeout: 15000 });
