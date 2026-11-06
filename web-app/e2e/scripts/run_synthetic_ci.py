@@ -90,6 +90,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_navigation", "notes_navigation_link", "notes_collections", "notes_create", "notes_save",
     "notes_readback", "notes_readback_payload", "notes_readback_editor_missing",
     "notes_frontmatter_seed", "notes_frontmatter_reopen",
+    "notes_blocksuite_button_click", "notes_blocksuite_canvas_visible", "notes_blocksuite_save_status",
+    "notes_blocksuite_body_visible", "notes_blocksuite_enabled", "notes_blocksuite_contenteditable",
     "notes_blocksuite_open", "notes_blocksuite_edit", "notes_blocksuite_reopen",
     "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",

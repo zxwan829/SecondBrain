@@ -33,7 +33,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections' | 'notes_blocksuite_open'
   | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
-  | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen'
+  | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
+  | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
+  | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
   | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source'
   | 'daily_brief_project_count' | 'daily_brief_project_label'
@@ -1140,14 +1142,19 @@ for (const viewport of viewports) {
       expect(rereadFrontmatter.status(), 'notes_frontmatter_read').toBe(200);
 
       observed.setFailureStage('notes_blocksuite_open');
-      observed.setDiagnosticAssertion('notes_blocksuite_open');
+      observed.setDiagnosticAssertion('notes_blocksuite_button_click');
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const canvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('notes_blocksuite_canvas_visible');
       await expect(canvas).toBeVisible();
+      observed.setDiagnosticAssertion('notes_blocksuite_save_status');
       await expect(page.getByRole('status').filter({ hasText: 'BlockSuite Page · Core Notes 保存' })).toBeVisible();
+      observed.setDiagnosticAssertion('notes_blocksuite_body_visible');
       await expect(canvas).toContainText(syntheticNoteBody);
+      observed.setDiagnosticAssertion('notes_blocksuite_enabled');
       await expect(canvas).toHaveAttribute('data-disabled', 'false');
       const block = canvas.locator('[contenteditable="true"]').first();
+      observed.setDiagnosticAssertion('notes_blocksuite_contenteditable');
       await expect(block).toBeVisible();
 
       observed.setFailureStage('notes_blocksuite_edit');
