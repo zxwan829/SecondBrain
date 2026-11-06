@@ -1,5 +1,7 @@
 """Real Core localhost Trash move/restore, atomic rename races, and boundaries."""
 import hashlib
+import base64
+from io import BytesIO
 import json
 import errno
 import multiprocessing
@@ -14,6 +16,7 @@ import httpx
 import pytest
 import uvicorn
 from fastapi import HTTPException
+from PIL import Image
 
 from secondbrain_core.app import create_app
 import secondbrain_core.modules.notes_trash as notes_trash_module
@@ -95,7 +98,8 @@ def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exp
     created_resource = note_store.create_blocksuite_resource("projects", note.name, resource_body,
                                                              initial_note_etag)
     note_with_reference = original.decode("utf-8") + "\n" + created_resource["reference"] + "\n"
-    note_store.update("projects", note.name, note_with_reference, initial_note_etag)
+    note_store.update("projects", note.name, note_with_reference, initial_note_etag,
+                      expected_artifacts=created_resource["artifact_set_etag"])
     original = note_with_reference.encode("utf-8")
     resource_id = created_resource["resource_id"]
     resource_source = projects / "attachments" / created_resource["filename"]
@@ -324,11 +328,19 @@ def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkey
     resource_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "retry_doc",
                      "updateB64": "c2FtcGxlLXlqcw==", "snapshot": {"blocks": ["retry"]}}
     created = store.create_blocksuite_resource("projects", note.name, resource_body, note_etag)
+    image_buffer = BytesIO()
+    Image.new("RGB", (2, 2), "blue").save(image_buffer, format="PNG")
+    blob_bytes = image_buffer.getvalue()
+    blob_id = base64.urlsafe_b64encode(hashlib.sha256(blob_bytes).digest()).decode("ascii")
+    created_blob = store.put_blocksuite_blob("projects", note.name, blob_id, blob_bytes, "image/png",
+                                              note_etag, created["artifact_set_etag"])
     note_with_reference = note_bytes.decode() + "\n" + created["reference"] + "\n"
-    store.update("projects", note.name, note_with_reference, note_etag)
+    store.update("projects", note.name, note_with_reference, note_etag,
+                 expected_artifacts=created_blob["artifact_set_etag"])
     final_note_etag = hashlib.sha256(note_with_reference.encode()).hexdigest()
     resource_path = projects / "attachments" / created["filename"]
     resource_bytes = resource_path.read_bytes()
+    blob_path = projects / "attachments" / f"{hashlib.sha256(blob_bytes).hexdigest()}.blocksuite-blob"
     trash_root = vault / ".trash" / "secondbrain"
     trash = NotesTrashStore(store, str(trash_root))
 
@@ -338,7 +350,7 @@ def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkey
     def fail_second_move(source_fd, source_name, target_fd, target_name):
         nonlocal move_calls
         move_calls += 1
-        if move_calls == 2:
+        if move_calls == 3:
             raise OSError(errno.EIO, "synthetic interruption after note move")
         return real_rename(source_fd, source_name, target_fd, target_name)
 
@@ -350,10 +362,14 @@ def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkey
     item_dir = trash_root / trash_id
     manifest = json.loads((item_dir / "manifest.json").read_text())
     assert manifest["state"] == "pending"
-    assert manifest["resources"] == [{"resource_id": created["resource_id"],
-                                      "sha256": hashlib.sha256(resource_bytes).hexdigest(),
-                                      "size_bytes": len(resource_bytes)}]
-    assert not note.exists() and resource_path.read_bytes() == resource_bytes
+    assert manifest["schema"] == 3
+    assert len(manifest["resources"]) == len(manifest["blobs"]) == 1
+    assert manifest["resources"][0]["resource_id"] == created["resource_id"]
+    assert manifest["resources"][0]["sha256"] == hashlib.sha256(resource_bytes).hexdigest()
+    assert manifest["blobs"][0]["blob_id"] == blob_id
+    assert manifest["blobs"][0]["sha256"] == hashlib.sha256(blob_bytes).hexdigest()
+    assert not note.exists() and not resource_path.exists() and blob_path.exists()
+    assert (item_dir / "resources" / created["filename"]).read_bytes() == resource_bytes
     with pytest.raises(HTTPException) as hidden:
         store.read_blocksuite_resource("projects", note.name, created["resource_id"])
     assert hidden.value.status_code == 404
@@ -361,12 +377,14 @@ def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkey
     monkeypatch.setattr(notes_trash_module, "_rename_noreplace", real_rename)
     retried = trash.trash("projects", note.name, final_note_etag, "closure-retry-key")
     assert retried["status"] == "trashed" and retried["duplicate"] is True
-    assert not resource_path.exists()
+    assert not resource_path.exists() and not blob_path.exists()
     assert (item_dir / "resources" / created["filename"]).read_bytes() == resource_bytes
+    assert (item_dir / "resources" / blob_path.name).read_bytes() == blob_bytes
     restored = trash.restore(trash_id)
     assert restored["status"] == "restored"
     assert note.read_bytes() == note_with_reference.encode()
     assert store.read_blocksuite_resource("projects", note.name, created["resource_id"])["etag"] == created["etag"]
+    assert store.read_blocksuite_blob("projects", note.name, blob_id)["data"] == blob_bytes
 
 
 def test_core_rebuild_recovers_persisted_trash_without_auto_purge(tmp_path, monkeypatch):
