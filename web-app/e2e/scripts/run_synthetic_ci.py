@@ -114,7 +114,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_setext_seed_status_200", "notes_setext_seed_status_401", "notes_setext_seed_status_403",
     "notes_setext_seed_status_409", "notes_setext_seed_status_412", "notes_setext_seed_status_422",
     "notes_setext_seed_status_428", "notes_setext_seed_status_other",
-    "notes_setext_reopen_read", "notes_setext_editor_open",
+    "notes_setext_reopen_read", "notes_setext_editor_open", "notes_setext_leave_read",
     "notes_setext_fallback", "notes_setext_fallback_render",
     "notes_attachment_select", "notes_attachment_open", "notes_attachment_fallback", "notes_attachment_render",
     "notes_unsafe_select", "notes_unsafe_source", "notes_unsafe_safety", "notes_unsafe_editor_hidden",

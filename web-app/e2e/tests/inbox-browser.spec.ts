@@ -87,7 +87,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_setext_seed_status_200' | 'notes_setext_seed_status_401' | 'notes_setext_seed_status_403'
   | 'notes_setext_seed_status_409' | 'notes_setext_seed_status_412' | 'notes_setext_seed_status_422'
   | 'notes_setext_seed_status_428' | 'notes_setext_seed_status_other'
-  | 'notes_setext_reopen_read' | 'notes_setext_editor_open' | 'notes_setext_fallback' | 'notes_setext_fallback_render'
+  | 'notes_setext_reopen_read' | 'notes_setext_editor_open' | 'notes_setext_leave_read' | 'notes_setext_fallback' | 'notes_setext_fallback_render'
   | 'notes_attachment_select' | 'notes_attachment_open' | 'notes_attachment_fallback' | 'notes_attachment_render'
   | 'notes_unsafe_select' | 'notes_unsafe_source' | 'notes_unsafe_safety' | 'notes_unsafe_editor_hidden'
   | 'notes_blocksuite_reopen_scrollable' | 'notes_blocksuite_reopen_concurrent_update'
@@ -1820,8 +1820,16 @@ for (const viewport of activeViewports) {
                 : setextStatus === 422 ? 'notes_setext_seed_status_422'
                   : setextStatus === 428 ? 'notes_setext_seed_status_428' : 'notes_setext_seed_status_other');
       expect(setextStatus, 'notes_seed_setext_fallback').toBe(200);
-      page.once('dialog', (dialog) => void dialog.accept());
-      await page.reload();
+      // The simple Notes roundtrip above already verifies full page refresh.
+      // Switch away and reopen here so the focused compatibility check reuses
+      // the loaded optional editor chunk instead of depending on a second cold
+      // lazy-module load after the refresh.
+      await expect(page.locator('.notes-document-heading [role="status"]')).toHaveText('已保存');
+      const attachmentRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && /^\/api\/notes\/drafts\/[0-9a-f-]{36}$/i.test(new URL(response.url()).pathname), { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_setext_leave_read');
+      await page.getByRole('button', { name: 'WP5 attachment fallback fixture', exact: true }).click();
+      expect((await attachmentRead).status(), 'notes_setext_leave_read').toBe(200);
       const fallbackRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
       observed.setDiagnosticAssertion('notes_setext_editor_open');
