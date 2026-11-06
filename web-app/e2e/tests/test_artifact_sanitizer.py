@@ -256,6 +256,16 @@ def test_failure_diagnostic_can_include_bounded_note_item_read_failure():
     diagnostic["notes_item_read_statuses"] = [600]
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_notes_write_statuses():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_blocksuite_conflict",
+                  "code": "timeout", "assertion_id": "notes_blocksuite_conflict_rejected",
+                  "activity_get_statuses": [200], "notes_write_statuses": [200, 412, None]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_write_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
     diagnostic["notes_item_read_statuses"] = [403]
     diagnostic["notes_readback_failure"] = "raw error text"
     with pytest.raises(RuntimeError, match="value rejected"):

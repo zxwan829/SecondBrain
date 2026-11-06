@@ -550,6 +550,8 @@ async function configurePage(page: Page) {
       && request.path === '/api/notes').map((request) => request.status).slice(-4); },
     get notesItemReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && /^\/api\/notes\/drafts\/<opaque-id>$/.test(request.path)).map((request) => request.status).slice(-4); },
+    get notesWriteStatuses() { return requestRecords.filter((request) => request.method === 'PUT'
+      && /^\/api\/notes\/drafts\/<opaque-id>$/.test(request.path)).map((request) => request.status).slice(-8); },
     get notesReadbackFailure() { return notesReadbackFailure; },
     setNotesSeedStatus(status: number) { notesSeedStatus = status; },
     get notesSeedStatus() { return notesSeedStatus; },
@@ -1918,6 +1920,7 @@ test.afterEach(async ({ page }, testInfo) => {
       activity_get_statuses: observed?.activityReadStatuses ?? [],
       notes_collection_statuses: observed?.notesCollectionReadStatuses ?? [],
       notes_item_read_statuses: observed?.notesItemReadStatuses ?? [],
+      notes_write_statuses: observed?.notesWriteStatuses ?? [],
       notes_readback_failure: observed?.notesReadbackFailure ?? null,
       notes_seed_status: observed?.notesSeedStatus ?? null,
       notes_ui_state: notesUiState,

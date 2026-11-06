@@ -316,7 +316,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
     for entry in value:
         base_keys = {"viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
         optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
-                         "notes_item_read_statuses", "notes_readback_failure", "notes_seed_status",
+                         "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
                          "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
                          "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
         allowed_shapes = {
@@ -332,6 +332,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         activity_statuses = entry["activity_get_statuses"]
         notes_statuses = entry.get("notes_collection_statuses", [])
         notes_item_statuses = entry.get("notes_item_read_statuses", [])
+        notes_write_statuses = entry.get("notes_write_statuses", [])
         notes_readback_failure = entry.get("notes_readback_failure")
         notes_seed_status = entry.get("notes_seed_status")
         notes_ui_state = entry.get("notes_ui_state")
@@ -355,6 +356,9 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(notes_item_statuses, list) or len(notes_item_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in notes_item_statuses)
+                or not isinstance(notes_write_statuses, list) or len(notes_write_statuses) > 8
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in notes_write_statuses)
                 or (notes_readback_failure is not None and (
                     not isinstance(notes_readback_failure, str) or notes_readback_failure not in {
                         "session_required", "action_not_enabled", "draft_directory_permissions_unsafe",
@@ -518,7 +522,7 @@ def _collect_failure_diagnostics(
                 raise RuntimeError("failure diagnostic JSON rejected; upload withheld") from error
             base_keys = {"schema_version", "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
             optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
-                             "notes_item_read_statuses", "notes_readback_failure", "notes_seed_status",
+                             "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
                              "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
                              "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
             allowed_shapes = {
@@ -538,6 +542,8 @@ def _collect_failure_diagnostics(
                 diagnostics[-1]["notes_collection_statuses"] = raw["notes_collection_statuses"]
             if "notes_item_read_statuses" in raw:
                 diagnostics[-1]["notes_item_read_statuses"] = raw["notes_item_read_statuses"]
+            if "notes_write_statuses" in raw:
+                diagnostics[-1]["notes_write_statuses"] = raw["notes_write_statuses"]
             if "notes_readback_failure" in raw:
                 diagnostics[-1]["notes_readback_failure"] = raw["notes_readback_failure"]
             if "notes_seed_status" in raw:
