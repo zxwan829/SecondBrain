@@ -1069,6 +1069,7 @@ for (const viewport of activeViewports) {
               updateB64: currentResource.updateB64, snapshot: changedSnapshot },
           });
           observed.setDiagnosticAssertion('wp5_resource_checkpoint_031');
+          console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ externalStatus: externalWrite.status(), resourceIdentityPresent: Boolean(currentResource.resourceId), artifactHeaderPresent: Boolean(currentResourceResponse.headers()['x-artifact-set-etag']), noteEtagMatches: currentNote.etag === currentResourceResponse.headers()['x-note-etag']?.replace(/^"|"$/g, '') }));
           expect(externalWrite.status(), 'wp5_resource_external_change').toBe(200);
           const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]:visible').first();
           await conflictEditor.click();
