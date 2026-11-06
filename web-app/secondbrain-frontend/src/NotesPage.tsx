@@ -58,7 +58,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
   const blockSuiteFallbackReason = useRef<string | null>(null);
-  const blockSuiteFallbackDiagnostic = useRef<'illegal_constructor' | 'other' | null>(null);
+  const blockSuiteFallbackDiagnostic = useRef<'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'missing_root' | 'blocksuite_error' | 'other' | null>(null);
   const [loading, setLoading] = useState(false);
   const [trashView, setTrashView] = useState(false);
   const [trashItems, setTrashItems] = useState<NotesTrashItem[]>([]);
@@ -236,7 +236,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     timer.current = window.setTimeout(() => { void save(target, body, revision, sequence).catch(() => undefined); }, 900);
   };
 
-  const leaveBlockSuite = async (reason?: string, diagnostic?: 'illegal_constructor' | 'other') => {
+  const leaveBlockSuite = async (reason?: string, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'missing_root' | 'blocksuite_error' | 'other') => {
     const target = noteRef.current;
     if (reason) window.clearTimeout(timer.current);
     if (!reason && target && contentRef.current !== savedContent.current) {

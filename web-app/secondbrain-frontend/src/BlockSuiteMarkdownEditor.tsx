@@ -66,7 +66,7 @@ function makeManagers() {
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
 export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset, onOpenBlockSuiteResource }: {
-  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'other') => void;
+  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'missing_root' | 'blocksuite_error' | 'other') => void;
   onOpenVisualAsset?: (filename: string) => void; onOpenBlockSuiteResource?: (filename: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -171,8 +171,11 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
       } catch (error) {
         if (!disposed) {
           setStatus(error instanceof Error ? error.message : 'BlockSuite 无法安全载入此 Markdown');
-          const diagnostic = error instanceof Error && /illegal constructor/i.test(error.message)
-            ? 'illegal_constructor' : 'other';
+          const diagnostic = error instanceof Error && /illegal constructor/i.test(error.message) ? 'illegal_constructor'
+            : error instanceof Error && /custom element .* not registered|not defined in the custom element registry/i.test(error.message) ? 'missing_custom_element'
+              : error instanceof Error && /already been used with this registry|already defined/i.test(error.message) ? 'custom_element_conflict'
+                : error instanceof Error && /missing root block|no root model/i.test(error.message) ? 'missing_root'
+                  : error instanceof Error && error.name === 'BlockSuiteError' ? 'blocksuite_error' : 'other';
           onFallbackRef.current(fallbackReason, diagnostic);
         }
         try { std?.unmount(); } catch { /* Keep workspace disposal fail-safe. */ }

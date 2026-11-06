@@ -376,6 +376,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                         "fallback_markdown_conversion_error", "fallback_unsafe_roundtrip",
                         "fallback_content_mismatch",
                         "fallback_view_initialization_error", "fallback_illegal_constructor",
+                        "fallback_missing_custom_element", "fallback_custom_element_conflict",
+                        "fallback_missing_root", "fallback_blocksuite_error", "fallback_other",
                         "blocksuite_canvas", "legacy_editor",
                         "app_blank", "canvas_missing", "unavailable",
                     }))

@@ -2240,7 +2240,9 @@ test.afterEach(async ({ page }, testInfo) => {
         const reason = fallback.getAttribute('data-fallback-reason');
         const diagnostic = fallback.getAttribute('data-fallback-diagnostic');
         if (reason && ['invalid_frontmatter', 'unsupported_syntax', 'markdown_conversion_error', 'unsafe_roundtrip', 'content_mismatch', 'view_initialization_error'].includes(reason)) {
-          if (diagnostic === 'illegal_constructor') return 'fallback_illegal_constructor';
+          if (diagnostic && ['illegal_constructor', 'missing_custom_element', 'custom_element_conflict', 'missing_root', 'blocksuite_error', 'other'].includes(diagnostic)) {
+            return `fallback_${diagnostic}`;
+          }
           return `fallback_${reason}`;
         }
         return 'fallback_message';
