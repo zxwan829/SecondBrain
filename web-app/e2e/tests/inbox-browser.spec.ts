@@ -1312,7 +1312,7 @@ for (const viewport of viewports) {
       observed.setDiagnosticAssertion('notes_blocksuite_edit_focus');
       await block.click();
       observed.setDiagnosticAssertion('notes_blocksuite_edit_end');
-      await page.keyboard.press('Control+End');
+      await page.keyboard.press('End');
       observed.setDiagnosticAssertion('notes_blocksuite_edit_newline');
       await page.keyboard.press('Enter');
       observed.setDiagnosticAssertion('notes_blocksuite_edit_type');
@@ -1343,7 +1343,7 @@ for (const viewport of viewports) {
       const staleWrite = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
       await block.click();
-      await page.keyboard.press('Control+End');
+      await page.keyboard.press('End');
       await page.keyboard.press('Enter');
       await page.keyboard.insertText('WP5 stale browser edit must not replace Core');
       const rejected = await staleWrite;
@@ -1370,7 +1370,7 @@ for (const viewport of viewports) {
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
       const reopenedBlock = page.locator('.blocksuite-notes-canvas').getByText(updatedBody, { exact: false });
       await reopenedBlock.click();
-      await page.keyboard.press('Control+End');
+      await page.keyboard.press('End');
       await page.keyboard.press('Enter');
       await page.keyboard.insertText(quickSwitchEdit);
       await page.getByRole('button', { name: '切回旧版编辑器' }).click();
