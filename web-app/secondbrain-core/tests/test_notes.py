@@ -1,4 +1,6 @@
 import tempfile
+import asyncio
+import base64
 import os
 import unittest
 import concurrent.futures
@@ -11,7 +13,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from secondbrain_core.modules.notes import NotesStore, configured_notes_store, create_notes_router, markdown_safety, _note_properties, _replace_note_properties
+from secondbrain_core.modules.notes import (NotesStore, _read_bounded_json_request, configured_notes_store,
+                                            create_notes_router, markdown_safety, _note_properties,
+                                            _replace_note_properties)
 from secondbrain_core.modules.vocabulary import VocabularyStore
 
 
@@ -192,6 +196,208 @@ class NotesStoreTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as missing_etag:
             self.store.create_visual_asset("drafts", note["path"], "mindmap", mindmap, "wrong")
         self.assertEqual(missing_etag.exception.status_code, 412)
+
+    def test_blocksuite_resources_are_note_bound_versioned_and_dual_etag_protected(self):
+        note = self.store.create("# Page with a separate BlockSuite resource\n")
+        update = b"synthetic-yjs-update"
+        initial = {"schemaVersion": 1, "resourceKind": "database", "docId": "doc_table_1",
+                   "updateB64": base64.b64encode(update).decode("ascii"),
+                   "snapshot": {"type": "page", "blocks": {"table": ["a", "b"]}}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], initial, note["etag"])
+        self.assertRegex(created["filename"], r"^[0-9a-f]{32}\.blocksuite\.json$")
+        self.assertEqual(created["reference"], f"[BlockSuite resource](attachments/{created['filename']})")
+        resource_id = created["resource_id"]
+        resource_path = self.drafts / note["path"] / "attachments" / created["filename"]
+        self.assertEqual(resource_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(resource_path.parent.stat().st_mode & 0o777, 0o700)
+        first = self.store.read_blocksuite_resource("drafts", note["path"], resource_id)
+        self.assertEqual(first["updateB64"], initial["updateB64"])
+        self.assertEqual(first["etag"], created["etag"])
+
+        changed = {**first, "etag": None, "note_etag": None, "filename": None,
+                   "updateB64": base64.b64encode(b"updated-yjs-update").decode("ascii")}
+        changed.pop("etag")
+        changed.pop("note_etag")
+        changed.pop("filename")
+        saved = self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
+                                                      changed, note["etag"], first["etag"])
+        self.assertNotEqual(saved["etag"], first["etag"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], resource_id)["updateB64"],
+                         changed["updateB64"])
+        with self.assertRaises(HTTPException) as stale_asset:
+            self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
+                                                  changed, note["etag"], first["etag"])
+        self.assertEqual(stale_asset.exception.status_code, 412)
+        with self.assertRaises(HTTPException) as stale_note:
+            self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
+                                                  changed, "0" * 64, saved["etag"])
+        self.assertEqual(stale_note.exception.status_code, 412)
+        for identity_change in ({"resourceKind": "edgeless-canvas"}, {"docId": "different_doc"}):
+            with self.subTest(identity_change=identity_change):
+                candidate = {**changed, **identity_change}
+                with self.assertRaises(HTTPException) as immutable:
+                    self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
+                                                          candidate, note["etag"], saved["etag"])
+                self.assertEqual(immutable.exception.status_code, 409)
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], resource_id)["docId"],
+                         "doc_table_1")
+
+        other_note = self.store.create("# Different note\n")
+        with self.assertRaises(HTTPException) as unbound:
+            self.store.read_blocksuite_resource("drafts", other_note["path"], resource_id)
+        self.assertEqual(unbound.exception.status_code, 404)
+
+    def test_blocksuite_resource_schema_and_payload_limits_fail_closed(self):
+        note = self.store.create("# Resource bounds\n")
+        valid = {"schemaVersion": 1, "resourceKind": "edgeless-canvas", "docId": "canvas_1",
+                 "updateB64": base64.b64encode(b"yjs").decode("ascii"), "snapshot": {"blocks": []}}
+        with self.assertRaises(HTTPException) as unknown:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "unexpected": True}, note["etag"])
+        self.assertEqual(unknown.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as bad_b64:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "updateB64": "%%%%"}, note["etag"])
+        self.assertEqual(bad_b64.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as bad_kind:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "resourceKind": "anything"}, note["etag"])
+        self.assertEqual(bad_kind.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as invalid_unicode:
+            self.store.create_blocksuite_resource("drafts", note["path"],
+                                                  {**valid, "snapshot": {"text": chr(0xD800)}}, note["etag"])
+        self.assertEqual(invalid_unicode.exception.status_code, 422)
+        nested = {"value": "leaf"}
+        for _ in range(66):
+            nested = {"nested": nested}
+        with self.assertRaises(HTTPException) as too_deep:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "snapshot": nested}, note["etag"])
+        self.assertEqual(too_deep.exception.status_code, 422)
+        too_large = base64.b64encode(b"x" * (7 * 1024 * 1024 + 1)).decode("ascii")
+        with self.assertRaises(HTTPException) as oversized:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "updateB64": too_large}, note["etag"])
+        self.assertEqual(oversized.exception.status_code, 413)
+        self.assertEqual(list((self.drafts / note["path"] / "attachments").glob("*.blocksuite.json"))
+                         if (self.drafts / note["path"] / "attachments").exists() else [], [])
+
+    def test_blocksuite_resource_per_note_quotas_reject_without_changing_existing_resources(self):
+        note = self.store.create("# Resource quota bounds\n")
+        valid = {"schemaVersion": 1, "resourceKind": "database", "docId": "doc_1",
+                 "updateB64": base64.b64encode(b"yjs").decode("ascii"), "snapshot": {"blocks": []}}
+
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_PER_NOTE", 2):
+            first = self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
+            second = self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
+            before_count_limit = [self.store.read_blocksuite_resource("drafts", note["path"], item["resource_id"])
+                                  for item in (first, second)]
+            with self.assertRaises(HTTPException) as count_limited:
+                self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
+            self.assertEqual(count_limited.exception.status_code, 413)
+            after_count_limit = [self.store.read_blocksuite_resource("drafts", note["path"], item["resource_id"])
+                                 for item in (first, second)]
+            self.assertEqual([(item["etag"], item["updateB64"]) for item in after_count_limit],
+                             [(item["etag"], item["updateB64"]) for item in before_count_limit])
+
+        another_note = self.store.create("# Aggregate resource quota bounds\n")
+        first = self.store.create_blocksuite_resource("drafts", another_note["path"], valid, another_note["etag"])
+        first_data = self.store.read_blocksuite_resource("drafts", another_note["path"], first["resource_id"])
+        first_path = self.drafts / another_note["path"] / "attachments" / first["filename"]
+        first_size = first_path.stat().st_size
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE",
+                   first_size + 1):
+            with self.assertRaises(HTTPException) as aggregate_limited:
+                self.store.create_blocksuite_resource("drafts", another_note["path"], valid, another_note["etag"])
+            self.assertEqual(aggregate_limited.exception.status_code, 413)
+            after_create_limit = self.store.read_blocksuite_resource("drafts", another_note["path"],
+                                                                     first["resource_id"])
+            self.assertEqual((after_create_limit["etag"], after_create_limit["updateB64"]),
+                             (first_data["etag"], first_data["updateB64"]))
+
+            replacement = {**valid, "resourceId": first["resource_id"],
+                           "updateB64": base64.b64encode(b"larger replacement").decode("ascii")}
+            with self.assertRaises(HTTPException) as update_limited:
+                self.store.update_blocksuite_resource("drafts", another_note["path"], first["resource_id"],
+                                                      replacement, another_note["etag"], first["etag"])
+            self.assertEqual(update_limited.exception.status_code, 413)
+            after_update_limit = self.store.read_blocksuite_resource("drafts", another_note["path"],
+                                                                     first["resource_id"])
+            self.assertEqual((after_update_limit["etag"], after_update_limit["updateB64"]),
+                             (first_data["etag"], first_data["updateB64"]))
+
+    def test_blocksuite_resource_rejects_symlinked_resource_files(self):
+        note = self.store.create("# Symlink resource test\n")
+        body = {"schemaVersion": 1, "resourceKind": "database", "docId": "doc_1",
+                "updateB64": base64.b64encode(b"state").decode("ascii"), "snapshot": {"blocks": []}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], body, note["etag"])
+        target = self.drafts / note["path"] / "attachments" / created["filename"]
+        outside = Path(self.temp.name) / "outside-resource.json"
+        outside.write_text('{"synthetic":"outside"}')
+        outside.chmod(0o600)
+        target.unlink()
+        target.symlink_to(outside)
+        with self.assertRaises(HTTPException) as blocked:
+            self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        self.assertEqual(blocked.exception.status_code, 403)
+        self.assertEqual(outside.read_text(), '{"synthetic":"outside"}')
+
+    def test_blocksuite_resource_http_routes_require_notes_scope_and_use_both_etags(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+                if request.headers.get("x-deny") == action:
+                    raise HTTPException(status_code=403, detail=f"{action} denied")
+
+        note = self.store.create("# HTTP BlockSuite resource\n")
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        base = f"/api/notes/drafts/{note['path']}/blocksuite/resources"
+        body = {"schemaVersion": 1, "resourceKind": "database", "docId": "table_doc",
+                "updateB64": base64.b64encode(b"synthetic-state").decode("ascii"),
+                "snapshot": {"type": "page", "blocks": []}}
+        self.assertEqual(client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"'}).status_code, 401)
+        client.cookies.set("session", "owner")
+        self.assertEqual(client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"', "x-deny": "notes.write"}).status_code, 403)
+        created = client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"'})
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.headers["x-note-etag"], f'"{note["etag"]}"')
+        resource_url = f"{base}/{created.json()['resource_id']}"
+        self.assertEqual(client.get(resource_url, headers={"x-deny": "notes.read"}).status_code, 403)
+        fetched = client.get(resource_url)
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.headers["etag"], f'"{created.json()["etag"]}"')
+        replacement = {**body, "resourceId": created.json()["resource_id"],
+                       "updateB64": base64.b64encode(b"replacement").decode("ascii")}
+        stale = client.put(resource_url, json=replacement,
+                           headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": '"stale"'})
+        self.assertEqual(stale.status_code, 412)
+        saved = client.put(resource_url, json=replacement,
+                           headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": fetched.headers["etag"]})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(client.get(resource_url).json()["updateB64"], replacement["updateB64"])
+        identity_change = {**replacement, "docId": "other_doc"}
+        rejected_identity_change = client.put(resource_url, json=identity_change,
+                                              headers={"If-Match": f'"{note["etag"]}"',
+                                                       "If-Resource-Match": saved.headers["etag"]})
+        self.assertEqual(rejected_identity_change.status_code, 409)
+        self.assertEqual(client.get(resource_url).json()["docId"], "table_doc")
+
+    def test_blocksuite_http_body_limit_catches_chunked_body_with_forged_length(self):
+        limit = 1024
+        chunks = [b'{"payload":"' + b"a" * 800, b"b" * 800 + b'"}']
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+                 "method": "POST", "scheme": "http", "path": "/", "raw_path": b"/",
+                 "query_string": b"", "headers": [(b"content-length", b"1")],
+                 "server": ("test", 80), "client": ("test", 1)}
+
+        async def receive():
+            if chunks:
+                chunk = chunks.pop(0)
+                return {"type": "http.request", "body": chunk, "more_body": bool(chunks)}
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        request = Request(scope, receive)
+        with self.assertRaises(HTTPException) as too_large:
+            asyncio.run(_read_bounded_json_request(request, limit))
+        self.assertEqual(too_large.exception.status_code, 413)
 
     def test_notes_router_uses_etag_and_routes_attachment_endpoints(self):
         class SessionAuth:

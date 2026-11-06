@@ -1,6 +1,8 @@
 """Narrow Core-owned Notes API for explicitly configured Markdown roots."""
 from __future__ import annotations
 import csv
+import base64
+import binascii
 import hashlib
 import fcntl
 import json
@@ -22,6 +24,38 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_VISUAL_BYTES = 10 * 1024 * 1024
 _VISUAL_FILENAME = re.compile(r"^[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json$")
 _VISUAL_KINDS = {"mindmap", "excalidraw"}
+_BLOCKSUITE_RESOURCE_ID = re.compile(r"^[0-9a-f]{32}$")
+_BLOCKSUITE_DOC_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
+_BLOCKSUITE_RESOURCE_FILENAME = re.compile(r"^[0-9a-f]{32}\.blocksuite\.json$")
+_BLOCKSUITE_RESOURCE_KINDS = {"database", "edgeless-canvas"}
+MAX_BLOCKSUITE_RESOURCE_BYTES = 10 * 1024 * 1024
+MAX_BLOCKSUITE_RESOURCES_PER_NOTE = 64
+MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE = 64 * 1024 * 1024
+MAX_BLOCKSUITE_UPDATE_BYTES = 7 * 1024 * 1024
+MAX_BLOCKSUITE_SNAPSHOT_BYTES = 2 * 1024 * 1024
+MAX_BLOCKSUITE_SNAPSHOT_NODES = 50_000
+MAX_BLOCKSUITE_SNAPSHOT_DEPTH = 64
+MAX_BLOCKSUITE_REQUEST_BYTES = MAX_BLOCKSUITE_RESOURCE_BYTES + 64 * 1024
+
+
+async def _read_bounded_json_request(request: Request, max_bytes: int):
+    """Read a JSON request incrementally so schema limits also bound input memory."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(status_code=413, detail="BlockSuite resource request is too large")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length") from exc
+    raw = bytearray()
+    async for chunk in request.stream():
+        if len(raw) + len(chunk) > max_bytes:
+            raise HTTPException(status_code=413, detail="BlockSuite resource request is too large")
+        raw.extend(chunk)
+    try:
+        return json.loads(raw)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="BlockSuite resource request must be valid JSON") from exc
 
 
 def _frontmatter_prefix(content: str):
@@ -673,6 +707,252 @@ class NotesStore:
             os.close(directory_fd)
 
     @staticmethod
+    def _validate_blocksuite_resource(resource_id, body):
+        """Validate one bounded, versioned BlockSuite Yjs resource envelope."""
+        if not isinstance(resource_id, str) or not _BLOCKSUITE_RESOURCE_ID.fullmatch(resource_id):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite resource id")
+        if not isinstance(body, dict) or set(body) != {
+                "schemaVersion", "resourceId", "resourceKind", "docId", "updateB64", "snapshot"}:
+            raise HTTPException(status_code=422, detail="BlockSuite resource schema is invalid")
+        if (body.get("schemaVersion") != 1 or body.get("resourceId") != resource_id
+                or body.get("resourceKind") not in _BLOCKSUITE_RESOURCE_KINDS):
+            raise HTTPException(status_code=422, detail="BlockSuite resource version or identity is invalid")
+        doc_id = body.get("docId")
+        encoded = body.get("updateB64")
+        if not isinstance(doc_id, str) or not _BLOCKSUITE_DOC_ID.fullmatch(doc_id):
+            raise HTTPException(status_code=422, detail="BlockSuite document id is invalid")
+        if not isinstance(encoded, str) or not encoded or len(encoded) > ((MAX_BLOCKSUITE_UPDATE_BYTES + 2) // 3) * 4:
+            raise HTTPException(status_code=413, detail="BlockSuite document update is too large")
+        try:
+            update = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(status_code=422, detail="BlockSuite document update is not valid Base64") from exc
+        if not update or len(update) > MAX_BLOCKSUITE_UPDATE_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite document update is too large")
+        snapshot = body.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise HTTPException(status_code=422, detail="BlockSuite snapshot must be an object")
+        pending = [(snapshot, 0)]
+        nodes = 0
+        while pending:
+            value, depth = pending.pop()
+            nodes += 1
+            if nodes > MAX_BLOCKSUITE_SNAPSHOT_NODES or depth > MAX_BLOCKSUITE_SNAPSHOT_DEPTH:
+                raise HTTPException(status_code=422, detail="BlockSuite snapshot exceeds structural limits")
+            if isinstance(value, dict):
+                pending.extend((child, depth + 1) for child in value.values())
+            elif isinstance(value, list):
+                pending.extend((child, depth + 1) for child in value)
+            elif isinstance(value, str):
+                try:
+                    string_size = len(value.encode("utf-8"))
+                except UnicodeEncodeError as exc:
+                    raise HTTPException(status_code=422, detail="BlockSuite snapshot string is invalid Unicode") from exc
+                if string_size > 100_000:
+                    raise HTTPException(status_code=422, detail="BlockSuite snapshot string is too long")
+            elif value is not None and not isinstance(value, (str, int, float, bool)):
+                raise HTTPException(status_code=422, detail="BlockSuite snapshot contains unsupported values")
+        try:
+            snapshot_bytes = json.dumps(snapshot, ensure_ascii=False, allow_nan=False,
+                                        separators=(",", ":")).encode("utf-8")
+            resource_bytes = json.dumps(body, ensure_ascii=False, allow_nan=False,
+                                        separators=(",", ":")).encode("utf-8")
+        except (TypeError, ValueError, UnicodeEncodeError) as exc:
+            raise HTTPException(status_code=422, detail="BlockSuite resource JSON is invalid") from exc
+        if len(snapshot_bytes) > MAX_BLOCKSUITE_SNAPSHOT_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite snapshot is too large")
+        if len(resource_bytes) > MAX_BLOCKSUITE_RESOURCE_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite resource is too large")
+        return resource_bytes
+
+    @staticmethod
+    def _open_note_lock(directory_fd):
+        try:
+            lock_fd = os.open(".notes.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                              0o600, dir_fd=directory_fd)
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Note lock could not be opened safely") from exc
+        info = os.fstat(lock_fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            os.close(lock_fd)
+            raise HTTPException(status_code=403, detail="Note lock permissions are unsafe")
+        return lock_fd
+
+    @staticmethod
+    def _open_attachments_directory(directory_fd, *, create=False):
+        if create:
+            try:
+                os.mkdir("attachments", mode=0o700, dir_fd=directory_fd)
+            except FileExistsError:
+                pass
+        try:
+            attachments_fd = os.open("attachments", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                     | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Note resource directory not found")
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Note resource directory is unsafe") from exc
+        info = os.fstat(attachments_fd)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            os.close(attachments_fd)
+            raise HTTPException(status_code=403, detail="Note resource directory permissions are unsafe")
+        return attachments_fd
+
+    def _read_blocksuite_resource_at(self, attachments_fd, resource_id):
+        filename = f"{resource_id}.blocksuite.json"
+        if not _BLOCKSUITE_RESOURCE_FILENAME.fullmatch(filename):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite resource filename")
+        try:
+            fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=attachments_fd)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="BlockSuite resource not found")
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="BlockSuite resource could not be opened safely") from exc
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise HTTPException(status_code=403, detail="BlockSuite resource file permissions are unsafe")
+            if info.st_size > MAX_BLOCKSUITE_RESOURCE_BYTES:
+                raise HTTPException(status_code=413, detail="BlockSuite resource file is too large")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                raw = stream.read(MAX_BLOCKSUITE_RESOURCE_BYTES + 1)
+        finally:
+            os.close(fd)
+        if len(raw) > MAX_BLOCKSUITE_RESOURCE_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite resource file is too large")
+        try:
+            body = json.loads(raw)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="BlockSuite resource file is invalid JSON") from exc
+        canonical = self._validate_blocksuite_resource(resource_id, body)
+        if canonical != raw:
+            raise HTTPException(status_code=409, detail="BlockSuite resource file is not canonical")
+        return body, raw, hashlib.sha256(raw).hexdigest()
+
+    @staticmethod
+    def _blocksuite_resource_usage(attachments_fd):
+        count = total_bytes = 0
+        try:
+            names = os.listdir(attachments_fd)
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Note resource directory could not be listed safely") from exc
+        for name in names:
+            if not _BLOCKSUITE_RESOURCE_FILENAME.fullmatch(name):
+                continue
+            try:
+                info = os.stat(name, dir_fd=attachments_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise HTTPException(status_code=403, detail="BlockSuite resource could not be inspected safely") from exc
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077
+                    or info.st_size > MAX_BLOCKSUITE_RESOURCE_BYTES):
+                raise HTTPException(status_code=403, detail="BlockSuite resource file permissions or size are unsafe")
+            count += 1
+            total_bytes += info.st_size
+        if count > MAX_BLOCKSUITE_RESOURCES_PER_NOTE or total_bytes > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE:
+            raise HTTPException(status_code=409, detail="Existing BlockSuite resources exceed configured note limits")
+        return count, total_bytes
+
+    def create_blocksuite_resource(self, collection, relative, body, expected_note):
+        path, directory = self._path(collection, relative)
+        resource_id = uuid.uuid4().hex
+        create_fields = {"schemaVersion", "resourceKind", "docId", "updateB64", "snapshot"}
+        if not isinstance(body, dict) or set(body) != create_fields:
+            raise HTTPException(status_code=422, detail="BlockSuite resource creation schema is invalid")
+        body = {**body, "resourceId": resource_id}
+        raw = self._validate_blocksuite_resource(resource_id, body)
+        directory_fd = self._open_directory(directory)
+        lock_fd = attachments_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current = self._read_at(directory_fd, path.name)
+            note_etag = self._digest(current)
+            if not expected_note or expected_note.strip('"') != note_etag:
+                raise HTTPException(status_code=412, detail="Note changed; reload before creating a resource")
+            attachments_fd = self._open_attachments_directory(directory_fd, create=True)
+            resource_count, resource_bytes = self._blocksuite_resource_usage(attachments_fd)
+            if (resource_count + 1 > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or resource_bytes + len(raw) > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=413, detail="BlockSuite resources exceed per-note storage limits")
+            filename = f"{resource_id}.blocksuite.json"
+            self._atomic_write(directory / "attachments" / filename, raw, exclusive=True,
+                               directory_fd=attachments_fd)
+            etag = hashlib.sha256(raw).hexdigest()
+            return {"resource_id": resource_id, "resource_kind": body["resourceKind"], "doc_id": body["docId"],
+                    "filename": filename, "reference": f"[BlockSuite resource](attachments/{filename})",
+                    "etag": etag, "note_etag": note_etag}
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="BlockSuite resource path could not be opened safely") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    def read_blocksuite_resource(self, collection, relative, resource_id):
+        if not _BLOCKSUITE_RESOURCE_ID.fullmatch(resource_id or ""):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite resource id")
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory, missing_status=404)
+        attachments_fd = None
+        try:
+            note = self._read_at(directory_fd, path.name)
+            attachments_fd = self._open_attachments_directory(directory_fd)
+            body, _raw, etag = self._read_blocksuite_resource_at(attachments_fd, resource_id)
+            return {**body, "etag": etag, "note_etag": self._digest(note),
+                    "filename": f"{resource_id}.blocksuite.json"}
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            os.close(directory_fd)
+
+    def update_blocksuite_resource(self, collection, relative, resource_id, body, expected_note, expected_resource):
+        if not _BLOCKSUITE_RESOURCE_ID.fullmatch(resource_id or ""):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite resource id")
+        raw = self._validate_blocksuite_resource(resource_id, body)
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory)
+        lock_fd = attachments_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current = self._read_at(directory_fd, path.name)
+            note_etag = self._digest(current)
+            if not expected_note or expected_note.strip('"') != note_etag:
+                raise HTTPException(status_code=412, detail="Note changed; reload before saving a resource")
+            attachments_fd = self._open_attachments_directory(directory_fd)
+            old_body, _old_raw, current_resource_etag = self._read_blocksuite_resource_at(attachments_fd, resource_id)
+            if not expected_resource or expected_resource.strip('"') != current_resource_etag:
+                raise HTTPException(status_code=412, detail="BlockSuite resource changed; reload before saving")
+            if (body["resourceKind"] != old_body["resourceKind"]
+                    or body["docId"] != old_body["docId"]):
+                raise HTTPException(status_code=409, detail="BlockSuite resource identity is immutable")
+            resource_count, resource_bytes = self._blocksuite_resource_usage(attachments_fd)
+            if (resource_count > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or resource_bytes - len(_old_raw) + len(raw) > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=413, detail="BlockSuite resources exceed per-note storage limits")
+            filename = f"{resource_id}.blocksuite.json"
+            self._atomic_write(directory / "attachments" / filename, raw, directory_fd=attachments_fd)
+            etag = hashlib.sha256(raw).hexdigest()
+            return {"resource_id": resource_id, "resource_kind": body["resourceKind"], "doc_id": body["docId"],
+                    "filename": filename, "etag": etag, "note_etag": note_etag}
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="BlockSuite resource path could not be opened safely") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    @staticmethod
     def _validate_visual_payload(kind, content):
         if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_VISUAL_BYTES:
             raise HTTPException(status_code=413, detail="Visual asset is too large")
@@ -856,6 +1136,40 @@ def create_notes_router(auth, store, vocabulary_store=None):
         auth.require_action(request, f"notes.{action}")
         if store is None:
             raise HTTPException(status_code=503, detail="Notes is not configured")
+
+    @router.post("/{collection}/{relative:path}/blocksuite/resources")
+    async def create_blocksuite_resource(request: Request, response: Response, collection: str,
+                                         relative: str):
+        require(request, "write")
+        body = await _read_bounded_json_request(request, MAX_BLOCKSUITE_REQUEST_BYTES)
+        result = store.create_blocksuite_resource(collection, relative, body,
+                                                  request.headers.get("if-match", ""))
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        return result
+
+    @router.get("/{collection}/{relative:path}/blocksuite/resources/{resource_id}")
+    def read_blocksuite_resource(request: Request, response: Response, collection: str,
+                                 relative: str, resource_id: str):
+        require(request, "read")
+        result = store.read_blocksuite_resource(collection, relative, resource_id)
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return result
+
+    @router.put("/{collection}/{relative:path}/blocksuite/resources/{resource_id}")
+    async def update_blocksuite_resource(request: Request, response: Response, collection: str,
+                                         relative: str, resource_id: str):
+        require(request, "write")
+        body = await _read_bounded_json_request(request, MAX_BLOCKSUITE_REQUEST_BYTES)
+        result = store.update_blocksuite_resource(collection, relative, resource_id, body,
+                                                  request.headers.get("if-match", ""),
+                                                  request.headers.get("if-resource-match", ""))
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        return result
 
     @router.post("")
     def create(request: Request, response: Response, body: dict):
