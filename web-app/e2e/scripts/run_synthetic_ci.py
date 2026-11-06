@@ -304,7 +304,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(page_error_categories, list) or len(page_error_categories) > 5
                 or any(not isinstance(category, str) or category not in {
                     "nullish_property_access", "invalid_runtime_symbol", "custom_element_registration",
-                    "module_load_failure", "missing_block_extension", "other",
+                    "module_load_failure", "missing_block_extension", "view_service_error",
+                    "block_schema_error", "document_state_error", "react_lazy_error", "other",
                 } for category in page_error_categories)
                 or not isinstance(page_error_sources, list) or len(page_error_sources) > 5
                 or any(not isinstance(source, str) or source not in {

@@ -304,8 +304,12 @@ async function configurePage(page: Page) {
     const category = /cannot read properties of (undefined|null)/.test(message) ? 'nullish_property_access'
       : /not a constructor|is not a function/.test(message) ? 'invalid_runtime_symbol'
         : /custom element|already been defined|already registered/.test(message) ? 'custom_element_registration'
-          : /failed to fetch dynamically imported module|failed to load module|module script failed/.test(message) ? 'module_load_failure'
-            : /not registered|missing.*extension|unknown block/.test(message) ? 'missing_block_extension' : 'other';
+          : /failed to fetch dynamically imported module|failed to load (?:module|url)|module script failed|does not provide an export/.test(message) ? 'module_load_failure'
+            : /not registered|missing.*extension|unknown block/.test(message) ? 'missing_block_extension'
+              : /viewport|service identifier|service not found/.test(message) ? 'view_service_error'
+                : /schema|flavour|flavor|block model/.test(message) ? 'block_schema_error'
+                  : /workspace|ydoc|y\.doc|document state/.test(message) ? 'document_state_error'
+                    : /invalid hook|element type is invalid|suspend|lazy component/.test(message) ? 'react_lazy_error' : 'other';
     pageErrorCategories.push(category);
     const stack = (error.stack ?? '').toLowerCase();
     const source = /blocksuite-markdown-editor|blocksuite/.test(stack) ? 'blocksuite_module'
