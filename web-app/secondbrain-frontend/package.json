@@ -48,6 +48,7 @@
     "@tiptap/react": "3.32.0",
     "@tiptap/starter-kit": "3.32.0",
     "@toeverything/theme": "1.1.15",
+    "marked": "17.0.6",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "react": "18.3.1",

@@ -94,7 +94,9 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
       try {
         const split = splitOpaqueFrontmatter(valueRef.current);
         // Keep formats whose assets or Obsidian semantics belong to the existing editor on its fallback path.
-        if (/!\[[^\]]*\]\([^)]*attachments\//i.test(split.body) || /\[\[[^\]]+\]\]|<\s*\/?[a-z][^>]*>/i.test(split.body)) {
+        if (/!\[[^\]]*\]\([^)]*attachments\//i.test(split.body)
+            || /\[\[[^\]]+\]\]|<\s*\/?[a-z][^>]*>/i.test(split.body)
+            || /^(?:[ \t]*>[ \t]*)+\[![-\w]+\]/m.test(split.body)) {
           if (!disposed) onFallbackRef.current('unsupported_syntax');
           return;
         }

@@ -1,4 +1,19 @@
+import { marked } from 'marked';
+
 export type MarkdownParts = { prefix: string; body: string };
+
+function semanticMarkdown(markdown: string): string {
+  const withoutRaw = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value
+      .filter((item) => !(item && typeof item === 'object' && 'type' in item && (item as { type?: string }).type === 'space'))
+      .map(withoutRaw);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'raw')
+      .map(([key, nested]) => [key, withoutRaw(nested)]));
+  };
+  const tokens = marked.lexer(markdown, { gfm: true }).filter(token => token.type !== 'space');
+  return JSON.stringify(withoutRaw(tokens));
+}
 
 /** Frontmatter remains an opaque byte-for-byte prefix outside BlockSuite's editor. */
 export function splitOpaqueFrontmatter(markdown: string): MarkdownParts {
@@ -17,12 +32,26 @@ export function splitOpaqueFrontmatter(markdown: string): MarkdownParts {
 }
 
 export function blockSuiteMarkdownMatches(source: string, serialized: string): boolean {
-  // The adapter normalizes the number of terminal line breaks. Treat that
-  // suffix as opaque (it is restored by preserveSourceTerminalNewlines) while
-  // keeping all content and whitespace before it byte-significant after EOL
-  // normalization.
   const normalize = (value: string) => value.replace(/\r\n/g, '\n').replace(/\n+$/, '');
-  return normalize(source) === normalize(serialized);
+  const original = normalize(source);
+  const roundTrip = normalize(serialized);
+
+  // Setext headings and Obsidian callouts have distinct source semantics that
+  // the current Page view cannot preserve. Keep these on the legacy path even
+  // if a general Markdown parser considers the rendered result equivalent.
+  if (/^\s*[^\n]+\n[ \t]*(?:={3,}|-{3,})[ \t]*$/m.test(original)
+      || /^(?:[ \t]*>[ \t]*)+\[![-\w]+\]/m.test(original)) return false;
+  if (original === roundTrip) return true;
+
+  try {
+    // The BlockSuite adapter may canonicalize harmless Markdown formatting
+    // (for example heading markers, list bullets, and table padding). Compare
+    // parsed token structure and text, not raw source syntax. The original
+    // terminal newline suffix is restored separately before any Core write.
+    return semanticMarkdown(original) === semanticMarkdown(roundTrip);
+  } catch {
+    return false;
+  }
 }
 
 /** Keep the user's exact terminal newline sequence when exporting through the adapter. */

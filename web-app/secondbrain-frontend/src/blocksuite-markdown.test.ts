@@ -15,14 +15,25 @@ describe('BlockSuite Markdown safety boundary', () => {
     expect(() => splitOpaqueFrontmatter('---\ntags: [x]\n正文')).toThrow('Frontmatter is incomplete');
   });
 
-  it('accepts adapter terminal-newline normalization while preserving the exact source suffix', () => {
+  it('accepts semantic Markdown normalization while preserving exact source terminal newlines', () => {
     expect(blockSuiteMarkdownMatches('# Title\r\n\r\nBody\r\n', '# Title\n\nBody\n')).toBe(true);
     expect(blockSuiteMarkdownMatches('Plain Markdown\n', 'Plain Markdown')).toBe(true);
     expect(blockSuiteMarkdownMatches('Plain Markdown\n\n', 'Plain Markdown')).toBe(true);
     expect(preserveSourceTerminalNewlines('Plain Markdown\r\n\r\n', 'Plain Markdown\n')).toBe('Plain Markdown\r\n\r\n');
+    expect(blockSuiteMarkdownMatches('# Heading\n\n- one\n- two\n', '# Heading\n\n* one\n* two\n')).toBe(true);
+    expect(blockSuiteMarkdownMatches('| A | B |\n| --- | --- |\n| x | y |\n', '|A|B|\n|---|---|\n|x|y|\n')).toBe(true);
+    expect(blockSuiteMarkdownMatches('[label](https://example.invalid)\n', '[label](https://example.invalid "title")\n')).toBe(false);
+    expect(blockSuiteMarkdownMatches('| A | B |\n| --- | --- |\n| x | y |\n', '| A | B |\n| :--- | ---: |\n| x | y |\n')).toBe(false);
+    expect(blockSuiteMarkdownMatches('| A | B |\n| --- | --- |\n| x | y |\n', '| A | B |\n| --- | --- |\n| x | |\n')).toBe(false);
     expect(blockSuiteMarkdownMatches('```text\nline  \n\n\n```\n', '```text\nline\n\n```\n')).toBe(false);
     expect(blockSuiteMarkdownMatches('Plain Markdown\n\n', 'Plain Markdown changed')).toBe(false);
     expect(blockSuiteMarkdownMatches('Body  \n', 'Body\n')).toBe(false);
     expect(blockSuiteMarkdownMatches('[[Obsidian]]\n', '')).toBe(false);
+    expect(blockSuiteMarkdownMatches('Heading\n---\n', '# Heading\n')).toBe(false);
+    expect(blockSuiteMarkdownMatches('Heading\n---\n', 'Heading\n---\n')).toBe(false);
+    expect(blockSuiteMarkdownMatches('> [!NOTE]\n> keep as callout\n', '> keep as callout\n')).toBe(false);
+    expect(blockSuiteMarkdownMatches('> [!NOTE]\n> keep as callout\n', '> [!NOTE]\n> keep as callout\n')).toBe(false);
+    expect(blockSuiteMarkdownMatches('> > [!NOTE]\n> > keep as nested callout\n', '> > keep as nested callout\n')).toBe(false);
+    expect(blockSuiteMarkdownMatches('>> [!NOTE]\n>> keep as compact nested callout\n', '>> keep as compact nested callout\n')).toBe(false);
   });
 });

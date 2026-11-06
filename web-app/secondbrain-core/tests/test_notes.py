@@ -28,6 +28,11 @@ class NotesStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_markdown_safety_rejects_nested_obsidian_callouts(self):
+        for content in ("> [!NOTE]\n> text\n", "> > [!NOTE]\n> > text\n", ">> [!NOTE]\n>> text\n"):
+            with self.subTest(content=content):
+                self.assertIn("callouts", markdown_safety(content))
+
     def test_create_edit_reload_and_history_are_markdown_authoritative(self):
         note = self.store.create("# Synthetic\n\nHello **world**.\n")
         self.assertEqual((self.drafts / note["path"] / "note.md").read_text(), note["content"])

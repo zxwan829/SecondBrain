@@ -1175,7 +1175,7 @@ for (const viewport of viewports) {
       // Seed only the isolated synthetic Draft with metadata via the same
       // authenticated Core Notes API, then refresh and exercise the real
       // BlockSuite editor once with the complete Markdown compatibility fixture.
-      const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n`;
+      const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('notes_frontmatter_seed');
       const seededResult = await page.evaluate(async (content) => {
@@ -1313,6 +1313,7 @@ for (const viewport of viewports) {
       await expect(page.locator('.notes-raw-source')).toContainText('[[Synthetic Wiki Target]]');
       await expect(page.locator('.notes-raw-source')).toContainText('![[synthetic-embed.png]]');
       await expect(page.locator('.notes-raw-source')).toContainText('<details>');
+      await expect(page.locator('.notes-raw-source')).toContainText('> > [!NOTE]');
       await expect(page.locator('.notes-safety')).toBeVisible();
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器' })).toHaveCount(0);
     }

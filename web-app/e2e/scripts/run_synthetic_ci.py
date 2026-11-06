@@ -890,7 +890,8 @@ def seed_notes_safety_fixtures(notes_root: Path) -> None:
     fixtures = {
         "wp5-unsafe-markdown.md": (
             "# WP5 unsafe Markdown fixture\n\n[[Synthetic Wiki Target]]\n"
-            "![[synthetic-embed.png]]\n\n<details><summary>unknown block</summary></details>\n"
+            "![[synthetic-embed.png]]\n\n<details><summary>unknown block</summary></details>\n\n"
+            "> > [!NOTE]\n> > nested synthetic callout\n"
         ),
         "wp5-attachment-fallback.md": (
             "# WP5 attachment fallback fixture\n\n"

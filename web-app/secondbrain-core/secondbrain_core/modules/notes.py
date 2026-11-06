@@ -48,7 +48,7 @@ def markdown_safety(content: str) -> list[str]:
     elif prefix is None:
         reasons.append("incomplete frontmatter")
     checks = {
-        "wiki links": r"!?\[\[[^\]]+\]\]", "callouts": r"^\s*>\s*\[![-\w]+\]",
+        "wiki links": r"!?\[\[[^\]]+\]\]", "callouts": r"^(?:[ \t]*>[ \t]*)+\[![-\w]+\]",
         "block IDs": r"\^[-\w]+\s*$", "reference links": r"^\s*\[[^\]]+\]:",
         "footnotes": r"\[\^[^\]]+\]", "HTML blocks": r"<\s*/?\s*[A-Za-z][^>]*>",
         "Obsidian comments": r"%%.*?%%",
