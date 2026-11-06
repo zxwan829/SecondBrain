@@ -83,6 +83,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_navigation_response' | 'notes_blocksuite_reopen_editor_entry'
   | 'notes_blocksuite_reopen_canvas'
   | 'notes_blocksuite_quick_switch_edit' | 'notes_blocksuite_quick_switch_fallback' | 'notes_blocksuite_quick_switch_save_response'
+  | 'notes_blocksuite_reopen_heading' | 'notes_blocksuite_reopen_saved_status' | 'notes_blocksuite_reopen_editor_button'
   | 'notes_setext_seed_status_200' | 'notes_setext_seed_status_401' | 'notes_setext_seed_status_403'
   | 'notes_setext_seed_status_409' | 'notes_setext_seed_status_412' | 'notes_setext_seed_status_422'
   | 'notes_setext_seed_status_428' | 'notes_setext_seed_status_other'
@@ -1745,8 +1746,11 @@ for (const viewport of activeViewports) {
       expect(reopenedPayload.content).not.toContain('WP5 stale browser edit must not replace Core');
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_entry');
       const noteHeading = page.locator('.notes-document-heading');
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_heading');
       await expect(noteHeading).toContainText(activeNotePath);
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_saved_status');
       await expect(noteHeading.getByRole('status')).toHaveText('已保存');
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_button');
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_canvas');

@@ -109,6 +109,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_blocksuite_reopen_editor_entry",
     "notes_blocksuite_reopen_canvas", "notes_blocksuite_quick_switch_edit",
     "notes_blocksuite_quick_switch_fallback", "notes_blocksuite_quick_switch_save_response",
+    "notes_blocksuite_reopen_heading", "notes_blocksuite_reopen_saved_status",
+    "notes_blocksuite_reopen_editor_button",
     "notes_setext_seed_status_200", "notes_setext_seed_status_401", "notes_setext_seed_status_403",
     "notes_setext_seed_status_409", "notes_setext_seed_status_412", "notes_setext_seed_status_422",
     "notes_setext_seed_status_428", "notes_setext_seed_status_other",
