@@ -6,6 +6,15 @@ import { join } from 'node:path';
 const baseUrl = process.env.SB_E2E_BASE_URL ?? 'http://127.0.0.1:4173';
 const baseOrigin = new URL(baseUrl).origin;
 function safePageErrorSummary(value: string): string {
+  const missingExport = value.match(/requested module ['\"]([^'\"]+)['\"] does not provide an export named ['\"]([^'\"]+)['\"]/i);
+  if (missingExport) {
+    const modulePath = missingExport[1].split(/[?#]/, 1)[0].replaceAll('\\', '/');
+    const packageMatch = modulePath.match(/\/node_modules\/@blocksuite\/([^/]+)/)
+      ?? modulePath.match(/\/node_modules\/@blocksuite_([^/]+?)(?:\.js)?$/);
+    const packageName = packageMatch?.[1]?.replace(/[^A-Za-z0-9_-]/g, '') ?? 'unknown';
+    const symbol = /^[A-Za-z_$][A-Za-z0-9_$]{0,48}$/.test(missingExport[2]) ? missingExport[2] : 'unknown';
+    return `missing_export package_${packageName} symbol_${symbol}`.slice(0, 120);
+  }
   return value
     .replace(/https?:\/\/[^\s)]+/gi, '<url>')
     .replace(/(?:[A-Za-z]:\\|\/(?:Users|home|private|tmp|opt|workspace)\/)[^\s)]+/gi, '<path>')
