@@ -1114,11 +1114,14 @@ for (const viewport of viewports) {
       const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('notes_frontmatter_seed');
-      const seeded = await page.request.put(`${baseUrl}/api/notes/drafts/${createdNote.path}`, {
-        headers: { Origin: baseOrigin, 'If-Match': readNoteResponse.headers()['etag'] ?? '' },
-        data: { content: syntheticFrontmatter },
-      });
-      expect(seeded.status(), 'notes_seed_synthetic_frontmatter').toBe(200);
+      const seededStatus = await page.evaluate(async ({ path, etag, content }) => {
+        const response = await fetch(path, { method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': etag },
+          body: JSON.stringify({ content }) });
+        return response.status;
+      }, { path: `/api/notes/drafts/${createdNote.path}`, etag: readNoteResponse.headers()['etag'] ?? '',
+        content: syntheticFrontmatter });
+      expect(seededStatus, 'notes_seed_synthetic_frontmatter').toBe(200);
       observed.setFailureStage('notes_frontmatter_reopen');
       observed.setDiagnosticAssertion('notes_frontmatter_reopen');
       await page.reload();
