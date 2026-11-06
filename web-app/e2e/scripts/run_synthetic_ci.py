@@ -64,7 +64,7 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "agent_health", "today", "journal", "calendar", "notes_navigation",
     "notes_create", "notes_edit_save", "notes_reopen", "notes_frontmatter_seed",
     "notes_frontmatter_reopen", "notes_blocksuite_open",
-    "notes_blocksuite_edit", "notes_blocksuite_reopen", "viewport_layout",
+    "notes_blocksuite_edit", "notes_blocksuite_conflict", "notes_blocksuite_reopen", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 FAILURE_DIAGNOSTIC_ASSERTIONS = {
@@ -101,6 +101,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_blocksuite_request_content", "notes_blocksuite_response_matches_request",
     "notes_blocksuite_saved_status", "notes_ui_state_unsaved", "notes_ui_state_saving",
     "notes_ui_state_conflict", "notes_ui_state_failed", "notes_ui_state_unknown",
+    "notes_blocksuite_conflict_seed", "notes_blocksuite_conflict_rejected",
+    "notes_blocksuite_conflict_ui", "notes_blocksuite_conflict_readback",
     "wp5_focus_notes_navigation", "wp5_focus_note_seed", "wp5_focus_editor_open",
     "wp5_focus_body_target", "wp5_focus_put_received", "wp5_focus_put_request_content",
     "wp5_focus_put_status", "wp5_focus_put_response_content", "wp5_focus_api_readback",

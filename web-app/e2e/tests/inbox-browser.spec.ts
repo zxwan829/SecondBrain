@@ -45,7 +45,7 @@ type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'daily_brief_readback' | 'permission_revocation' | 'post_revocation_navigation'
   | 'notes_navigation' | 'notes_create' | 'notes_edit_save' | 'notes_reopen'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen'
-  | 'notes_blocksuite_open' | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen'
+  | 'notes_blocksuite_open' | 'notes_blocksuite_edit' | 'notes_blocksuite_conflict' | 'notes_blocksuite_reopen'
   | 'agent_health' | 'today' | 'journal' | 'calendar' | 'viewport_layout';
 type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
   | 'home_after_projects' | 'home_to_activity' | 'activity_heading'
@@ -64,6 +64,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_edit_response_body' | 'notes_blocksuite_saved_title'
   | 'notes_blocksuite_saved_tag' | 'notes_blocksuite_saved_custom_property'
   | 'notes_blocksuite_saved_edit_text' | 'notes_blocksuite_saved_status'
+  | 'notes_blocksuite_conflict_seed' | 'notes_blocksuite_conflict_rejected'
+  | 'notes_blocksuite_conflict_ui' | 'notes_blocksuite_conflict_readback'
   | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
   | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
@@ -1369,12 +1371,15 @@ for (const viewport of viewports) {
 
       // A concurrent Core edit advances the ETag. The stale editor must receive
       // 412 and leave that external content intact rather than overwrite it.
+      observed.setFailureStage('notes_blocksuite_conflict');
       const concurrentText = 'WP5 synthetic concurrent Core update';
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_seed');
       const concurrent = await page.request.put(`${baseUrl}/api/notes/drafts/${activeNotePath}`, {
         headers: { 'If-Match': saved.headers()['etag'] ?? '' },
         data: { content: `${savedPayload.content}\n${concurrentText}\n` },
       });
       expect(concurrent.status(), 'notes_seed_concurrent_update').toBe(200);
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_rejected');
       const staleWrite = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
       await block.click();
@@ -1383,7 +1388,9 @@ for (const viewport of viewports) {
       await page.keyboard.insertText('WP5 stale browser edit must not replace Core');
       const rejected = await staleWrite;
       expect(rejected.status(), 'notes_blocksuite_conflict').toBe(412);
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_ui');
       await expect(page.getByRole('status').filter({ hasText: '版本冲突' })).toBeVisible();
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_readback');
       const afterConflict = await page.request.get(`${baseUrl}/api/notes/drafts/${activeNotePath}`);
       const currentAfterConflict = await afterConflict.json() as { content: string };
       expect(currentAfterConflict.content).toContain(concurrentText);
