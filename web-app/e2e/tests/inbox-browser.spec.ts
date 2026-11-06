@@ -37,6 +37,7 @@ const viewports = [
   { name: 'mobile-390x844', width: 390, height: 844 },
 ] as const;
 const wp5RoundtripOnly = process.env.SB_E2E_WP5_ROUNDTRIP_ONLY === 'true';
+const wp5ConflictOnly = process.env.SB_E2E_WP5_CONFLICT_ONLY === 'true';
 const desktopOnly = process.env.SB_E2E_DESKTOP_ONLY === 'true';
 const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 
@@ -710,10 +711,10 @@ async function readSyntheticPassword(): Promise<string> {
 
 for (const viewport of activeViewports) {
   test(`explicit Inbox capture, retry, conflict and source protection at ${viewport.name}`, async ({ page }, testInfo) => {
-    if (wp5RoundtripOnly && viewport.name !== 'desktop-1440x1000') test.skip();
+    if ((wp5RoundtripOnly || wp5ConflictOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
-    if (wp5RoundtripOnly) {
+    if (wp5RoundtripOnly || wp5ConflictOnly) {
       await page.addInitScript((marker) => {
         const state = { marker, active: false, events: [] as { marker: string; at_ms: number; event: string; status?: number }[] };
         const emit = (event: string, status?: number) => {
@@ -756,12 +757,13 @@ for (const viewport of activeViewports) {
     }
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
     await signInAndCreateBlankSession(page, viewport, observed);
-    if (wp5RoundtripOnly) {
+    if (wp5RoundtripOnly || wp5ConflictOnly) {
       observed.setFailureStage('notes_navigation');
       observed.setDiagnosticAssertion('wp5_focus_notes_navigation');
       await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
       await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
 
+      if (!wp5ConflictOnly) {
       const title = 'WP5 focused roundtrip';
       const originalBody = `Synthetic body ${randomUUID()}`;
       const editMarker = `WP5 持久化编辑 ${randomUUID()}`;
@@ -838,6 +840,7 @@ for (const viewport of activeViewports) {
       await expect(rawSource).toContainText(editMarker);
       await expect(rawSource).toContainText('custom: preserve-focused');
       await expect(rawSource).toContainText('Column A');
+      }
 
       // Focused concurrency probe: only synthetic Notes, real Core PUT/If-Match,
       // and the BlockSuite -> Notes autosave queue are exercised here.
@@ -943,10 +946,11 @@ for (const viewport of activeViewports) {
 
       // Leaving the conflict revision clears the blocked queue; a fresh reopen/edit must save normally.
       page.once('dialog', (dialog) => void dialog.accept());
-      await page.getByRole('button', { name: title, exact: true }).click();
-      await page.getByRole('button', { name: conflictTitle, exact: true }).click();
+      if (wp5ConflictOnly) await page.reload();
+      else await page.getByRole('button', { name: 'WP5 focused roundtrip', exact: true }).click();
       const conflictReopenResponse = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === conflictUrlPath);
+      await page.getByRole('button', { name: conflictTitle, exact: true }).click();
       await expect(page.locator('.notes-document-heading')).toContainText(conflictPath);
       expect((await conflictReopenResponse).status(), 'wp5_conflict_probe_reopen').toBe(200);
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();

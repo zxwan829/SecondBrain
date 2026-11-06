@@ -1274,8 +1274,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--http-smoke-only", action="store_true", help="run synthetic Core HTTP checks without launching a browser")
     parser.add_argument("--wp5-roundtrip-only", action="store_true", help="run only the desktop WP5 Notes save/reopen and conflict-autosave browser probes")
+    parser.add_argument("--wp5-conflict-only", action="store_true", help="run only the desktop WP5 Notes conflict-autosave and recovery browser probe")
     parser.add_argument("--desktop-only", action="store_true", help="run the existing browser acceptance journey at desktop viewport only")
     options = parser.parse_args()
+    wp5_probe_mode = options.wp5_roundtrip_only or options.wp5_conflict_only
     # The workflow uploads only this directory. It starts empty on every run;
     # raw Playwright output lives in the private temp root below and is never a
     # parent or sibling matched by the upload-artifact path.
@@ -1325,10 +1327,11 @@ def main() -> int:
             "SB_TASK_ROOT": str(dirs["task"]),
             "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
-            "SB_E2E_WP5_ROUNDTRIP_ONLY": "true" if options.wp5_roundtrip_only else "false",
-            "SB_E2E_WP5_AUTOSAVE_MARKER": "wp5-conflict-queue" if options.wp5_roundtrip_only else "",
-            "SB_E2E_WP5_AUTOSAVE_LOG": str(wp5_autosave_core_log) if options.wp5_roundtrip_only else "",
-            "SB_E2E_WP5_AUTOSAVE_BROWSER_LOG": str(wp5_autosave_browser_log) if options.wp5_roundtrip_only else "",
+            "SB_E2E_WP5_ROUNDTRIP_ONLY": "true" if wp5_probe_mode else "false",
+            "SB_E2E_WP5_CONFLICT_ONLY": "true" if options.wp5_conflict_only else "false",
+            "SB_E2E_WP5_AUTOSAVE_MARKER": "wp5-conflict-queue" if wp5_probe_mode else "",
+            "SB_E2E_WP5_AUTOSAVE_LOG": str(wp5_autosave_core_log) if wp5_probe_mode else "",
+            "SB_E2E_WP5_AUTOSAVE_BROWSER_LOG": str(wp5_autosave_browser_log) if wp5_probe_mode else "",
             "SB_E2E_DESKTOP_ONLY": "true" if options.desktop_only else "false",
             "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
@@ -1385,7 +1388,7 @@ def main() -> int:
             processes.append(test_process)
             test_returncode = wait_for_test_process(test_process)
             core_probe_events = []
-            if options.wp5_roundtrip_only and wp5_autosave_core_log.exists():
+            if wp5_probe_mode and wp5_autosave_core_log.exists():
                 if wp5_autosave_core_log.stat().st_size > 2048 or not wp5_autosave_core_log.is_file():
                     raise RuntimeError("WP5 Core probe log exceeded bounded size")
                 for line in wp5_autosave_core_log.read_text(encoding="utf-8").splitlines()[:8]:
@@ -1402,7 +1405,7 @@ def main() -> int:
                     core_probe_events.append(event)
                 core_probe_events.sort(key=lambda item: item["at_ms"])
             browser_probe_events = []
-            if options.wp5_roundtrip_only and wp5_autosave_browser_log.exists():
+            if wp5_probe_mode and wp5_autosave_browser_log.exists():
                 browser_info = wp5_autosave_browser_log.lstat()
                 if (wp5_autosave_browser_log.is_symlink() or not wp5_autosave_browser_log.is_file()
                         or browser_info.st_size > 4096 or browser_info.st_uid != os.geteuid()
@@ -1411,7 +1414,7 @@ def main() -> int:
                 browser_probe_events = _validate_wp5_autosave_events(
                     json.loads(wp5_autosave_browser_log.read_text(encoding="utf-8")))
             failure_summary_paths = list(raw_artifacts.rglob("failure-summary.json"))
-            if options.wp5_roundtrip_only and not browser_probe_events:
+            if wp5_probe_mode and not browser_probe_events:
                 for source in failure_summary_paths:
                     summary_data = json.loads(source.read_text(encoding="utf-8"))
                     browser_probe_events = summary_data.get("wp5_autosave_events", [])
@@ -1421,7 +1424,7 @@ def main() -> int:
                 [*browser_probe_events[:browser_limit], *core_probe_events],
                 key=lambda item: item["at_ms"],
             ))
-            if options.wp5_roundtrip_only:
+            if wp5_probe_mode:
                 print("WP5_AUTOSAVE_TIMELINE " + json.dumps(autosave_timeline, separators=(",", ":")))
                 for source in failure_summary_paths:
                     summary_data = json.loads(source.read_text(encoding="utf-8"))
@@ -1437,17 +1440,17 @@ def main() -> int:
         today_brief_name = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
         brief_file_set_verified = False
         if test_returncode == 0:
-            expected_raw = 1 if options.http_smoke_only or options.desktop_only else (0 if options.wp5_roundtrip_only else 3)
+            expected_raw = 1 if options.http_smoke_only or options.desktop_only else (0 if wp5_probe_mode else 3)
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
-            expected_journal_appends = 0 if options.http_smoke_only or options.wp5_roundtrip_only else (
+            expected_journal_appends = 0 if options.http_smoke_only or wp5_probe_mode else (
                 1 if options.desktop_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
             )
             assert_journal_fixture_unchanged(
                 dirs["journal"], journal_fixture, expected_browser_appends=expected_journal_appends,
             )
-            if options.wp5_roundtrip_only:
+            if wp5_probe_mode:
                 if any(dirs["briefs"].iterdir()):
                     raise RuntimeError("focused WP5 probe unexpectedly wrote Daily Brief files")
             else:
