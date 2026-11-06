@@ -1840,7 +1840,9 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('notes_setext_fallback');
       await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
       observed.setDiagnosticAssertion('notes_setext_fallback_render');
-      await expect(page.locator('.ProseMirror')).toContainText('Setext compatibility heading');
+      // Opaque frontmatter makes the legacy editor read-only by contract; in
+      // that case fallback preserves the exact source in the raw read-only view.
+      await expect(page.locator('.notes-raw-source')).toContainText('Setext compatibility heading');
 
       observed.setFailureStage('notes_blocksuite_reopen');
       observed.setDiagnosticAssertion('notes_attachment_select');
