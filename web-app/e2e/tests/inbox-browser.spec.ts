@@ -58,7 +58,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'journal_append' | 'journal_saved_readback' | 'journal_refresh_readback'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
   | 'notes_navigation_link' | 'notes_collections' | 'notes_blocksuite_open'
-  | 'notes_blocksuite_edit' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
+  | 'notes_blocksuite_edit' | 'notes_blocksuite_edit_focus' | 'notes_blocksuite_edit_end'
+  | 'notes_blocksuite_edit_newline' | 'notes_blocksuite_edit_type' | 'notes_blocksuite_edit_save_response'
+  | 'notes_blocksuite_edit_response_body' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
@@ -1218,16 +1220,21 @@ for (const viewport of viewports) {
       await expect(block).toBeVisible();
 
       observed.setFailureStage('notes_blocksuite_edit');
-      observed.setDiagnosticAssertion('notes_blocksuite_edit');
       const updatedBody = `WP5 BlockSuite 保存 ${viewport.name}`;
       const blocksuiteSave = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_focus');
       await block.click();
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_end');
       await page.keyboard.press('Control+End');
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_newline');
       await page.keyboard.press('Enter');
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_type');
       await page.keyboard.type(updatedBody);
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_save_response');
       const saved = await blocksuiteSave;
       expect(saved.status(), 'notes_blocksuite_save').toBe(200);
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_response_body');
       const savedPayload = await saved.json() as { content: string };
       expect(savedPayload.content).toContain('title: WP5 synthetic note');
       expect(savedPayload.content).toContain('custom: preserve-me');
