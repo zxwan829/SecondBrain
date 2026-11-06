@@ -66,7 +66,7 @@ function makeManagers() {
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
 export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset, onOpenBlockSuiteResource }: {
-  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'missing_root' | 'blocksuite_error' | 'other') => void;
+  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'missing_root' | 'blocksuite_error' | 'other', stage?: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update') => void;
   onOpenVisualAsset?: (filename: string) => void; onOpenBlockSuiteResource?: (filename: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -87,6 +87,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
     let std: BlockStdScope | undefined;
     const initialize = async () => {
       let fallbackReason: FallbackReason = 'invalid_frontmatter';
+      let initializationStage: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update' = 'extension_setup';
       try {
         const split = splitOpaqueFrontmatter(valueRef.current);
         // Keep formats whose assets or Obsidian semantics belong to the existing editor on its fallback path.
@@ -121,7 +122,10 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         }
         if (disposed || !host.current) { currentWorkspace.dispose(); return; }
         fallbackReason = 'view_initialization_error';
-        std = new BlockStdScope({ store: store as any, extensions: views.get('page') });
+        const pageExtensions = views.get('page');
+        initializationStage = 'scope_create';
+        std = new BlockStdScope({ store: store as any, extensions: pageExtensions });
+        initializationStage = 'host_render';
         const root = std.render();
         // RootViewExtension resolves `.affine-page-viewport` for page focus,
         // selection and coordinate services. Keep the same wrapper contract as
@@ -129,11 +133,13 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const viewport = document.createElement('div');
         viewport.className = 'affine-page-viewport';
         viewport.append(root);
+        initializationStage = 'host_mount';
         host.current.replaceChildren(viewport);
         // Mounting the host is not enough to declare the editor ready: the
         // Page and its block views hydrate asynchronously after attachment.
         // Wait for BlockSuite's own update lifecycle before exposing the
         // saved/ready state to users and browser acceptance.
+        initializationStage = 'host_update';
         await root.getUpdateComplete();
         if (disposed) return;
         const currentEditor: NonNullable<typeof editorRef.current> = { store, std, workspace: currentWorkspace, adapter, split };
@@ -176,7 +182,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
               : error instanceof Error && /already been used with this registry|already defined/i.test(error.message) ? 'custom_element_conflict'
                 : error instanceof Error && /missing root block|no root model/i.test(error.message) ? 'missing_root'
                   : error instanceof Error && error.name === 'BlockSuiteError' ? 'blocksuite_error' : 'other';
-          onFallbackRef.current(fallbackReason, diagnostic);
+          onFallbackRef.current(fallbackReason, diagnostic, initializationStage);
         }
         try { std?.unmount(); } catch { /* Keep workspace disposal fail-safe. */ }
         workspace?.dispose();
