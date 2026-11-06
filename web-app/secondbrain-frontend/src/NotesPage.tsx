@@ -54,6 +54,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [items, setItems] = useState<{ path: string; title: string }[]>([]);
   const [note, setNote] = useState<Note | null>(null);
   const [content, setContent] = useState('');
+  const [editorGeneration, setEditorGeneration] = useState(0);
   const [editorMode, setEditorMode] = useState<'blocksuite' | 'source'>('blocksuite');
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
@@ -358,6 +359,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         throw new Error('资源已创建，但引用保存结果未应用到当前笔记。');
       }
       setPendingBlockSuiteReference(null);
+      // The reference is now durably saved. Re-import this controlled parent
+      // update so the editor shows its new attachment link immediately.
+      setEditorGeneration(value => value + 1);
       blockSuiteResourceOpen.current = true;
       setBlockSuiteResource(resource);
       setMessage('独立 BlockSuite 资源与稳定 Markdown 引用均已保存。');
@@ -403,6 +407,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       const saved = await save(target, content, revision, editSequence.current);
       if (!saved) throw new Error('笔记已切换，保存结果未应用到当前页面。');
       setPendingBlockSuiteReference(null);
+      // The reference is now durably saved. Re-import this controlled parent
+      // update so the editor shows its new attachment link immediately.
+      setEditorGeneration(value => value + 1);
       blockSuiteResourceOpen.current = true;
       setBlockSuiteResource(pending.resource);
       setMessage('Markdown 资源引用已保存。');
@@ -859,7 +866,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
               ? 'BlockSuite 无法安全往返此笔记；原文保持只读，可下载保存。'
               : '此笔记含有 YAML Frontmatter；当前编辑器不能确认安全往返，原文保持只读。')}</div>
           <pre className="notes-raw-source">{content}</pre>
-        </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
+        </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}:${editorGeneration}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
           onOpenVisualAsset={openVisual} onOpenBlockSuiteResource={(filename) => { void openBlockSuiteResource(filename); }}
           onFallback={(reason, diagnostic, stage) => { void leaveBlockSuite(reason, diagnostic, stage); }} /></Suspense>
           : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
