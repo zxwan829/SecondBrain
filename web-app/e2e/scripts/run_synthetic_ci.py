@@ -306,7 +306,7 @@ def _sanitize_run_summary(path: Path) -> None:
                "raw_record_count", "journal_files", "knowledge_files", "exit_code",
                "journal_source_fixture_files", "journal_mutated_files", "brief_files",
                "brief_file_set_verified", "notes_files", "python", "node",
-               "html_report_uploaded", "screenshots_uploaded"}
+               "html_report_uploaded", "screenshots_uploaded", "acceptance_scope"}
     path.write_text(json.dumps({key: summary[key] for key in allowed if key in summary}, indent=2) + "\n",
                     encoding="utf-8")
 
@@ -1300,6 +1300,7 @@ def main() -> int:
     parser.add_argument("--wp5-conflict-only", action="store_true", help="run only the desktop WP5 Notes conflict-autosave and recovery browser probe")
     parser.add_argument("--desktop-only", action="store_true", help="run the existing browser acceptance journey at desktop viewport only")
     options = parser.parse_args()
+    wp5_open_only = os.environ.get("SB_E2E_WP5_OPEN_ONLY") == "true"
     wp5_probe_mode = options.wp5_roundtrip_only or options.wp5_conflict_only
     # The workflow uploads only this directory. It starts empty on every run;
     # raw Playwright output lives in the private temp root below and is never a
@@ -1462,7 +1463,7 @@ def main() -> int:
                 }]
                 autosave_timeline_raw.sort(key=lambda item: item["at_ms"])
             autosave_timeline = _validate_wp5_autosave_events(autosave_timeline_raw)
-            if wp5_probe_mode and test_returncode == 0:
+            if wp5_probe_mode and not wp5_open_only and test_returncode == 0:
                 if any(event["event"] == "probe-events-overflow" for event in autosave_timeline):
                     raise RuntimeError("WP5 autosave timeline overflow on successful run")
                 core_signature = [(event["event"], event.get("status")) for event in core_probe_events]
@@ -1509,6 +1510,7 @@ def main() -> int:
         screenshot_count = count_allowlisted_failure_screenshots(raw_artifacts)
         summary = {
             "result": "PASS" if test_returncode == 0 else "FAIL",
+            "acceptance_scope": "editor-open-only" if wp5_open_only else "selected-browser-journey",
             "core": "real localhost HTTP",
             "web": "local Vite",
             "browser": "NOT RUN (local stop gate)" if options.http_smoke_only else "Playwright Linux Chromium (workflow runner only)",
