@@ -33,6 +33,27 @@ MAX_BLOCKSUITE_UPDATE_BYTES = 7 * 1024 * 1024
 MAX_BLOCKSUITE_SNAPSHOT_BYTES = 2 * 1024 * 1024
 MAX_BLOCKSUITE_SNAPSHOT_NODES = 50_000
 MAX_BLOCKSUITE_SNAPSHOT_DEPTH = 64
+MAX_BLOCKSUITE_REQUEST_BYTES = MAX_BLOCKSUITE_RESOURCE_BYTES + 64 * 1024
+
+
+async def _read_bounded_json_request(request: Request, max_bytes: int):
+    """Read a JSON request incrementally so schema limits also bound input memory."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(status_code=413, detail="BlockSuite resource request is too large")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length") from exc
+    raw = bytearray()
+    async for chunk in request.stream():
+        if len(raw) + len(chunk) > max_bytes:
+            raise HTTPException(status_code=413, detail="BlockSuite resource request is too large")
+        raw.extend(chunk)
+    try:
+        return json.loads(raw)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="BlockSuite resource request must be valid JSON") from exc
 
 
 def _frontmatter_prefix(content: str):
@@ -870,9 +891,12 @@ class NotesStore:
             if not expected_note or expected_note.strip('"') != note_etag:
                 raise HTTPException(status_code=412, detail="Note changed; reload before saving a resource")
             attachments_fd = self._open_attachments_directory(directory_fd)
-            _old_body, _old_raw, current_resource_etag = self._read_blocksuite_resource_at(attachments_fd, resource_id)
+            old_body, _old_raw, current_resource_etag = self._read_blocksuite_resource_at(attachments_fd, resource_id)
             if not expected_resource or expected_resource.strip('"') != current_resource_etag:
                 raise HTTPException(status_code=412, detail="BlockSuite resource changed; reload before saving")
+            if (body["resourceKind"] != old_body["resourceKind"]
+                    or body["docId"] != old_body["docId"]):
+                raise HTTPException(status_code=409, detail="BlockSuite resource identity is immutable")
             filename = f"{resource_id}.blocksuite.json"
             self._atomic_write(directory / "attachments" / filename, raw, directory_fd=attachments_fd)
             etag = hashlib.sha256(raw).hexdigest()
@@ -1076,9 +1100,10 @@ def create_notes_router(auth, store, vocabulary_store=None):
             raise HTTPException(status_code=503, detail="Notes is not configured")
 
     @router.post("/{collection}/{relative:path}/blocksuite/resources")
-    def create_blocksuite_resource(request: Request, response: Response, collection: str,
-                                   relative: str, body: dict):
+    async def create_blocksuite_resource(request: Request, response: Response, collection: str,
+                                         relative: str):
         require(request, "write")
+        body = await _read_bounded_json_request(request, MAX_BLOCKSUITE_REQUEST_BYTES)
         result = store.create_blocksuite_resource(collection, relative, body,
                                                   request.headers.get("if-match", ""))
         response.headers["ETag"] = f'"{result["etag"]}"'
@@ -1097,9 +1122,10 @@ def create_notes_router(auth, store, vocabulary_store=None):
         return result
 
     @router.put("/{collection}/{relative:path}/blocksuite/resources/{resource_id}")
-    def update_blocksuite_resource(request: Request, response: Response, collection: str,
-                                   relative: str, resource_id: str, body: dict):
+    async def update_blocksuite_resource(request: Request, response: Response, collection: str,
+                                         relative: str, resource_id: str):
         require(request, "write")
+        body = await _read_bounded_json_request(request, MAX_BLOCKSUITE_REQUEST_BYTES)
         result = store.update_blocksuite_resource(collection, relative, resource_id, body,
                                                   request.headers.get("if-match", ""),
                                                   request.headers.get("if-resource-match", ""))

@@ -1,4 +1,5 @@
 import tempfile
+import asyncio
 import base64
 import os
 import unittest
@@ -12,7 +13,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from secondbrain_core.modules.notes import NotesStore, configured_notes_store, create_notes_router, markdown_safety, _note_properties, _replace_note_properties
+from secondbrain_core.modules.notes import (NotesStore, _read_bounded_json_request, configured_notes_store,
+                                            create_notes_router, markdown_safety, _note_properties,
+                                            _replace_note_properties)
 from secondbrain_core.modules.vocabulary import VocabularyStore
 
 
@@ -229,6 +232,15 @@ class NotesStoreTests(unittest.TestCase):
             self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
                                                   changed, "0" * 64, saved["etag"])
         self.assertEqual(stale_note.exception.status_code, 412)
+        for identity_change in ({"resourceKind": "edgeless-canvas"}, {"docId": "different_doc"}):
+            with self.subTest(identity_change=identity_change):
+                candidate = {**changed, **identity_change}
+                with self.assertRaises(HTTPException) as immutable:
+                    self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
+                                                          candidate, note["etag"], saved["etag"])
+                self.assertEqual(immutable.exception.status_code, 409)
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], resource_id)["docId"],
+                         "doc_table_1")
 
         other_note = self.store.create("# Different note\n")
         with self.assertRaises(HTTPException) as unbound:
@@ -313,6 +325,31 @@ class NotesStoreTests(unittest.TestCase):
                            headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": fetched.headers["etag"]})
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(client.get(resource_url).json()["updateB64"], replacement["updateB64"])
+        identity_change = {**replacement, "docId": "other_doc"}
+        rejected_identity_change = client.put(resource_url, json=identity_change,
+                                              headers={"If-Match": f'"{note["etag"]}"',
+                                                       "If-Resource-Match": saved.headers["etag"]})
+        self.assertEqual(rejected_identity_change.status_code, 409)
+        self.assertEqual(client.get(resource_url).json()["docId"], "table_doc")
+
+    def test_blocksuite_http_body_limit_catches_chunked_body_with_forged_length(self):
+        limit = 1024
+        chunks = [b'{"payload":"' + b"a" * 800, b"b" * 800 + b'"}']
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+                 "method": "POST", "scheme": "http", "path": "/", "raw_path": b"/",
+                 "query_string": b"", "headers": [(b"content-length", b"1")],
+                 "server": ("test", 80), "client": ("test", 1)}
+
+        async def receive():
+            if chunks:
+                chunk = chunks.pop(0)
+                return {"type": "http.request", "body": chunk, "more_body": bool(chunks)}
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        request = Request(scope, receive)
+        with self.assertRaises(HTTPException) as too_large:
+            asyncio.run(_read_bounded_json_request(request, limit))
+        self.assertEqual(too_large.exception.status_code, 413)
 
     def test_notes_router_uses_etag_and_routes_attachment_endpoints(self):
         class SessionAuth:
