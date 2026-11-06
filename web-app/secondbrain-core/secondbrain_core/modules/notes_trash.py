@@ -692,6 +692,13 @@ class NotesTrashStore:
             parent_fd, filename = self._source_parent(collection, relative)
             lock_fd = self.notes_store._open_note_lock(parent_fd)
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if item_fd is not None:
+                manifest = self._load_manifest(item_fd, trash_id)
+                if (manifest["operation_key_sha256"] != key_hash or manifest["collection"] != collection
+                        or manifest["relative_path"] != relative or manifest["sha256"] != expected_sha256):
+                    raise HTTPException(status_code=409, detail="Idempotency-Key conflicts with an earlier Trash action")
+                if manifest["state"] not in {"pending", "trashed"}:
+                    raise HTTPException(status_code=409, detail="Trash action is no longer replayable")
             if root_fd is None:
                 try:
                     source_bytes, source_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
@@ -882,10 +889,14 @@ class NotesTrashStore:
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=404, detail="Trash item not found") from exc
             manifest = self._load_manifest(item_fd, trash_id)
+            initial_identity = (manifest["collection"], manifest["relative_path"])
+            parent_fd, filename = self._source_parent(manifest["collection"], manifest["relative_path"])
+            lock_fd = self.notes_store._open_note_lock(parent_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            manifest = self._load_manifest(item_fd, trash_id)
+            if (manifest["collection"], manifest["relative_path"]) != initial_identity:
+                raise HTTPException(status_code=409, detail="Trash target changed while acquiring its lock")
             if manifest["state"] == "restored":
-                parent_fd, filename = self._source_parent(manifest["collection"], manifest["relative_path"])
-                lock_fd = self.notes_store._open_note_lock(parent_fd)
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
                 restored, restored_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
                 if (hashlib.sha256(restored).hexdigest() != manifest["sha256"]
                         or (restored_info.st_dev, restored_info.st_ino) != (manifest["device"], manifest["inode"])):
@@ -894,9 +905,6 @@ class NotesTrashStore:
                 return self._item_result(manifest, status="restored", duplicate=True)
             if manifest["state"] != "trashed":
                 raise HTTPException(status_code=409, detail="Trash item is not restorable")
-            parent_fd, filename = self._source_parent(manifest["collection"], manifest["relative_path"])
-            lock_fd = self.notes_store._open_note_lock(parent_fd)
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
             if os.fstat(parent_fd).st_dev != os.fstat(root_fd).st_dev:
                 raise HTTPException(status_code=503, detail="Notes and Trash must share a filesystem")
 
