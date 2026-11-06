@@ -10,14 +10,14 @@ source: GitHub SecondBrain Monorepo
 
 ## 当前快照
 
-- **最新代码与生产版本：** GitHub main 已包含 PR #279 部署记录；生产 App 仍运行 PR #277 固定源码 SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`。本轮状态记录 PR 仅更新文档，不改变 App 部署目标。
+- **最新代码与生产版本：** GitHub main 已包含 PR #294（merge `e9f323b3f90d53473964fe991a968fcd046d85bf`）。生产最近一次记录的 App revision 为 PR #277 固定源码 SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`（见下方 2026-11-05 快照；本轮未实时复核）；PR #294 没有部署。
 - **总体：** V1 尚未完成。GitHub main 的代码/文档状态不代表生产部署、真实数据验证或用户验收。
 - **最近已核验生产快照：** 2026-11-05 PR #277 部署后，App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`、Image ID `sha256:d73bb0fb73b77a728c4f6eecde44c8309695abb573e00048c6ba3affb50fc1e1`、running/healthy；Compose SHA-256 `f5760550d5d9fe197cd58bd07c77bc178fb04fec27a9e990342d642530ace020`。详情见 `Environment-Baseline.md`。
 - **生产安全闸门（2026-11-05 部署后复核）：** Promote=false、Weixin 未开启、App Knowledge 挂载只读、Private 未挂载；App UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`，两个 Secret 文件只读挂载。归一化 Compose 仅 App image 改变；Hermes 容器、镜像与启动时间未变。详情见 `Environment-Baseline.md`。
-- **开发阶段：** 工作包 4 / #287 隔离工程目标已完成：PR #289 与 #291 已合并，Chat→Inbox→Journal 和明确 Chat Task 创建/查询/完成/改截止日期路径通过定向测试、独立 Review 及 Linux Chromium Gate。真实模型自然理解、NAS/Obsidian 同步和用户业务 UAT 未运行；未部署本轮代码。#269/#274 App-only UI 已部署；其旧版 Chat UI 人工视觉验收为 `USER_WAIVED / NOT RUN`（绝不记为 `USER_UAT_PASS`）；VNext 保持冻结。
+- **开发阶段：** 工作包 4 / #287 隔离工程目标已完成；工作包 5 首批 Markdown 集成达到 `WP5_MARKDOWN_INTEGRATION_ENGINEERING_PASS`，PR #294 已合并。Chat→Inbox→Journal 和明确 Chat Task 工程路径通过定向测试、独立 Review 及 Linux Chromium Gate；真实模型自然理解、真实 Vault/Obsidian 同步及用户业务验收不由合成测试替代。#269/#274 App-only UI 已部署；其新版 UI 人工视觉验收为 `USER_WAIVED / NOT RUN`（绝不记为 `USER_UAT_PASS`）。按用户本轮要求，工作包 6 未启动；VNext 保持冻结。
 - **PR #274 工程验收与部署：** Daily Brief 合成旅程的 Journal 请求断言按页面阶段记录基线；完整 Gate [Actions #41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) PASS、独立审查 PASS。PR #274 固定 merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704` 已于 2026-11-05 部署，生产健康和安全门禁通过。工程 Gate 与部署验证都不替代新版 Chat UI 用户验收。
 - **PR #277 App-only 部署与生产合成 UAT：** 固定 merge SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82` 已部署，App running/healthy；Compose 仅 App image 变化，Hermes、挂载及权限不变。生产合成 UAT 部分通过：Notes Draft 新建、编辑、保存、刷新重开及精确 API 回读通过；Journal 空白合成日期新增两条不同幂等键记录，刷新后两条按序回读。相同幂等键重放仍 NOT RUN，故整项 UAT 尚未通过。详情见 `Environment-Baseline.md`。
-- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / CHAT_UI_ENGINEERING_GATE_PASS / USER_WAIVED_NOT_RUN / NOTES_JOURNAL_ISOLATED_ENGINEERING_PASS / PR277_DEPLOYED_AND_VERIFIED / NOTES_JOURNAL_PRODUCTION_SYNTHETIC_UAT_PARTIAL / UAT_SCOPE_DEVIATION_ACCEPTED`。PR #269、#274、#277 App 均已合并部署；PR #277 生产健康及安全核验通过。Notes Draft 与 Journal 部分生产合成旅程通过；Journal 同 key replay 尚未运行。另：登录后页面自动落至 Home，一次完整可访问性快照包含现有业务摘要；此前 Notes 页快照包含列表标题。未打开既有记录详情，未修改/删除记录或将内容保存、外发；该读取超出本轮仅处理合成数据的边界。PMO 已裁定接受该低严重度测试范围偏差记录，不要求补跑生产同键重放；裁定见 [PR #281 comment](https://github.com/zxwan829/SecondBrain/pull/281#issuecomment-6658259876)。Chat UI 人工视觉 UAT 仍 `USER_WAIVED / NOT RUN`，不是用户验收通过；其他 V1 未验收项保持原状。
+- **本阶段状态：** `PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / CHAT_UI_ENGINEERING_GATE_PASS / USER_WAIVED_NOT_RUN / WP5_MARKDOWN_INTEGRATION_ENGINEERING_PASS / PR277_DEPLOYED_AND_VERIFIED / NOTES_JOURNAL_PRODUCTION_SYNTHETIC_UAT_PARTIAL / UAT_SCOPE_DEVIATION_ACCEPTED`。PR #269、#274、#277 App 均已合并部署；PR #277 生产健康及安全核验通过。Notes Draft 与 Journal 部分生产合成旅程通过；Journal 同 key replay 尚未运行。PR #294 已合并但未部署；其真实 Obsidian/Vault 往返及用户使用验收未运行。另：登录后页面自动落至 Home，一次完整可访问性快照包含现有业务摘要；此前 Notes 页快照包含列表标题。未打开既有记录详情，未修改/删除记录或将内容保存、外发；该读取超出本轮仅处理合成数据的边界。PMO 已裁定接受该低严重度测试范围偏差记录，不要求补跑生产同键重放；裁定见 [PR #281 comment](https://github.com/zxwan829/SecondBrain/pull/281#issuecomment-6658259876)。Chat UI 人工视觉 UAT 仍 `USER_WAIVED / NOT RUN`，不是用户验收通过；其他 V1 未验收项保持原状。
 
 ## 能力状态
 
@@ -51,7 +51,7 @@ source: GitHub SecondBrain Monorepo
 
 ## 近期执行规划（2026-11-06 PMO 更新）
 
-**目标：在收口已部署成果的同时，优先证明“跨会话记住、纠正并有效帮助用户”，减少重复审批和 Hermes 长期维护成本，再完成全部 V1。** 本节定义当前工作顺序；[V1 交付规划](V1-Delivery-Plan.md)保留 P1—P6 全量分解与验收标准。下列八个工作包是原 P1—P6 的执行重排（明确编辑器及 Knowledge 闭环的接续包），不是新增产品阶段，不缩减 V1 范围；旧 A/B 波次和 #76/#96/#97 不再作为任务启动入口。VNext 继续冻结。
+**目标与排程说明：在收口已部署成果的同时，优先证明“跨会话记住、纠正并有效帮助用户”，减少重复审批和 Hermes 长期维护成本，再完成全部 V1。** 本节记录原定工作顺序及当前状态；不表示所有条目都已启动，实际 NEXT 以唯一 NEXT 段为准；[V1 交付规划](V1-Delivery-Plan.md)保留 P1—P6 全量分解与验收标准。下列八个工作包是原 P1—P6 的执行重排（明确编辑器及 Knowledge 闭环的接续包），不是新增产品阶段，不缩减 V1 范围；旧 A/B 波次和 #76/#96/#97 不再作为任务启动入口。VNext 继续冻结。
 
 | 顺序 / 对应原阶段 | 目标与拆解 | 汇合条件与当前状态 |
 |---|---|---|
@@ -59,20 +59,20 @@ source: GitHub SecondBrain Monorepo
 | 2. Hermes 补丁盘点与复用（P2、P5） | 对固定上游版本列出源码补丁、插件、配置及 Core 适配器；逐项记录用途、必要性、上游扩展替代方式、升级验证方法，分类为保留/可迁出/可删除/待验证；以合成数据评估原生记忆接口能否服务现有受控链路 | 交付可追溯到源码/版本的清单与最小建议；未检查的能力标 UNKNOWN。必要安全补丁保留，不以升级整个 Hermes 为前置；盘点结论不自动授权删除补丁或更换记忆权威来源 |
 | 3. 跨会话记忆闭环（P2-1～4） | 接续 #30，沿保存→检索选择→上下文传递→模型采用定位故障；优先最小修复，核验自然召回、纠正、撤销、无关请求及事实回源；只对已证明的缺口比较 Hermes 原生能力或检索改进 | 隔离链路与真实模型证据分开；真实新会话能用正确记忆、纠正后采用新值、撤销后不再使用、无关时不过度召回，才通过对应业务验收。JSONL 写入和 Stub 回答不代替实际效果 |
 | 4. 自然对话与日常记录（P1-2/3、P3） | 梳理 Chat 收录、Journal、Task 的实际确认次数、保存回执和重试；先修现行规格内的重复提示及状态错误；涉及合并确认或改变批准语义，集中提出正式规格修订后实施 | 保留 Core 统一处理、D086 Inbox 原件和专用写入边界；正式 Knowledge 仍须明确批准。用户清楚知道保存了什么、在哪里、是否成功；不能用简化体验之名绕过审批 |
-| 5. BlockSuite 编辑器接续（P4-3/5，#46） | 紧接 #287 的合成业务闭环交付；复用归档试验，按兼容差距→用户确认→Core Notes/附件接线→保存重开→Obsidian 往返的顺序推进；明确支持子集和回退，不从零重做 PoC | 当前为已排入计划、尚未实施。前置只限现有 Notes 合同、Markdown/图形数据方案与编辑体验确认，不等待记忆完全验收或整套 V1 完成。正式选型/迁移及实施边界按下文五步执行；无损不成立时提出具体取舍，不静默锁入专有格式 |
-| 6. Review→Knowledge 最小闭环（P1-4/5、P5，#78） | 紧接 BlockSuite 候选闭环；提前只读盘点已合并 Promote/Core/Web 与 Writer 候选，沿已批准安全合同设计独立测试 Knowledge 根；复用真实审批、写入及检索接口，跑通合成原件→Review→精确批准→受控创建→检索回源 | 当前为计划与准备，未宣称安全写入已实现。独立测试根实际文件、幂等/拒绝覆盖/失败恢复/回源形成证据才算合成闭环；不以暂存或 Mock 回执代替正式 Knowledge 入库，不开启 NAS Writer/Promote。安全敏感增量仍需相应审查与授权 |
+| 5. BlockSuite 编辑器接续（P4-3/5，#46） | 复用归档试验，按兼容差距→用户确认→Core Notes/附件接线→保存重开及安全回退完成首批非生产集成；实际 Obsidian/Vault 同步另行验收 | **首批工程目标已完成**：PR #294 合并，合成 Core/浏览器闭环 Gate PASS。真实 Vault/Obsidian 往返、生产部署与用户体验验收仍 NOT RUN；依赖发布风险见下文 |
+| 6. Review→Knowledge 最小闭环（P1-4/5、P5，#78） | 复用已合并 Promote/Core/Web 能力及获准安全合同；规划中的隔离 Knowledge 测试根与合成原件→Review→精确批准→受控创建→检索回源 | **NOT STARTED / HOLD（用户本轮明确不启动）**。待用户明确切换阶段后再领取；不得由历史排程自动启动，不开启 NAS Writer/Promote |
 | 7. 记忆驱动的日常价值（P2-5、P3） | 复用 Task/Project/Journal、Daily Brief、预算与反馈能力；补来源可信的回顾、建议和受控业务动作；Daily Brief 范围为 Task/Project 加 Journal 回顾 | 来源可回查，建议与实际执行区分；主动/被动额度、频次、拒绝与恢复按既有合同验证；真实模型/费用/数据处理仍依对应授权 |
-| 8. 剩余 V1 与完整验收（P1、P4～P6） | 对照全量矩阵补齐工作包 6 剩余的 Knowledge 实际部署/验收、多格式输入、微信、编辑器与文件生命周期、日历/项目、Activity、多端和同步；复用已有实现及有效证据，分组集成 | 每项正式 MUST 有对应能力及验收证据，缺项明确保留；完整 V1 不以 PR 数或部分闭环宣布完成。飞书范围待决按原规格处理，不能静默删减或扩张 |
+| 8. 剩余 V1 与完整验收（后续计划） | 对照全量矩阵补齐其余 V1 范围：Knowledge、安全写入、多格式输入、微信、文件生命周期、日历/项目、Activity、多端和同步；复用已有实现与有效证据 | 未启动的后续项须由用户明确切换阶段；#78 当前 `NOT STARTED / HOLD`。每项正式 MUST 有对应能力及验收证据，缺项明确保留；完整 V1 不以 PR 数或部分闭环宣布完成。飞书范围待决按原规格处理，不能静默删减或扩张 |
 
-**并行与汇合：** 工作包 4 / #287 工程实现已合并收口；工作包 3 继续保持有限真实模型 PARTIAL，不追加 Run。按顺序接续工作包 5（#46）、工作包 6（#78），随后工作包 7、8；本轮不启动其他工作包。Web/Core/独立 Review 依项目规则集中协调；普通问题在各工作包内处理，不重复有效测试。
+**并行与汇合：** 工作包 4 / #287 与工作包 5 首批工程集成均已合并收口；工作包 3 继续保持有限真实模型 PARTIAL，不追加 Run。#78 / 工作包 6 为历史规划中的后续候选，但当前状态为 `NOT STARTED / HOLD`，不得自动接续；仅由用户明确切换阶段后启动。此后工作包 7、8 也未启动。
 
 **备份恢复贯穿执行（P5/P6）：** 先核对已有文档和配置定义，列清个人记忆、Journal、Task、Notes、Inbox 原件及必要元数据的权威位置，区分不可重建数据与可重建索引；核实备份覆盖、保留与恢复证据，缺证标 UNKNOWN。准备隔离恢复演练与校验步骤；真实 NAS/业务数据读取、备份配置和恢复操作按对应授权执行。Compose 回滚不等于业务数据备份，不为此预建新备份平台。
 
 **技术取舍：** 固定 Hermes 版本是可复现措施；业务定制优先配置、插件和窄适配器。现有必要安全补丁未经替代验证不得移除。Core JSONL 继续作为个人记忆权威；原生记忆的评估不等于启用第二套权威存储。先定位记忆链路失败，再决定是否需要关键词/向量混合检索；不把新数据库或 Runtime 重写当默认前置。
 
-### 当下框架策略：编辑器、Obsidian 与搜索
+### 编辑器、Obsidian 与搜索：已批准合同及工程状态
 
-**排程已调整：BlockSuite 为 #287 之后的下一工作包，接续 #46；兼容差距核对可以提前并行。** 本次批准工作包顺序和准备方向，不将 BlockSuite 写成已选型或已集成；#260 整站 VNext 仍冻结。复用既有归档源码/运行证据，只迁入经审查的必要增量，不恢复旧试验整包，不重做 PoC。正式编辑器选型和实施范围在下列步骤 2 集中确认一次；范围内普通问题持续推进，不逐项请示。Vault 开写、生产部署、付费模型及索引服务另依对应授权。
+用户已批准首批非生产范围；PR #294 已完成该工程闭环。BlockSuite 仅作无损兼容子集的可选编辑视图，Markdown 仍为正文权威，旧 Tiptap 保留回退；真实 Vault/Obsidian 写入、生产部署、付费模型、资源 Store 和 VNext 均不在本批授权中。以下规划表述保留正式架构与尚未验收范围，不构成自动启动工作包或授权。
 
 | 领域 | 框架建议与拆解 | 准入 / 汇合条件 |
 |---|---|---|
@@ -82,7 +82,9 @@ source: GitHub SecondBrain Monorepo
 | AI 搜索与分析 | Hermes 调用 Core 受控检索，取得少量相关证据，按需回源后回答；知识正文作为低信任资料传递，不能升级为系统指令。自然记忆联想和用户显式全局搜索可复用检索适配，但触发、范围与预算分别控制 | 用同一批相关/无关/冲突/过期/撤权样本比较效果、时延和费用；答案需对应具体来源版本，证据不足说明缺口。不得让模型直接扫描全 Vault；分析结果默认是回答/候选，不自动写 Knowledge |
 | 语义检索演进 | 先判断问题出在检索还是上下文传递，再基于代表查询评估关键词+向量/重排。若需要 embedding，沿用版本化来源引用，记录模型/切块版本及失效重建方式 | 数据出站和费用先明确；新依赖、服务或数据副本需论证，不默认新增数据库。索引陈旧、来源删除或权限变化时过滤并回源校验，不返回旧敏感正文 |
 
-**工作包 5 的五步拆解与汇合（统一记录于 #46，不新建权威文档）：**
+**工作包 5 的五步拆解与汇合（统一记录于 #46，不新建权威文档；首批非生产工程部分已由 PR #294 完成）：**
+
+> 以下保留原批准范围与验收合同，不代表本轮所有条款均通过：Core/合成浏览器工程闭环已完成；真实 Vault/Obsidian 同步、生产发布和用户体验仍为 NOT RUN。任何后续工作包均以唯一 NEXT 和用户明确的阶段切换为准。
 
 1. **复用与差距核对：** 定位归档试验的固定版本、源文件和已有证据，对照现有 Notes/附件接口及代表性 Markdown 样本列出缺口；不得要求用户重新寻找已保存材料，也不把试验通过当正式集成通过。此步只读准备可与 #287 并行。
 2. **兼容方案与体验集中确认：** 给出可运行的既有预览、明确的支持矩阵与最小 diff/接线计划，确认普通正文 Markdown 权威、属性/未知语法保留、图形源文件及附件关联、外部修改冲突和回退。若 BlockSuite 特性必须以专有快照为权威，应说明损失并提出具体产品取舍；不能暗中另建正文 SoT。用户一次确认正式选型及非生产实施范围后，主 Agent 在该范围连续执行，不逐函数请示；准备不足时只补真实缺口，不做无限选型。
@@ -90,11 +92,11 @@ source: GitHub SecondBrain Monorepo
 4. **Obsidian、搜索与 AI 兼容汇合：** 用中文路径、YAML、wiki links/嵌入、相对附件、未知块与脑图/画板代表样本验证受支持内容往返；不支持项只读/源码回退且原文不丢。保存后的正文/属性通过既有 Core 检索适配可查并回到同一来源版本；图形按支持矩阵提供文本投影或明确不可检索，不默认为已支持。AI 仅通过现有授权检索取证，合成接口测试不调用付费模型；此步只要求 Notes 数据合同可接入，不以全源搜索平台完成为前置。
 5. **工程验收与候选交付：** 相关定向测试、独立 Review、授权范围内 Linux Chromium 保存/重开及必要视口旅程，普通 PR 按现行门禁处理。交付支持矩阵、可体验候选和回退说明；实际 Obsidian 双向同步、NAS 发布与最终用户验收分别记录并取得对应授权。正常开发问题包内解决，只有确实无法满足 Markdown 权威或新增数据/权限边界才升级 PMO。
 
-**接续原则：** #287 交付后不再派发新的记忆预检来推迟编辑器；工作包 5 完成上述候选闭环后接续工作包 6（#78），之后再进入工作包 7 的回顾/建议。全局检索合同可并行核对，但不将新向量库、完整 AI 搜索或所有图形格式兼容当作编辑器启动条件。
+**接续原则（历史排程以当前授权为准）：** #287 后的工作包 5 已通过 PR #294 收口。工作包 6（#78）虽然是原排程后续项，但目前明确保持 `NOT STARTED / HOLD`，不自动接续；工作包 7 及之后同样未启动。全局检索、Obsidian/Vault 同步或生产发布均不能被解释为本轮已授权。
 
 ### 工作包 6：#78 最小安全写入路径与验收
 
-**产品交付位置：** #287 → BlockSuite 候选闭环 → #78 → 回顾与建议。#78 不再仅埋在“剩余 V1”中；测试根用于验证同一正式业务链路，不另建审批平台或第二知识库。已部署环境 Promote OFF、Knowledge RO 是当前状态，不是禁止隔离研发的永久产品规则。本次更新批准规划和准备，实际安全敏感增量按已有专门合同/授权核对，不将文档更新当作 NAS 写入、部署或新权限拓扑的授权。
+**产品规划位置（当前 HOLD）：** #287 → 已完成的 BlockSuite 首批闭环 → #78 → 回顾与建议。用户要求本轮不启动 #78；以下内容只是未来工作包规格，不能启动实施。测试根若未来获批仍应验证同一正式业务链路，不另建审批平台或第二知识库；任何生产 Writer/Promote/Knowledge 写入继续需要独立授权。
 
 1. **盘点并复用：** 在 #78 列出当前 main 的 Core/Web Promote 实现、历史合成检索回源证据及 #106/D090 等未合并候选的有效增量；标明已实现/未合并/待验证。#89/#88 已合并是历史事实，不得复活旧 A/B 审批流程或从零再造 Writer。
 2. **最小测试目标：** 使用本地/隔离环境的独立合成 Knowledge 根，Raw、Review、状态和目标根明确分开；仅允许受控 Writer 在该根新增批准文件，不覆盖/删除既有文件，不扩大普通 Hermes 或 Core 通用工具写权。沿用现行 Authority/Writer 信任合同；已有批准合同无法直接适用时只提交具体差异和最低必要取舍，不无限重设计。
@@ -118,9 +120,11 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 **工作包 4 / Issue #287：** 隔离工程目标完成。PR [#289](https://github.com/zxwan829/SecondBrain/pull/289) 已合并（merge `deab530b13ee755609a9375ee22449913ef1ed4a`），完成 Chat→Inbox 原文回执、Capture→Journal 独立审批/目标预览/append 入口及 Task 创建；Gate [Actions #42076994861](https://github.com/zxwan829/SecondBrain/actions/runs/42076994861) PASS。PR [#291](https://github.com/zxwan829/SecondBrain/pull/291) 已合并（merge `814c04b7abb343620014da65d83c9f1b075b4141`），补齐今天未完成 Task 查询、精确标题完成、截止日期更新及会话绑定幂等活动恢复；定向 Core 55 passed、前端 96 passed、typecheck/build 通过，独立 Review PASS，Gate [Actions #42080651081](https://github.com/zxwan829/SecondBrain/actions/runs/42080651081) 对固定 SHA `d4b0ee62a354499ae51f0d89b21d0362a0df3c79` PASS。命令路由只接受明确的消息开头表达，真实模型自然理解未验证。真实模型、NAS/Obsidian 同步、生产写入和用户业务 UAT 均 `NOT RUN`；PR #277 Notes/Journal 生产合成 UAT 仍 `PARTIAL`，同 key replay `NOT RUN`。本轮没有生产修改、付费模型调用或真实 Vault 访问；Promote/Writer/Weixin 保持关闭，VNext 保持 FROZEN。
 
-**工作包 5 / #46 审计结果：** 只读源码审计已完成，固定归档 BlockSuite-Editor `b25a75d9a3c474614c79f24ac5396c317e02bf8f`。完整兼容矩阵、四项轻量合成验证及已知缺口见 [#46 审计报告](https://github.com/zxwan829/SecondBrain/issues/46#issuecomment-6670705800)；该证据不等于完整构建、Core HTTP、真实浏览器或 Obsidian 往返验收。PMO 已在 [#46 选型建议](https://github.com/zxwan829/SecondBrain/issues/46#issuecomment-6670794515)确定最小范围，**用户于 2026-11-06 明确“同意”并批准首批非生产实施**；授权记录见 [#46](https://github.com/zxwan829/SecondBrain/issues/46#issuecomment-6670836316)。选型为：普通 Markdown/Obsidian 正文唯一权威；BlockSuite 仅作为无损兼容子集的可选编辑视图，旧 Tiptap 保留作回退。完整 Database/Edgeless 拟为独立原生资源并由 Markdown 引用，但**本批不授权实施资源 Store 或迁移**。归档 22 个安装补丁按需选择复用，不整包迁入。
+**工作包 5 / #46 首批范围与工程状态：** 用户于 2026-11-06 批准非生产集成，授权记录见 [#46](https://github.com/zxwan829/SecondBrain/issues/46#issuecomment-6670836316)；正式选型为普通 Markdown/Obsidian 正文唯一权威、BlockSuite 仅作无损兼容子集的可选编辑视图、旧 Tiptap 保留回退。PR [#294](https://github.com/zxwan829/SecondBrain/pull/294) 已以 merge `e9f323b3f90d53473964fe991a968fcd046d85bf` 合并，工程状态 `WP5_MARKDOWN_INTEGRATION_ENGINEERING_PASS`。固定 PR HEAD `8ce5a5e7559f8cfea5345ccf21ed0bb1a1a31f2a` 的 Linux Chromium Gate [Actions #42201007416](https://github.com/zxwan829/SecondBrain/actions/runs/42201007416) 3/3 视口通过；build-and-smoke [#42201001485](https://github.com/zxwan829/SecondBrain/actions/runs/42201001485) 通过；前端 typecheck/build 与 29 项定向测试通过。完整证据、范围和依赖风险见 Progress Log 2026-11-06 记录及 PR 验收评论。
 
-**唯一 NEXT（工作包 5 首批非生产集成 / #46）：** Codex 主 Agent 立即按上述已批准范围，基于最新 main 与归档固定 SHA 开始实施：复用现有 Core Notes Markdown `GET/PUT`、`If-Match`/412、身份/权限/附件/历史，接入 BlockSuite 安全子集；用合成笔记验证创建→编辑→保存→关闭重开→刷新回读，中文文件名与类型/标签/YAML 保真，未知语法阻止有损写入及旧编辑器回退；覆盖冲突、失败恢复及来源隔离，完成定向工程测试、独立 Review 和依门禁合并的普通 PR。首批工程出口为 `WP5_MARKDOWN_INTEGRATION_ENGINEERING_PASS`，**当前仅授权，代码/集成/真实浏览器/用户业务验收尚无本轮 PASS 证据**。NAS/生产、真实 Vault/Private、付费模型、Obsidian 同步/迁移、原生 Yjs Store、完整 Database/Edgeless 与 VNext 均不在本批授权内。工作包 5 未完成前不接续工作包 6（#78）。
+**剩余验收/发布边界：** PR #294 没有部署。真实 Obsidian/Vault 往返、生产 Notes 写入及用户对新编辑器的体验均 `NOT RUN`；安全风险审计发现 58 个依赖告警（50 High），主要为 Zod 3.25.76 在 BlockSuite 依赖链上的超大数组校验内存耗尽问题。尚无证据证明本应用存在可利用的攻击者控制输入路径；此风险不阻止非生产代码合并，但生产发布前必须完成兼容修复或明确的可达性与风险处置。Promote、Writer、Private、微信、生产配置及权限均未更改。
+
+**唯一 NEXT：** 本轮工作包 5 工程目标已收口；不自动启动工作包 6（#78）。等待用户另行决定是否及何时授权真实 Vault/Obsidian 验收或生产部署；生产发布须先满足上述依赖风险门槛并取得独立授权。VNext 保持 FROZEN。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
@@ -132,8 +136,8 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 2. [#74 Inbox 请求范围隔离风险](https://github.com/zxwan829/SecondBrain/issues/74) — 范围隔离修复 PR #79 已合入，包含于当前生产 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Linux 合成浏览器通过，未登录读取生产 Inbox；Issue 保持开放至用户验收。
 3. [#75 M1 幂等重放与浏览器请求证据](https://github.com/zxwan829/SecondBrain/issues/75) — 历史生产证据缺口尚未重新核验；任何生产复测需单独授权。
 4. [#30 跨会话记忆召回故障](https://github.com/zxwan829/SecondBrain/issues/30) — 合成真实模型 UAT 部分通过；初始偏好自然召回遗漏颜色、冲突场景未测，详见本轮记录。
-5. [#78 Review→Promote 安全闭环](https://github.com/zxwan829/SecondBrain/issues/78) — 工作包 6，紧接 BlockSuite；盘点及独立测试根合同可提前只读并行，具体五步与权限见本文件；部署环境 Writer/Promote/Knowledge 写入未开启。
-6. [#46 Markdown 可视化编辑器](https://github.com/zxwan829/SecondBrain/issues/46) — 工作包 5，紧接 #287；复用 BlockSuite 归档试验，先并行核对兼容差距，按本文件五步推进与确认，不重做 PoC。
+5. [#78 Review→Promote 安全闭环](https://github.com/zxwan829/SecondBrain/issues/78) — 工作包 6，`NOT STARTED / HOLD`，待用户明确阶段切换；Writer/Promote/Knowledge 生产写入未开启。
+6. [#46 Markdown 可视化编辑器](https://github.com/zxwan829/SecondBrain/issues/46) — 工作包 5 首批非生产工程已完成，PR #294 合并；真实 Vault/Obsidian 往返、生产部署与用户体验仍未验收，禁止把其工程 PASS 扩展成用户 PASS。
 7. [#260 VNext 工作台产品基线与隔离原型](https://github.com/zxwan829/SecondBrain/issues/260) — 产品讨论/原型冻结入口；不表示批准整站替换或生产切换。
 
 ## 本轮资产处置
