@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { DatabaseBlockDataSource, databaseViewInitTemplate, richTextColumnConfig } from '@blocksuite/affine-block-database';
 import { ImageStoreExtension } from '@blocksuite/affine-block-image/store';
 import { ImageViewExtension } from '@blocksuite/affine-block-image/view';
