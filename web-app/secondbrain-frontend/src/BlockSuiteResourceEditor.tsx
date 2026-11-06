@@ -303,7 +303,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       const index = store.getBlocksByFlavour('affine:image').length;
       store.addBlock('affine:image', {
         sourceId, width: 320, height: 220, size: file.size, rotate: 0,
-        xywh: `[${80 + index * 32},${100 + index * 28},320,220]`,
+        xywh: `[${440 + index * 32},${100 + index * 28},320,220]`,
       }, surface.id);
       setStatus('图片已加入 Edgeless 画布；保存资源以持久化位置和引用。');
     } catch (error) {
