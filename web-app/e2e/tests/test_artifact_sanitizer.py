@@ -251,7 +251,8 @@ def test_failure_diagnostic_can_include_bounded_blocksuite_runtime_state():
                   "assertion_id": "notes_blocksuite_simple_open", "activity_get_statuses": [200],
                   "notes_ui_state": "fallback_message", "page_error_names": ["TypeError"],
                   "page_error_categories": ["nullish_property_access"],
-                  "page_error_sources": ["blocksuite_module"], "blocksuite_module_statuses": [200, 504]}
+                  "page_error_sources": ["blocksuite_module"], "blocksuite_module_statuses": [200, 504],
+                  "page_error_summaries": ["Error: Cannot read properties of undefined (<quoted>)"]}
     assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
     diagnostic["notes_ui_state"] = "raw browser text"
     with pytest.raises(RuntimeError, match="value rejected"):
@@ -270,6 +271,10 @@ def test_failure_diagnostic_can_include_bounded_blocksuite_runtime_state():
         module._validate_failure_diagnostics([diagnostic])
     diagnostic["page_error_sources"] = ["blocksuite_module"]
     diagnostic["blocksuite_module_statuses"] = ["GET /secret"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["blocksuite_module_statuses"] = [200, 504]
+    diagnostic["page_error_summaries"] = ["/Users/person/private.txt"]
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([diagnostic])
 

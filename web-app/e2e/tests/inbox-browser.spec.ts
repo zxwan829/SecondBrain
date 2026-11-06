@@ -5,6 +5,18 @@ import { join } from 'node:path';
 
 const baseUrl = process.env.SB_E2E_BASE_URL ?? 'http://127.0.0.1:4173';
 const baseOrigin = new URL(baseUrl).origin;
+function safePageErrorSummary(value: string): string {
+  return value
+    .replace(/https?:\/\/[^\s)]+/gi, '<url>')
+    .replace(/(?:[A-Za-z]:\\|\/(?:Users|home|private|tmp|opt|workspace)\/)[^\s)]+/gi, '<path>')
+    .replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, '<id>')
+    .replace(/\b[A-Za-z0-9_./+=-]{16,}\b/g, '<value>')
+    .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '<quoted>')
+    .replace(/[\u3400-\u9fff]+/g, '<text>')
+    .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '<email>')
+    .replace(/\s+/g, ' ')
+    .slice(0, 180);
+}
 const viewports = [
   { name: 'desktop-1440x1000', width: 1440, height: 1000 },
   { name: 'tablet-820x1180', width: 820, height: 1180 },
@@ -280,6 +292,7 @@ async function configurePage(page: Page) {
   const pageErrorNames: string[] = [];
   const pageErrorCategories: string[] = [];
   const pageErrorSources: string[] = [];
+  const pageErrorSummaries: string[] = [];
   let failureStage: FailureStage = 'login';
   let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
@@ -317,6 +330,7 @@ async function configurePage(page: Page) {
         : /react-dom/.test(stack) ? 'react_dom'
           : /vite/.test(stack) ? 'vite_runtime' : 'other_module';
     pageErrorSources.push(source);
+    pageErrorSummaries.push(safePageErrorSummary(error.message));
   });
   const recordedResponses = new WeakSet<Request>();
   page.on('response', (response) => {
@@ -459,6 +473,7 @@ async function configurePage(page: Page) {
     get pageErrorNames() { return pageErrorNames.slice(-5); },
     get pageErrorCategories() { return pageErrorCategories.slice(-5); },
     get pageErrorSources() { return pageErrorSources.slice(-5); },
+    get pageErrorSummaries() { return pageErrorSummaries.slice(-5); },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
@@ -1373,6 +1388,7 @@ test.afterEach(async ({ page }, testInfo) => {
       page_error_names: observed?.pageErrorNames ?? [],
       page_error_categories: observed?.pageErrorCategories ?? [],
       page_error_sources: observed?.pageErrorSources ?? [],
+      page_error_summaries: observed?.pageErrorSummaries ?? [],
       blocksuite_module_statuses: observed?.requestRecords.filter((record) => record.method === 'GET'
         && /blocksuite|node_modules\/\.vite/i.test(record.path)).map((record) => record.status).slice(-8) ?? [],
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
