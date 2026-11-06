@@ -174,6 +174,21 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     timer.current = window.setTimeout(() => { void save(target, body, revision, sequence).catch(() => undefined); }, 900);
   };
 
+  const leaveBlockSuite = async (reason?: string) => {
+    const target = noteRef.current;
+    if (!reason && target && contentRef.current !== savedContent.current) {
+      const revision = viewRevision.current;
+      const sequence = editSequence.current;
+      const body = contentRef.current;
+      window.clearTimeout(timer.current);
+      try { await save(target, body, revision, sequence); }
+      catch { /* save() keeps unsaved content and reports its failure before the editor switches. */ }
+    }
+    blockSuiteFallbackReason.current = reason ?? null;
+    setEditorMode('legacy');
+    if (reason) setMessage('BlockSuite 不支持安全往返此笔记，已保留原文并切回旧版编辑器。');
+  };
+
   const createDraft = async () => {
     if (!protectUnsaved()) return;
     const revision = beginTransition();
@@ -471,7 +486,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
             : '此笔记含有不透明 YAML Frontmatter；旧版编辑器保持只读，请切换 BlockSuite 以安全编辑正文。'}</div>
           <pre className="notes-raw-source">{content}</pre>
         </> : editorMode === 'blocksuite' ? <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
-          onFallback={(reason) => { blockSuiteFallbackReason.current = reason ?? null; setEditorMode('legacy'); setMessage('BlockSuite 不支持安全往返此笔记，已保留原文并切回旧版编辑器。'); }} /></Suspense>
+          onFallback={(reason) => { void leaveBlockSuite(reason); }} /></Suspense>
           : <MarkdownEditor key={`legacy:${noteKey(note)}`} value={content} disabled={false} onChange={change} onImagePaste={pasteImage}
             onOpenVisualAsset={openVisual}
             assetBase={`/api/notes/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`} /> : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
