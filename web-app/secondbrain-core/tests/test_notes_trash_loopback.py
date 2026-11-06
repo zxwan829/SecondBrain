@@ -387,6 +387,43 @@ def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkey
     assert store.read_blocksuite_blob("projects", note.name, blob_id)["data"] == blob_bytes
 
 
+def test_late_idempotent_trash_replay_cannot_undo_a_completed_restore(tmp_path, monkeypatch):
+    vault = _private(tmp_path / "vault")
+    projects = _private(vault / "Projects")
+    _private(vault / ".trash")
+    drafts = _private(tmp_path / "drafts")
+    store = NotesStore(drafts, {"projects": projects})
+    note = projects / "late-replay.md"
+    original = b"# Late replay must not undo restore\n"
+    note.write_bytes(original)
+    os.chmod(note, 0o600)
+    digest = hashlib.sha256(original).hexdigest()
+    trash = NotesTrashStore(store, str(vault / ".trash" / "secondbrain"))
+    entry = trash.trash("projects", note.name, digest, "late-replay-key")
+    waiting = threading.Event()
+    release = threading.Event()
+    open_note_lock = store._open_note_lock
+
+    def delay_late_replay(directory_fd):
+        if threading.current_thread().name.startswith("late-trash-replay"):
+            waiting.set()
+            assert release.wait(timeout=10)
+        return open_note_lock(directory_fd)
+
+    monkeypatch.setattr(store, "_open_note_lock", delay_late_replay)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="late-trash-replay") as executor:
+        replay = executor.submit(trash.trash, "projects", note.name, digest, "late-replay-key")
+        assert waiting.wait(timeout=5), "replay did not reach note-lock boundary"
+        restored = trash.restore(entry["trash_id"])
+        assert restored["status"] == "restored"
+        release.set()
+        with pytest.raises(HTTPException) as stale_replay:
+            replay.result(timeout=5)
+        assert stale_replay.value.status_code == 409
+    assert note.read_bytes() == original
+    assert not (vault / ".trash" / "secondbrain" / entry["trash_id"] / "note.md").exists()
+
+
 def test_core_rebuild_recovers_persisted_trash_without_auto_purge(tmp_path, monkeypatch):
     app, listener, host, port, origin, projects, vault = _run_core(tmp_path, monkeypatch)
     note = projects / "restart-note.md"
