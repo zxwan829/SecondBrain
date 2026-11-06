@@ -3,6 +3,11 @@ name: A Web synthetic browser acceptance
 on:
   workflow_dispatch:
     inputs:
+      wp5_open_only:
+        description: Verify only BlockSuite editor initialization with a synthetic note
+        required: false
+        type: boolean
+        default: false
       wp5_roundtrip_only:
         description: Run only the desktop Notes save/reopen and conflict-autosave probe
         required: false
@@ -68,25 +73,30 @@ jobs:
       - name: Run Web regression and type checks
         working-directory: web-app/secondbrain-frontend
         env:
-          WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only }}
+          WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only || inputs.wp5_open_only }}
           WP5_CONFLICT_ONLY: ${{ inputs.wp5_conflict_only }}
         run: |
           if [ "$WP5_ROUNDTRIP_ONLY" = "true" ] || [ "$WP5_CONFLICT_ONLY" = "true" ]; then
-            npm test -- --run src/NotesPage.test.tsx src/App.navigation.test.tsx src/blocksuite-markdown.test.ts src/zod-security.test.ts
+            npm test -- --run src/NotesPage.test.tsx src/App.navigation.test.tsx src/blocksuite-markdown.test.ts src/zod-security.test.ts src/api/notes-blocksuite-blobs.test.ts
           else
             npm test
           fi
+          npm run test:blocksuite-lifecycle
           npm run typecheck
       - name: Build Web assets
         working-directory: web-app/secondbrain-frontend
+        env:
+          VITE_ENABLE_NOTES: "true"
         run: npm run build
       - name: Verify trace artifact redaction
         run: python -m pytest -q web-app/e2e/tests/test_artifact_sanitizer.py
       - name: Run isolated Core + Web browser acceptance
         id: synthetic
         env:
-          WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only }}
+          WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only || inputs.wp5_open_only }}
           WP5_CONFLICT_ONLY: ${{ inputs.wp5_conflict_only }}
+          SB_E2E_PRODUCTION_BUILD: "true"
+          SB_E2E_WP5_OPEN_ONLY: ${{ inputs.wp5_open_only }}
           WP5_DESKTOP_ONLY: ${{ inputs.wp5_desktop_only }}
         run: |
           if [ "$WP5_CONFLICT_ONLY" = "true" ]; then

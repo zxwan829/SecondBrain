@@ -1,5 +1,5 @@
 import { NoopLogger } from '@blocksuite/global/utils';
-import { BlobEngine, MemoryBlobSource } from '@blocksuite/sync';
+import { BlobEngine, MemoryBlobSource, type BlobSource } from '@blocksuite/sync';
 import { AwarenessStore, StoreContainer } from '@blocksuite/store';
 import { Awareness } from 'y-protocols/awareness.js';
 import { Subject } from 'rxjs';
@@ -20,10 +20,12 @@ export class TransientMarkdownWorkspace {
   readonly docs = new Map<string, TransientMarkdownDoc>();
   readonly meta: any;
 
-  constructor() {
+  constructor(blobSource?: BlobSource) {
     const workspace = this;
-    const blobs = new MemoryBlobSource();
-    blobs.readonly = true;
+    const blobs = blobSource ?? new MemoryBlobSource();
+    // Markdown projection workspaces never persist blobs. Resource workspaces
+    // may inject a note-scoped Core BlobSource with immutable SHA-256 keys.
+    if (!blobSource) blobs.readonly = true;
     this.blobSync = new BlobEngine(blobs, [], new NoopLogger());
     this.meta = {
       docMetaAdded: new Subject<string>(), docMetaRemoved: new Subject<string>(), docMetaUpdated: new Subject<void>(),
@@ -43,7 +45,7 @@ export class TransientMarkdownWorkspace {
   waitForSynced() { return Promise.resolve(); }
   forceStop() {}
 
-  createDoc(id = this.idGenerator()) {
+  createDoc(id: string = this.idGenerator()) {
     if (this.docs.has(id)) throw new Error('Transient BlockSuite document already exists');
     const doc = new TransientMarkdownDoc(id, this);
     this.docs.set(id, doc);

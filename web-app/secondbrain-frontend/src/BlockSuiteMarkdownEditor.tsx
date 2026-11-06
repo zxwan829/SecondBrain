@@ -29,7 +29,8 @@ import { ReferenceViewExtension } from '@blocksuite/affine-inline-reference/view
 import { SurfaceStoreExtension } from '@blocksuite/affine-block-surface/store';
 import { SurfaceViewExtension } from '@blocksuite/affine-block-surface/view';
 import { MarkdownAdapter } from '@blocksuite/affine-shared/adapters';
-import { StoreExtensionManager, ViewExtensionManager } from '@blocksuite/affine-ext-loader';
+import { StoreExtensionManager } from '@blocksuite/affine-ext-loader';
+import { markdownViewManager } from './blocksuite-resource-views';
 import { BlockStdScope } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
 import { blockSuiteMarkdownMatches, blockSuiteMarkdownSupportsEditing, preserveSourceTerminalNewlines, splitOpaqueFrontmatter, type MarkdownParts } from './blocksuite-markdown';
@@ -56,13 +57,7 @@ function makeManagers() {
     SurfaceStoreExtension,
   ]);
   stores.configure(NoteStoreExtension, { mode: 'doc' });
-  const views = new ViewExtensionManager([
-    FoundationViewExtension, RootViewExtension, NoteViewExtension,
-    ParagraphViewExtension, ListViewExtension, CodeBlockViewExtension,
-    TableViewExtension, DividerViewExtension, InlinePresetViewExtension, LatexViewExtension,
-    FootnoteViewExtension, LinkViewExtension, MentionViewExtension, ReferenceViewExtension,
-    SurfaceViewExtension,
-  ]);
+  const views = markdownViewManager;
   return { stores, views };
 }
 
@@ -70,12 +65,18 @@ function makeManagers() {
  * BlockSuite is a transient local editing projection only. Its in-memory Y.Doc has
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
-export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset }: {
-  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason) => void;
-  onOpenVisualAsset?: (filename: string) => void;
+export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset, onOpenBlockSuiteResource, onProjectionPending }: {
+  onProjectionPending?: (pending: boolean) => void;
+  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'duplicate_root' | 'duplicate_note' | 'duplicate_paragraph' | 'duplicate_database' | 'duplicate_data_view' | 'duplicate_edgeless_text' | 'duplicate_other' | 'missing_root' | 'blocksuite_error' | 'other', stage?: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update') => void;
+  onOpenVisualAsset?: (filename: string) => void; onOpenBlockSuiteResource?: (filename: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<{ store: any; std: BlockStdScope; workspace: TransientMarkdownWorkspace; adapter: MarkdownAdapter; split: MarkdownParts; subscription?: { unsubscribe: () => void } } | null>(null);
+  const pendingCallback = useRef(onProjectionPending);
+  pendingCallback.current = onProjectionPending;
+  const projectionSequence = useRef(0);
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   const valueRef = useRef(value);
   const emittedRef = useRef(value);
   const onChangeRef = useRef(onChange);
@@ -92,6 +93,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
     let std: BlockStdScope | undefined;
     const initialize = async () => {
       let fallbackReason: FallbackReason = 'invalid_frontmatter';
+      let initializationStage: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update' = 'extension_setup';
       try {
         const split = splitOpaqueFrontmatter(valueRef.current);
         // Keep formats whose assets or Obsidian semantics belong to the existing editor on its fallback path.
@@ -110,7 +112,6 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const localDoc = currentWorkspace.createDoc(`markdown-${crypto.randomUUID()}`);
         localDoc.load();
         const store = localDoc.getStore();
-        store.readonly = disabled;
         const adapter = markdownAdapter(store);
         // Match the pinned BlockSuite Page document contract: the Page root
         // contains a surface before the Markdown adapter creates its note block.
@@ -125,8 +126,13 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
           return;
         }
         if (disposed || !host.current) { currentWorkspace.dispose(); return; }
+        // Populate the transient document before making its mounted view readonly.
+        store.readonly = disabledRef.current;
         fallbackReason = 'view_initialization_error';
-        std = new BlockStdScope({ store: store as any, extensions: views.get('page') });
+        const pageExtensions = views.get('page');
+        initializationStage = 'scope_create';
+        std = new BlockStdScope({ store: store as any, extensions: pageExtensions });
+        initializationStage = 'host_render';
         const root = std.render();
         // RootViewExtension resolves `.affine-page-viewport` for page focus,
         // selection and coordinate services. Keep the same wrapper contract as
@@ -134,21 +140,27 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const viewport = document.createElement('div');
         viewport.className = 'affine-page-viewport';
         viewport.append(root);
+        initializationStage = 'host_mount';
         host.current.replaceChildren(viewport);
         // Mounting the host is not enough to declare the editor ready: the
         // Page and its block views hydrate asynchronously after attachment.
         // Wait for BlockSuite's own update lifecycle before exposing the
         // saved/ready state to users and browser acceptance.
+        initializationStage = 'host_update';
         await root.getUpdateComplete();
         if (disposed) return;
+        store.readonly = disabledRef.current;
         const currentEditor: NonNullable<typeof editorRef.current> = { store, std, workspace: currentWorkspace, adapter, split };
         editorRef.current = currentEditor;
         const publish = () => {
+          const sequence = ++projectionSequence.current;
+          pendingCallback.current?.(true);
           window.clearTimeout(timer.current);
           timer.current = window.setTimeout(() => {
             const current = editorRef.current;
             if (!current) return;
             void current.adapter.fromBlock(current.store.getBlocksByFlavour('affine:note')[0]!.model as any).then(result => {
+              if (disposed || sequence !== projectionSequence.current || editorRef.current !== current) return;
               const exported = result?.file ?? '';
               const next = `${current.split.prefix}${preserveSourceTerminalNewlines(current.split.body, exported)}`;
               if (next === emittedRef.current) return;
@@ -162,7 +174,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
                 return;
               }
               onChangeRef.current(next);
-            }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
+            }).then(() => { if (!disposed && editorRef.current === current && sequence === projectionSequence.current) pendingCallback.current?.(false); }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
           }, 250);
         };
         // BlockSuite text content is stored in nested Y.Text values. The
@@ -176,7 +188,19 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
       } catch (error) {
         if (!disposed) {
           setStatus(error instanceof Error ? error.message : 'BlockSuite 无法安全载入此 Markdown');
-          onFallbackRef.current(fallbackReason);
+          const message = error instanceof Error ? error.message.toLowerCase() : '';
+          const diagnostic = /illegal constructor/i.test(message) ? 'illegal_constructor'
+            : /custom element .* not registered|not defined in the custom element registry/i.test(message) ? 'missing_custom_element'
+              : /already been used with this registry|already defined/i.test(message)
+                ? /affine-page-root|affine-edgeless-root/.test(message) ? 'duplicate_root'
+                  : /affine-note/.test(message) ? 'duplicate_note'
+                    : /affine-paragraph/.test(message) ? 'duplicate_paragraph'
+                      : /affine-database/.test(message) ? 'duplicate_database'
+                        : /affine-data-view/.test(message) ? 'duplicate_data_view'
+                          : /affine-edgeless-text/.test(message) ? 'duplicate_edgeless_text' : 'duplicate_other'
+                : /missing root block|no root model/i.test(message) ? 'missing_root'
+                  : error instanceof Error && error.name === 'BlockSuiteError' ? 'blocksuite_error' : 'other';
+          onFallbackRef.current(fallbackReason, diagnostic, initializationStage);
         }
         try { std?.unmount(); } catch { /* Keep workspace disposal fail-safe. */ }
         workspace?.dispose();
@@ -198,25 +222,36 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
 
   useEffect(() => {
     const root = host.current;
-    if (!root || !onOpenVisualAsset) return;
+    if (!root || (!onOpenVisualAsset && !onOpenBlockSuiteResource)) return;
     const onClick = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const anchor = target.closest('a[href]');
+      // Lit links live in shadow roots; event.target is retargeted to their
+      // host. Inspect the composed path to find the actual attachment anchor.
+      const anchor = event.composedPath().find((node): node is HTMLAnchorElement =>
+        node instanceof HTMLAnchorElement && node.hasAttribute('href'));
       if (!anchor) return;
       let filename: string;
+      let kind: 'visual' | 'blocksuite' = 'visual';
       try {
-        const url = new URL(anchor.getAttribute('href') || '', window.location.href);
-        const match = url.pathname.match(/(?:^|\/)attachments\/([0-9a-f]{32}\.(?:mindmap|excalidraw)\.json)$/i);
+        // AffineLink normalizes relative Markdown URLs to https:// URLs for
+        // display. Route attachments from the original delta, not that href.
+        const linkNode = event.composedPath().find(node => node instanceof Element && node.localName === 'affine-link') as (Element & { delta?: { attributes?: { link?: string } } }) | undefined;
+        const sourceLink = linkNode?.delta?.attributes?.link ?? anchor.getAttribute('href') ?? '';
+        if (!/^attachments\/[0-9a-f]{32}\.(?:mindmap|excalidraw|blocksuite)\.json$/i.test(sourceLink)) return;
+        const url = new URL(sourceLink, window.location.href);
+        const match = url.pathname.match(/(?:^|\/)attachments\/([0-9a-f]{32}\.(?:mindmap|excalidraw|blocksuite)\.json)$/i);
         if (!match) return;
         filename = decodeURIComponent(match[1]);
+        kind = filename.endsWith('.blocksuite.json') ? 'blocksuite' : 'visual';
       } catch { return; }
+      if (kind === 'blocksuite' && !onOpenBlockSuiteResource) return;
+      if (kind === 'visual' && !onOpenVisualAsset) return;
       event.preventDefault();
-      onOpenVisualAsset(filename);
+      if (kind === 'blocksuite') onOpenBlockSuiteResource?.(filename);
+      else onOpenVisualAsset?.(filename);
     };
-    root.addEventListener('click', onClick);
-    return () => root.removeEventListener('click', onClick);
-  }, [onOpenVisualAsset]);
+    root.addEventListener('click', onClick, true);
+    return () => root.removeEventListener('click', onClick, true);
+  }, [onOpenVisualAsset, onOpenBlockSuiteResource]);
 
   useEffect(() => {
     // A parent save response updates the prop to the same serialized content. Do not

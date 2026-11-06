@@ -127,6 +127,9 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_conflict_seed_status_409", "notes_conflict_seed_status_412",
     "notes_conflict_seed_status_422", "notes_conflict_seed_status_428",
     "notes_conflict_seed_status_other",
+    "wp5_resource_focus", "wp5_resource_type", "wp5_resource_dirty", "wp5_resource_save", "wp5_resource_saved", "wp5_resource_close", "wp5_resource_reopen",
+    "wp5_resource_checkpoint_001", "wp5_resource_checkpoint_002", "wp5_resource_checkpoint_003", "wp5_resource_checkpoint_004", "wp5_resource_checkpoint_005", "wp5_resource_checkpoint_006", "wp5_resource_checkpoint_007", "wp5_resource_checkpoint_008", "wp5_resource_checkpoint_009", "wp5_resource_checkpoint_010", "wp5_resource_checkpoint_011", "wp5_resource_checkpoint_012", "wp5_resource_checkpoint_013", "wp5_resource_checkpoint_014", "wp5_resource_checkpoint_015", "wp5_resource_checkpoint_016", "wp5_resource_checkpoint_017", "wp5_resource_checkpoint_018", "wp5_resource_checkpoint_019", "wp5_resource_checkpoint_020", "wp5_resource_checkpoint_021", "wp5_resource_checkpoint_022", "wp5_resource_checkpoint_023", "wp5_resource_checkpoint_024", "wp5_resource_checkpoint_025", "wp5_resource_checkpoint_026", "wp5_resource_checkpoint_027", "wp5_resource_checkpoint_028", "wp5_resource_checkpoint_029", "wp5_resource_checkpoint_030", "wp5_resource_checkpoint_031", "wp5_resource_checkpoint_032", "wp5_resource_checkpoint_033", "wp5_resource_checkpoint_034", "wp5_resource_checkpoint_035", "wp5_resource_checkpoint_036", "wp5_resource_checkpoint_037", "wp5_resource_checkpoint_038", "wp5_resource_checkpoint_039", "wp5_resource_checkpoint_040", "wp5_resource_checkpoint_041", "wp5_resource_checkpoint_042", "wp5_resource_checkpoint_043", "wp5_resource_checkpoint_044", "wp5_resource_checkpoint_045", "wp5_resource_checkpoint_046", "wp5_resource_checkpoint_047", "wp5_resource_checkpoint_048", "wp5_resource_checkpoint_049", "wp5_resource_checkpoint_050", "wp5_resource_checkpoint_051", "wp5_resource_checkpoint_052", "wp5_resource_checkpoint_053", "wp5_resource_checkpoint_054", "wp5_resource_checkpoint_055", "wp5_resource_checkpoint_056", "wp5_resource_checkpoint_057", "wp5_resource_checkpoint_058", "wp5_resource_checkpoint_059", "wp5_resource_checkpoint_060", "wp5_resource_checkpoint_061", "wp5_resource_checkpoint_062", "wp5_resource_checkpoint_063", "wp5_resource_checkpoint_064", "wp5_resource_checkpoint_065",
+    "wp5_resource_dialog_open", "wp5_resource_content_visible", "wp5_resource_editable",
     "wp5_focus_notes_navigation", "wp5_focus_note_seed", "wp5_focus_editor_open",
     "wp5_focus_body_target", "wp5_focus_put_received", "wp5_focus_put_request_content",
     "wp5_focus_put_status", "wp5_focus_put_response_content", "wp5_focus_api_readback",
@@ -306,7 +309,7 @@ def _sanitize_run_summary(path: Path) -> None:
                "raw_record_count", "journal_files", "knowledge_files", "exit_code",
                "journal_source_fixture_files", "journal_mutated_files", "brief_files",
                "brief_file_set_verified", "notes_files", "python", "node",
-               "html_report_uploaded", "screenshots_uploaded"}
+               "html_report_uploaded", "screenshots_uploaded", "acceptance_scope"}
     path.write_text(json.dumps({key: summary[key] for key in allowed if key in summary}, indent=2) + "\n",
                     encoding="utf-8")
 
@@ -371,13 +374,17 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or (notes_seed_status is not None
                     and (type(notes_seed_status) is not int or not 100 <= notes_seed_status <= 599))
                 or (notes_ui_state is not None and (
-                    not isinstance(notes_ui_state, str) or notes_ui_state not in {
+                    not isinstance(notes_ui_state, str) or (notes_ui_state not in {
                         "vite_error", "fallback_message", "fallback_invalid_frontmatter", "fallback_unsupported_syntax",
                         "fallback_markdown_conversion_error", "fallback_unsafe_roundtrip",
                         "fallback_content_mismatch",
-                        "fallback_view_initialization_error", "blocksuite_canvas", "legacy_editor",
+                        "fallback_view_initialization_error",
+                        "blocksuite_canvas", "legacy_editor",
                         "app_blank", "canvas_missing", "unavailable",
-                    }))
+                    } and not re.fullmatch(
+                        r"fallback_(?:illegal_constructor|missing_custom_element|custom_element_conflict|duplicate_root|duplicate_note|duplicate_paragraph|duplicate_database|duplicate_data_view|duplicate_edgeless_text|duplicate_other|missing_root|blocksuite_error|other)_(?:extension_setup|scope_create|host_render|host_mount|host_update)",
+                        notes_ui_state,
+                    ))))
                 or not isinstance(page_error_names, list) or len(page_error_names) > 5
                 or any(not isinstance(name, str) or name not in {
                     "Error", "TypeError", "ReferenceError", "RangeError", "SyntaxError", "URIError", "unknown",
@@ -1296,6 +1303,7 @@ def main() -> int:
     parser.add_argument("--wp5-conflict-only", action="store_true", help="run only the desktop WP5 Notes conflict-autosave and recovery browser probe")
     parser.add_argument("--desktop-only", action="store_true", help="run the existing browser acceptance journey at desktop viewport only")
     options = parser.parse_args()
+    wp5_open_only = os.environ.get("SB_E2E_WP5_OPEN_ONLY") == "true"
     wp5_probe_mode = options.wp5_roundtrip_only or options.wp5_conflict_only
     # The workflow uploads only this directory. It starts empty on every run;
     # raw Playwright output lives in the private temp root below and is never a
@@ -1383,8 +1391,9 @@ def main() -> int:
             raise RuntimeError("Core did not start with Promote and Hermes integrations disabled")
         web_log = (root / "vite.log").open("wb")
         log_files.append(web_log)
+        web_command = ["npx", "--no-install", "vite", "preview"] if os.environ.get("SB_E2E_PRODUCTION_BUILD") == "true" else ["npm", "run", "dev", "--"]
         web = subprocess.Popen([
-            "npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", str(web_port), "--strictPort",
+            *web_command, "--host", "127.0.0.1", "--port", str(web_port), "--strictPort",
         ], cwd=FRONTEND, env=env, stdout=web_log, stderr=subprocess.STDOUT, start_new_session=True)
         processes.append(web)
         wait_http(WEB_URL + "/chat/blank", web, "Vite")
@@ -1406,6 +1415,17 @@ def main() -> int:
             test_process = launch_browser_tests(env, test_log)
             processes.append(test_process)
             test_returncode = wait_for_test_process(test_process)
+            if test_returncode != 0:
+                # This bounded diagnostic only runs for the synthetic WP5
+                # resource fixture and omits the surrounding Playwright log.
+                runner_log = root / "playwright-runner.log"
+                if runner_log.is_file() and runner_log.stat().st_size <= 4 * 1024 * 1024:
+                    for line in runner_log.read_text(encoding="utf-8", errors="replace").splitlines():
+                        marker = "WP5_RESOURCE_CREATE_ERROR "
+                        if marker in line:
+                            detail = line.split(marker, 1)[1].strip()[:240]
+                            if not any(secret in detail.lower() for secret in ("bearer ", "password=", "token=")):
+                                print(marker + detail)
             core_probe_events = []
             if wp5_probe_mode and wp5_autosave_core_log.exists():
                 if wp5_autosave_core_log.stat().st_size > 2048 or not wp5_autosave_core_log.is_file():
@@ -1447,7 +1467,7 @@ def main() -> int:
                 }]
                 autosave_timeline_raw.sort(key=lambda item: item["at_ms"])
             autosave_timeline = _validate_wp5_autosave_events(autosave_timeline_raw)
-            if wp5_probe_mode and test_returncode == 0:
+            if wp5_probe_mode and not wp5_open_only and test_returncode == 0:
                 if any(event["event"] == "probe-events-overflow" for event in autosave_timeline):
                     raise RuntimeError("WP5 autosave timeline overflow on successful run")
                 core_signature = [(event["event"], event.get("status")) for event in core_probe_events]
@@ -1494,8 +1514,9 @@ def main() -> int:
         screenshot_count = count_allowlisted_failure_screenshots(raw_artifacts)
         summary = {
             "result": "PASS" if test_returncode == 0 else "FAIL",
+            "acceptance_scope": "editor-open-only" if wp5_open_only else "selected-browser-journey",
             "core": "real localhost HTTP",
-            "web": "local Vite",
+            "web": "Vite production build preview" if os.environ.get("SB_E2E_PRODUCTION_BUILD") == "true" else "local Vite",
             "browser": "NOT RUN (local stop gate)" if options.http_smoke_only else "Playwright Linux Chromium (workflow runner only)",
             "promote_enabled": False,
             "hermes": "fixture-only Chat endpoints; no Hermes service or credentials",

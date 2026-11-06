@@ -354,8 +354,8 @@ button:focus-visible { outline: 2px solid var(--sb-blue-soft); outline-offset: 2
 .notes-sidebar ul { list-style: none; display: grid; gap: 6px; margin: 0; padding: 0; }
 .notes-sidebar li button { width: 100%; text-align: left; overflow-wrap: anywhere; }
 .notes-document { display: flex; flex-direction: column; gap: 12px; }
-.notes-document-heading { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid rgb(151 177 215 / 15%); padding-bottom: 12px; font-size: 13px; }
-.notes-document-heading > span:first-child { flex: 1; overflow-wrap: anywhere; color: #aebed3; }
+.notes-document-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; border-bottom: 1px solid rgb(151 177 215 / 15%); padding-bottom: 12px; font-size: 13px; }
+.notes-document-heading > span:first-child { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; color: #aebed3; }
 .notes-editor-mode { display: flex; gap: 8px; }
 .notes-editor-mode button[aria-pressed="true"] { border-color: #8faee1; background: rgb(68 98 145 / 30%); }
 .notes-toolbar { display: flex; flex-wrap: wrap; gap: 6px; }

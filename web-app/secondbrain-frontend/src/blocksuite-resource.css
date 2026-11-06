@@ -1,0 +1,14 @@
+.blocksuite-resource-backdrop { position: fixed; inset: 0; z-index: 12000; display: grid; place-items: center; padding: 18px; background: rgb(4 11 22 / 74%); }
+.blocksuite-resource-dialog { display: flex; width: min(1180px, 96vw); height: min(860px, 94dvh); flex-direction: column; overflow: hidden; border: 1px solid rgb(151 177 215 / 24%); border-radius: 12px; background: #f8fafc; color: #1f2937; box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
+.blocksuite-resource-dialog header, .blocksuite-resource-dialog footer { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #dbe3ee; padding: 10px 14px; font-size: 13px; }
+.blocksuite-resource-dialog header span { flex: 1; }
+.blocksuite-resource-dialog footer { justify-content: space-between; border-top: 1px solid #dbe3ee; border-bottom: 0; }
+.blocksuite-resource-dialog button { border: 1px solid #bcc9d8; border-radius: 7px; padding: 6px 10px; background: white; color: #172033; cursor: pointer; }
+.blocksuite-resource-dialog button:disabled { cursor: not-allowed; opacity: .55; }
+.blocksuite-resource-upload { display: inline-flex; align-items: center; border: 1px solid #bcc9d8; border-radius: 7px; padding: 6px 10px; background: white; color: #172033; cursor: pointer; }
+.blocksuite-resource-upload input { position: absolute; width: 1px; height: 1px; clip: rect(0 0 0 0); overflow: hidden; }
+.blocksuite-resource-host { min-height: 0; flex: 1; overflow: auto; background: #fff; }
+.blocksuite-resource-host[data-kind="edgeless-canvas"] { overflow: hidden; }
+.blocksuite-resource-host .affine-page-viewport { min-height: 100%; padding: 24px; }
+.blocksuite-resource-host affine-page-root { min-height: 560px; }
+.blocksuite-resource-host .affine-edgeless-viewport { position: relative; width: 100%; height: 100%; min-height: 560px; overflow: hidden; }
