@@ -986,9 +986,10 @@ for (const viewport of activeViewports) {
           const firstDownload = await firstDownloadPromise;
           const firstCopyPath = await firstDownload.path();
           expect(firstCopyPath).toBeTruthy();
-          const firstCopy = JSON.parse(await readFile(firstCopyPath!, 'utf8')) as { updateB64: string; snapshot: Record<string, unknown> };
+          const firstCopy = JSON.parse(await readFile(firstCopyPath!, 'utf8')) as { updateB64: string; snapshot: Record<string, unknown>; complete: boolean };
           expect(firstCopy.updateB64.length).toBeGreaterThan(4);
           expect(JSON.stringify(firstCopy.snapshot)).toContain('unsaved resource conflict');
+          expect(firstCopy.complete).toBe(true);
           await expect(close).toBeEnabled();
           const conflictEditorAgain = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]').first();
           await conflictEditorAgain.click();
@@ -1003,6 +1004,31 @@ for (const viewport of activeViewports) {
           expect(secondCopyPath).toBeTruthy();
           const secondCopy = JSON.parse(await readFile(secondCopyPath!, 'utf8')) as { updateB64: string; snapshot: Record<string, unknown> };
           expect(JSON.stringify(secondCopy.snapshot)).toContain('later unsaved resource conflict');
+        }
+        if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
+          const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]').first();
+          await conflictEditor.click();
+          await page.keyboard.press('End');
+          await page.keyboard.press('Enter');
+          await page.keyboard.insertText(' unsaved image conflict');
+          await reopenedDialog.getByRole('button', { name: '保存资源' }).click();
+          await expect(reopenedDialog.getByRole('status')).toContainText('412');
+          const close = reopenedDialog.getByRole('button', { name: '关闭' });
+          await expect(close).toBeDisabled();
+          const copyPromise = page.waitForEvent('download');
+          await reopenedDialog.getByRole('button', { name: '下载未保存恢复副本' }).click();
+          const copyPath = await (await copyPromise).path();
+          expect(copyPath).toBeTruthy();
+          const recovery = JSON.parse(await readFile(copyPath!, 'utf8')) as {
+            updateB64: string; snapshot: Record<string, unknown>; complete: boolean;
+            blobs: Array<{ id: string; base64: string }>; missingBlobs: string[];
+          };
+          expect(recovery.complete, 'wp5_edgeless_conflict_copy_complete').toBe(true);
+          expect(recovery.missingBlobs, 'wp5_edgeless_conflict_missing_blobs').toEqual([]);
+          expect(recovery.updateB64.length).toBeGreaterThan(4);
+          expect(JSON.stringify(recovery.snapshot)).toContain('unsaved image conflict');
+          expect(Buffer.from(recovery.blobs[0].base64, 'base64'), 'wp5_edgeless_conflict_cached_blob').toEqual(uploadedBlobBytes);
+          await expect(close).toBeEnabled();
         }
         await reopenedDialog.getByRole('button', { name: /关闭/ }).click();
         return uploadedBlobUrl;
@@ -1051,8 +1077,10 @@ for (const viewport of activeViewports) {
       await page.getByRole('button', { name: title, exact: true }).click();
       const reopened = await reopenedRead;
       expect(reopened.status(), 'wp5_focus_reopen_api').toBe(200);
-      const reopenedPayload = await reopened.json() as { content?: unknown };
-      expect(reopenedPayload.content, 'wp5_focus_reopen_api').toBe(savedPayload.content);
+      const reopenedPayload = await reopened.json() as { content?: string };
+      expect(reopenedPayload.content, 'wp5_focus_reopen_api').toContain(savedPayload.content as string);
+      expect((reopenedPayload.content?.match(/\]\(attachments\/[0-9a-f]{32}\.blocksuite\.json\)/g) ?? []).length,
+        'wp5_focus_reopen_resource_references').toBe(2);
       observed.setDiagnosticAssertion('wp5_focus_reopen_content');
       await expect(page.getByRole('alert')).toContainText('Markdown 原文', { timeout: 20000 });
       const rawSource = page.locator('.notes-raw-source');

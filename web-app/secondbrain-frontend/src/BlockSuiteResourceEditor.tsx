@@ -185,6 +185,9 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const resourceRef = useRef(initialResource);
   const noteRef = useRef(note);
   const dirtyRef = useRef(false);
+  // Keep the exact bytes uploaded in this editing session so a later artifact
+  // set conflict cannot make the only recovery copy depend on a stale server ETag.
+  const uploadedBlobCopies = useRef(new Map<string, { contentType: string; bytes: Uint8Array }>());
   const [status, setStatus] = useState('正在载入 BlockSuite 资源…');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -289,6 +292,10 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     setStatus('正在将图片写入当前笔记的 SHA-256 Blob 存储…');
     try {
       const sourceId = await store.blobSync.set(file);
+      uploadedBlobCopies.current.set(sourceId, {
+        contentType: file.type,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      });
       const surface = store.getBlocksByFlavour('affine:surface')[0]?.model;
       if (!surface) throw new Error('画布 surface 不存在；图片已上传，可重试。');
       const index = store.getBlocksByFlavour('affine:image').length;
@@ -306,15 +313,27 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     const store = (host.current as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null)?.__sbBlockSuiteStore;
     if (!store) return;
     try {
-      setStatus('正在读取当前资源引用的图片以生成完整恢复副本…');
+      setStatus('正在生成恢复副本…');
       const snapshot = store.getTransformer().docToSnapshot(store);
       const spaceDoc = store.spaceDoc as Y.Doc;
       const blobs = [];
+      const missingBlobs: string[] = [];
       for (const id of referencedBlockSuiteBlobIds(store)) {
-        const data = await store.blobSync.get(id) as Blob | null;
-        if (!data) throw new Error(`无法读取引用的图片 Blob ${id}，未生成不完整恢复副本。`);
-        const bytes = new Uint8Array(await data.arrayBuffer());
-        blobs.push({ id, contentType: data.type, bytes: bytes.byteLength, base64: base64(bytes) });
+        const local = uploadedBlobCopies.current.get(id);
+        if (local) {
+          blobs.push({ id, contentType: local.contentType, bytes: local.bytes.byteLength, base64: base64(local.bytes) });
+          continue;
+        }
+        try {
+          const data = await store.blobSync.get(id) as Blob | null;
+          if (!data) { missingBlobs.push(id); continue; }
+          const bytes = new Uint8Array(await data.arrayBuffer());
+          blobs.push({ id, contentType: data.type, bytes: bytes.byteLength, base64: base64(bytes) });
+        } catch {
+          // Preserve Yjs and any locally cached blobs even when a concurrent
+          // attachment-set change makes the remaining remote reads unsafe.
+          missingBlobs.push(id);
+        }
       }
       const body = {
         schemaVersion: 1,
@@ -324,6 +343,8 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         updateB64: base64(Y.encodeStateAsUpdate(spaceDoc)),
         snapshot,
         blobs,
+        missingBlobs,
+        complete: missingBlobs.length === 0,
         recoveryContext: { noteCollection: noteRef.current.collection, notePath: noteRef.current.path,
           noteEtag: noteRef.current.etag, resourceEtag: resourceRef.current.etag },
       };
@@ -335,7 +356,9 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
       setRecoveryCopyReady(true);
-      setStatus('已下载包含 Yjs update、快照与所引用图片的恢复副本。');
+      setStatus(missingBlobs.length === 0
+        ? '已下载包含 Yjs update、快照与所引用图片的完整恢复副本。'
+        : `已下载部分恢复副本；${missingBlobs.length} 个图片 Blob 未包含，已在文件中明确列出。`);
     } catch (error) {
       setStatus(`恢复副本生成失败；编辑内容仍保留。${error instanceof Error ? error.message : ''}`);
     }
