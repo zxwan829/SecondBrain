@@ -67,6 +67,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_saved_tag' | 'notes_blocksuite_saved_custom_property'
   | 'notes_blocksuite_saved_edit_text' | 'notes_blocksuite_saved_status'
   | 'notes_blocksuite_conflict_seed' | 'notes_blocksuite_conflict_rejected'
+  | 'notes_blocksuite_conflict_editor_enabled' | 'notes_blocksuite_conflict_unsaved_state'
   | 'notes_blocksuite_conflict_ui' | 'notes_blocksuite_conflict_readback'
   | 'notes_blocksuite_conflict_readback_status' | 'notes_blocksuite_conflict_readback_payload'
   | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_editor_entry'
@@ -1412,10 +1413,15 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_rejected');
       const staleWrite = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_editor_enabled');
+      await expect(page.locator('.blocksuite-notes-canvas')).toHaveAttribute('data-disabled', 'false');
       await block.click();
       await page.keyboard.press('End');
       await page.keyboard.press('Enter');
       await page.keyboard.insertText('WP5 stale browser edit must not replace Core');
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_unsaved_state');
+      await expect(page.locator('.notes-document-heading [role="status"]')).toHaveText('未保存', { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_rejected');
       const rejected = await staleWrite;
       expect(rejected.status(), 'notes_blocksuite_conflict').toBe(412);
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_ui');

@@ -102,6 +102,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_blocksuite_saved_status", "notes_ui_state_unsaved", "notes_ui_state_saving",
     "notes_ui_state_conflict", "notes_ui_state_failed", "notes_ui_state_unknown",
     "notes_blocksuite_conflict_seed", "notes_blocksuite_conflict_rejected",
+    "notes_blocksuite_conflict_editor_enabled", "notes_blocksuite_conflict_unsaved_state",
     "notes_blocksuite_conflict_ui", "notes_blocksuite_conflict_readback",
     "notes_blocksuite_conflict_readback_status", "notes_blocksuite_conflict_readback_payload",
     "notes_blocksuite_reopen_note_selector", "notes_blocksuite_reopen_editor_entry",
