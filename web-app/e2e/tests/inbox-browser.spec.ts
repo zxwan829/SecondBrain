@@ -1217,11 +1217,9 @@ for (const viewport of viewports) {
       await expect(canvas).toContainText(syntheticNoteBody);
       observed.setDiagnosticAssertion('notes_blocksuite_enabled');
       await expect(canvas).toHaveAttribute('data-disabled', 'false');
-      // Edit a regular Markdown body paragraph rather than the first heading;
-      // the Page title/heading has separate editor behavior and is not the
-      // persistence target for this body round-trip assertion.
-      const block = canvas.locator('[contenteditable="true"]')
-        .filter({ hasText: syntheticNoteBody }).first();
+      // Click the body text itself, rather than the center of its potentially
+      // full-page contenteditable ancestor (which can land on the first heading).
+      const block = canvas.getByText(syntheticNoteBody, { exact: false });
       observed.setDiagnosticAssertion('notes_blocksuite_contenteditable');
       await expect(block).toContainText(syntheticNoteBody);
 
