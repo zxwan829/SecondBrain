@@ -105,7 +105,13 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         if (disposed || !host.current) { currentWorkspace.dispose(); return; }
         std = new BlockStdScope({ store: store as any, extensions: views.get('page') });
         const root = std.render();
-        host.current.replaceChildren(root);
+        // RootViewExtension resolves `.affine-page-viewport` for page focus,
+        // selection and coordinate services. Keep the same wrapper contract as
+        // the pinned archive instead of mounting the Page root directly.
+        const viewport = document.createElement('div');
+        viewport.className = 'affine-page-viewport';
+        viewport.append(root);
+        host.current.replaceChildren(viewport);
         const currentEditor: NonNullable<typeof editorRef.current> = { store, std, workspace: currentWorkspace, adapter, split };
         editorRef.current = currentEditor;
         const publish = () => {
