@@ -96,6 +96,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_blocksuite_open", "notes_blocksuite_edit", "notes_blocksuite_edit_focus",
     "notes_blocksuite_edit_end", "notes_blocksuite_edit_newline", "notes_blocksuite_edit_type",
     "notes_blocksuite_edit_save_response", "notes_blocksuite_edit_response_body",
+    "notes_blocksuite_saved_title", "notes_blocksuite_saved_tag",
+    "notes_blocksuite_saved_custom_property", "notes_blocksuite_saved_edit_text",
     "notes_blocksuite_reopen",
     "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",

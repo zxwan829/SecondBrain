@@ -60,7 +60,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_navigation_link' | 'notes_collections' | 'notes_blocksuite_open'
   | 'notes_blocksuite_edit' | 'notes_blocksuite_edit_focus' | 'notes_blocksuite_edit_end'
   | 'notes_blocksuite_edit_newline' | 'notes_blocksuite_edit_type' | 'notes_blocksuite_edit_save_response'
-  | 'notes_blocksuite_edit_response_body' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
+  | 'notes_blocksuite_edit_response_body' | 'notes_blocksuite_saved_title'
+  | 'notes_blocksuite_saved_tag' | 'notes_blocksuite_saved_custom_property'
+  | 'notes_blocksuite_saved_edit_text' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
@@ -1236,9 +1238,13 @@ for (const viewport of viewports) {
       expect(saved.status(), 'notes_blocksuite_save').toBe(200);
       observed.setDiagnosticAssertion('notes_blocksuite_edit_response_body');
       const savedPayload = await saved.json() as { content: string };
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_title');
       expect(savedPayload.content).toContain('title: WP5 synthetic note');
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_custom_property');
       expect(savedPayload.content).toContain('custom: preserve-me');
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_tag');
       expect(savedPayload.content).toContain('wp5-synthetic');
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_edit_text');
       expect(savedPayload.content).toContain(updatedBody);
       await expect(page.getByRole('status').filter({ hasText: '已保存' }).first()).toBeVisible();
 
