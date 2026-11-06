@@ -28,6 +28,9 @@ import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import './blocksuite-notes.css';
 import '@toeverything/theme/style.css';
 
+type FallbackReason = 'invalid_frontmatter' | 'unsupported_syntax' | 'markdown_conversion_error'
+  | 'unsafe_roundtrip' | 'view_initialization_error';
+
 function markdownAdapter(store: any) {
   const job = store.getTransformer();
   // v0.22.4's source entrypoints and declaration entrypoints expose duplicate
@@ -57,7 +60,7 @@ function makeManagers() {
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
 export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback }: {
-  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: () => void;
+  value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<{ store: any; std: BlockStdScope; workspace: TransientMarkdownWorkspace; adapter: MarkdownAdapter; split: MarkdownParts; subscription?: { unsubscribe: () => void } } | null>(null);
@@ -76,12 +79,15 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
     let workspace: TransientMarkdownWorkspace | undefined;
     let std: BlockStdScope | undefined;
     const initialize = async () => {
+      let fallbackReason: FallbackReason = 'invalid_frontmatter';
       try {
         const split = splitOpaqueFrontmatter(valueRef.current);
         // Keep formats whose assets or Obsidian semantics belong to the existing editor on its fallback path.
         if (/!\[[^\]]*\]\([^)]*attachments\//i.test(split.body) || /\[\[[^\]]+\]\]|<\s*\/?[a-z][^>]*>/i.test(split.body)) {
-          throw new Error('此笔记含附件或 Obsidian 专用语法');
+          if (!disposed) onFallbackRef.current('unsupported_syntax');
+          return;
         }
+        fallbackReason = 'markdown_conversion_error';
         const { stores, views } = makeManagers();
         const currentWorkspace = new TransientMarkdownWorkspace();
         workspace = currentWorkspace;
@@ -100,9 +106,12 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const exported = await adapter.fromBlock(store.getBlocksByFlavour('affine:note')[0]!.model as any);
         const body = exported?.file ?? '';
         if (!blockSuiteMarkdownMatches(split.body, body)) {
-          throw new Error('此笔记无法通过 BlockSuite 安全往返');
+          if (!disposed) onFallbackRef.current('unsafe_roundtrip');
+          currentWorkspace.dispose();
+          return;
         }
         if (disposed || !host.current) { currentWorkspace.dispose(); return; }
+        fallbackReason = 'view_initialization_error';
         std = new BlockStdScope({ store: store as any, extensions: views.get('page') });
         const root = std.render();
         // RootViewExtension resolves `.affine-page-viewport` for page focus,
@@ -135,7 +144,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
       } catch (error) {
         if (!disposed) {
           setStatus(error instanceof Error ? error.message : 'BlockSuite 无法安全载入此 Markdown');
-          onFallbackRef.current();
+          onFallbackRef.current(fallbackReason);
         }
         workspace?.dispose();
       }

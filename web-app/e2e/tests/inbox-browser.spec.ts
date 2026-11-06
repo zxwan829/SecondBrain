@@ -1378,7 +1378,12 @@ test.afterEach(async ({ page }, testInfo) => {
     const notesUiState = await page.evaluate(() => {
       const visible = (element: Element | null) => Boolean(element && (element as HTMLElement).getClientRects().length);
       if (visible(document.querySelector('vite-error-overlay'))) return 'vite_error';
-      if (visible(document.querySelector('.notes-document [role="alert"]'))) return 'fallback_message';
+      const fallback = document.querySelector('.notes-document [role="alert"]');
+      if (visible(fallback)) {
+        const reason = fallback.getAttribute('data-fallback-reason');
+        if (reason && ['invalid_frontmatter', 'unsupported_syntax', 'markdown_conversion_error', 'unsafe_roundtrip', 'view_initialization_error'].includes(reason)) return `fallback_${reason}`;
+        return 'fallback_message';
+      }
       if (visible(document.querySelector('.blocksuite-notes-canvas'))) return 'blocksuite_canvas';
       if (visible(document.querySelector('.notes-document .ProseMirror'))) return 'legacy_editor';
       const root = document.querySelector('#root');

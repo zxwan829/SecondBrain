@@ -294,7 +294,9 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                     and (type(notes_seed_status) is not int or not 100 <= notes_seed_status <= 599))
                 or (notes_ui_state is not None and (
                     not isinstance(notes_ui_state, str) or notes_ui_state not in {
-                        "vite_error", "fallback_message", "blocksuite_canvas", "legacy_editor",
+                        "vite_error", "fallback_message", "fallback_invalid_frontmatter", "fallback_unsupported_syntax",
+                        "fallback_markdown_conversion_error", "fallback_unsafe_roundtrip",
+                        "fallback_view_initialization_error", "blocksuite_canvas", "legacy_editor",
                         "app_blank", "canvas_missing", "unavailable",
                     }))
                 or not isinstance(page_error_names, list) or len(page_error_names) > 5

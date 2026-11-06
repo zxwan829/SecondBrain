@@ -20,6 +20,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [editorMode, setEditorMode] = useState<'blocksuite' | 'legacy'>('legacy');
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
+  const blockSuiteFallbackReason = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [trashView, setTrashView] = useState(false);
   const [trashItems, setTrashItems] = useState<NotesTrashItem[]>([]);
@@ -95,7 +96,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     if (!protectUnsaved()) return;
     const revision = beginTransition();
     const targetCollection = collection;
-    setLoading(true); setMessage('');
+    setLoading(true); setMessage(''); blockSuiteFallbackReason.current = null;
     try {
       const loaded = await notesApi.read(targetCollection, path);
       if (viewRevision.current !== revision) return;
@@ -157,7 +158,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const createDraft = async () => {
     if (!protectUnsaved()) return;
     const revision = beginTransition();
-    setLoading(true); setMessage('');
+    setLoading(true); setMessage(''); blockSuiteFallbackReason.current = null;
     try {
       const created = await notesApi.create('# 未命名笔记\n\n');
       if (viewRevision.current !== revision) return;
@@ -288,7 +289,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     const key = noteKey(target);
     const idempotencyKey = trashIdempotencyKeys.current[key] ?? globalThis.crypto.randomUUID();
     trashIdempotencyKeys.current[key] = idempotencyKey;
-    setLoading(true); setMessage('');
+    setLoading(true); setMessage(''); blockSuiteFallbackReason.current = null;
     try {
       await notesApi.trash(target, idempotencyKey);
       delete trashIdempotencyKeys.current[key];
@@ -451,11 +452,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
             : '此笔记含有不透明 YAML Frontmatter；旧版编辑器保持只读，请切换 BlockSuite 以安全编辑正文。'}</div>
           <pre className="notes-raw-source">{content}</pre>
         </> : editorMode === 'blocksuite' ? <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
-          onFallback={() => { setEditorMode('legacy'); setMessage('BlockSuite 不支持安全往返此笔记，已保留原文并切回旧版编辑器。'); }} /></Suspense>
+          onFallback={(reason) => { blockSuiteFallbackReason.current = reason ?? null; setEditorMode('legacy'); setMessage('BlockSuite 不支持安全往返此笔记，已保留原文并切回旧版编辑器。'); }} /></Suspense>
           : <MarkdownEditor key={`legacy:${noteKey(note)}`} value={content} disabled={false} onChange={change} onImagePaste={pasteImage}
             onOpenVisualAsset={openVisual}
             assetBase={`/api/notes/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`} /> : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
-        {message && <p role="alert" className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
+        {message && <p role="alert" data-fallback-reason={blockSuiteFallbackReason.current ?? undefined} className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
         {unpersistedVisual && state === '保存失败' && note && noteKey(note) === noteKey(unpersistedVisual.note) &&
           <button type="button" onClick={() => void retryVisualReference()}>重试保存图形引用</button>}
       </section>
