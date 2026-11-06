@@ -150,8 +150,12 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
             }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
           }, 250);
         };
-        const subscription = store.slots.blockUpdated.subscribe(publish);
-        currentEditor.subscription = subscription;
+        // BlockSuite text content is stored in nested Y.Text values. The
+        // blockUpdated slot observes block/property changes, but does not fire
+        // for every inline text edit, so listen to the transient document's
+        // update event to publish all edits back through Core Notes.
+        store.spaceDoc.on('update', publish);
+        currentEditor.subscription = { unsubscribe: () => store.spaceDoc.off('update', publish) };
         setReady(true);
         setStatus('BlockSuite Page · Core Notes 保存');
       } catch (error) {
