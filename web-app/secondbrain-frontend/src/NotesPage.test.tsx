@@ -26,7 +26,7 @@ import { NotesPage } from './NotesPage';
 describe('NotesPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
-  it('keeps opaque frontmatter out of the legacy editor and offers BlockSuite for safe body edits', async () => {
+  it('keeps opaque frontmatter read-only while BlockSuite is unavailable in this production build', async () => {
     const note = { collection: 'drafts', path: '中文笔记.md', content: '---\ntags: [合成]\ncustom: 保留\n---\n\n# 正文\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
@@ -37,9 +37,9 @@ describe('NotesPage', () => {
     });
     render(<NotesPage />);
     fireEvent.click(await screen.findByRole('button', { name: '中文笔记' }));
-    expect(await screen.findByText(/旧版编辑器保持只读/)).toBeTruthy();
+    expect(await screen.findByText(/当前编辑器保持只读并保留原文/)).toBeTruthy();
     expect(document.querySelector('.notes-raw-source')?.textContent).toBe(note.content);
-    expect(screen.getByRole('button', { name: 'BlockSuite 编辑器' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'BlockSuite 编辑器' })).toBeNull();
     expect(screen.queryByLabelText('合成 Markdown 编辑器')).toBeNull();
   });
 
