@@ -71,6 +71,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_conflict_readback_status' | 'notes_blocksuite_conflict_readback_payload'
   | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_editor_entry'
   | 'notes_blocksuite_reopen_canvas'
+  | 'notes_setext_seed_status' | 'notes_setext_reopen_read' | 'notes_setext_editor_open' | 'notes_setext_fallback' | 'notes_setext_fallback_render'
+  | 'notes_attachment_select' | 'notes_attachment_open' | 'notes_attachment_fallback' | 'notes_attachment_render'
+  | 'notes_unsafe_select' | 'notes_unsafe_source' | 'notes_unsafe_safety' | 'notes_unsafe_editor_hidden'
   | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
   | 'notes_conflict_seed_status_403' | 'notes_conflict_seed_status_404'
   | 'notes_conflict_seed_status_409' | 'notes_conflict_seed_status_412'
@@ -1479,29 +1482,42 @@ for (const viewport of activeViewports) {
       const setextSeed = await page.request.put(`${baseUrl}/api/notes/drafts/${activeNotePath}`, {
         headers: { 'If-Match': latest.headers()['etag'] ?? '' }, data: { content: setextContent },
       });
+      observed.setDiagnosticAssertion('notes_setext_seed_status');
       expect(setextSeed.status(), 'notes_seed_setext_fallback').toBe(200);
       page.once('dialog', (dialog) => void dialog.accept());
       await page.reload();
       const fallbackRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_setext_editor_open');
       await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
-      await fallbackRead;
+      observed.setDiagnosticAssertion('notes_setext_reopen_read');
+      expect((await fallbackRead).status()).toBe(200);
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_setext_fallback');
       await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      observed.setDiagnosticAssertion('notes_setext_fallback_render');
       await expect(page.locator('.ProseMirror')).toContainText('Setext compatibility heading');
 
       observed.setFailureStage('notes_blocksuite_reopen');
+      observed.setDiagnosticAssertion('notes_attachment_select');
       await page.getByRole('button', { name: 'WP5 attachment fallback fixture', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_attachment_open');
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_attachment_fallback');
       await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      observed.setDiagnosticAssertion('notes_attachment_render');
       await expect(page.locator('.ProseMirror img[alt="synthetic attachment"]')).toBeVisible();
 
+      observed.setDiagnosticAssertion('notes_unsafe_select');
       await page.getByRole('button', { name: 'WP5 unsafe Markdown fixture', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_unsafe_source');
       await expect(page.locator('.notes-raw-source')).toContainText('[[Synthetic Wiki Target]]');
       await expect(page.locator('.notes-raw-source')).toContainText('![[synthetic-embed.png]]');
       await expect(page.locator('.notes-raw-source')).toContainText('<details>');
       await expect(page.locator('.notes-raw-source')).toContainText('> > [!NOTE]');
+      observed.setDiagnosticAssertion('notes_unsafe_safety');
       await expect(page.locator('.notes-safety')).toBeVisible();
+      observed.setDiagnosticAssertion('notes_unsafe_editor_hidden');
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器' })).toHaveCount(0);
     }
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
