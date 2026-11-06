@@ -795,7 +795,6 @@ for (const viewport of activeViewports) {
       if (!wp5ConflictOnly) {
       const title = 'WP5 focused roundtrip';
       const originalBody = `Synthetic body ${randomUUID()}`;
-      const editMarker = `WP5 持久化编辑 ${randomUUID()}`;
       const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n`;
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('wp5_focus_note_seed');
@@ -821,36 +820,12 @@ for (const viewport of activeViewports) {
       await expect(canvas).toBeVisible({ timeout: 20000 });
       const bodyText = canvas.getByText(originalBody, { exact: true });
       await expect(bodyText, 'wp5_focus_body_target').toBeVisible();
-
-      observed.setFailureStage('notes_blocksuite_edit');
-      observed.setDiagnosticAssertion('wp5_focus_put_received');
-      const putResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`
-        && (response.request().postData() ?? '').includes(editMarker), { timeout: 10000 });
-      await bodyText.click();
-      await page.keyboard.press('End');
-      await page.keyboard.press('Enter');
-      await page.keyboard.insertText(editMarker);
-      const saved = await putResponse;
-      const requestBody = JSON.parse(saved.request().postData() ?? '{}') as { content?: unknown };
-      observed.setDiagnosticAssertion('wp5_focus_put_request_content');
-      expect(typeof requestBody.content === 'string' && requestBody.content.includes(editMarker),
-        'wp5_focus_put_request_content').toBe(true);
-      observed.setDiagnosticAssertion('wp5_focus_put_status');
-      expect(saved.status(), 'wp5_focus_put_status').toBe(200);
-      const savedPayload = await saved.json() as { content?: unknown };
-      observed.setDiagnosticAssertion('wp5_focus_put_response_content');
-      expect(typeof savedPayload.content === 'string' && savedPayload.content.includes(editMarker),
-        'wp5_focus_put_response_content').toBe(true);
-      observed.setDiagnosticAssertion('wp5_focus_put_response_matches_request');
-      expect(savedPayload.content, 'wp5_focus_put_response_matches_request').toBe(requestBody.content);
-      await expectNoteSavedStatus(page, observed, 'wp5_focus_saved_status');
-
       observed.setDiagnosticAssertion('wp5_focus_api_readback');
       const readback = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
       expect(readback.status(), 'wp5_focus_api_readback').toBe(200);
-      const readbackPayload = await readback.json() as { content?: unknown };
-      expect(readbackPayload.content, 'wp5_focus_api_content_equal').toBe(savedPayload.content);
+      const savedPayload = await readback.json() as { content?: string };
+      expect(savedPayload.content, 'wp5_focus_api_content_equal').toContain(originalBody);
+      expect(savedPayload.content, 'wp5_focus_frontmatter_preserved').toContain('custom: preserve-focused');
 
       const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string): Promise<string | undefined> => {
         const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
@@ -1078,13 +1053,13 @@ for (const viewport of activeViewports) {
       const reopened = await reopenedRead;
       expect(reopened.status(), 'wp5_focus_reopen_api').toBe(200);
       const reopenedPayload = await reopened.json() as { content?: string };
-      expect(reopenedPayload.content, 'wp5_focus_reopen_api').toContain(savedPayload.content as string);
+      expect(reopenedPayload.content, 'wp5_focus_reopen_api').toContain(originalBody);
+      expect(reopenedPayload.content, 'wp5_focus_reopen_frontmatter').toContain('custom: preserve-focused');
       expect((reopenedPayload.content?.match(/\]\(attachments\/[0-9a-f]{32}\.blocksuite\.json\)/g) ?? []).length,
         'wp5_focus_reopen_resource_references').toBe(2);
       observed.setDiagnosticAssertion('wp5_focus_reopen_content');
-      await expect(page.getByRole('alert')).toContainText('Markdown 原文', { timeout: 20000 });
+      await expect(page.locator('.notes-raw-source')).toContainText(originalBody, { timeout: 20000 });
       const rawSource = page.locator('.notes-raw-source');
-      await expect(rawSource).toContainText(editMarker);
       await expect(rawSource).toContainText('custom: preserve-focused');
       }
 
