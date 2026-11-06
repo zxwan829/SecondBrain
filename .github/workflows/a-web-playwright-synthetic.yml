@@ -2,6 +2,12 @@ name: A Web synthetic browser acceptance
 
 on:
   workflow_dispatch:
+    inputs:
+      wp5_roundtrip_only:
+        description: Run only the desktop synthetic Notes BlockSuite save/reopen probe
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -61,7 +67,14 @@ jobs:
         run: python -m pytest -q web-app/e2e/tests/test_artifact_sanitizer.py
       - name: Run isolated Core + Web browser acceptance
         id: synthetic
-        run: python web-app/e2e/scripts/run_synthetic_ci.py
+        env:
+          WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only }}
+        run: |
+          if [ "$WP5_ROUNDTRIP_ONLY" = "true" ]; then
+            python web-app/e2e/scripts/run_synthetic_ci.py --wp5-roundtrip-only
+          else
+            python web-app/e2e/scripts/run_synthetic_ci.py
+          fi
       - name: Upload sanitized acceptance evidence
         if: always() && steps.synthetic.outputs.artifacts_verified == 'true'
         uses: actions/upload-artifact@v4

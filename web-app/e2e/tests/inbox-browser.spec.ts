@@ -36,6 +36,7 @@ const viewports = [
   { name: 'tablet-820x1180', width: 820, height: 1180 },
   { name: 'mobile-390x844', width: 390, height: 844 },
 ] as const;
+const wp5RoundtripOnly = process.env.SB_E2E_WP5_ROUNDTRIP_ONLY === 'true';
 
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
 type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
@@ -62,7 +63,11 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_edit_newline' | 'notes_blocksuite_edit_type' | 'notes_blocksuite_edit_save_response'
   | 'notes_blocksuite_edit_response_body' | 'notes_blocksuite_saved_title'
   | 'notes_blocksuite_saved_tag' | 'notes_blocksuite_saved_custom_property'
-  | 'notes_blocksuite_saved_edit_text' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
+  | 'notes_blocksuite_saved_edit_text' | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
+  | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
+  | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
+  | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
+  | 'wp5_focus_reopen_content' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
@@ -658,10 +663,84 @@ async function readSyntheticPassword(): Promise<string> {
 
 for (const viewport of viewports) {
   test(`explicit Inbox capture, retry, conflict and source protection at ${viewport.name}`, async ({ page }, testInfo) => {
+    if (wp5RoundtripOnly && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
     await signInAndCreateBlankSession(page, viewport, observed);
+    if (wp5RoundtripOnly) {
+      observed.setFailureStage('notes_navigation');
+      observed.setDiagnosticAssertion('wp5_focus_notes_navigation');
+      await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
+      await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+
+      const title = 'WP5 focused roundtrip';
+      const originalBody = `Synthetic body ${randomUUID()}`;
+      const editMarker = `WP5 persisted edit ${randomUUID()}`;
+      const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\n---\n\n# ${title}\n\n${originalBody}\n`;
+      observed.setFailureStage('notes_frontmatter_seed');
+      observed.setDiagnosticAssertion('wp5_focus_note_seed');
+      const seeded = await page.evaluate(async (content) => {
+        const response = await fetch('/api/notes', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+        return { status: response.status, note: response.ok ? await response.json() : null };
+      }, markdown);
+      observed.setNotesSeedStatus(seeded.status);
+      expect(seeded.status, 'wp5_focus_note_seed').toBe(200);
+      const note = seeded.note as { collection: string; path: string };
+      expect(note.collection, 'wp5_focus_note_seed_collection').toBe('drafts');
+
+      await page.reload();
+      observed.setFailureStage('notes_frontmatter_reopen');
+      const noteRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 5000 });
+      await page.getByRole('button', { name: title, exact: true }).click();
+      expect((await noteRead).status(), 'wp5_focus_note_open').toBe(200);
+      observed.setFailureStage('notes_blocksuite_open');
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const canvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_focus_editor_open');
+      await expect(canvas).toBeVisible({ timeout: 20000 });
+      const bodyText = canvas.getByText(originalBody, { exact: true });
+      await expect(bodyText, 'wp5_focus_body_target').toBeVisible();
+
+      observed.setFailureStage('notes_blocksuite_edit');
+      observed.setDiagnosticAssertion('wp5_focus_put_received');
+      const putResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 10000 });
+      await bodyText.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText(editMarker);
+      const saved = await putResponse;
+      const requestBody = JSON.parse(saved.request().postData() ?? '{}') as { content?: unknown };
+      observed.setDiagnosticAssertion('wp5_focus_put_request_content');
+      expect(typeof requestBody.content === 'string' && requestBody.content.includes(editMarker),
+        'wp5_focus_put_request_content').toBe(true);
+      observed.setDiagnosticAssertion('wp5_focus_put_status');
+      expect(saved.status(), 'wp5_focus_put_status').toBe(200);
+      const savedPayload = await saved.json() as { content?: unknown };
+      observed.setDiagnosticAssertion('wp5_focus_put_response_content');
+      expect(typeof savedPayload.content === 'string' && savedPayload.content.includes(editMarker),
+        'wp5_focus_put_response_content').toBe(true);
+
+      observed.setDiagnosticAssertion('wp5_focus_api_readback');
+      const readback = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
+      expect(readback.status(), 'wp5_focus_api_readback').toBe(200);
+      const readbackPayload = await readback.json() as { content?: unknown };
+      expect(readbackPayload.content, 'wp5_focus_api_content_equal').toBe(savedPayload.content);
+
+      observed.setFailureStage('notes_blocksuite_reopen');
+      await page.reload();
+      const reopenedRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 5000 });
+      await page.getByRole('button', { name: title, exact: true }).click();
+      expect((await reopenedRead).status(), 'wp5_focus_reopen_api').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('wp5_focus_reopen_content');
+      await expect(page.locator('.blocksuite-notes-canvas')).toContainText(editMarker);
+      return;
+    }
     const composer = page.getByPlaceholder('发送消息给 Hermes…');
     await composer.fill(original);
     observed.setFailureStage('first_submit');

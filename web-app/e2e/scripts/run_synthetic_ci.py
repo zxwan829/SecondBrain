@@ -98,6 +98,10 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_blocksuite_edit_save_response", "notes_blocksuite_edit_response_body",
     "notes_blocksuite_saved_title", "notes_blocksuite_saved_tag",
     "notes_blocksuite_saved_custom_property", "notes_blocksuite_saved_edit_text",
+    "wp5_focus_notes_navigation", "wp5_focus_note_seed", "wp5_focus_editor_open",
+    "wp5_focus_body_target", "wp5_focus_put_received", "wp5_focus_put_request_content",
+    "wp5_focus_put_status", "wp5_focus_put_response_content", "wp5_focus_api_readback",
+    "wp5_focus_api_content_equal", "wp5_focus_reopen_api", "wp5_focus_reopen_content",
     "notes_blocksuite_reopen",
     "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
@@ -1195,6 +1199,7 @@ def main() -> int:
     global CORE_URL, WEB_URL, ALLOW_FAILURE_SCREENSHOT_PUBLICATION
     parser = argparse.ArgumentParser()
     parser.add_argument("--http-smoke-only", action="store_true", help="run synthetic Core HTTP checks without launching a browser")
+    parser.add_argument("--wp5-roundtrip-only", action="store_true", help="run only the desktop WP5 Notes save/reopen browser probe")
     options = parser.parse_args()
     # The workflow uploads only this directory. It starts empty on every run;
     # raw Playwright output lives in the private temp root below and is never a
@@ -1243,6 +1248,7 @@ def main() -> int:
             "SB_TASK_ROOT": str(dirs["task"]),
             "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
+            "SB_E2E_WP5_ROUNDTRIP_ONLY": "true" if options.wp5_roundtrip_only else "false",
             "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
             "SB_DASHBOARD_ORIGINS": WEB_URL,
@@ -1306,16 +1312,20 @@ def main() -> int:
         today_brief_name = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
         brief_file_set_verified = False
         if test_returncode == 0:
-            expected_raw = 1 if options.http_smoke_only else 3
+            expected_raw = 1 if options.http_smoke_only else (0 if options.wp5_roundtrip_only else 3)
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
-            expected_journal_appends = 0 if options.http_smoke_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
+            expected_journal_appends = 0 if options.http_smoke_only or options.wp5_roundtrip_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
             assert_journal_fixture_unchanged(
                 dirs["journal"], journal_fixture, expected_browser_appends=expected_journal_appends,
             )
-            _assert_exact_brief_file_set(dirs["briefs"], today_brief_name)
-            brief_file_set_verified = True
+            if options.wp5_roundtrip_only:
+                if any(dirs["briefs"].iterdir()):
+                    raise RuntimeError("focused WP5 probe unexpectedly wrote Daily Brief files")
+            else:
+                _assert_exact_brief_file_set(dirs["briefs"], today_brief_name)
+                brief_file_set_verified = True
         brief_directory_files = sum(
             1 for path in dirs["briefs"].iterdir() if path.is_file() and not path.is_symlink()
         )
