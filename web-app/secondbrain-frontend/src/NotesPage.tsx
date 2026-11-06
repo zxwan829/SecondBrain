@@ -318,10 +318,32 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
 
   const retryBlockSuiteReference = async () => {
     const pending = pendingBlockSuiteReference;
-    if (!pending || state !== '保存失败' || !noteRef.current || noteKey(noteRef.current) !== noteKey(pending.note)) return;
+    if (!pending || !['保存失败', '版本冲突'].includes(state)
+        || !noteRef.current || noteKey(noteRef.current) !== noteKey(pending.note)) return;
     const revision = viewRevision.current;
     try {
-      const saved = await save(pending.note, contentRef.current, revision, editSequence.current);
+      let target = noteRef.current;
+      let content = contentRef.current;
+      if (state === '版本冲突') {
+        // Resource creation was explicit and began from a clean Note. On an
+        // explicit retry, preserve the newer Core Markdown and append only
+        // this resource's stable reference; never resend the stale body.
+        target = await notesApi.read(pending.note.collection, pending.note.path);
+        if (viewRevision.current !== revision || !noteRef.current
+            || noteKey(noteRef.current) !== noteKey(pending.note)) return;
+        if (!target.content.includes(pending.resource.filename)) {
+          const reference = `[BlockSuite resource](attachments/${pending.resource.filename})`;
+          content = `${target.content.trimEnd()}${target.content.trim() ? '\n\n' : ''}${reference}\n`;
+        } else {
+          content = target.content;
+        }
+        setCurrent(target, target.content);
+        contentRef.current = content;
+        setContent(content);
+        conflictedSave.current = null;
+        setState('未保存');
+      }
+      const saved = await save(target, content, revision, editSequence.current);
       if (!saved) throw new Error('笔记已切换，保存结果未应用到当前页面。');
       setPendingBlockSuiteReference(null);
       blockSuiteResourceOpen.current = true;
@@ -585,8 +607,10 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         {message && <p role="alert" data-fallback-reason={blockSuiteFallbackReason.current ?? undefined} className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
         {unpersistedVisual && state === '保存失败' && note && noteKey(note) === noteKey(unpersistedVisual.note) &&
           <button type="button" onClick={() => void retryVisualReference()}>重试保存图形引用</button>}
-        {pendingBlockSuiteReference && state === '保存失败' && note && noteKey(note) === noteKey(pendingBlockSuiteReference.note) &&
-          <button type="button" onClick={() => void retryBlockSuiteReference()}>重试保存 BlockSuite 资源引用</button>}
+        {pendingBlockSuiteReference && ['保存失败', '版本冲突'].includes(state) && note && noteKey(note) === noteKey(pendingBlockSuiteReference.note) &&
+          <button type="button" onClick={() => void retryBlockSuiteReference()}>
+            {state === '版本冲突' ? '读取最新笔记并追加 BlockSuite 资源引用' : '重试保存 BlockSuite 资源引用'}
+          </button>}
       </section>
     </div>}
     {blockSuiteResource && note && <Suspense fallback={<p role="status">正在加载 BlockSuite 资源编辑器…</p>}>

@@ -20,6 +20,11 @@ vi.mock('./VisualAssetDialog', () => ({
     </section>;
   },
 }));
+vi.mock('./BlockSuiteResourceEditor', () => ({
+  createBlockSuiteResourcePayload: (resourceKind: string) => ({ schemaVersion: 1, resourceKind,
+    docId: '00000000-0000-4000-8000-000000000002', updateB64: 'AQ==', snapshot: { schemaVersion: 1 } }),
+  BlockSuiteResourceEditor: () => <div role="dialog" aria-label="合成 BlockSuite 资源编辑器" />,
+}));
 
 import { NotesPage } from './NotesPage';
 
@@ -451,6 +456,45 @@ describe('NotesPage', () => {
       expect(screen.getByText('版本冲突')).toBeTruthy();
       expect(screen.queryByRole('button', { name: '重试保存图形引用' })).toBeNull();
     }
+  });
+
+  it('explicitly rebases a newly created BlockSuite reference after a Markdown 412', async () => {
+    const path = '00000000-0000-4000-8000-000000000001';
+    const initial = { collection: 'drafts', path, content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    const latest = { ...initial, content: '# Initial\n\nRemote concurrent edit.\n', etag: 'c'.repeat(64) };
+    const resourceId = '11111111111111111111111111111111';
+    let putCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(initial), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/resources` && init?.method === 'POST') {
+        return new Response(JSON.stringify({ resource_id: resourceId, resource_kind: 'database',
+          doc_id: '00000000-0000-4000-8000-000000000002', filename: `${resourceId}.blocksuite.json`,
+          reference: `[BlockSuite resource](attachments/${resourceId}.blocksuite.json)`, etag: 'b'.repeat(64), note_etag: initial.etag }), { status: 201 });
+      }
+      if (url === `/api/notes/drafts/${path}` && init?.method === 'PUT') {
+        putCount += 1;
+        if (putCount === 1) return new Response(JSON.stringify({ detail: 'revision changed' }), { status: 412 });
+        expect(new Headers(init.headers).get('If-Match')).toBe(`"${latest.etag}"`);
+        const content = JSON.parse(String(init.body)).content;
+        expect(content).toContain('Remote concurrent edit.');
+        expect(content).toContain(`${resourceId}.blocksuite.json`);
+        return new Response(JSON.stringify({ ...latest, content, etag: 'd'.repeat(64) }), { status: 200 });
+      }
+      if (url === `/api/notes/drafts/${path}` && !init?.method) return new Response(JSON.stringify(latest), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    fireEvent.click(await screen.findByRole('button', { name: '新建 BlockSuite Database' }));
+    await screen.findByText('版本冲突');
+    const retry = await screen.findByRole('button', { name: '读取最新笔记并追加 BlockSuite 资源引用' });
+    fireEvent.click(retry);
+    await screen.findByRole('dialog', { name: '合成 BlockSuite 资源编辑器' });
+    expect(putCount).toBe(2);
   });
 
   it('requires confirmation before soft deletion and sends the current SHA with an idempotency key', async () => {
