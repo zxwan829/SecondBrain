@@ -9,11 +9,15 @@ function safePageErrorSummary(value: string): string {
   const missingExport = value.match(/requested module ['\"]([^'\"]+)['\"] does not provide an export named ['\"]([^'\"]+)['\"]/i);
   if (missingExport) {
     const modulePath = missingExport[1].split(/[?#]/, 1)[0].replaceAll('\\', '/');
-    const packageMatch = modulePath.match(/\/node_modules\/@blocksuite\/([^/]+)/)
-      ?? modulePath.match(/\/node_modules\/@blocksuite_([^/]+?)(?:\.js)?$/);
-    const packageName = packageMatch?.[1]?.replace(/[^A-Za-z0-9_-]/g, '') ?? 'unknown';
+    const dependencyPath = modulePath.split('/node_modules/', 2)[1] ?? '';
+    const dependency = dependencyPath.startsWith('.vite/deps/')
+      ? dependencyPath.slice('.vite/deps/'.length).split('/', 1)[0]
+      : dependencyPath.startsWith('@')
+        ? dependencyPath.split('/', 2).join('_')
+        : dependencyPath.split('/', 1)[0];
+    const moduleName = dependency.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64) || 'unknown';
     const symbol = /^[A-Za-z_$][A-Za-z0-9_$]{0,48}$/.test(missingExport[2]) ? missingExport[2] : 'unknown';
-    return `missing_export package_${packageName} symbol_${symbol}`.slice(0, 120);
+    return `missing_export module_${moduleName} symbol_${symbol}`.slice(0, 120);
   }
   return value
     .replace(/https?:\/\/[^\s)]+/gi, '<url>')
