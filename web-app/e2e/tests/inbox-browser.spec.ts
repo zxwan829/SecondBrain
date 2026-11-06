@@ -835,11 +835,21 @@ for (const viewport of activeViewports) {
         await expect(createButton, `wp5_${kind}_create_button_enabled`).toBeEnabled();
         const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources`, { timeout: 15000 });
+        const resourceError = page.locator('.notes-document [role="alert"]');
+        const resourceOutcome = Promise.race([
+          resourcePost.then(response => ({ response })),
+          resourceError.waitFor({ state: 'visible', timeout: 10000 }).then(() => ({ error: true as const })),
+        ]);
         const referenceSave = page.waitForResponse((response) => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 15000 });
         observed.setDiagnosticAssertion('wp5_focus_put_received');
         await createButton.click();
-        const created = await resourcePost;
+        const outcome = await resourceOutcome;
+        if ('error' in outcome) {
+          console.log('WP5_RESOURCE_CREATE_ERROR', (await resourceError.textContent())?.slice(0, 240) ?? 'alert-without-text');
+          throw new Error('BlockSuite resource creation failed before the Core POST response');
+        }
+        const created = outcome.response;
         expect(created.status(), `wp5_resource_${kind}_create`).toBe(200);
         const resourceInfo = await created.json() as { resource_id: string; filename: string; reference: string; etag: string };
         const resourceDialog = page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' });
