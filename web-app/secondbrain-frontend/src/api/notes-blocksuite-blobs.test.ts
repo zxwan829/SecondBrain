@@ -29,6 +29,7 @@ describe('note-scoped BlockSuite BlobSource', () => {
     const source = new NoteBoundBlockSuiteBlobSource(() => note, fetcher as typeof fetch, changed);
 
     await expect(source.set(key, new Blob([png], { type: 'image/png' }))).resolves.toBe(key);
+    expect(fetcher.mock.contexts[0]).toBe(globalThis);
     const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`/api/notes/drafts/folder/note.md/blocksuite/blobs/${encodeURIComponent(key)}`);
     expect(init.method).toBe('PUT');
@@ -48,6 +49,7 @@ describe('note-scoped BlockSuite BlobSource', () => {
     const source = new NoteBoundBlockSuiteBlobSource(() => note, fetcher as typeof fetch);
 
     const loaded = await source.get(key);
+    expect(fetcher.mock.contexts[0]).toBe(globalThis);
     expect(loaded?.type).toBe('image/png');
     expect([...new Uint8Array(await loaded!.arrayBuffer())]).toEqual([...png]);
     expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ credentials: 'same-origin', cache: 'no-store' });
