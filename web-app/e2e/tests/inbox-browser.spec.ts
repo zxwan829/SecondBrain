@@ -80,7 +80,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_conflict_editor_enabled' | 'notes_blocksuite_conflict_unsaved_state'
   | 'notes_blocksuite_conflict_ui' | 'notes_blocksuite_conflict_readback'
   | 'notes_blocksuite_conflict_readback_status' | 'notes_blocksuite_conflict_readback_payload'
-  | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_editor_entry'
+  | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_navigation_response' | 'notes_blocksuite_reopen_editor_entry'
   | 'notes_blocksuite_reopen_canvas'
   | 'notes_setext_seed_status_200' | 'notes_setext_seed_status_401' | 'notes_setext_seed_status_403'
   | 'notes_setext_seed_status_409' | 'notes_setext_seed_status_412' | 'notes_setext_seed_status_422'
@@ -1731,6 +1731,7 @@ for (const viewport of activeViewports) {
         && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_note_selector');
       await page.getByRole('button', { name: syntheticNoteBody, exact: true }).click();
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_navigation_response');
       expect((await closeRead).status(), 'notes_blocksuite_close_read').toBe(200);
       const blockSuiteRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
