@@ -24,7 +24,7 @@ describe('note-scoped BlockSuite BlobSource', () => {
     expect(key).toMatch(/^[A-Za-z0-9_-]{43}=$/);
     expect(key).toBe(await sha(png.slice().buffer as ArrayBuffer));
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(JSON.stringify({ blob_id: key, sha256: hex, bytes: png.byteLength, content_type: 'image/png', note_etag: note.etag, artifact_set_etag: nextSet }), { status: 201, headers: { ETag: `"${hex}"`, 'X-Note-ETag': `"${note.etag}"`, 'X-Artifact-Set-ETag': `"${nextSet}"` } }));
+      new Response(JSON.stringify({ blob_id: key, etag: hex, size_bytes: png.byteLength, content_type: 'image/png', note_etag: note.etag, artifact_set_etag: nextSet }), { status: 201, headers: { ETag: `"${hex}"`, 'X-Note-ETag': `"${note.etag}"`, 'X-Artifact-Set-ETag': `"${nextSet}"` } }));
     const changed = vi.fn();
     const source = new NoteBoundBlockSuiteBlobSource(() => note, fetcher as typeof fetch, changed);
 

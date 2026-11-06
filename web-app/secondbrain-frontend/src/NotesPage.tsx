@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { NotePropertiesPanel } from './NotePropertiesPanel';
-import { notesApi, type BlockSuiteResource, type BlockSuiteResourceKind, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
+import { notesApi, type BlockSuiteResource, type BlockSuiteResourceKind, type BlockSuiteSnapshotDetail, type BlockSuiteSnapshotEntry, type BlockSuiteSnapshots, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
 import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
 
 const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module) => ({ default: module.VisualAssetDialog })));
@@ -9,6 +9,44 @@ const BlockSuiteResourceEditor = lazy(() => import('./BlockSuiteResourceEditor')
 
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
+const blockSuiteBlobKeyPattern = /^[A-Za-z0-9_-]{43}=$/;
+const emptyBlockSuiteArtifactSetEtag = '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945';
+const artifactKind = (artifact: { kind?: string; resource_id?: string; resource?: unknown; blob?: unknown }) =>
+  artifact.kind ?? (artifact.resource_id || artifact.resource ? 'resource' : artifact.blob ? 'blob' : '');
+const artifactId = (artifact: { id?: string; resource_id?: string }) => artifact.id ?? artifact.resource_id ?? '';
+
+function referencedBlockSuiteBlobIds(resource: { snapshot?: unknown }): string[] {
+  const found = new Set<string>();
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    for (const [key, item] of Object.entries(value)) {
+      if ((key === 'sourceId' || key === 'source_id') && typeof item === 'string' && blockSuiteBlobKeyPattern.test(item)) found.add(item);
+      visit(item);
+    }
+  };
+  visit(resource.snapshot);
+  return [...found];
+}
+
+async function validateSnapshotBlobs(artifacts: { kind?: string; id?: string; etag?: string; size_bytes?: number; bytes?: number; data_base64?: string }[]) {
+  const blobs = artifacts.filter((artifact) => artifact.kind === 'blob');
+  if (!blobs.length) return;
+  const { sha } = await import('@blocksuite/global/utils');
+  for (const artifact of blobs) {
+    if (!artifact.id || !artifact.data_base64 || !blockSuiteBlobKeyPattern.test(artifact.id)) {
+      throw new Error('快照图片缺少规范的 Blob key 或内容。');
+    }
+    const raw = atob(artifact.data_base64);
+    if (btoa(raw) !== artifact.data_base64) throw new Error(`快照图片 ${artifact.id} 的 base64 不是规范编码。`);
+    const bytes = Uint8Array.from(raw, (char) => char.charCodeAt(0));
+    if (bytes.byteLength !== (artifact.size_bytes ?? artifact.bytes)) throw new Error(`快照图片 ${artifact.id} 的长度校验失败。`);
+    if (await sha(bytes.slice().buffer as ArrayBuffer) !== artifact.id) throw new Error(`快照图片 ${artifact.id} 的 SHA-256 校验失败。`);
+    const digestRaw = atob(artifact.id.replace(/-/g, '+').replace(/_/g, '/'));
+    const expectedHex = digestRaw.split('').map((char) => char.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    if (artifact.etag?.replace(/^"|"$/g, '') !== expectedHex) throw new Error(`快照图片 ${artifact.id} 的 ETag 校验失败。`);
+  }
+}
 
 export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { onRegisterNavigationGuard?: (guard: (() => boolean) | null) => void; onOpenInboxSource?: (collection: string, path: string) => void }) {
   const [collections, setCollections] = useState<NoteCollection[]>([]);
@@ -27,6 +65,12 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [trashOffset, setTrashOffset] = useState(0);
   const [trashHasMore, setTrashHasMore] = useState(false);
   const [restorePreview, setRestorePreview] = useState<{ etag: string; content: string } | null>(null);
+  const [blockSuiteSnapshots, setBlockSuiteSnapshots] = useState<{ note: Note; result: BlockSuiteSnapshots } | null>(null);
+  const [blockSuiteSnapshotPreview, setBlockSuiteSnapshotPreview] = useState<{ entry: BlockSuiteSnapshotEntry; detail: BlockSuiteSnapshotDetail; currentNoteEtag: string; currentArtifactSetEtag: string } | null>(null);
+  const [blockSuiteSnapshotBusy, setBlockSuiteSnapshotBusy] = useState(false);
+  const [blockSuiteRestoreFailed, setBlockSuiteRestoreFailed] = useState(false);
+  const [blockSuiteSnapshotRecoveryCopy, setBlockSuiteSnapshotRecoveryCopy] = useState<string | null>(null);
+  const [blockSuiteSnapshotRecoveryComplete, setBlockSuiteSnapshotRecoveryComplete] = useState(false);
   const [visualAsset, setVisualAsset] = useState<VisualAsset | null>(null);
   const [unpersistedVisual, setUnpersistedVisual] = useState<{ note: Note; asset: VisualAsset } | null>(null);
   const [creatingVisual, setCreatingVisual] = useState(false);
@@ -84,6 +128,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setBlockSuiteResource(null);
     blockSuiteResourceOpen.current = false;
     setRestorePreview(null);
+    setBlockSuiteSnapshots(null);
+    setBlockSuiteSnapshotPreview(null);
+    setBlockSuiteRestoreFailed(false);
+    setBlockSuiteSnapshotRecoveryCopy(null);
+    setBlockSuiteSnapshotRecoveryComplete(false);
     setVisualAsset(null);
     setUnpersistedVisual(null);
     return viewRevision.current;
@@ -512,11 +561,39 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const restore = async () => {
     const target = noteRef.current;
     if (!target) return;
+    if (state !== '已保存' || blockSuiteResourceOpen.current || !protectUnsaved()) {
+      setMessage('请先保存并关闭当前编辑器，再查看可恢复版本。');
+      return;
+    }
     const targetKey = noteKey(target);
     const revision = viewRevision.current;
     setRestorePreview(null);
+    setBlockSuiteSnapshots(null);
+    setBlockSuiteSnapshotPreview(null);
+    setBlockSuiteRestoreFailed(false);
+    setBlockSuiteSnapshotRecoveryCopy(null);
+    setBlockSuiteSnapshotRecoveryComplete(false);
     try {
-      const result = await notesApi.history(target);
+      if (/\]\(attachments\/[0-9a-f]{32}\.blocksuite\.json\)/i.test(target.content) || target.artifactSetEtag) {
+        let consistent = await notesApi.readWithArtifactSet(target.collection, target.path);
+        let closure = await notesApi.readBlockSuiteSnapshots(consistent);
+        if (consistent.etag !== closure.note_etag || consistent.artifactSetEtag !== closure.artifact_set_etag) {
+          consistent = await notesApi.readWithArtifactSet(target.collection, target.path);
+          closure = await notesApi.readBlockSuiteSnapshots(consistent);
+        }
+        if (consistent.etag !== closure.note_etag || consistent.artifactSetEtag !== closure.artifact_set_etag) {
+          throw Object.assign(new Error('笔记或 BlockSuite 资源集合在读取期间变化；请重新打开笔记后重试。'), { status: 412 });
+        }
+        if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== targetKey) return;
+        noteRef.current = consistent; setNote(consistent);
+        if (closure.snapshots.length || closure.artifact_set_etag !== emptyBlockSuiteArtifactSetEtag) {
+          setBlockSuiteSnapshots({ note: consistent, result: closure });
+          if (!closure.snapshots.length) setMessage('暂无完整且已校验的 BlockSuite 快照；当前正文与资源未改变。');
+          else setMessage('选择一个快照查看目标 Markdown 与资源摘要；当前笔记尚未改变。');
+          return;
+        }
+      }
+      const result = await notesApi.history(noteRef.current ?? target);
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== targetKey) return;
       if (!Array.isArray(result.versions)) throw new Error('历史版本响应格式无效。');
       if (!result.versions.length) { setMessage('暂无可恢复版本。'); return; }
@@ -532,6 +609,142 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
               : '无法连接历史服务或响应格式无效，请检查连接后重试。';
       if (viewRevision.current === revision && noteRef.current && noteKey(noteRef.current) === targetKey) setMessage(message);
     }
+  };
+
+  const previewBlockSuiteSnapshot = async (snapshotId: string) => {
+    const history = blockSuiteSnapshots;
+    const revision = viewRevision.current;
+    const entry = history?.result.snapshots.find((item) => item.snapshot_id === snapshotId);
+    if (!history || !entry || blockSuiteSnapshotBusy) return;
+    setBlockSuiteSnapshotBusy(true);
+    setBlockSuiteSnapshotPreview(null);
+    setBlockSuiteRestoreFailed(false);
+    try {
+      const current = noteRef.current;
+      if (!current || noteKey(current) !== noteKey(history.note)
+          || current.etag !== history.note.etag || current.artifactSetEtag !== history.note.artifactSetEtag) {
+        throw Object.assign(new Error('当前 Note 或资源集合版本已变化；请重新载入快照列表。'), { status: 412 });
+      }
+      const detail = await notesApi.readBlockSuiteSnapshot(history.note, snapshotId);
+      if (detail.snapshot_id !== entry.snapshot_id || detail.note.etag !== entry.note_sha256
+          || detail.artifact_set_etag !== entry.artifact_set_etag) {
+        throw new Error('快照详情与列表摘要不匹配；已拒绝预览。');
+      }
+      const referenced = [...detail.note.content.matchAll(/\]\(attachments\/([0-9a-f]{32})\.blocksuite\.json\)/ig)].map((match) => match[1].toLowerCase());
+      const resourceArtifacts = detail.artifacts.filter((artifact) => artifactKind(artifact) === 'resource');
+      const blobArtifacts = detail.artifacts.filter((artifact) => artifactKind(artifact) === 'blob');
+      const artifactIds = new Set(resourceArtifacts.map(artifactId).map((id) => id.toLowerCase()));
+      if (referenced.some((id) => !artifactIds.has(id))) throw new Error('此快照的 Markdown 引用了缺失资源；已拒绝恢复。');
+      const referencedBlobs = new Set(resourceArtifacts.flatMap((artifact) => referencedBlockSuiteBlobIds(artifact.resource ?? {})));
+      const blobIds = new Set(blobArtifacts.map(artifactId));
+      if ([...referencedBlobs].some((id) => !blobIds.has(id))) throw new Error('此快照的 BlockSuite 资源引用了缺失图片；已拒绝恢复。');
+      await validateSnapshotBlobs(detail.artifacts);
+      if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(history.note)) return;
+      setBlockSuiteSnapshotPreview({ entry, detail, currentNoteEtag: history.note.etag, currentArtifactSetEtag: history.result.artifact_set_etag });
+      setMessage('已载入快照内容与资源摘要；当前笔记尚未改变。');
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status;
+      setMessage(status === 412 ? '当前笔记或资源已变化，未读取混合版本快照；请重新打开后重试。'
+        : `无法安全预览此 BlockSuite 快照：${error instanceof Error ? error.message : '读取失败'}`);
+    } finally { setBlockSuiteSnapshotBusy(false); }
+  };
+
+  const downloadBlockSuiteRecoveryCopy = () => {
+    if (!blockSuiteSnapshotRecoveryCopy || !noteRef.current) return;
+    const blob = new Blob([blockSuiteSnapshotRecoveryCopy], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `blocksuite-${noteRef.current.path.split('/').at(-1) || 'note'}-recovery.json`; anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setMessage('已下载恢复前捕获的当前 Markdown 与引用资源副本；远端内容未被覆盖。');
+  };
+
+  const confirmBlockSuiteRestore = async () => {
+    const preview = blockSuiteSnapshotPreview;
+    const current = noteRef.current;
+    if (!preview || !current || blockSuiteSnapshotBusy || !protectUnsaved()) return;
+    if (current.etag !== preview.currentNoteEtag || current.artifactSetEtag !== preview.currentArtifactSetEtag) {
+      setBlockSuiteRestoreFailed(true);
+      setBlockSuiteSnapshotRecoveryCopy(JSON.stringify({ schemaVersion: 1, recoveryType: 'blocksuite-snapshot-restore-conflict',
+        captureComplete: false, note: { collection: current.collection, path: current.path, etag: current.etag, content: current.content },
+        artifactSetEtag: current.artifactSetEtag, resources: [], blobs: [] }, null, 2));
+      setBlockSuiteSnapshotRecoveryComplete(false);
+      setMessage('当前 Note 或资源集合版本已变化（412）；没有恢复或覆盖内容。可下载当前正文副本后重新载入。');
+      return;
+    }
+    const blobSummary = preview.detail.artifacts.filter((artifact) => artifactKind(artifact) === 'blob')
+      .map((artifact) => `图片 ${artifactId(artifact)} · ${artifact.content_type ?? 'unknown'} · ${artifact.size_bytes ?? artifact.bytes ?? 0} bytes · ${artifact.sha256 ?? artifact.etag ?? 'unknown digest'}`).join('\n');
+    const accepted = window.confirm(`将 BlockSuite 快照 ${preview.entry.snapshot_id} 恢复到此笔记？\n\n当前 Note: ${preview.currentNoteEtag}\n当前资源集合: ${preview.currentArtifactSetEtag}\n目标 Note: ${preview.detail.note.etag}\n目标资源集合: ${preview.detail.artifact_set_etag}\n\n目标图片：\n${blobSummary || '无'}\n\n恢复后会替换正文与该快照中的 BlockSuite 资源。`);
+    if (!accepted) return;
+    setBlockSuiteSnapshotBusy(true);
+    setBlockSuiteRestoreFailed(false);
+    setBlockSuiteSnapshotRecoveryCopy(null);
+    setBlockSuiteSnapshotRecoveryComplete(false);
+    try {
+      setBlockSuiteSnapshotRecoveryCopy(JSON.stringify({ schemaVersion: 1, recoveryType: 'blocksuite-snapshot-restore-conflict',
+        captureComplete: false, note: { collection: current.collection, path: current.path, etag: current.etag, content: current.content },
+        artifactSetEtag: current.artifactSetEtag, resources: [], blobs: [] }, null, 2));
+      const resourceIds = [...new Set([...current.content.matchAll(/\]\(attachments\/([0-9a-f]{32})\.blocksuite\.json\)/ig)].map((match) => match[1].toLowerCase()))];
+      const currentResources = await Promise.all(resourceIds.map((id) => notesApi.readBlockSuiteResource(current, id)));
+      setBlockSuiteSnapshotRecoveryCopy(JSON.stringify({ schemaVersion: 1, recoveryType: 'blocksuite-snapshot-restore-conflict',
+        captureComplete: false, note: { collection: current.collection, path: current.path, etag: current.etag, content: current.content },
+        artifactSetEtag: current.artifactSetEtag, resources: currentResources, blobs: [] }, null, 2));
+      if (currentResources.some((resource) => resource.note_etag !== current.etag
+          || resource.artifact_set_etag !== current.artifactSetEtag)) throw Object.assign(new Error('当前资源版本发生变化，未启动恢复。'), { status: 412 });
+      const blobIds = [...new Set(currentResources.flatMap(referencedBlockSuiteBlobIds))];
+      const { NoteBoundBlockSuiteBlobSource } = await import('./api/notes-blocksuite-blobs');
+      const blobSource = new NoteBoundBlockSuiteBlobSource(() => current);
+      const currentBlobs = await Promise.all(blobIds.map(async (id) => {
+        const value = await blobSource.get(id);
+        if (!value) throw new Error(`当前资源引用的图片 ${id} 无法读取；未启动恢复。`);
+        const bytes = new Uint8Array(await value.arrayBuffer());
+        let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
+        return { id, content_type: value.type, bytes: bytes.byteLength, base64: btoa(binary) };
+      }));
+      const recoveryCopy = JSON.stringify({ schemaVersion: 1, recoveryType: 'blocksuite-snapshot-restore-conflict',
+        captureComplete: true,
+        note: { collection: current.collection, path: current.path, etag: current.etag, content: current.content },
+        artifactSetEtag: current.artifactSetEtag, resources: currentResources, blobs: currentBlobs }, null, 2);
+      setBlockSuiteSnapshotRecoveryCopy(recoveryCopy);
+      setBlockSuiteSnapshotRecoveryComplete(true);
+      const result = await notesApi.restoreBlockSuiteSnapshot(current, preview.entry.snapshot_id);
+      if (!result.restored || result.snapshot_id !== preview.entry.snapshot_id) throw new Error('Core 未确认此快照恢复成功。');
+      const restored = await notesApi.readWithArtifactSet(current.collection, current.path);
+      if (restored.etag !== result.note_etag || restored.artifactSetEtag !== result.artifact_set_etag) {
+        throw Object.assign(new Error('恢复响应与重新读取的 Note/资源版本不一致。'), { status: 412 });
+      }
+      const resourceArtifacts = preview.detail.artifacts.filter((artifact) => artifactKind(artifact) === 'resource');
+      const blobArtifacts = preview.detail.artifacts.filter((artifact) => artifactKind(artifact) === 'blob');
+      for (const artifact of resourceArtifacts) {
+        const id = artifactId(artifact);
+        const loaded = await notesApi.readBlockSuiteResource(restored, id);
+        if (loaded.resourceId !== id || loaded.etag !== (artifact.sha256 ?? artifact.etag)
+            || loaded.note_etag !== restored.etag || loaded.artifact_set_etag !== restored.artifactSetEtag) {
+          throw new Error(`恢复后的资源 ${id} 无法验证。`);
+        }
+      }
+      if (blobArtifacts.length) {
+        const { NoteBoundBlockSuiteBlobSource } = await import('./api/notes-blocksuite-blobs');
+        const source = new NoteBoundBlockSuiteBlobSource(() => restored);
+        for (const artifact of blobArtifacts) {
+          const id = artifactId(artifact);
+          if (!await source.get(id)) throw new Error(`恢复后的图片 ${id} 无法验证。`);
+        }
+      }
+      if (!noteRef.current || noteKey(noteRef.current) !== noteKey(current)) throw new Error('笔记已切换；恢复结果未应用到当前视图。');
+      setCurrent(restored, restored.content);
+      setState('已保存');
+      setBlockSuiteSnapshots(null); setBlockSuiteSnapshotPreview(null); setBlockSuiteRestoreFailed(false);
+      setBlockSuiteSnapshotRecoveryCopy(null);
+      setBlockSuiteSnapshotRecoveryComplete(false);
+      setMessage('BlockSuite 快照已恢复，并重新验证了正文与引用资源。');
+      void refresh(restored.collection);
+    } catch (error) {
+      const status = (error as Error & { status?: number }).status;
+      setBlockSuiteRestoreFailed(true);
+      setMessage(status === 412 || status === 409
+        ? `恢复未执行（HTTP ${status}）：当前正文与资源保留，Core 未强制覆盖。建议先下载当前恢复副本，再重新载入快照列表。`
+        : `恢复未能确认完成；当前页面正文仍保留。${error instanceof Error ? error.message : ''}`);
+    } finally { setBlockSuiteSnapshotBusy(false); }
   };
   const confirmRestore = () => {
     if (!restorePreview || !protectUnsaved()) return;
@@ -598,6 +811,39 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           <h2>最近历史版本预览</h2><pre>{restorePreview.content}</pre>
           <button type="button" onClick={() => setRestorePreview(null)}>取消</button>
           <button type="button" onClick={confirmRestore}>使用此版本</button>
+        </section>}
+        {blockSuiteSnapshots && <section className="notes-restore-preview blocksuite-snapshot-history" aria-label="BlockSuite 快照恢复">
+          <h2>BlockSuite 完整快照</h2>
+          <p>当前 Note ETag：<code>{blockSuiteSnapshots.note.etag}</code></p>
+          <p>当前资源集合 ETag：<code>{blockSuiteSnapshots.result.artifact_set_etag}</code></p>
+          {!blockSuiteSnapshots.result.snapshots.length ? <p>没有可恢复的完整快照。</p> : <ul aria-label="可恢复 BlockSuite 快照">
+            {blockSuiteSnapshots.result.snapshots.map((entry) => <li key={entry.snapshot_id}>
+              <span>{new Date(entry.created_at).toLocaleString()} · Note {entry.note_sha256.slice(0, 12)} · {entry.artifact_count} 项 / {entry.artifact_bytes} bytes</span>
+              <button type="button" disabled={blockSuiteSnapshotBusy} onClick={() => void previewBlockSuiteSnapshot(entry.snapshot_id)}>选择并预览</button>
+            </li>)}
+          </ul>}
+          {blockSuiteSnapshotPreview && <div aria-label="BlockSuite 快照预览">
+            <h3>目标快照摘要</h3>
+            <p>目标 Note ETag：<code>{blockSuiteSnapshotPreview.detail.note.etag}</code></p>
+            <p>目标资源集合 ETag：<code>{blockSuiteSnapshotPreview.detail.artifact_set_etag}</code></p>
+            <h4>目标 Markdown</h4><pre>{blockSuiteSnapshotPreview.detail.note.content}</pre>
+            <h4>目标 BlockSuite 资源（{blockSuiteSnapshotPreview.detail.artifacts.length} 项）</h4>
+            <ul>{blockSuiteSnapshotPreview.detail.artifacts.map((artifact) => <li key={`${artifactKind(artifact)}:${artifactId(artifact)}`}>
+              {artifactKind(artifact) === 'resource'
+                ? `${artifact.resource?.resourceKind ?? 'resource'} · ${artifact.resource?.docId ?? artifactId(artifact)} · ${artifact.bytes ?? new TextEncoder().encode(JSON.stringify(artifact.resource ?? {})).byteLength} bytes · ${artifact.sha256 ?? artifact.etag ?? ''}`
+                : `图片 · ${artifact.content_type ?? 'unknown'} · ${artifact.size_bytes ?? artifact.bytes ?? 0} bytes · SHA-256 ${artifact.sha256 ?? artifact.etag ?? artifactId(artifact)}`}
+            </li>)}</ul>
+            <p>只有显式确认后才会提交恢复。恢复请求会同时校验当前 Note 与资源集合 ETag。</p>
+            <button type="button" disabled={blockSuiteSnapshotBusy} onClick={() => { setBlockSuiteSnapshotPreview(null); setBlockSuiteRestoreFailed(false); setBlockSuiteSnapshotRecoveryCopy(null); setBlockSuiteSnapshotRecoveryComplete(false); }}>取消</button>
+            <button type="button" disabled={blockSuiteSnapshotBusy} onClick={() => void confirmBlockSuiteRestore()}>
+              {blockSuiteSnapshotBusy ? '正在校验或恢复…' : '确认恢复此 BlockSuite 快照'}
+            </button>
+          </div>}
+          {blockSuiteRestoreFailed && blockSuiteSnapshotRecoveryCopy && <>
+            {!blockSuiteSnapshotRecoveryComplete && <p>完整资源副本生成失败；下载文件将包含当前 Markdown 及已成功读取的资源部分。</p>}
+            <button type="button" onClick={downloadBlockSuiteRecoveryCopy}>{blockSuiteSnapshotRecoveryComplete ? '下载恢复前的正文、资源与图片副本' : '下载当前部分恢复副本'}</button>
+          </>}
+          <button type="button" disabled={blockSuiteSnapshotBusy} onClick={() => { setBlockSuiteSnapshots(null); setBlockSuiteSnapshotPreview(null); setBlockSuiteRestoreFailed(false); setBlockSuiteSnapshotRecoveryCopy(null); setBlockSuiteSnapshotRecoveryComplete(false); }}>关闭</button>
         </section>}
         {note && state === '已保存' && !loading && <NotePropertiesPanel key={noteKey(note)} note={note} onSaved={(saved) => {
           setCurrent(saved, saved.content); setState('已保存'); setMessage(''); void refresh(saved.collection);

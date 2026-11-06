@@ -57,9 +57,10 @@ export class NoteBoundBlockSuiteBlobSource implements BlobSource {
       body: value,
     });
     if (!response.ok) throw httpError('PUT', response.status);
-    const result = await response.json().catch(() => null) as null | { blob_id?: unknown; sha256?: unknown; bytes?: unknown; content_type?: unknown; note_etag?: unknown; artifact_set_etag?: unknown };
-    if (!result || result.blob_id !== key || result.sha256 !== shaKeyHex(key) || result.bytes !== bytes.byteLength
+    const result = await response.json().catch(() => null) as null | { blob_id?: unknown; etag?: unknown; size_bytes?: unknown; content_type?: unknown; note_etag?: unknown; artifact_set_etag?: unknown };
+    if (!result || result.blob_id !== key || result.etag !== shaKeyHex(key) || result.size_bytes !== bytes.byteLength
       || result.content_type !== mediaType || trimEtag(response.headers.get('ETag')) !== shaKeyHex(key)
+      || trimEtag(String(result.note_etag ?? '')) !== note.etag
       || trimEtag(response.headers.get('X-Note-ETag')) !== note.etag
       || trimEtag(response.headers.get('X-Artifact-Set-ETag')) !== trimEtag(String(result.artifact_set_etag ?? ''))) {
       throw new Error('Core Notes Blob 写入确认的摘要与上传内容不匹配');

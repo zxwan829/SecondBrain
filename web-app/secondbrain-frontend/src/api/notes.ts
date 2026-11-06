@@ -16,6 +16,18 @@ export type NotesTrashItem = {
 };
 export type BlockSuiteSnapshotEntry = { snapshot_id: string; note_sha256: string; artifact_set_etag: string; created_at: string; artifact_count: number; artifact_bytes: number };
 export type BlockSuiteSnapshots = { note_etag: string; artifact_set_etag: string; snapshots: BlockSuiteSnapshotEntry[] };
+export type BlockSuiteSnapshotDetail = {
+  snapshot_id: string; note: { content: string; etag: string }; artifact_set_etag: string;
+  artifacts: BlockSuiteSnapshotArtifact[];
+};
+export type BlockSuiteSnapshotArtifact = {
+  kind?: 'resource' | 'blob'; id?: string; resource_id?: string; etag?: string; sha256?: string;
+  bytes?: number; size_bytes?: number; content_type?: string; data_base64?: string;
+  resource?: BlockSuiteResourceWrite; blob?: Record<string, unknown>;
+};
+export type BlockSuiteSnapshotRestoreResult = {
+  snapshot_id: string; note_etag: string; artifact_set_etag: string; restored: boolean; duplicate: boolean;
+};
 
 const etagHeader = (value?: string) => value ? `"${value.replace(/^"|"$/g, '')}"` : undefined;
 function withArtifactSet(note: Note, init: RequestInit = {}): RequestInit {
@@ -33,8 +45,19 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
     error.status = response.status;
     throw error;
   }
-  if (result && typeof result === 'object' && response.headers.get('X-Artifact-Set-ETag')) {
-    (result as Record<string, unknown>).artifact_set_etag = (response.headers.get('X-Artifact-Set-ETag') || '').replace(/^"|"$/g, '');
+  if (result && typeof result === 'object') {
+    const data = result as Record<string, unknown>;
+    const noteHeader = response.headers.get('X-Note-ETag')?.replace(/^"|"$/g, '');
+    const bodyNoteEtag = typeof data.note_etag === 'string' ? data.note_etag
+      : data.note && typeof data.note === 'object' && typeof (data.note as Record<string, unknown>).etag === 'string'
+        ? (data.note as Record<string, unknown>).etag as string : undefined;
+    const artifactHeader = response.headers.get('X-Artifact-Set-ETag')?.replace(/^"|"$/g, '');
+    if ((noteHeader && bodyNoteEtag && noteHeader !== bodyNoteEtag)
+        || (artifactHeader && typeof data.artifact_set_etag === 'string' && artifactHeader !== data.artifact_set_etag)) {
+      throw Object.assign(new Error('Core Notes 响应头与 BlockSuite 版本摘要不一致。'), { status: 412 });
+    }
+    if (artifactHeader) data.artifact_set_etag = artifactHeader;
+    if (typeof data.artifact_set_etag === 'string') data.artifactSetEtag = data.artifact_set_etag;
   }
   return result as T;
 }
@@ -60,6 +83,16 @@ export const notesApi = {
     throw Object.assign(new Error('笔记与 BlockSuite 附件集合持续变化；请刷新后重试。'), { status: 412 });
   },
   readBlockSuiteSnapshots: (note: Note) => json<BlockSuiteSnapshots>(`${pathUrl(note.collection, note.path)}/blocksuite/snapshots`),
+  readBlockSuiteSnapshot: (note: Note, snapshotId: string) => json<BlockSuiteSnapshotDetail>(
+    `${pathUrl(note.collection, note.path)}/blocksuite/snapshots/${encodeURIComponent(snapshotId)}`,
+  ),
+  restoreBlockSuiteSnapshot: (note: Note, snapshotId: string) => json<BlockSuiteSnapshotRestoreResult>(
+    `${pathUrl(note.collection, note.path)}/blocksuite/snapshots/${encodeURIComponent(snapshotId)}/restore`,
+    { method: 'POST', headers: {
+      'If-Match': etagHeader(note.etag)!,
+      'If-Artifact-Set-Match': etagHeader(note.artifactSetEtag)!,
+    } },
+  ),
   readProperties: (note: Note) => json<NoteProperties>(`${pathUrl(note.collection, note.path)}/properties`),
   saveProperties: (note: Note, type: string, tags: string[]) => json<Note>(`${pathUrl(note.collection, note.path)}/properties`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"` },
