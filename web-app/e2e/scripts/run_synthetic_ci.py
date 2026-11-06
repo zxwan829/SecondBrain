@@ -127,6 +127,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_focus_api_content_equal", "wp5_focus_reopen_api", "wp5_focus_reopen_content",
     "wp5_focus_saved_status",
     "wp5_conflict_probe_seed", "wp5_conflict_probe_open", "wp5_conflict_probe_initial_read",
+    "wp5_conflict_probe_canvas",
     "wp5_conflict_probe_external_write", "wp5_conflict_probe_request_path", "wp5_conflict_probe_rejected",
     "wp5_conflict_probe_readback", "wp5_conflict_probe_reopen", "wp5_conflict_probe_recovery_status",
     "wp5_conflict_probe_recovery_body", "wp5_conflict_probe_recovery_readback",

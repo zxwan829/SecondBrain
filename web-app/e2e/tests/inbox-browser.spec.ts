@@ -93,6 +93,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_focus_saved_status'
   | 'wp5_focus_reopen_content' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
   | 'wp5_conflict_probe_seed' | 'wp5_conflict_probe_open' | 'wp5_conflict_probe_initial_read'
+  | 'wp5_conflict_probe_canvas'
   | 'wp5_conflict_probe_external_write' | 'wp5_conflict_probe_request_path' | 'wp5_conflict_probe_rejected'
   | 'wp5_conflict_probe_readback' | 'wp5_conflict_probe_reopen' | 'wp5_conflict_probe_recovery_status'
   | 'wp5_conflict_probe_recovery_body' | 'wp5_conflict_probe_recovery_readback'
@@ -750,7 +751,7 @@ for (const viewport of activeViewports) {
                   : text === '保存失败' ? 'notes-queue-failed' : '';
           if (event && event !== previousState) { previousState = event; emit(event); }
         });
-        observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+        observer.observe(document, { subtree: true, childList: true, characterData: true });
       }, WP5_PROBE_MARKER);
     }
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
@@ -860,6 +861,7 @@ for (const viewport of activeViewports) {
       expect((await conflictRead).status(), 'wp5_conflict_probe_open').toBe(200);
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const conflictCanvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_conflict_probe_canvas');
       await expect(conflictCanvas).toBeVisible({ timeout: 20000 });
       const baselineBlock = conflictCanvas.getByText(baselineText, { exact: true });
       await expect(baselineBlock).toBeVisible();
