@@ -1381,7 +1381,7 @@ test.afterEach(async ({ page }, testInfo) => {
       const fallback = document.querySelector('.notes-document [role="alert"]');
       if (visible(fallback)) {
         const reason = fallback.getAttribute('data-fallback-reason');
-        if (reason && ['invalid_frontmatter', 'unsupported_syntax', 'markdown_conversion_error', 'unsafe_roundtrip', 'view_initialization_error'].includes(reason)) return `fallback_${reason}`;
+        if (reason && ['invalid_frontmatter', 'unsupported_syntax', 'markdown_conversion_error', 'unsafe_roundtrip', 'terminal_newline_mismatch', 'content_mismatch', 'view_initialization_error'].includes(reason)) return `fallback_${reason}`;
         return 'fallback_message';
       }
       if (visible(document.querySelector('.blocksuite-notes-canvas'))) return 'blocksuite_canvas';

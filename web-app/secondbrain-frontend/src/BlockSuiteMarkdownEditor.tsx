@@ -29,7 +29,8 @@ import './blocksuite-notes.css';
 import '@toeverything/theme/style.css';
 
 type FallbackReason = 'invalid_frontmatter' | 'unsupported_syntax' | 'markdown_conversion_error'
-  | 'unsafe_roundtrip' | 'view_initialization_error';
+  | 'unsafe_roundtrip' | 'terminal_newline_mismatch' | 'content_mismatch'
+  | 'view_initialization_error';
 
 function markdownAdapter(store: any) {
   const job = store.getTransformer();
@@ -106,7 +107,12 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const exported = await adapter.fromBlock(store.getBlocksByFlavour('affine:note')[0]!.model as any);
         const body = exported?.file ?? '';
         if (!blockSuiteMarkdownMatches(split.body, body)) {
-          if (!disposed) onFallbackRef.current('unsafe_roundtrip');
+          const normalize = (markdown: string) => markdown.replace(/\r\n/g, '\n');
+          const source = normalize(split.body);
+          const roundTrip = normalize(body);
+          const mismatch = source.replace(/\n+$/, '') === roundTrip.replace(/\n+$/, '')
+            ? 'terminal_newline_mismatch' : 'content_mismatch';
+          if (!disposed) onFallbackRef.current(mismatch);
           currentWorkspace.dispose();
           return;
         }
