@@ -1053,7 +1053,10 @@ for (const viewport of activeViewports) {
         ['notes-queue-conflict', 'wp5_conflict_probe_notes-queue-conflict'],
       ] as const) {
         observed.setDiagnosticAssertion(assertion);
-        expect(browserProbeEvents.some((event) => event.event === requiredEvent), assertion).toBe(true);
+        // The conflict is observed before the deliberate reload; the timer and
+        // conflict events from that document were copied into the test-level
+        // timeline above. The reopened document only contains recovery events.
+        expect(observed.wp5AutosaveProbeEvents.some((event) => event.event === requiredEvent), assertion).toBe(true);
       }
       observed.setDiagnosticAssertion('wp5_conflict_probe_timeline_bound');
       observed.wp5AutosaveProbeEvents = boundedWp5ProbeTimeline(observed.wp5AutosaveProbeEvents);
