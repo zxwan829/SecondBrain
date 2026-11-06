@@ -27,6 +27,7 @@
     "@blocksuite/affine-ext-loader": "0.22.4",
     "@blocksuite/affine-foundation": "0.22.4",
     "@blocksuite/affine-inline-preset": "0.22.4",
+    "@blocksuite/affine-inline-latex": "0.22.4",
     "@blocksuite/affine-model": "0.22.4",
     "@blocksuite/affine-shared": "0.22.4",
     "@blocksuite/global": "0.22.4",

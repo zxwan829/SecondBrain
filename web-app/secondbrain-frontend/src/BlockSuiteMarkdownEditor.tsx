@@ -17,6 +17,8 @@ import { FoundationStoreExtension } from '@blocksuite/affine-foundation/store';
 import { FoundationViewExtension } from '@blocksuite/affine-foundation/view';
 import { InlinePresetStoreExtension } from '@blocksuite/affine-inline-preset/store';
 import { InlinePresetViewExtension } from '@blocksuite/affine-inline-preset/view';
+import { LatexStoreExtension } from '@blocksuite/affine-inline-latex/store';
+import { LatexViewExtension } from '@blocksuite/affine-inline-latex/view';
 import { SurfaceStoreExtension } from '@blocksuite/affine-block-surface/store';
 import { SurfaceViewExtension } from '@blocksuite/affine-block-surface/view';
 import { MarkdownAdapter } from '@blocksuite/affine-shared/adapters';
@@ -42,14 +44,14 @@ function makeManagers() {
   const stores = new StoreExtensionManager([
     FoundationStoreExtension, RootStoreExtension, NoteStoreExtension,
     ParagraphStoreExtension, ListStoreExtension, CodeStoreExtension,
-    TableStoreExtension, DividerStoreExtension, InlinePresetStoreExtension,
+    TableStoreExtension, DividerStoreExtension, InlinePresetStoreExtension, LatexStoreExtension,
     SurfaceStoreExtension,
   ]);
   stores.configure(NoteStoreExtension, { mode: 'doc' });
   const views = new ViewExtensionManager([
     FoundationViewExtension, RootViewExtension, NoteViewExtension,
     ParagraphViewExtension, ListViewExtension, CodeBlockViewExtension,
-    TableViewExtension, DividerViewExtension, InlinePresetViewExtension,
+    TableViewExtension, DividerViewExtension, InlinePresetViewExtension, LatexViewExtension,
     SurfaceViewExtension,
   ]);
   return { stores, views };
