@@ -14,7 +14,8 @@
     "package:review-bundle": "node scripts/package-review-bundle.mjs",
     "validate:manifest": "node scripts/validate-manifest.mjs",
     "verify:bundle": "node scripts/verify-bundle.mjs",
-    "verify:fe25": "node scripts/verify-fe25.mjs"
+    "verify:fe25": "node scripts/verify-fe25.mjs",
+    "test:blocksuite-lifecycle": "vitest run --config vitest.lifecycle.config.ts"
   },
   "dependencies": {
     "@blocksuite/affine-block-code": "0.22.4",

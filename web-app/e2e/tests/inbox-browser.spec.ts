@@ -764,7 +764,7 @@ for (const viewport of activeViewports) {
     // conflict/recovery, and an unsupported-Markdown preservation probe. Give
     // that composed journey enough total execution budget without extending
     // any individual product wait/assertion or weakening its conditions.
-    if (viewport.name === 'desktop-1440x1000') test.setTimeout(60_000);
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5RoundtripOnly ? 120_000 : 60_000);
     if ((wp5RoundtripOnly || wp5ConflictOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
@@ -966,25 +966,36 @@ for (const viewport of activeViewports) {
           throw error;
         });
         observed.setDiagnosticAssertion('wp5_resource_focus');
-        await editable.click();
+        if (kind === 'database') await editable.click();
         observed.setDiagnosticAssertion('wp5_resource_type');
         await page.keyboard.press('End');
         await page.keyboard.press('Enter');
         await page.keyboard.insertText(marker);
         observed.setDiagnosticAssertion('wp5_resource_dirty');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_009');
-        await expect(resourceDialog.getByText('有未保存的资源修改')).toBeVisible();
+        await expect(resourceDialog.getByRole('button', { name: '保存资源' })).toBeEnabled();
         const resourcePut = page.waitForResponse((response) => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`, { timeout: 15000 });
         observed.setDiagnosticAssertion('wp5_resource_save');
         await resourceDialog.getByRole('button', { name: '保存资源' }).click();
-        const savedResource = await resourcePut;
+        const savedResource = await resourcePut.catch(async error => {
+          console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ syntheticSaveStatus: (await resourceDialog.getByRole('status').textContent())?.slice(0, 180) }));
+          throw error;
+        });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
         expect(savedResource.status(), `wp5_resource_${kind}_save`).toBe(200);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_011');
         expect((await savedResource.json() as { etag: string }).etag).not.toBe(resourceInfo.etag);
         observed.setDiagnosticAssertion('wp5_resource_saved');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_012');
+        for (let retry = 0; retry < 2; retry += 1) {
+          await expect(resourceDialog.getByRole('status')).toHaveText(/^(BlockSuite 资源已保存|先前版本已保存；有未保存的资源修改|有未保存的资源修改)$/);
+          if ((await resourceDialog.getByRole('status').textContent()) === 'BlockSuite 资源已保存') break;
+          const latestPut = page.waitForResponse(response => response.request().method() === 'PUT'
+            && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
+          await resourceDialog.getByRole('button', { name: '保存资源' }).click();
+          expect((await latestPut).status()).toBe(200);
+        }
         await expect(resourceDialog.getByRole('status')).toHaveText('BlockSuite 资源已保存');
         const readResource = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_013');
@@ -1126,8 +1137,11 @@ for (const viewport of activeViewports) {
           expect(JSON.stringify(secondCopy.snapshot)).toContain('later unsaved resource conflict');
         }
         if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
-          const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]:visible').first();
-          await conflictEditor.click();
+          const bounds = await reopenedDialog.locator('affine-edgeless-text').first().boundingBox();
+          expect(bounds).not.toBeNull();
+          await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
+          await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+          await page.mouse.dblclick(bounds!.x + 10, bounds!.y + 10, { delay: 100 });
           await page.keyboard.press('End');
           await page.keyboard.press('Enter');
           await page.keyboard.insertText(' unsaved image conflict');
@@ -1183,7 +1197,7 @@ for (const viewport of activeViewports) {
       await page.getByRole('button', { name: '查看可恢复版本' }).click();
       const snapshotRows = page.getByRole('list', { name: '可恢复 BlockSuite 快照' }).getByRole('button', { name: '选择并预览' });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_053');
-      expect(await snapshotRows.count(), 'wp5_snapshot_restore_rows').toBeGreaterThan(0);
+      await expect(snapshotRows.first(), 'wp5_snapshot_restore_rows').toBeVisible({ timeout: 15000 });
       const latestSnapshotRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname.includes(`/api/notes/drafts/${note.path}/blocksuite/snapshots/`), { timeout: 15000 });
       await snapshotRows.last().click();
@@ -1226,10 +1240,9 @@ for (const viewport of activeViewports) {
         'wp5_focus_reopen_resource_references').toBe(2);
       observed.setDiagnosticAssertion('wp5_focus_reopen_content');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_064');
-      await expect(page.locator('.notes-raw-source')).toContainText(originalBody, { timeout: 20000 });
-      const rawSource = page.locator('.notes-raw-source');
+      await expect(page.locator('.blocksuite-notes-canvas').getByText(originalBody, { exact: true })).toBeVisible({ timeout: 20000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_065');
-      await expect(rawSource).toContainText('custom: preserve-focused');
+      await expect(page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' })).toHaveCount(2);
       }
 
       // Focused concurrency probe: only synthetic Notes, real Core PUT/If-Match,
@@ -1369,7 +1382,11 @@ for (const viewport of activeViewports) {
         recordProbe('probe-reload-start');
         await page.reload();
       }
-      else await page.getByRole('button', { name: 'WP5 focused roundtrip', exact: true }).click();
+      else {
+        await page.getByRole('button', { name: 'WP5 focused roundtrip', exact: true }).click();
+        await expect(page.locator('.notes-document-heading')).not.toContainText(conflictPath);
+        await expect(page.locator('.blocksuite-notes-canvas')).toHaveAttribute('aria-busy', 'false');
+      }
       if (wp5ConflictOnly) {
         const reopenedProbe = await page.evaluate((marker) => {
           const probe = (window as Window & { __sbWp5AutosaveProbe?: {

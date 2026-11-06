@@ -126,7 +126,7 @@ function seedResource(store: any, kind: BlockSuiteResourceKind) {
   } else {
     const canvas = store.getBlock(surface)?.model;
     canvas.addElement({ type: 'shape', shapeType: ShapeType.Rect, xywh: '[80,100,260,150]', text: '可编辑测试画布' });
-    const sticky = store.addBlock('affine:edgeless-text', { xywh: '[120,300,240,100]' }, surface);
+    const sticky = store.addBlock('affine:edgeless-text', { xywh: '[120,360,320,120]', hasMaxWidth: true }, surface);
     store.addBlock('affine:paragraph', { text: new Text('独立 Edgeless 便签') }, sticky);
   }
 }
@@ -174,6 +174,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const host = useRef<HTMLDivElement>(null);
   const resourceRef = useRef(initialResource);
   const noteRef = useRef(note);
+  const blobSourceRef = useRef<NoteBoundBlockSuiteBlobSource | null>(null);
   const dirtyRef = useRef(false);
   const editSequence = useRef(0);
   // Keep the exact bytes uploaded in this editing session so a later artifact
@@ -196,17 +197,26 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     const setup = async () => {
       try {
         const { stores, views } = managers();
-        workspace = new TransientMarkdownWorkspace(new NoteBoundBlockSuiteBlobSource(() => noteRef.current, fetch, (etag) => {
+        const blobSource = new NoteBoundBlockSuiteBlobSource(() => noteRef.current, fetch, (etag) => {
           noteRef.current = { ...noteRef.current, artifactSetEtag: etag };
           resourceRef.current = { ...resourceRef.current, artifact_set_etag: etag };
           onNoteVersionChange(etag);
-        }));
+        });
+        blobSourceRef.current = blobSource;
+        workspace = new TransientMarkdownWorkspace(blobSource);
         workspace.storeExtensions = stores.get('store');
         workspace.meta.initialize();
         const doc = workspace.createDoc(initialResource.docId);
         Y.applyUpdate(doc.spaceDoc, unbase64(initialResource.updateB64));
         doc.load();
         const store = doc.getStore();
+        // Capture the verified image closure before enabling an editing session.
+        // A later remote conflict must not remove its complete recovery copy.
+        for (const id of referencedBlockSuiteBlobIds(store)) {
+          const blob = await store.blobSync.get(id) as Blob | null;
+          if (!blob) throw new Error('资源引用的图片缺失；未启用编辑。');
+          uploadedBlobCopies.current.set(id, { contentType: blob.type, bytes: new Uint8Array(await blob.arrayBuffer()) });
+        }
         const extensionSet = views.get(initialResource.resourceKind === 'database' ? 'page' : 'edgeless');
         std = new BlockStdScope({ store: store as any, extensions: extensionSet });
         const root = std.render();
@@ -251,13 +261,17 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     if (!store || saving) return;
     setSaving(true);
     setStatus('正在保存 BlockSuite 资源…');
-    const sequence = editSequence.current;
     try {
       const blobIds = referencedBlockSuiteBlobIds(store);
       for (const id of blobIds) {
         if (!await store.blobSync.get(id)) throw new Error(`资源引用的 Blob ${id} 不在此笔记的 Core 存储中；已保留页面修改，未提交。`);
       }
-      if (sequence !== editSequence.current) throw new Error('资源在图片校验期间变化，请再次保存。');
+      if (JSON.stringify([...blobIds].sort()) !== JSON.stringify(referencedBlockSuiteBlobIds(store).sort())) {
+        throw new Error('资源引用的图片在校验期间变化，请再次保存。');
+      }
+      // Layout-only changes may occur while blobs are read. Capture the latest
+      // synchronous snapshot only after confirming its blob closure is validated.
+      const sequence = editSequence.current;
       const snapshot = store.getTransformer().docToSnapshot(store);
       if (!snapshot || typeof snapshot !== 'object') throw new Error('BlockSuite 未能导出快照');
       const spaceDoc = store.spaceDoc as Y.Doc;
@@ -267,11 +281,19 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         resourceKind: resourceRef.current.resourceKind, docId: resourceRef.current.docId,
         updateB64: base64(Y.encodeStateAsUpdate(spaceDoc)), snapshot: snapshot as Record<string, unknown>,
       };
+      const submittedSnapshotJson = JSON.stringify(snapshot);
       const result = await notesApi.saveBlockSuiteResource(noteRef.current, resourceRef.current, body);
       resourceRef.current = { ...resourceRef.current, etag: result.etag, note_etag: result.note_etag, artifact_set_etag: result.artifact_set_etag };
       noteRef.current = { ...noteRef.current, artifactSetEtag: result.artifact_set_etag };
+      if (blobSourceRef.current) blobSourceRef.current.artifactSetEtag = result.artifact_set_etag;
       onNoteVersionChange(result.artifact_set_etag);
-      if (sequence === editSequence.current) {
+      // Gfx may emit redundant Yjs layout transactions. Only clear dirty if
+      // the complete current semantic snapshot still equals the submitted one.
+      const currentSnapshot = store.getTransformer().docToSnapshot(store);
+      const unchanged = sequence === editSequence.current
+        || (currentSnapshot !== null && typeof currentSnapshot === 'object'
+          && JSON.stringify(currentSnapshot) === submittedSnapshotJson);
+      if (unchanged) {
         dirtyRef.current = false; setDirty(false);
         setStatus('BlockSuite 资源已保存');
       } else {

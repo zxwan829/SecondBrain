@@ -75,6 +75,8 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
   const pendingCallback = useRef(onProjectionPending);
   pendingCallback.current = onProjectionPending;
   const projectionSequence = useRef(0);
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   const valueRef = useRef(value);
   const emittedRef = useRef(value);
   const onChangeRef = useRef(onChange);
@@ -110,7 +112,6 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const localDoc = currentWorkspace.createDoc(`markdown-${crypto.randomUUID()}`);
         localDoc.load();
         const store = localDoc.getStore();
-        store.readonly = disabled;
         const adapter = markdownAdapter(store);
         // Match the pinned BlockSuite Page document contract: the Page root
         // contains a surface before the Markdown adapter creates its note block.
@@ -125,6 +126,8 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
           return;
         }
         if (disposed || !host.current) { currentWorkspace.dispose(); return; }
+        // Populate the transient document before making its mounted view readonly.
+        store.readonly = disabledRef.current;
         fallbackReason = 'view_initialization_error';
         const pageExtensions = views.get('page');
         initializationStage = 'scope_create';
@@ -146,6 +149,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         initializationStage = 'host_update';
         await root.getUpdateComplete();
         if (disposed) return;
+        store.readonly = disabledRef.current;
         const currentEditor: NonNullable<typeof editorRef.current> = { store, std, workspace: currentWorkspace, adapter, split };
         editorRef.current = currentEditor;
         const publish = () => {
