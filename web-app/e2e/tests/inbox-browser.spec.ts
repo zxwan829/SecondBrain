@@ -14,6 +14,7 @@ function safePageErrorSummary(value: string): string {
     .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '<quoted>')
     .replace(/[\u3400-\u9fff]+/g, '<text>')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '<email>')
+    .replace(/[^A-Za-z0-9 <>._,:()'-]/g, ' ')
     .replace(/\s+/g, ' ')
     .slice(0, 120);
 }
