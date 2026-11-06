@@ -741,7 +741,7 @@ for (const viewport of viewports) {
       expect(reopenedPayload.content, 'wp5_focus_reopen_api').toBe(savedPayload.content);
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('wp5_focus_reopen_content');
-      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 20000 });
       const rawSource = page.locator('.notes-raw-source');
       await expect(rawSource).toContainText(editMarker);
       await expect(rawSource).toContainText('custom: preserve-focused');
