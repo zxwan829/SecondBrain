@@ -5,6 +5,7 @@ import os
 import unittest
 import concurrent.futures
 import json
+import stat
 from io import BytesIO
 from unittest.mock import patch
 from pathlib import Path
@@ -219,33 +220,281 @@ class NotesStoreTests(unittest.TestCase):
         changed.pop("etag")
         changed.pop("note_etag")
         changed.pop("filename")
+        changed.pop("artifact_set_etag")
         saved = self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
-                                                      changed, note["etag"], first["etag"])
+                                                      changed, note["etag"], first["etag"],
+                                                      first["artifact_set_etag"])
         self.assertNotEqual(saved["etag"], first["etag"])
         self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], resource_id)["updateB64"],
                          changed["updateB64"])
         with self.assertRaises(HTTPException) as stale_asset:
             self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
-                                                  changed, note["etag"], first["etag"])
+                                                  changed, note["etag"], first["etag"],
+                                                  saved["artifact_set_etag"])
         self.assertEqual(stale_asset.exception.status_code, 412)
         with self.assertRaises(HTTPException) as stale_note:
             self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
-                                                  changed, "0" * 64, saved["etag"])
+                                                  changed, "0" * 64, saved["etag"],
+                                                  saved["artifact_set_etag"])
         self.assertEqual(stale_note.exception.status_code, 412)
         for identity_change in ({"resourceKind": "edgeless-canvas"}, {"docId": "different_doc"}):
             with self.subTest(identity_change=identity_change):
                 candidate = {**changed, **identity_change}
                 with self.assertRaises(HTTPException) as immutable:
                     self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
-                                                          candidate, note["etag"], saved["etag"])
+                                                          candidate, note["etag"], saved["etag"],
+                                                          saved["artifact_set_etag"])
                 self.assertEqual(immutable.exception.status_code, 409)
         self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], resource_id)["docId"],
                          "doc_table_1")
 
+    def test_blocksuite_snapshots_capture_resource_only_changes(self):
+        note = self.store.create("# Snapshot closure\n")
+        initial = {"schemaVersion": 1, "resourceKind": "database", "docId": "snapshot_doc",
+                   "updateB64": base64.b64encode(b"state-one").decode("ascii"), "snapshot": {"blocks": []}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], initial, note["etag"])
+        reference_content = note["content"] + "\n" + created["reference"] + "\n"
+        saved_note = self.store.update("drafts", note["path"], reference_content, note["etag"],
+                                       expected_artifacts=created["artifact_set_etag"])
+        before_resource_change = self.store.list_blocksuite_snapshots("drafts", note["path"])
+        current = self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        replacement = {key: value for key, value in current.items()
+                       if key not in {"etag", "note_etag", "filename", "artifact_set_etag"}}
+        replacement["updateB64"] = base64.b64encode(b"state-two").decode("ascii")
+        self.store.update_blocksuite_resource("drafts", note["path"], created["resource_id"], replacement,
+                                              saved_note["etag"], current["etag"],
+                                              current["artifact_set_etag"])
+        after_resource_change = self.store.list_blocksuite_snapshots("drafts", note["path"])
+        self.assertEqual(after_resource_change["note_etag"], saved_note["etag"])
+        self.assertNotEqual(after_resource_change["artifact_set_etag"], before_resource_change["artifact_set_etag"])
+        after = {item["artifact_set_etag"]: item for item in after_resource_change["snapshots"]}
+        self.assertIn(before_resource_change["artifact_set_etag"], after)
+        self.assertTrue(any(item["note_sha256"] == saved_note["etag"]
+                            and item["artifact_set_etag"] == current["artifact_set_etag"]
+                            for item in after_resource_change["snapshots"]))
+        self.assertTrue(all(item["artifact_count"] == 1 for item in after.values()
+                            if item["note_sha256"] == saved_note["etag"]))
+
         other_note = self.store.create("# Different note\n")
         with self.assertRaises(HTTPException) as unbound:
-            self.store.read_blocksuite_resource("drafts", other_note["path"], resource_id)
+            self.store.read_blocksuite_resource("drafts", other_note["path"], created["resource_id"])
         self.assertEqual(unbound.exception.status_code, 404)
+
+    def test_blocksuite_snapshot_restore_replaces_managed_resource_set_and_is_idempotent(self):
+        note = self.store.create("# Restore closure\n")
+        first_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "restore_a",
+                      "updateB64": base64.b64encode(b"A-one").decode("ascii"), "snapshot": {"blocks": []}}
+        first = self.store.create_blocksuite_resource("drafts", note["path"], first_body, note["etag"])
+        content = note["content"] + "\n" + first["reference"] + "\n"
+        saved_note = self.store.update("drafts", note["path"], content, note["etag"],
+                                       expected_artifacts=first["artifact_set_etag"])
+        first_current = self.store.read_blocksuite_resource("drafts", note["path"], first["resource_id"])
+        changed_a = {key: value for key, value in first_current.items()
+                     if key not in {"etag", "note_etag", "filename", "artifact_set_etag"}}
+        changed_a["updateB64"] = base64.b64encode(b"A-two").decode("ascii")
+        self.store.update_blocksuite_resource("drafts", note["path"], first["resource_id"], changed_a,
+                                              saved_note["etag"], first_current["etag"],
+                                              first_current["artifact_set_etag"])
+        snapshots = self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+        target_a_one = next(item for item in snapshots if item["note_sha256"] == saved_note["etag"]
+                            and item["artifact_set_etag"] == first_current["artifact_set_etag"])
+
+        second_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "restore_b",
+                       "updateB64": base64.b64encode(b"B-one").decode("ascii"), "snapshot": {"blocks": []}}
+        second = self.store.create_blocksuite_resource("drafts", note["path"], second_body,
+                                                       saved_note["etag"],
+                                                       self.store.read("drafts", note["path"])["artifact_set_etag"])
+        second_current = self.store.read_blocksuite_resource("drafts", note["path"], second["resource_id"])
+        second_changed = {key: value for key, value in second_current.items()
+                          if key not in {"etag", "note_etag", "filename", "artifact_set_etag"}}
+        second_changed["updateB64"] = base64.b64encode(b"B-two").decode("ascii")
+        self.store.update_blocksuite_resource("drafts", note["path"], second["resource_id"], second_changed,
+                                              saved_note["etag"], second_current["etag"],
+                                              second_current["artifact_set_etag"])
+        after_add = self.store.read("drafts", note["path"])
+        restored = self.store.restore_blocksuite_snapshot("drafts", note["path"], target_a_one["snapshot_id"],
+                                                          after_add["etag"], after_add["artifact_set_etag"])
+        self.assertTrue(restored["restored"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], first["resource_id"])["updateB64"],
+                         first_body["updateB64"])
+        with self.assertRaises(HTTPException) as removed_resource:
+            self.store.read_blocksuite_resource("drafts", note["path"], second["resource_id"])
+        self.assertEqual(removed_resource.exception.status_code, 404)
+
+        duplicate = self.store.restore_blocksuite_snapshot("drafts", note["path"], target_a_one["snapshot_id"],
+                                                           after_add["etag"], after_add["artifact_set_etag"])
+        self.assertTrue(duplicate["duplicate"])
+
+        target_a_two_b_two = next(item for item in self.store.list_blocksuite_snapshots(
+            "drafts", note["path"])["snapshots"] if item["artifact_set_etag"] == after_add["artifact_set_etag"])
+        current = self.store.read("drafts", note["path"])
+        self.store.restore_blocksuite_snapshot("drafts", note["path"], target_a_two_b_two["snapshot_id"],
+                                               current["etag"], current["artifact_set_etag"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], second["resource_id"])["updateB64"],
+                         second_changed["updateB64"])
+
+    def test_blocksuite_snapshot_restore_resumes_after_markdown_write_failure(self):
+        note = self.store.create("# Restore retry\n")
+        body = {"schemaVersion": 1, "resourceKind": "database", "docId": "retry_doc",
+                "updateB64": base64.b64encode(b"old").decode("ascii"), "snapshot": {"blocks": []}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], body, note["etag"])
+        content = note["content"] + "\n" + created["reference"] + "\n"
+        saved_note = self.store.update("drafts", note["path"], content, note["etag"],
+                                       expected_artifacts=created["artifact_set_etag"])
+        current_resource = self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        changed = {key: value for key, value in current_resource.items()
+                   if key not in {"etag", "note_etag", "filename", "artifact_set_etag"}}
+        changed["updateB64"] = base64.b64encode(b"new").decode("ascii")
+        self.store.update_blocksuite_resource("drafts", note["path"], created["resource_id"], changed,
+                                              saved_note["etag"], current_resource["etag"],
+                                              current_resource["artifact_set_etag"])
+        target = next(item for item in self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+                      if item["note_sha256"] == saved_note["etag"]
+                      and item["artifact_set_etag"] == current_resource["artifact_set_etag"])
+        current = self.store.read("drafts", note["path"])
+        current = self.store.update("drafts", note["path"], current["content"] + "\n# Newer text\n",
+                                    current["etag"], expected_artifacts=current["artifact_set_etag"])
+        original_atomic_write = self.store._atomic_write
+        fail_once = {"value": True}
+
+        def injected_write(path, data, exclusive=False, directory_fd=None):
+            if path.name == "note.md" and fail_once["value"]:
+                fail_once["value"] = False
+                raise OSError("injected markdown phase failure")
+            return original_atomic_write(path, data, exclusive=exclusive, directory_fd=directory_fd)
+
+        with patch.object(self.store, "_atomic_write", side_effect=injected_write):
+            with self.assertRaises(OSError):
+                self.store.restore_blocksuite_snapshot("drafts", note["path"], target["snapshot_id"],
+                                                       current["etag"], current["artifact_set_etag"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])["updateB64"],
+                         body["updateB64"])
+        resumed = self.store.restore_blocksuite_snapshot("drafts", note["path"], target["snapshot_id"],
+                                                         current["etag"], current["artifact_set_etag"])
+        self.assertTrue(resumed["restored"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])["updateB64"],
+                         body["updateB64"])
+
+    def test_corrupt_same_size_snapshot_object_blocks_repeat_write_without_changing_live_data(self):
+        note = self.store.create("# Corrupt recovery object\n")
+        body = {"schemaVersion": 1, "resourceKind": "database", "docId": "integrity_doc",
+                "updateB64": base64.b64encode(b"still-live").decode("ascii"), "snapshot": {"blocks": []}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], body, note["etag"])
+        content = note["content"] + "\n" + created["reference"] + "\n"
+        saved = self.store.update("drafts", note["path"], content, note["etag"],
+                                  expected_artifacts=created["artifact_set_etag"])
+        saved = self.store.update("drafts", note["path"], saved["content"], saved["etag"],
+                                  expected_artifacts=saved["artifact_set_etag"])
+        rows = self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+        snapshot = next(item for item in rows if item["note_sha256"] == saved["etag"])
+        manifest_path = self.drafts / note["path"] / ".history" / "blocksuite" / "snapshots" / f"{snapshot['snapshot_id']}.json"
+        manifest = json.loads(manifest_path.read_text())
+        digest = manifest["artifacts"][0]["sha256"]
+        object_path = self.drafts / ".blocksuite-history" / "objects" / digest
+        original = object_path.read_bytes()
+        corrupted = bytes([original[0] ^ 1]) + original[1:]
+        self.assertEqual(len(corrupted), len(original))
+        object_path.write_bytes(corrupted)
+        before_note = self.store.read("drafts", note["path"])
+        before_resource = self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        with self.assertRaises(HTTPException) as blocked:
+            self.store.update("drafts", note["path"], before_note["content"], before_note["etag"],
+                              expected_artifacts=before_note["artifact_set_etag"])
+        self.assertEqual(blocked.exception.status_code, 503)
+        after_note = self.store.read("drafts", note["path"])
+        after_resource = self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        self.assertEqual(after_note["etag"], before_note["etag"])
+        self.assertEqual(after_resource["etag"], before_resource["etag"])
+        self.assertEqual(after_resource["updateB64"], body["updateB64"])
+
+    def test_corrupt_retained_snapshot_blocks_pruning_and_new_history_write(self):
+        note = self.store.create("# Version zero\n")
+        current = note
+        for title in ("Version one", "Version two", "Version three"):
+            current = self.store.update("drafts", note["path"], f"# {title}\n", current["etag"],
+                                        expected_artifacts=current["artifact_set_etag"])
+        before_rows = self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+        self.assertEqual(len(before_rows), 3)
+        retained = before_rows[-1]
+        manifest_path = self.drafts / note["path"] / ".history" / "blocksuite" / "snapshots" / f"{retained['snapshot_id']}.json"
+        manifest = json.loads(manifest_path.read_text())
+        digest = manifest["note_sha256"]
+        object_path = self.drafts / ".blocksuite-history" / "objects" / digest
+        original = object_path.read_bytes()
+        object_path.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+        with self.assertRaises(HTTPException) as blocked:
+            self.store.update("drafts", note["path"], "# Version four\n", current["etag"],
+                              expected_artifacts=current["artifact_set_etag"])
+        self.assertEqual(blocked.exception.status_code, 503)
+        snapshots_dir = self.drafts / note["path"] / ".history" / "blocksuite" / "snapshots"
+        after_ids = {path.stem for path in snapshots_dir.glob("[0-9a-f]*.json")}
+        self.assertEqual(after_ids, {item["snapshot_id"] for item in before_rows})
+        self.assertEqual(self.store.read("drafts", note["path"])["etag"], current["etag"])
+
+    def test_history_keeps_latest_three_distinct_closures_in_order(self):
+        note = self.store.create("# Version zero\n")
+        current = note
+        history = {current["etag"]: current["content"]}
+        for index in range(1, 6):
+            current = self.store.update("drafts", note["path"], f"# Version {index}\n", current["etag"],
+                                        expected_artifacts=current["artifact_set_etag"])
+            history[current["etag"]] = current["content"]
+        snapshots = self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+        self.assertEqual(len(snapshots), 3)
+        expected = {self.store._digest(f"# Version {index}\n") for index in (2, 3, 4)}
+        self.assertEqual({item["note_sha256"] for item in snapshots}, expected)
+        self.assertEqual(sorted(item["created_at"] for item in snapshots),
+                         [item["created_at"] for item in snapshots])
+
+    def test_completed_snapshot_retry_finishes_prune_and_collects_orphan(self):
+        note = self.store.create("# Version zero\n")
+        current = note
+        for index in range(1, 5):
+            current = self.store.update("drafts", note["path"], f"# Version {index}\n", current["etag"],
+                                        expected_artifacts=current["artifact_set_etag"])
+        history = self.store._history_store()
+        original_prune = history._prune_local
+        fail_once = {"value": True}
+
+        def injected_prune(*args, **kwargs):
+            if fail_once["value"]:
+                fail_once["value"] = False
+                raise OSError("injected prune interruption")
+            return original_prune(*args, **kwargs)
+
+        with patch.object(history, "_prune_local", side_effect=injected_prune):
+            with self.assertRaises(HTTPException) as interrupted:
+                self.store.update("drafts", note["path"], "# Version five\n", current["etag"],
+                                  expected_artifacts=current["artifact_set_etag"])
+            self.assertEqual(interrupted.exception.status_code, 507)
+        snapshots_dir = self.drafts / note["path"] / ".history" / "blocksuite" / "snapshots"
+        self.assertEqual(len(list(snapshots_dir.glob("[0-9a-f]*.json"))), 4)
+        orphan_data = b"orphaned generated history block"
+        orphan_hash = __import__("hashlib").sha256(orphan_data).hexdigest()
+        with history._global(create=False) as global_fds:
+            history._write_object(global_fds["objects_fd"], orphan_hash, orphan_data)
+        retried = self.store.update("drafts", note["path"], "# Version five\n", current["etag"],
+                                    expected_artifacts=current["artifact_set_etag"])
+        self.assertEqual(retried["content"], "# Version five\n")
+        after_rows = self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+        self.assertEqual(len(after_rows), 3)
+        self.assertFalse((self.drafts / ".blocksuite-history" / "objects" / orphan_hash).exists())
+
+    def test_snapshot_directory_creation_fsyncs_parent_directories(self):
+        note = self.store.create("# Durable snapshot directories\n")
+        original_fsync = os.fsync
+        observed_directory_sync = {"value": False}
+
+        def track_fsync(fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                observed_directory_sync["value"] = True
+            return original_fsync(fd)
+
+        with patch("os.fsync", side_effect=track_fsync):
+            body = {"schemaVersion": 1, "resourceKind": "database", "docId": "durable_doc",
+                    "updateB64": base64.b64encode(b"durable").decode("ascii"), "snapshot": {"blocks": []}}
+            self.store.create_blocksuite_resource("drafts", note["path"], body, note["etag"])
+        self.assertTrue(observed_directory_sync["value"])
 
     def test_blocksuite_resource_schema_and_payload_limits_fail_closed(self):
         note = self.store.create("# Resource bounds\n")
@@ -284,11 +533,13 @@ class NotesStoreTests(unittest.TestCase):
 
         with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_PER_NOTE", 2):
             first = self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
-            second = self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
+            second = self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"],
+                                                           first["artifact_set_etag"])
             before_count_limit = [self.store.read_blocksuite_resource("drafts", note["path"], item["resource_id"])
                                   for item in (first, second)]
             with self.assertRaises(HTTPException) as count_limited:
-                self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
+                self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"],
+                                                      second["artifact_set_etag"])
             self.assertEqual(count_limited.exception.status_code, 413)
             after_count_limit = [self.store.read_blocksuite_resource("drafts", note["path"], item["resource_id"])
                                  for item in (first, second)]
@@ -303,7 +554,8 @@ class NotesStoreTests(unittest.TestCase):
         with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE",
                    first_size + 1):
             with self.assertRaises(HTTPException) as aggregate_limited:
-                self.store.create_blocksuite_resource("drafts", another_note["path"], valid, another_note["etag"])
+                self.store.create_blocksuite_resource("drafts", another_note["path"], valid, another_note["etag"],
+                                                      first["artifact_set_etag"])
             self.assertEqual(aggregate_limited.exception.status_code, 413)
             after_create_limit = self.store.read_blocksuite_resource("drafts", another_note["path"],
                                                                      first["resource_id"])
@@ -314,7 +566,8 @@ class NotesStoreTests(unittest.TestCase):
                            "updateB64": base64.b64encode(b"larger replacement").decode("ascii")}
             with self.assertRaises(HTTPException) as update_limited:
                 self.store.update_blocksuite_resource("drafts", another_note["path"], first["resource_id"],
-                                                      replacement, another_note["etag"], first["etag"])
+                                                      replacement, another_note["etag"], first["etag"],
+                                                      first_data["artifact_set_etag"])
             self.assertEqual(update_limited.exception.status_code, 413)
             after_update_limit = self.store.read_blocksuite_resource("drafts", another_note["path"],
                                                                      first["resource_id"])
@@ -356,7 +609,9 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"'}).status_code, 401)
         client.cookies.set("session", "owner")
         self.assertEqual(client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"', "x-deny": "notes.write"}).status_code, 403)
-        created = client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"'})
+        empty_set = f'"{note["artifact_set_etag"]}"'
+        created = client.post(base, json=body,
+                              headers={"If-Match": f'"{note["etag"]}"', "If-Artifact-Set-Match": empty_set})
         self.assertEqual(created.status_code, 200)
         self.assertEqual(created.headers["x-note-etag"], f'"{note["etag"]}"')
         resource_url = f"{base}/{created.json()['resource_id']}"
@@ -364,21 +619,208 @@ class NotesStoreTests(unittest.TestCase):
         fetched = client.get(resource_url)
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.headers["etag"], f'"{created.json()["etag"]}"')
+        self.assertEqual(fetched.headers["x-artifact-set-etag"],
+                         f'"{created.json()["artifact_set_etag"]}"')
         replacement = {**body, "resourceId": created.json()["resource_id"],
                        "updateB64": base64.b64encode(b"replacement").decode("ascii")}
         stale = client.put(resource_url, json=replacement,
-                           headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": '"stale"'})
+                           headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": '"stale"',
+                                    "If-Artifact-Set-Match": fetched.headers["x-artifact-set-etag"]})
         self.assertEqual(stale.status_code, 412)
         saved = client.put(resource_url, json=replacement,
-                           headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": fetched.headers["etag"]})
+                           headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": fetched.headers["etag"],
+                                    "If-Artifact-Set-Match": fetched.headers["x-artifact-set-etag"]})
         self.assertEqual(saved.status_code, 200)
         self.assertEqual(client.get(resource_url).json()["updateB64"], replacement["updateB64"])
         identity_change = {**replacement, "docId": "other_doc"}
         rejected_identity_change = client.put(resource_url, json=identity_change,
                                               headers={"If-Match": f'"{note["etag"]}"',
-                                                       "If-Resource-Match": saved.headers["etag"]})
+                                                       "If-Resource-Match": saved.headers["etag"],
+                                                       "If-Artifact-Set-Match": saved.headers["x-artifact-set-etag"]})
         self.assertEqual(rejected_identity_change.status_code, 409)
         self.assertEqual(client.get(resource_url).json()["docId"], "table_doc")
+
+    def test_blocksuite_snapshot_routes_expose_read_and_dual_etag_restore(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+                if request.headers.get("x-deny") == action:
+                    raise HTTPException(status_code=403, detail=f"{action} denied")
+
+        note = self.store.create("# Snapshot route\n")
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        client.cookies.set("session", "owner")
+        base = f"/api/notes/drafts/{note['path']}/blocksuite"
+        create_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "route_doc",
+                       "updateB64": base64.b64encode(b"before").decode("ascii"), "snapshot": {"blocks": []}}
+        created = client.post(f"{base}/resources", json=create_body,
+                              headers={"If-Match": f'"{note["etag"]}"',
+                                       "If-Artifact-Set-Match": f'"{note["artifact_set_etag"]}"'})
+        self.assertEqual(created.status_code, 200)
+        note_ref = note["content"] + "\n" + created.json()["reference"] + "\n"
+        saved = client.put(f"/api/notes/drafts/{note['path']}", json={"content": note_ref},
+                           headers={"If-Match": f'"{note["etag"]}"',
+                                    "If-Artifact-Set-Match": created.headers["x-artifact-set-etag"]})
+        self.assertEqual(saved.status_code, 200)
+        current_resource = client.get(f"{base}/resources/{created.json()['resource_id']}")
+        replacement = {key: value for key, value in current_resource.json().items()
+                       if key not in {"etag", "note_etag", "artifact_set_etag", "filename"}}
+        replacement["updateB64"] = base64.b64encode(b"after").decode("ascii")
+        current = client.put(f"{base}/resources/{created.json()['resource_id']}", json=replacement,
+                             headers={"If-Match": saved.headers["etag"],
+                                      "If-Resource-Match": current_resource.headers["etag"],
+                                      "If-Artifact-Set-Match": current_resource.headers["x-artifact-set-etag"]})
+        self.assertEqual(current.status_code, 200)
+        listing = client.get(f"{base}/snapshots")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.headers["x-note-etag"], saved.headers["etag"])
+        target = next(item for item in listing.json()["snapshots"]
+                      if item["note_sha256"] == saved.json()["etag"]
+                      and item["artifact_set_etag"] == current_resource.json()["artifact_set_etag"])
+        snapshot = client.get(f"{base}/snapshots/{target['snapshot_id']}")
+        self.assertEqual(snapshot.status_code, 200)
+        self.assertEqual(snapshot.json()["note"]["content"], note_ref)
+        self.assertEqual(snapshot.json()["artifacts"][0]["resource"]["updateB64"], create_body["updateB64"])
+        restore_url = f"{base}/snapshots/{target['snapshot_id']}/restore"
+        stale = client.post(restore_url, headers={"If-Match": '"stale"',
+                                                  "If-Artifact-Set-Match": current.headers["x-artifact-set-etag"]})
+        self.assertEqual(stale.status_code, 412)
+        denied = client.post(restore_url, headers={"If-Match": current.headers["x-note-etag"],
+                                                   "If-Artifact-Set-Match": current.headers["x-artifact-set-etag"],
+                                                   "x-deny": "notes.write"})
+        self.assertEqual(denied.status_code, 403)
+        restored = client.post(restore_url, headers={"If-Match": current.headers["x-note-etag"],
+                                                      "If-Artifact-Set-Match": current.headers["x-artifact-set-etag"]})
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(restored.headers["x-note-etag"], saved.headers["etag"])
+        self.assertEqual(client.get(f"{base}/resources/{created.json()['resource_id']}").json()["updateB64"],
+                         create_body["updateB64"])
+
+    @staticmethod
+    def _png_blob(color):
+        buffer = BytesIO()
+        Image.new("RGB", (2, 2), color=color).save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    @staticmethod
+    def _blob_id(data):
+        return base64.urlsafe_b64encode(__import__("hashlib").sha256(data).digest()).decode("ascii")
+
+    def test_blocksuite_blob_hash_validation_idempotency_and_combined_quotas(self):
+        note = self.store.create("# Blob note\n")
+        png = self._png_blob("blue")
+        blob_id = self._blob_id(png)
+        created = self.store.put_blocksuite_blob("drafts", note["path"], blob_id, png, "image/png",
+                                                 note["etag"], note["artifact_set_etag"])
+        self.assertTrue(created["created"])
+        self.assertEqual(created["etag"], __import__("hashlib").sha256(png).hexdigest())
+        fetched = self.store.read_blocksuite_blob("drafts", note["path"], blob_id)
+        self.assertEqual(fetched["data"], png)
+        self.assertEqual(fetched["content_type"], "image/png")
+        repeated = self.store.put_blocksuite_blob("drafts", note["path"], blob_id, png, "image/png",
+                                                  note["etag"], fetched["artifact_set_etag"])
+        self.assertFalse(repeated["created"])
+        for bad_id, expected_status in ((blob_id[:-1], 400), ("A" + blob_id[1:], 422)):
+            with self.subTest(bad_id=bad_id):
+                with self.assertRaises(HTTPException) as invalid:
+                    self.store.put_blocksuite_blob("drafts", note["path"], bad_id, png, "image/png",
+                                                   note["etag"], fetched["artifact_set_etag"])
+                self.assertEqual(invalid.exception.status_code, expected_status)
+        with self.assertRaises(HTTPException) as bad_type:
+            self.store.put_blocksuite_blob("drafts", note["path"], blob_id, png, "image/jpeg",
+                                            note["etag"], fetched["artifact_set_etag"])
+        self.assertEqual(bad_type.exception.status_code, 415)
+        with self.assertRaises(HTTPException) as bad_image:
+            self.store.put_blocksuite_blob("drafts", note["path"], self._blob_id(b"not image"), b"not image",
+                                            "image/png", note["etag"], fetched["artifact_set_etag"])
+        self.assertEqual(bad_image.exception.status_code, 415)
+
+        next_png = self._png_blob("red")
+        next_id = self._blob_id(next_png)
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_PER_NOTE", 1):
+            with self.assertRaises(HTTPException) as over_count:
+                self.store.put_blocksuite_blob("drafts", note["path"], next_id, next_png, "image/png",
+                                               note["etag"], fetched["artifact_set_etag"])
+            self.assertEqual(over_count.exception.status_code, 413)
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE", len(png) + 1):
+            with self.assertRaises(HTTPException) as over_bytes:
+                self.store.put_blocksuite_blob("drafts", note["path"], next_id, next_png, "image/png",
+                                               note["etag"], fetched["artifact_set_etag"])
+            self.assertEqual(over_bytes.exception.status_code, 413)
+        self.assertEqual(self.store.read_blocksuite_blob("drafts", note["path"], blob_id)["data"], png)
+        with self.assertRaises(HTTPException) as stale:
+            self.store.put_blocksuite_blob("drafts", note["path"], next_id, next_png, "image/png",
+                                           note["etag"], "0" * 64)
+        self.assertEqual(stale.exception.status_code, 412)
+
+    def test_blocksuite_blob_is_in_snapshot_read_restore_closure(self):
+        note = self.store.create("# Blob restore closure\n")
+        blue = self._png_blob("blue")
+        blue_id = self._blob_id(blue)
+        first = self.store.put_blocksuite_blob("drafts", note["path"], blue_id, blue, "image/png",
+                                               note["etag"], note["artifact_set_etag"])
+        resource_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "blob_closure",
+                         "updateB64": base64.b64encode(b"resource").decode("ascii"), "snapshot": {"blocks": []}}
+        resource = self.store.create_blocksuite_resource("drafts", note["path"], resource_body, note["etag"],
+                                                         first["artifact_set_etag"])
+        red = self._png_blob("red")
+        red_id = self._blob_id(red)
+        second = self.store.put_blocksuite_blob("drafts", note["path"], red_id, red, "image/png",
+                                                note["etag"], resource["artifact_set_etag"])
+        target = next(item for item in self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+                      if item["artifact_set_etag"] == resource["artifact_set_etag"])
+        detail = self.store.read_blocksuite_snapshot("drafts", note["path"], target["snapshot_id"])
+        self.assertEqual({(item["kind"], item["id"]) for item in detail["artifacts"]},
+                         {("blob", blue_id), ("resource", resource["resource_id"])})
+        current = self.store.read("drafts", note["path"])
+        restored = self.store.restore_blocksuite_snapshot("drafts", note["path"], target["snapshot_id"],
+                                                          current["etag"], current["artifact_set_etag"])
+        self.assertTrue(restored["restored"])
+        self.assertEqual(self.store.read_blocksuite_blob("drafts", note["path"], blue_id)["data"], blue)
+        with self.assertRaises(HTTPException) as removed:
+            self.store.read_blocksuite_blob("drafts", note["path"], red_id)
+        self.assertEqual(removed.exception.status_code, 404)
+        duplicate = self.store.restore_blocksuite_snapshot("drafts", note["path"], target["snapshot_id"],
+                                                           current["etag"], current["artifact_set_etag"])
+        self.assertTrue(duplicate["duplicate"])
+
+    def test_blocksuite_blob_http_routes_use_auth_caps_and_dual_etag(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+                if request.headers.get("x-deny") == action:
+                    raise HTTPException(status_code=403, detail=f"{action} denied")
+
+        note = self.store.create("# Blob HTTP\n")
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        data = self._png_blob("green")
+        blob_id = self._blob_id(data)
+        url = f"/api/notes/drafts/{note['path']}/blocksuite/blobs/{blob_id}"
+        headers = {"Content-Type": "image/png", "If-Match": f'"{note["etag"]}"',
+                   "If-Artifact-Set-Match": f'"{note["artifact_set_etag"]}"'}
+        self.assertEqual(client.put(url, content=data, headers=headers).status_code, 401)
+        client.cookies.set("session", "owner")
+        self.assertEqual(client.put(url, content=data, headers={**headers, "x-deny": "notes.write"}).status_code, 403)
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_BLOB_BYTES", len(data) - 1):
+            oversized = client.put(url, content=data, headers=headers)
+        self.assertEqual(oversized.status_code, 413)
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_BLOB_BYTES", 5 * 1024 * 1024):
+            created = client.put(url, content=data, headers=headers)
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.headers["x-artifact-set-etag"], f'"{created.json()["artifact_set_etag"]}"')
+        fetched = client.get(url)
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.content, data)
+        self.assertEqual(fetched.headers["content-type"], "image/png")
+        self.assertEqual(fetched.headers["etag"], created.headers["etag"])
+        self.assertEqual(client.put(url, content=data, headers={**headers,
+                         "If-Artifact-Set-Match": created.headers["x-artifact-set-etag"]}).status_code, 200)
 
     def test_blocksuite_http_body_limit_catches_chunked_body_with_forged_length(self):
         limit = 1024
@@ -409,13 +851,17 @@ class NotesStoreTests(unittest.TestCase):
         app.include_router(create_notes_router(SessionAuth(), self.store))
         client = TestClient(app)
         client.cookies.set("session", "owner")
-        created = client.post("/api/notes", json={"content": "# API note\n"}).json()
+        created_response = client.post("/api/notes", json={"content": "# API note\n"})
+        created = created_response.json()
+        self.assertEqual(created_response.headers["x-artifact-set-etag"], f'"{created["artifact_set_etag"]}"')
         target = f"/api/notes/drafts/{created['path']}"
         loaded = client.get(target)
         self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.headers["x-artifact-set-etag"], f'"{loaded.json()["artifact_set_etag"]}"')
         etag = loaded.headers["etag"]
         saved = client.put(target, json={"content": "# Updated\n"}, headers={"If-Match": etag})
         self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.headers["x-artifact-set-etag"], f'"{saved.json()["artifact_set_etag"]}"')
         stale = client.put(target, json={"content": "# Stale\n"}, headers={"If-Match": etag})
         self.assertEqual(stale.status_code, 412)
         history = client.get(f"{target}/history")
