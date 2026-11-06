@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       wp5_roundtrip_only:
-        description: Run only the desktop synthetic Notes BlockSuite save/reopen probe
+        description: Run only the desktop Notes save/reopen and conflict-autosave probe
         required: false
         type: boolean
         default: false

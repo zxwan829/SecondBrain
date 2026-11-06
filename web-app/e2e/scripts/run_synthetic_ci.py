@@ -126,6 +126,10 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_focus_put_response_matches_request",
     "wp5_focus_api_content_equal", "wp5_focus_reopen_api", "wp5_focus_reopen_content",
     "wp5_focus_saved_status",
+    "wp5_conflict_probe_seed", "wp5_conflict_probe_open", "wp5_conflict_probe_initial_read",
+    "wp5_conflict_probe_external_write", "wp5_conflict_probe_request_path", "wp5_conflict_probe_rejected",
+    "wp5_conflict_probe_readback", "wp5_conflict_probe_reopen", "wp5_conflict_probe_recovery_status",
+    "wp5_conflict_probe_recovery_body", "wp5_conflict_probe_recovery_readback",
     "notes_blocksuite_reopen",
     "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
@@ -137,7 +141,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
     "calendar_api_requests",
 }
-MAX_FAILURE_DIAGNOSTIC_BYTES = 2048
+MAX_FAILURE_DIAGNOSTIC_BYTES = 4096
 MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_SCREENSHOT_WIDTH = 2048
@@ -281,7 +285,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
                          "notes_item_read_statuses", "notes_readback_failure", "notes_seed_status",
                          "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
-                         "blocksuite_module_statuses", "page_error_summaries")
+                         "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
         allowed_shapes = {
             frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
             for mask in range(1 << len(optional_keys))
@@ -304,6 +308,16 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         blocksuite_module_statuses = entry.get("blocksuite_module_statuses", [])
         page_error_summaries = entry.get("page_error_summaries", [])
         brief_statuses = entry.get("daily_brief_get_statuses", [])
+        autosave_events = entry.get("wp5_autosave_events", [])
+        autosave_event_names = {
+            "probe-armed", "notes-queue-unsaved", "notes-save-timer-scheduled",
+            "notes-save-timer-cancelled", "notes-save-timer-fired", "notes-queue-saving",
+            "notes-queue-conflict", "notes-queue-saved", "notes-queue-failed",
+            "browser-put-request", "browser-put-response", "browser-put-requestfailed",
+            "test-request-matcher-accepted", "test-response-matcher-accepted",
+            "core-request-received", "core-response", "core-handler-error",
+            "recovery-response-matcher-accepted",
+        }
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
@@ -358,6 +372,15 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in brief_statuses)
+                or not isinstance(autosave_events, list) or len(autosave_events) > 24
+                or any(not isinstance(event, dict)
+                       or set(event) not in ({"marker", "at_ms", "event"}, {"marker", "at_ms", "event", "status"})
+                       or event.get("marker") != "wp5-conflict-queue"
+                       or type(event.get("at_ms")) is not int or event["at_ms"] < 0
+                       or event.get("event") not in autosave_event_names
+                       or ("status" in event and (type(event["status"]) is not int or not 100 <= event["status"] <= 599))
+                       for event in autosave_events)
+                or [event["at_ms"] for event in autosave_events] != sorted(event["at_ms"] for event in autosave_events)
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
         seen_viewports.add(viewport)
@@ -385,6 +408,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
             normalized["page_error_summaries"] = page_error_summaries
         if "daily_brief_get_statuses" in entry:
             normalized["daily_brief_get_statuses"] = brief_statuses
+        if "wp5_autosave_events" in entry:
+            normalized["wp5_autosave_events"] = autosave_events
         validated.append(normalized)
     return validated
 
@@ -479,7 +504,7 @@ def _collect_failure_diagnostics(
             optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
                              "notes_item_read_statuses", "notes_readback_failure", "notes_seed_status",
                              "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
-                             "blocksuite_module_statuses", "page_error_summaries")
+                             "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
             allowed_shapes = {
                 frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
                 for mask in range(1 << len(optional_keys))
@@ -515,6 +540,8 @@ def _collect_failure_diagnostics(
                 diagnostics[-1]["page_error_summaries"] = raw["page_error_summaries"]
             if "daily_brief_get_statuses" in raw:
                 diagnostics[-1]["daily_brief_get_statuses"] = raw["daily_brief_get_statuses"]
+            if "wp5_autosave_events" in raw:
+                diagnostics[-1]["wp5_autosave_events"] = raw["wp5_autosave_events"]
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
@@ -1238,7 +1265,7 @@ def main() -> int:
     global CORE_URL, WEB_URL, ALLOW_FAILURE_SCREENSHOT_PUBLICATION
     parser = argparse.ArgumentParser()
     parser.add_argument("--http-smoke-only", action="store_true", help="run synthetic Core HTTP checks without launching a browser")
-    parser.add_argument("--wp5-roundtrip-only", action="store_true", help="run only the desktop WP5 Notes save/reopen browser probe")
+    parser.add_argument("--wp5-roundtrip-only", action="store_true", help="run only the desktop WP5 Notes save/reopen and conflict-autosave browser probes")
     parser.add_argument("--desktop-only", action="store_true", help="run the existing browser acceptance journey at desktop viewport only")
     options = parser.parse_args()
     # The workflow uploads only this directory. It starts empty on every run;
@@ -1265,6 +1292,7 @@ def main() -> int:
     os.chmod(root, 0o700)
     raw_artifacts = root / "playwright-raw"
     raw_artifacts.mkdir(mode=0o700)
+    wp5_autosave_core_log = root / "wp5-autosave-core.jsonl"
     processes: list[subprocess.Popen] = []
     log_files = []
     result = 1
@@ -1289,6 +1317,8 @@ def main() -> int:
             "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
             "SB_E2E_WP5_ROUNDTRIP_ONLY": "true" if options.wp5_roundtrip_only else "false",
+            "SB_E2E_WP5_AUTOSAVE_MARKER": "wp5-conflict-queue" if options.wp5_roundtrip_only else "",
+            "SB_E2E_WP5_AUTOSAVE_LOG": str(wp5_autosave_core_log) if options.wp5_roundtrip_only else "",
             "SB_E2E_DESKTOP_ONLY": "true" if options.desktop_only else "false",
             "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
@@ -1344,6 +1374,34 @@ def main() -> int:
             test_process = launch_browser_tests(env, test_log)
             processes.append(test_process)
             test_returncode = wait_for_test_process(test_process)
+            core_probe_events = []
+            if options.wp5_roundtrip_only and wp5_autosave_core_log.exists():
+                if wp5_autosave_core_log.stat().st_size > 2048 or not wp5_autosave_core_log.is_file():
+                    raise RuntimeError("WP5 Core probe log exceeded bounded size")
+                for line in wp5_autosave_core_log.read_text(encoding="utf-8").splitlines()[:8]:
+                    row = json.loads(line)
+                    if (not isinstance(row, dict) or row.get("marker") != "wp5-conflict-queue"
+                            or row.get("event") not in {"core-request-received", "core-response", "core-handler-error"}
+                            or type(row.get("at_ms")) is not int):
+                        raise RuntimeError("WP5 Core probe event rejected")
+                    event = {"marker": row["marker"], "at_ms": row["at_ms"], "event": row["event"]}
+                    if "status" in row:
+                        if type(row["status"]) is not int or not 100 <= row["status"] <= 599:
+                            raise RuntimeError("WP5 Core probe status rejected")
+                        event["status"] = row["status"]
+                    core_probe_events.append(event)
+                core_probe_events.sort(key=lambda item: item["at_ms"])
+                print("WP5_AUTOSAVE_CORE_EVENTS " + json.dumps(core_probe_events, separators=(",", ":")))
+                for source in raw_artifacts.rglob("failure-summary.json"):
+                    summary_data = json.loads(source.read_text(encoding="utf-8"))
+                    browser_events = summary_data.get("wp5_autosave_events", [])
+                    browser_limit = max(0, 24 - len(core_probe_events))
+                    summary_data["wp5_autosave_events"] = sorted(
+                        [*browser_events[:browser_limit], *core_probe_events],
+                        key=lambda item: item["at_ms"],
+                    )
+                    source.write_text(json.dumps(summary_data, indent=2) + "\n", encoding="utf-8")
+                    os.chmod(source, 0o600)
 
         raw_files = [path for path in dirs["raw"].iterdir() if path.is_file()]
         journal_after = _read_regular_file_snapshot(dirs["journal"])

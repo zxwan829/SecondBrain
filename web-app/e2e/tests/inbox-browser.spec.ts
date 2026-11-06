@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request, type Response, type Route } from '@playwright/test';
+import { expect, test, type Page, type Request, type Response, type Route, type TestInfo } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -41,6 +41,8 @@ const desktopOnly = process.env.SB_E2E_DESKTOP_ONLY === 'true';
 const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
+type Wp5ProbeEvent = { marker: 'wp5-conflict-queue'; at_ms: number; event: string; status?: number };
+const WP5_PROBE_MARKER = 'wp5-conflict-queue' as const;
 type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
@@ -90,6 +92,10 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
   | 'wp5_focus_saved_status'
   | 'wp5_focus_reopen_content' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
+  | 'wp5_conflict_probe_seed' | 'wp5_conflict_probe_open' | 'wp5_conflict_probe_initial_read'
+  | 'wp5_conflict_probe_external_write' | 'wp5_conflict_probe_request_path' | 'wp5_conflict_probe_rejected'
+  | 'wp5_conflict_probe_readback' | 'wp5_conflict_probe_reopen' | 'wp5_conflict_probe_recovery_status'
+  | 'wp5_conflict_probe_recovery_body' | 'wp5_conflict_probe_recovery_readback'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
@@ -516,7 +522,7 @@ async function configurePage(page: Page) {
   });
 
   return {
-    requestRecords, blockedOrigins,
+    requestRecords, blockedOrigins, wp5AutosaveProbeEvents: [] as Wp5ProbeEvent[],
     setFailureStage(stage: FailureStage) { failureStage = stage; },
     get failureStage() { return failureStage; },
     get inboxPostCount() { return inboxPostCount; },
@@ -706,6 +712,47 @@ for (const viewport of activeViewports) {
     if (wp5RoundtripOnly && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
+    if (wp5RoundtripOnly) {
+      await page.addInitScript((marker) => {
+        const state = { marker, active: false, events: [] as { marker: string; at_ms: number; event: string; status?: number }[] };
+        const emit = (event: string, status?: number) => {
+          if (!state.active || state.events.length >= 24) return;
+          state.events.push({ marker: state.marker, at_ms: Date.now(), event, ...(status === undefined ? {} : { status }) });
+        };
+        Object.defineProperty(window, '__sbWp5AutosaveProbe', { value: state, configurable: true });
+        const originalSetTimeout = window.setTimeout.bind(window);
+        const originalClearTimeout = window.clearTimeout.bind(window);
+        const autosaveTimers = new Set<number>();
+        window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+          const isAutosave = state.active && timeout === 900 && typeof handler === 'function';
+          if (!isAutosave || typeof handler !== 'function') return originalSetTimeout(handler, timeout, ...args);
+          let timerId = 0;
+          timerId = originalSetTimeout(() => {
+            if (autosaveTimers.delete(timerId)) emit('notes-save-timer-fired');
+            handler.apply(window, args);
+          }, timeout);
+          autosaveTimers.add(timerId);
+          emit('notes-save-timer-scheduled');
+          return timerId;
+        }) as typeof window.setTimeout;
+        window.clearTimeout = ((timerId?: number) => {
+          if (timerId !== undefined && autosaveTimers.delete(timerId)) emit('notes-save-timer-cancelled');
+          return originalClearTimeout(timerId);
+        }) as typeof window.clearTimeout;
+        let previousState = '';
+        const observer = new MutationObserver(() => {
+          if (!state.active) return;
+          const text = document.querySelector('.notes-document-heading [role="status"]')?.textContent?.trim() ?? '';
+          const event = text === '未保存' ? 'notes-queue-unsaved'
+            : text === '保存中…' ? 'notes-queue-saving'
+              : text === '版本冲突' ? 'notes-queue-conflict'
+                : text === '已保存' ? 'notes-queue-saved'
+                  : text === '保存失败' ? 'notes-queue-failed' : '';
+          if (event && event !== previousState) { previousState = event; emit(event); }
+        });
+        observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+      }, WP5_PROBE_MARKER);
+    }
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
     await signInAndCreateBlankSession(page, viewport, observed);
     if (wp5RoundtripOnly) {
@@ -790,6 +837,148 @@ for (const viewport of activeViewports) {
       await expect(rawSource).toContainText(editMarker);
       await expect(rawSource).toContainText('custom: preserve-focused');
       await expect(rawSource).toContainText('Column A');
+
+      // Focused concurrency probe: only synthetic Notes, real Core PUT/If-Match,
+      // and the BlockSuite -> Notes autosave queue are exercised here.
+      observed.setFailureStage('notes_blocksuite_conflict');
+      const conflictTitle = 'WP5 conflict queue probe';
+      const baselineText = `Conflict baseline ${randomUUID()}`;
+      const baselineMarkdown = `# ${conflictTitle}\n\n${baselineText}\n`;
+      observed.setDiagnosticAssertion('wp5_conflict_probe_seed');
+      const conflictSeed = await page.evaluate(async (content) => {
+        const response = await fetch('/api/notes', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+        return { status: response.status, note: response.ok ? await response.json() as { path: string } : null };
+      }, baselineMarkdown);
+      expect(conflictSeed.status, 'wp5_conflict_probe_seed').toBe(200);
+      const conflictPath = conflictSeed.note!.path;
+      const conflictUrlPath = `/api/notes/drafts/${conflictPath}`;
+      await page.reload();
+      const conflictRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === conflictUrlPath);
+      await page.getByRole('button', { name: conflictTitle, exact: true }).click();
+      expect((await conflictRead).status(), 'wp5_conflict_probe_open').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const conflictCanvas = page.locator('.blocksuite-notes-canvas');
+      await expect(conflictCanvas).toBeVisible({ timeout: 20000 });
+      const baselineBlock = conflictCanvas.getByText(baselineText, { exact: true });
+      await expect(baselineBlock).toBeVisible();
+      const initialRead = await page.request.get(`${baseUrl}${conflictUrlPath}`);
+      expect(initialRead.status(), 'wp5_conflict_probe_initial_read').toBe(200);
+      const initialNote = await initialRead.json() as { content: string };
+      const externalText = 'WP5 Core concurrent update';
+      const externalWrite = await page.evaluate(async ({ path, content, etag }) => {
+        const response = await fetch(path, { method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': etag }, body: JSON.stringify({ content }) });
+        return response.status;
+      }, { path: conflictUrlPath, content: `${initialNote.content}\n${externalText}\n`, etag: initialRead.headers()['etag'] ?? '' });
+      expect(externalWrite, 'wp5_conflict_probe_external_write').toBe(200);
+
+      let probeActive = false;
+      const recordProbe = (event: string, status?: number) => {
+        if (observed.wp5AutosaveProbeEvents.length >= 24) return;
+        observed.wp5AutosaveProbeEvents.push({ marker: WP5_PROBE_MARKER, at_ms: Date.now(), event,
+          ...(status === undefined ? {} : { status }) });
+      };
+      await page.route('**/api/notes/drafts/*', async (route) => {
+        const request = route.request();
+        const requestUrl = new URL(request.url());
+        if (probeActive && request.method() === 'PUT' && requestUrl.pathname === conflictUrlPath) {
+          requestUrl.searchParams.set('wp5_probe', WP5_PROBE_MARKER);
+          await route.continue({ url: requestUrl.toString() });
+          return;
+        }
+        await route.fallback();
+      });
+      page.on('request', (request) => {
+        if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
+          recordProbe('browser-put-request');
+      });
+      page.on('response', (response) => {
+        const request = response.request();
+        if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
+          recordProbe('browser-put-response', response.status());
+      });
+      page.on('requestfailed', (request) => {
+        if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
+          recordProbe('browser-put-requestfailed');
+      });
+      await page.evaluate((marker) => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: { marker: string; active: boolean } }).__sbWp5AutosaveProbe;
+        if (probe && probe.marker === marker) probe.active = true;
+      }, WP5_PROBE_MARKER);
+      probeActive = true;
+      recordProbe('probe-armed');
+
+      const staleRequestPromise = page.waitForRequest((request) => request.method() === 'PUT'
+        && new URL(request.url()).pathname === conflictUrlPath, { timeout: 5000 });
+      const staleResponsePromise = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === conflictUrlPath, { timeout: 5000 }).then((response) => {
+          recordProbe('test-response-matcher-accepted', response.status());
+          return response;
+        });
+      await expect(conflictCanvas).toHaveAttribute('data-disabled', 'false');
+      await baselineBlock.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      const staleText = 'WP5 stale browser edit must not replace Core';
+      await page.keyboard.insertText(staleText);
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_unsaved_state');
+      await expect(page.locator('.notes-document-heading [role="status"]')).toHaveText('未保存', { timeout: 5000 });
+      const staleRequest = await staleRequestPromise;
+      expect(new URL(staleRequest.url()).pathname, 'wp5_conflict_probe_request_path').toBe(conflictUrlPath);
+      recordProbe('test-request-matcher-accepted');
+      const staleResponse = await staleResponsePromise;
+      expect(staleResponse.status(), 'wp5_conflict_probe_rejected').toBe(412);
+      await expect(page.getByRole('status').filter({ hasText: '版本冲突' })).toBeVisible();
+      const coreAfterConflict = await page.evaluate(async (path) => {
+        const response = await fetch(path, { credentials: 'same-origin' });
+        return { status: response.status, content: response.ok ? (await response.json() as { content: string }).content : '' };
+      }, conflictUrlPath);
+      expect(coreAfterConflict.status, 'wp5_conflict_probe_readback').toBe(200);
+      expect(coreAfterConflict.content, 'wp5_conflict_probe_readback').toContain(externalText);
+      expect(coreAfterConflict.content, 'wp5_conflict_probe_readback').not.toContain(staleText);
+
+      // Leaving the conflict revision clears the blocked queue; a fresh reopen/edit must save normally.
+      page.once('dialog', (dialog) => void dialog.accept());
+      await page.getByRole('button', { name: title, exact: true }).click();
+      await page.getByRole('button', { name: conflictTitle, exact: true }).click();
+      const conflictReopenResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === conflictUrlPath);
+      await expect(page.locator('.notes-document-heading')).toContainText(conflictPath);
+      expect((await conflictReopenResponse).status(), 'wp5_conflict_probe_reopen').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
+      await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
+      await expect(reopenedCanvas).toContainText(externalText);
+      const recoveryText = 'WP5 autosave queue recovery';
+      const recoveryResponsePromise = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === conflictUrlPath, { timeout: 5000 }).then((response) => {
+          recordProbe('recovery-response-matcher-accepted', response.status());
+          return response;
+        });
+      const recoveryBlock = reopenedCanvas.getByText(externalText, { exact: true });
+      await recoveryBlock.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText(recoveryText);
+      const recoveryResponse = await recoveryResponsePromise;
+      expect(recoveryResponse.status(), 'wp5_conflict_probe_recovery_status').toBe(200);
+      const recoveryBody = await recoveryResponse.json() as { content: string };
+      expect(recoveryBody.content, 'wp5_conflict_probe_recovery_body').toContain(recoveryText);
+      const recoveredReadback = await page.evaluate(async (path) => {
+        const response = await fetch(path, { credentials: 'same-origin' });
+        return { status: response.status, content: response.ok ? (await response.json() as { content: string }).content : '' };
+      }, conflictUrlPath);
+      expect(recoveredReadback.status, 'wp5_conflict_probe_recovery_readback').toBe(200);
+      expect(recoveredReadback.content, 'wp5_conflict_probe_recovery_readback').toBe(recoveryBody.content);
+      const browserProbeEvents = await page.evaluate(() => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
+        return probe?.events ?? [];
+      });
+      observed.wp5AutosaveProbeEvents.push(...browserProbeEvents);
+      observed.wp5AutosaveProbeEvents.sort((left, right) => left.at_ms - right.at_ms);
+      console.log(`WP5_AUTOSAVE_EVENTS ${JSON.stringify(observed.wp5AutosaveProbeEvents.slice(0, 24))}`);
       return;
     }
     const composer = page.getByPlaceholder('发送消息给 Hermes…');
@@ -1633,6 +1822,13 @@ test.afterEach(async ({ page }, testInfo) => {
       blocksuite_module_statuses: observed?.requestRecords.filter((record) => record.method === 'GET'
         && /blocksuite|node_modules\/\.vite/i.test(record.path)).map((record) => record.status).slice(-8) ?? [],
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
+      ...(observed?.wp5AutosaveProbeEvents.length ? {
+        wp5_autosave_events: await page.evaluate(() => {
+          const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
+          return probe?.events ?? [];
+        }).catch(() => []).then((browserEvents) => [...observed.wp5AutosaveProbeEvents, ...browserEvents]
+          .sort((left, right) => left.at_ms - right.at_ms).slice(0, 32)),
+      } : {}),
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);

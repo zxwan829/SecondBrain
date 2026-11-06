@@ -193,6 +193,32 @@ def test_exact_playwright_truncated_output_directory_is_allowlisted(viewport, tm
     assert module.count_allowlisted_failure_screenshots(raw) == 1
 
 
+
+def test_wp5_autosave_probe_timeline_accepts_only_bounded_safe_events():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_conflict",
+        "code": "timeout", "assertion_id": "notes_blocksuite_conflict_rejected",
+        "activity_get_statuses": [200],
+        "wp5_autosave_events": [
+            {"marker": "wp5-conflict-queue", "at_ms": 1000, "event": "notes-queue-unsaved"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1001, "event": "notes-save-timer-fired"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1002, "event": "browser-put-request"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1003, "event": "core-response", "status": 412},
+        ],
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    invalid = {**diagnostic, "wp5_autosave_events": [
+        {"marker": "wrong-marker", "at_ms": 1000, "event": "browser-put-request"},
+    ]}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([invalid])
+    over_bound = {**diagnostic, "wp5_autosave_events": [
+        {"marker": "wp5-conflict-queue", "at_ms": index, "event": "browser-put-request"}
+        for index in range(25)
+    ]}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([over_bound])
+
 @pytest.mark.parametrize("entry", [
     {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret", "notes_collection_statuses": []},
     {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
