@@ -1115,7 +1115,7 @@ for (const viewport of viewports) {
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('notes_frontmatter_seed');
       const seeded = await page.request.put(`${baseUrl}/api/notes/drafts/${createdNote.path}`, {
-        headers: { 'If-Match': readNoteResponse.headers()['etag'] ?? '' },
+        headers: { Origin: baseOrigin, 'If-Match': readNoteResponse.headers()['etag'] ?? '' },
         data: { content: syntheticFrontmatter },
       });
       expect(seeded.status(), 'notes_seed_synthetic_frontmatter').toBe(200);
