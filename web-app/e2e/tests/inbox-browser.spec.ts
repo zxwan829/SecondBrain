@@ -677,7 +677,7 @@ for (const viewport of viewports) {
       const title = 'WP5 focused roundtrip';
       const originalBody = `Synthetic body ${randomUUID()}`;
       const editMarker = `WP5 persisted edit ${randomUUID()}`;
-      const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\n---\n\n# ${title}\n\n${originalBody}\n`;
+      const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('wp5_focus_note_seed');
       const seeded = await page.evaluate(async (content) => {
