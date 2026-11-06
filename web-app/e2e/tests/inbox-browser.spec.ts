@@ -980,6 +980,11 @@ for (const viewport of activeViewports) {
         const resourceLink = page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' }).last();
         await expect(resourceLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
         observed.setDiagnosticAssertion('wp5_resource_reopen');
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(await resourceLink.evaluate(anchor => ({
+          anchorPointer: getComputedStyle(anchor).pointerEvents,
+          canvasDisabled: anchor.closest('.blocksuite-notes-canvas')?.getAttribute('data-disabled'),
+          width: Math.round(anchor.getBoundingClientRect().width), height: Math.round(anchor.getBoundingClientRect().height),
+        }))));
         await resourceLink.click();
         await expect(page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' })).toBeVisible({ timeout: 15000 });
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
