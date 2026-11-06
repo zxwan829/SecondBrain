@@ -81,6 +81,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_sources'
   | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
+  | 'notes_ui_state_unsaved' | 'notes_ui_state_saving' | 'notes_ui_state_conflict'
+  | 'notes_ui_state_failed' | 'notes_ui_state_unknown'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
   | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat'
   | 'chat_session' | 'chat_context_preview' | 'chat_preview_button_visible' | 'chat_preview_button_enabled'
@@ -90,6 +92,22 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'chat_run_candidates' | 'chat_run_citations' | 'chat_run_citation_panel' | 'chat_run_citation_content' | 'chat_composer_reset'
   | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
+
+async function expectNoteSavedStatus(page: Page, observed: Awaited<ReturnType<typeof configurePage>>, assertion: 'wp5_focus_saved_status' | 'notes_blocksuite_saved_status') {
+  const status = page.locator('.notes-document-heading [role="status"]');
+  observed.setDiagnosticAssertion(assertion);
+  try {
+    await expect(status).toHaveText('已保存');
+  } catch (error) {
+    const current = (await status.textContent().catch(() => '')).trim();
+    const stateAssertion: DiagnosticAssertion = current === '未保存' ? 'notes_ui_state_unsaved'
+      : current === '保存中…' ? 'notes_ui_state_saving'
+        : current === '版本冲突' ? 'notes_ui_state_conflict'
+          : current === '保存失败' ? 'notes_ui_state_failed' : 'notes_ui_state_unknown';
+    observed.setDiagnosticAssertion(stateAssertion);
+    throw error;
+  }
+}
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
   return page.waitForResponse((response) => {
@@ -728,8 +746,7 @@ for (const viewport of viewports) {
         'wp5_focus_put_response_content').toBe(true);
       observed.setDiagnosticAssertion('wp5_focus_put_response_matches_request');
       expect(savedPayload.content, 'wp5_focus_put_response_matches_request').toBe(requestBody.content);
-      observed.setDiagnosticAssertion('wp5_focus_saved_status');
-      await expect(page.locator('.notes-document-heading').getByRole('status')).toHaveText('已保存');
+      await expectNoteSavedStatus(page, observed, 'wp5_focus_saved_status');
 
       observed.setDiagnosticAssertion('wp5_focus_api_readback');
       const readback = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
@@ -1348,8 +1365,7 @@ for (const viewport of viewports) {
       expect(savedPayload.content).toContain('wp5-synthetic');
       observed.setDiagnosticAssertion('notes_blocksuite_saved_edit_text');
       expect(savedPayload.content).toContain(updatedBody);
-      observed.setDiagnosticAssertion('notes_blocksuite_saved_status');
-      await expect(page.getByRole('status').filter({ hasText: '已保存' }).first()).toBeVisible();
+      await expectNoteSavedStatus(page, observed, 'notes_blocksuite_saved_status');
 
       // A concurrent Core edit advances the ETag. The stale editor must receive
       // 412 and leave that external content intact rather than overwrite it.
