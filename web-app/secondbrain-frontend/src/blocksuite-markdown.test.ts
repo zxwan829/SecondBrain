@@ -15,8 +15,10 @@ describe('BlockSuite Markdown safety boundary', () => {
     expect(() => splitOpaqueFrontmatter('---\ntags: [x]\n正文')).toThrow('Frontmatter is incomplete');
   });
 
-  it('accepts line ending conversion but rejects whitespace or blank line loss', () => {
+  it('accepts line-ending and single terminal-newline normalization but rejects content loss', () => {
     expect(blockSuiteMarkdownMatches('# Title\r\n\r\nBody\r\n', '# Title\n\nBody\n')).toBe(true);
+    expect(blockSuiteMarkdownMatches('Plain Markdown\n', 'Plain Markdown')).toBe(true);
+    expect(blockSuiteMarkdownMatches('Plain Markdown\n\n', 'Plain Markdown')).toBe(false);
     expect(blockSuiteMarkdownMatches('```text\nline  \n\n\n```\n', '```text\nline\n\n```\n')).toBe(false);
     expect(blockSuiteMarkdownMatches('Body  \n', 'Body\n')).toBe(false);
     expect(blockSuiteMarkdownMatches('[[Obsidian]]\n', '')).toBe(false);

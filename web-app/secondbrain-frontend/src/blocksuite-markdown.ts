@@ -17,8 +17,9 @@ export function splitOpaqueFrontmatter(markdown: string): MarkdownParts {
 }
 
 export function blockSuiteMarkdownMatches(source: string, serialized: string): boolean {
-  // Line-ending differences are harmless. Whitespace and blank lines elsewhere
-  // may be significant (especially inside fenced code), so never normalize them.
-  const normalize = (value: string) => value.replace(/\r\n/g, '\n');
+  // CRLF conversion and one terminal newline are Markdown-equivalent. Other
+  // whitespace and blank lines may be significant (especially inside code), so
+  // keep the comparison strict everywhere else.
+  const normalize = (value: string) => value.replace(/\r\n/g, '\n').replace(/\n$/, '');
   return normalize(source) === normalize(serialized);
 }

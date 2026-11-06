@@ -436,7 +436,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           {note && <button type="button" onClick={() => void trashSelectedNote()} disabled={state !== '已保存' || loading || creatingVisual || savingVisual || visualAsset !== null || unpersistedVisual !== null}>移到回收站</button>}
         </div>
         {note && !note.read_only && editorMode === 'legacy' && <div className="notes-editor-mode" role="group" aria-label="Markdown 编辑器">
-          <button type="button" onClick={() => setEditorMode('blocksuite')}>BlockSuite 编辑器</button>
+          <button type="button" onClick={() => { blockSuiteFallbackReason.current = null; setMessage(''); setEditorMode('blocksuite'); }}>BlockSuite 编辑器</button>
         </div>}
         {restorePreview && <section className="notes-restore-preview" aria-label="历史版本预览">
           <h2>最近历史版本预览</h2><pre>{restorePreview.content}</pre>

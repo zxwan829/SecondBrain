@@ -146,6 +146,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
           setStatus(error instanceof Error ? error.message : 'BlockSuite 无法安全载入此 Markdown');
           onFallbackRef.current(fallbackReason);
         }
+        try { std?.unmount(); } catch { /* Keep workspace disposal fail-safe. */ }
         workspace?.dispose();
       }
     };
