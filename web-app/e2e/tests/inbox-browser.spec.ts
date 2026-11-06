@@ -1872,24 +1872,20 @@ for (const viewport of activeViewports) {
       // Exercise unsupported syntax introduced during an active BlockSuite
       // session. Preserve the projection through fallback without a Core PUT.
       const projectionTitle = 'WP5 dynamic unsupported projection';
-      const projectionBody = `# ${projectionTitle}\n\nSafe baseline text\n`;
       observed.setFailureStage('notes_blocksuite_edit');
       observed.setDiagnosticAssertion('wp5_unsupported_projection_seed');
-      const projectionSeed = await page.evaluate(async (content) => {
-        const response = await fetch('/api/notes', { method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
-        return { status: response.status, note: response.ok ? await response.json() as { path: string } : null };
-      }, projectionBody);
-      expect(projectionSeed.status, 'wp5_unsupported_projection_seed').toBe(200);
-      const projectionUrl = `/api/notes/drafts/${projectionSeed.note!.path}`;
-      const projectionRead = page.waitForResponse((response) => response.request().method() === 'GET'
-        && new URL(response.url()).pathname === projectionUrl, { timeout: 5000 });
-      await page.getByRole('button', { name: projectionTitle, exact: true }).click();
-      expect((await projectionRead).status(), 'wp5_unsupported_projection_open').toBe(200);
+      const projectionSeed = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/notes', { timeout: 5000 });
+      await page.getByRole('button', { name: '新建 Draft', exact: true }).click();
+      const projectionCreated = await projectionSeed;
+      expect(projectionCreated.status(), 'wp5_unsupported_projection_seed').toBe(200);
+      const projectionNote = await projectionCreated.json() as { path: string };
+      const projectionUrl = `/api/notes/drafts/${projectionNote.path}`;
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const projectionCanvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_open');
       await expect(projectionCanvas).toBeVisible({ timeout: 20000 });
-      const baseline = projectionCanvas.getByText('Safe baseline text', { exact: true });
+      const baseline = projectionCanvas.getByText('未命名笔记', { exact: true });
       await expect(baseline).toBeVisible();
       let projectionPutCount = 0;
       const countProjectionPut = (request: Request) => {
