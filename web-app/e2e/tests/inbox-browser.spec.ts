@@ -835,6 +835,13 @@ for (const viewport of activeViewports) {
         await expect(createButton, `wp5_${kind}_create_button_enabled`).toBeEnabled();
         const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources`, { timeout: 15000 });
+        let resourceRequestFailure: string | null = null;
+        const onResourceRequestFailed = (request: import('@playwright/test').Request) => {
+          if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/blocksuite/resources')) {
+            resourceRequestFailure = request.failure()?.errorText ?? 'unknown-request-failure';
+          }
+        };
+        page.on('requestfailed', onResourceRequestFailed);
         const resourceError = page.locator('.notes-document [role="alert"]')
           .filter({ hasText: 'BlockSuite 资源创建失败' });
         const resourceOutcome = Promise.race([
@@ -848,9 +855,14 @@ for (const viewport of activeViewports) {
         const outcome = await resourceOutcome;
         if ('error' in outcome) {
           const alertText = outcome.error ? await resourceError.textContent() : null;
-          console.log('WP5_RESOURCE_CREATE_ERROR', alertText?.slice(0, 240) ?? 'no-response-without-create-error-alert');
+          page.off('requestfailed', onResourceRequestFailed);
+          console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({
+            alert: alertText?.slice(0, 240) ?? 'no-response-without-create-error-alert',
+            requestFailure: resourceRequestFailure,
+          }));
           throw new Error('BlockSuite resource creation failed before the Core POST response');
         }
+        page.off('requestfailed', onResourceRequestFailed);
         const created = outcome.response;
         expect(created.status(), `wp5_resource_${kind}_create`).toBe(200);
         const resourceInfo = await created.json() as { resource_id: string; filename: string; reference: string; etag: string };
