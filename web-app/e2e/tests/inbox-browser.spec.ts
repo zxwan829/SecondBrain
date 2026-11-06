@@ -1691,6 +1691,55 @@ for (const viewport of activeViewports) {
       expect(savedPayload.content).toContain(updatedBody);
       await expectNoteSavedStatus(page, observed, 'notes_blocksuite_saved_status');
 
+      // Exercise unsupported syntax introduced during an active BlockSuite
+      // session. Preserve the projection through fallback without a Core PUT.
+      observed.setFailureStage('notes_blocksuite_edit');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_seed');
+      const projectionSeed = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/notes', { timeout: 5000 });
+      await page.getByRole('button', { name: '新建 Draft', exact: true }).click();
+      const projectionCreated = await projectionSeed;
+      expect(projectionCreated.status(), 'wp5_unsupported_projection_seed').toBe(200);
+      const projectionNote = await projectionCreated.json() as { path: string };
+      const projectionUrl = `/api/notes/drafts/${projectionNote.path}`;
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const projectionCanvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_open');
+      await expect(projectionCanvas).toBeVisible({ timeout: 20000 });
+      const baseline = projectionCanvas.getByText('未命名笔记', { exact: true });
+      await expect(baseline).toBeVisible();
+      let projectionPutCount = 0;
+      const countProjectionPut = (request: Request) => {
+        if (request.method() === 'PUT' && new URL(request.url()).pathname === projectionUrl) projectionPutCount += 1;
+      };
+      page.on('request', countProjectionPut);
+      await baseline.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText('Dynamic Setext heading');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText('===');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_rejected');
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 5000 });
+      const fallbackProjection = page.locator('.notes-document .ProseMirror');
+      await expect(fallbackProjection).toContainText('Dynamic Setext heading');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_preserved');
+      await page.waitForTimeout(1000);
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_no_core_put');
+      expect(projectionPutCount, 'wp5_unsupported_projection_no_core_put').toBe(0);
+      page.off('request', countProjectionPut);
+      // Discard this synthetic unsaved projection before continuing the main
+      // conflict/recovery journey on its original note.
+      page.once('dialog', (dialog) => void dialog.accept());
+      const restoreMainNote = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
+      await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
+      expect((await restoreMainNote).status(), 'notes_blocksuite_reopen_navigation_response').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      await expect(page.locator('.blocksuite-notes-canvas')).toBeVisible({ timeout: 20000 });
+      await expect(page.locator('.blocksuite-notes-canvas')).toHaveAttribute('data-disabled', 'false');
+
+
       // A concurrent Core edit advances the ETag. The stale editor must receive
       // 412 and leave that external content intact rather than overwrite it.
       observed.setFailureStage('notes_blocksuite_conflict');
@@ -1869,44 +1918,6 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('notes_unsafe_editor_hidden');
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器' })).toHaveCount(0);
 
-      // Exercise unsupported syntax introduced during an active BlockSuite
-      // session. Preserve the projection through fallback without a Core PUT.
-      const projectionTitle = 'WP5 dynamic unsupported projection';
-      observed.setFailureStage('notes_blocksuite_edit');
-      observed.setDiagnosticAssertion('wp5_unsupported_projection_seed');
-      const projectionSeed = page.waitForResponse((response) => response.request().method() === 'POST'
-        && new URL(response.url()).pathname === '/api/notes', { timeout: 5000 });
-      await page.getByRole('button', { name: '新建 Draft', exact: true }).click();
-      const projectionCreated = await projectionSeed;
-      expect(projectionCreated.status(), 'wp5_unsupported_projection_seed').toBe(200);
-      const projectionNote = await projectionCreated.json() as { path: string };
-      const projectionUrl = `/api/notes/drafts/${projectionNote.path}`;
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
-      const projectionCanvas = page.locator('.blocksuite-notes-canvas');
-      observed.setDiagnosticAssertion('wp5_unsupported_projection_open');
-      await expect(projectionCanvas).toBeVisible({ timeout: 20000 });
-      const baseline = projectionCanvas.getByText('未命名笔记', { exact: true });
-      await expect(baseline).toBeVisible();
-      let projectionPutCount = 0;
-      const countProjectionPut = (request: Request) => {
-        if (request.method() === 'PUT' && new URL(request.url()).pathname === projectionUrl) projectionPutCount += 1;
-      };
-      page.on('request', countProjectionPut);
-      await baseline.click();
-      await page.keyboard.press('End');
-      await page.keyboard.press('Enter');
-      await page.keyboard.insertText('Dynamic Setext heading');
-      await page.keyboard.press('Enter');
-      await page.keyboard.insertText('===');
-      observed.setDiagnosticAssertion('wp5_unsupported_projection_rejected');
-      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 5000 });
-      const fallbackProjection = page.locator('.notes-document .ProseMirror');
-      await expect(fallbackProjection).toContainText('Dynamic Setext heading');
-      observed.setDiagnosticAssertion('wp5_unsupported_projection_preserved');
-      await page.waitForTimeout(1000);
-      observed.setDiagnosticAssertion('wp5_unsupported_projection_no_core_put');
-      expect(projectionPutCount, 'wp5_unsupported_projection_no_core_put').toBe(0);
-      page.off('request', countProjectionPut);
     }
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
 
