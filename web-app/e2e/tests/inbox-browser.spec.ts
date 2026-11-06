@@ -738,7 +738,10 @@ for (const viewport of viewports) {
       expect((await reopenedRead).status(), 'wp5_focus_reopen_api').toBe(200);
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('wp5_focus_reopen_content');
-      await expect(page.locator('.blocksuite-notes-canvas')).toContainText(editMarker);
+      const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
+      await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
+      await expect(reopenedCanvas).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
+      await expect(reopenedCanvas).toContainText(editMarker);
       return;
     }
     const composer = page.getByPlaceholder('发送消息给 Hermes…');
