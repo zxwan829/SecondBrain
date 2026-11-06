@@ -29,6 +29,8 @@ _BLOCKSUITE_DOC_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
 _BLOCKSUITE_RESOURCE_FILENAME = re.compile(r"^[0-9a-f]{32}\.blocksuite\.json$")
 _BLOCKSUITE_RESOURCE_KINDS = {"database", "edgeless-canvas"}
 MAX_BLOCKSUITE_RESOURCE_BYTES = 10 * 1024 * 1024
+MAX_BLOCKSUITE_RESOURCES_PER_NOTE = 64
+MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE = 64 * 1024 * 1024
 MAX_BLOCKSUITE_UPDATE_BYTES = 7 * 1024 * 1024
 MAX_BLOCKSUITE_SNAPSHOT_BYTES = 2 * 1024 * 1024
 MAX_BLOCKSUITE_SNAPSHOT_NODES = 50_000
@@ -741,8 +743,13 @@ class NotesStore:
                 pending.extend((child, depth + 1) for child in value.values())
             elif isinstance(value, list):
                 pending.extend((child, depth + 1) for child in value)
-            elif isinstance(value, str) and len(value.encode("utf-8")) > 100_000:
-                raise HTTPException(status_code=422, detail="BlockSuite snapshot string is too long")
+            elif isinstance(value, str):
+                try:
+                    string_size = len(value.encode("utf-8"))
+                except UnicodeEncodeError as exc:
+                    raise HTTPException(status_code=422, detail="BlockSuite snapshot string is invalid Unicode") from exc
+                if string_size > 100_000:
+                    raise HTTPException(status_code=422, detail="BlockSuite snapshot string is too long")
             elif value is not None and not isinstance(value, (str, int, float, bool)):
                 raise HTTPException(status_code=422, detail="BlockSuite snapshot contains unsupported values")
         try:
@@ -822,6 +829,29 @@ class NotesStore:
             raise HTTPException(status_code=409, detail="BlockSuite resource file is not canonical")
         return body, raw, hashlib.sha256(raw).hexdigest()
 
+    @staticmethod
+    def _blocksuite_resource_usage(attachments_fd):
+        count = total_bytes = 0
+        try:
+            names = os.listdir(attachments_fd)
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Note resource directory could not be listed safely") from exc
+        for name in names:
+            if not _BLOCKSUITE_RESOURCE_FILENAME.fullmatch(name):
+                continue
+            try:
+                info = os.stat(name, dir_fd=attachments_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise HTTPException(status_code=403, detail="BlockSuite resource could not be inspected safely") from exc
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077
+                    or info.st_size > MAX_BLOCKSUITE_RESOURCE_BYTES):
+                raise HTTPException(status_code=403, detail="BlockSuite resource file permissions or size are unsafe")
+            count += 1
+            total_bytes += info.st_size
+        if count > MAX_BLOCKSUITE_RESOURCES_PER_NOTE or total_bytes > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE:
+            raise HTTPException(status_code=409, detail="Existing BlockSuite resources exceed configured note limits")
+        return count, total_bytes
+
     def create_blocksuite_resource(self, collection, relative, body, expected_note):
         path, directory = self._path(collection, relative)
         resource_id = uuid.uuid4().hex
@@ -840,6 +870,10 @@ class NotesStore:
             if not expected_note or expected_note.strip('"') != note_etag:
                 raise HTTPException(status_code=412, detail="Note changed; reload before creating a resource")
             attachments_fd = self._open_attachments_directory(directory_fd, create=True)
+            resource_count, resource_bytes = self._blocksuite_resource_usage(attachments_fd)
+            if (resource_count + 1 > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or resource_bytes + len(raw) > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=413, detail="BlockSuite resources exceed per-note storage limits")
             filename = f"{resource_id}.blocksuite.json"
             self._atomic_write(directory / "attachments" / filename, raw, exclusive=True,
                                directory_fd=attachments_fd)
@@ -897,6 +931,10 @@ class NotesStore:
             if (body["resourceKind"] != old_body["resourceKind"]
                     or body["docId"] != old_body["docId"]):
                 raise HTTPException(status_code=409, detail="BlockSuite resource identity is immutable")
+            resource_count, resource_bytes = self._blocksuite_resource_usage(attachments_fd)
+            if (resource_count > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or resource_bytes - len(_old_raw) + len(raw) > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=413, detail="BlockSuite resources exceed per-note storage limits")
             filename = f"{resource_id}.blocksuite.json"
             self._atomic_write(directory / "attachments" / filename, raw, directory_fd=attachments_fd)
             etag = hashlib.sha256(raw).hexdigest()

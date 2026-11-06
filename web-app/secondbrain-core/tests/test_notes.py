@@ -260,6 +260,10 @@ class NotesStoreTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as bad_kind:
             self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "resourceKind": "anything"}, note["etag"])
         self.assertEqual(bad_kind.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as invalid_unicode:
+            self.store.create_blocksuite_resource("drafts", note["path"],
+                                                  {**valid, "snapshot": {"text": chr(0xD800)}}, note["etag"])
+        self.assertEqual(invalid_unicode.exception.status_code, 422)
         nested = {"value": "leaf"}
         for _ in range(66):
             nested = {"nested": nested}
@@ -272,6 +276,50 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(oversized.exception.status_code, 413)
         self.assertEqual(list((self.drafts / note["path"] / "attachments").glob("*.blocksuite.json"))
                          if (self.drafts / note["path"] / "attachments").exists() else [], [])
+
+    def test_blocksuite_resource_per_note_quotas_reject_without_changing_existing_resources(self):
+        note = self.store.create("# Resource quota bounds\n")
+        valid = {"schemaVersion": 1, "resourceKind": "database", "docId": "doc_1",
+                 "updateB64": base64.b64encode(b"yjs").decode("ascii"), "snapshot": {"blocks": []}}
+
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_PER_NOTE", 2):
+            first = self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
+            second = self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
+            before_count_limit = [self.store.read_blocksuite_resource("drafts", note["path"], item["resource_id"])
+                                  for item in (first, second)]
+            with self.assertRaises(HTTPException) as count_limited:
+                self.store.create_blocksuite_resource("drafts", note["path"], valid, note["etag"])
+            self.assertEqual(count_limited.exception.status_code, 413)
+            after_count_limit = [self.store.read_blocksuite_resource("drafts", note["path"], item["resource_id"])
+                                 for item in (first, second)]
+            self.assertEqual([(item["etag"], item["updateB64"]) for item in after_count_limit],
+                             [(item["etag"], item["updateB64"]) for item in before_count_limit])
+
+        another_note = self.store.create("# Aggregate resource quota bounds\n")
+        first = self.store.create_blocksuite_resource("drafts", another_note["path"], valid, another_note["etag"])
+        first_data = self.store.read_blocksuite_resource("drafts", another_note["path"], first["resource_id"])
+        first_path = self.drafts / another_note["path"] / "attachments" / first["filename"]
+        first_size = first_path.stat().st_size
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE",
+                   first_size + 1):
+            with self.assertRaises(HTTPException) as aggregate_limited:
+                self.store.create_blocksuite_resource("drafts", another_note["path"], valid, another_note["etag"])
+            self.assertEqual(aggregate_limited.exception.status_code, 413)
+            after_create_limit = self.store.read_blocksuite_resource("drafts", another_note["path"],
+                                                                     first["resource_id"])
+            self.assertEqual((after_create_limit["etag"], after_create_limit["updateB64"]),
+                             (first_data["etag"], first_data["updateB64"]))
+
+            replacement = {**valid, "resourceId": first["resource_id"],
+                           "updateB64": base64.b64encode(b"larger replacement").decode("ascii")}
+            with self.assertRaises(HTTPException) as update_limited:
+                self.store.update_blocksuite_resource("drafts", another_note["path"], first["resource_id"],
+                                                      replacement, another_note["etag"], first["etag"])
+            self.assertEqual(update_limited.exception.status_code, 413)
+            after_update_limit = self.store.read_blocksuite_resource("drafts", another_note["path"],
+                                                                     first["resource_id"])
+            self.assertEqual((after_update_limit["etag"], after_update_limit["updateB64"]),
+                             (first_data["etag"], first_data["updateB64"]))
 
     def test_blocksuite_resource_rejects_symlinked_resource_files(self):
         note = self.store.create("# Symlink resource test\n")
