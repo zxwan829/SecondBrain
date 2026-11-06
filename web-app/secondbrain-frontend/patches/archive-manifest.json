@@ -1,0 +1,116 @@
+{
+  "archiveRevision": "b25a75d9a3c474614c79f24ac5396c317e02bf8f",
+  "deploymentStatus": "BLOCKED_PENDING_MARKDOWN_FIDELITY_DECISION",
+  "scripts": [
+    {
+      "script": "patches/apply-text-align.mjs",
+      "archiveSha256": "b3713224e653ca40d609fdf6c03b283366250ef380ec6bac8399d2eac3b3e003",
+      "adaptedSha256": "62182c084407a1c3b19203ae6f34239ca55f51d6f34b94a058d59305c701f0f8"
+    },
+    {
+      "script": "patches/apply-table-merge-regions.mjs",
+      "archiveSha256": "7d35894bd47b122a037f1e312537f852ee5cb0b775c473bb62c97e73baada601",
+      "adaptedSha256": "7d35894bd47b122a037f1e312537f852ee5cb0b775c473bb62c97e73baada601"
+    },
+    {
+      "script": "patches/apply-table-unified-menu.mjs",
+      "archiveSha256": "291675613082982c0eea772b3899f615243c61bb21aa6655c546be5505d7b1b0",
+      "adaptedSha256": "291675613082982c0eea772b3899f615243c61bb21aa6655c546be5505d7b1b0"
+    },
+    {
+      "script": "patches/apply-table-row-resize.mjs",
+      "archiveSha256": "eb20bc04d456ede5f145ebcecea21445cde16073825b46bc82135c07ab283b4e",
+      "adaptedSha256": "eb20bc04d456ede5f145ebcecea21445cde16073825b46bc82135c07ab283b4e"
+    },
+    {
+      "script": "patches/apply-slash-localization.mjs",
+      "archiveSha256": "f3414683ccb54c448052298c49831fa42d68e40d602ad455ff678f6143ed3ca6",
+      "adaptedSha256": "f3414683ccb54c448052298c49831fa42d68e40d602ad455ff678f6143ed3ca6"
+    },
+    {
+      "script": "patches/apply-mindmap-tab-edit.mjs",
+      "archiveSha256": "d6167daa827110a3417a71a26195105fdeeb5231134cc78d27f6353590293b0c",
+      "adaptedSha256": "d6167daa827110a3417a71a26195105fdeeb5231134cc78d27f6353590293b0c"
+    },
+    {
+      "script": "patches/apply-mindmap-hit-test.mjs",
+      "archiveSha256": "d9d2e9a2bc0d8c99076c69c3cfb6c5df076dd30e725bfa045af8c06c20331b62",
+      "adaptedSha256": "8d7f6188dd534fe3be743f4b82d4bfd36ae48336b2e614e66bcf4e258a427c8e"
+    },
+    {
+      "script": "patches/apply-table-zh-labels.mjs",
+      "archiveSha256": "6491293ddff229ce4026af6d7bda6036be6aaa1104f6d421a2afec3ab4f9d653",
+      "adaptedSha256": "6491293ddff229ce4026af6d7bda6036be6aaa1104f6d421a2afec3ab4f9d653"
+    },
+    {
+      "script": "patches/apply-inline-toolbar-zh.mjs",
+      "archiveSha256": "64711393aaf2368cf078378d3a165666ccb1b62434f2ae0e2a140883dd6eb715",
+      "adaptedSha256": "64711393aaf2368cf078378d3a165666ccb1b62434f2ae0e2a140883dd6eb715"
+    },
+    {
+      "script": "patches/apply-paragraph-align-toolbar.mjs",
+      "archiveSha256": "2986954401773114c3824792f560189f983106b2d113c40f02f9b7080fd6d60b",
+      "adaptedSha256": "2986954401773114c3824792f560189f983106b2d113c40f02f9b7080fd6d60b"
+    },
+    {
+      "script": "patches/apply-selection-toolbar-zh.mjs",
+      "archiveSha256": "dc48e3aea28f1b5172ec13a91c4b98556968e6f6ae6428e9c8d0e4d6ae46d04e",
+      "adaptedSha256": "dc48e3aea28f1b5172ec13a91c4b98556968e6f6ae6428e9c8d0e4d6ae46d04e"
+    },
+    {
+      "script": "patches/apply-paragraph-placeholder-zh.mjs",
+      "archiveSha256": "5a95218a4e4ce037a1847ed7c9bf45a9ea47204a3ca9f9c28ca644636590024b",
+      "adaptedSha256": "5a95218a4e4ce037a1847ed7c9bf45a9ea47204a3ca9f9c28ca644636590024b"
+    },
+    {
+      "script": "patches/apply-paragraph-placeholder-alignment.mjs",
+      "archiveSha256": "d75ef79f7834de5d7192faa7a9aaffdf2dde93e4f4c9fe92677855fce337ed48",
+      "adaptedSha256": "d75ef79f7834de5d7192faa7a9aaffdf2dde93e4f4c9fe92677855fce337ed48"
+    },
+    {
+      "script": "patches/apply-database-localization.mjs",
+      "archiveSha256": "c19a19baf9f0173a6bfbc11c1b18228fe14429644e11bca3170a9c0384fd8adf",
+      "adaptedSha256": "c19a19baf9f0173a6bfbc11c1b18228fe14429644e11bca3170a9c0384fd8adf"
+    },
+    {
+      "script": "patches/apply-export-safety.mjs",
+      "archiveSha256": "a062496c1ad9b19e944dae35e10f5a421aaf006885440c720874765651078ce5",
+      "adaptedSha256": "a062496c1ad9b19e944dae35e10f5a421aaf006885440c720874765651078ce5"
+    },
+    {
+      "script": "patches/apply-database-cell-close-guard.mjs",
+      "archiveSha256": "34e3539efcff4de85e312e1df758ceea1d12826462d869fe802404490d7da74c",
+      "adaptedSha256": "34e3539efcff4de85e312e1df758ceea1d12826462d869fe802404490d7da74c"
+    },
+    {
+      "script": "patches/apply-canvas-template-search.mjs",
+      "archiveSha256": "9ea6b0a58308577f56cf890f8f78617d08245c7db9c6951b1fc93dce394117e4",
+      "adaptedSha256": "9ea6b0a58308577f56cf890f8f78617d08245c7db9c6951b1fc93dce394117e4"
+    },
+    {
+      "script": "patches/apply-database-toolbar-tooltips.mjs",
+      "archiveSha256": "433ef7a7bbf3a35fa7828d1a94a674cee2547380597da1a38a061708789082c8",
+      "adaptedSha256": "0005761a795362d572dee8d3d074d309d19430805f998584b42b2348d3588a6a"
+    },
+    {
+      "script": "patches/apply-database-menu-zh.mjs",
+      "archiveSha256": "1b4327b675325adbb1ae87649c468302cac34eb2ed4e00b3af62a2489aa28ce5",
+      "adaptedSha256": "8734c937244ecf79f84fc4acd0185fd1f22e306f4a0463bc070c60a737f22693"
+    },
+    {
+      "script": "patches/apply-heading-toggle-spacing.mjs",
+      "archiveSha256": "81a768674cce8ec51d9c132da86d2d6436b224c2b26efbaa53f6c024348bbad3",
+      "adaptedSha256": "81a768674cce8ec51d9c132da86d2d6436b224c2b26efbaa53f6c024348bbad3"
+    },
+    {
+      "script": "patches/apply-heading-list-prefix-guard.mjs",
+      "archiveSha256": "0d9f499f6ed658a3a0e86423d1fa0ac2ea98cd81e0124f6ca08d50f5df7289d5",
+      "adaptedSha256": "0d9f499f6ed658a3a0e86423d1fa0ac2ea98cd81e0124f6ca08d50f5df7289d5"
+    },
+    {
+      "script": "patches/apply-database-ux-localization.mjs",
+      "archiveSha256": "262af93765b5279464e2198ba0390504d97fbc11ab15bb4ffa995657cc89cb1b",
+      "adaptedSha256": "9f2f806e81ed10d8081bee71bde435f30cef3f8afcc4b9ef9b5e29458c680b7c"
+    }
+  ]
+}
