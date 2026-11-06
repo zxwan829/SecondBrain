@@ -1236,7 +1236,7 @@ for (const viewport of viewports) {
       observed.setDiagnosticAssertion('notes_blocksuite_edit_newline');
       await page.keyboard.press('Enter');
       observed.setDiagnosticAssertion('notes_blocksuite_edit_type');
-      await page.keyboard.type(updatedBody);
+      await page.keyboard.insertText(updatedBody);
       observed.setDiagnosticAssertion('notes_blocksuite_edit_save_response');
       const saved = await blocksuiteSave;
       expect(saved.status(), 'notes_blocksuite_save').toBe(200);
@@ -1265,7 +1265,7 @@ for (const viewport of viewports) {
       await block.click();
       await page.keyboard.press('Control+End');
       await page.keyboard.press('Enter');
-      await page.keyboard.type('WP5 stale browser edit must not replace Core');
+      await page.keyboard.insertText('WP5 stale browser edit must not replace Core');
       const rejected = await staleWrite;
       expect(rejected.status(), 'notes_blocksuite_conflict').toBe(412);
       await expect(page.getByRole('status').filter({ hasText: '版本冲突' })).toBeVisible();
@@ -1292,7 +1292,7 @@ for (const viewport of viewports) {
       await reopenedBlock.click();
       await page.keyboard.press('Control+End');
       await page.keyboard.press('Enter');
-      await page.keyboard.type(quickSwitchEdit);
+      await page.keyboard.insertText(quickSwitchEdit);
       await page.getByRole('button', { name: '切回旧版编辑器' }).click();
       const quickSaved = await quickSwitchSave;
       expect(quickSaved.status(), 'notes_blocksuite_quick_fallback_save').toBe(200);
