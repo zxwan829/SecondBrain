@@ -273,6 +273,7 @@ async function configurePage(page: Page) {
   let lastDailyBriefBody: Record<string, unknown> | null = null;
   let activityReadRevoked = false;
   let notesReadbackFailure: string | null = null;
+  let notesSeedStatus: number | null = null;
   let failureStage: FailureStage = 'login';
   let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
@@ -426,6 +427,8 @@ async function configurePage(page: Page) {
     get notesItemReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && /^\/api\/notes\/drafts\/<opaque-id>$/.test(request.path)).map((request) => request.status).slice(-4); },
     get notesReadbackFailure() { return notesReadbackFailure; },
+    setNotesSeedStatus(status: number) { notesSeedStatus = status; },
+    get notesSeedStatus() { return notesSeedStatus; },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
@@ -1121,6 +1124,7 @@ for (const viewport of viewports) {
         return response.status;
       }, { path: `/api/notes/drafts/${createdNote.path}`, etag: readNoteResponse.headers()['etag'] ?? '',
         content: syntheticFrontmatter });
+      observed.setNotesSeedStatus(seededStatus);
       expect(seededStatus, 'notes_seed_synthetic_frontmatter').toBe(200);
       observed.setFailureStage('notes_frontmatter_reopen');
       observed.setDiagnosticAssertion('notes_frontmatter_reopen');
@@ -1302,6 +1306,7 @@ test.afterEach(async ({ page }, testInfo) => {
       notes_collection_statuses: observed?.notesCollectionReadStatuses ?? [],
       notes_item_read_statuses: observed?.notesItemReadStatuses ?? [],
       notes_readback_failure: observed?.notesReadbackFailure ?? null,
+      notes_seed_status: observed?.notesSeedStatus ?? null,
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }

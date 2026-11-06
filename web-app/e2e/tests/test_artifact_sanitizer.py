@@ -227,6 +227,19 @@ def test_failure_diagnostic_can_include_bounded_note_item_read_failure():
     diagnostic["notes_item_read_statuses"] = [600]
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_notes_seed_status():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_frontmatter_seed", "code": "assertion_failed",
+                  "assertion_id": "notes_frontmatter_seed", "activity_get_statuses": [200],
+                  "notes_seed_status": 412}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_seed_status"] = True
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["notes_seed_status"] = 600
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
     diagnostic["notes_item_read_statuses"] = [403]
     diagnostic["notes_readback_failure"] = "raw error text"
     with pytest.raises(RuntimeError, match="value rejected"):
