@@ -36,6 +36,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
+  | 'notes_blocksuite_simple_open'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
   | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source'
   | 'daily_brief_project_count' | 'daily_brief_project_label'
@@ -1115,6 +1116,17 @@ for (const viewport of viewports) {
     observed.setDiagnosticAssertion(editorContainsReadback ? 'notes_readback' : 'notes_readback_editor_missing');
     expect(editorContainsReadback, 'notes_readback').toBe(true);
     if (viewport.name === 'desktop-1440x1000') {
+      // Prove the lazy editor itself mounts for ordinary Markdown before using
+      // the richer metadata/table fixture below.
+      observed.setFailureStage('notes_blocksuite_open');
+      observed.setDiagnosticAssertion('notes_blocksuite_simple_open');
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const simpleCanvas = page.locator('.blocksuite-notes-canvas');
+      await expect(simpleCanvas).toBeVisible({ timeout: 20000 });
+      await expect(simpleCanvas).toContainText(syntheticNoteBody);
+      await page.getByRole('button', { name: '切回旧版编辑器', exact: true }).click();
+      await expect(editor).toBeVisible();
+
       // Seed only the isolated synthetic Draft with metadata via the same
       // authenticated Core Notes API, then exercise the real BlockSuite editor.
       const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
