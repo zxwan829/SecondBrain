@@ -373,6 +373,7 @@ async function configurePage(page: Page) {
   let dailyBriefPostCount = 0;
   let lastDailyBriefBody: Record<string, unknown> | null = null;
   let activityReadRevoked = false;
+  let wp5BlockSuiteNotePath: string | null = null;
   let notesReadbackFailure: string | null = null;
   let notesSeedStatus: number | null = null;
   const pageErrorNames: string[] = [];
@@ -505,9 +506,22 @@ async function configurePage(page: Page) {
       || (['GET', 'PUT'].includes(route.request().method())
         && /^\/api\/notes\/drafts\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(url.pathname))
     );
+    const blocksuitePath = (() => {
+      if (!wp5BlockSuiteNotePath || params.size !== 0
+          || !url.pathname.startsWith(`${wp5BlockSuiteNotePath}/`)) return false;
+      const suffix = url.pathname.slice(wp5BlockSuiteNotePath.length);
+      const method = route.request().method();
+      if (suffix === '/blocksuite/resources') return method === 'POST';
+      if (/^\/blocksuite\/resources\/[0-9a-f]{32}$/i.test(suffix)) return ['GET', 'PUT'].includes(method);
+      if (/^\/blocksuite\/blobs\/[A-Za-z0-9_-]{43}(?:=|%3D)?$/i.test(suffix)) return ['GET', 'PUT'].includes(method);
+      if (suffix === '/blocksuite/snapshots') return method === 'GET';
+      if (/^\/blocksuite\/snapshots\/[0-9a-f]{64}$/i.test(suffix)) return method === 'GET';
+      if (/^\/blocksuite\/snapshots\/[0-9a-f]{64}\/restore$/i.test(suffix)) return method === 'POST';
+      return false;
+    })();
     if (url.pathname.startsWith('/api/') && !inboxPath && !authPath
       && !briefPath && !journalSourcePath && !sourceListPath && !homePath && !healthPath
-      && !activityPath && !calendarPath && !journalPath && !journalAppendPath && !taskListPath && !notesPath) {
+      && !activityPath && !calendarPath && !journalPath && !journalAppendPath && !taskListPath && !notesPath && !blocksuitePath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
       return;
@@ -543,6 +557,12 @@ async function configurePage(page: Page) {
     setFailureStage(stage: FailureStage) { failureStage = stage; },
     get failureStage() { return failureStage; },
     get inboxPostCount() { return inboxPostCount; },
+    allowBlockSuiteNote(path: string) {
+      if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(path)) {
+        throw new Error('WP5 BlockSuite allowlist requires the synthetic Note UUID');
+      }
+      wp5BlockSuiteNotePath = `/api/notes/drafts/${path}`;
+    },
     get lastInboxBody() { return lastInboxBody; },
     get dailyBriefPostCount() { return dailyBriefPostCount; },
     get lastDailyBriefBody() { return lastDailyBriefBody; },
@@ -807,6 +827,7 @@ for (const viewport of activeViewports) {
       expect(seeded.status, 'wp5_focus_note_seed').toBe(200);
       const note = seeded.note as { collection: string; path: string };
       expect(note.collection, 'wp5_focus_note_seed_collection').toBe('drafts');
+      observed.allowBlockSuiteNote(note.path);
 
       await page.reload();
       observed.setFailureStage('notes_frontmatter_reopen');
