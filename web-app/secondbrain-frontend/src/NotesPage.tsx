@@ -675,7 +675,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const confirmBlockSuiteRestore = async () => {
     const preview = blockSuiteSnapshotPreview;
     const current = noteRef.current;
-    if (!preview || !current || blockSuiteSnapshotBusy || !protectUnsaved()) return;
+    if (!preview || !current || projectionPending.current || state !== '已保存' || blockSuiteSnapshotBusy || !protectUnsaved()) return;
     if (current.etag !== preview.currentNoteEtag || current.artifactSetEtag !== preview.currentArtifactSetEtag) {
       setBlockSuiteRestoreFailed(true);
       setBlockSuiteSnapshotRecoveryCopy(JSON.stringify({ schemaVersion: 1, recoveryType: 'blocksuite-snapshot-restore-conflict',
@@ -689,6 +689,8 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       .map((artifact) => `图片 ${artifactId(artifact)} · ${artifact.content_type ?? 'unknown'} · ${artifact.size_bytes ?? artifact.bytes ?? 0} bytes · ${artifact.sha256 ?? artifact.etag ?? 'unknown digest'}`).join('\n');
     const accepted = window.confirm(`将 BlockSuite 快照 ${preview.entry.snapshot_id} 恢复到此笔记？\n\n当前 Note: ${preview.currentNoteEtag}\n当前资源集合: ${preview.currentArtifactSetEtag}\n目标 Note: ${preview.detail.note.etag}\n目标资源集合: ${preview.detail.artifact_set_etag}\n\n目标图片：\n${blobSummary || '无'}\n\n恢复后会替换正文与该快照中的 BlockSuite 资源。`);
     if (!accepted) return;
+    const revision = viewRevision.current;
+    pendingSaves.current += 1;
     setBlockSuiteSnapshotBusy(true);
     setBlockSuiteRestoreFailed(false);
     setBlockSuiteSnapshotRecoveryCopy(null);
@@ -744,8 +746,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           if (!await source.get(id)) throw new Error(`恢复后的图片 ${id} 无法验证。`);
         }
       }
-      if (!noteRef.current || noteKey(noteRef.current) !== noteKey(current)) throw new Error('笔记已切换；恢复结果未应用到当前视图。');
+      if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(current)) throw new Error('笔记已切换；恢复结果未应用到当前视图。');
       setCurrent(restored, restored.content);
+      setEditorGeneration(value => value + 1);
       setState('已保存');
       setBlockSuiteSnapshots(null); setBlockSuiteSnapshotPreview(null); setBlockSuiteRestoreFailed(false);
       setBlockSuiteSnapshotRecoveryCopy(null);
@@ -758,7 +761,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       setMessage(status === 412 || status === 409
         ? `恢复未执行（HTTP ${status}）：当前正文与资源保留，Core 未强制覆盖。建议先下载当前恢复副本，再重新载入快照列表。`
         : `恢复未能确认完成；当前页面正文仍保留。${error instanceof Error ? error.message : ''}`);
-    } finally { setBlockSuiteSnapshotBusy(false); }
+    } finally { pendingSaves.current = Math.max(0, pendingSaves.current - 1); setBlockSuiteSnapshotBusy(false); }
   };
   const confirmRestore = () => {
     if (!restorePreview || !protectUnsaved()) return;
@@ -869,7 +872,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
               ? 'BlockSuite 无法安全往返此笔记；原文保持只读，可下载保存。'
               : '此笔记含有 YAML Frontmatter；当前编辑器不能确认安全往返，原文保持只读。')}</div>
           <pre className="notes-raw-source">{content}</pre>
-        </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}:${editorGeneration}`} value={content} onProjectionPending={(pending) => { projectionPending.current = pending; setProjectionBusy(pending); }} disabled={creatingBlockSuiteResource || state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
+        </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}:${editorGeneration}`} value={content} onProjectionPending={(pending) => { projectionPending.current = pending; setProjectionBusy(pending); }} disabled={blockSuiteSnapshotBusy || creatingBlockSuiteResource || state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
           onOpenVisualAsset={openVisual} onOpenBlockSuiteResource={(filename) => { void openBlockSuiteResource(filename); }}
           onFallback={(reason, diagnostic, stage) => { void leaveBlockSuite(reason, diagnostic, stage); }} /></Suspense>
           : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
