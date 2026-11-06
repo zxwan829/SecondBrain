@@ -1427,22 +1427,26 @@ for (const viewport of activeViewports) {
 
       observed.setFailureStage('notes_blocksuite_reopen');
       page.once('dialog', (dialog) => void dialog.accept());
-      await page.reload();
-      await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
-      await expect(page.getByRole('heading', { name: '笔记', exact: true })).toBeVisible();
+      const closeRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_note_selector');
+      await page.getByRole('button', { name: syntheticNoteBody, exact: true }).click();
+      expect((await closeRead).status(), 'notes_blocksuite_close_read').toBe(200);
       const blockSuiteRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
-      observed.setDiagnosticAssertion('notes_blocksuite_reopen_note_selector');
       await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
       const reread = await blockSuiteRead;
       expect(reread.status(), 'notes_blocksuite_reopen').toBe(200);
+      const reopenedPayload = await reread.json() as { content: string };
+      expect(reopenedPayload.content).toContain(concurrentText);
+      expect(reopenedPayload.content).not.toContain('WP5 stale browser edit must not replace Core');
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_entry');
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_canvas');
       const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
-      // A full page reload invalidates the browser module cache; match the
-      // first-open lazy chunk gate instead of the generic 5s assertion default.
+      // Match the first-open lazy chunk gate; the view has been recreated
+      // after selecting another Note without repeating the full page reload.
       await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
       await expect(reopenedCanvas).toContainText(updatedBody, { timeout: 20000 });
       await expect(reopenedCanvas).toContainText('preserve-me', { timeout: 20000 });
