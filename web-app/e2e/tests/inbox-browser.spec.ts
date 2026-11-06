@@ -707,7 +707,8 @@ for (const viewport of viewports) {
       observed.setFailureStage('notes_blocksuite_edit');
       observed.setDiagnosticAssertion('wp5_focus_put_received');
       const putResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 10000 });
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`
+        && (response.request().postData() ?? '').includes(editMarker), { timeout: 10000 });
       await bodyText.click();
       await page.keyboard.press('End');
       await page.keyboard.press('Enter');
