@@ -219,9 +219,10 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
     const root = host.current;
     if (!root || (!onOpenVisualAsset && !onOpenBlockSuiteResource)) return;
     const onClick = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const anchor = target.closest('a[href]');
+      // Lit links live in shadow roots; event.target is retargeted to their
+      // host. Inspect the composed path to find the actual attachment anchor.
+      const anchor = event.composedPath().find((node): node is HTMLAnchorElement =>
+        node instanceof HTMLAnchorElement && node.hasAttribute('href'));
       if (!anchor) return;
       let filename: string;
       let kind: 'visual' | 'blocksuite' = 'visual';
@@ -238,8 +239,8 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
       if (kind === 'blocksuite') onOpenBlockSuiteResource?.(filename);
       else onOpenVisualAsset?.(filename);
     };
-    root.addEventListener('click', onClick);
-    return () => root.removeEventListener('click', onClick);
+    root.addEventListener('click', onClick, true);
+    return () => root.removeEventListener('click', onClick, true);
   }, [onOpenVisualAsset, onOpenBlockSuiteResource]);
 
   useEffect(() => {
