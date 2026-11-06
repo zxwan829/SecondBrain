@@ -1286,7 +1286,7 @@ for (const viewport of viewports) {
       const quickSwitchEdit = 'WP5 quick fallback edit preserved';
       const quickSwitchSave = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
-      const reopenedBlock = page.locator('.blocksuite-notes-canvas [contenteditable="true"]').first();
+      const reopenedBlock = page.locator('.blocksuite-notes-canvas').getByText(updatedBody, { exact: false });
       await reopenedBlock.click();
       await page.keyboard.press('Control+End');
       await page.keyboard.press('Enter');
