@@ -192,6 +192,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [recoveryCopyReady, setRecoveryCopyReady] = useState(false);
+  const [recoveryCopyComplete, setRecoveryCopyComplete] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   noteRef.current = note;
 
@@ -356,6 +357,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
       setRecoveryCopyReady(true);
+      setRecoveryCopyComplete(missingBlobs.length === 0);
       setStatus(missingBlobs.length === 0
         ? '已下载包含 Yjs update、快照与所引用图片的完整恢复副本。'
         : `已下载部分恢复副本；${missingBlobs.length} 个图片 Blob 未包含，已在文件中明确列出。`);
@@ -369,7 +371,9 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       <header><strong>{initialResource.resourceKind === 'database' ? '独立 Database 资源' : '独立 Edgeless 画布'}</strong>
         <span role="status" aria-live="polite">{status}</span>
         <button type="button" onClick={onClose} disabled={saving || (dirty && !recoveryCopyReady)}>
-          {dirty && recoveryCopyReady ? '关闭（恢复副本已下载）' : '关闭'}
+          {dirty && recoveryCopyReady
+            ? recoveryCopyComplete ? '关闭（完整恢复副本已下载）' : '关闭（部分恢复副本已下载）'
+            : '关闭'}
         </button>
       </header>
       <div className="blocksuite-resource-host" ref={host} data-kind={initialResource.resourceKind} />
