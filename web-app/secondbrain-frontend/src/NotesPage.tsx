@@ -54,6 +54,8 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [items, setItems] = useState<{ path: string; title: string }[]>([]);
   const [note, setNote] = useState<Note | null>(null);
   const [content, setContent] = useState('');
+  const projectionPending = useRef(false);
+  const [projectionBusy, setProjectionBusy] = useState(false);
   const [editorGeneration, setEditorGeneration] = useState(0);
   const [editorMode, setEditorMode] = useState<'blocksuite' | 'source'>('blocksuite');
   const [state, setState] = useState<State>('已保存');
@@ -114,13 +116,14 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       setMessage('请先保存并关闭当前 BlockSuite 资源编辑器，再切换笔记。');
       return false;
     }
-    const dirty = (!!noteRef.current && contentRef.current !== savedContent.current)
+    const dirty = projectionPending.current || (!!noteRef.current && contentRef.current !== savedContent.current)
       || visualNavigationRisk.current || unpersistedVisual !== null;
     return !dirty || window.confirm('当前笔记或图形有尚未保存的修改。离开后这些修改可能丢失，仍要继续吗？');
   }, [unpersistedVisual]);
   const protectUnsaved = canNavigateAway;
   const updateVisualNavigationRisk = useCallback((risk: boolean) => { visualNavigationRisk.current = risk; }, []);
   const beginTransition = () => {
+    projectionPending.current = false; setProjectionBusy(false);
     window.clearTimeout(timer.current);
     viewRevision.current += 1;
     conflictedSave.current = null;
@@ -332,7 +335,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
 
   const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind) => {
     const target = noteRef.current;
-    if (!target || target.read_only || state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource) return;
+    if (!target || target.read_only || projectionPending.current || state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource) return;
     const revision = viewRevision.current;
     pendingSaves.current += 1;
     setCreatingBlockSuiteResource(true);
@@ -802,8 +805,8 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           {note && !note.read_only && <>
             <button type="button" disabled={state !== '已保存' || creatingVisual || savingVisual} onClick={() => void createVisual('mindmap')}>插入思维导图</button>
             <button type="button" disabled={state !== '已保存' || creatingVisual || savingVisual} onClick={() => void createVisual('excalidraw')}>插入自由画板</button>
-            <button type="button" disabled={state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource !== null} onClick={() => void attachBlockSuiteResource('database')}>新建 BlockSuite Database</button>
-            <button type="button" disabled={state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource !== null} onClick={() => void attachBlockSuiteResource('edgeless-canvas')}>新建 BlockSuite Edgeless 画布</button>
+            <button type="button" disabled={projectionBusy || state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource !== null} onClick={() => void attachBlockSuiteResource('database')}>新建 BlockSuite Database</button>
+            <button type="button" disabled={projectionBusy || state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource !== null} onClick={() => void attachBlockSuiteResource('edgeless-canvas')}>新建 BlockSuite Edgeless 画布</button>
           </>}
           {note && note.collection === 'drafts' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(note.path) && onOpenInboxSource && <button type="button" onClick={() => { if (protectUnsaved()) onOpenInboxSource(note.collection, note.path); }}>单来源 Inbox 审批</button>}
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
@@ -866,7 +869,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
               ? 'BlockSuite 无法安全往返此笔记；原文保持只读，可下载保存。'
               : '此笔记含有 YAML Frontmatter；当前编辑器不能确认安全往返，原文保持只读。')}</div>
           <pre className="notes-raw-source">{content}</pre>
-        </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}:${editorGeneration}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
+        </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}:${editorGeneration}`} value={content} onProjectionPending={(pending) => { projectionPending.current = pending; setProjectionBusy(pending); }} disabled={creatingBlockSuiteResource || state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
           onOpenVisualAsset={openVisual} onOpenBlockSuiteResource={(filename) => { void openBlockSuiteResource(filename); }}
           onFallback={(reason, diagnostic, stage) => { void leaveBlockSuite(reason, diagnostic, stage); }} /></Suspense>
           : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}

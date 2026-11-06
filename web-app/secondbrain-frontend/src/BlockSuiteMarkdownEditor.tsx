@@ -65,12 +65,16 @@ function makeManagers() {
  * BlockSuite is a transient local editing projection only. Its in-memory Y.Doc has
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
-export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset, onOpenBlockSuiteResource }: {
+export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset, onOpenBlockSuiteResource, onProjectionPending }: {
+  onProjectionPending?: (pending: boolean) => void;
   value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason, diagnostic?: 'illegal_constructor' | 'missing_custom_element' | 'custom_element_conflict' | 'duplicate_root' | 'duplicate_note' | 'duplicate_paragraph' | 'duplicate_database' | 'duplicate_data_view' | 'duplicate_edgeless_text' | 'duplicate_other' | 'missing_root' | 'blocksuite_error' | 'other', stage?: 'extension_setup' | 'scope_create' | 'host_render' | 'host_mount' | 'host_update') => void;
   onOpenVisualAsset?: (filename: string) => void; onOpenBlockSuiteResource?: (filename: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<{ store: any; std: BlockStdScope; workspace: TransientMarkdownWorkspace; adapter: MarkdownAdapter; split: MarkdownParts; subscription?: { unsubscribe: () => void } } | null>(null);
+  const pendingCallback = useRef(onProjectionPending);
+  pendingCallback.current = onProjectionPending;
+  const projectionSequence = useRef(0);
   const valueRef = useRef(value);
   const emittedRef = useRef(value);
   const onChangeRef = useRef(onChange);
@@ -145,6 +149,8 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const currentEditor: NonNullable<typeof editorRef.current> = { store, std, workspace: currentWorkspace, adapter, split };
         editorRef.current = currentEditor;
         const publish = () => {
+          const sequence = ++projectionSequence.current;
+          pendingCallback.current?.(true);
           window.clearTimeout(timer.current);
           timer.current = window.setTimeout(() => {
             const current = editorRef.current;
@@ -163,7 +169,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
                 return;
               }
               onChangeRef.current(next);
-            }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
+            }).then(() => { if (sequence === projectionSequence.current) pendingCallback.current?.(false); }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
           }, 250);
         };
         // BlockSuite text content is stored in nested Y.Text values. The
