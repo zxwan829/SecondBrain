@@ -1040,7 +1040,7 @@ for (const viewport of activeViewports) {
           const laterSnapshot = { ...currentResource.snapshot, e2eExternalEdgelessMutation: randomUUID() };
           const externalWrite = await page.request.put(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`, {
             headers: { 'If-Match': `"${currentNote.etag}"`, 'If-Resource-Match': `"${currentResource.etag}"`,
-              'If-Artifact-Set-Match': `"${currentResource.artifact_set_etag}"` },
+              'If-Artifact-Set-Match': `"${currentResourceResponse.headers()['x-artifact-set-etag']?.replace(/^"|"$/g, '') ?? currentResource.artifact_set_etag}"` },
             data: { schemaVersion: currentResource.schemaVersion, resourceId: currentResource.resourceId,
               resourceKind: currentResource.resourceKind, docId: currentResource.docId,
               updateB64: currentResource.updateB64, snapshot: laterSnapshot },
@@ -1063,7 +1063,7 @@ for (const viewport of activeViewports) {
           const changedSnapshot = { ...currentResource.snapshot, e2eExternalResourceChange: randomUUID() };
           const externalWrite = await page.request.put(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`, {
             headers: { 'If-Match': `"${currentNote.etag}"`, 'If-Resource-Match': `"${currentResource.etag}"`,
-              'If-Artifact-Set-Match': `"${currentResource.artifact_set_etag}"` },
+              'If-Artifact-Set-Match': `"${currentResourceResponse.headers()['x-artifact-set-etag']?.replace(/^"|"$/g, '') ?? currentResource.artifact_set_etag}"` },
             data: { schemaVersion: currentResource.schemaVersion, resourceId: currentResource.resourceId,
               resourceKind: currentResource.resourceKind, docId: currentResource.docId,
               updateB64: currentResource.updateB64, snapshot: changedSnapshot },
