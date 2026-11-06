@@ -29,7 +29,8 @@ import { ReferenceViewExtension } from '@blocksuite/affine-inline-reference/view
 import { SurfaceStoreExtension } from '@blocksuite/affine-block-surface/store';
 import { SurfaceViewExtension } from '@blocksuite/affine-block-surface/view';
 import { MarkdownAdapter } from '@blocksuite/affine-shared/adapters';
-import { StoreExtensionManager, ViewExtensionManager } from '@blocksuite/affine-ext-loader';
+import { StoreExtensionManager } from '@blocksuite/affine-ext-loader';
+import { markdownViewManager } from './blocksuite-resource-views';
 import { BlockStdScope } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
 import { blockSuiteMarkdownMatches, blockSuiteMarkdownSupportsEditing, preserveSourceTerminalNewlines, splitOpaqueFrontmatter, type MarkdownParts } from './blocksuite-markdown';
@@ -56,13 +57,7 @@ function makeManagers() {
     SurfaceStoreExtension,
   ]);
   stores.configure(NoteStoreExtension, { mode: 'doc' });
-  const views = new ViewExtensionManager([
-    FoundationViewExtension, RootViewExtension, NoteViewExtension,
-    ParagraphViewExtension, ListViewExtension, CodeBlockViewExtension,
-    TableViewExtension, DividerViewExtension, InlinePresetViewExtension, LatexViewExtension,
-    FootnoteViewExtension, LinkViewExtension, MentionViewExtension, ReferenceViewExtension,
-    SurfaceViewExtension,
-  ]);
+  const views = markdownViewManager;
   return { stores, views };
 }
 

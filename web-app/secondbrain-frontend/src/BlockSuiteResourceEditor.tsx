@@ -39,6 +39,7 @@ import { NoteViewExtension } from '@blocksuite/affine-block-note/view';
 import { ParagraphViewExtension } from '@blocksuite/affine-block-paragraph/view';
 import { RootStoreExtension } from '@blocksuite/affine-block-root/store';
 import { RootViewExtension } from '@blocksuite/affine-block-root/view';
+import { effects as registerRootEffects } from '@blocksuite/affine-block-root/effects';
 import { SurfaceStoreExtension } from '@blocksuite/affine-block-surface/store';
 import { SurfaceViewExtension } from '@blocksuite/affine-block-surface/view';
 import { TableViewExtension } from '@blocksuite/affine-block-table/view';
@@ -61,7 +62,8 @@ import { LatexViewExtension } from '@blocksuite/affine-inline-latex/view';
 import { MentionViewExtension } from '@blocksuite/affine-inline-mention/view';
 import { ReferenceStoreExtension } from '@blocksuite/affine-inline-reference/store';
 import { ReferenceViewExtension } from '@blocksuite/affine-inline-reference/view';
-import { StoreExtensionManager, ViewExtensionManager } from '@blocksuite/affine-ext-loader';
+import { StoreExtensionManager } from '@blocksuite/affine-ext-loader';
+import { resourceViewManager } from './blocksuite-resource-views';
 import { BlockStdScope } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
 import * as Y from 'yjs';
@@ -101,18 +103,7 @@ function managers() {
       EdgelessTextStoreExtension, BrushStoreExtension, ConnectorStoreExtension, GroupStoreExtension,
       MindmapStoreExtension, ShapeStoreExtension, GfxTextStoreExtension,
     ]),
-    views: new ViewExtensionManager([
-      FoundationViewExtension, RootViewExtension, NoteViewExtension, ParagraphViewExtension,
-      ListViewExtension, CodeBlockViewExtension, TableViewExtension, DividerViewExtension,
-      InlinePresetViewExtension, LatexViewExtension, FootnoteViewExtension, LinkViewExtension,
-      MentionViewExtension, ReferenceViewExtension, SurfaceViewExtension, DataViewViewExtension,
-      DatabaseViewExtension, ImageViewExtension, EdgelessTextViewExtension, BrushViewExtension, ConnectorViewExtension,
-      GroupViewExtension, MindmapViewExtension, PointerViewExtension, ShapeViewExtension,
-      GfxTextViewExtension, EdgelessAutoConnectViewExtension, EdgelessDraggingAreaViewExtension,
-      EdgelessSelectedRectViewExtension, EdgelessToolbarViewExtension, EdgelessZoomToolbarViewExtension,
-      FrameTitleViewExtension, KeyboardToolbarViewExtension, NoteSlicerViewExtension,
-      RemoteSelectionViewExtension, ViewportOverlayViewExtension,
-    ]),
+    views: resourceViewManager,
   };
 }
 
