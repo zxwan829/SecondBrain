@@ -84,6 +84,8 @@ jobs:
           npm run typecheck
       - name: Build Web assets
         working-directory: web-app/secondbrain-frontend
+        env:
+          VITE_ENABLE_NOTES: "true"
         run: npm run build
       - name: Verify trace artifact redaction
         run: python -m pytest -q web-app/e2e/tests/test_artifact_sanitizer.py
