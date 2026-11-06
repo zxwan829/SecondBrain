@@ -16,7 +16,7 @@ export default defineConfig({
     optimizeDeps: {
         // This CJS child dependency of @blocksuite/store still needs Vite's
         // ESM compatibility wrapper when its BlockSuite parent is excluded.
-        include: ['lodash.ismatch', 'bind-event-listener', 'raf-schd', 'extend', 'debug', 'ms'],
+        include: ['lodash.ismatch', 'bind-event-listener', 'raf-schd', 'extend', 'debug', 'ms', 'bytes'],
         exclude: [
             '@blocksuite/affine-block-code', '@blocksuite/affine-block-divider',
             '@blocksuite/affine-block-list', '@blocksuite/affine-block-note',
