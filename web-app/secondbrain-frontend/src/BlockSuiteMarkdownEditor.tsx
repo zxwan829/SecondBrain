@@ -228,7 +228,12 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
       let filename: string;
       let kind: 'visual' | 'blocksuite' = 'visual';
       try {
-        const url = new URL(anchor.getAttribute('href') || '', window.location.href);
+        // AffineLink normalizes relative Markdown URLs to https:// URLs for
+        // display. Route attachments from the original delta, not that href.
+        const linkNode = event.composedPath().find(node => node instanceof Element && node.localName === 'affine-link') as (Element & { delta?: { attributes?: { link?: string } } }) | undefined;
+        const sourceLink = linkNode?.delta?.attributes?.link ?? anchor.getAttribute('href') ?? '';
+        if (!/^attachments\/[0-9a-f]{32}\.(?:mindmap|excalidraw|blocksuite)\.json$/i.test(sourceLink)) return;
+        const url = new URL(sourceLink, window.location.href);
         const match = url.pathname.match(/(?:^|\/)attachments\/([0-9a-f]{32}\.(?:mindmap|excalidraw|blocksuite)\.json)$/i);
         if (!match) return;
         filename = decodeURIComponent(match[1]);
