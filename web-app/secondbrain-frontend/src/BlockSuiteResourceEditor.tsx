@@ -175,6 +175,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const resourceRef = useRef(initialResource);
   const noteRef = useRef(note);
   const dirtyRef = useRef(false);
+  const editSequence = useRef(0);
   // Keep the exact bytes uploaded in this editing session so a later artifact
   // set conflict cannot make the only recovery copy depend on a stale server ETag.
   const uploadedBlobCopies = useRef(new Map<string, { contentType: string; bytes: Uint8Array }>());
@@ -216,6 +217,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         await root.getUpdateComplete();
         if (disposed) return;
         const onUpdate = () => {
+          editSequence.current += 1;
           dirtyRef.current = true;
           setDirty(true);
           setRecoveryCopyReady(false);
@@ -245,11 +247,13 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     if (!store || saving) return;
     setSaving(true);
     setStatus('正在保存 BlockSuite 资源…');
+    const sequence = editSequence.current;
     try {
       const blobIds = referencedBlockSuiteBlobIds(store);
       for (const id of blobIds) {
         if (!await store.blobSync.get(id)) throw new Error(`资源引用的 Blob ${id} 不在此笔记的 Core 存储中；已保留页面修改，未提交。`);
       }
+      if (sequence !== editSequence.current) throw new Error('资源在图片校验期间变化，请再次保存。');
       const snapshot = store.getTransformer().docToSnapshot(store);
       if (!snapshot || typeof snapshot !== 'object') throw new Error('BlockSuite 未能导出快照');
       const spaceDoc = store.spaceDoc as Y.Doc;
@@ -263,9 +267,12 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       resourceRef.current = { ...resourceRef.current, etag: result.etag, note_etag: result.note_etag, artifact_set_etag: result.artifact_set_etag };
       noteRef.current = { ...noteRef.current, artifactSetEtag: result.artifact_set_etag };
       onNoteVersionChange(result.artifact_set_etag);
-      dirtyRef.current = false;
-      setDirty(false);
-      setStatus('BlockSuite 资源已保存');
+      if (sequence === editSequence.current) {
+        dirtyRef.current = false; setDirty(false);
+        setStatus('BlockSuite 资源已保存');
+      } else {
+        setStatus('先前版本已保存；有未保存的资源修改');
+      }
     } catch (error) {
       const status = (error as Error & { status?: number })?.status;
       setStatus(status === 412
@@ -305,8 +312,10 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     if (!store) return;
     try {
       setStatus('正在生成恢复副本…');
+      const sequence = editSequence.current;
       const snapshot = store.getTransformer().docToSnapshot(store);
       const spaceDoc = store.spaceDoc as Y.Doc;
+      const recoveryUpdate = base64(Y.encodeStateAsUpdate(spaceDoc));
       const blobs = [];
       const missingBlobs: string[] = [];
       for (const id of referencedBlockSuiteBlobIds(store)) {
@@ -331,7 +340,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         resourceId: resourceRef.current.resourceId,
         resourceKind: resourceRef.current.resourceKind,
         docId: resourceRef.current.docId,
-        updateB64: base64(Y.encodeStateAsUpdate(spaceDoc)),
+        updateB64: recoveryUpdate,
         snapshot,
         blobs,
         missingBlobs,
@@ -346,6 +355,11 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       anchor.download = `blocksuite-${resourceRef.current.resourceId}-recovery.json`;
       anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      if (sequence !== editSequence.current) {
+        setRecoveryCopyReady(false);
+        setStatus('已下载先前版本副本；有新修改，请重新下载后关闭。');
+        return;
+      }
       setRecoveryCopyReady(true);
       setRecoveryCopyComplete(missingBlobs.length === 0);
       setStatus(missingBlobs.length === 0
