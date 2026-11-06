@@ -914,7 +914,10 @@ for (const viewport of activeViewports) {
         let uploadedBlobUrl: string | undefined;
         let uploadedBlobBytes: Buffer | undefined;
         if (kind === 'edgeless-canvas') {
-          await expect(resourceDialog.getByRole('status')).toHaveText('BlockSuite Edgeless 画布已就绪', { timeout: 15000 });
+          await expect(resourceDialog.getByRole('status')).toHaveText('BlockSuite Edgeless 画布已就绪', { timeout: 15000 }).catch(async error => {
+            console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ syntheticSetupStatus: (await resourceDialog.getByRole('status').textContent())?.slice(0, 180) }));
+            throw error;
+          });
           const imageDataUrl = await page.evaluate(() => {
             const canvas = document.createElement('canvas');
             canvas.width = 2; canvas.height = 2;
