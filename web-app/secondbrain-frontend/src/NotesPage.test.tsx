@@ -566,6 +566,69 @@ describe('NotesPage', () => {
     expect((screen.getByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement).value).toContain('# Previous snapshot');
   });
 
+  it('keeps a complete local Markdown/resource/Blob copy when snapshot restore returns 412', async () => {
+    const path = '00000000-0000-4000-8000-000000000003';
+    const currentResourceId = '33333333333333333333333333333333';
+    const targetResourceId = '44444444444444444444444444444444';
+    const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const blobKey = await sha(imageBytes.slice().buffer as ArrayBuffer);
+    const digestRaw = atob(blobKey.replace(/-/g, '+').replace(/_/g, '/'));
+    const blobHex = [...digestRaw].map((char) => char.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    let imageBinary = ''; for (const byte of imageBytes) imageBinary += String.fromCharCode(byte);
+    const currentEtag = 'a'.repeat(64); const currentSet = 'b'.repeat(64);
+    const targetEtag = 'c'.repeat(64); const targetSet = 'd'.repeat(64);
+    const note = { collection: 'drafts', path, content: `# Current note\n\n[BlockSuite resource](attachments/${currentResourceId}.blocksuite.json)\n`, etag: currentEtag, read_only: false, safety_reasons: [] };
+    const entry = { snapshot_id: 'f'.repeat(64), note_sha256: targetEtag, artifact_set_etag: targetSet,
+      created_at: '2026-11-05T10:00:00Z', artifact_count: 1, artifact_bytes: 256 };
+    let restoreHeaders: Headers | undefined;
+    let downloaded: Blob | undefined;
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => { downloaded = blob as Blob; return 'blob:recovery'; });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path, title: 'Current with image' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}` && !init?.method) return new Response(JSON.stringify(note), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots`) return new Response(JSON.stringify({ note_etag: currentEtag, artifact_set_etag: currentSet, snapshots: [entry] }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots/${entry.snapshot_id}`) return new Response(JSON.stringify({
+        snapshot_id: entry.snapshot_id, note: { content: `# Older\n\n[BlockSuite resource](attachments/${targetResourceId}.blocksuite.json)\n`, etag: targetEtag }, artifact_set_etag: targetSet,
+        artifacts: [{ kind: 'resource', id: targetResourceId, etag: 'e'.repeat(64), resource: {
+          schemaVersion: 1, resourceId: targetResourceId, resourceKind: 'database', docId: 'older-doc', updateB64: 'AQ==', snapshot: {},
+        } }],
+      }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/resources/${currentResourceId}`) return new Response(JSON.stringify({
+        schemaVersion: 1, resourceId: currentResourceId, resourceKind: 'edgeless-canvas', docId: 'current-doc', updateB64: 'AQ==', snapshot: { sourceId: blobKey },
+        etag: '9'.repeat(64), note_etag: currentEtag, artifact_set_etag: currentSet, filename: `${currentResourceId}.blocksuite.json`,
+      }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/blobs/${encodeURIComponent(blobKey)}`) return new Response(imageBytes, { status: 200, headers: {
+        ETag: `"${blobHex}"`, 'X-Note-ETag': `"${currentEtag}"`, 'X-Artifact-Set-ETag': `"${currentSet}"`, 'Content-Type': 'image/png',
+      } });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots/${entry.snapshot_id}/restore` && init?.method === 'POST') {
+        restoreHeaders = new Headers(init.headers);
+        return new Response(JSON.stringify({ detail: 'Current closure changed' }), { status: 412 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Current with image' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看可恢复版本' }));
+    fireEvent.click(await screen.findByRole('button', { name: '选择并预览' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认恢复此 BlockSuite 快照' }));
+    expect(await screen.findByText(/恢复未执行（HTTP 412）/)).toBeTruthy();
+    expect(restoreHeaders?.get('If-Match')).toBe(`"${currentEtag}"`);
+    expect(restoreHeaders?.get('If-Artifact-Set-Match')).toBe(`"${currentSet}"`);
+    fireEvent.click(screen.getByRole('button', { name: '下载恢复前的正文、资源与图片副本' }));
+    const backup = JSON.parse(await downloaded!.text());
+    expect(backup.captureComplete).toBe(true);
+    expect(backup.note.content).toContain('# Current note');
+    expect(backup.resources).toHaveLength(1);
+    expect(backup.blobs[0]).toMatchObject({ id: blobKey, content_type: 'image/png', bytes: imageBytes.byteLength, base64: btoa(imageBinary) });
+    expect((screen.getByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement).value).toContain('# Current note');
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
   it('requires confirmation before soft deletion and sends the current SHA with an idempotency key', async () => {
     const note = { collection: 'projects', path: 'synthetic.md', content: '# Synthetic\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
     const deletes: RequestInit[] = [];
