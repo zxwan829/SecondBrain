@@ -249,13 +249,18 @@ def test_failure_diagnostic_can_include_notes_seed_status():
 def test_failure_diagnostic_can_include_bounded_blocksuite_runtime_state():
     diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
                   "assertion_id": "notes_blocksuite_simple_open", "activity_get_statuses": [200],
-                  "notes_ui_state": "fallback_message", "page_error_names": ["TypeError"]}
+                  "notes_ui_state": "fallback_message", "page_error_names": ["TypeError"],
+                  "page_error_categories": ["nullish_property_access"]}
     assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
     diagnostic["notes_ui_state"] = "raw browser text"
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([diagnostic])
     diagnostic["notes_ui_state"] = "fallback_message"
     diagnostic["page_error_names"] = ["Error: private payload"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["page_error_names"] = ["TypeError"]
+    diagnostic["page_error_categories"] = ["raw browser message"]
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([diagnostic])
 

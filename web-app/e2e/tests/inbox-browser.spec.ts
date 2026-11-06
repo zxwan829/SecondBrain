@@ -278,6 +278,7 @@ async function configurePage(page: Page) {
   let notesReadbackFailure: string | null = null;
   let notesSeedStatus: number | null = null;
   const pageErrorNames: string[] = [];
+  const pageErrorCategories: string[] = [];
   let failureStage: FailureStage = 'login';
   let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
@@ -298,6 +299,13 @@ async function configurePage(page: Page) {
   page.on('pageerror', (error) => {
     const allowed = new Set(['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'URIError']);
     pageErrorNames.push(allowed.has(error.name) ? error.name : 'unknown');
+    const message = error.message.toLowerCase();
+    const category = /cannot read properties of (undefined|null)/.test(message) ? 'nullish_property_access'
+      : /not a constructor|is not a function/.test(message) ? 'invalid_runtime_symbol'
+        : /custom element|already been defined|already registered/.test(message) ? 'custom_element_registration'
+          : /failed to fetch dynamically imported module|failed to load module|module script failed/.test(message) ? 'module_load_failure'
+            : /not registered|missing.*extension|unknown block/.test(message) ? 'missing_block_extension' : 'other';
+    pageErrorCategories.push(category);
   });
   const recordedResponses = new WeakSet<Request>();
   page.on('response', (response) => {
@@ -438,6 +446,7 @@ async function configurePage(page: Page) {
     setNotesSeedStatus(status: number) { notesSeedStatus = status; },
     get notesSeedStatus() { return notesSeedStatus; },
     get pageErrorNames() { return pageErrorNames.slice(-5); },
+    get pageErrorCategories() { return pageErrorCategories.slice(-5); },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
@@ -1350,6 +1359,7 @@ test.afterEach(async ({ page }, testInfo) => {
       notes_seed_status: observed?.notesSeedStatus ?? null,
       notes_ui_state: notesUiState,
       page_error_names: observed?.pageErrorNames ?? [],
+      page_error_categories: observed?.pageErrorCategories ?? [],
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
