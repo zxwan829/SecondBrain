@@ -1308,7 +1308,8 @@ for (const viewport of viewports) {
       observed.setFailureStage('notes_blocksuite_edit');
       const updatedBody = `WP5 BlockSuite 保存 ${viewport.name}`;
       const blocksuiteSave = page.waitForResponse((response) => response.request().method() === 'PUT'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`
+        && (response.request().postData() ?? '').includes(updatedBody), { timeout: 10000 });
       observed.setDiagnosticAssertion('notes_blocksuite_edit_focus');
       await block.click();
       observed.setDiagnosticAssertion('notes_blocksuite_edit_end');
