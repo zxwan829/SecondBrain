@@ -855,13 +855,13 @@ for (const viewport of activeViewports) {
       const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string) => {
         const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources`, { timeout: 15000 });
+        const referenceSave = page.waitForResponse((response) => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 15000 });
         observed.setDiagnosticAssertion('wp5_focus_put_received');
         await page.getByRole('button', { name: buttonName }).click();
         const created = await resourcePost;
-        expect(created.status(), `wp5_resource_${kind}_create`).toBe(201);
+        expect(created.status(), `wp5_resource_${kind}_create`).toBe(200);
         const resourceInfo = await created.json() as { resource_id: string; filename: string; reference: string; etag: string };
-        const referenceSave = page.waitForResponse((response) => response.request().method() === 'PUT'
-          && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 15000 });
         const resourceDialog = page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' });
         await expect(resourceDialog).toBeVisible({ timeout: 20000 });
         const referenceResult = await referenceSave;
@@ -894,6 +894,69 @@ for (const viewport of activeViewports) {
         await expect(page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' })).toBeVisible({ timeout: 15000 });
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
         await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
+        await page.reload();
+        const refreshedNoteRead = page.waitForResponse((response) => response.request().method() === 'GET'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 10000 });
+        await page.getByRole('button', { name: title, exact: true }).click();
+        expect((await refreshedNoteRead).status(), `wp5_resource_${kind}_refresh_note`).toBe(200);
+        await expect(page.locator('.blocksuite-notes-canvas')).toBeVisible({ timeout: 20000 });
+        const refreshedLink = page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' }).last();
+        await expect(refreshedLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
+        await refreshedLink.click();
+        await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
+        const reopenedDialog = page.getByRole('dialog');
+        if (kind === 'database') {
+          const currentNoteResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
+          expect(currentNoteResponse.status()).toBe(200);
+          const currentNote = await currentNoteResponse.json() as { etag: string };
+          const currentResourceResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
+          expect(currentResourceResponse.status()).toBe(200);
+          const currentResource = await currentResourceResponse.json() as {
+            schemaVersion: number; resourceId: string; resourceKind: string; docId: string;
+            updateB64: string; snapshot: Record<string, unknown>; etag: string; artifact_set_etag: string;
+          };
+          const changedSnapshot = { ...currentResource.snapshot, e2eExternalResourceChange: randomUUID() };
+          const externalWrite = await page.request.put(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`, {
+            headers: { 'If-Match': `"${currentNote.etag}"`, 'If-Resource-Match': `"${currentResource.etag}"`,
+              'If-Artifact-Set-Match': `"${currentResource.artifact_set_etag}"` },
+            data: { schemaVersion: currentResource.schemaVersion, resourceId: currentResource.resourceId,
+              resourceKind: currentResource.resourceKind, docId: currentResource.docId,
+              updateB64: currentResource.updateB64, snapshot: changedSnapshot },
+          });
+          expect(externalWrite.status(), 'wp5_resource_external_change').toBe(200);
+          const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]').first();
+          await conflictEditor.click();
+          await page.keyboard.press('End');
+          await page.keyboard.press('Enter');
+          await page.keyboard.insertText(' unsaved resource conflict');
+          await reopenedDialog.getByRole('button', { name: '保存资源' }).click();
+          await expect(reopenedDialog.getByRole('status')).toContainText('保存失败；修改仍保留');
+          const close = reopenedDialog.getByRole('button', { name: '关闭' });
+          await expect(close).toBeDisabled();
+          const firstDownloadPromise = page.waitForEvent('download');
+          await reopenedDialog.getByRole('button', { name: '下载未保存恢复副本' }).click();
+          const firstDownload = await firstDownloadPromise;
+          const firstCopyPath = await firstDownload.path();
+          expect(firstCopyPath).toBeTruthy();
+          const firstCopy = JSON.parse(await readFile(firstCopyPath!, 'utf8')) as { updateB64: string; snapshot: Record<string, unknown> };
+          expect(firstCopy.updateB64.length).toBeGreaterThan(4);
+          expect(JSON.stringify(firstCopy.snapshot)).toContain('unsaved resource conflict');
+          await expect(close).toBeEnabled();
+          const conflictEditorAgain = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]').first();
+          await conflictEditorAgain.click();
+          await page.keyboard.press('End');
+          await page.keyboard.press('Enter');
+          await page.keyboard.insertText(' later unsaved resource conflict');
+          await expect(close).toBeDisabled();
+          const secondDownloadPromise = page.waitForEvent('download');
+          await reopenedDialog.getByRole('button', { name: '下载未保存恢复副本' }).click();
+          const secondDownload = await secondDownloadPromise;
+          const secondCopyPath = await secondDownload.path();
+          expect(secondCopyPath).toBeTruthy();
+          const secondCopy = JSON.parse(await readFile(secondCopyPath!, 'utf8')) as { updateB64: string; snapshot: Record<string, unknown> };
+          expect(JSON.stringify(secondCopy.snapshot)).toContain('later unsaved resource conflict');
+        }
+        await reopenedDialog.getByRole('button', { name: /关闭/ }).click();
       };
 
       observed.setFailureStage('notes_blocksuite_edit');
