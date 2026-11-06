@@ -247,7 +247,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         base_keys = {"viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
         optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
                          "notes_item_read_statuses", "notes_readback_failure", "notes_seed_status",
-                         "notes_ui_state", "page_error_names", "page_error_categories")
+                         "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources")
         allowed_shapes = {
             frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
             for mask in range(1 << len(optional_keys))
@@ -266,6 +266,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         notes_ui_state = entry.get("notes_ui_state")
         page_error_names = entry.get("page_error_names", [])
         page_error_categories = entry.get("page_error_categories", [])
+        page_error_sources = entry.get("page_error_sources", [])
         brief_statuses = entry.get("daily_brief_get_statuses", [])
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
@@ -303,6 +304,10 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                     "nullish_property_access", "invalid_runtime_symbol", "custom_element_registration",
                     "module_load_failure", "missing_block_extension", "other",
                 } for category in page_error_categories)
+                or not isinstance(page_error_sources, list) or len(page_error_sources) > 5
+                or any(not isinstance(source, str) or source not in {
+                    "blocksuite_module", "notes_page_module", "react_dom", "vite_runtime", "other_module",
+                } for source in page_error_sources)
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in brief_statuses)
@@ -325,6 +330,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
             normalized["page_error_names"] = page_error_names
         if "page_error_categories" in entry:
             normalized["page_error_categories"] = page_error_categories
+        if "page_error_sources" in entry:
+            normalized["page_error_sources"] = page_error_sources
         if "daily_brief_get_statuses" in entry:
             normalized["daily_brief_get_statuses"] = brief_statuses
         validated.append(normalized)
@@ -414,7 +421,7 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
             base_keys = {"schema_version", "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
             optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
                              "notes_item_read_statuses", "notes_readback_failure", "notes_seed_status",
-                             "notes_ui_state", "page_error_names", "page_error_categories")
+                             "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources")
             allowed_shapes = {
                 frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
                 for mask in range(1 << len(optional_keys))
@@ -442,6 +449,8 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
                 diagnostics[-1]["page_error_names"] = raw["page_error_names"]
             if "page_error_categories" in raw:
                 diagnostics[-1]["page_error_categories"] = raw["page_error_categories"]
+            if "page_error_sources" in raw:
+                diagnostics[-1]["page_error_sources"] = raw["page_error_sources"]
             if "daily_brief_get_statuses" in raw:
                 diagnostics[-1]["daily_brief_get_statuses"] = raw["daily_brief_get_statuses"]
 

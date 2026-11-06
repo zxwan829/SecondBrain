@@ -279,6 +279,7 @@ async function configurePage(page: Page) {
   let notesSeedStatus: number | null = null;
   const pageErrorNames: string[] = [];
   const pageErrorCategories: string[] = [];
+  const pageErrorSources: string[] = [];
   let failureStage: FailureStage = 'login';
   let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
@@ -306,6 +307,12 @@ async function configurePage(page: Page) {
           : /failed to fetch dynamically imported module|failed to load module|module script failed/.test(message) ? 'module_load_failure'
             : /not registered|missing.*extension|unknown block/.test(message) ? 'missing_block_extension' : 'other';
     pageErrorCategories.push(category);
+    const stack = (error.stack ?? '').toLowerCase();
+    const source = /blocksuite-markdown-editor|blocksuite/.test(stack) ? 'blocksuite_module'
+      : /notespaged|notespage/.test(stack) ? 'notes_page_module'
+        : /react-dom/.test(stack) ? 'react_dom'
+          : /vite/.test(stack) ? 'vite_runtime' : 'other_module';
+    pageErrorSources.push(source);
   });
   const recordedResponses = new WeakSet<Request>();
   page.on('response', (response) => {
@@ -447,6 +454,7 @@ async function configurePage(page: Page) {
     get notesSeedStatus() { return notesSeedStatus; },
     get pageErrorNames() { return pageErrorNames.slice(-5); },
     get pageErrorCategories() { return pageErrorCategories.slice(-5); },
+    get pageErrorSources() { return pageErrorSources.slice(-5); },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
@@ -1360,6 +1368,7 @@ test.afterEach(async ({ page }, testInfo) => {
       notes_ui_state: notesUiState,
       page_error_names: observed?.pageErrorNames ?? [],
       page_error_categories: observed?.pageErrorCategories ?? [],
+      page_error_sources: observed?.pageErrorSources ?? [],
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
