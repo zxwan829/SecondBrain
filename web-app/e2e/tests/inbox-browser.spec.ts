@@ -835,10 +835,11 @@ for (const viewport of activeViewports) {
         await expect(createButton, `wp5_${kind}_create_button_enabled`).toBeEnabled();
         const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources`, { timeout: 15000 });
-        const resourceError = page.locator('.notes-document [role="alert"]');
+        const resourceError = page.locator('.notes-document [role="alert"]')
+          .filter({ hasText: 'BlockSuite 资源创建失败' });
         const resourceOutcome = Promise.race([
           resourcePost.then(response => ({ response })),
-          resourceError.waitFor({ state: 'visible', timeout: 10000 }).then(() => ({ error: true as const })),
+          resourceError.waitFor({ state: 'visible', timeout: 15000 }).then(() => ({ error: true as const }), () => ({ error: false as const })),
         ]);
         const referenceSave = page.waitForResponse((response) => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 15000 });
@@ -846,7 +847,8 @@ for (const viewport of activeViewports) {
         await createButton.click();
         const outcome = await resourceOutcome;
         if ('error' in outcome) {
-          console.log('WP5_RESOURCE_CREATE_ERROR', (await resourceError.textContent())?.slice(0, 240) ?? 'alert-without-text');
+          const alertText = outcome.error ? await resourceError.textContent() : null;
+          console.log('WP5_RESOURCE_CREATE_ERROR', alertText?.slice(0, 240) ?? 'no-response-without-create-error-alert');
           throw new Error('BlockSuite resource creation failed before the Core POST response');
         }
         const created = outcome.response;

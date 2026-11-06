@@ -1406,6 +1406,17 @@ def main() -> int:
             test_process = launch_browser_tests(env, test_log)
             processes.append(test_process)
             test_returncode = wait_for_test_process(test_process)
+            if test_returncode != 0:
+                # This bounded diagnostic only runs for the synthetic WP5
+                # resource fixture and omits the surrounding Playwright log.
+                runner_log = root / "playwright-runner.log"
+                if runner_log.is_file() and runner_log.stat().st_size <= 4 * 1024 * 1024:
+                    for line in runner_log.read_text(encoding="utf-8", errors="replace").splitlines():
+                        marker = "WP5_RESOURCE_CREATE_ERROR "
+                        if marker in line:
+                            detail = line.split(marker, 1)[1].strip()[:240]
+                            if not any(secret in detail.lower() for secret in ("bearer ", "password=", "token=")):
+                                print(marker + detail)
             core_probe_events = []
             if wp5_probe_mode and wp5_autosave_core_log.exists():
                 if wp5_autosave_core_log.stat().st_size > 2048 or not wp5_autosave_core_log.is_file():
