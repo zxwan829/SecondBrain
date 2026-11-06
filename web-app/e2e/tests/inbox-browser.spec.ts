@@ -82,6 +82,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_conflict_readback_status' | 'notes_blocksuite_conflict_readback_payload'
   | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_navigation_response' | 'notes_blocksuite_reopen_editor_entry'
   | 'notes_blocksuite_reopen_canvas'
+  | 'notes_blocksuite_quick_switch_edit' | 'notes_blocksuite_quick_switch_fallback' | 'notes_blocksuite_quick_switch_save_response'
   | 'notes_setext_seed_status_200' | 'notes_setext_seed_status_401' | 'notes_setext_seed_status_403'
   | 'notes_setext_seed_status_409' | 'notes_setext_seed_status_412' | 'notes_setext_seed_status_422'
   | 'notes_setext_seed_status_428' | 'notes_setext_seed_status_other'
@@ -1766,11 +1767,14 @@ for (const viewport of activeViewports) {
       const quickSwitchSave = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
       const reopenedBlock = page.locator('.blocksuite-notes-canvas').getByText(updatedBody, { exact: false });
+      observed.setDiagnosticAssertion('notes_blocksuite_quick_switch_edit');
       await reopenedBlock.click();
       await page.keyboard.press('End');
       await page.keyboard.press('Enter');
       await page.keyboard.insertText(quickSwitchEdit);
+      observed.setDiagnosticAssertion('notes_blocksuite_quick_switch_fallback');
       await page.getByRole('button', { name: '切回旧版编辑器' }).click();
+      observed.setDiagnosticAssertion('notes_blocksuite_quick_switch_save_response');
       const quickSaved = await quickSwitchSave;
       expect(quickSaved.status(), 'notes_blocksuite_quick_fallback_save').toBe(200);
       await expect(page.locator('.notes-raw-source')).toContainText(updatedBody);
