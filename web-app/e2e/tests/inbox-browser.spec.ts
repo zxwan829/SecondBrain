@@ -100,7 +100,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_conflict_seed_status_422' | 'notes_conflict_seed_status_428'
   | 'notes_conflict_seed_status_other'
   | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
-  | 'wp5_resource_dialog_open' | 'wp5_resource_content_visible' | 'wp5_resource_editable' | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
+  | 'wp5_resource_focus' | 'wp5_resource_type' | 'wp5_resource_dirty' | 'wp5_resource_save' | 'wp5_resource_saved' | 'wp5_resource_close' | 'wp5_resource_reopen' | 'wp5_resource_dialog_open' | 'wp5_resource_content_visible' | 'wp5_resource_editable' | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
   | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
   | 'wp5_focus_saved_status'
@@ -946,17 +946,22 @@ for (const viewport of activeViewports) {
           })));
           throw error;
         });
+        observed.setDiagnosticAssertion('wp5_resource_focus');
         await editable.click();
+        observed.setDiagnosticAssertion('wp5_resource_type');
         await page.keyboard.press('End');
         await page.keyboard.press('Enter');
         await page.keyboard.insertText(marker);
+        observed.setDiagnosticAssertion('wp5_resource_dirty');
         await expect(resourceDialog.getByText('有未保存的资源修改')).toBeVisible();
         const resourcePut = page.waitForResponse((response) => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`, { timeout: 15000 });
+        observed.setDiagnosticAssertion('wp5_resource_save');
         await resourceDialog.getByRole('button', { name: '保存资源' }).click();
         const savedResource = await resourcePut;
         expect(savedResource.status(), `wp5_resource_${kind}_save`).toBe(200);
         expect((await savedResource.json() as { etag: string }).etag).not.toBe(resourceInfo.etag);
+        observed.setDiagnosticAssertion('wp5_resource_saved');
         await expect(resourceDialog.getByRole('status')).toHaveText('BlockSuite 资源已保存');
         const readResource = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
         expect(readResource.status(), `wp5_resource_${kind}_readback`).toBe(200);
@@ -970,9 +975,11 @@ for (const viewport of activeViewports) {
           const blobId = decodeURIComponent(new URL(uploadedBlobUrl).pathname.split('/').pop() ?? '');
           expect(JSON.stringify(readPayload.snapshot), 'wp5_edgeless_blob_reference').toContain(blobId);
         }
+        observed.setDiagnosticAssertion('wp5_resource_close');
         await resourceDialog.getByRole('button', { name: '关闭' }).click();
         const resourceLink = page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' }).last();
         await expect(resourceLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
+        observed.setDiagnosticAssertion('wp5_resource_reopen');
         await resourceLink.click();
         await expect(page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' })).toBeVisible({ timeout: 15000 });
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
