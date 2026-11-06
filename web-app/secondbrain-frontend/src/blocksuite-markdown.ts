@@ -17,9 +17,18 @@ export function splitOpaqueFrontmatter(markdown: string): MarkdownParts {
 }
 
 export function blockSuiteMarkdownMatches(source: string, serialized: string): boolean {
-  // CRLF conversion and one terminal newline are Markdown-equivalent. Other
-  // whitespace and blank lines may be significant (especially inside code), so
-  // keep the comparison strict everywhere else.
-  const normalize = (value: string) => value.replace(/\r\n/g, '\n').replace(/\n$/, '');
+  // The adapter normalizes the number of terminal line breaks. Treat that
+  // suffix as opaque (it is restored by preserveSourceTerminalNewlines) while
+  // keeping all content and whitespace before it byte-significant after EOL
+  // normalization.
+  const normalize = (value: string) => value.replace(/\r\n/g, '\n').replace(/\n+$/, '');
   return normalize(source) === normalize(serialized);
+}
+
+/** Keep the user's exact terminal newline sequence when exporting through the adapter. */
+export function preserveSourceTerminalNewlines(source: string, serialized: string): string {
+  const serializedNormalized = serialized.replace(/\r\n/g, '\n');
+  const sourceSuffix = source.match(/(?:\r?\n)*$/)?.[0] ?? '';
+  const serializedBody = serializedNormalized.replace(/\n+$/, '');
+  return `${serializedBody}${sourceSuffix}`;
 }

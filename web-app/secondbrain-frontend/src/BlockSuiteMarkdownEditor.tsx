@@ -23,14 +23,13 @@ import { MarkdownAdapter } from '@blocksuite/affine-shared/adapters';
 import { StoreExtensionManager, ViewExtensionManager } from '@blocksuite/affine-ext-loader';
 import { BlockStdScope } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
-import { blockSuiteMarkdownMatches, splitOpaqueFrontmatter, type MarkdownParts } from './blocksuite-markdown';
+import { blockSuiteMarkdownMatches, preserveSourceTerminalNewlines, splitOpaqueFrontmatter, type MarkdownParts } from './blocksuite-markdown';
 import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import './blocksuite-notes.css';
 import '@toeverything/theme/style.css';
 
 type FallbackReason = 'invalid_frontmatter' | 'unsupported_syntax' | 'markdown_conversion_error'
-  | 'unsafe_roundtrip' | 'terminal_newline_mismatch' | 'content_mismatch'
-  | 'view_initialization_error';
+  | 'unsafe_roundtrip' | 'content_mismatch' | 'view_initialization_error';
 
 function markdownAdapter(store: any) {
   const job = store.getTransformer();
@@ -107,12 +106,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const exported = await adapter.fromBlock(store.getBlocksByFlavour('affine:note')[0]!.model as any);
         const body = exported?.file ?? '';
         if (!blockSuiteMarkdownMatches(split.body, body)) {
-          const normalize = (markdown: string) => markdown.replace(/\r\n/g, '\n');
-          const source = normalize(split.body);
-          const roundTrip = normalize(body);
-          const mismatch = source.replace(/\n+$/, '') === roundTrip.replace(/\n+$/, '')
-            ? 'terminal_newline_mismatch' : 'content_mismatch';
-          if (!disposed) onFallbackRef.current(mismatch);
+          if (!disposed) onFallbackRef.current('content_mismatch');
           currentWorkspace.dispose();
           return;
         }
@@ -135,7 +129,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
             const current = editorRef.current;
             if (!current) return;
             void current.adapter.fromBlock(current.store.getBlocksByFlavour('affine:note')[0]!.model as any).then(result => {
-              const next = `${current.split.prefix}${result?.file ?? ''}`;
+              const next = `${current.split.prefix}${preserveSourceTerminalNewlines(current.split.body, result?.file ?? '')}`;
               if (next === emittedRef.current) return;
               emittedRef.current = next;
               valueRef.current = next;
@@ -185,7 +179,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
     if (current) {
       try {
         const exported = await current.adapter.fromBlock(current.store.getBlocksByFlavour('affine:note')[0]!.model as any);
-        const next = `${current.split.prefix}${exported?.file ?? ''}`;
+        const next = `${current.split.prefix}${preserveSourceTerminalNewlines(current.split.body, exported?.file ?? '')}`;
         if (next !== emittedRef.current) {
           emittedRef.current = next;
           valueRef.current = next;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blockSuiteMarkdownMatches, splitOpaqueFrontmatter } from './blocksuite-markdown';
+import { blockSuiteMarkdownMatches, preserveSourceTerminalNewlines, splitOpaqueFrontmatter } from './blocksuite-markdown';
 
 describe('BlockSuite Markdown safety boundary', () => {
   it('keeps BOM, CRLF metadata, unknown YAML keys and separator bytes opaque', () => {
@@ -15,11 +15,13 @@ describe('BlockSuite Markdown safety boundary', () => {
     expect(() => splitOpaqueFrontmatter('---\ntags: [x]\n正文')).toThrow('Frontmatter is incomplete');
   });
 
-  it('accepts line-ending and single terminal-newline normalization but rejects content loss', () => {
+  it('accepts adapter terminal-newline normalization while preserving the exact source suffix', () => {
     expect(blockSuiteMarkdownMatches('# Title\r\n\r\nBody\r\n', '# Title\n\nBody\n')).toBe(true);
     expect(blockSuiteMarkdownMatches('Plain Markdown\n', 'Plain Markdown')).toBe(true);
-    expect(blockSuiteMarkdownMatches('Plain Markdown\n\n', 'Plain Markdown')).toBe(false);
+    expect(blockSuiteMarkdownMatches('Plain Markdown\n\n', 'Plain Markdown')).toBe(true);
+    expect(preserveSourceTerminalNewlines('Plain Markdown\r\n\r\n', 'Plain Markdown\n')).toBe('Plain Markdown\r\n\r\n');
     expect(blockSuiteMarkdownMatches('```text\nline  \n\n\n```\n', '```text\nline\n\n```\n')).toBe(false);
+    expect(blockSuiteMarkdownMatches('Plain Markdown\n\n', 'Plain Markdown changed')).toBe(false);
     expect(blockSuiteMarkdownMatches('Body  \n', 'Body\n')).toBe(false);
     expect(blockSuiteMarkdownMatches('[[Obsidian]]\n', '')).toBe(false);
   });
