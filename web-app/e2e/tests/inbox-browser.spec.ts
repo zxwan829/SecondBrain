@@ -277,6 +277,7 @@ async function configurePage(page: Page) {
   let activityReadRevoked = false;
   let notesReadbackFailure: string | null = null;
   let notesSeedStatus: number | null = null;
+  const pageErrorNames: string[] = [];
   let failureStage: FailureStage = 'login';
   let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
@@ -293,6 +294,10 @@ async function configurePage(page: Page) {
       try { lastDailyBriefBody = JSON.parse(request.postData() ?? 'null') as Record<string, unknown>; }
       catch { lastDailyBriefBody = null; }
     }
+  });
+  page.on('pageerror', (error) => {
+    const allowed = new Set(['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'URIError']);
+    pageErrorNames.push(allowed.has(error.name) ? error.name : 'unknown');
   });
   const recordedResponses = new WeakSet<Request>();
   page.on('response', (response) => {
@@ -432,6 +437,7 @@ async function configurePage(page: Page) {
     get notesReadbackFailure() { return notesReadbackFailure; },
     setNotesSeedStatus(status: number) { notesSeedStatus = status; },
     get notesSeedStatus() { return notesSeedStatus; },
+    get pageErrorNames() { return pageErrorNames.slice(-5); },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
@@ -1319,6 +1325,16 @@ test.afterEach(async ({ page }, testInfo) => {
     const observed = observations.get(testInfo);
     const viewport = viewports.find(({ name }) => testInfo.title.includes(name));
     const errors = testInfo.errors;
+    const notesUiState = await page.evaluate(() => {
+      const visible = (element: Element | null) => Boolean(element && (element as HTMLElement).getClientRects().length);
+      if (visible(document.querySelector('vite-error-overlay'))) return 'vite_error';
+      if (visible(document.querySelector('.notes-document [role="alert"]'))) return 'fallback_message';
+      if (visible(document.querySelector('.blocksuite-notes-canvas'))) return 'blocksuite_canvas';
+      if (visible(document.querySelector('.notes-document .ProseMirror'))) return 'legacy_editor';
+      const root = document.querySelector('#root');
+      if (!document.body.childElementCount || (root && !root.childElementCount)) return 'app_blank';
+      return 'canvas_missing';
+    }).catch(() => 'unavailable');
     const isTimeout = errors.some((error) => error.name === 'TimeoutError' || /timeout/i.test(error.message));
     const isAssertion = errors.some((error) => /\bexpect(?:\(|\.)|\bExpected:|\bReceived:/i.test(error.message));
     await writeFile(join(testInfo.outputDir, 'failure-summary.json'), JSON.stringify({
@@ -1332,6 +1348,8 @@ test.afterEach(async ({ page }, testInfo) => {
       notes_item_read_statuses: observed?.notesItemReadStatuses ?? [],
       notes_readback_failure: observed?.notesReadbackFailure ?? null,
       notes_seed_status: observed?.notesSeedStatus ?? null,
+      notes_ui_state: notesUiState,
+      page_error_names: observed?.pageErrorNames ?? [],
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
