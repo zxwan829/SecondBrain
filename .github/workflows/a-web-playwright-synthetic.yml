@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: false
+      wp5_desktop_only:
+        description: Run the existing synthetic acceptance journey at desktop 1440x1000 only
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -69,9 +74,12 @@ jobs:
         id: synthetic
         env:
           WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only }}
+          WP5_DESKTOP_ONLY: ${{ inputs.wp5_desktop_only }}
         run: |
           if [ "$WP5_ROUNDTRIP_ONLY" = "true" ]; then
             python web-app/e2e/scripts/run_synthetic_ci.py --wp5-roundtrip-only
+          elif [ "$WP5_DESKTOP_ONLY" = "true" ]; then
+            python web-app/e2e/scripts/run_synthetic_ci.py --desktop-only
           else
             python web-app/e2e/scripts/run_synthetic_ci.py
           fi

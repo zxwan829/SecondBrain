@@ -37,6 +37,8 @@ const viewports = [
   { name: 'mobile-390x844', width: 390, height: 844 },
 ] as const;
 const wp5RoundtripOnly = process.env.SB_E2E_WP5_ROUNDTRIP_ONLY === 'true';
+const desktopOnly = process.env.SB_E2E_DESKTOP_ONLY === 'true';
+const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
 type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
@@ -691,7 +693,7 @@ async function readSyntheticPassword(): Promise<string> {
   return cachedPassword;
 }
 
-for (const viewport of viewports) {
+for (const viewport of activeViewports) {
   test(`explicit Inbox capture, retry, conflict and source protection at ${viewport.name}`, async ({ page }, testInfo) => {
     if (wp5RoundtripOnly && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);

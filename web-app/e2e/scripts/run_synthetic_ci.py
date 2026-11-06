@@ -1215,6 +1215,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--http-smoke-only", action="store_true", help="run synthetic Core HTTP checks without launching a browser")
     parser.add_argument("--wp5-roundtrip-only", action="store_true", help="run only the desktop WP5 Notes save/reopen browser probe")
+    parser.add_argument("--desktop-only", action="store_true", help="run the existing browser acceptance journey at desktop viewport only")
     options = parser.parse_args()
     # The workflow uploads only this directory. It starts empty on every run;
     # raw Playwright output lives in the private temp root below and is never a
@@ -1264,6 +1265,7 @@ def main() -> int:
             "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
             "SB_E2E_WP5_ROUNDTRIP_ONLY": "true" if options.wp5_roundtrip_only else "false",
+            "SB_E2E_DESKTOP_ONLY": "true" if options.desktop_only else "false",
             "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
             "SB_DASHBOARD_ORIGINS": WEB_URL,
@@ -1327,11 +1329,13 @@ def main() -> int:
         today_brief_name = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
         brief_file_set_verified = False
         if test_returncode == 0:
-            expected_raw = 1 if options.http_smoke_only else (0 if options.wp5_roundtrip_only else 3)
+            expected_raw = 1 if options.http_smoke_only or options.desktop_only else (0 if options.wp5_roundtrip_only else 3)
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
-            expected_journal_appends = 0 if options.http_smoke_only or options.wp5_roundtrip_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
+            expected_journal_appends = 0 if options.http_smoke_only or options.wp5_roundtrip_only else (
+                1 if options.desktop_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
+            )
             assert_journal_fixture_unchanged(
                 dirs["journal"], journal_fixture, expected_browser_appends=expected_journal_appends,
             )
