@@ -59,6 +59,7 @@ registerStdEffects();
 // mark fully-present package anchors as already effected before each scope is
 // built, while still running each provider's scope-specific setup.
 const registeredEffectAnchors: Array<[typeof providers[number], string]> = [
+  [FoundationViewExtension, 'icon-button'],
   [RootViewExtension, 'affine-page-root'],
   [NoteViewExtension, 'affine-note'],
   [ParagraphViewExtension, 'affine-paragraph'],
@@ -66,12 +67,34 @@ const registeredEffectAnchors: Array<[typeof providers[number], string]> = [
   [CodeBlockViewExtension, 'affine-code'],
   [TableViewExtension, 'affine-table'],
   [DividerViewExtension, 'affine-divider'],
+  [InlinePresetViewExtension, 'affine-text'],
   [LatexViewExtension, 'affine-latex'],
+  [FootnoteViewExtension, 'affine-footnote-node'],
+  [LinkViewExtension, 'link-popup'],
+  [MentionViewExtension, 'affine-mention'],
+  [ReferenceViewExtension, 'reference-popup'],
   [SurfaceViewExtension, 'affine-surface'],
   [DataViewViewExtension, 'affine-data-view'],
   [DatabaseViewExtension, 'affine-database'],
   [ImageViewExtension, 'affine-image'],
   [EdgelessTextViewExtension, 'affine-edgeless-text'],
+  [BrushViewExtension, 'edgeless-eraser-tool-button'],
+  [ConnectorViewExtension, 'edgeless-connector-tool-button'],
+  [GroupViewExtension, 'edgeless-group-title-editor'],
+  [MindmapViewExtension, 'edgeless-mindmap-tool-button'],
+  [PointerViewExtension, 'edgeless-default-tool-button'],
+  [ShapeViewExtension, 'edgeless-shape-text-editor'],
+  [GfxTextViewExtension, 'edgeless-text-editor'],
+  [EdgelessAutoConnectViewExtension, 'affine-edgeless-auto-connect-widget'],
+  [EdgelessDraggingAreaViewExtension, 'edgeless-dragging-area-rect'],
+  [EdgelessSelectedRectViewExtension, 'edgeless-auto-complete'],
+  [EdgelessToolbarViewExtension, 'edgeless-toolbar-button'],
+  [EdgelessZoomToolbarViewExtension, 'edgeless-zoom-toolbar'],
+  [FrameTitleViewExtension, 'affine-frame-title-editor'],
+  [KeyboardToolbarViewExtension, 'affine-keyboard-tool-panel'],
+  [NoteSlicerViewExtension, 'note-slicer'],
+  [RemoteSelectionViewExtension, 'affine-edgeless-remote-selection-widget'],
+  [ViewportOverlayViewExtension, 'affine-viewport-overlay-widget'],
 ];
 export function prepareViewExtensions() {
   for (const [Provider, anchor] of registeredEffectAnchors) {
