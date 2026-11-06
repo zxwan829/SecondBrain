@@ -1,4 +1,4 @@
-export type Note = { collection: string; path: string; content: string; etag: string; read_only: boolean; safety_reasons: string[] };
+export type Note = { collection: string; path: string; content: string; etag: string; artifactSetEtag?: string; read_only: boolean; safety_reasons: string[] };
 export type NoteCollection = { id: string; kind: 'drafts' | 'authorized' };
 export type NoteProperties = { type: string; tags: string[]; etag: string };
 export type VisualKind = 'mindmap' | 'excalidraw';
@@ -6,7 +6,7 @@ export type VisualAsset = { filename: string; etag: string; content: string };
 export type BlockSuiteResourceKind = 'database' | 'edgeless-canvas';
 export type BlockSuiteResource = {
   schemaVersion: 1; resourceId: string; resourceKind: BlockSuiteResourceKind; docId: string;
-  updateB64: string; snapshot: Record<string, unknown>; etag: string; note_etag: string; filename: string;
+  updateB64: string; snapshot: Record<string, unknown>; etag: string; note_etag: string; artifact_set_etag?: string; filename: string;
 };
 export type BlockSuiteResourceWrite = Omit<BlockSuiteResource, 'etag' | 'note_etag' | 'filename'>;
 export type NotesTrashItem = {
@@ -14,6 +14,16 @@ export type NotesTrashItem = {
   size_bytes: number; trashed_at: string; status: string; duplicate: boolean;
   recovery_reason: string | null;
 };
+export type BlockSuiteSnapshotEntry = { snapshot_id: string; note_sha256: string; artifact_set_etag: string; created_at: string; artifact_count: number; artifact_bytes: number };
+export type BlockSuiteSnapshots = { note_etag: string; artifact_set_etag: string; snapshots: BlockSuiteSnapshotEntry[] };
+
+const etagHeader = (value?: string) => value ? `"${value.replace(/^"|"$/g, '')}"` : undefined;
+function withArtifactSet(note: Note, init: RequestInit = {}): RequestInit {
+  if (!note.artifactSetEtag) return init;
+  const headers = new Headers(init.headers);
+  headers.set('If-Artifact-Set-Match', etagHeader(note.artifactSetEtag)!);
+  return { ...init, headers };
+}
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { credentials: 'same-origin', ...init });
@@ -22,6 +32,9 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
     const error = new Error(result.detail || `HTTP ${response.status}`) as Error & { status?: number };
     error.status = response.status;
     throw error;
+  }
+  if (result && typeof result === 'object' && response.headers.get('X-Artifact-Set-ETag')) {
+    (result as Record<string, unknown>).artifact_set_etag = (response.headers.get('X-Artifact-Set-ETag') || '').replace(/^"|"$/g, '');
   }
   return result as T;
 }
@@ -33,7 +46,20 @@ export const notesApi = {
   list: (collection: string, signal?: AbortSignal) => json<{ items: { path: string; title: string }[] }>(`/api/notes/${encodeURIComponent(collection)}`, signal ? { signal } : undefined),
   read: (collection: string, path: string, signal?: AbortSignal) => json<Note>(pathUrl(collection, path), signal ? { signal } : undefined),
   create: (content: string) => json<Note>('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }),
-  save: (note: Note, content: string) => json<Note>(pathUrl(note.collection, note.path), { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"` }, body: JSON.stringify({ content }) }),
+  save: async (note: Note, content: string) => {
+    const saved = await json<Note>(pathUrl(note.collection, note.path), withArtifactSet(note, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': etagHeader(note.etag)! }, body: JSON.stringify({ content }) }));
+    if (!saved.artifactSetEtag) saved.artifactSetEtag = note.artifactSetEtag;
+    return saved;
+  },
+  readWithArtifactSet: async (collection: string, path: string): Promise<Note> => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const note = await json<Note>(pathUrl(collection, path));
+      const closure = await json<BlockSuiteSnapshots>(`${pathUrl(collection, path)}/blocksuite/snapshots`);
+      if (note.etag === closure.note_etag) return { ...note, artifactSetEtag: closure.artifact_set_etag };
+    }
+    throw Object.assign(new Error('笔记与 BlockSuite 附件集合持续变化；请刷新后重试。'), { status: 412 });
+  },
+  readBlockSuiteSnapshots: (note: Note) => json<BlockSuiteSnapshots>(`${pathUrl(note.collection, note.path)}/blocksuite/snapshots`),
   readProperties: (note: Note) => json<NoteProperties>(`${pathUrl(note.collection, note.path)}/properties`),
   saveProperties: (note: Note, type: string, tags: string[]) => json<Note>(`${pathUrl(note.collection, note.path)}/properties`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"` },
@@ -59,16 +85,16 @@ export const notesApi = {
       body: JSON.stringify({ content }),
     }),
   createBlockSuiteResource: (note: Note, body: Omit<BlockSuiteResourceWrite, 'resourceId'>) =>
-    json<{ resource_id: string; resource_kind: BlockSuiteResourceKind; doc_id: string; filename: string; reference: string; etag: string; note_etag: string }>(
+    json<{ resource_id: string; resource_kind: BlockSuiteResourceKind; doc_id: string; filename: string; reference: string; etag: string; note_etag: string; artifact_set_etag: string }>(
       `${pathUrl(note.collection, note.path)}/blocksuite/resources`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"` }, body: JSON.stringify(body) },
+      withArtifactSet(note, { method: 'POST', headers: { 'Content-Type': 'application/json', 'If-Match': etagHeader(note.etag)! }, body: JSON.stringify(body) }),
     ),
   readBlockSuiteResource: (note: Note, resourceId: string) =>
     json<BlockSuiteResource>(`${pathUrl(note.collection, note.path)}/blocksuite/resources/${encodeURIComponent(resourceId)}`),
   saveBlockSuiteResource: (note: Note, resource: BlockSuiteResource, body: BlockSuiteResourceWrite) =>
-    json<{ resource_id: string; resource_kind: BlockSuiteResourceKind; doc_id: string; filename: string; etag: string; note_etag: string }>(
+    json<{ resource_id: string; resource_kind: BlockSuiteResourceKind; doc_id: string; filename: string; etag: string; note_etag: string; artifact_set_etag: string }>(
       `${pathUrl(note.collection, note.path)}/blocksuite/resources/${encodeURIComponent(resource.resourceId)}`,
-      { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"`, 'If-Resource-Match': `"${resource.etag}"` }, body: JSON.stringify(body) },
+      withArtifactSet(note, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': etagHeader(note.etag)!, 'If-Resource-Match': etagHeader(resource.etag)! }, body: JSON.stringify(body) }),
     ),
   listTrash: (offset = 0, signal?: AbortSignal) => json<{ status: string; items: NotesTrashItem[]; pagination: { limit: number; offset: number; has_more: boolean } }>(
     `/api/notes/trash?limit=50&offset=${encodeURIComponent(String(offset))}`, signal ? { signal } : undefined,

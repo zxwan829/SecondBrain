@@ -111,9 +111,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setLoading(true); setMessage(''); blockSuiteFallbackReason.current = null;
     try {
       const loaded = await notesApi.read(targetCollection, path);
+      const hasBlockSuiteReference = /\]\(attachments\/[0-9a-f]{32}\.blocksuite\.json\)/i.test(loaded.content);
+      const consistent = hasBlockSuiteReference ? await notesApi.readWithArtifactSet(targetCollection, path) : loaded;
       if (viewRevision.current !== revision) return;
-      setCurrent(loaded, loaded.content); setState('已保存'); setEditorMode('blocksuite');
-      setMessage(loaded.read_only ? `此文件含有当前富文本编辑器不能安全往返的语法（${loaded.safety_reasons.join('、')}），已保留原文并设为只读。` : '');
+      setCurrent(consistent, consistent.content); setState('已保存'); setEditorMode('blocksuite');
+      setMessage(consistent.read_only ? `此文件含有当前富文本编辑器不能安全往返的语法（${consistent.safety_reasons.join('、')}），已保留原文并设为只读。` : '');
     } catch { if (viewRevision.current === revision) setMessage('笔记读取失败，原有内容未更改。'); }
     finally { if (viewRevision.current === revision) setLoading(false); }
   };
@@ -286,8 +288,10 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       const { createBlockSuiteResourcePayload } = await import('./BlockSuiteResourceEditor');
       const payload = createBlockSuiteResourcePayload(kind);
       const created = await notesApi.createBlockSuiteResource(target, payload);
-      resource = { ...payload, resourceId: created.resource_id, etag: created.etag, note_etag: created.note_etag, filename: created.filename };
-      setPendingBlockSuiteReference({ note: target, resource });
+      const versionedTarget = { ...target, artifactSetEtag: created.artifact_set_etag };
+      if (noteRef.current && noteKey(noteRef.current) === noteKey(target)) { noteRef.current = versionedTarget; setNote(versionedTarget); }
+      resource = { ...payload, resourceId: created.resource_id, etag: created.etag, note_etag: created.note_etag, artifact_set_etag: created.artifact_set_etag, filename: created.filename };
+      setPendingBlockSuiteReference({ note: versionedTarget, resource });
       const current = contentRef.current;
       const nextContent = `${current.trimEnd()}${current.trim() ? '\n\n' : ''}${created.reference}\n`;
       window.clearTimeout(timer.current);
@@ -295,7 +299,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       setContent(nextContent);
       setState('未保存');
       const sequence = ++editSequence.current;
-      const saved = await save(target, nextContent, revision, sequence);
+      const saved = await save(versionedTarget, nextContent, revision, sequence);
       if (!saved) throw new Error('笔记已切换，资源已创建但 Markdown 引用尚未保存；请返回原笔记重试。');
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(target)) {
         throw new Error('资源已创建，但引用保存结果未应用到当前笔记。');
@@ -328,11 +332,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         // Resource creation was explicit and began from a clean Note. On an
         // explicit retry, preserve the newer Core Markdown and append only
         // this resource's stable reference; never resend the stale body.
-        target = await notesApi.read(pending.note.collection, pending.note.path);
+        target = await notesApi.readWithArtifactSet(pending.note.collection, pending.note.path);
         if (viewRevision.current !== revision || !noteRef.current
             || noteKey(noteRef.current) !== noteKey(pending.note)) return;
-        if (!target.content.includes(pending.resource.filename)) {
-          const reference = `[BlockSuite resource](attachments/${pending.resource.filename})`;
+        const reference = `[BlockSuite resource](attachments/${pending.resource.filename})`;
+        if (!target.content.includes(reference)) {
           content = `${target.content.trimEnd()}${target.content.trim() ? '\n\n' : ''}${reference}\n`;
         } else {
           content = target.content;
@@ -354,6 +358,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
 
   const openBlockSuiteResource = async (filename: string) => {
     const target = noteRef.current;
+    const revision = viewRevision.current;
     const match = filename.match(/^([0-9a-f]{32})\.blocksuite\.json$/i);
     if (!target || !match || state !== '已保存' || blockSuiteResourceOpen.current) {
       setMessage('请先保存当前笔记，再打开 BlockSuite 资源。');
@@ -365,8 +370,12 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     }
     setLoading(true);
     try {
-      const loaded = await notesApi.readBlockSuiteResource(target, match[1]);
-      if (loaded.note_etag !== noteRef.current?.etag) throw new Error('笔记版本已变化，请刷新后再打开资源。');
+      const consistentTarget = await notesApi.readWithArtifactSet(target.collection, target.path);
+      if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(target)) throw new Error('笔记已切换，请重新打开资源。');
+      const loaded = await notesApi.readBlockSuiteResource(consistentTarget, match[1]);
+      if (loaded.note_etag !== consistentTarget.etag) throw new Error('笔记版本已变化，请刷新后再打开资源。');
+      if (loaded.artifact_set_etag && loaded.artifact_set_etag !== consistentTarget.artifactSetEtag) throw new Error('附件集合版本已变化，请刷新后再打开资源。');
+      noteRef.current = consistentTarget; setNote(consistentTarget);
       blockSuiteResourceOpen.current = true;
       setBlockSuiteResource(loaded);
       setMessage('');
@@ -615,6 +624,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     </div>}
     {blockSuiteResource && note && <Suspense fallback={<p role="status">正在加载 BlockSuite 资源编辑器…</p>}>
       <BlockSuiteResourceEditor key={`${noteKey(note)}:${blockSuiteResource.resourceId}`} note={note} resource={blockSuiteResource}
+        onNoteVersionChange={(artifactSetEtag) => {
+          if (!noteRef.current || noteKey(noteRef.current) !== noteKey(note)) return;
+          const next = { ...noteRef.current, artifactSetEtag };
+          noteRef.current = next; setNote(next);
+        }}
         onClose={() => { blockSuiteResourceOpen.current = false; setBlockSuiteResource(null); }} />
     </Suspense>}
     {visualAsset && <Suspense fallback={<p role="status">正在加载图形编辑器…</p>}>

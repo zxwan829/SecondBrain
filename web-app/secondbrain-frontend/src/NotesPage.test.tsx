@@ -472,7 +472,7 @@ describe('NotesPage', () => {
       if (url === `/api/notes/drafts/${path}/blocksuite/resources` && init?.method === 'POST') {
         return new Response(JSON.stringify({ resource_id: resourceId, resource_kind: 'database',
           doc_id: '00000000-0000-4000-8000-000000000002', filename: `${resourceId}.blocksuite.json`,
-          reference: `[BlockSuite resource](attachments/${resourceId}.blocksuite.json)`, etag: 'b'.repeat(64), note_etag: initial.etag }), { status: 201 });
+          reference: `[BlockSuite resource](attachments/${resourceId}.blocksuite.json)`, etag: 'b'.repeat(64), note_etag: initial.etag, artifact_set_etag: 'e'.repeat(64) }), { status: 201 });
       }
       if (url === `/api/notes/drafts/${path}` && init?.method === 'PUT') {
         putCount += 1;
@@ -484,6 +484,7 @@ describe('NotesPage', () => {
         return new Response(JSON.stringify({ ...latest, content, etag: 'd'.repeat(64) }), { status: 200 });
       }
       if (url === `/api/notes/drafts/${path}` && !init?.method) return new Response(JSON.stringify(latest), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots`) return new Response(JSON.stringify({ note_etag: latest.etag, artifact_set_etag: 'e'.repeat(64), snapshots: [] }), { status: 200 });
       throw new Error(`Unexpected request ${url}`);
     });
 

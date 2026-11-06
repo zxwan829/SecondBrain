@@ -22,6 +22,7 @@
     "@blocksuite/affine-block-database": "0.22.4",
     "@blocksuite/affine-block-divider": "0.22.4",
     "@blocksuite/affine-block-edgeless-text": "0.22.4",
+    "@blocksuite/affine-block-image": "0.22.4",
     "@blocksuite/affine-block-list": "0.22.4",
     "@blocksuite/affine-block-note": "0.22.4",
     "@blocksuite/affine-block-paragraph": "0.22.4",

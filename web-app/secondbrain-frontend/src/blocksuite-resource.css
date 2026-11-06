@@ -5,6 +5,8 @@
 .blocksuite-resource-dialog footer { justify-content: space-between; border-top: 1px solid #dbe3ee; border-bottom: 0; }
 .blocksuite-resource-dialog button { border: 1px solid #bcc9d8; border-radius: 7px; padding: 6px 10px; background: white; color: #172033; cursor: pointer; }
 .blocksuite-resource-dialog button:disabled { cursor: not-allowed; opacity: .55; }
+.blocksuite-resource-upload { display: inline-flex; align-items: center; border: 1px solid #bcc9d8; border-radius: 7px; padding: 6px 10px; background: white; color: #172033; cursor: pointer; }
+.blocksuite-resource-upload input { position: absolute; width: 1px; height: 1px; clip: rect(0 0 0 0); overflow: hidden; }
 .blocksuite-resource-host { min-height: 0; flex: 1; overflow: auto; background: #fff; }
 .blocksuite-resource-host[data-kind="edgeless-canvas"] { overflow: hidden; }
 .blocksuite-resource-host .affine-page-viewport { min-height: 100%; padding: 24px; }

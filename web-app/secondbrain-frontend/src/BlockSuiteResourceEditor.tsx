@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DatabaseBlockDataSource, databaseViewInitTemplate, richTextColumnConfig } from '@blocksuite/affine-block-database';
+import { ImageStoreExtension } from '@blocksuite/affine-block-image/store';
+import { ImageViewExtension } from '@blocksuite/affine-block-image/view';
 import { DatabaseStoreExtension } from '@blocksuite/affine-block-database/store';
 import { DatabaseViewExtension } from '@blocksuite/affine-block-database/view';
 import { DataViewStoreExtension } from '@blocksuite/affine-block-data-view/store';
@@ -64,6 +66,7 @@ import { BlockStdScope } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
 import * as Y from 'yjs';
 import { notesApi, type BlockSuiteResource, type BlockSuiteResourceKind, type BlockSuiteResourceWrite, type Note } from './api/notes';
+import { NoteBoundBlockSuiteBlobSource } from './api/notes-blocksuite-blobs';
 import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import './blocksuite-resource.css';
 import '@toeverything/theme/style.css';
@@ -78,13 +81,23 @@ const unbase64 = (value: string) => {
   return Uint8Array.from(raw, char => char.charCodeAt(0));
 };
 
+function referencedBlockSuiteBlobIds(store: any): string[] {
+  const ids = new Set<string>();
+  for (const block of store.getBlocksByFlavour(['affine:image', 'affine:attachment'])) {
+    const id = block.model.props.sourceId;
+    if (typeof id !== 'string' || !id) throw new Error('图片/附件 Block 缺少 Blob sourceId；资源未保存。');
+    ids.add(id);
+  }
+  return [...ids];
+}
+
 function managers() {
   return {
     stores: new StoreExtensionManager([
       FoundationStoreExtension, RootStoreExtension, NoteStoreExtension, ParagraphStoreExtension,
       ListStoreExtension, CodeStoreExtension, TableStoreExtension, DividerStoreExtension,
       InlinePresetStoreExtension, LatexStoreExtension, FootnoteStoreExtension, LinkStoreExtension,
-      ReferenceStoreExtension, SurfaceStoreExtension, DataViewStoreExtension, DatabaseStoreExtension,
+      ReferenceStoreExtension, SurfaceStoreExtension, DataViewStoreExtension, DatabaseStoreExtension, ImageStoreExtension,
       EdgelessTextStoreExtension, BrushStoreExtension, ConnectorStoreExtension, GroupStoreExtension,
       MindmapStoreExtension, ShapeStoreExtension, GfxTextStoreExtension,
     ]),
@@ -93,7 +106,7 @@ function managers() {
       ListViewExtension, CodeBlockViewExtension, TableViewExtension, DividerViewExtension,
       InlinePresetViewExtension, LatexViewExtension, FootnoteViewExtension, LinkViewExtension,
       MentionViewExtension, ReferenceViewExtension, SurfaceViewExtension, DataViewViewExtension,
-      DatabaseViewExtension, EdgelessTextViewExtension, BrushViewExtension, ConnectorViewExtension,
+      DatabaseViewExtension, ImageViewExtension, EdgelessTextViewExtension, BrushViewExtension, ConnectorViewExtension,
       GroupViewExtension, MindmapViewExtension, PointerViewExtension, ShapeViewExtension,
       GfxTextViewExtension, EdgelessAutoConnectViewExtension, EdgelessDraggingAreaViewExtension,
       EdgelessSelectedRectViewExtension, EdgelessToolbarViewExtension, EdgelessZoomToolbarViewExtension,
@@ -165,8 +178,8 @@ export function restoreBlockSuiteResourceSnapshot(resource: Pick<BlockSuiteResou
   }
 }
 
-export function BlockSuiteResourceEditor({ note, resource: initialResource, onClose }: {
-  note: Note; resource: BlockSuiteResource; onClose: () => void;
+export function BlockSuiteResourceEditor({ note, resource: initialResource, onClose, onNoteVersionChange }: {
+  note: Note; resource: BlockSuiteResource; onClose: () => void; onNoteVersionChange: (artifactSetEtag: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const resourceRef = useRef(initialResource);
@@ -176,6 +189,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [recoveryCopyReady, setRecoveryCopyReady] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   noteRef.current = note;
 
   useEffect(() => {
@@ -186,7 +200,11 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     const setup = async () => {
       try {
         const { stores, views } = managers();
-        workspace = new TransientMarkdownWorkspace();
+        workspace = new TransientMarkdownWorkspace(new NoteBoundBlockSuiteBlobSource(() => noteRef.current, fetch, (etag) => {
+          noteRef.current = { ...noteRef.current, artifactSetEtag: etag };
+          resourceRef.current = { ...resourceRef.current, artifact_set_etag: etag };
+          onNoteVersionChange(etag);
+        }));
         workspace.storeExtensions = stores.get('store');
         workspace.meta.initialize();
         const doc = workspace.createDoc(initialResource.docId);
@@ -206,6 +224,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         const onUpdate = () => {
           dirtyRef.current = true;
           setDirty(true);
+          setRecoveryCopyReady(false);
           setStatus('有未保存的资源修改');
         };
         doc.spaceDoc.on('update', onUpdate);
@@ -233,8 +252,9 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     setSaving(true);
     setStatus('正在保存 BlockSuite 资源…');
     try {
-      if (store.getBlocksByFlavour(['affine:image', 'affine:attachment']).length > 0) {
-        throw new Error('此资源尚不支持图片或 Blob 附件；已保留页面修改，未提交。');
+      const blobIds = referencedBlockSuiteBlobIds(store);
+      for (const id of blobIds) {
+        if (!await store.blobSync.get(id)) throw new Error(`资源引用的 Blob ${id} 不在此笔记的 Core 存储中；已保留页面修改，未提交。`);
       }
       const snapshot = store.getTransformer().docToSnapshot(store);
       if (!snapshot || typeof snapshot !== 'object') throw new Error('BlockSuite 未能导出快照');
@@ -246,40 +266,79 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         updateB64: base64(Y.encodeStateAsUpdate(spaceDoc)), snapshot: snapshot as Record<string, unknown>,
       };
       const result = await notesApi.saveBlockSuiteResource(noteRef.current, resourceRef.current, body);
-      resourceRef.current = { ...resourceRef.current, etag: result.etag, note_etag: result.note_etag };
+      resourceRef.current = { ...resourceRef.current, etag: result.etag, note_etag: result.note_etag, artifact_set_etag: result.artifact_set_etag };
+      noteRef.current = { ...noteRef.current, artifactSetEtag: result.artifact_set_etag };
+      onNoteVersionChange(result.artifact_set_etag);
       dirtyRef.current = false;
       setDirty(false);
       setStatus('BlockSuite 资源已保存');
     } catch (error) {
-      setStatus(error instanceof Error ? `保存失败；修改仍保留，可重试。${error.message}` : '保存失败；修改仍保留，可重试。');
+      const status = (error as Error & { status?: number })?.status;
+      setStatus(status === 412
+        ? '版本冲突（412）；Core 未覆盖现有资源。当前修改仍保留，请下载恢复副本后重新载入。'
+        : error instanceof Error ? `保存失败；修改仍保留，可重试。${error.message}` : '保存失败；修改仍保留，可重试。');
     } finally {
       setSaving(false);
     }
   };
 
-  const downloadRecoveryCopy = () => {
+  const addCanvasImage = async (file?: File) => {
+    const store = (host.current as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null)?.__sbBlockSuiteStore;
+    if (!file || !store || initialResource.resourceKind !== 'edgeless-canvas' || uploadingImage) return;
+    setUploadingImage(true);
+    setStatus('正在将图片写入当前笔记的 SHA-256 Blob 存储…');
+    try {
+      const sourceId = await store.blobSync.set(file);
+      const surface = store.getBlocksByFlavour('affine:surface')[0]?.model;
+      if (!surface) throw new Error('画布 surface 不存在；图片已上传，可重试。');
+      const index = store.getBlocksByFlavour('affine:image').length;
+      store.addBlock('affine:image', {
+        sourceId, width: 320, height: 220, size: file.size, rotate: 0,
+        xywh: `[${80 + index * 32},${100 + index * 28},320,220]`,
+      }, surface.id);
+      setStatus('图片已加入 Edgeless 画布；保存资源以持久化位置和引用。');
+    } catch (error) {
+      setStatus(`图片未能安全写入；未加入画布。${error instanceof Error ? error.message : ''}`);
+    } finally { setUploadingImage(false); }
+  };
+
+  const downloadRecoveryCopy = async () => {
     const store = (host.current as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null)?.__sbBlockSuiteStore;
     if (!store) return;
-    const snapshot = store.getTransformer().docToSnapshot(store);
-    const spaceDoc = store.spaceDoc as Y.Doc;
-    const body = {
-      schemaVersion: 1,
-      resourceId: resourceRef.current.resourceId,
-      resourceKind: resourceRef.current.resourceKind,
-      docId: resourceRef.current.docId,
-      updateB64: base64(Y.encodeStateAsUpdate(spaceDoc)),
-      snapshot,
-      recoveryContext: { noteCollection: noteRef.current.collection, notePath: noteRef.current.path,
-        noteEtag: noteRef.current.etag, resourceEtag: resourceRef.current.etag },
-    };
-    const blob = new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `blocksuite-${resourceRef.current.resourceId}-recovery.json`;
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    setRecoveryCopyReady(true);
+    try {
+      setStatus('正在读取当前资源引用的图片以生成完整恢复副本…');
+      const snapshot = store.getTransformer().docToSnapshot(store);
+      const spaceDoc = store.spaceDoc as Y.Doc;
+      const blobs = [];
+      for (const id of referencedBlockSuiteBlobIds(store)) {
+        const data = await store.blobSync.get(id) as Blob | null;
+        if (!data) throw new Error(`无法读取引用的图片 Blob ${id}，未生成不完整恢复副本。`);
+        const bytes = new Uint8Array(await data.arrayBuffer());
+        blobs.push({ id, contentType: data.type, bytes: bytes.byteLength, base64: base64(bytes) });
+      }
+      const body = {
+        schemaVersion: 1,
+        resourceId: resourceRef.current.resourceId,
+        resourceKind: resourceRef.current.resourceKind,
+        docId: resourceRef.current.docId,
+        updateB64: base64(Y.encodeStateAsUpdate(spaceDoc)),
+        snapshot,
+        blobs,
+        recoveryContext: { noteCollection: noteRef.current.collection, notePath: noteRef.current.path,
+          noteEtag: noteRef.current.etag, resourceEtag: resourceRef.current.etag },
+      };
+      const blob = new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `blocksuite-${resourceRef.current.resourceId}-recovery.json`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setRecoveryCopyReady(true);
+      setStatus('已下载包含 Yjs update、快照与所引用图片的恢复副本。');
+    } catch (error) {
+      setStatus(`恢复副本生成失败；编辑内容仍保留。${error instanceof Error ? error.message : ''}`);
+    }
   };
 
   return <div className="blocksuite-resource-backdrop" role="presentation">
@@ -291,9 +350,14 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         </button>
       </header>
       <div className="blocksuite-resource-host" ref={host} data-kind={initialResource.resourceKind} />
-      <footer><span>资源通过 Markdown 附件引用关联；Yjs update 为保存源。保存冲突或失败时可下载未保存恢复副本。</span>
-        <button type="button" onClick={downloadRecoveryCopy} disabled={!dirty || saving}>下载未保存恢复副本</button>
-        <button type="button" onClick={() => void save()} disabled={!dirty || saving}>{saving ? '保存中…' : '保存资源'}</button>
+      <footer><span>资源通过 Markdown 附件引用关联；Yjs update 与同笔记 SHA-256 图片均受 Core ETag/配额保护。</span>
+        {initialResource.resourceKind === 'edgeless-canvas' && <label className="blocksuite-resource-upload">
+          添加画布图片
+          <input aria-label="选择 Edgeless 图片" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={saving || uploadingImage}
+            onChange={(event) => { void addCanvasImage(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }} />
+        </label>}
+        <button type="button" onClick={() => void downloadRecoveryCopy()} disabled={!dirty || saving}>下载未保存恢复副本</button>
+        <button type="button" onClick={() => void save()} disabled={!dirty || saving || uploadingImage}>{saving ? '保存中…' : '保存资源'}</button>
       </footer>
     </section>
   </div>;
