@@ -1832,6 +1832,8 @@ for (const viewport of activeViewports) {
       // after selecting another Note without repeating the full page reload.
       await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
       await expect(reopenedCanvas).toContainText(updatedBody, { timeout: 20000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_table_reopen');
+      await expect(reopenedCanvas).toContainText(tableEditMarker, { timeout: 20000 });
       const reopenScrollMetrics = await reopenedCanvas.evaluate((element) => ({
         scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
       }));

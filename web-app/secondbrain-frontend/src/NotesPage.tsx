@@ -468,7 +468,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           anchor.href = url;
           anchor.download = note.path.split('/').at(-1) || 'note.md';
           anchor.click();
-          URL.revokeObjectURL(url);
+          window.setTimeout(() => URL.revokeObjectURL(url), 0);
         }}>下载当前 Markdown 原文</button>}
         {restorePreview && <section className="notes-restore-preview" aria-label="历史版本预览">
           <h2>最近历史版本预览</h2><pre>{restorePreview.content}</pre>
