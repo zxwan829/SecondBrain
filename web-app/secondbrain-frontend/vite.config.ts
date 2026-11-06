@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { vanillaExtractPlugin } from '@vanilla-extract/vite-plugin';
@@ -17,16 +18,11 @@ export default defineConfig({
         // This CJS child dependency of @blocksuite/store still needs Vite's
         // ESM compatibility wrapper when its BlockSuite parent is excluded.
         include: ['lodash.ismatch', 'bind-event-listener', 'raf-schd', 'extend', 'debug', 'ms', 'bytes'],
-        exclude: [
-            '@blocksuite/affine-block-code', '@blocksuite/affine-block-divider',
-            '@blocksuite/affine-block-list', '@blocksuite/affine-block-note',
-            '@blocksuite/affine-block-paragraph', '@blocksuite/affine-block-root',
-            '@blocksuite/affine-block-surface', '@blocksuite/affine-block-table',
-            '@blocksuite/affine-ext-loader', '@blocksuite/affine-foundation',
-            '@blocksuite/affine-inline-preset', '@blocksuite/affine-model',
-            '@blocksuite/affine-shared', '@blocksuite/global', '@blocksuite/std',
-            '@blocksuite/store', '@blocksuite/sync',
-        ],
+        // Every BlockSuite package must stay in the same source module graph.
+        // Optimizing a resource package while Foundation remains source creates
+        // different Lit constructors for registration and instantiation.
+        exclude: readdirSync(new URL('./node_modules/@blocksuite/', import.meta.url))
+            .map(name => `@blocksuite/${name}`),
     },
     resolve: { dedupe: ['yjs', 'lit', 'lit-html', '@lit/reactive-element', 'zod'] },
     build: { assetsInlineLimit: 4096 },
