@@ -380,7 +380,13 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
     return validated
 
 
-def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
+def _collect_failure_diagnostics(
+    raw_root: Path, expected_viewports: set[str] | None = None,
+) -> list[dict[str, object]]:
+    if expected_viewports is None:
+        expected_viewports = set(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values())
+    if not expected_viewports or not expected_viewports.issubset(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()):
+        raise RuntimeError("failure diagnostic viewport selection rejected; upload withheld")
     junit_path = raw_root / "junit.xml"
     summary_path = raw_root / "run-summary.json"
     if junit_path.is_symlink() or summary_path.is_symlink():
@@ -417,8 +423,8 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
         testcase_viewports.append(viewport)
         if any(child.tag.rsplit("}", 1)[-1] in {"failure", "error"} for child in element):
             failed_viewports.append(viewport)
-    if (len(testcase_viewports) != len(FAILURE_JUNIT_TESTCASE_VIEWPORTS)
-            or set(testcase_viewports) != set(FAILURE_JUNIT_TESTCASE_VIEWPORTS.values())
+    if (len(testcase_viewports) != len(expected_viewports)
+            or set(testcase_viewports) != expected_viewports
             or len(set(testcase_viewports)) != len(testcase_viewports)):
         safe_observed = ",".join(testcase_viewports)
         safe_failed = ",".join(failed_viewports)
@@ -635,7 +641,9 @@ def is_allowlisted_failure_screenshot(artifacts_root: Path, path: Path) -> bool:
             and relative.parts[2] == FAILURE_SCREENSHOT_NAME)
 
 
-def _copy_publishable_files(raw_root: Path, staging_root: Path) -> int:
+def _copy_publishable_files(
+    raw_root: Path, staging_root: Path, expected_viewports: set[str] | None = None,
+) -> int:
     def copy_regular(source: Path, target: Path) -> None:
         if source.is_symlink():
             raise RuntimeError("symlink report rejected; upload withheld")
@@ -656,7 +664,7 @@ def _copy_publishable_files(raw_root: Path, staging_root: Path) -> int:
         for source in results.rglob("trace.zip"):
             target = staging_root / source.relative_to(raw_root)
             copy_regular(source, target)
-    diagnostics = _collect_failure_diagnostics(raw_root)
+    diagnostics = _collect_failure_diagnostics(raw_root, expected_viewports)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
     screenshots = _failure_screenshot_candidates(raw_root)
     for source in screenshots:
@@ -748,7 +756,10 @@ def _verify_sanitized_png(path: Path, secret: bytes) -> None:
         raise RuntimeError("invalid failure screenshot; upload withheld") from error
 
 
-def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: Path) -> int:
+def publish_verified_reports(
+    raw_root: Path, publish_root: Path, password_path: Path,
+    expected_viewports: set[str] | None = None,
+) -> int:
     """Atomically publish an allowlist of fully sanitized reports or publish nothing."""
     publish_root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if publish_root.is_symlink() or (publish_root.exists() and not publish_root.is_dir()):
@@ -758,7 +769,7 @@ def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: 
     publish_root.mkdir(mode=0o700, exist_ok=True)
     staging_root = Path(tempfile.mkdtemp(prefix=".artifacts-verified-", dir=publish_root.parent))
     try:
-        screenshot_count = _copy_publishable_files(raw_root, staging_root)
+        screenshot_count = _copy_publishable_files(raw_root, staging_root, expected_viewports)
         sanitize_trace_archives(staging_root)
         _sanitize_failure_screenshots(staging_root)
         sanitize_text_reports(staging_root, password_path)
@@ -1373,7 +1384,8 @@ def main() -> int:
         }
         (raw_artifacts / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         os.chmod(raw_artifacts / "run-summary.json", 0o600)
-        publish_verified_reports(raw_artifacts, publish_root, password_path)
+        expected_failure_viewports = {"desktop-1440x1000"} if options.desktop_only else None
+        publish_verified_reports(raw_artifacts, publish_root, password_path, expected_failure_viewports)
         mark_verified_artifact_output()
         result = test_returncode
         return result
