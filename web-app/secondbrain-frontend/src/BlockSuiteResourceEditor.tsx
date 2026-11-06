@@ -63,7 +63,7 @@ import { MentionViewExtension } from '@blocksuite/affine-inline-mention/view';
 import { ReferenceStoreExtension } from '@blocksuite/affine-inline-reference/store';
 import { ReferenceViewExtension } from '@blocksuite/affine-inline-reference/view';
 import { StoreExtensionManager } from '@blocksuite/affine-ext-loader';
-import { resourceViewManager } from './blocksuite-resource-views';
+import { prepareViewExtensions, resourceViewManager } from './blocksuite-resource-views';
 import { BlockStdScope } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
 import * as Y from 'yjs';
@@ -206,6 +206,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         Y.applyUpdate(doc.spaceDoc, unbase64(initialResource.updateB64));
         doc.load();
         const store = doc.getStore();
+        prepareViewExtensions();
         const extensionSet = views.get(initialResource.resourceKind === 'database' ? 'page' : 'edgeless');
         std = new BlockStdScope({ store: store as any, extensions: extensionSet });
         const root = std.render();

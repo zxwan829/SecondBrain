@@ -56,8 +56,8 @@ const providers = [
 registerStdEffects();
 // Some eagerly loaded BlockSuite surfaces register their Lit elements before
 // Notes creates its scope. ViewExtensionProvider tracks effects per class, so
-// mark only fully-present package anchors as already effected to prevent a
-// duplicate customElements.define while still running each provider's setup.
+// mark fully-present package anchors as already effected before each scope is
+// built, while still running each provider's scope-specific setup.
 const registeredEffectAnchors: Array<[typeof providers[number], string]> = [
   [RootViewExtension, 'affine-page-root'],
   [NoteViewExtension, 'affine-note'],
@@ -73,8 +73,10 @@ const registeredEffectAnchors: Array<[typeof providers[number], string]> = [
   [ImageViewExtension, 'affine-image'],
   [EdgelessTextViewExtension, 'affine-edgeless-text'],
 ];
-for (const [Provider, anchor] of registeredEffectAnchors) {
-  if (customElements.get(anchor)) Provider.effectRan = true;
+export function prepareViewExtensions() {
+  for (const [Provider, anchor] of registeredEffectAnchors) {
+    if (customElements.get(anchor)) Provider.effectRan = true;
+  }
 }
 
 export const markdownViewManager = new ViewExtensionManager(providers);
