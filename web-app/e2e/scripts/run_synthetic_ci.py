@@ -104,7 +104,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
     "calendar_api_requests",
 }
-MAX_FAILURE_DIAGNOSTIC_BYTES = 1024
+MAX_FAILURE_DIAGNOSTIC_BYTES = 2048
 MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_SCREENSHOT_WIDTH = 2048
