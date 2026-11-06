@@ -1440,9 +1440,12 @@ for (const viewport of activeViewports) {
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_canvas');
-      await expect(page.locator('.blocksuite-notes-canvas')).toBeVisible();
-      await expect(page.locator('.blocksuite-notes-canvas')).toContainText(updatedBody);
-      await expect(page.locator('.blocksuite-notes-canvas')).toContainText('preserve-me');
+      const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
+      // A full page reload invalidates the browser module cache; match the
+      // first-open lazy chunk gate instead of the generic 5s assertion default.
+      await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
+      await expect(reopenedCanvas).toContainText(updatedBody, { timeout: 20000 });
+      await expect(reopenedCanvas).toContainText('preserve-me', { timeout: 20000 });
       const quickSwitchEdit = 'WP5 quick fallback edit preserved';
       const quickSwitchSave = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
