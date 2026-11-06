@@ -70,8 +70,9 @@ function makeManagers() {
  * BlockSuite is a transient local editing projection only. Its in-memory Y.Doc has
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
-export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback }: {
+export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset }: {
   value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason) => void;
+  onOpenVisualAsset?: (filename: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<{ store: any; std: BlockStdScope; workspace: TransientMarkdownWorkspace; adapter: MarkdownAdapter; split: MarkdownParts; subscription?: { unsubscribe: () => void } } | null>(null);
@@ -196,6 +197,28 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
   useEffect(() => { if (editorRef.current) editorRef.current.store.readonly = disabled; }, [disabled]);
 
   useEffect(() => {
+    const root = host.current;
+    if (!root || !onOpenVisualAsset) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest('a[href]');
+      if (!anchor) return;
+      let filename: string;
+      try {
+        const url = new URL(anchor.getAttribute('href') || '', window.location.href);
+        const match = url.pathname.match(/(?:^|\/)attachments\/([0-9a-f]{32}\.(?:mindmap|excalidraw)\.json)$/i);
+        if (!match) return;
+        filename = decodeURIComponent(match[1]);
+      } catch { return; }
+      event.preventDefault();
+      onOpenVisualAsset(filename);
+    };
+    root.addEventListener('click', onClick);
+    return () => root.removeEventListener('click', onClick);
+  }, [onOpenVisualAsset]);
+
+  useEffect(() => {
     // A parent save response updates the prop to the same serialized content. Do not
     // reconstruct the local editor for that acknowledgement; re-open uses a new key.
     if (value !== emittedRef.current && value !== valueRef.current) {
@@ -216,13 +239,13 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
           valueRef.current = next;
           onChangeRef.current(next);
         }
-      } catch { setStatus('切换旧版编辑器失败，当前编辑器仍保留。'); return; }
+      } catch { setStatus('无法安全显示 Markdown 原文，当前编辑器仍保留。'); return; }
     }
     onFallbackRef.current();
   };
 
   return <section className="blocksuite-notes" aria-label="BlockSuite Markdown 编辑器">
-    <div className="blocksuite-notes-bar"><span role="status">{status}</span><button type="button" onClick={() => void fallback()}>切回旧版编辑器</button></div>
+    <div className="blocksuite-notes-bar"><span role="status">{status}</span><button type="button" onClick={() => void fallback()}>查看 Markdown 原文</button></div>
     <div className="blocksuite-notes-canvas" ref={host} aria-busy={!ready} data-disabled={disabled ? 'true' : 'false'} />
   </section>;
 }

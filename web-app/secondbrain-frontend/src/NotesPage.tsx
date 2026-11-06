@@ -1,5 +1,4 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { MarkdownEditor } from './MarkdownEditor';
 import { NotePropertiesPanel } from './NotePropertiesPanel';
 import { notesApi, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
 import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
@@ -9,7 +8,6 @@ const BlockSuiteMarkdownEditor = lazy(() => import('./BlockSuiteMarkdownEditor')
 
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
-const hasOpaqueFrontmatter = (value: string) => /^\ufeff?---\r?\n/.test(value);
 
 export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { onRegisterNavigationGuard?: (guard: (() => boolean) | null) => void; onOpenInboxSource?: (collection: string, path: string) => void }) {
   const [collections, setCollections] = useState<NoteCollection[]>([]);
@@ -17,7 +15,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [items, setItems] = useState<{ path: string; title: string }[]>([]);
   const [note, setNote] = useState<Note | null>(null);
   const [content, setContent] = useState('');
-  const [editorMode, setEditorMode] = useState<'blocksuite' | 'legacy'>('legacy');
+  const [editorMode, setEditorMode] = useState<'blocksuite' | 'source'>('blocksuite');
   const [state, setState] = useState<State>('已保存');
   const [message, setMessage] = useState('');
   const blockSuiteFallbackReason = useRef<string | null>(null);
@@ -102,7 +100,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     try {
       const loaded = await notesApi.read(targetCollection, path);
       if (viewRevision.current !== revision) return;
-      setCurrent(loaded, loaded.content); setState('已保存'); setEditorMode('legacy');
+      setCurrent(loaded, loaded.content); setState('已保存'); setEditorMode('blocksuite');
       setMessage(loaded.read_only ? `此文件含有当前富文本编辑器不能安全往返的语法（${loaded.safety_reasons.join('、')}），已保留原文并设为只读。` : '');
     } catch { if (viewRevision.current === revision) setMessage('笔记读取失败，原有内容未更改。'); }
     finally { if (viewRevision.current === revision) setLoading(false); }
@@ -186,8 +184,8 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       catch { /* save() keeps unsaved content and reports its failure before the editor switches. */ }
     }
     blockSuiteFallbackReason.current = reason ?? null;
-    setEditorMode('legacy');
-    if (reason) setMessage('BlockSuite 不支持安全往返此笔记，已保留原文并切回旧版编辑器。');
+    setEditorMode('source');
+    if (reason) setMessage('BlockSuite 无法安全往返此笔记，已保留 Markdown 原文并切换为只读源码视图。');
   };
 
   const createDraft = async () => {
@@ -197,7 +195,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     try {
       const created = await notesApi.create('# 未命名笔记\n\n');
       if (viewRevision.current !== revision) return;
-      setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('legacy');
+      setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('blocksuite');
       void refresh('drafts');
     } catch { if (viewRevision.current === revision) setMessage('Drafts 尚未配置，或创建失败；没有创建笔记。'); }
     finally { if (viewRevision.current === revision) setLoading(false); }
@@ -207,13 +205,6 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     if (next === collection || !protectUnsaved()) return;
     beginTransition(); setCollection(next); setCurrent(null); setState('已保存'); setMessage('');
   };
-  const pasteImage = async (file: File) => {
-    const target = noteRef.current;
-    if (!target) throw new Error('请先创建或打开一篇笔记');
-    try { const uploaded = await notesApi.upload(target, file); return uploaded.url; }
-    catch { setMessage('图片附件未保存；正文仍保留。'); throw new Error('图片上传失败'); }
-  };
-
   const createVisual = async (kind: VisualKind) => {
     const target = noteRef.current;
     if (!target || target.read_only || creatingVisual || state !== '已保存') return;
@@ -470,9 +461,15 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
           {note && <button type="button" onClick={() => void trashSelectedNote()} disabled={state !== '已保存' || loading || creatingVisual || savingVisual || visualAsset !== null || unpersistedVisual !== null}>移到回收站</button>}
         </div>
-        {note && !note.read_only && editorMode === 'legacy' && <div className="notes-editor-mode" role="group" aria-label="Markdown 编辑器">
-          <button type="button" onClick={() => { blockSuiteFallbackReason.current = null; setMessage(''); setEditorMode('blocksuite'); }}>BlockSuite 编辑器</button>
-        </div>}
+        {note && (note.read_only || editorMode === 'source') && <button type="button" onClick={() => {
+          const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = note.path.split('/').at(-1) || 'note.md';
+          anchor.click();
+          URL.revokeObjectURL(url);
+        }}>下载当前 Markdown 原文</button>}
         {restorePreview && <section className="notes-restore-preview" aria-label="历史版本预览">
           <h2>最近历史版本预览</h2><pre>{restorePreview.content}</pre>
           <button type="button" onClick={() => setRestorePreview(null)}>取消</button>
@@ -481,16 +478,16 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         {note && state === '已保存' && !loading && <NotePropertiesPanel key={noteKey(note)} note={note} onSaved={(saved) => {
           setCurrent(saved, saved.content); setState('已保存'); setMessage(''); void refresh(saved.collection);
         }} />}
-        {note ? note.read_only || (editorMode === 'legacy' && hasOpaqueFrontmatter(content)) ? <>
+        {note ? note.read_only || editorMode === 'source' ? <>
           <div className="notes-safety" role="status">{note.read_only
-            ? `此文件含有当前富文本编辑器不能安全往返的语法（${note.safety_reasons.join('、')}），原始 Markdown 保留只读。`
-            : '此笔记含有不透明 YAML Frontmatter；旧版编辑器保持只读，请切换 BlockSuite 以安全编辑正文。'}</div>
+            ? `此文件含有当前 BlockSuite 编辑器不能安全往返的语法（${note.safety_reasons.join('、')}），原始 Markdown 保留只读。`
+            : (editorMode === 'source'
+              ? 'BlockSuite 无法安全往返此笔记；原文保持只读，可下载保存。'
+              : '此笔记含有 YAML Frontmatter；当前编辑器不能确认安全往返，原文保持只读。')}</div>
           <pre className="notes-raw-source">{content}</pre>
-        </> : editorMode === 'blocksuite' ? <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
-          onFallback={(reason) => { void leaveBlockSuite(reason); }} /></Suspense>
-          : <MarkdownEditor key={`legacy:${noteKey(note)}`} value={content} disabled={false} onChange={change} onImagePaste={pasteImage}
-            onOpenVisualAsset={openVisual}
-            assetBase={`/api/notes/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`} /> : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
+        </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
+          onOpenVisualAsset={openVisual} onFallback={(reason) => { void leaveBlockSuite(reason); }} /></Suspense>
+          : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
         {message && <p role="alert" data-fallback-reason={blockSuiteFallbackReason.current ?? undefined} className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
         {unpersistedVisual && state === '保存失败' && note && noteKey(note) === noteKey(unpersistedVisual.note) &&
           <button type="button" onClick={() => void retryVisualReference()}>重试保存图形引用</button>}

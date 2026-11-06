@@ -2,8 +2,8 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./MarkdownEditor', () => ({
-  MarkdownEditor: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <textarea aria-label="合成 Markdown 编辑器" value={value} onChange={(event) => onChange(event.target.value)} />,
+vi.mock('./BlockSuiteMarkdownEditor', () => ({
+  BlockSuiteMarkdownEditor: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <textarea aria-label="合成 Markdown 编辑器" value={value} onChange={(event) => onChange(event.target.value)} />,
 }));
 vi.mock('./MindMapEditor', () => ({
   MindMapEditor: ({ content, onChange }: { content: string; onChange: (value: string) => void }) => <textarea aria-label="合成脑图编辑器" value={content} onChange={(event) => onChange(event.target.value)} />,

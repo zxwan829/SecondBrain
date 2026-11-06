@@ -2,8 +2,8 @@ import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./MarkdownEditor', () => ({
-  MarkdownEditor: ({ value, onChange, disabled, onOpenVisualAsset }: { value: string; onChange: (value: string) => void; disabled: boolean; onOpenVisualAsset?: (filename: string) => void }) => <>
+vi.mock('./BlockSuiteMarkdownEditor', () => ({
+  BlockSuiteMarkdownEditor: ({ value, onChange, disabled, onOpenVisualAsset }: { value: string; onChange: (value: string) => void; disabled: boolean; onOpenVisualAsset?: (filename: string) => void }) => <>
     <textarea aria-label="合成 Markdown 编辑器" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
     {value.match(/[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json/)?.[0] && <button onClick={() => onOpenVisualAsset?.(value.match(/[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json/)![0])}>打开图形附件</button>}
   </>,
@@ -26,7 +26,7 @@ import { NotesPage } from './NotesPage';
 describe('NotesPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
-  it('keeps opaque frontmatter out of the legacy editor and offers BlockSuite for safe body edits', async () => {
+  it('opens frontmatter notes in BlockSuite while preserving the complete Markdown source', async () => {
     const note = { collection: 'drafts', path: '中文笔记.md', content: '---\ntags: [合成]\ncustom: 保留\n---\n\n# 正文\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
@@ -37,10 +37,24 @@ describe('NotesPage', () => {
     });
     render(<NotesPage />);
     fireEvent.click(await screen.findByRole('button', { name: '中文笔记' }));
-    expect(await screen.findByText(/旧版编辑器保持只读/)).toBeTruthy();
-    expect(document.querySelector('.notes-raw-source')?.textContent).toBe(note.content);
-    expect(screen.getByRole('button', { name: 'BlockSuite 编辑器' })).toBeTruthy();
-    expect(screen.queryByLabelText('合成 Markdown 编辑器')).toBeNull();
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    expect(editor.value).toBe(note.content);
+    expect(screen.queryByRole('button', { name: '切回旧版编辑器' })).toBeNull();
+  });
+
+  it('opens supported notes directly in BlockSuite by default', async () => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000002', content: '# Direct BlockSuite\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/notes') return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: note.path, title: 'Direct BlockSuite' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${note.path}`) return new Response(JSON.stringify(note), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Direct BlockSuite' }));
+    expect(await screen.findByLabelText('合成 Markdown 编辑器')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '切回旧版编辑器' })).toBeNull();
   });
 
   it('opens single-source Inbox for the selected Draft only after the unsaved-navigation guard passes', async () => {

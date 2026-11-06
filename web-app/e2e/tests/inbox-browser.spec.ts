@@ -816,7 +816,6 @@ for (const viewport of activeViewports) {
       await page.getByRole('button', { name: title, exact: true }).click();
       expect((await noteRead).status(), 'wp5_focus_note_open').toBe(200);
       observed.setFailureStage('notes_blocksuite_open');
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const canvas = page.locator('.blocksuite-notes-canvas');
       observed.setDiagnosticAssertion('wp5_focus_editor_open');
       await expect(canvas).toBeVisible({ timeout: 20000 });
@@ -862,9 +861,8 @@ for (const viewport of activeViewports) {
       expect(reopened.status(), 'wp5_focus_reopen_api').toBe(200);
       const reopenedPayload = await reopened.json() as { content?: unknown };
       expect(reopenedPayload.content, 'wp5_focus_reopen_api').toBe(savedPayload.content);
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('wp5_focus_reopen_content');
-      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 20000 });
+      await expect(page.getByRole('alert')).toContainText('Markdown 原文', { timeout: 20000 });
       const rawSource = page.locator('.notes-raw-source');
       await expect(rawSource).toContainText(editMarker);
       await expect(rawSource).toContainText('custom: preserve-focused');
@@ -891,7 +889,6 @@ for (const viewport of activeViewports) {
         && new URL(response.url()).pathname === conflictUrlPath);
       await page.getByRole('button', { name: conflictTitle, exact: true }).click();
       expect((await conflictRead).status(), 'wp5_conflict_probe_open').toBe(200);
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const conflictCanvas = page.locator('.blocksuite-notes-canvas');
       observed.setDiagnosticAssertion('wp5_conflict_probe_canvas');
       await expect(conflictCanvas).toBeVisible({ timeout: 20000 });
@@ -1031,7 +1028,6 @@ for (const viewport of activeViewports) {
       await page.getByRole('button', { name: conflictTitle, exact: true }).click();
       await expect(page.locator('.notes-document-heading')).toContainText(conflictPath);
       expect((await conflictReopenResponse).status(), 'wp5_conflict_probe_reopen').toBe(200);
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
       observed.setDiagnosticAssertion('wp5_conflict_probe_reopen_canvas');
       await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
@@ -1564,7 +1560,7 @@ for (const viewport of activeViewports) {
     expect(createdNote.collection).toBe('drafts');
     expect(createdNote.path).toMatch(/^[0-9a-f-]{36}$/i);
     let activeNotePath = createdNote.path;
-    const editor = page.locator('.ProseMirror');
+    const editor = page.locator('.blocksuite-notes-canvas [contenteditable="true"]').first();
     await expect(editor).toBeVisible();
 
     const syntheticNoteBody = `Synthetic mobile note round trip ${viewport.name}`;
@@ -1597,7 +1593,7 @@ for (const viewport of activeViewports) {
     observed.setDiagnosticAssertion('notes_readback_payload');
     expect(typeof persistedNote.content === 'string' && persistedNote.content.includes(syntheticNoteBody),
       'notes_readback_payload').toBe(true);
-    const renderedNote = await page.locator('.notes-document .notes-prose').innerText();
+    const renderedNote = await page.locator('.blocksuite-notes-canvas').innerText();
     const editorContainsReadback = renderedNote.includes(syntheticNoteBody);
     observed.setDiagnosticAssertion(editorContainsReadback ? 'notes_readback' : 'notes_readback_editor_missing');
     expect(editorContainsReadback, 'notes_readback').toBe(true);
@@ -1630,11 +1626,10 @@ for (const viewport of activeViewports) {
       expect(rereadFrontmatter.status(), 'notes_frontmatter_read').toBe(200);
 
       observed.setFailureStage('notes_blocksuite_open');
-      observed.setDiagnosticAssertion('notes_blocksuite_button_click');
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_blocksuite_default_entry');
       const canvas = page.locator('.blocksuite-notes-canvas');
       observed.setDiagnosticAssertion('notes_blocksuite_canvas_visible');
-      // The optional editor is a large lazy-loaded chunk; do not apply the
+      // The editor is a large lazy-loaded chunk; do not apply the
       // default 5s assertion timeout to its first mount in CI Chromium.
       await expect(canvas).toBeVisible({ timeout: 20000 });
       observed.setDiagnosticAssertion('notes_blocksuite_save_status');
@@ -1643,6 +1638,18 @@ for (const viewport of activeViewports) {
       await expect(canvas).toContainText(syntheticNoteBody);
       observed.setDiagnosticAssertion('notes_blocksuite_enabled');
       await expect(canvas).toHaveAttribute('data-disabled', 'false');
+      const tableCell = canvas.locator('affine-table').getByText('synthetic', { exact: true }).last();
+      await expect(tableCell, 'notes_blocksuite_table_cell').toBeVisible();
+      const tableEditMarker = 'WP5 table cell edit';
+      const tableSave = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`
+        && (response.request().postData() ?? '').includes(tableEditMarker), { timeout: 10000 });
+      await tableCell.click();
+      await page.keyboard.press('End');
+      await page.keyboard.insertText(` ${tableEditMarker}`);
+      const tableSaved = await tableSave;
+      expect(tableSaved.status(), 'notes_blocksuite_table_save').toBe(200);
+      expect((await tableSaved.json() as { content: string }).content).toContain(tableEditMarker);
       // Click the body text itself, rather than the center of its potentially
       // full-page contenteditable ancestor (which can land on the first heading).
       const block = canvas.getByText(syntheticNoteBody, { exact: false });
@@ -1707,7 +1714,6 @@ for (const viewport of activeViewports) {
       expect(projectionCreated.status(), 'wp5_unsupported_projection_seed').toBe(200);
       const projectionNote = await projectionCreated.json() as { path: string };
       const projectionUrl = `/api/notes/drafts/${projectionNote.path}`;
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const projectionCanvas = page.locator('.blocksuite-notes-canvas');
       observed.setDiagnosticAssertion('wp5_unsupported_projection_open');
       await expect(projectionCanvas).toBeVisible({ timeout: 20000 });
@@ -1724,7 +1730,7 @@ for (const viewport of activeViewports) {
       // create independent Page blocks and do not represent Setext source.
       await page.keyboard.insertText('Dynamic Setext heading\n===');
       observed.setDiagnosticAssertion('wp5_unsupported_projection_rejected');
-      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 5000 });
+      await expect(page.getByRole('alert')).toContainText('Markdown 原文', { timeout: 5000 });
       const fallbackProjection = page.locator('.notes-raw-source');
       await expect(fallbackProjection).toContainText('Dynamic Setext heading');
       await expect(fallbackProjection).toContainText('===');
@@ -1740,7 +1746,6 @@ for (const viewport of activeViewports) {
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
       await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
       expect((await restoreMainNote).status(), 'notes_blocksuite_reopen_navigation_response').toBe(200);
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       await expect(page.locator('.blocksuite-notes-canvas')).toBeVisible({ timeout: 20000 });
       await expect(page.locator('.blocksuite-notes-canvas')).toHaveAttribute('data-disabled', 'false');
 
@@ -1820,9 +1825,7 @@ for (const viewport of activeViewports) {
       await expect(noteHeading).toContainText(activeNotePath);
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_saved_status');
       await expect(noteHeading.getByRole('status')).toHaveText('已保存');
-      observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_button');
-      await expect(page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true })).toBeVisible();
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_default_entry');
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_canvas');
       const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
       // Match the first-open lazy chunk gate; the view has been recreated
@@ -1847,7 +1850,7 @@ for (const viewport of activeViewports) {
       await page.keyboard.press('Enter');
       await page.keyboard.insertText(quickSwitchEdit);
       observed.setDiagnosticAssertion('notes_blocksuite_quick_switch_fallback');
-      await page.getByRole('button', { name: '切回旧版编辑器' }).click();
+      await page.getByRole('button', { name: '查看 Markdown 原文' }).click();
       observed.setDiagnosticAssertion('notes_blocksuite_quick_switch_save_response');
       const quickSaved = await quickSwitchSave;
       expect(quickSaved.status(), 'notes_blocksuite_quick_fallback_save').toBe(200);
@@ -1893,23 +1896,21 @@ for (const viewport of activeViewports) {
       await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
       observed.setDiagnosticAssertion('notes_setext_reopen_read');
       expect((await fallbackRead).status()).toBe(200);
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('notes_setext_fallback');
-      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      await expect(page.getByRole('alert')).toContainText('Markdown 原文');
       observed.setDiagnosticAssertion('notes_setext_fallback_render');
-      // Opaque frontmatter makes the legacy editor read-only by contract; in
-      // that case fallback preserves the exact source in the raw read-only view.
+      // The Markdown source view preserves syntax that the BlockSuite adapter
+      // cannot safely round-trip.
       await expect(page.locator('.notes-raw-source')).toContainText('Setext compatibility heading');
 
       observed.setFailureStage('notes_blocksuite_reopen');
       observed.setDiagnosticAssertion('notes_attachment_select');
       await page.getByRole('button', { name: 'WP5 attachment fallback fixture', exact: true }).click();
       observed.setDiagnosticAssertion('notes_attachment_open');
-      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('notes_attachment_fallback');
-      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      await expect(page.getByRole('alert')).toContainText('Markdown 原文');
       observed.setDiagnosticAssertion('notes_attachment_render');
-      await expect(page.locator('.ProseMirror img[alt="synthetic attachment"]')).toBeVisible();
+      await expect(page.locator('.notes-raw-source')).toContainText('attachments/synthetic-attachment.png');
 
       observed.setDiagnosticAssertion('notes_unsafe_select');
       await page.getByRole('button', { name: 'WP5 unsafe Markdown fixture', exact: true }).click();
@@ -1921,7 +1922,7 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('notes_unsafe_safety');
       await expect(page.locator('.notes-safety')).toBeVisible();
       observed.setDiagnosticAssertion('notes_unsafe_editor_hidden');
-      await expect(page.getByRole('button', { name: 'BlockSuite 编辑器' })).toHaveCount(0);
+      await expect(page.locator('.notes-raw-source')).toBeVisible();
 
     }
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
@@ -1983,7 +1984,7 @@ test.afterEach(async ({ page }, testInfo) => {
         return 'fallback_message';
       }
       if (visible(document.querySelector('.blocksuite-notes-canvas'))) return 'blocksuite_canvas';
-      if (visible(document.querySelector('.notes-document .ProseMirror'))) return 'legacy_editor';
+      if (visible(document.querySelector('.notes-document .ProseMirror'))) return 'unexpected_legacy_editor';
       const root = document.querySelector('#root');
       if (!document.body.childElementCount || (root && !root.childElementCount)) return 'app_blank';
       return 'canvas_missing';
