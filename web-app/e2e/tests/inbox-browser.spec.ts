@@ -66,6 +66,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_saved_edit_text' | 'notes_blocksuite_saved_status'
   | 'notes_blocksuite_conflict_seed' | 'notes_blocksuite_conflict_rejected'
   | 'notes_blocksuite_conflict_ui' | 'notes_blocksuite_conflict_readback'
+  | 'notes_blocksuite_conflict_readback_status' | 'notes_blocksuite_conflict_readback_payload'
+  | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_editor_entry'
+  | 'notes_blocksuite_reopen_canvas'
   | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
   | 'notes_conflict_seed_status_403' | 'notes_conflict_seed_status_404'
   | 'notes_conflict_seed_status_409' | 'notes_conflict_seed_status_412'
@@ -1409,20 +1412,33 @@ for (const viewport of viewports) {
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_ui');
       await expect(page.getByRole('status').filter({ hasText: '版本冲突' })).toBeVisible();
       observed.setDiagnosticAssertion('notes_blocksuite_conflict_readback');
-      const afterConflict = await page.request.get(`${baseUrl}/api/notes/drafts/${activeNotePath}`);
-      const currentAfterConflict = await afterConflict.json() as { content: string };
-      expect(currentAfterConflict.content).toContain(concurrentText);
-      expect(currentAfterConflict.content).not.toContain('WP5 stale browser edit must not replace Core');
+      const afterConflict = await page.evaluate(async (path) => {
+        const response = await fetch(`/api/notes/drafts/${path}`, { credentials: 'same-origin' });
+        return { status: response.status, note: response.ok ? await response.json() as { content: string } : null };
+      }, activeNotePath);
+      expect(afterConflict.status, 'notes_blocksuite_conflict_readback_status').toBe(200);
+      const currentAfterConflict = afterConflict.note;
+      expect(currentAfterConflict, 'notes_blocksuite_conflict_readback_payload').not.toBeNull();
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_readback');
+      expect(currentAfterConflict?.content).toContain(concurrentText);
+      expect(currentAfterConflict?.content).not.toContain('WP5 stale browser edit must not replace Core');
 
       observed.setFailureStage('notes_blocksuite_reopen');
       page.once('dialog', (dialog) => void dialog.accept());
       await page.reload();
+      await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+      await expect(page.getByRole('heading', { name: '笔记', exact: true })).toBeVisible();
       const blockSuiteRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_note_selector');
       await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
       const reread = await blockSuiteRead;
       expect(reread.status(), 'notes_blocksuite_reopen').toBe(200);
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_entry');
+      await expect(page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_canvas');
+      await expect(page.locator('.blocksuite-notes-canvas')).toBeVisible();
       await expect(page.locator('.blocksuite-notes-canvas')).toContainText(updatedBody);
       await expect(page.locator('.blocksuite-notes-canvas')).toContainText('preserve-me');
       const quickSwitchEdit = 'WP5 quick fallback edit preserved';
