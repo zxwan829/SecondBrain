@@ -14,7 +14,9 @@ from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from .notes import MAX_MARKDOWN_BYTES, NotesStore
+from .notes import (MAX_BLOCKSUITE_RESOURCE_BYTES, MAX_BLOCKSUITE_RESOURCES_PER_NOTE,
+                    MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE, MAX_MARKDOWN_BYTES,
+                    NotesStore, _BLOCKSUITE_RESOURCE_FILENAME)
 
 
 _TRASH_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -25,6 +27,7 @@ _EXCLUDED = {"drafts", "inbox", "00-inbox", "00_inbox", "capture", "raw", "revie
 _MANIFEST_FIELDS = {"schema", "trash_id", "operation_key_sha256", "collection", "relative_path",
                     "sha256", "size_bytes", "trashed_at", "state", "device", "inode",
                     "restored_at", "recovery_reason", "recovery_sha256"}
+_RESOURCE_MANIFEST_FIELDS = _MANIFEST_FIELDS | {"resources"}
 _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 
 
@@ -117,7 +120,7 @@ class NotesTrashStore:
 
     MAX_ITEMS = 500
     MAX_LIST_OFFSET = 5000
-    MAX_MANIFEST_BYTES = 8192
+    MAX_MANIFEST_BYTES = 32 * 1024
 
     def __init__(self, notes_store, trash_root):
         self.notes_store = notes_store
@@ -215,8 +218,25 @@ class NotesTrashStore:
 
     @staticmethod
     def _valid_manifest(value, trash_id):
-        return (isinstance(value, dict) and set(value) == _MANIFEST_FIELDS
-                and value.get("schema") == 1 and value.get("trash_id") == trash_id
+        if not isinstance(value, dict) or value.get("schema") not in {1, 2}:
+            return False
+        expected_fields = _MANIFEST_FIELDS if value["schema"] == 1 else _RESOURCE_MANIFEST_FIELDS
+        resources = value.get("resources", [])
+        resources_valid = (isinstance(resources, list) and len(resources) <= MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                           and all(isinstance(item, dict) and set(item) == {
+                               "resource_id", "sha256", "size_bytes"
+                           } and isinstance(item.get("resource_id"), str)
+                           and re.fullmatch(r"[0-9a-f]{32}", item["resource_id"]) is not None
+                           and isinstance(item.get("sha256"), str)
+                           and _SHA256.fullmatch(item["sha256"]) is not None
+                           and type(item.get("size_bytes")) is int
+                           and 0 <= item["size_bytes"] <= MAX_BLOCKSUITE_RESOURCE_BYTES
+                           for item in resources)
+                           and sum(item["size_bytes"] for item in resources)
+                           <= MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE
+                           and len({item["resource_id"] for item in resources}) == len(resources))
+        return (set(value) == expected_fields and resources_valid
+                and value.get("trash_id") == trash_id
                 and value.get("state") in {"pending", "trashed", "restored", "recovery_required"}
                 and isinstance(value.get("collection"), str)
                 and isinstance(value.get("relative_path"), str)
@@ -239,6 +259,226 @@ class NotesTrashStore:
         if not self._valid_manifest(value, trash_id):
             raise HTTPException(status_code=503, detail="Trash record requires recovery")
         return value
+
+    def _open_resource_trash_directory(self, item_fd, *, create=False):
+        if create:
+            try:
+                os.mkdir("resources", 0o700, dir_fd=item_fd)
+                os.fsync(item_fd)
+            except FileExistsError:
+                pass
+        try:
+            fd = os.open("resources", _DIRECTORY_FLAGS, dir_fd=item_fd)
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Trash resources are unsafe") from exc
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            os.close(fd)
+            raise HTTPException(status_code=503, detail="Trash resources are unsafe")
+        return fd
+
+    def _read_resource_at(self, directory_fd, resource_id):
+        filename = f"{resource_id}.blocksuite.json"
+        if not re.fullmatch(r"[0-9a-f]{32}", resource_id):
+            raise HTTPException(status_code=503, detail="Trash resource identity is invalid")
+        try:
+            fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Trash resource could not be opened safely") from exc
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                    or before.st_mode & 0o077 or before.st_nlink != 1
+                    or before.st_size > MAX_BLOCKSUITE_RESOURCE_BYTES):
+                raise HTTPException(status_code=503, detail="Trash resource file is unsafe")
+            chunks, remaining = [], MAX_BLOCKSUITE_RESOURCE_BYTES + 1
+            while remaining:
+                chunk = os.read(fd, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            after = os.fstat(fd)
+            if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    or len(raw) != before.st_size or len(raw) > MAX_BLOCKSUITE_RESOURCE_BYTES):
+                raise HTTPException(status_code=503, detail="Trash resource changed during verification")
+        finally:
+            os.close(fd)
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            canonical = self.notes_store._validate_blocksuite_resource(resource_id, body)
+        except (UnicodeError, ValueError, RecursionError, HTTPException) as exc:
+            raise HTTPException(status_code=503, detail="Trash resource failed schema verification") from exc
+        if canonical != raw:
+            raise HTTPException(status_code=503, detail="Trash resource is not canonical")
+        return {"raw": raw, "sha256": hashlib.sha256(raw).hexdigest(), "size_bytes": len(raw),
+                "resource_id": resource_id, "device": before.st_dev, "inode": before.st_ino}
+
+    @staticmethod
+    def _resource_matches(observed, expected):
+        return (observed is not None and observed["resource_id"] == expected["resource_id"]
+                and observed["sha256"] == expected["sha256"]
+                and observed["size_bytes"] == expected["size_bytes"])
+
+    def _inventory_blocksuite_resources(self, parent_fd):
+        try:
+            attachments_fd = self.notes_store._open_attachments_directory(parent_fd)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return []
+            raise
+        try:
+            names = os.listdir(attachments_fd)
+            resources = []
+            for filename in names:
+                if not _BLOCKSUITE_RESOURCE_FILENAME.fullmatch(filename):
+                    continue
+                resource_id = filename.split(".", 1)[0]
+                observed = self._read_resource_at(attachments_fd, resource_id)
+                if observed is None:
+                    raise HTTPException(status_code=503, detail="BlockSuite resource disappeared during inventory")
+                resources.append({key: observed[key] for key in
+                                  ("resource_id", "sha256", "size_bytes")})
+            resources.sort(key=lambda item: item["resource_id"])
+            if (len(resources) > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or sum(item["size_bytes"] for item in resources)
+                    > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=409, detail="BlockSuite resource inventory exceeds note limits")
+            return resources
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="BlockSuite resource inventory is unavailable") from exc
+        finally:
+            os.close(attachments_fd)
+
+    def _move_resources_to_trash(self, parent_fd, item_fd, manifest):
+        resources = manifest.get("resources", [])
+        if not resources:
+            return
+        try:
+            attachments_fd = self.notes_store._open_attachments_directory(parent_fd)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                attachments_fd = None
+            else:
+                raise
+        trash_resources_fd = self._open_resource_trash_directory(item_fd, create=True)
+        try:
+            for expected in resources:
+                resource_id = expected["resource_id"]
+                source = self._read_resource_at(attachments_fd, resource_id) if attachments_fd is not None else None
+                moved = self._read_resource_at(trash_resources_fd, resource_id)
+                if moved is not None:
+                    if not self._resource_matches(moved, expected):
+                        raise HTTPException(status_code=503, detail="Trashed resource failed integrity verification")
+                    if source is not None:
+                        raise HTTPException(status_code=503, detail="Duplicate resource names require recovery")
+                    continue
+                if source is None or not self._resource_matches(source, expected):
+                    raise HTTPException(status_code=503, detail="BlockSuite resource is missing or changed")
+                _rename_noreplace(attachments_fd, f"{resource_id}.blocksuite.json", trash_resources_fd,
+                                  f"{resource_id}.blocksuite.json")
+                moved = self._read_resource_at(trash_resources_fd, resource_id)
+                if not self._resource_matches(moved, expected):
+                    raise HTTPException(status_code=503, detail="Moved resource failed integrity verification")
+                os.fsync(attachments_fd)
+                os.fsync(trash_resources_fd)
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail="Trash resource target is occupied") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="BlockSuite resource move requires recovery") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            os.close(trash_resources_fd)
+
+    def _restore_resources(self, parent_fd, item_fd, manifest):
+        resources = manifest.get("resources", [])
+        if not resources:
+            return
+        try:
+            trash_resources_fd = self._open_resource_trash_directory(item_fd)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=503, detail="Trash resource directory is missing") from exc
+        attachments_fd = None
+        try:
+            try:
+                attachments_fd = self.notes_store._open_attachments_directory(parent_fd)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                attachments_fd = None
+            # Preflight every name before moving any resource. Existing names are
+            # accepted only when the recorded resource id, byte count, and hash match.
+            observed = []
+            for expected in resources:
+                resource_id = expected["resource_id"]
+                in_trash = self._read_resource_at(trash_resources_fd, resource_id)
+                in_source = None
+                if attachments_fd is not None:
+                    filename = f"{resource_id}.blocksuite.json"
+                    try:
+                        os.stat(filename, dir_fd=attachments_fd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        try:
+                            in_source = self._read_resource_at(attachments_fd, resource_id)
+                        except HTTPException as exc:
+                            raise HTTPException(status_code=409,
+                                                detail="Restore resource target is occupied") from exc
+                if in_trash is None and self._resource_matches(in_source, expected):
+                    observed.append((expected, in_trash, in_source))
+                    continue
+                if not self._resource_matches(in_trash, expected):
+                    raise HTTPException(status_code=503, detail="Trash resource is missing or damaged")
+                if in_source is not None:
+                    raise HTTPException(status_code=409, detail="Restore resource target is occupied")
+                observed.append((expected, in_trash, in_source))
+
+            if attachments_fd is None:
+                attachments_fd = self.notes_store._open_attachments_directory(parent_fd, create=True)
+            for expected, in_trash, in_source in observed:
+                if in_source is not None:
+                    continue
+                resource_id = expected["resource_id"]
+                try:
+                    _rename_noreplace(trash_resources_fd, f"{resource_id}.blocksuite.json", attachments_fd,
+                                      f"{resource_id}.blocksuite.json")
+                except FileExistsError as exc:
+                    raise HTTPException(status_code=409, detail="Restore resource target is occupied") from exc
+                restored = self._read_resource_at(attachments_fd, resource_id)
+                if not self._resource_matches(restored, expected):
+                    raise HTTPException(status_code=503, detail="Restored resource failed integrity verification")
+                os.fsync(attachments_fd)
+                os.fsync(trash_resources_fd)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="BlockSuite resource restore requires recovery") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            os.close(trash_resources_fd)
+
+    def _verify_resources_in_trash(self, item_fd, manifest):
+        resources = manifest.get("resources", [])
+        if not resources:
+            return
+        try:
+            resource_fd = self._open_resource_trash_directory(item_fd)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=503, detail="Trash resource directory is missing") from exc
+        try:
+            for expected in resources:
+                if not self._resource_matches(self._read_resource_at(resource_fd, expected["resource_id"]), expected):
+                    raise HTTPException(status_code=503, detail="Trashed resource is missing or damaged")
+        finally:
+            os.close(resource_fd)
 
     @staticmethod
     def _write_manifest(item_fd, value, *, exclusive=False):
@@ -308,6 +548,7 @@ class NotesTrashStore:
                                      "recorded_at": _now(), "actor": "owner"})
 
     def _commit_trashed(self, item_fd, parent_fd, manifest, digest, info, *, duplicate=False):
+        self._move_resources_to_trash(parent_fd, item_fd, manifest)
         os.fsync(parent_fd)
         os.fsync(item_fd)
         manifest.update(state="trashed", device=info.st_dev, inode=info.st_ino)
@@ -335,6 +576,7 @@ class NotesTrashStore:
         if (source_absent and info is not None
                 and hashlib.sha256(moved).hexdigest() == digest
                 and (info.st_dev, info.st_ino) == (manifest["device"], manifest["inode"])):
+            self._move_resources_to_trash(parent_fd, item_fd, manifest)
             return self._commit_trashed(item_fd, parent_fd, manifest, digest, info, duplicate=True)
         observed = hashlib.sha256(moved).hexdigest() if moved is not None else None
         self._mark_recovery_required(item_fd, manifest, "source_name_conflict", observed)
@@ -351,6 +593,7 @@ class NotesTrashStore:
         root_fd = self._root_fd()
         item_fd = None
         parent_fd = None
+        lock_fd = None
         try:
             manifest = None
             if root_fd is not None:
@@ -367,10 +610,13 @@ class NotesTrashStore:
                     existing, info = _read_at(item_fd, "note.md", MAX_MARKDOWN_BYTES)
                     if hashlib.sha256(existing).hexdigest() != expected_sha256:
                         raise HTTPException(status_code=503, detail="Trash record requires recovery")
+                    self._verify_resources_in_trash(item_fd, manifest)
                     return self._item_result(manifest, status="trashed", duplicate=True)
                 if manifest["state"] != "pending":
                     raise HTTPException(status_code=409, detail="Trash action is no longer replayable")
             parent_fd, filename = self._source_parent(collection, relative)
+            lock_fd = self.notes_store._open_note_lock(parent_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
             if root_fd is None:
                 try:
                     source_bytes, source_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
@@ -400,6 +646,7 @@ class NotesTrashStore:
                     if current is not None:
                         self._mark_recovery_required(item_fd, manifest, "source_name_conflict")
                         raise HTTPException(status_code=503, detail="Trash action requires manual recovery")
+                    self._move_resources_to_trash(parent_fd, item_fd, manifest)
                     return self._commit_trashed(item_fd, parent_fd, manifest, expected_sha256,
                                                 note_info, duplicate=True)
                 try:
@@ -445,11 +692,13 @@ class NotesTrashStore:
             if item_info.st_uid != os.geteuid() or item_info.st_mode & 0o077:
                 raise HTTPException(status_code=503, detail="Trash record requires recovery")
             if manifest is None:
-                manifest = {"schema": 1, "trash_id": trash_id, "operation_key_sha256": key_hash,
+                resources = self._inventory_blocksuite_resources(parent_fd)
+                manifest = {"schema": 2, "trash_id": trash_id, "operation_key_sha256": key_hash,
                             "collection": collection, "relative_path": relative, "sha256": digest,
                             "size_bytes": len(source_bytes), "trashed_at": _now(), "state": "pending",
                             "device": source_info.st_dev, "inode": source_info.st_ino,
-                            "restored_at": None, "recovery_reason": None, "recovery_sha256": None}
+                            "restored_at": None, "recovery_reason": None, "recovery_sha256": None,
+                            "resources": resources}
                 self._write_manifest(item_fd, manifest, exclusive=True)
                 self._append_event(item_fd, {"event": "trash_intent", "trash_id": trash_id,
                                              "sha256": digest, "recorded_at": _now(), "actor": "owner"})
@@ -484,6 +733,11 @@ class NotesTrashStore:
         except OSError as exc:
             raise HTTPException(status_code=503, detail="Notes Trash operation is unavailable") from exc
         finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
             if item_fd is not None:
                 os.close(item_fd)
             if root_fd is not None:
@@ -546,6 +800,7 @@ class NotesTrashStore:
             raise HTTPException(status_code=404, detail="Trash item not found")
         item_fd = None
         parent_fd = None
+        lock_fd = None
         try:
             try:
                 item_fd = os.open(trash_id, _DIRECTORY_FLAGS, dir_fd=root_fd)
@@ -553,10 +808,20 @@ class NotesTrashStore:
                 raise HTTPException(status_code=404, detail="Trash item not found") from exc
             manifest = self._load_manifest(item_fd, trash_id)
             if manifest["state"] == "restored":
+                parent_fd, filename = self._source_parent(manifest["collection"], manifest["relative_path"])
+                lock_fd = self.notes_store._open_note_lock(parent_fd)
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                restored, restored_info = _read_at(parent_fd, filename, MAX_MARKDOWN_BYTES)
+                if (hashlib.sha256(restored).hexdigest() != manifest["sha256"]
+                        or (restored_info.st_dev, restored_info.st_ino) != (manifest["device"], manifest["inode"])):
+                    raise HTTPException(status_code=503, detail="Restored note failed integrity verification")
+                self._restore_resources(parent_fd, item_fd, manifest)
                 return self._item_result(manifest, status="restored", duplicate=True)
             if manifest["state"] != "trashed":
                 raise HTTPException(status_code=409, detail="Trash item is not restorable")
             parent_fd, filename = self._source_parent(manifest["collection"], manifest["relative_path"])
+            lock_fd = self.notes_store._open_note_lock(parent_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
             if os.fstat(parent_fd).st_dev != os.fstat(root_fd).st_dev:
                 raise HTTPException(status_code=503, detail="Notes and Trash must share a filesystem")
 
@@ -573,6 +838,7 @@ class NotesTrashStore:
                 if ((restored_info.st_dev, restored_info.st_ino) != (manifest["device"], manifest["inode"])
                         or hashlib.sha256(restored).hexdigest() != manifest["sha256"]):
                     raise HTTPException(status_code=409, detail="Restore target is occupied")
+                self._restore_resources(parent_fd, item_fd, manifest)
                 os.fsync(parent_fd)
                 os.fsync(item_fd)
                 manifest.update(state="restored", restored_at=_now())
@@ -587,6 +853,17 @@ class NotesTrashStore:
                 self._mark_recovery_required(item_fd, manifest, "restore_identity_mismatch",
                                              hashlib.sha256(trash_bytes).hexdigest())
                 raise HTTPException(status_code=503, detail="Trash item failed integrity verification")
+
+            try:
+                os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise HTTPException(status_code=409, detail="Restore target is occupied")
+
+            # Restore resources before note.md becomes visible again. Every
+            # resource is preflighted first; note rename is the final commit.
+            self._restore_resources(parent_fd, item_fd, manifest)
 
             try:
                 _rename_noreplace(item_fd, "note.md", parent_fd, filename)
@@ -642,6 +919,11 @@ class NotesTrashStore:
         except OSError as exc:
             raise HTTPException(status_code=503, detail="Notes Trash operation is unavailable") from exc
         finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
             if parent_fd is not None:
                 os.close(parent_fd)
             if item_fd is not None:
