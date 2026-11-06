@@ -156,6 +156,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
             const current = editorRef.current;
             if (!current) return;
             void current.adapter.fromBlock(current.store.getBlocksByFlavour('affine:note')[0]!.model as any).then(result => {
+              if (disposed || sequence !== projectionSequence.current || editorRef.current !== current) return;
               const exported = result?.file ?? '';
               const next = `${current.split.prefix}${preserveSourceTerminalNewlines(current.split.body, exported)}`;
               if (next === emittedRef.current) return;
@@ -169,7 +170,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
                 return;
               }
               onChangeRef.current(next);
-            }).then(() => { if (sequence === projectionSequence.current) pendingCallback.current?.(false); }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
+            }).then(() => { if (!disposed && editorRef.current === current && sequence === projectionSequence.current) pendingCallback.current?.(false); }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
           }, 250);
         };
         // BlockSuite text content is stored in nested Y.Text values. The
