@@ -113,6 +113,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_setext_fallback", "notes_setext_fallback_render",
     "notes_attachment_select", "notes_attachment_open", "notes_attachment_fallback", "notes_attachment_render",
     "notes_unsafe_select", "notes_unsafe_source", "notes_unsafe_safety", "notes_unsafe_editor_hidden",
+    "notes_blocksuite_reopen_scrollable", "notes_blocksuite_reopen_concurrent_update",
     "notes_conflict_seed_status_200", "notes_conflict_seed_status_401",
     "notes_conflict_seed_status_403", "notes_conflict_seed_status_404",
     "notes_conflict_seed_status_409", "notes_conflict_seed_status_412",

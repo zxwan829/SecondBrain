@@ -77,6 +77,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_setext_reopen_read' | 'notes_setext_editor_open' | 'notes_setext_fallback' | 'notes_setext_fallback_render'
   | 'notes_attachment_select' | 'notes_attachment_open' | 'notes_attachment_fallback' | 'notes_attachment_render'
   | 'notes_unsafe_select' | 'notes_unsafe_source' | 'notes_unsafe_safety' | 'notes_unsafe_editor_hidden'
+  | 'notes_blocksuite_reopen_scrollable' | 'notes_blocksuite_reopen_concurrent_update'
   | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
   | 'notes_conflict_seed_status_403' | 'notes_conflict_seed_status_404'
   | 'notes_conflict_seed_status_409' | 'notes_conflict_seed_status_412'
@@ -1460,6 +1461,13 @@ for (const viewport of activeViewports) {
       // after selecting another Note without repeating the full page reload.
       await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
       await expect(reopenedCanvas).toContainText(updatedBody, { timeout: 20000 });
+      const reopenScrollMetrics = await reopenedCanvas.evaluate((element) => ({
+        scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
+      }));
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_scrollable');
+      expect(reopenScrollMetrics.scrollHeight).toBeGreaterThan(reopenScrollMetrics.clientHeight);
+      await reopenedCanvas.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_concurrent_update');
       await expect(reopenedCanvas).toContainText(concurrentText, { timeout: 20000 });
       const quickSwitchEdit = 'WP5 quick fallback edit preserved';
       const quickSwitchSave = page.waitForResponse((response) => response.request().method() === 'PUT'
