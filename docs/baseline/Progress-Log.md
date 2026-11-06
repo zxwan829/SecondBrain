@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-06 — WP5 / PR #294 Markdown 集成工程验收
+
+- **合并与范围：** PR [#294](https://github.com/zxwan829/SecondBrain/pull/294) 已合并，merge commit `e9f323b3f90d53473964fe991a968fcd046d85bf`；固定候选 HEAD `8ce5a5e7559f8cfea5345ccf21ed0bb1a1a31f2a`。未修改 NAS、生产容器/配置/权限、真实 Vault 或业务数据；未调用付费模型；工作包 6 未启动。
+- **完整浏览器与回归：** Linux Chromium 全旅程 [Actions #42201007416](https://github.com/zxwan829/SecondBrain/actions/runs/42201007416) 于精确 SHA 完成，JUnit 3 tests、0 failures、0 skipped：桌面 1440×1000 29.652s、平板 820×1180 10.492s、手机 390×844 13.355s。真实 localhost Core HTTP + local Vite，Hermes 使用 fixture-only Chat，Knowledge 文件数 0、Promote=false；输出摘要 PASS，未发布截图。Build/typecheck/regression 与 artifact 脱敏步骤通过；PR build-and-smoke [Actions #42201001485](https://github.com/zxwan829/SecondBrain/actions/runs/42201001485) 通过。额外定向前端测试 29 passed，typecheck 通过。独立 Review PASS。
+- **失败原因与修复：** 先前固定 SHA `fe1e5ebc` 的浏览器执行在约 30.9s 处触及 Playwright 全测试 30s 限时；脱敏诊断和截图已到达 Setext 安全回退及源码保留断言，没有显示 Core 写入。只将包含完整桌面旅程的用例总预算调至 60s，没有改动单项等待、选择器、断言、视口或业务代码。后续固定 SHA 全 Gate PASS。实际浏览器确认活动 BlockSuite 编辑器对 Setext 触发 fallback，正文含标题和 `===` 被旧编辑器安全源码视图保留，精确合成 Draft 没有 Core PUT；其后隔离冲突/412、外部内容保留、恢复保存和 API 回读仍执行并通过。冲突专项此前已由 PMO 接受，不在此重复排障。
+- **依赖风险评估：** `npm audit --omit=dev --json` 在锁文件报告 58 项 vulnerability records：50 High、4 Moderate、4 Low、0 Critical。主要 High 为 Zod 3.25.76 依赖链对应 [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)：攻击者提交不受长度限制的大数组使 Zod 累积过多校验错误、耗尽内存，修复版本为 Zod 4.6.6；该重大版本升级当前无可用兼容性修复（`fixAvailable=false`）。相关 Zod 位于新增 BlockSuite 前端依赖图，编辑器为懒加载客户端 chunk。当前没有证据证明用户控制内容会进入该漏洞所需的 Zod 数组 schema；因此不把审计告警直接等同可利用漏洞。此风险不阻止非生产 PR 合并，但**生产部署前须完成兼容修复，或对实际可达路径完成评估并作明确安全风险处置**。审计还列出 Vitest mocker、uuid 等依赖告警，需随正式发布前依赖处置一并复核；本轮不强行升级以免破坏兼容。
+- **阶段结论：** `WP5_MARKDOWN_INTEGRATION_ENGINEERING_PASS`；集成只证明隔离 Core/合成数据闭环，不表示真实 Vault/Obsidian 同步、生产部署或用户 UAT 通过。保持 Promote/Writer/Private/Weixin 及 VNext 冻结；唯一后续由用户决定是否授权真实 Vault 验收或生产发布，本轮不启动工作包 6。
+
 ## 2026-11-06 — #287 工程收口：Chat Task 查询与更新合并
 
 - **实现与修复：** PR #289 已合并（`deab530b13ee755609a9375ee22449913ef1ed4a`），交付 Chat→Inbox→Journal 的显式收录与独立 Journal 审批链。后续 PR [#291](https://github.com/zxwan829/SecondBrain/pull/291) 合并（`814c04b7abb343620014da65d83c9f1b075b4141`），补齐今天未完成 Task 查询、按唯一精确标题完成及修改截止日期。Task 更新使用既有专用 API、task.write、乐观版本和幂等键；异步投影可从原子 Task 账本恢复。独立 Review 发现并促使修复一个会话归属缺陷：同 key 但改变 Session/原命令原本可能返回错误归属活动；现将二者纳入 Chat-scoped fingerprint 与原子记录，异归属重放 409。
