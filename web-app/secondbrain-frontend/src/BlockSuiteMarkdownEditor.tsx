@@ -134,6 +134,12 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         viewport.className = 'affine-page-viewport';
         viewport.append(root);
         host.current.replaceChildren(viewport);
+        // Mounting the host is not enough to declare the editor ready: the
+        // Page and its block views hydrate asynchronously after attachment.
+        // Wait for BlockSuite's own update lifecycle before exposing the
+        // saved/ready state to users and browser acceptance.
+        await root.getUpdateComplete();
+        if (disposed) return;
         const currentEditor: NonNullable<typeof editorRef.current> = { store, std, workspace: currentWorkspace, adapter, split };
         editorRef.current = currentEditor;
         const publish = () => {
