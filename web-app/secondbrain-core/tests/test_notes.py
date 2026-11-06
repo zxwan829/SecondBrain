@@ -1,4 +1,5 @@
 import tempfile
+import base64
 import os
 import unittest
 import concurrent.futures
@@ -192,6 +193,126 @@ class NotesStoreTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as missing_etag:
             self.store.create_visual_asset("drafts", note["path"], "mindmap", mindmap, "wrong")
         self.assertEqual(missing_etag.exception.status_code, 412)
+
+    def test_blocksuite_resources_are_note_bound_versioned_and_dual_etag_protected(self):
+        note = self.store.create("# Page with a separate BlockSuite resource\n")
+        update = b"synthetic-yjs-update"
+        initial = {"schemaVersion": 1, "resourceKind": "database", "docId": "doc_table_1",
+                   "updateB64": base64.b64encode(update).decode("ascii"),
+                   "snapshot": {"type": "page", "blocks": {"table": ["a", "b"]}}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], initial, note["etag"])
+        self.assertRegex(created["filename"], r"^[0-9a-f]{32}\.blocksuite\.json$")
+        self.assertEqual(created["reference"], f"[BlockSuite resource](attachments/{created['filename']})")
+        resource_id = created["resource_id"]
+        resource_path = self.drafts / note["path"] / "attachments" / created["filename"]
+        self.assertEqual(resource_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(resource_path.parent.stat().st_mode & 0o777, 0o700)
+        first = self.store.read_blocksuite_resource("drafts", note["path"], resource_id)
+        self.assertEqual(first["updateB64"], initial["updateB64"])
+        self.assertEqual(first["etag"], created["etag"])
+
+        changed = {**first, "etag": None, "note_etag": None, "filename": None,
+                   "updateB64": base64.b64encode(b"updated-yjs-update").decode("ascii")}
+        changed.pop("etag")
+        changed.pop("note_etag")
+        changed.pop("filename")
+        saved = self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
+                                                      changed, note["etag"], first["etag"])
+        self.assertNotEqual(saved["etag"], first["etag"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], resource_id)["updateB64"],
+                         changed["updateB64"])
+        with self.assertRaises(HTTPException) as stale_asset:
+            self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
+                                                  changed, note["etag"], first["etag"])
+        self.assertEqual(stale_asset.exception.status_code, 412)
+        with self.assertRaises(HTTPException) as stale_note:
+            self.store.update_blocksuite_resource("drafts", note["path"], resource_id,
+                                                  changed, "0" * 64, saved["etag"])
+        self.assertEqual(stale_note.exception.status_code, 412)
+
+        other_note = self.store.create("# Different note\n")
+        with self.assertRaises(HTTPException) as unbound:
+            self.store.read_blocksuite_resource("drafts", other_note["path"], resource_id)
+        self.assertEqual(unbound.exception.status_code, 404)
+
+    def test_blocksuite_resource_schema_and_payload_limits_fail_closed(self):
+        note = self.store.create("# Resource bounds\n")
+        valid = {"schemaVersion": 1, "resourceKind": "edgeless-canvas", "docId": "canvas_1",
+                 "updateB64": base64.b64encode(b"yjs").decode("ascii"), "snapshot": {"blocks": []}}
+        with self.assertRaises(HTTPException) as unknown:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "unexpected": True}, note["etag"])
+        self.assertEqual(unknown.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as bad_b64:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "updateB64": "%%%%"}, note["etag"])
+        self.assertEqual(bad_b64.exception.status_code, 422)
+        with self.assertRaises(HTTPException) as bad_kind:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "resourceKind": "anything"}, note["etag"])
+        self.assertEqual(bad_kind.exception.status_code, 422)
+        nested = {"value": "leaf"}
+        for _ in range(66):
+            nested = {"nested": nested}
+        with self.assertRaises(HTTPException) as too_deep:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "snapshot": nested}, note["etag"])
+        self.assertEqual(too_deep.exception.status_code, 422)
+        too_large = base64.b64encode(b"x" * (7 * 1024 * 1024 + 1)).decode("ascii")
+        with self.assertRaises(HTTPException) as oversized:
+            self.store.create_blocksuite_resource("drafts", note["path"], {**valid, "updateB64": too_large}, note["etag"])
+        self.assertEqual(oversized.exception.status_code, 413)
+        self.assertEqual(list((self.drafts / note["path"] / "attachments").glob("*.blocksuite.json"))
+                         if (self.drafts / note["path"] / "attachments").exists() else [], [])
+
+    def test_blocksuite_resource_rejects_symlinked_resource_files(self):
+        note = self.store.create("# Symlink resource test\n")
+        body = {"schemaVersion": 1, "resourceKind": "database", "docId": "doc_1",
+                "updateB64": base64.b64encode(b"state").decode("ascii"), "snapshot": {"blocks": []}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], body, note["etag"])
+        target = self.drafts / note["path"] / "attachments" / created["filename"]
+        outside = Path(self.temp.name) / "outside-resource.json"
+        outside.write_text('{"synthetic":"outside"}')
+        outside.chmod(0o600)
+        target.unlink()
+        target.symlink_to(outside)
+        with self.assertRaises(HTTPException) as blocked:
+            self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        self.assertEqual(blocked.exception.status_code, 403)
+        self.assertEqual(outside.read_text(), '{"synthetic":"outside"}')
+
+    def test_blocksuite_resource_http_routes_require_notes_scope_and_use_both_etags(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if request.cookies.get("session") != "owner":
+                    raise HTTPException(status_code=401, detail="App session required")
+                if request.headers.get("x-deny") == action:
+                    raise HTTPException(status_code=403, detail=f"{action} denied")
+
+        note = self.store.create("# HTTP BlockSuite resource\n")
+        app = FastAPI()
+        app.include_router(create_notes_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        base = f"/api/notes/drafts/{note['path']}/blocksuite/resources"
+        body = {"schemaVersion": 1, "resourceKind": "database", "docId": "table_doc",
+                "updateB64": base64.b64encode(b"synthetic-state").decode("ascii"),
+                "snapshot": {"type": "page", "blocks": []}}
+        self.assertEqual(client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"'}).status_code, 401)
+        client.cookies.set("session", "owner")
+        self.assertEqual(client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"', "x-deny": "notes.write"}).status_code, 403)
+        created = client.post(base, json=body, headers={"If-Match": f'"{note["etag"]}"'})
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.headers["x-note-etag"], f'"{note["etag"]}"')
+        resource_url = f"{base}/{created.json()['resource_id']}"
+        self.assertEqual(client.get(resource_url, headers={"x-deny": "notes.read"}).status_code, 403)
+        fetched = client.get(resource_url)
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.headers["etag"], f'"{created.json()["etag"]}"')
+        replacement = {**body, "resourceId": created.json()["resource_id"],
+                       "updateB64": base64.b64encode(b"replacement").decode("ascii")}
+        stale = client.put(resource_url, json=replacement,
+                           headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": '"stale"'})
+        self.assertEqual(stale.status_code, 412)
+        saved = client.put(resource_url, json=replacement,
+                           headers={"If-Match": f'"{note["etag"]}"', "If-Resource-Match": fetched.headers["etag"]})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(client.get(resource_url).json()["updateB64"], replacement["updateB64"])
 
     def test_notes_router_uses_etag_and_routes_attachment_endpoints(self):
         class SessionAuth:
