@@ -316,8 +316,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in blocksuite_module_statuses)
                 or not isinstance(page_error_summaries, list) or len(page_error_summaries) > 5
-                or any(not isinstance(summary, str) or len(summary) > 180
-                       or not re.fullmatch(r"[A-Za-z0-9 <>._,:()'-]{1,180}", summary)
+                or any(not isinstance(summary, str) or len(summary) > 120
+                       or not re.fullmatch(r"[A-Za-z0-9 <>._,:()'-]{1,120}", summary)
                        for summary in page_error_summaries)
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)

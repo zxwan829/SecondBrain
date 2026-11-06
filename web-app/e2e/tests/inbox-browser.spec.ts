@@ -15,7 +15,7 @@ function safePageErrorSummary(value: string): string {
     .replace(/[\u3400-\u9fff]+/g, '<text>')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '<email>')
     .replace(/\s+/g, ' ')
-    .slice(0, 180);
+    .slice(0, 120);
 }
 const viewports = [
   { name: 'desktop-1440x1000', width: 1440, height: 1000 },
@@ -473,7 +473,7 @@ async function configurePage(page: Page) {
     get pageErrorNames() { return pageErrorNames.slice(-5); },
     get pageErrorCategories() { return pageErrorCategories.slice(-5); },
     get pageErrorSources() { return pageErrorSources.slice(-5); },
-    get pageErrorSummaries() { return pageErrorSummaries.slice(-5); },
+    get pageErrorSummaries() { return pageErrorSummaries.slice(-1); },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
