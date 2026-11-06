@@ -17,9 +17,12 @@ import { FoundationStoreExtension } from '@blocksuite/affine-foundation/store';
 import { FoundationViewExtension } from '@blocksuite/affine-foundation/view';
 import { InlinePresetStoreExtension } from '@blocksuite/affine-inline-preset/store';
 import { InlinePresetViewExtension } from '@blocksuite/affine-inline-preset/view';
+import { SurfaceStoreExtension } from '@blocksuite/affine-block-surface/store';
+import { SurfaceViewExtension } from '@blocksuite/affine-block-surface/view';
 import { MarkdownAdapter } from '@blocksuite/affine-shared/adapters';
 import { StoreExtensionManager, ViewExtensionManager } from '@blocksuite/affine-ext-loader';
 import { BlockStdScope } from '@blocksuite/std';
+import { Text } from '@blocksuite/store';
 import { blockSuiteMarkdownMatches, splitOpaqueFrontmatter, type MarkdownParts } from './blocksuite-markdown';
 import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import './blocksuite-notes.css';
@@ -37,12 +40,14 @@ function makeManagers() {
     FoundationStoreExtension, RootStoreExtension, NoteStoreExtension,
     ParagraphStoreExtension, ListStoreExtension, CodeStoreExtension,
     TableStoreExtension, DividerStoreExtension, InlinePresetStoreExtension,
+    SurfaceStoreExtension,
   ]);
   stores.configure(NoteStoreExtension, { mode: 'doc' });
   const views = new ViewExtensionManager([
     FoundationViewExtension, RootViewExtension, NoteViewExtension,
     ParagraphViewExtension, ListViewExtension, CodeBlockViewExtension,
     TableViewExtension, DividerViewExtension, InlinePresetViewExtension,
+    SurfaceViewExtension,
   ]);
   return { stores, views };
 }
@@ -87,7 +92,10 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
         const store = localDoc.getStore();
         store.readonly = disabled;
         const adapter = markdownAdapter(store);
-        const rootId = store.addBlock('affine:page', {}, null);
+        // Match the pinned BlockSuite Page document contract: the Page root
+        // contains a surface before the Markdown adapter creates its note block.
+        const rootId = store.addBlock('affine:page', { title: new Text('') }, null);
+        store.addBlock('affine:surface', {}, rootId, 0);
         await adapter.toBlock({ file: split.body }, store as any, rootId);
         const exported = await adapter.fromBlock(store.getBlocksByFlavour('affine:note')[0]!.model as any);
         const body = exported?.file ?? '';
