@@ -1443,6 +1443,9 @@ for (const viewport of activeViewports) {
       expect(reopenedPayload.content).toContain('custom: preserve-me');
       expect(reopenedPayload.content).not.toContain('WP5 stale browser edit must not replace Core');
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_entry');
+      const noteHeading = page.locator('.notes-document-heading');
+      await expect(noteHeading).toContainText(activeNotePath);
+      await expect(noteHeading.getByRole('status')).toHaveText('已保存');
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       observed.setDiagnosticAssertion('notes_blocksuite_reopen_canvas');
