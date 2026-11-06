@@ -219,10 +219,12 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         if (disposed) return;
         const onUpdate = () => {
           editSequence.current += 1;
+          const wasDirty = dirtyRef.current;
           dirtyRef.current = true;
           setDirty(true);
           setRecoveryCopyReady(false);
-          setStatus('有未保存的资源修改');
+          // Layout updates must not overwrite upload/save failure diagnostics.
+          if (!wasDirty) setStatus('有未保存的资源修改');
         };
         doc.spaceDoc.on('update', onUpdate);
         offUpdate = () => doc.spaceDoc.off('update', onUpdate);
