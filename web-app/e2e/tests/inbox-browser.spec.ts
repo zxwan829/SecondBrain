@@ -100,7 +100,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_conflict_seed_status_422' | 'notes_conflict_seed_status_428'
   | 'notes_conflict_seed_status_other'
   | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
-  | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
+  | 'wp5_resource_dialog_open' | 'wp5_resource_content_visible' | 'wp5_resource_editable' | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
   | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
   | 'wp5_focus_saved_status'
@@ -902,6 +902,7 @@ for (const viewport of activeViewports) {
         expect(created.status(), `wp5_resource_${kind}_create`).toBe(200);
         const resourceInfo = await created.json() as { resource_id: string; filename: string; reference: string; etag: string };
         const resourceDialog = page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' });
+        observed.setDiagnosticAssertion('wp5_resource_dialog_open');
         await expect(resourceDialog).toBeVisible({ timeout: 20000 });
         const referenceResult = await referenceSave;
         expect(referenceResult.status(), `wp5_resource_${kind}_reference`).toBe(200);
@@ -927,8 +928,10 @@ for (const viewport of activeViewports) {
           uploadedBlobUrl = uploaded.url();
         }
         const resourceHost = resourceDialog.locator('.blocksuite-resource-host');
+        observed.setDiagnosticAssertion('wp5_resource_content_visible');
         await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '可编辑测试画布', { timeout: 15000 });
         const editable = resourceHost.locator('[contenteditable="true"]').first();
+        observed.setDiagnosticAssertion('wp5_resource_editable');
         await expect(editable).toBeVisible();
         await editable.click();
         await page.keyboard.press('End');

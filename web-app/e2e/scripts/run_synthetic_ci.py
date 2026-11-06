@@ -127,6 +127,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_conflict_seed_status_409", "notes_conflict_seed_status_412",
     "notes_conflict_seed_status_422", "notes_conflict_seed_status_428",
     "notes_conflict_seed_status_other",
+    "wp5_resource_dialog_open", "wp5_resource_content_visible", "wp5_resource_editable",
     "wp5_focus_notes_navigation", "wp5_focus_note_seed", "wp5_focus_editor_open",
     "wp5_focus_body_target", "wp5_focus_put_received", "wp5_focus_put_request_content",
     "wp5_focus_put_status", "wp5_focus_put_response_content", "wp5_focus_api_readback",
