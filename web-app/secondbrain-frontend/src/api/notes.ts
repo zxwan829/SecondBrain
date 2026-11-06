@@ -3,6 +3,12 @@ export type NoteCollection = { id: string; kind: 'drafts' | 'authorized' };
 export type NoteProperties = { type: string; tags: string[]; etag: string };
 export type VisualKind = 'mindmap' | 'excalidraw';
 export type VisualAsset = { filename: string; etag: string; content: string };
+export type BlockSuiteResourceKind = 'database' | 'edgeless-canvas';
+export type BlockSuiteResource = {
+  schemaVersion: 1; resourceId: string; resourceKind: BlockSuiteResourceKind; docId: string;
+  updateB64: string; snapshot: Record<string, unknown>; etag: string; note_etag: string; filename: string;
+};
+export type BlockSuiteResourceWrite = Omit<BlockSuiteResource, 'etag' | 'note_etag' | 'filename'>;
 export type NotesTrashItem = {
   trash_id: string; collection: string; path: string; sha256: string;
   size_bytes: number; trashed_at: string; status: string; duplicate: boolean;
@@ -52,6 +58,18 @@ export const notesApi = {
       method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"`, 'If-Asset-Match': `"${asset.etag}"` },
       body: JSON.stringify({ content }),
     }),
+  createBlockSuiteResource: (note: Note, body: Omit<BlockSuiteResourceWrite, 'resourceId'>) =>
+    json<{ resource_id: string; resource_kind: BlockSuiteResourceKind; doc_id: string; filename: string; reference: string; etag: string; note_etag: string }>(
+      `${pathUrl(note.collection, note.path)}/blocksuite/resources`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"` }, body: JSON.stringify(body) },
+    ),
+  readBlockSuiteResource: (note: Note, resourceId: string) =>
+    json<BlockSuiteResource>(`${pathUrl(note.collection, note.path)}/blocksuite/resources/${encodeURIComponent(resourceId)}`),
+  saveBlockSuiteResource: (note: Note, resource: BlockSuiteResource, body: BlockSuiteResourceWrite) =>
+    json<{ resource_id: string; resource_kind: BlockSuiteResourceKind; doc_id: string; filename: string; etag: string; note_etag: string }>(
+      `${pathUrl(note.collection, note.path)}/blocksuite/resources/${encodeURIComponent(resource.resourceId)}`,
+      { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': `"${note.etag}"`, 'If-Resource-Match': `"${resource.etag}"` }, body: JSON.stringify(body) },
+    ),
   listTrash: (offset = 0, signal?: AbortSignal) => json<{ status: string; items: NotesTrashItem[]; pagination: { limit: number; offset: number; has_more: boolean } }>(
     `/api/notes/trash?limit=50&offset=${encodeURIComponent(String(offset))}`, signal ? { signal } : undefined,
   ),

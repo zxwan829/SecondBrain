@@ -1,10 +1,11 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { NotePropertiesPanel } from './NotePropertiesPanel';
-import { notesApi, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
+import { notesApi, type BlockSuiteResource, type BlockSuiteResourceKind, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
 import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
 
 const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module) => ({ default: module.VisualAssetDialog })));
 const BlockSuiteMarkdownEditor = lazy(() => import('./BlockSuiteMarkdownEditor').then((module) => ({ default: module.BlockSuiteMarkdownEditor })));
+const BlockSuiteResourceEditor = lazy(() => import('./BlockSuiteResourceEditor').then((module) => ({ default: module.BlockSuiteResourceEditor })));
 
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
@@ -29,6 +30,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [visualAsset, setVisualAsset] = useState<VisualAsset | null>(null);
   const [unpersistedVisual, setUnpersistedVisual] = useState<{ note: Note; asset: VisualAsset } | null>(null);
   const [creatingVisual, setCreatingVisual] = useState(false);
+  const [creatingBlockSuiteResource, setCreatingBlockSuiteResource] = useState(false);
+  const [pendingBlockSuiteReference, setPendingBlockSuiteReference] = useState<{ note: Note; resource: BlockSuiteResource } | null>(null);
+  const [blockSuiteResource, setBlockSuiteResource] = useState<BlockSuiteResource | null>(null);
   const [savingVisual, setSavingVisual] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const viewRevision = useRef(0);
@@ -39,6 +43,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const contentRef = useRef('');
   const savedContent = useRef('');
   const visualNavigationRisk = useRef(false);
+  const blockSuiteResourceOpen = useRef(false);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingSaves = useRef(0);
   const trashIdempotencyKeys = useRef<Record<string, string>>({});
@@ -58,6 +63,10 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       setMessage('当前笔记正在保存，请等待保存完成后再切换。');
       return false;
     }
+    if (blockSuiteResourceOpen.current) {
+      setMessage('请先保存并关闭当前 BlockSuite 资源编辑器，再切换笔记。');
+      return false;
+    }
     const dirty = (!!noteRef.current && contentRef.current !== savedContent.current)
       || visualNavigationRisk.current || unpersistedVisual !== null;
     return !dirty || window.confirm('当前笔记或图形有尚未保存的修改。离开后这些修改可能丢失，仍要继续吗？');
@@ -71,6 +80,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     editSequence.current += 1;
     visualOpenSequence.current += 1;
     setCreatingVisual(false);
+    setCreatingBlockSuiteResource(false);
+    setBlockSuiteResource(null);
+    blockSuiteResourceOpen.current = false;
     setRestorePreview(null);
     setVisualAsset(null);
     setUnpersistedVisual(null);
@@ -260,6 +272,85 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       setVisualAsset(pending.asset);
       setMessage('图形源文件与 Markdown 相对引用均已保存。');
     } catch { /* save() retains the unsaved Markdown and reports the failure. */ }
+  };
+
+  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind) => {
+    const target = noteRef.current;
+    if (!target || target.read_only || state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource) return;
+    const revision = viewRevision.current;
+    pendingSaves.current += 1;
+    setCreatingBlockSuiteResource(true);
+    setMessage(`正在创建独立 BlockSuite ${kind === 'database' ? 'Database' : 'Edgeless'} 资源…`);
+    let resource: BlockSuiteResource | null = null;
+    try {
+      const { createBlockSuiteResourcePayload } = await import('./BlockSuiteResourceEditor');
+      const payload = createBlockSuiteResourcePayload(kind);
+      const created = await notesApi.createBlockSuiteResource(target, payload);
+      resource = { ...payload, resourceId: created.resource_id, etag: created.etag, note_etag: created.note_etag, filename: created.filename };
+      setPendingBlockSuiteReference({ note: target, resource });
+      const current = contentRef.current;
+      const nextContent = `${current.trimEnd()}${current.trim() ? '\n\n' : ''}${created.reference}\n`;
+      window.clearTimeout(timer.current);
+      contentRef.current = nextContent;
+      setContent(nextContent);
+      setState('未保存');
+      const sequence = ++editSequence.current;
+      const saved = await save(target, nextContent, revision, sequence);
+      if (!saved) throw new Error('笔记已切换，资源已创建但 Markdown 引用尚未保存；请返回原笔记重试。');
+      if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(target)) {
+        throw new Error('资源已创建，但引用保存结果未应用到当前笔记。');
+      }
+      setPendingBlockSuiteReference(null);
+      blockSuiteResourceOpen.current = true;
+      setBlockSuiteResource(resource);
+      setMessage('独立 BlockSuite 资源与稳定 Markdown 引用均已保存。');
+    } catch (error) {
+      if (viewRevision.current === revision) {
+        setMessage(resource
+          ? `资源文件已创建，但 Markdown 引用未确认保存；引用仍保留在正文，可重试。${error instanceof Error ? error.message : ''}`
+          : `BlockSuite 资源创建失败；笔记正文未更改。${error instanceof Error ? error.message : ''}`);
+      }
+    } finally {
+      pendingSaves.current = Math.max(0, pendingSaves.current - 1);
+      if (viewRevision.current === revision) setCreatingBlockSuiteResource(false);
+    }
+  };
+
+  const retryBlockSuiteReference = async () => {
+    const pending = pendingBlockSuiteReference;
+    if (!pending || state !== '保存失败' || !noteRef.current || noteKey(noteRef.current) !== noteKey(pending.note)) return;
+    const revision = viewRevision.current;
+    try {
+      const saved = await save(pending.note, contentRef.current, revision, editSequence.current);
+      if (!saved) throw new Error('笔记已切换，保存结果未应用到当前页面。');
+      setPendingBlockSuiteReference(null);
+      blockSuiteResourceOpen.current = true;
+      setBlockSuiteResource(pending.resource);
+      setMessage('Markdown 资源引用已保存。');
+    } catch { /* save() retains the unsaved Markdown and reports the failure. */ }
+  };
+
+  const openBlockSuiteResource = async (filename: string) => {
+    const target = noteRef.current;
+    const match = filename.match(/^([0-9a-f]{32})\.blocksuite\.json$/i);
+    if (!target || !match || state !== '已保存' || blockSuiteResourceOpen.current) {
+      setMessage('请先保存当前笔记，再打开 BlockSuite 资源。');
+      return;
+    }
+    if (!contentRef.current.includes(`(attachments/${filename})`)) {
+      setMessage('此 BlockSuite 资源没有当前笔记中的稳定引用，已拒绝打开。');
+      return;
+    }
+    setLoading(true);
+    try {
+      const loaded = await notesApi.readBlockSuiteResource(target, match[1]);
+      if (loaded.note_etag !== noteRef.current?.etag) throw new Error('笔记版本已变化，请刷新后再打开资源。');
+      blockSuiteResourceOpen.current = true;
+      setBlockSuiteResource(loaded);
+      setMessage('');
+    } catch (error) {
+      setMessage(`BlockSuite 资源无法打开：${error instanceof Error ? error.message : '读取失败'}`);
+    } finally { setLoading(false); }
   };
 
   const openTrash = async () => {
@@ -456,6 +547,8 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           {note && !note.read_only && <>
             <button type="button" disabled={state !== '已保存' || creatingVisual || savingVisual} onClick={() => void createVisual('mindmap')}>插入思维导图</button>
             <button type="button" disabled={state !== '已保存' || creatingVisual || savingVisual} onClick={() => void createVisual('excalidraw')}>插入自由画板</button>
+            <button type="button" disabled={state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource !== null} onClick={() => void attachBlockSuiteResource('database')}>新建 BlockSuite Database</button>
+            <button type="button" disabled={state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource !== null} onClick={() => void attachBlockSuiteResource('edgeless-canvas')}>新建 BlockSuite Edgeless 画布</button>
           </>}
           {note && note.collection === 'drafts' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(note.path) && onOpenInboxSource && <button type="button" onClick={() => { if (protectUnsaved()) onOpenInboxSource(note.collection, note.path); }}>单来源 Inbox 审批</button>}
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
@@ -486,13 +579,20 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
               : '此笔记含有 YAML Frontmatter；当前编辑器不能确认安全往返，原文保持只读。')}</div>
           <pre className="notes-raw-source">{content}</pre>
         </> : <Suspense fallback={<p role="status">正在加载 BlockSuite 编辑器…</p>}><BlockSuiteMarkdownEditor key={`blocksuite:${noteKey(note)}`} value={content} disabled={state === '保存中…' || state === '版本冲突' || state === '保存失败'} onChange={change}
-          onOpenVisualAsset={openVisual} onFallback={(reason) => { void leaveBlockSuite(reason); }} /></Suspense>
+          onOpenVisualAsset={openVisual} onOpenBlockSuiteResource={(filename) => { void openBlockSuiteResource(filename); }}
+          onFallback={(reason) => { void leaveBlockSuite(reason); }} /></Suspense>
           : <p className="notes-empty">先选择一篇已授权 Markdown，或新建 Draft。</p>}
         {message && <p role="alert" data-fallback-reason={blockSuiteFallbackReason.current ?? undefined} className={state === '版本冲突' || state === '保存失败' ? 'notes-error' : 'notes-hint'}>{message}</p>}
         {unpersistedVisual && state === '保存失败' && note && noteKey(note) === noteKey(unpersistedVisual.note) &&
           <button type="button" onClick={() => void retryVisualReference()}>重试保存图形引用</button>}
+        {pendingBlockSuiteReference && state === '保存失败' && note && noteKey(note) === noteKey(pendingBlockSuiteReference.note) &&
+          <button type="button" onClick={() => void retryBlockSuiteReference()}>重试保存 BlockSuite 资源引用</button>}
       </section>
     </div>}
+    {blockSuiteResource && note && <Suspense fallback={<p role="status">正在加载 BlockSuite 资源编辑器…</p>}>
+      <BlockSuiteResourceEditor key={`${noteKey(note)}:${blockSuiteResource.resourceId}`} note={note} resource={blockSuiteResource}
+        onClose={() => { blockSuiteResourceOpen.current = false; setBlockSuiteResource(null); }} />
+    </Suspense>}
     {visualAsset && <Suspense fallback={<p role="status">正在加载图形编辑器…</p>}>
       <VisualAssetDialog key={`${note ? noteKey(note) : ''}:${visualAsset.filename}`} kind={visualKindFromFilename(visualAsset.filename)!} asset={visualAsset}
         onSave={saveVisual} onClose={() => setVisualAsset(null)} onNavigationRiskChange={updateVisualNavigationRisk} canSave={state === '已保存'} />

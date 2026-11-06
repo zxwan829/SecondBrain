@@ -11,6 +11,10 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "paths": {
+      "@blocksuite/data-view/view-presets": ["./node_modules/@blocksuite/data-view/dist/view-presets/index.d.ts"],
+      "@blocksuite/data-view/property-presets": ["./node_modules/@blocksuite/data-view/dist/property-presets/index.d.ts"],
+      "@blocksuite/data-view/widget-presets": ["./node_modules/@blocksuite/data-view/dist/widget-presets/index.d.ts"],
+      "@blocksuite/data-view/effects": ["./node_modules/@blocksuite/data-view/dist/effects.d.ts"],
       "@blocksuite/affine/store": ["./node_modules/@blocksuite/store/dist/index.d.ts"],
       "@blocksuite/*/store": ["./node_modules/@blocksuite/*/dist/store.d.ts"],
       "@blocksuite/*/view": ["./node_modules/@blocksuite/*/dist/view.d.ts"],

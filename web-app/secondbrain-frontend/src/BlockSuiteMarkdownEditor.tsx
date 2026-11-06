@@ -70,9 +70,9 @@ function makeManagers() {
  * BlockSuite is a transient local editing projection only. Its in-memory Y.Doc has
  * no persistence source; Core Notes Markdown/ETag remains the sole save path.
  */
-export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset }: {
+export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback, onOpenVisualAsset, onOpenBlockSuiteResource }: {
   value: string; disabled: boolean; onChange: (markdown: string) => void; onFallback: (reason?: FallbackReason) => void;
-  onOpenVisualAsset?: (filename: string) => void;
+  onOpenVisualAsset?: (filename: string) => void; onOpenBlockSuiteResource?: (filename: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<{ store: any; std: BlockStdScope; workspace: TransientMarkdownWorkspace; adapter: MarkdownAdapter; split: MarkdownParts; subscription?: { unsubscribe: () => void } } | null>(null);
@@ -198,25 +198,30 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
 
   useEffect(() => {
     const root = host.current;
-    if (!root || !onOpenVisualAsset) return;
+    if (!root || (!onOpenVisualAsset && !onOpenBlockSuiteResource)) return;
     const onClick = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
       const anchor = target.closest('a[href]');
       if (!anchor) return;
       let filename: string;
+      let kind: 'visual' | 'blocksuite' = 'visual';
       try {
         const url = new URL(anchor.getAttribute('href') || '', window.location.href);
-        const match = url.pathname.match(/(?:^|\/)attachments\/([0-9a-f]{32}\.(?:mindmap|excalidraw)\.json)$/i);
+        const match = url.pathname.match(/(?:^|\/)attachments\/([0-9a-f]{32}\.(?:mindmap|excalidraw|blocksuite)\.json)$/i);
         if (!match) return;
         filename = decodeURIComponent(match[1]);
+        kind = filename.endsWith('.blocksuite.json') ? 'blocksuite' : 'visual';
       } catch { return; }
+      if (kind === 'blocksuite' && !onOpenBlockSuiteResource) return;
+      if (kind === 'visual' && !onOpenVisualAsset) return;
       event.preventDefault();
-      onOpenVisualAsset(filename);
+      if (kind === 'blocksuite') onOpenBlockSuiteResource?.(filename);
+      else onOpenVisualAsset?.(filename);
     };
     root.addEventListener('click', onClick);
     return () => root.removeEventListener('click', onClick);
-  }, [onOpenVisualAsset]);
+  }, [onOpenVisualAsset, onOpenBlockSuiteResource]);
 
   useEffect(() => {
     // A parent save response updates the prop to the same serialized content. Do not

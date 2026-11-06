@@ -43,7 +43,7 @@ export class TransientMarkdownWorkspace {
   waitForSynced() { return Promise.resolve(); }
   forceStop() {}
 
-  createDoc(id = this.idGenerator()) {
+  createDoc(id: string = this.idGenerator()) {
     if (this.docs.has(id)) throw new Error('Transient BlockSuite document already exists');
     const doc = new TransientMarkdownDoc(id, this);
     this.docs.set(id, doc);
