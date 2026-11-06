@@ -852,7 +852,7 @@ for (const viewport of activeViewports) {
       const readbackPayload = await readback.json() as { content?: unknown };
       expect(readbackPayload.content, 'wp5_focus_api_content_equal').toBe(savedPayload.content);
 
-      const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string) => {
+      const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string): Promise<string | undefined> => {
         const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources`, { timeout: 15000 });
         const referenceSave = page.waitForResponse((response) => response.request().method() === 'PUT'
@@ -866,6 +866,27 @@ for (const viewport of activeViewports) {
         await expect(resourceDialog).toBeVisible({ timeout: 20000 });
         const referenceResult = await referenceSave;
         expect(referenceResult.status(), `wp5_resource_${kind}_reference`).toBe(200);
+        let uploadedBlobUrl: string | undefined;
+        let uploadedBlobBytes: Buffer | undefined;
+        if (kind === 'edgeless-canvas') {
+          const imageDataUrl = await page.evaluate(() => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2; canvas.height = 2;
+            const context = canvas.getContext('2d');
+            if (!context) throw new Error('Canvas 2D context unavailable');
+            context.fillStyle = '#2f80ed'; context.fillRect(0, 0, 2, 2);
+            return canvas.toDataURL('image/png');
+          });
+          uploadedBlobBytes = Buffer.from(imageDataUrl.split(',')[1], 'base64');
+          const blobPut = page.waitForResponse((response) => response.request().method() === 'PUT'
+            && new URL(response.url()).pathname.includes(`/api/notes/drafts/${note.path}/blocksuite/blobs/`), { timeout: 15000 });
+          await resourceDialog.getByLabel('选择 Edgeless 图片').setInputFiles({
+            name: 'wp5-edgeless-synthetic.png', mimeType: 'image/png', buffer: uploadedBlobBytes,
+          });
+          const uploaded = await blobPut;
+          expect(uploaded.status(), 'wp5_edgeless_blob_create').toBe(201);
+          uploadedBlobUrl = uploaded.url();
+        }
         const resourceHost = resourceDialog.locator('.blocksuite-resource-host');
         await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '可编辑测试画布', { timeout: 15000 });
         const editable = resourceHost.locator('[contenteditable="true"]').first();
@@ -887,6 +908,13 @@ for (const viewport of activeViewports) {
         const readPayload = await readResource.json() as { updateB64: string; snapshot: Record<string, unknown> };
         expect(readPayload.updateB64.length).toBeGreaterThan(4);
         expect(JSON.stringify(readPayload.snapshot)).toContain(marker);
+        if (uploadedBlobUrl && uploadedBlobBytes) {
+          const blobRead = await page.request.get(uploadedBlobUrl);
+          expect(blobRead.status(), 'wp5_edgeless_blob_readback').toBe(200);
+          expect(Buffer.from(await blobRead.body()), 'wp5_edgeless_blob_bytes').toEqual(uploadedBlobBytes);
+          const blobId = decodeURIComponent(new URL(uploadedBlobUrl).pathname.split('/').pop() ?? '');
+          expect(JSON.stringify(readPayload.snapshot), 'wp5_edgeless_blob_reference').toContain(blobId);
+        }
         await resourceDialog.getByRole('button', { name: '关闭' }).click();
         const resourceLink = page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' }).last();
         await expect(resourceLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
@@ -905,6 +933,26 @@ for (const viewport of activeViewports) {
         await refreshedLink.click();
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
         const reopenedDialog = page.getByRole('dialog');
+        if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
+          const currentNoteResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
+          expect(currentNoteResponse.status()).toBe(200);
+          const currentNote = await currentNoteResponse.json() as { etag: string };
+          const currentResourceResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
+          expect(currentResourceResponse.status()).toBe(200);
+          const currentResource = await currentResourceResponse.json() as {
+            schemaVersion: number; resourceId: string; resourceKind: string; docId: string;
+            updateB64: string; snapshot: Record<string, unknown>; etag: string; artifact_set_etag: string;
+          };
+          const laterSnapshot = { ...currentResource.snapshot, e2eExternalEdgelessMutation: randomUUID() };
+          const externalWrite = await page.request.put(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`, {
+            headers: { 'If-Match': `"${currentNote.etag}"`, 'If-Resource-Match': `"${currentResource.etag}"`,
+              'If-Artifact-Set-Match': `"${currentResource.artifact_set_etag}"` },
+            data: { schemaVersion: currentResource.schemaVersion, resourceId: currentResource.resourceId,
+              resourceKind: currentResource.resourceKind, docId: currentResource.docId,
+              updateB64: currentResource.updateB64, snapshot: laterSnapshot },
+          });
+          expect(externalWrite.status(), 'wp5_edgeless_external_change').toBe(200);
+        }
         if (kind === 'database') {
           const currentNoteResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
           expect(currentNoteResponse.status()).toBe(200);
@@ -957,11 +1005,44 @@ for (const viewport of activeViewports) {
           expect(JSON.stringify(secondCopy.snapshot)).toContain('later unsaved resource conflict');
         }
         await reopenedDialog.getByRole('button', { name: /关闭/ }).click();
+        return uploadedBlobUrl;
       };
 
       observed.setFailureStage('notes_blocksuite_edit');
       await roundtripResource('database', '新建 BlockSuite Database', 'DB persistence marker');
-      await roundtripResource('edgeless-canvas', '新建 BlockSuite Edgeless 画布', 'Canvas persistence marker');
+      await page.reload();
+      const beforeEdgelessNoteRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 10000 });
+      await page.getByRole('button', { name: title, exact: true }).click();
+      expect((await beforeEdgelessNoteRead).status(), 'wp5_before_edgeless_note_read').toBe(200);
+      const edgelessBlobUrl = await roundtripResource('edgeless-canvas', '新建 BlockSuite Edgeless 画布', 'Canvas persistence marker');
+
+      observed.setFailureStage('notes_blocksuite_snapshot_restore');
+      await page.reload();
+      const historyNoteRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 10000 });
+      await page.getByRole('button', { name: title, exact: true }).click();
+      expect((await historyNoteRead).status(), 'wp5_snapshot_restore_note_read').toBe(200);
+      await page.getByRole('button', { name: '查看可恢复版本' }).click();
+      const snapshotRows = page.getByRole('list', { name: '可恢复 BlockSuite 快照' }).getByRole('button', { name: '选择并预览' });
+      expect(await snapshotRows.count(), 'wp5_snapshot_restore_rows').toBeGreaterThan(0);
+      const latestSnapshotRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname.includes(`/api/notes/drafts/${note.path}/blocksuite/snapshots/`), { timeout: 15000 });
+      await snapshotRows.last().click();
+      expect((await latestSnapshotRead).status(), 'wp5_snapshot_restore_detail').toBe(200);
+      await expect(page.getByLabel('BlockSuite 快照预览')).toContainText('图片 · image/png', { timeout: 15000 });
+      page.once('dialog', (dialog) => dialog.accept());
+      const restoreResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname.endsWith('/restore'), { timeout: 20000 });
+      await page.getByRole('button', { name: '确认恢复此 BlockSuite 快照' }).click();
+      const restored = await restoreResponse;
+      expect(restored.status(), 'wp5_snapshot_restore_status').toBe(200);
+      expect((await restored.json() as { restored: boolean }).restored, 'wp5_snapshot_restore_ack').toBe(true);
+      if (edgelessBlobUrl) {
+        const restoredBlob = await page.request.get(edgelessBlobUrl);
+        expect(restoredBlob.status(), 'wp5_snapshot_restored_blob').toBe(200);
+      }
+      await expect(page.getByText('BlockSuite 快照已恢复，并重新验证了正文与引用资源。')).toBeVisible({ timeout: 15000 });
 
       observed.setFailureStage('notes_blocksuite_reopen');
       await page.reload();
