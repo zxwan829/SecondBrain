@@ -1217,9 +1217,13 @@ for (const viewport of viewports) {
       await expect(canvas).toContainText(syntheticNoteBody);
       observed.setDiagnosticAssertion('notes_blocksuite_enabled');
       await expect(canvas).toHaveAttribute('data-disabled', 'false');
-      const block = canvas.locator('[contenteditable="true"]').first();
+      // Edit a regular Markdown body paragraph rather than the first heading;
+      // the Page title/heading has separate editor behavior and is not the
+      // persistence target for this body round-trip assertion.
+      const block = canvas.locator('[contenteditable="true"]')
+        .filter({ hasText: syntheticNoteBody }).first();
       observed.setDiagnosticAssertion('notes_blocksuite_contenteditable');
-      await expect(block).toBeVisible();
+      await expect(block).toContainText(syntheticNoteBody);
 
       observed.setFailureStage('notes_blocksuite_edit');
       const updatedBody = `WP5 BlockSuite 保存 ${viewport.name}`;
