@@ -176,6 +176,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
 
   const leaveBlockSuite = async (reason?: string) => {
     const target = noteRef.current;
+    if (reason) window.clearTimeout(timer.current);
     if (!reason && target && contentRef.current !== savedContent.current) {
       const revision = viewRevision.current;
       const sequence = editSequence.current;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blockSuiteMarkdownMatches, preserveSourceTerminalNewlines, splitOpaqueFrontmatter } from './blocksuite-markdown';
+import { blockSuiteMarkdownMatches, blockSuiteMarkdownSupportsEditing, preserveSourceTerminalNewlines, splitOpaqueFrontmatter } from './blocksuite-markdown';
 
 describe('BlockSuite Markdown safety boundary', () => {
   it('keeps BOM, CRLF metadata, unknown YAML keys and separator bytes opaque', () => {
@@ -35,5 +35,11 @@ describe('BlockSuite Markdown safety boundary', () => {
     expect(blockSuiteMarkdownMatches('> [!NOTE]\n> keep as callout\n', '> [!NOTE]\n> keep as callout\n')).toBe(false);
     expect(blockSuiteMarkdownMatches('> > [!NOTE]\n> > keep as nested callout\n', '> > keep as nested callout\n')).toBe(false);
     expect(blockSuiteMarkdownMatches('>> [!NOTE]\n>> keep as compact nested callout\n', '>> keep as compact nested callout\n')).toBe(false);
+  });
+
+  it('rejects unsupported source syntax from later editor projections before save', () => {
+    expect(blockSuiteMarkdownSupportsEditing('A Setext title\n===\n')).toBe(false);
+    expect(blockSuiteMarkdownSupportsEditing('> [!WARNING]\n> Keep the callout\n')).toBe(false);
+    expect(blockSuiteMarkdownSupportsEditing('A supported paragraph\n\n# A supported heading\n')).toBe(true);
   });
 });

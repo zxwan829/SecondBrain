@@ -32,7 +32,7 @@ import { MarkdownAdapter } from '@blocksuite/affine-shared/adapters';
 import { StoreExtensionManager, ViewExtensionManager } from '@blocksuite/affine-ext-loader';
 import { BlockStdScope } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
-import { blockSuiteMarkdownMatches, preserveSourceTerminalNewlines, splitOpaqueFrontmatter, type MarkdownParts } from './blocksuite-markdown';
+import { blockSuiteMarkdownMatches, blockSuiteMarkdownSupportsEditing, preserveSourceTerminalNewlines, splitOpaqueFrontmatter, type MarkdownParts } from './blocksuite-markdown';
 import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import './blocksuite-notes.css';
 import '@toeverything/theme/style.css';
@@ -148,10 +148,18 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
             const current = editorRef.current;
             if (!current) return;
             void current.adapter.fromBlock(current.store.getBlocksByFlavour('affine:note')[0]!.model as any).then(result => {
-              const next = `${current.split.prefix}${preserveSourceTerminalNewlines(current.split.body, result?.file ?? '')}`;
+              const exported = result?.file ?? '';
+              const next = `${current.split.prefix}${preserveSourceTerminalNewlines(current.split.body, exported)}`;
               if (next === emittedRef.current) return;
               emittedRef.current = next;
               valueRef.current = next;
+              if (!blockSuiteMarkdownSupportsEditing(exported)) {
+                // Keep the projection in the fallback editor, but cancel the
+                // parent's debounce before unsupported source can reach Core.
+                onChangeRef.current(next);
+                onFallbackRef.current('unsupported_syntax');
+                return;
+              }
               onChangeRef.current(next);
             }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
           }, 250);

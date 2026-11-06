@@ -36,11 +36,7 @@ export function blockSuiteMarkdownMatches(source: string, serialized: string): b
   const original = normalize(source);
   const roundTrip = normalize(serialized);
 
-  // Setext headings and Obsidian callouts have distinct source semantics that
-  // the current Page view cannot preserve. Keep these on the legacy path even
-  // if a general Markdown parser considers the rendered result equivalent.
-  if (/^\s*[^\n]+\n[ \t]*(?:={3,}|-{3,})[ \t]*$/m.test(original)
-      || /^(?:[ \t]*>[ \t]*)+\[![-\w]+\]/m.test(original)) return false;
+  if (!blockSuiteMarkdownSupportsEditing(original) || !blockSuiteMarkdownSupportsEditing(roundTrip)) return false;
   if (original === roundTrip) return true;
 
   try {
@@ -52,6 +48,12 @@ export function blockSuiteMarkdownMatches(source: string, serialized: string): b
   } catch {
     return false;
   }
+}
+
+/** Syntax whose source-level meaning the current Page editor cannot preserve. */
+export function blockSuiteMarkdownSupportsEditing(markdown: string): boolean {
+  return !(/^\s*[^\n]+\n[ \t]*(?:={3,}|-{3,})[ \t]*$/m.test(markdown)
+    || /^(?:[ \t]*>[ \t]*)+\[![-\w]+\]/m.test(markdown));
 }
 
 /** Keep the user's exact terminal newline sequence when exporting through the adapter. */
