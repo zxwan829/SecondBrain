@@ -138,14 +138,17 @@ def test_workflow_uploads_only_exact_sanitized_directory_and_is_manual_read_only
     assert "path: web-app/e2e/artifacts-sanitized/${{ github.run_id }}-${{ github.run_attempt }}/" in workflow
     assert "path: web-app/e2e/artifacts/" not in workflow
     assert "path: web-app/e2e/artifacts-raw/" not in workflow
+    assert "wp5_conflict_only:" in workflow
+    assert "--wp5-conflict-only" in workflow and "WP5_CONFLICT_ONLY" in workflow
     assert "if: always()" in workflow and "if-no-files-found: ignore" in workflow
     assert "steps.synthetic.outputs.artifacts_verified == 'true'" in workflow
     assert 'prefix=".artifacts-verified-"' in runner
     assert "os.replace(staging_root, publish_root)" in runner
     assert "SB_E2E_RAW_ARTIFACTS" in runner and "artifacts-sanitized" in runner
     assert "SB_E2E_RAW_ARTIFACTS" in config and "artifacts-raw" in config
-    assert runner.index("wait_for_test_process(test_process)") < runner.index("publish_verified_reports(raw_artifacts, publish_root, password_path)")
-    assert runner.index("publish_verified_reports(raw_artifacts, publish_root, password_path)") < runner.rindex("mark_verified_artifact_output()")
+    publish_call = "publish_verified_reports(raw_artifacts, publish_root, password_path, expected_failure_viewports)"
+    assert runner.index("wait_for_test_process(test_process)") < runner.index(publish_call)
+    assert runner.index(publish_call) < runner.rindex("mark_verified_artifact_output()")
 
 
 def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
@@ -154,7 +157,7 @@ def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
     config = (E2E / "playwright.config.ts").read_text()
     browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
     assert "runs-on: ubuntu-24.04" in workflow
-    assert "npx playwright install --with-deps chromium" in workflow
+    assert "npx playwright install chromium" in workflow
     assert "screenshot: 'only-on-failure'" in config
     assert "serviceWorkers: 'block'" in config
     assert "ALLOW_FAILURE_SCREENSHOT_PUBLICATION = (" in runner
@@ -192,6 +195,32 @@ def test_exact_playwright_truncated_output_directory_is_allowlisted(viewport, tm
     assert module.count_allowlisted_failure_screenshots(raw) == 1
 
 
+
+def test_wp5_autosave_probe_timeline_accepts_only_bounded_safe_events():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_conflict",
+        "code": "timeout", "assertion_id": "notes_blocksuite_conflict_rejected",
+        "activity_get_statuses": [200],
+        "wp5_autosave_events": [
+            {"marker": "wp5-conflict-queue", "at_ms": 1000, "event": "notes-queue-unsaved"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1001, "event": "notes-save-timer-fired"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1002, "event": "browser-put-request"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1003, "event": "core-response", "status": 412},
+        ],
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    invalid = {**diagnostic, "wp5_autosave_events": [
+        {"marker": "wrong-marker", "at_ms": 1000, "event": "browser-put-request"},
+    ]}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([invalid])
+    over_bound = {**diagnostic, "wp5_autosave_events": [
+        {"marker": "wp5-conflict-queue", "at_ms": index, "event": "browser-put-request"}
+        for index in range(65)
+    ]}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([over_bound])
+
 @pytest.mark.parametrize("entry", [
     {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret", "notes_collection_statuses": []},
     {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
@@ -215,6 +244,76 @@ def test_failure_diagnostic_can_include_bounded_notes_collection_statuses():
                   "notes_collection_statuses": [403]}
     assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
     diagnostic["notes_collection_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_note_item_read_failure():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_reopen", "code": "assertion_failed",
+                  "assertion_id": "notes_readback", "activity_get_statuses": [200],
+                  "notes_item_read_statuses": [403], "notes_readback_failure": "note_file_permissions_unsafe"}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_item_read_statuses"] = [600]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_notes_write_statuses():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_blocksuite_conflict",
+                  "code": "timeout", "assertion_id": "notes_blocksuite_conflict_rejected",
+                  "activity_get_statuses": [200], "notes_write_statuses": [200, 412, None]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_write_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["notes_item_read_statuses"] = [403]
+    diagnostic["notes_readback_failure"] = "raw error text"
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_notes_seed_status():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_frontmatter_seed", "code": "assertion_failed",
+                  "assertion_id": "notes_frontmatter_seed", "activity_get_statuses": [200],
+                  "notes_seed_status": 412}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_seed_status"] = True
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["notes_seed_status"] = 600
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_blocksuite_runtime_state():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+                  "assertion_id": "notes_blocksuite_simple_open", "activity_get_statuses": [200],
+                  "notes_ui_state": "fallback_message", "page_error_names": ["TypeError"],
+                  "page_error_categories": ["nullish_property_access"],
+                  "page_error_sources": ["blocksuite_module"], "blocksuite_module_statuses": [200, 504],
+                  "page_error_summaries": ["Error: Cannot read properties of undefined (<quoted>)"]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_ui_state"] = "raw browser text"
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["notes_ui_state"] = "fallback_message"
+    diagnostic["page_error_names"] = ["Error: private payload"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["page_error_names"] = ["TypeError"]
+    diagnostic["page_error_categories"] = ["raw browser message"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["page_error_categories"] = ["nullish_property_access"]
+    diagnostic["page_error_sources"] = ["/Users/private/path.tsx"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["page_error_sources"] = ["blocksuite_module"]
+    diagnostic["blocksuite_module_statuses"] = ["GET /secret"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["blocksuite_module_statuses"] = [200, 504]
+    diagnostic["page_error_summaries"] = ["/Users/person/private.txt"]
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([diagnostic])
 

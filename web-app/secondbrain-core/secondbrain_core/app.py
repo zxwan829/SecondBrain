@@ -1,6 +1,7 @@
 """SecondBrain Core HTTP application factory."""
 import json
 import os
+import time
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -262,7 +263,41 @@ def create_app():
 
     @app.middleware("http")
     async def security_headers(request, call_next):
-        response = await call_next(request)
+        probe_marker = os.environ.get("SB_E2E_WP5_AUTOSAVE_MARKER", "")
+        probe_path = os.environ.get("SB_E2E_WP5_AUTOSAVE_LOG", "")
+        is_wp5_autosave_probe = bool(
+            probe_marker and probe_path
+            and request.method == "PUT"
+            and request.url.path.startswith("/api/notes/drafts/")
+            and request.query_params.get("wp5_probe") == probe_marker
+        )
+
+        def record_wp5_probe(event, status=None):
+            if not is_wp5_autosave_probe:
+                return
+            row = {"marker": probe_marker, "at_ms": int(time.time() * 1000), "event": event}
+            if status is not None:
+                row["status"] = int(status)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                descriptor = os.open(probe_path, flags, 0o600)
+                try:
+                    info = os.fstat(descriptor)
+                    if info.st_size < 2048 and info.st_uid == os.geteuid() and not info.st_mode & 0o077:
+                        os.write(descriptor, (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8"))
+                finally:
+                    os.close(descriptor)
+            except OSError:
+                # Test-only evidence must never change the request result.
+                return
+
+        record_wp5_probe("core-request-received")
+        try:
+            response = await call_next(request)
+        except Exception:
+            record_wp5_probe("core-handler-error")
+            raise
+        record_wp5_probe("core-response", response.status_code)
         # Core API payloads are owner-scoped or authentication/authorization
         # decisions. Default them to non-cacheable, including error responses
         # returned before route handlers can attach response headers. Existing

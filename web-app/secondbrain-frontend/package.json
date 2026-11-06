@@ -16,6 +16,28 @@
     "verify:fe25": "node scripts/verify-fe25.mjs"
   },
   "dependencies": {
+    "@blocksuite/affine-block-code": "0.22.4",
+    "@blocksuite/affine-block-divider": "0.22.4",
+    "@blocksuite/affine-block-list": "0.22.4",
+    "@blocksuite/affine-block-note": "0.22.4",
+    "@blocksuite/affine-block-paragraph": "0.22.4",
+    "@blocksuite/affine-block-root": "0.22.4",
+    "@blocksuite/affine-block-surface": "0.22.4",
+    "@blocksuite/affine-block-table": "0.22.4",
+    "@blocksuite/affine-ext-loader": "0.22.4",
+    "@blocksuite/affine-foundation": "0.22.4",
+    "@blocksuite/affine-inline-preset": "0.22.4",
+    "@blocksuite/affine-inline-latex": "0.22.4",
+    "@blocksuite/affine-inline-footnote": "0.22.4",
+    "@blocksuite/affine-inline-link": "0.22.4",
+    "@blocksuite/affine-inline-mention": "0.22.4",
+    "@blocksuite/affine-inline-reference": "0.22.4",
+    "@blocksuite/affine-model": "0.22.4",
+    "@blocksuite/affine-shared": "0.22.4",
+    "@blocksuite/global": "0.22.4",
+    "@blocksuite/std": "0.22.4",
+    "@blocksuite/store": "0.22.4",
+    "@blocksuite/sync": "0.22.4",
     "@excalidraw/excalidraw": "0.17.6",
     "@tiptap/extension-image": "3.32.0",
     "@tiptap/extension-table": "3.32.0",
@@ -25,18 +47,30 @@
     "@tiptap/markdown": "3.32.0",
     "@tiptap/react": "3.32.0",
     "@tiptap/starter-kit": "3.32.0",
+    "@toeverything/theme": "1.1.15",
+    "marked": "17.0.6",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "@vitejs/plugin-react": "latest",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "simple-mind-map": "0.14.0-fix.3",
-    "typescript": "latest",
-    "vite": "latest"
+    "y-protocols": "1.0.6",
+    "yjs": "13.6.27",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@testing-library/react": "16.3.3",
+    "@types/node": "22.19.11",
+    "@vanilla-extract/vite-plugin": "5.0.0",
+    "@vitejs/plugin-react": "4.7.0",
     "jsdom": "30.1.2",
+    "typescript": "5.8.3",
+    "vite": "6.4.5",
     "vitest": "5.0.4"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1",
+    "undici": "^8.12.2",
+    "tinypool": "^2.1.2"
   }
 }

@@ -1,4 +1,5 @@
 """Narrow Core-owned Notes API for explicitly configured Markdown roots."""
+from __future__ import annotations
 import csv
 import hashlib
 import fcntl
@@ -6,6 +7,7 @@ import json
 import os
 import re
 import stat
+import unicodedata
 import uuid
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -13,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File
 from PIL import Image, UnidentifiedImageError
 
-_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}\.md$", re.I)
+_SAFE_NAME = re.compile(r"^[^\W_][\w. -]{0,119}\.md$", re.I | re.UNICODE)
 _IMAGE_TYPES = {".png": b"\x89PNG\r\n\x1a\n", ".jpg": b"\xff\xd8\xff", ".gif": b"GIF8", ".webp": b"RIFF"}
 MAX_MARKDOWN_BYTES = 1_000_000
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -22,26 +24,44 @@ _VISUAL_FILENAME = re.compile(r"^[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json$")
 _VISUAL_KINDS = {"mindmap", "excalidraw"}
 
 
+def _frontmatter_prefix(content: str):
+    """Return an exact leading YAML frontmatter prefix, if present."""
+    offset = 1 if content.startswith("\ufeff") else 0
+    normalized = content[offset:]
+    if not normalized.startswith(("---\n", "---\r\n")):
+        return ""
+    match = re.match(r"^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)", normalized)
+    return content[:offset + match.end()] if match else None
+
+
 def markdown_safety(content: str) -> list[str]:
-    """Return constructs that the basic editor cannot safely round-trip."""
+    """Return body constructs that the rich-text editor cannot safely round-trip.
+
+    Frontmatter is an opaque prefix owned by Notes. Editors may edit the Markdown
+    body only when they return that prefix byte-for-byte unchanged.
+    """
     reasons = []
-    if content.lstrip("\ufeff").startswith("---\n") or content.lstrip("\ufeff").startswith("---\r\n"):
-        reasons.append("frontmatter")
+    body = content
+    prefix = _frontmatter_prefix(content)
+    if prefix is not None and prefix:
+        body = content[len(prefix):]
+    elif prefix is None:
+        reasons.append("incomplete frontmatter")
     checks = {
-        "wiki links": r"!?\[\[[^\]]+\]\]", "callouts": r"^\s*>\s*\[![-\w]+\]",
+        "wiki links": r"!?\[\[[^\]]+\]\]", "callouts": r"^(?:[ \t]*>[ \t]*)+\[![-\w]+\]",
         "block IDs": r"\^[-\w]+\s*$", "reference links": r"^\s*\[[^\]]+\]:",
         "footnotes": r"\[\^[^\]]+\]", "HTML blocks": r"<\s*/?\s*[A-Za-z][^>]*>",
         "Obsidian comments": r"%%.*?%%",
     }
     for label, pattern in checks.items():
-        if re.search(pattern, content, re.M | re.S if label == "Obsidian comments" else re.M):
+        if re.search(pattern, body, re.M | re.S if label == "Obsidian comments" else re.M):
             reasons.append(label)
     return reasons
 
 
 def _note_properties(content: str) -> tuple[str | None, list[str]]:
     """Read the two managed properties from a deliberately small YAML subset."""
-    lines = content.splitlines()
+    lines = content.removeprefix("\ufeff").splitlines()
     if not lines or lines[0] != "---":
         return None, []
     try:
@@ -107,7 +127,9 @@ def _note_properties(content: str) -> tuple[str | None, list[str]]:
 def _replace_note_properties(content: str, note_type: str, tags: list[str]) -> str:
     """Replace only top-level 类型/tags lines, preserving all other bytes and body."""
     newline = "\r\n" if "\r\n" in content else "\n"
-    lines = content.splitlines(keepends=True)
+    bom = "\ufeff" if content.startswith("\ufeff") else ""
+    source = content[len(bom):]
+    lines = source.splitlines(keepends=True)
     bare = lambda line: line.removesuffix("\r\n").removesuffix("\n").removesuffix("\r")
     has_frontmatter = bool(lines and bare(lines[0]) == "---")
     if has_frontmatter:
@@ -119,7 +141,7 @@ def _replace_note_properties(content: str, note_type: str, tags: list[str]) -> s
         header = lines[1:end]
         closing_line = lines[end]
     else:
-        body, header = content, []
+        body, header = source, []
         closing_line = "---" + newline
 
     kept: list[str] = []
@@ -149,8 +171,8 @@ def _replace_note_properties(content: str, note_type: str, tags: list[str]) -> s
         kept.append("tags: " + json.dumps(tags, ensure_ascii=False) + newline)
 
     if has_frontmatter:
-        return "---" + newline + "".join(kept) + closing_line + body
-    return "---" + newline + "".join(kept) + closing_line + body
+        return bom + "---" + newline + "".join(kept) + closing_line + body
+    return bom + "---" + newline + "".join(kept) + closing_line + body
 
 
 class NotesStore:
@@ -193,6 +215,8 @@ class NotesStore:
             raise HTTPException(status_code=400, detail="Invalid note path")
         parsed = PurePosixPath(value)
         if parsed.is_absolute() or any(part in {".", ".."} for part in parsed.parts) or not _SAFE_NAME.fullmatch(parsed.name):
+            raise HTTPException(status_code=400, detail="Invalid note path")
+        if any(unicodedata.category(char).startswith("C") for char in parsed.name):
             raise HTTPException(status_code=400, detail="Invalid note path")
         return parsed
 
@@ -498,6 +522,8 @@ class NotesStore:
             current_etag = self._digest(current)
             if not expected or expected.strip('"') != current_etag:
                 raise HTTPException(status_code=412, detail="Note changed; reload before saving")
+            if not metadata_only and _frontmatter_prefix(content) != _frontmatter_prefix(current):
+                raise HTTPException(status_code=422, detail="Markdown editors must preserve the existing frontmatter exactly")
             if markdown_safety(current) and not metadata_only:
                 raise HTTPException(status_code=422, detail="This Markdown contains unsupported syntax and is read-only")
             namespace = self._history_namespace(collection, relative)

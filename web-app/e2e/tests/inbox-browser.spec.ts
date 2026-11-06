@@ -1,22 +1,63 @@
-import { expect, test, type Page, type Request, type Response, type Route } from '@playwright/test';
+import { expect, test, type Page, type Request, type Response, type Route, type TestInfo } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const baseUrl = process.env.SB_E2E_BASE_URL ?? 'http://127.0.0.1:4173';
 const baseOrigin = new URL(baseUrl).origin;
+function safePageErrorSummary(value: string): string {
+  const missingExport = value.match(/requested module ['\"]([^'\"]+)['\"] does not provide an export named ['\"]([^'\"]+)['\"]/i);
+  if (missingExport) {
+    const modulePath = missingExport[1].split(/[?#]/, 1)[0].replaceAll('\\', '/');
+    const dependencyPath = modulePath.split('/node_modules/', 2)[1] ?? '';
+    const dependency = dependencyPath.startsWith('.vite/deps/')
+      ? dependencyPath.slice('.vite/deps/'.length).split('/', 1)[0]
+      : dependencyPath.startsWith('@')
+        ? dependencyPath.split('/', 2).join('_')
+        : dependencyPath.split('/', 1)[0];
+    const moduleName = dependency.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64) || 'unknown';
+    const symbol = /^[A-Za-z_$][A-Za-z0-9_$]{0,48}$/.test(missingExport[2]) ? missingExport[2] : 'unknown';
+    return `missing_export module_${moduleName} symbol_${symbol}`.slice(0, 120);
+  }
+  return value
+    .replace(/https?:\/\/[^\s)]+/gi, '<url>')
+    .replace(/(?:[A-Za-z]:\\|\/(?:Users|home|private|tmp|opt|workspace)\/)[^\s)]+/gi, '<path>')
+    .replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, '<id>')
+    .replace(/\b[A-Za-z0-9_./+=-]{16,}\b/g, '<value>')
+    .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '<quoted>')
+    .replace(/[\u3400-\u9fff]+/g, '<text>')
+    .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '<email>')
+    .replace(/[^A-Za-z0-9 <>._,:()'-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120);
+}
 const viewports = [
   { name: 'desktop-1440x1000', width: 1440, height: 1000 },
   { name: 'tablet-820x1180', width: 820, height: 1180 },
   { name: 'mobile-390x844', width: 390, height: 844 },
 ] as const;
+const wp5RoundtripOnly = process.env.SB_E2E_WP5_ROUNDTRIP_ONLY === 'true';
+const wp5ConflictOnly = process.env.SB_E2E_WP5_CONFLICT_ONLY === 'true';
+const desktopOnly = process.env.SB_E2E_DESKTOP_ONLY === 'true';
+const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
+type Wp5ProbeEvent = { marker: 'wp5-conflict-queue'; at_ms: number; event: string; status?: number };
+const WP5_PROBE_MARKER = 'wp5-conflict-queue' as const;
+function boundedWp5ProbeTimeline(events: Wp5ProbeEvent[]): Wp5ProbeEvent[] {
+  const ordered = [...events].sort((left, right) => left.at_ms - right.at_ms);
+  if (ordered.length <= 64 && !ordered.some((event) => event.event === 'probe-events-overflow')) return ordered;
+  return [...ordered.slice(0, 63), {
+    marker: WP5_PROBE_MARKER, at_ms: ordered.at(-1)?.at_ms ?? Date.now(), event: 'probe-events-overflow',
+  }].sort((left, right) => left.at_ms - right.at_ms);
+}
 type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
   | 'daily_brief_readback' | 'permission_revocation' | 'post_revocation_navigation'
   | 'notes_navigation' | 'notes_create' | 'notes_edit_save' | 'notes_reopen'
+  | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen'
+  | 'notes_blocksuite_open' | 'notes_blocksuite_edit' | 'notes_blocksuite_conflict' | 'notes_blocksuite_reopen'
   | 'agent_health' | 'today' | 'journal' | 'calendar' | 'viewport_layout';
 type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading'
   | 'home_after_projects' | 'home_to_activity' | 'activity_heading'
@@ -29,7 +70,53 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'today_navigation' | 'today_api_response' | 'journal_navigation' | 'journal_api_response'
   | 'journal_append' | 'journal_saved_readback' | 'journal_refresh_readback'
   | 'calendar_navigation' | 'calendar_api_response' | 'home_api_response'
-  | 'notes_navigation_link' | 'notes_collections'
+  | 'notes_navigation_link' | 'notes_collections' | 'notes_blocksuite_open'
+  | 'notes_blocksuite_edit' | 'notes_blocksuite_edit_focus' | 'notes_blocksuite_edit_end'
+  | 'notes_blocksuite_edit_newline' | 'notes_blocksuite_edit_type' | 'notes_blocksuite_edit_save_response'
+  | 'notes_blocksuite_edit_response_body' | 'notes_blocksuite_saved_title'
+  | 'notes_blocksuite_saved_tag' | 'notes_blocksuite_saved_custom_property'
+  | 'notes_blocksuite_saved_edit_text' | 'notes_blocksuite_saved_status'
+  | 'notes_blocksuite_conflict_seed' | 'notes_blocksuite_conflict_rejected'
+  | 'notes_blocksuite_conflict_editor_enabled' | 'notes_blocksuite_conflict_unsaved_state'
+  | 'notes_blocksuite_conflict_ui' | 'notes_blocksuite_conflict_readback'
+  | 'notes_blocksuite_conflict_readback_status' | 'notes_blocksuite_conflict_readback_payload'
+  | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_navigation_response' | 'notes_blocksuite_reopen_editor_entry'
+  | 'notes_blocksuite_reopen_canvas'
+  | 'notes_blocksuite_quick_switch_edit' | 'notes_blocksuite_quick_switch_fallback' | 'notes_blocksuite_quick_switch_save_response'
+  | 'notes_blocksuite_reopen_heading' | 'notes_blocksuite_reopen_saved_status' | 'notes_blocksuite_reopen_editor_button'
+  | 'notes_setext_seed_status_200' | 'notes_setext_seed_status_401' | 'notes_setext_seed_status_403'
+  | 'notes_setext_seed_status_409' | 'notes_setext_seed_status_412' | 'notes_setext_seed_status_422'
+  | 'notes_setext_seed_status_428' | 'notes_setext_seed_status_other'
+  | 'notes_setext_reopen_read' | 'notes_setext_editor_open' | 'notes_setext_leave_read' | 'notes_setext_fallback' | 'notes_setext_fallback_render'
+  | 'notes_attachment_select' | 'notes_attachment_open' | 'notes_attachment_fallback' | 'notes_attachment_render'
+  | 'notes_unsafe_select' | 'notes_unsafe_source' | 'notes_unsafe_safety' | 'notes_unsafe_editor_hidden'
+  | 'notes_blocksuite_reopen_scrollable' | 'notes_blocksuite_reopen_concurrent_update'
+  | 'wp5_unsupported_projection_seed' | 'wp5_unsupported_projection_open'
+  | 'wp5_unsupported_projection_rejected' | 'wp5_unsupported_projection_preserved'
+  | 'wp5_unsupported_projection_no_core_put'
+  | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
+  | 'notes_conflict_seed_status_403' | 'notes_conflict_seed_status_404'
+  | 'notes_conflict_seed_status_409' | 'notes_conflict_seed_status_412'
+  | 'notes_conflict_seed_status_422' | 'notes_conflict_seed_status_428'
+  | 'notes_conflict_seed_status_other'
+  | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
+  | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
+  | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
+  | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
+  | 'wp5_focus_saved_status'
+  | 'wp5_focus_reopen_content' | 'notes_blocksuite_reopen' | 'notes_readback_editor_missing'
+  | 'wp5_conflict_probe_seed' | 'wp5_conflict_probe_open' | 'wp5_conflict_probe_initial_read'
+  | 'wp5_conflict_probe_canvas'
+  | 'wp5_conflict_probe_external_write' | 'wp5_conflict_probe_request_path' | 'wp5_conflict_probe_rejected'
+  | 'wp5_conflict_probe_hooks_ready' | 'wp5_conflict_probe_timer_scheduled' | 'wp5_conflict_probe_timer_fired'
+  | 'wp5_conflict_probe_notes-queue-conflict' | 'wp5_conflict_probe_timeline_bound'
+  | 'wp5_conflict_probe_readback' | 'wp5_conflict_probe_reopen' | 'wp5_conflict_probe_recovery_status'
+  | 'wp5_conflict_probe_reopen_canvas' | 'wp5_conflict_probe_reopen_ready'
+  | 'wp5_conflict_probe_recovery_body' | 'wp5_conflict_probe_recovery_readback'
+  | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
+  | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
+  | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
+  | 'notes_blocksuite_simple_open'
   | 'daily_brief_navigation' | 'daily_brief_heading' | 'daily_brief_saved_readback'
   | 'daily_brief_open_prepare' | 'daily_brief_task_source' | 'daily_brief_project_source'
   | 'daily_brief_project_count' | 'daily_brief_project_label'
@@ -37,6 +124,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'daily_brief_sources'
   | 'daily_brief_journal_action'
   | 'daily_brief_journal_source' | 'daily_brief_preview'
+  | 'notes_ui_state_unsaved' | 'notes_ui_state_saving' | 'notes_ui_state_conflict'
+  | 'notes_ui_state_failed' | 'notes_ui_state_unknown'
   | 'layout_home' | 'layout_projects' | 'layout_activity' | 'layout_agent_health'
   | 'layout_today' | 'layout_journal' | 'layout_calendar' | 'layout_notes' | 'layout_chat'
   | 'chat_session' | 'chat_context_preview' | 'chat_preview_button_visible' | 'chat_preview_button_enabled'
@@ -46,6 +135,22 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'chat_run_candidates' | 'chat_run_citations' | 'chat_run_citation_panel' | 'chat_run_citation_content' | 'chat_composer_reset'
   | 'chat_reload' | 'chat_stop' | 'chat_return_blank' | 'chat_completion' | 'layout_no_horizontal_overflow';
 const observations = new WeakMap<object, Awaited<ReturnType<typeof configurePage>>>();
+
+async function expectNoteSavedStatus(page: Page, observed: Awaited<ReturnType<typeof configurePage>>, assertion: 'wp5_focus_saved_status' | 'notes_blocksuite_saved_status') {
+  const status = page.locator('.notes-document-heading [role="status"]');
+  observed.setDiagnosticAssertion(assertion);
+  try {
+    await expect(status).toHaveText('已保存');
+  } catch (error) {
+    const current = (await status.textContent().catch(() => '')).trim();
+    const stateAssertion: DiagnosticAssertion = current === '未保存' ? 'notes_ui_state_unsaved'
+      : current === '保存中…' ? 'notes_ui_state_saving'
+        : current === '版本冲突' ? 'notes_ui_state_conflict'
+          : current === '保存失败' ? 'notes_ui_state_failed' : 'notes_ui_state_unknown';
+    observed.setDiagnosticAssertion(stateAssertion);
+    throw error;
+  }
+}
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
   return page.waitForResponse((response) => {
@@ -268,6 +373,12 @@ async function configurePage(page: Page) {
   let dailyBriefPostCount = 0;
   let lastDailyBriefBody: Record<string, unknown> | null = null;
   let activityReadRevoked = false;
+  let notesReadbackFailure: string | null = null;
+  let notesSeedStatus: number | null = null;
+  const pageErrorNames: string[] = [];
+  const pageErrorCategories: string[] = [];
+  const pageErrorSources: string[] = [];
+  const pageErrorSummaries: string[] = [];
   let failureStage: FailureStage = 'login';
   let diagnosticAssertion: DiagnosticAssertion = 'test_setup';
 
@@ -284,6 +395,28 @@ async function configurePage(page: Page) {
       try { lastDailyBriefBody = JSON.parse(request.postData() ?? 'null') as Record<string, unknown>; }
       catch { lastDailyBriefBody = null; }
     }
+  });
+  page.on('pageerror', (error) => {
+    const allowed = new Set(['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'URIError']);
+    pageErrorNames.push(allowed.has(error.name) ? error.name : 'unknown');
+    const message = error.message.toLowerCase();
+    const category = /cannot read properties of (undefined|null)/.test(message) ? 'nullish_property_access'
+      : /not a constructor|is not a function/.test(message) ? 'invalid_runtime_symbol'
+        : /custom element|already been defined|already registered/.test(message) ? 'custom_element_registration'
+          : /failed to fetch dynamically imported module|failed to load (?:module|url)|module script failed|does not provide an export/.test(message) ? 'module_load_failure'
+            : /not registered|missing.*extension|unknown block/.test(message) ? 'missing_block_extension'
+              : /viewport|service identifier|service not found/.test(message) ? 'view_service_error'
+                : /schema|flavour|flavor|block model/.test(message) ? 'block_schema_error'
+                  : /workspace|ydoc|y\.doc|document state/.test(message) ? 'document_state_error'
+                    : /invalid hook|element type is invalid|suspend|lazy component/.test(message) ? 'react_lazy_error' : 'other';
+    pageErrorCategories.push(category);
+    const stack = (error.stack ?? '').toLowerCase();
+    const source = /blocksuite-markdown-editor|blocksuite/.test(stack) ? 'blocksuite_module'
+      : /notespaged|notespage/.test(stack) ? 'notes_page_module'
+        : /react-dom/.test(stack) ? 'react_dom'
+          : /vite/.test(stack) ? 'vite_runtime' : 'other_module';
+    pageErrorSources.push(source);
+    pageErrorSummaries.push(safePageErrorSummary(error.message));
   });
   const recordedResponses = new WeakSet<Request>();
   page.on('response', (response) => {
@@ -406,7 +539,7 @@ async function configurePage(page: Page) {
   });
 
   return {
-    requestRecords, blockedOrigins,
+    requestRecords, blockedOrigins, wp5AutosaveProbeEvents: [] as Wp5ProbeEvent[],
     setFailureStage(stage: FailureStage) { failureStage = stage; },
     get failureStage() { return failureStage; },
     get inboxPostCount() { return inboxPostCount; },
@@ -418,10 +551,33 @@ async function configurePage(page: Page) {
       && request.path === '/api/activity').map((request) => request.status).slice(-4); },
     get notesCollectionReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/notes').map((request) => request.status).slice(-4); },
+    get notesItemReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
+      && /^\/api\/notes\/drafts\/<opaque-id>$/.test(request.path)).map((request) => request.status).slice(-4); },
+    get notesWriteStatuses() { return requestRecords.filter((request) => request.method === 'PUT'
+      && /^\/api\/notes\/drafts\/<opaque-id>$/.test(request.path)).map((request) => request.status).slice(-8); },
+    get notesReadbackFailure() { return notesReadbackFailure; },
+    setNotesSeedStatus(status: number) { notesSeedStatus = status; },
+    get notesSeedStatus() { return notesSeedStatus; },
+    get pageErrorNames() { return pageErrorNames.slice(-5); },
+    get pageErrorCategories() { return pageErrorCategories.slice(-5); },
+    get pageErrorSources() { return pageErrorSources.slice(-5); },
+    get pageErrorSummaries() { return pageErrorSummaries.slice(-1); },
     get dailyBriefReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
+    setNotesReadbackFailure(detail: unknown) {
+      const known: Record<string, string> = {
+        'App session required': 'session_required',
+        'Action is not enabled': 'action_not_enabled',
+        'Draft directory permissions are unsafe': 'draft_directory_permissions_unsafe',
+        'Directory permissions are unsafe': 'directory_permissions_unsafe',
+        'Note file permissions or size are unsafe': 'note_file_permissions_unsafe',
+        'Note could not be opened safely': 'note_open_rejected',
+        'Note not found': 'note_not_found',
+      };
+      notesReadbackFailure = typeof detail === 'string' ? known[detail] ?? 'other' : 'other';
+    },
     setActivityReadRevoked(revoked: boolean) { activityReadRevoked = revoked; },
   };
 }
@@ -435,7 +591,9 @@ async function inspectOrCreateDailyBrief(
   observed.setDiagnosticAssertion('daily_brief_navigation');
   await page.goto('/brief');
   observed.setDiagnosticAssertion('daily_brief_heading');
-  await expect(page.getByRole('heading', { name: /每日简报|Daily Brief/ })).toBeVisible({ timeout: 15000 });
+  const briefHeading = page.locator('#brief-title');
+  await expect(briefHeading).toBeVisible({ timeout: 15000 });
+  await expect(briefHeading).toHaveText(/每日简报|Daily Brief/);
   const journalSourceReadsBeforeBrief = observed.requestRecords.filter((item) => item.method === 'GET'
     && item.path === '/api/daily-brief/source-options/journal').length;
   const beforeOpen = observed.dailyBriefPostCount;
@@ -568,12 +726,368 @@ async function readSyntheticPassword(): Promise<string> {
   return cachedPassword;
 }
 
-for (const viewport of viewports) {
+for (const viewport of activeViewports) {
   test(`explicit Inbox capture, retry, conflict and source protection at ${viewport.name}`, async ({ page }, testInfo) => {
+    // The desktop journey includes the full Core Notes round trip, BlockSuite
+    // conflict/recovery, and an unsupported-Markdown preservation probe. Give
+    // that composed journey enough total execution budget without extending
+    // any individual product wait/assertion or weakening its conditions.
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(60_000);
+    if ((wp5RoundtripOnly || wp5ConflictOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
+    await page.addInitScript((marker) => {
+        const state = { marker, active: false, timerHookReady: false, observerReady: false,
+          events: [] as { marker: string; at_ms: number; event: string; status?: number }[] };
+        const emit = (event: string, status?: number) => {
+          if (!state.active) return;
+          if (state.events.length >= 64) {
+            if (!state.events.some((item) => item.event === 'probe-events-overflow'))
+              state.events.push({ marker: state.marker, at_ms: Date.now(), event: 'probe-events-overflow' });
+            return;
+          }
+          state.events.push({ marker: state.marker, at_ms: Date.now(), event, ...(status === undefined ? {} : { status }) });
+        };
+        Object.defineProperty(window, '__sbWp5AutosaveProbe', { value: state, configurable: true });
+        const originalSetTimeout = window.setTimeout.bind(window);
+        const originalClearTimeout = window.clearTimeout.bind(window);
+        const autosaveTimers = new Set<number>();
+        const observedSetTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+          const isAutosave = state.active && timeout === 900 && typeof handler === 'function';
+          if (!isAutosave || typeof handler !== 'function') return originalSetTimeout(handler, timeout, ...args);
+          let timerId = 0;
+          timerId = originalSetTimeout(() => {
+            if (autosaveTimers.delete(timerId)) emit('notes-save-timer-fired');
+            handler.apply(window, args);
+          }, timeout);
+          autosaveTimers.add(timerId);
+          emit('notes-save-timer-scheduled');
+          return timerId;
+        }) as typeof window.setTimeout;
+        window.setTimeout = observedSetTimeout;
+        state.timerHookReady = window.setTimeout === observedSetTimeout;
+        window.clearTimeout = ((timerId?: number) => {
+          if (timerId !== undefined && autosaveTimers.delete(timerId)) emit('notes-save-timer-cancelled');
+          return originalClearTimeout(timerId);
+        }) as typeof window.clearTimeout;
+        let previousState = '';
+        const observer = new MutationObserver(() => {
+          if (!state.active) return;
+          const text = document.querySelector('.notes-document-heading [role="status"]')?.textContent?.trim() ?? '';
+          const event = text === '未保存' ? 'notes-queue-unsaved'
+            : text === '保存中…' ? 'notes-queue-saving'
+              : text === '版本冲突' ? 'notes-queue-conflict'
+                : text === '已保存' ? 'notes-queue-saved'
+                  : text === '保存失败' ? 'notes-queue-failed' : '';
+          if (event && event !== previousState) { previousState = event; emit(event); }
+        });
+        observer.observe(document, { subtree: true, childList: true, characterData: true });
+        state.observerReady = true;
+      }, WP5_PROBE_MARKER);
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
     await signInAndCreateBlankSession(page, viewport, observed);
+    if (wp5RoundtripOnly || wp5ConflictOnly) {
+      observed.setFailureStage('notes_navigation');
+      observed.setDiagnosticAssertion('wp5_focus_notes_navigation');
+      await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
+      await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+
+      if (!wp5ConflictOnly) {
+      const title = 'WP5 focused roundtrip';
+      const originalBody = `Synthetic body ${randomUUID()}`;
+      const editMarker = `WP5 持久化编辑 ${randomUUID()}`;
+      const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
+      observed.setFailureStage('notes_frontmatter_seed');
+      observed.setDiagnosticAssertion('wp5_focus_note_seed');
+      const seeded = await page.evaluate(async (content) => {
+        const response = await fetch('/api/notes', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+        return { status: response.status, note: response.ok ? await response.json() : null };
+      }, markdown);
+      observed.setNotesSeedStatus(seeded.status);
+      expect(seeded.status, 'wp5_focus_note_seed').toBe(200);
+      const note = seeded.note as { collection: string; path: string };
+      expect(note.collection, 'wp5_focus_note_seed_collection').toBe('drafts');
+
+      await page.reload();
+      observed.setFailureStage('notes_frontmatter_reopen');
+      const noteRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 5000 });
+      await page.getByRole('button', { name: title, exact: true }).click();
+      expect((await noteRead).status(), 'wp5_focus_note_open').toBe(200);
+      observed.setFailureStage('notes_blocksuite_open');
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const canvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_focus_editor_open');
+      await expect(canvas).toBeVisible({ timeout: 20000 });
+      const bodyText = canvas.getByText(originalBody, { exact: true });
+      await expect(bodyText, 'wp5_focus_body_target').toBeVisible();
+
+      observed.setFailureStage('notes_blocksuite_edit');
+      observed.setDiagnosticAssertion('wp5_focus_put_received');
+      const putResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`
+        && (response.request().postData() ?? '').includes(editMarker), { timeout: 10000 });
+      await bodyText.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText(editMarker);
+      const saved = await putResponse;
+      const requestBody = JSON.parse(saved.request().postData() ?? '{}') as { content?: unknown };
+      observed.setDiagnosticAssertion('wp5_focus_put_request_content');
+      expect(typeof requestBody.content === 'string' && requestBody.content.includes(editMarker),
+        'wp5_focus_put_request_content').toBe(true);
+      observed.setDiagnosticAssertion('wp5_focus_put_status');
+      expect(saved.status(), 'wp5_focus_put_status').toBe(200);
+      const savedPayload = await saved.json() as { content?: unknown };
+      observed.setDiagnosticAssertion('wp5_focus_put_response_content');
+      expect(typeof savedPayload.content === 'string' && savedPayload.content.includes(editMarker),
+        'wp5_focus_put_response_content').toBe(true);
+      observed.setDiagnosticAssertion('wp5_focus_put_response_matches_request');
+      expect(savedPayload.content, 'wp5_focus_put_response_matches_request').toBe(requestBody.content);
+      await expectNoteSavedStatus(page, observed, 'wp5_focus_saved_status');
+
+      observed.setDiagnosticAssertion('wp5_focus_api_readback');
+      const readback = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
+      expect(readback.status(), 'wp5_focus_api_readback').toBe(200);
+      const readbackPayload = await readback.json() as { content?: unknown };
+      expect(readbackPayload.content, 'wp5_focus_api_content_equal').toBe(savedPayload.content);
+
+      observed.setFailureStage('notes_blocksuite_reopen');
+      await page.reload();
+      const reopenedRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 5000 });
+      await page.getByRole('button', { name: title, exact: true }).click();
+      const reopened = await reopenedRead;
+      expect(reopened.status(), 'wp5_focus_reopen_api').toBe(200);
+      const reopenedPayload = await reopened.json() as { content?: unknown };
+      expect(reopenedPayload.content, 'wp5_focus_reopen_api').toBe(savedPayload.content);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('wp5_focus_reopen_content');
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 20000 });
+      const rawSource = page.locator('.notes-raw-source');
+      await expect(rawSource).toContainText(editMarker);
+      await expect(rawSource).toContainText('custom: preserve-focused');
+      await expect(rawSource).toContainText('Column A');
+      }
+
+      // Focused concurrency probe: only synthetic Notes, real Core PUT/If-Match,
+      // and the BlockSuite -> Notes autosave queue are exercised here.
+      observed.setFailureStage('notes_blocksuite_conflict');
+      const conflictTitle = 'WP5 conflict queue probe';
+      const baselineText = `Conflict baseline ${randomUUID()}`;
+      const baselineMarkdown = `# ${conflictTitle}\n\n${baselineText}\n`;
+      observed.setDiagnosticAssertion('wp5_conflict_probe_seed');
+      const conflictSeed = await page.evaluate(async (content) => {
+        const response = await fetch('/api/notes', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+        return { status: response.status, note: response.ok ? await response.json() as { path: string } : null };
+      }, baselineMarkdown);
+      expect(conflictSeed.status, 'wp5_conflict_probe_seed').toBe(200);
+      const conflictPath = conflictSeed.note!.path;
+      const conflictUrlPath = `/api/notes/drafts/${conflictPath}`;
+      await page.reload();
+      const conflictRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === conflictUrlPath);
+      await page.getByRole('button', { name: conflictTitle, exact: true }).click();
+      expect((await conflictRead).status(), 'wp5_conflict_probe_open').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const conflictCanvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_conflict_probe_canvas');
+      await expect(conflictCanvas).toBeVisible({ timeout: 20000 });
+      const baselineBlock = conflictCanvas.getByText(baselineText, { exact: true });
+      await expect(baselineBlock).toBeVisible();
+      const initialRead = await page.request.get(`${baseUrl}${conflictUrlPath}`);
+      expect(initialRead.status(), 'wp5_conflict_probe_initial_read').toBe(200);
+      const initialNote = await initialRead.json() as { content: string };
+      const externalText = 'WP5 Core concurrent update';
+      const externalWrite = await page.evaluate(async ({ path, content, etag }) => {
+        const response = await fetch(path, { method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': etag }, body: JSON.stringify({ content }) });
+        return response.status;
+      }, { path: conflictUrlPath, content: `${initialNote.content}\n${externalText}\n`, etag: initialRead.headers()['etag'] ?? '' });
+      expect(externalWrite, 'wp5_conflict_probe_external_write').toBe(200);
+
+      let probeActive = false;
+      const recordProbe = (event: string, status?: number) => {
+        if (observed.wp5AutosaveProbeEvents.length >= 64) {
+          if (!observed.wp5AutosaveProbeEvents.some((item) => item.event === 'probe-events-overflow'))
+            observed.wp5AutosaveProbeEvents.push({ marker: WP5_PROBE_MARKER, at_ms: Date.now(), event: 'probe-events-overflow' });
+          return;
+        }
+        observed.wp5AutosaveProbeEvents.push({ marker: WP5_PROBE_MARKER, at_ms: Date.now(), event,
+          ...(status === undefined ? {} : { status }) });
+      };
+      await page.route('**/api/notes/drafts/*', async (route) => {
+        const request = route.request();
+        const requestUrl = new URL(request.url());
+        if (probeActive && request.method() === 'PUT' && requestUrl.pathname === conflictUrlPath) {
+          requestUrl.searchParams.set('wp5_probe', WP5_PROBE_MARKER);
+          await route.continue({ url: requestUrl.toString() });
+          return;
+        }
+        await route.fallback();
+      });
+      page.on('request', (request) => {
+        if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
+          recordProbe('browser-put-request');
+      });
+      page.on('response', (response) => {
+        const request = response.request();
+        if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
+          recordProbe('browser-put-response', response.status());
+      });
+      page.on('requestfailed', (request) => {
+        if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
+          recordProbe('browser-put-requestfailed');
+      });
+      page.on('requestfinished', (request) => {
+        if (probeActive && request.method() === 'PUT' && new URL(request.url()).pathname === conflictUrlPath)
+          recordProbe('browser-put-requestfinished');
+      });
+      const probeReady = await page.evaluate((marker) => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: {
+          marker: string; active: boolean; timerHookReady: boolean; observerReady: boolean;
+          events: Wp5ProbeEvent[];
+        } }).__sbWp5AutosaveProbe;
+        if (!probe || probe.marker !== marker) return { found: false, timerHookReady: false, observerReady: false };
+        probe.active = true;
+        probe.events.push({ marker: probe.marker, at_ms: Date.now(), event: 'probe-armed' });
+        return { found: true, timerHookReady: probe.timerHookReady, observerReady: probe.observerReady };
+      }, WP5_PROBE_MARKER);
+      observed.setDiagnosticAssertion('wp5_conflict_probe_hooks_ready');
+      expect(probeReady, 'wp5_conflict_probe_hooks_ready').toEqual({ found: true, timerHookReady: true, observerReady: true });
+      probeActive = true;
+      recordProbe('probe-armed');
+
+      const staleRequestPromise = page.waitForRequest((request) => request.method() === 'PUT'
+        && new URL(request.url()).pathname === conflictUrlPath, { timeout: 5000 });
+      const staleResponsePromise = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === conflictUrlPath, { timeout: 5000 }).then((response) => {
+          recordProbe('test-response-matcher-accepted', response.status());
+          return response;
+        });
+      await expect(conflictCanvas).toHaveAttribute('data-disabled', 'false');
+      await baselineBlock.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      const staleText = 'WP5 stale browser edit must not replace Core';
+      await page.keyboard.insertText(staleText);
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_unsaved_state');
+      await page.waitForFunction(() => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
+        return probe?.events.some((event) => event.event === 'notes-queue-unsaved') ?? false;
+      }, { timeout: 5000 });
+      recordProbe('notes-queue-unsaved');
+      const staleRequest = await staleRequestPromise;
+      expect(new URL(staleRequest.url()).pathname, 'wp5_conflict_probe_request_path').toBe(conflictUrlPath);
+      recordProbe('test-request-matcher-accepted');
+      const staleResponse = await staleResponsePromise;
+      expect(staleResponse.status(), 'wp5_conflict_probe_rejected').toBe(412);
+      const statusAfterConflict = await page.locator('.notes-document-heading [role="status"]').innerText();
+      expect(statusAfterConflict, 'wp5_conflict_probe_rejected').toBe('版本冲突');
+      const coreAfterConflict = await page.evaluate(async (path) => {
+        const response = await fetch(path, { credentials: 'same-origin' });
+        return { status: response.status, content: response.ok ? (await response.json() as { content: string }).content : '' };
+      }, conflictUrlPath);
+      expect(coreAfterConflict.status, 'wp5_conflict_probe_readback').toBe(200);
+      expect(coreAfterConflict.content, 'wp5_conflict_probe_readback').toContain(externalText);
+      expect(coreAfterConflict.content, 'wp5_conflict_probe_readback').not.toContain(staleText);
+
+      if (wp5ConflictOnly) {
+        const beforeReloadEvents = await page.evaluate(() => {
+          const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
+          return probe?.events ?? [];
+        });
+        observed.wp5AutosaveProbeEvents.push(...beforeReloadEvents);
+        observed.wp5AutosaveProbeEvents.sort((left, right) => left.at_ms - right.at_ms);
+      }
+
+      // Leaving the conflict revision clears the blocked queue; a fresh reopen/edit must save normally.
+      page.once('dialog', (dialog) => void dialog.accept());
+      if (wp5ConflictOnly) {
+        recordProbe('probe-reload-start');
+        await page.reload();
+      }
+      else await page.getByRole('button', { name: 'WP5 focused roundtrip', exact: true }).click();
+      if (wp5ConflictOnly) {
+        const reopenedProbe = await page.evaluate((marker) => {
+          const probe = (window as Window & { __sbWp5AutosaveProbe?: {
+            marker: string; active: boolean; timerHookReady: boolean; observerReady: boolean;
+            events: Wp5ProbeEvent[];
+          } }).__sbWp5AutosaveProbe;
+          if (!probe || probe.marker !== marker) return { found: false, timerHookReady: false, observerReady: false };
+          probe.active = true;
+          probe.events.push({ marker: probe.marker, at_ms: Date.now(), event: 'browser-probe-armed' });
+          return { found: true, timerHookReady: probe.timerHookReady, observerReady: probe.observerReady };
+        }, WP5_PROBE_MARKER);
+        observed.setDiagnosticAssertion('wp5_conflict_probe_hooks_ready');
+        expect(reopenedProbe, 'wp5_conflict_probe_hooks_ready').toEqual({ found: true, timerHookReady: true, observerReady: true });
+        recordProbe('probe-rearmed');
+      }
+      observed.setDiagnosticAssertion('wp5_conflict_probe_reopen');
+      const conflictReopenResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === conflictUrlPath);
+      await page.getByRole('button', { name: conflictTitle, exact: true }).click();
+      await expect(page.locator('.notes-document-heading')).toContainText(conflictPath);
+      expect((await conflictReopenResponse).status(), 'wp5_conflict_probe_reopen').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_conflict_probe_reopen_canvas');
+      await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
+      await expect(reopenedCanvas).toContainText(externalText);
+      observed.setDiagnosticAssertion('wp5_conflict_probe_reopen_ready');
+      await expect(reopenedCanvas).toHaveAttribute('aria-busy', 'false');
+      await expect(reopenedCanvas).toHaveAttribute('data-disabled', 'false');
+      const recoveryText = 'WP5 autosave queue recovery';
+      observed.setDiagnosticAssertion('wp5_conflict_probe_recovery_status');
+      const recoveryResponsePromise = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === conflictUrlPath, { timeout: 5000 }).then((response) => {
+          recordProbe('recovery-response-matcher-accepted', response.status());
+          return response;
+        });
+      const recoveryBlock = reopenedCanvas.getByText(externalText, { exact: true });
+      await recoveryBlock.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText(recoveryText);
+      const recoveryResponse = await recoveryResponsePromise;
+      expect(recoveryResponse.status(), 'wp5_conflict_probe_recovery_status').toBe(200);
+      const recoveryBody = await recoveryResponse.json() as { content: string };
+      expect(recoveryBody.content, 'wp5_conflict_probe_recovery_body').toContain(recoveryText);
+      const recoveredReadback = await page.evaluate(async (path) => {
+        const response = await fetch(path, { credentials: 'same-origin' });
+        return { status: response.status, content: response.ok ? (await response.json() as { content: string }).content : '' };
+      }, conflictUrlPath);
+      expect(recoveredReadback.status, 'wp5_conflict_probe_recovery_readback').toBe(200);
+      expect(recoveredReadback.content, 'wp5_conflict_probe_recovery_readback').toBe(recoveryBody.content);
+      const browserProbeEvents = await page.evaluate(() => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
+        return probe?.events ?? [];
+      });
+      observed.wp5AutosaveProbeEvents.push(...browserProbeEvents);
+      observed.wp5AutosaveProbeEvents.sort((left, right) => left.at_ms - right.at_ms);
+      for (const [requiredEvent, assertion] of [
+        ['notes-save-timer-scheduled', 'wp5_conflict_probe_timer_scheduled'],
+        ['notes-save-timer-fired', 'wp5_conflict_probe_timer_fired'],
+        ['notes-queue-conflict', 'wp5_conflict_probe_notes-queue-conflict'],
+      ] as const) {
+        observed.setDiagnosticAssertion(assertion);
+        // The conflict is observed before the deliberate reload; the timer and
+        // conflict events from that document were copied into the test-level
+        // timeline above. The reopened document only contains recovery events.
+        expect(observed.wp5AutosaveProbeEvents.some((event) => event.event === requiredEvent), assertion).toBe(true);
+      }
+      observed.setDiagnosticAssertion('wp5_conflict_probe_timeline_bound');
+      observed.wp5AutosaveProbeEvents = boundedWp5ProbeTimeline(observed.wp5AutosaveProbeEvents);
+      expect(observed.wp5AutosaveProbeEvents.some((event) => event.event === 'probe-events-overflow'),
+        'wp5_conflict_probe_timeline_bound').toBe(false);
+      const browserLog = process.env.SB_E2E_WP5_AUTOSAVE_BROWSER_LOG;
+      if (browserLog) {
+        await writeFile(browserLog, JSON.stringify(observed.wp5AutosaveProbeEvents), { mode: 0o600 });
+      }
+      return;
+    }
     const composer = page.getByPlaceholder('发送消息给 Hermes…');
     await composer.fill(original);
     observed.setFailureStage('first_submit');
@@ -1049,6 +1563,7 @@ for (const viewport of viewports) {
     const createdNote = await createNoteResponse.json() as { collection: string; path: string };
     expect(createdNote.collection).toBe('drafts');
     expect(createdNote.path).toMatch(/^[0-9a-f-]{36}$/i);
+    let activeNotePath = createdNote.path;
     const editor = page.locator('.ProseMirror');
     await expect(editor).toBeVisible();
 
@@ -1056,7 +1571,7 @@ for (const viewport of viewports) {
     observed.setFailureStage('notes_edit_save');
     const saveNoteResponsePromise = page.waitForResponse((response) => {
       const request = response.request();
-      return request.method() === 'PUT' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
+      return request.method() === 'PUT' && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`;
     }, { timeout: 5000 });
     observed.setDiagnosticAssertion('notes_save');
     await editor.fill(syntheticNoteBody);
@@ -1068,13 +1583,347 @@ for (const viewport of viewports) {
     await page.reload();
     const readNoteResponsePromise = page.waitForResponse((response) => {
       const request = response.request();
-      return request.method() === 'GET' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
+      return request.method() === 'GET' && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`;
     }, { timeout: 5000 });
     observed.setDiagnosticAssertion('notes_readback');
     await page.getByRole('button', { name: syntheticNoteBody, exact: true }).click();
     const readNoteResponse = await readNoteResponsePromise;
+    if (readNoteResponse.status() !== 200) {
+      const payload = await readNoteResponse.json().catch(() => ({})) as { detail?: unknown };
+      observed.setNotesReadbackFailure(payload.detail);
+    }
     expect(readNoteResponse.status(), 'notes_readback').toBe(200);
-    await expect(page.locator('.ProseMirror')).toContainText(syntheticNoteBody);
+    const persistedNote = await readNoteResponse.json() as { content?: unknown };
+    observed.setDiagnosticAssertion('notes_readback_payload');
+    expect(typeof persistedNote.content === 'string' && persistedNote.content.includes(syntheticNoteBody),
+      'notes_readback_payload').toBe(true);
+    const renderedNote = await page.locator('.notes-document .notes-prose').innerText();
+    const editorContainsReadback = renderedNote.includes(syntheticNoteBody);
+    observed.setDiagnosticAssertion(editorContainsReadback ? 'notes_readback' : 'notes_readback_editor_missing');
+    expect(editorContainsReadback, 'notes_readback').toBe(true);
+    if (viewport.name === 'desktop-1440x1000') {
+      // Seed only the isolated synthetic Draft with metadata via the same
+      // authenticated Core Notes API, then refresh and exercise the real
+      // BlockSuite editor once with the complete Markdown compatibility fixture.
+      const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n`;
+      observed.setFailureStage('notes_frontmatter_seed');
+      observed.setDiagnosticAssertion('notes_frontmatter_seed');
+      const seededResult = await page.evaluate(async (content) => {
+        const response = await fetch('/api/notes', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+        return { status: response.status, note: response.ok ? await response.json() : null };
+      }, syntheticFrontmatter);
+      const seededStatus = seededResult.status;
+      observed.setNotesSeedStatus(seededStatus);
+      expect(seededStatus, 'notes_seed_synthetic_frontmatter').toBe(200);
+      const seededNote = seededResult.note as { collection?: unknown; path?: unknown };
+      expect(seededNote.collection).toBe('drafts');
+      expect(typeof seededNote.path).toBe('string');
+      activeNotePath = seededNote.path as string;
+      observed.setFailureStage('notes_frontmatter_reopen');
+      observed.setDiagnosticAssertion('notes_frontmatter_reopen');
+      await page.reload();
+      const frontmatterRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
+      await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
+      const rereadFrontmatter = await frontmatterRead;
+      expect(rereadFrontmatter.status(), 'notes_frontmatter_read').toBe(200);
+
+      observed.setFailureStage('notes_blocksuite_open');
+      observed.setDiagnosticAssertion('notes_blocksuite_button_click');
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const canvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('notes_blocksuite_canvas_visible');
+      // The optional editor is a large lazy-loaded chunk; do not apply the
+      // default 5s assertion timeout to its first mount in CI Chromium.
+      await expect(canvas).toBeVisible({ timeout: 20000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_save_status');
+      await expect(page.getByRole('status').filter({ hasText: 'BlockSuite Page · Core Notes 保存' })).toBeVisible();
+      observed.setDiagnosticAssertion('notes_blocksuite_body_visible');
+      await expect(canvas).toContainText(syntheticNoteBody);
+      observed.setDiagnosticAssertion('notes_blocksuite_enabled');
+      await expect(canvas).toHaveAttribute('data-disabled', 'false');
+      // Click the body text itself, rather than the center of its potentially
+      // full-page contenteditable ancestor (which can land on the first heading).
+      const block = canvas.getByText(syntheticNoteBody, { exact: false });
+      observed.setDiagnosticAssertion('notes_blocksuite_contenteditable');
+      await expect(block).toContainText(syntheticNoteBody);
+
+      observed.setFailureStage('notes_blocksuite_edit');
+      const browserProbeReady = await page.evaluate((marker) => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: {
+          marker: string; active: boolean; timerHookReady: boolean; observerReady: boolean;
+          events: Wp5ProbeEvent[];
+        } }).__sbWp5AutosaveProbe;
+        if (!probe || probe.marker !== marker) return { found: false, timerHookReady: false, observerReady: false };
+        probe.active = true;
+        probe.events.push({ marker: probe.marker, at_ms: Date.now(), event: 'browser-probe-armed' });
+        return { found: true, timerHookReady: probe.timerHookReady, observerReady: probe.observerReady };
+      }, WP5_PROBE_MARKER);
+      observed.wp5AutosaveProbeEvents.push({ marker: WP5_PROBE_MARKER, at_ms: Date.now(), event: 'browser-probe-armed' });
+      observed.setDiagnosticAssertion('wp5_conflict_probe_hooks_ready');
+      expect(browserProbeReady, 'wp5_conflict_probe_hooks_ready').toEqual({ found: true, timerHookReady: true, observerReady: true });
+      const updatedBody = `WP5 BlockSuite 保存 ${viewport.name}`;
+      const blocksuiteSave = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`
+        && (response.request().postData() ?? '').includes(updatedBody), { timeout: 10000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_focus');
+      await block.click();
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_end');
+      await page.keyboard.press('End');
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_newline');
+      await page.keyboard.press('Enter');
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_type');
+      await page.keyboard.insertText(updatedBody);
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_save_response');
+      const saved = await blocksuiteSave;
+      expect(saved.status(), 'notes_blocksuite_save').toBe(200);
+      const requestedContent = JSON.parse(saved.request().postData() ?? '{}') as { content?: unknown };
+      observed.setDiagnosticAssertion('notes_blocksuite_request_content');
+      expect(typeof requestedContent.content === 'string' && requestedContent.content.includes(updatedBody),
+        'notes_blocksuite_request_content').toBe(true);
+      observed.setDiagnosticAssertion('notes_blocksuite_edit_response_body');
+      const savedPayload = await saved.json() as { content: string };
+      observed.setDiagnosticAssertion('notes_blocksuite_response_matches_request');
+      expect(savedPayload.content, 'notes_blocksuite_response_matches_request').toBe(requestedContent.content);
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_title');
+      expect(savedPayload.content).toContain('title: WP5 synthetic note');
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_custom_property');
+      expect(savedPayload.content).toContain('custom: preserve-me');
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_tag');
+      expect(savedPayload.content).toContain('wp5-synthetic');
+      observed.setDiagnosticAssertion('notes_blocksuite_saved_edit_text');
+      expect(savedPayload.content).toContain(updatedBody);
+      await expectNoteSavedStatus(page, observed, 'notes_blocksuite_saved_status');
+
+      // Exercise unsupported syntax introduced during an active BlockSuite
+      // session. Preserve the projection through fallback without a Core PUT.
+      observed.setFailureStage('notes_blocksuite_edit');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_seed');
+      const projectionSeed = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/notes', { timeout: 5000 });
+      await page.getByRole('button', { name: '新建 Draft', exact: true }).click();
+      const projectionCreated = await projectionSeed;
+      expect(projectionCreated.status(), 'wp5_unsupported_projection_seed').toBe(200);
+      const projectionNote = await projectionCreated.json() as { path: string };
+      const projectionUrl = `/api/notes/drafts/${projectionNote.path}`;
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const projectionCanvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_open');
+      await expect(projectionCanvas).toBeVisible({ timeout: 20000 });
+      const baseline = projectionCanvas.getByText('未命名笔记', { exact: true });
+      await expect(baseline).toBeVisible();
+      let projectionPutCount = 0;
+      const countProjectionPut = (request: Request) => {
+        if (request.method() === 'PUT' && new URL(request.url()).pathname === projectionUrl) projectionPutCount += 1;
+      };
+      page.on('request', countProjectionPut);
+      await baseline.click();
+      await page.keyboard.press('End');
+      // Paste one literal two-line Markdown fragment; separate Enter actions
+      // create independent Page blocks and do not represent Setext source.
+      await page.keyboard.insertText('Dynamic Setext heading\n===');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_rejected');
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 5000 });
+      const fallbackProjection = page.locator('.notes-raw-source');
+      await expect(fallbackProjection).toContainText('Dynamic Setext heading');
+      await expect(fallbackProjection).toContainText('===');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_preserved');
+      await page.waitForTimeout(1000);
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_no_core_put');
+      expect(projectionPutCount, 'wp5_unsupported_projection_no_core_put').toBe(0);
+      page.off('request', countProjectionPut);
+      // Discard this synthetic unsaved projection before continuing the main
+      // conflict/recovery journey on its original note.
+      page.once('dialog', (dialog) => void dialog.accept());
+      const restoreMainNote = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
+      await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
+      expect((await restoreMainNote).status(), 'notes_blocksuite_reopen_navigation_response').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      await expect(page.locator('.blocksuite-notes-canvas')).toBeVisible({ timeout: 20000 });
+      await expect(page.locator('.blocksuite-notes-canvas')).toHaveAttribute('data-disabled', 'false');
+
+
+      // A concurrent Core edit advances the ETag. The stale editor must receive
+      // 412 and leave that external content intact rather than overwrite it.
+      observed.setFailureStage('notes_blocksuite_conflict');
+      const concurrentText = 'WP5 synthetic concurrent Core update';
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_seed');
+      const concurrentResult = await page.evaluate(async ({ path, content, etag }) => {
+        const response = await fetch(`/api/notes/drafts/${path}`, {
+          method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': etag },
+          body: JSON.stringify({ content }),
+        });
+        return { status: response.status };
+      }, { path: activeNotePath, content: `${savedPayload.content}\n${concurrentText}\n`, etag: saved.headers()['etag'] ?? '' });
+      const concurrentStatus = concurrentResult.status;
+      observed.setDiagnosticAssertion(concurrentStatus === 200 ? 'notes_conflict_seed_status_200'
+        : concurrentStatus === 401 ? 'notes_conflict_seed_status_401'
+          : concurrentStatus === 403 ? 'notes_conflict_seed_status_403'
+            : concurrentStatus === 404 ? 'notes_conflict_seed_status_404'
+              : concurrentStatus === 409 ? 'notes_conflict_seed_status_409'
+                : concurrentStatus === 412 ? 'notes_conflict_seed_status_412'
+                  : concurrentStatus === 422 ? 'notes_conflict_seed_status_422'
+                    : concurrentStatus === 428 ? 'notes_conflict_seed_status_428' : 'notes_conflict_seed_status_other');
+      expect(concurrentStatus, 'notes_seed_concurrent_update').toBe(200);
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_rejected');
+      const staleWrite = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_editor_enabled');
+      await expect(page.locator('.blocksuite-notes-canvas')).toHaveAttribute('data-disabled', 'false');
+      await block.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText('WP5 stale browser edit must not replace Core');
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_unsaved_state');
+      await expect(page.locator('.notes-document-heading [role="status"]')).toHaveText('未保存', { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_rejected');
+      const rejected = await staleWrite;
+      expect(rejected.status(), 'notes_blocksuite_conflict').toBe(412);
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_ui');
+      await expect(page.getByRole('status').filter({ hasText: '版本冲突' })).toBeVisible();
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_readback');
+      const afterConflict = await page.evaluate(async (path) => {
+        const response = await fetch(`/api/notes/drafts/${path}`, { credentials: 'same-origin' });
+        return { status: response.status, note: response.ok ? await response.json() as { content: string } : null };
+      }, activeNotePath);
+      expect(afterConflict.status, 'notes_blocksuite_conflict_readback_status').toBe(200);
+      const currentAfterConflict = afterConflict.note;
+      expect(currentAfterConflict, 'notes_blocksuite_conflict_readback_payload').not.toBeNull();
+      observed.setDiagnosticAssertion('notes_blocksuite_conflict_readback');
+      expect(currentAfterConflict?.content).toContain(concurrentText);
+      expect(currentAfterConflict?.content).toContain('custom: preserve-me');
+      expect(currentAfterConflict?.content).not.toContain('WP5 stale browser edit must not replace Core');
+
+      observed.setFailureStage('notes_blocksuite_reopen');
+      page.once('dialog', (dialog) => void dialog.accept());
+      const closeRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_note_selector');
+      await page.getByRole('button', { name: syntheticNoteBody, exact: true }).click();
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_navigation_response');
+      expect((await closeRead).status(), 'notes_blocksuite_close_read').toBe(200);
+      const blockSuiteRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
+      await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
+      const reread = await blockSuiteRead;
+      expect(reread.status(), 'notes_blocksuite_reopen').toBe(200);
+      const reopenedPayload = await reread.json() as { content: string };
+      expect(reopenedPayload.content).toContain(concurrentText);
+      expect(reopenedPayload.content).toContain('custom: preserve-me');
+      expect(reopenedPayload.content).not.toContain('WP5 stale browser edit must not replace Core');
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_entry');
+      const noteHeading = page.locator('.notes-document-heading');
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_heading');
+      await expect(noteHeading).toContainText(activeNotePath);
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_saved_status');
+      await expect(noteHeading.getByRole('status')).toHaveText('已保存');
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_editor_button');
+      await expect(page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_canvas');
+      const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
+      // Match the first-open lazy chunk gate; the view has been recreated
+      // after selecting another Note without repeating the full page reload.
+      await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
+      await expect(reopenedCanvas).toContainText(updatedBody, { timeout: 20000 });
+      const reopenScrollMetrics = await reopenedCanvas.evaluate((element) => ({
+        scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
+      }));
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_scrollable');
+      expect(reopenScrollMetrics.scrollHeight).toBeGreaterThan(reopenScrollMetrics.clientHeight);
+      await reopenedCanvas.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      observed.setDiagnosticAssertion('notes_blocksuite_reopen_concurrent_update');
+      await expect(reopenedCanvas).toContainText(concurrentText, { timeout: 20000 });
+      const quickSwitchEdit = 'WP5 quick fallback edit preserved';
+      const quickSwitchSave = page.waitForResponse((response) => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
+      const reopenedBlock = page.locator('.blocksuite-notes-canvas').getByText(updatedBody, { exact: false });
+      observed.setDiagnosticAssertion('notes_blocksuite_quick_switch_edit');
+      await reopenedBlock.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText(quickSwitchEdit);
+      observed.setDiagnosticAssertion('notes_blocksuite_quick_switch_fallback');
+      await page.getByRole('button', { name: '切回旧版编辑器' }).click();
+      observed.setDiagnosticAssertion('notes_blocksuite_quick_switch_save_response');
+      const quickSaved = await quickSwitchSave;
+      expect(quickSaved.status(), 'notes_blocksuite_quick_fallback_save').toBe(200);
+      await expect(page.locator('.notes-raw-source')).toContainText(updatedBody);
+      await expect(page.locator('.notes-raw-source')).toContainText(quickSwitchEdit);
+      await expect(page.locator('.notes-raw-source')).toContainText('preserve-me');
+
+      // Setext is accepted by Core but may not be preserved by this Page
+      // adapter. If round-trip comparison rejects it, the UI must keep the
+      // legacy editor and source text available.
+      const latest = await page.request.get(`${baseUrl}/api/notes/drafts/${activeNotePath}`);
+      const latestNote = await latest.json() as { content: string };
+      const setextContent = `${latestNote.content}\nSetext compatibility heading\n===\n`;
+      const setextStatus = await page.evaluate(async ({ path, content, etag }) => {
+        const response = await fetch(`/api/notes/drafts/${path}`, {
+          method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': etag },
+          body: JSON.stringify({ content }),
+        });
+        return response.status;
+      }, { path: activeNotePath, content: setextContent, etag: latest.headers()['etag'] ?? '' });
+      observed.setDiagnosticAssertion(setextStatus === 200 ? 'notes_setext_seed_status_200'
+        : setextStatus === 401 ? 'notes_setext_seed_status_401'
+          : setextStatus === 403 ? 'notes_setext_seed_status_403'
+            : setextStatus === 409 ? 'notes_setext_seed_status_409'
+              : setextStatus === 412 ? 'notes_setext_seed_status_412'
+                : setextStatus === 422 ? 'notes_setext_seed_status_422'
+                  : setextStatus === 428 ? 'notes_setext_seed_status_428' : 'notes_setext_seed_status_other');
+      expect(setextStatus, 'notes_seed_setext_fallback').toBe(200);
+      // The simple Notes roundtrip above already verifies full page refresh.
+      // Switch away and reopen here so the focused compatibility check reuses
+      // the loaded optional editor chunk instead of depending on a second cold
+      // lazy-module load after the refresh.
+      await expect(page.locator('.notes-document-heading [role="status"]')).toHaveText('已保存');
+      const attachmentRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && /^\/api\/notes\/drafts\/[0-9a-f-]{36}$/i.test(new URL(response.url()).pathname), { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_setext_leave_read');
+      await page.getByRole('button', { name: 'WP5 attachment fallback fixture', exact: true }).click();
+      expect((await attachmentRead).status(), 'notes_setext_leave_read').toBe(200);
+      const fallbackRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
+      observed.setDiagnosticAssertion('notes_setext_editor_open');
+      await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_setext_reopen_read');
+      expect((await fallbackRead).status()).toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_setext_fallback');
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      observed.setDiagnosticAssertion('notes_setext_fallback_render');
+      // Opaque frontmatter makes the legacy editor read-only by contract; in
+      // that case fallback preserves the exact source in the raw read-only view.
+      await expect(page.locator('.notes-raw-source')).toContainText('Setext compatibility heading');
+
+      observed.setFailureStage('notes_blocksuite_reopen');
+      observed.setDiagnosticAssertion('notes_attachment_select');
+      await page.getByRole('button', { name: 'WP5 attachment fallback fixture', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_attachment_open');
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_attachment_fallback');
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器');
+      observed.setDiagnosticAssertion('notes_attachment_render');
+      await expect(page.locator('.ProseMirror img[alt="synthetic attachment"]')).toBeVisible();
+
+      observed.setDiagnosticAssertion('notes_unsafe_select');
+      await page.getByRole('button', { name: 'WP5 unsafe Markdown fixture', exact: true }).click();
+      observed.setDiagnosticAssertion('notes_unsafe_source');
+      await expect(page.locator('.notes-raw-source')).toContainText('[[Synthetic Wiki Target]]');
+      await expect(page.locator('.notes-raw-source')).toContainText('![[synthetic-embed.png]]');
+      await expect(page.locator('.notes-raw-source')).toContainText('<details>');
+      await expect(page.locator('.notes-raw-source')).toContainText('> > [!NOTE]');
+      observed.setDiagnosticAssertion('notes_unsafe_safety');
+      await expect(page.locator('.notes-safety')).toBeVisible();
+      observed.setDiagnosticAssertion('notes_unsafe_editor_hidden');
+      await expect(page.getByRole('button', { name: 'BlockSuite 编辑器' })).toHaveCount(0);
+
+    }
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
 
     // Exercise the real Notes dialog layout CSS against each accepted viewport.
@@ -1124,6 +1973,21 @@ test.afterEach(async ({ page }, testInfo) => {
     const observed = observations.get(testInfo);
     const viewport = viewports.find(({ name }) => testInfo.title.includes(name));
     const errors = testInfo.errors;
+    const notesUiState = await page.evaluate(() => {
+      const visible = (element: Element | null) => Boolean(element && (element as HTMLElement).getClientRects().length);
+      if (visible(document.querySelector('vite-error-overlay'))) return 'vite_error';
+      const fallback = document.querySelector('.notes-document [role="alert"]');
+      if (visible(fallback)) {
+        const reason = fallback.getAttribute('data-fallback-reason');
+        if (reason && ['invalid_frontmatter', 'unsupported_syntax', 'markdown_conversion_error', 'unsafe_roundtrip', 'content_mismatch', 'view_initialization_error'].includes(reason)) return `fallback_${reason}`;
+        return 'fallback_message';
+      }
+      if (visible(document.querySelector('.blocksuite-notes-canvas'))) return 'blocksuite_canvas';
+      if (visible(document.querySelector('.notes-document .ProseMirror'))) return 'legacy_editor';
+      const root = document.querySelector('#root');
+      if (!document.body.childElementCount || (root && !root.childElementCount)) return 'app_blank';
+      return 'canvas_missing';
+    }).catch(() => 'unavailable');
     const isTimeout = errors.some((error) => error.name === 'TimeoutError' || /timeout/i.test(error.message));
     const isAssertion = errors.some((error) => /\bexpect(?:\(|\.)|\bExpected:|\bReceived:/i.test(error.message));
     await writeFile(join(testInfo.outputDir, 'failure-summary.json'), JSON.stringify({
@@ -1134,7 +1998,24 @@ test.afterEach(async ({ page }, testInfo) => {
       assertion_id: observed?.diagnosticAssertion ?? 'test_setup',
       activity_get_statuses: observed?.activityReadStatuses ?? [],
       notes_collection_statuses: observed?.notesCollectionReadStatuses ?? [],
+      notes_item_read_statuses: observed?.notesItemReadStatuses ?? [],
+      notes_write_statuses: observed?.notesWriteStatuses ?? [],
+      notes_readback_failure: observed?.notesReadbackFailure ?? null,
+      notes_seed_status: observed?.notesSeedStatus ?? null,
+      notes_ui_state: notesUiState,
+      page_error_names: observed?.pageErrorNames ?? [],
+      page_error_categories: observed?.pageErrorCategories ?? [],
+      page_error_sources: observed?.pageErrorSources ?? [],
+      page_error_summaries: observed?.pageErrorSummaries ?? [],
+      blocksuite_module_statuses: observed?.requestRecords.filter((record) => record.method === 'GET'
+        && /blocksuite|node_modules\/\.vite/i.test(record.path)).map((record) => record.status).slice(-8) ?? [],
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
+      ...(observed?.wp5AutosaveProbeEvents.length ? {
+        wp5_autosave_events: await page.evaluate(() => {
+          const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
+          return probe?.events ?? [];
+        }).catch(() => []).then((browserEvents) => boundedWp5ProbeTimeline([...observed.wp5AutosaveProbeEvents, ...browserEvents])),
+      } : {}),
     }, null, 2), { mode: 0o600 });
   }
   const observed = observations.get(testInfo);

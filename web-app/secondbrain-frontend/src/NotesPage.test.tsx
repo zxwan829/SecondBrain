@@ -26,6 +26,23 @@ import { NotesPage } from './NotesPage';
 describe('NotesPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
+  it('keeps opaque frontmatter out of the legacy editor and offers BlockSuite for safe body edits', async () => {
+    const note = { collection: 'drafts', path: '中文笔记.md', content: '---\ntags: [合成]\ncustom: 保留\n---\n\n# 正文\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/notes') return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: note.path, title: '中文笔记' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${encodeURIComponent(note.path)}`) return new Response(JSON.stringify(note), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '中文笔记' }));
+    expect(await screen.findByText(/旧版编辑器保持只读/)).toBeTruthy();
+    expect(document.querySelector('.notes-raw-source')?.textContent).toBe(note.content);
+    expect(screen.getByRole('button', { name: 'BlockSuite 编辑器' })).toBeTruthy();
+    expect(screen.queryByLabelText('合成 Markdown 编辑器')).toBeNull();
+  });
+
   it('opens single-source Inbox for the selected Draft only after the unsaved-navigation guard passes', async () => {
     const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Selected Draft\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
@@ -88,6 +105,47 @@ describe('NotesPage', () => {
     expect(await screen.findByText('版本冲突', {}, { timeout: 3000 })).toBeTruthy();
     expect(screen.getByText('文件已在其他位置修改。当前输入仍保留；请复制未保存内容后重新载入再合并。')).toBeTruthy();
     expect(editor.value).toContain('Conflict content.');
+  });
+
+  it.each([false, true])('keeps a 412 conflict and blocks pending autosaves (already queued: %s)', async (queueSecondSave) => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    let resolvePut: ((response: Response) => void) | undefined;
+    let putCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (init?.method === 'PUT') {
+        putCount += 1;
+        return putCount === 1
+          ? new Promise<Response>((resolve) => { resolvePut = resolve; })
+          : new Response(JSON.stringify({ detail: 'revision changed' }), { status: 412 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    vi.useFakeTimers();
+    fireEvent.change(editor, { target: { value: '# First projection\n' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    expect(resolvePut).toBeTypeOf('function');
+
+    fireEvent.change(editor, { target: { value: '# Latest editor content\n' } });
+    if (queueSecondSave) await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    await act(async () => {
+      resolvePut!(new Response(JSON.stringify({ detail: 'revision changed' }), { status: 412 }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    if (!queueSecondSave) await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+
+    expect(screen.getByText('版本冲突')).toBeTruthy();
+    expect(screen.getByText('文件已在其他位置修改。当前输入仍保留；请复制未保存内容后重新载入再合并。')).toBeTruthy();
+    expect(editor.value).toBe('# Latest editor content\n');
+    expect(putCount).toBe(1);
+    vi.useRealTimers();
   });
 
   it('serializes overlapping autosaves with the newest confirmed ETag', async () => {

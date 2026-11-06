@@ -62,7 +62,9 @@ FAILURE_DIAGNOSTIC_STAGES = {
     "daily_brief_journal", "daily_brief_preview", "daily_brief_confirm",
     "daily_brief_readback", "permission_revocation", "post_revocation_navigation",
     "agent_health", "today", "journal", "calendar", "notes_navigation",
-    "notes_create", "notes_edit_save", "notes_reopen", "viewport_layout",
+    "notes_create", "notes_edit_save", "notes_reopen", "notes_frontmatter_seed",
+    "notes_frontmatter_reopen", "notes_blocksuite_open",
+    "notes_blocksuite_edit", "notes_blocksuite_conflict", "notes_blocksuite_reopen", "viewport_layout",
 }
 FAILURE_DIAGNOSTIC_CODES = {"assertion_failed", "timeout", "test_error"}
 FAILURE_DIAGNOSTIC_ASSERTIONS = {
@@ -86,7 +88,61 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "chat_run_candidates", "chat_run_citations", "chat_run_citation_panel", "chat_run_citation_content",
     "chat_composer_reset", "chat_reload",
     "notes_navigation", "notes_navigation_link", "notes_collections", "notes_create", "notes_save",
-    "notes_readback", "layout_notes", "layout_chat",
+    "notes_readback", "notes_readback_payload", "notes_readback_editor_missing",
+    "notes_frontmatter_seed", "notes_frontmatter_reopen",
+    "notes_blocksuite_button_click", "notes_blocksuite_canvas_visible", "notes_blocksuite_save_status",
+    "notes_blocksuite_body_visible", "notes_blocksuite_enabled", "notes_blocksuite_contenteditable",
+    "notes_blocksuite_simple_open",
+    "notes_blocksuite_open", "notes_blocksuite_edit", "notes_blocksuite_edit_focus",
+    "notes_blocksuite_edit_end", "notes_blocksuite_edit_newline", "notes_blocksuite_edit_type",
+    "notes_blocksuite_edit_save_response", "notes_blocksuite_edit_response_body",
+    "notes_blocksuite_saved_title", "notes_blocksuite_saved_tag",
+    "notes_blocksuite_saved_custom_property", "notes_blocksuite_saved_edit_text",
+    "notes_blocksuite_request_content", "notes_blocksuite_response_matches_request",
+    "notes_blocksuite_saved_status", "notes_ui_state_unsaved", "notes_ui_state_saving",
+    "notes_ui_state_conflict", "notes_ui_state_failed", "notes_ui_state_unknown",
+    "notes_blocksuite_conflict_seed", "notes_blocksuite_conflict_rejected",
+    "notes_blocksuite_conflict_editor_enabled", "notes_blocksuite_conflict_unsaved_state",
+    "notes_blocksuite_conflict_ui", "notes_blocksuite_conflict_readback",
+    "notes_blocksuite_conflict_readback_status", "notes_blocksuite_conflict_readback_payload",
+    "notes_blocksuite_reopen_note_selector", "notes_blocksuite_reopen_navigation_response",
+    "notes_blocksuite_reopen_editor_entry",
+    "notes_blocksuite_reopen_canvas", "notes_blocksuite_quick_switch_edit",
+    "notes_blocksuite_quick_switch_fallback", "notes_blocksuite_quick_switch_save_response",
+    "wp5_unsupported_projection_seed", "wp5_unsupported_projection_open",
+    "wp5_unsupported_projection_rejected", "wp5_unsupported_projection_preserved",
+    "wp5_unsupported_projection_no_core_put",
+    "notes_blocksuite_reopen_heading", "notes_blocksuite_reopen_saved_status",
+    "notes_blocksuite_reopen_editor_button",
+    "notes_setext_seed_status_200", "notes_setext_seed_status_401", "notes_setext_seed_status_403",
+    "notes_setext_seed_status_409", "notes_setext_seed_status_412", "notes_setext_seed_status_422",
+    "notes_setext_seed_status_428", "notes_setext_seed_status_other",
+    "notes_setext_reopen_read", "notes_setext_editor_open", "notes_setext_leave_read",
+    "notes_setext_fallback", "notes_setext_fallback_render",
+    "notes_attachment_select", "notes_attachment_open", "notes_attachment_fallback", "notes_attachment_render",
+    "notes_unsafe_select", "notes_unsafe_source", "notes_unsafe_safety", "notes_unsafe_editor_hidden",
+    "notes_blocksuite_reopen_scrollable", "notes_blocksuite_reopen_concurrent_update",
+    "notes_conflict_seed_status_200", "notes_conflict_seed_status_401",
+    "notes_conflict_seed_status_403", "notes_conflict_seed_status_404",
+    "notes_conflict_seed_status_409", "notes_conflict_seed_status_412",
+    "notes_conflict_seed_status_422", "notes_conflict_seed_status_428",
+    "notes_conflict_seed_status_other",
+    "wp5_focus_notes_navigation", "wp5_focus_note_seed", "wp5_focus_editor_open",
+    "wp5_focus_body_target", "wp5_focus_put_received", "wp5_focus_put_request_content",
+    "wp5_focus_put_status", "wp5_focus_put_response_content", "wp5_focus_api_readback",
+    "wp5_focus_put_response_matches_request",
+    "wp5_focus_api_content_equal", "wp5_focus_reopen_api", "wp5_focus_reopen_content",
+    "wp5_focus_saved_status",
+    "wp5_conflict_probe_seed", "wp5_conflict_probe_open", "wp5_conflict_probe_initial_read",
+    "wp5_conflict_probe_canvas", "wp5_conflict_probe_hooks_ready",
+    "wp5_conflict_probe_timer_scheduled", "wp5_conflict_probe_timer_fired",
+    "wp5_conflict_probe_notes-queue-conflict", "wp5_conflict_probe_timeline_bound",
+    "wp5_conflict_probe_external_write", "wp5_conflict_probe_request_path", "wp5_conflict_probe_rejected",
+    "wp5_conflict_probe_readback", "wp5_conflict_probe_reopen", "wp5_conflict_probe_reopen_canvas",
+    "wp5_conflict_probe_reopen_ready", "wp5_conflict_probe_recovery_status",
+    "wp5_conflict_probe_recovery_body", "wp5_conflict_probe_recovery_readback",
+    "notes_blocksuite_reopen",
+    "layout_notes", "layout_chat",
     "daily_brief_navigation", "daily_brief_heading", "daily_brief_saved_readback",
     "daily_brief_open_prepare", "daily_brief_task_source", "daily_brief_project_source",
     "daily_brief_project_count", "daily_brief_project_label", "daily_brief_project_visible",
@@ -96,12 +152,37 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
     "calendar_api_requests",
 }
-MAX_FAILURE_DIAGNOSTIC_BYTES = 1024
+MAX_FAILURE_DIAGNOSTIC_BYTES = 16384
 MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_SCREENSHOT_WIDTH = 2048
 MAX_SCREENSHOT_HEIGHT = 1600
 ALLOW_FAILURE_SCREENSHOT_PUBLICATION = False
+WP5_AUTOSAVE_MARKER = "wp5-conflict-queue"
+WP5_AUTOSAVE_EVENT_NAMES = {
+    "probe-armed", "probe-reload-start", "browser-probe-armed", "probe-rearmed",
+    "notes-queue-unsaved", "notes-save-timer-scheduled",
+    "notes-save-timer-cancelled", "notes-save-timer-fired", "notes-queue-saving",
+    "notes-queue-conflict", "notes-queue-saved", "notes-queue-failed",
+    "browser-put-request", "browser-put-response", "browser-put-requestfailed", "browser-put-requestfinished",
+    "test-request-matcher-accepted", "test-response-matcher-accepted",
+    "core-request-received", "core-response", "core-handler-error",
+    "recovery-response-matcher-accepted", "probe-events-overflow",
+}
+
+
+def _validate_wp5_autosave_events(events):
+    if (not isinstance(events, list) or len(events) > 64
+            or any(not isinstance(event, dict)
+                   or set(event) not in ({"marker", "at_ms", "event"}, {"marker", "at_ms", "event", "status"})
+                   or event.get("marker") != WP5_AUTOSAVE_MARKER
+                   or type(event.get("at_ms")) is not int or event["at_ms"] < 0
+                   or event.get("event") not in WP5_AUTOSAVE_EVENT_NAMES
+                   or ("status" in event and (type(event["status"]) is not int or not 100 <= event["status"] <= 599))
+                   for event in events)
+            or [event["at_ms"] for event in events] != sorted(event["at_ms"] for event in events)):
+        raise RuntimeError("WP5 autosave event timeline rejected")
+    return events
 
 
 def ephemeral_port() -> int:
@@ -237,9 +318,14 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
     seen_viewports = set()
     for entry in value:
         base_keys = {"viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
-        allowed_shapes = {frozenset(base_keys), frozenset(base_keys | {"notes_collection_statuses"}),
-                          frozenset(base_keys | {"daily_brief_get_statuses"}),
-                          frozenset(base_keys | {"notes_collection_statuses", "daily_brief_get_statuses"})}
+        optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
+                         "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
+                         "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
+                         "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
+        allowed_shapes = {
+            frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
+            for mask in range(1 << len(optional_keys))
+        }
         if not isinstance(entry, dict) or frozenset(entry) not in allowed_shapes:
             raise RuntimeError("failure diagnostic fields rejected; upload withheld")
         viewport = entry["viewport"]
@@ -248,7 +334,18 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         assertion_id = entry["assertion_id"]
         activity_statuses = entry["activity_get_statuses"]
         notes_statuses = entry.get("notes_collection_statuses", [])
+        notes_item_statuses = entry.get("notes_item_read_statuses", [])
+        notes_write_statuses = entry.get("notes_write_statuses", [])
+        notes_readback_failure = entry.get("notes_readback_failure")
+        notes_seed_status = entry.get("notes_seed_status")
+        notes_ui_state = entry.get("notes_ui_state")
+        page_error_names = entry.get("page_error_names", [])
+        page_error_categories = entry.get("page_error_categories", [])
+        page_error_sources = entry.get("page_error_sources", [])
+        blocksuite_module_statuses = entry.get("blocksuite_module_statuses", [])
+        page_error_summaries = entry.get("page_error_summaries", [])
         brief_statuses = entry.get("daily_brief_get_statuses", [])
+        autosave_events = entry.get("wp5_autosave_events", [])
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
@@ -259,23 +356,96 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(notes_statuses, list) or len(notes_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in notes_statuses)
+                or not isinstance(notes_item_statuses, list) or len(notes_item_statuses) > 4
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in notes_item_statuses)
+                or not isinstance(notes_write_statuses, list) or len(notes_write_statuses) > 8
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in notes_write_statuses)
+                or (notes_readback_failure is not None and (
+                    not isinstance(notes_readback_failure, str) or notes_readback_failure not in {
+                        "session_required", "action_not_enabled", "draft_directory_permissions_unsafe",
+                        "directory_permissions_unsafe", "note_file_permissions_unsafe", "note_open_rejected",
+                        "note_not_found", "other",
+                    }))
+                or (notes_seed_status is not None
+                    and (type(notes_seed_status) is not int or not 100 <= notes_seed_status <= 599))
+                or (notes_ui_state is not None and (
+                    not isinstance(notes_ui_state, str) or notes_ui_state not in {
+                        "vite_error", "fallback_message", "fallback_invalid_frontmatter", "fallback_unsupported_syntax",
+                        "fallback_markdown_conversion_error", "fallback_unsafe_roundtrip",
+                        "fallback_content_mismatch",
+                        "fallback_view_initialization_error", "blocksuite_canvas", "legacy_editor",
+                        "app_blank", "canvas_missing", "unavailable",
+                    }))
+                or not isinstance(page_error_names, list) or len(page_error_names) > 5
+                or any(not isinstance(name, str) or name not in {
+                    "Error", "TypeError", "ReferenceError", "RangeError", "SyntaxError", "URIError", "unknown",
+                }
+                       for name in page_error_names)
+                or not isinstance(page_error_categories, list) or len(page_error_categories) > 5
+                or any(not isinstance(category, str) or category not in {
+                    "nullish_property_access", "invalid_runtime_symbol", "custom_element_registration",
+                    "module_load_failure", "missing_block_extension", "view_service_error",
+                    "block_schema_error", "document_state_error", "react_lazy_error", "other",
+                } for category in page_error_categories)
+                or not isinstance(page_error_sources, list) or len(page_error_sources) > 5
+                or any(not isinstance(source, str) or source not in {
+                    "blocksuite_module", "notes_page_module", "react_dom", "vite_runtime", "other_module",
+                } for source in page_error_sources)
+                or not isinstance(blocksuite_module_statuses, list) or len(blocksuite_module_statuses) > 8
+                or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
+                       for status in blocksuite_module_statuses)
+                or not isinstance(page_error_summaries, list) or len(page_error_summaries) > 5
+                or any(not isinstance(summary, str) or len(summary) > 120
+                       or not re.fullmatch(r"[A-Za-z0-9 <>._,:()'-]{1,120}", summary)
+                       for summary in page_error_summaries)
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in brief_statuses)
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
+        autosave_events = _validate_wp5_autosave_events(autosave_events)
         seen_viewports.add(viewport)
         normalized = {"viewport": viewport, "stage": stage, "code": code,
                       "assertion_id": assertion_id, "activity_get_statuses": activity_statuses}
         if "notes_collection_statuses" in entry:
             normalized["notes_collection_statuses"] = notes_statuses
+        if "notes_item_read_statuses" in entry:
+            normalized["notes_item_read_statuses"] = notes_item_statuses
+        if "notes_write_statuses" in entry:
+            normalized["notes_write_statuses"] = notes_write_statuses
+        if "notes_readback_failure" in entry:
+            normalized["notes_readback_failure"] = notes_readback_failure
+        if "notes_seed_status" in entry:
+            normalized["notes_seed_status"] = notes_seed_status
+        if "notes_ui_state" in entry:
+            normalized["notes_ui_state"] = notes_ui_state
+        if "page_error_names" in entry:
+            normalized["page_error_names"] = page_error_names
+        if "page_error_categories" in entry:
+            normalized["page_error_categories"] = page_error_categories
+        if "page_error_sources" in entry:
+            normalized["page_error_sources"] = page_error_sources
+        if "blocksuite_module_statuses" in entry:
+            normalized["blocksuite_module_statuses"] = blocksuite_module_statuses
+        if "page_error_summaries" in entry:
+            normalized["page_error_summaries"] = page_error_summaries
         if "daily_brief_get_statuses" in entry:
             normalized["daily_brief_get_statuses"] = brief_statuses
+        if "wp5_autosave_events" in entry:
+            normalized["wp5_autosave_events"] = autosave_events
         validated.append(normalized)
     return validated
 
 
-def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
+def _collect_failure_diagnostics(
+    raw_root: Path, expected_viewports: set[str] | None = None,
+) -> list[dict[str, object]]:
+    if expected_viewports is None:
+        expected_viewports = set(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values())
+    if not expected_viewports or not expected_viewports.issubset(FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()):
+        raise RuntimeError("failure diagnostic viewport selection rejected; upload withheld")
     junit_path = raw_root / "junit.xml"
     summary_path = raw_root / "run-summary.json"
     if junit_path.is_symlink() or summary_path.is_symlink():
@@ -312,8 +482,8 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
         testcase_viewports.append(viewport)
         if any(child.tag.rsplit("}", 1)[-1] in {"failure", "error"} for child in element):
             failed_viewports.append(viewport)
-    if (len(testcase_viewports) != len(FAILURE_JUNIT_TESTCASE_VIEWPORTS)
-            or set(testcase_viewports) != set(FAILURE_JUNIT_TESTCASE_VIEWPORTS.values())
+    if (len(testcase_viewports) != len(expected_viewports)
+            or set(testcase_viewports) != expected_viewports
             or len(set(testcase_viewports)) != len(testcase_viewports)):
         safe_observed = ",".join(testcase_viewports)
         safe_failed = ",".join(failed_viewports)
@@ -356,9 +526,14 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
             except (json.JSONDecodeError, UnicodeDecodeError, OSError) as error:
                 raise RuntimeError("failure diagnostic JSON rejected; upload withheld") from error
             base_keys = {"schema_version", "viewport", "stage", "code", "assertion_id", "activity_get_statuses"}
-            allowed_shapes = {frozenset(base_keys), frozenset(base_keys | {"notes_collection_statuses"}),
-                              frozenset(base_keys | {"daily_brief_get_statuses"}),
-                              frozenset(base_keys | {"notes_collection_statuses", "daily_brief_get_statuses"})}
+            optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
+                             "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
+                             "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
+                             "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
+            allowed_shapes = {
+                frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
+                for mask in range(1 << len(optional_keys))
+            }
             if (not isinstance(raw, dict) or frozenset(raw) not in allowed_shapes
                     or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 2
                     or raw.get("viewport") != viewport):
@@ -370,8 +545,30 @@ def _collect_failure_diagnostics(raw_root: Path) -> list[dict[str, object]]:
             })
             if "notes_collection_statuses" in raw:
                 diagnostics[-1]["notes_collection_statuses"] = raw["notes_collection_statuses"]
+            if "notes_item_read_statuses" in raw:
+                diagnostics[-1]["notes_item_read_statuses"] = raw["notes_item_read_statuses"]
+            if "notes_write_statuses" in raw:
+                diagnostics[-1]["notes_write_statuses"] = raw["notes_write_statuses"]
+            if "notes_readback_failure" in raw:
+                diagnostics[-1]["notes_readback_failure"] = raw["notes_readback_failure"]
+            if "notes_seed_status" in raw:
+                diagnostics[-1]["notes_seed_status"] = raw["notes_seed_status"]
+            if "notes_ui_state" in raw:
+                diagnostics[-1]["notes_ui_state"] = raw["notes_ui_state"]
+            if "page_error_names" in raw:
+                diagnostics[-1]["page_error_names"] = raw["page_error_names"]
+            if "page_error_categories" in raw:
+                diagnostics[-1]["page_error_categories"] = raw["page_error_categories"]
+            if "page_error_sources" in raw:
+                diagnostics[-1]["page_error_sources"] = raw["page_error_sources"]
+            if "blocksuite_module_statuses" in raw:
+                diagnostics[-1]["blocksuite_module_statuses"] = raw["blocksuite_module_statuses"]
+            if "page_error_summaries" in raw:
+                diagnostics[-1]["page_error_summaries"] = raw["page_error_summaries"]
             if "daily_brief_get_statuses" in raw:
                 diagnostics[-1]["daily_brief_get_statuses"] = raw["daily_brief_get_statuses"]
+            if "wp5_autosave_events" in raw:
+                diagnostics[-1]["wp5_autosave_events"] = raw["wp5_autosave_events"]
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
@@ -507,7 +704,9 @@ def is_allowlisted_failure_screenshot(artifacts_root: Path, path: Path) -> bool:
             and relative.parts[2] == FAILURE_SCREENSHOT_NAME)
 
 
-def _copy_publishable_files(raw_root: Path, staging_root: Path) -> int:
+def _copy_publishable_files(
+    raw_root: Path, staging_root: Path, expected_viewports: set[str] | None = None,
+) -> int:
     def copy_regular(source: Path, target: Path) -> None:
         if source.is_symlink():
             raise RuntimeError("symlink report rejected; upload withheld")
@@ -528,7 +727,7 @@ def _copy_publishable_files(raw_root: Path, staging_root: Path) -> int:
         for source in results.rglob("trace.zip"):
             target = staging_root / source.relative_to(raw_root)
             copy_regular(source, target)
-    diagnostics = _collect_failure_diagnostics(raw_root)
+    diagnostics = _collect_failure_diagnostics(raw_root, expected_viewports)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
     screenshots = _failure_screenshot_candidates(raw_root)
     for source in screenshots:
@@ -620,7 +819,10 @@ def _verify_sanitized_png(path: Path, secret: bytes) -> None:
         raise RuntimeError("invalid failure screenshot; upload withheld") from error
 
 
-def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: Path) -> int:
+def publish_verified_reports(
+    raw_root: Path, publish_root: Path, password_path: Path,
+    expected_viewports: set[str] | None = None,
+) -> int:
     """Atomically publish an allowlist of fully sanitized reports or publish nothing."""
     publish_root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if publish_root.is_symlink() or (publish_root.exists() and not publish_root.is_dir()):
@@ -630,7 +832,7 @@ def publish_verified_reports(raw_root: Path, publish_root: Path, password_path: 
     publish_root.mkdir(mode=0o700, exist_ok=True)
     staging_root = Path(tempfile.mkdtemp(prefix=".artifacts-verified-", dir=publish_root.parent))
     try:
-        screenshot_count = _copy_publishable_files(raw_root, staging_root)
+        screenshot_count = _copy_publishable_files(raw_root, staging_root, expected_viewports)
         sanitize_trace_archives(staging_root)
         _sanitize_failure_screenshots(staging_root)
         sanitize_text_reports(staging_root, password_path)
@@ -779,6 +981,29 @@ def seed_daily_brief_sources(dirs: dict[str, Path]) -> dict[str, bytes]:
                             encoding="utf-8")
     os.chmod(journal_file, 0o600)
     return {item.name: item.read_bytes() for item in dirs["journal"].iterdir() if item.is_file()}
+
+
+def seed_notes_safety_fixtures(notes_root: Path) -> None:
+    """Create only synthetic Draft files for unsupported syntax/fallback checks."""
+    fixtures = {
+        "wp5-unsafe-markdown.md": (
+            "# WP5 unsafe Markdown fixture\n\n[[Synthetic Wiki Target]]\n"
+            "![[synthetic-embed.png]]\n\n<details><summary>unknown block</summary></details>\n\n"
+            "> > [!NOTE]\n> > nested synthetic callout\n"
+        ),
+        "wp5-attachment-fallback.md": (
+            "# WP5 attachment fallback fixture\n\n"
+            "![synthetic attachment](attachments/synthetic-attachment.png)\n"
+        ),
+    }
+    for name, content in fixtures.items():
+        # Drafts are stored as <UUID>/note.md. Flat Markdown files in the
+        # Drafts root are intentionally invisible to NotesStore.list_notes().
+        draft = notes_root / str(uuid.uuid4())
+        draft.mkdir(mode=0o700)
+        target = draft / "note.md"
+        target.write_text(content, encoding="utf-8", newline="")
+        os.chmod(target, 0o600)
 
 
 def assert_journal_fixture_unchanged(root: Path, baseline: dict[str, bytes], *,
@@ -1067,7 +1292,11 @@ def main() -> int:
     global CORE_URL, WEB_URL, ALLOW_FAILURE_SCREENSHOT_PUBLICATION
     parser = argparse.ArgumentParser()
     parser.add_argument("--http-smoke-only", action="store_true", help="run synthetic Core HTTP checks without launching a browser")
+    parser.add_argument("--wp5-roundtrip-only", action="store_true", help="run only the desktop WP5 Notes save/reopen and conflict-autosave browser probes")
+    parser.add_argument("--wp5-conflict-only", action="store_true", help="run only the desktop WP5 Notes conflict-autosave and recovery browser probe")
+    parser.add_argument("--desktop-only", action="store_true", help="run the existing browser acceptance journey at desktop viewport only")
     options = parser.parse_args()
+    wp5_probe_mode = options.wp5_roundtrip_only or options.wp5_conflict_only
     # The workflow uploads only this directory. It starts empty on every run;
     # raw Playwright output lives in the private temp root below and is never a
     # parent or sibling matched by the upload-artifact path.
@@ -1092,6 +1321,8 @@ def main() -> int:
     os.chmod(root, 0o700)
     raw_artifacts = root / "playwright-raw"
     raw_artifacts.mkdir(mode=0o700)
+    wp5_autosave_core_log = root / "wp5-autosave-core.jsonl"
+    wp5_autosave_browser_log = root / "wp5-autosave-browser.json"
     processes: list[subprocess.Popen] = []
     log_files = []
     result = 1
@@ -1099,6 +1330,7 @@ def main() -> int:
         dirs = {name: root / name for name in ("raw", "review", "state", "knowledge", "journal", "task", "projects", "briefs", "notes")}
         for path in dirs.values():
             path.mkdir(mode=0o700)
+        seed_notes_safety_fixtures(dirs["notes"])
         journal_fixture = seed_daily_brief_sources(dirs)
         password_path = root / "app-password"
         password_path.write_text(secrets.token_urlsafe(32) + "\n", encoding="utf-8")
@@ -1114,6 +1346,12 @@ def main() -> int:
             "SB_TASK_ROOT": str(dirs["task"]),
             "SB_PROJECTS_INDEX_ROOT": str(dirs["projects"]),
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
+            "SB_E2E_WP5_ROUNDTRIP_ONLY": "true" if wp5_probe_mode else "false",
+            "SB_E2E_WP5_CONFLICT_ONLY": "true" if options.wp5_conflict_only else "false",
+            "SB_E2E_WP5_AUTOSAVE_MARKER": "wp5-conflict-queue" if wp5_probe_mode else "",
+            "SB_E2E_WP5_AUTOSAVE_LOG": str(wp5_autosave_core_log) if wp5_probe_mode else "",
+            "SB_E2E_WP5_AUTOSAVE_BROWSER_LOG": str(wp5_autosave_browser_log) if wp5_probe_mode else "",
+            "SB_E2E_DESKTOP_ONLY": "true" if options.desktop_only else "false",
             "SB_NOTES_DRAFTS_ROOT": str(dirs["notes"]),
             "SB_APP_PASSWORD_FILE": str(password_path),
             "SB_DASHBOARD_ORIGINS": WEB_URL,
@@ -1168,6 +1406,63 @@ def main() -> int:
             test_process = launch_browser_tests(env, test_log)
             processes.append(test_process)
             test_returncode = wait_for_test_process(test_process)
+            core_probe_events = []
+            if wp5_probe_mode and wp5_autosave_core_log.exists():
+                if wp5_autosave_core_log.stat().st_size > 2048 or not wp5_autosave_core_log.is_file():
+                    raise RuntimeError("WP5 Core probe log exceeded bounded size")
+                for line in wp5_autosave_core_log.read_text(encoding="utf-8").splitlines()[:8]:
+                    row = json.loads(line)
+                    if (not isinstance(row, dict) or row.get("marker") != "wp5-conflict-queue"
+                            or row.get("event") not in {"core-request-received", "core-response", "core-handler-error"}
+                            or type(row.get("at_ms")) is not int):
+                        raise RuntimeError("WP5 Core probe event rejected")
+                    event = {"marker": row["marker"], "at_ms": row["at_ms"], "event": row["event"]}
+                    if "status" in row:
+                        if type(row["status"]) is not int or not 100 <= row["status"] <= 599:
+                            raise RuntimeError("WP5 Core probe status rejected")
+                        event["status"] = row["status"]
+                    core_probe_events.append(event)
+                core_probe_events.sort(key=lambda item: item["at_ms"])
+            browser_probe_events = []
+            if wp5_probe_mode and wp5_autosave_browser_log.exists():
+                browser_info = wp5_autosave_browser_log.lstat()
+                if (wp5_autosave_browser_log.is_symlink() or not wp5_autosave_browser_log.is_file()
+                        or browser_info.st_size > 16384 or browser_info.st_uid != os.geteuid()
+                        or browser_info.st_mode & 0o077):
+                    raise RuntimeError("WP5 browser probe log rejected")
+                browser_probe_events = _validate_wp5_autosave_events(
+                    json.loads(wp5_autosave_browser_log.read_text(encoding="utf-8")))
+            failure_summary_paths = list(raw_artifacts.rglob("failure-summary.json"))
+            if wp5_probe_mode and not browser_probe_events:
+                for source in failure_summary_paths:
+                    summary_data = json.loads(source.read_text(encoding="utf-8"))
+                    browser_probe_events = summary_data.get("wp5_autosave_events", [])
+                    break
+            autosave_timeline_raw = sorted([*browser_probe_events, *core_probe_events], key=lambda item: item["at_ms"])
+            if len(autosave_timeline_raw) > 64:
+                autosave_timeline_raw = [*autosave_timeline_raw[:63], {
+                    "marker": WP5_AUTOSAVE_MARKER,
+                    "at_ms": autosave_timeline_raw[-1]["at_ms"],
+                    "event": "probe-events-overflow",
+                }]
+                autosave_timeline_raw.sort(key=lambda item: item["at_ms"])
+            autosave_timeline = _validate_wp5_autosave_events(autosave_timeline_raw)
+            if wp5_probe_mode and test_returncode == 0:
+                if any(event["event"] == "probe-events-overflow" for event in autosave_timeline):
+                    raise RuntimeError("WP5 autosave timeline overflow on successful run")
+                core_signature = [(event["event"], event.get("status")) for event in core_probe_events]
+                if core_signature != [
+                    ("core-request-received", None), ("core-response", 412),
+                    ("core-request-received", None), ("core-response", 200),
+                ]:
+                    raise RuntimeError("WP5 Core conflict/recovery status sequence rejected")
+            if wp5_probe_mode:
+                print("WP5_AUTOSAVE_TIMELINE " + json.dumps(autosave_timeline, separators=(",", ":")))
+                for source in failure_summary_paths:
+                    summary_data = json.loads(source.read_text(encoding="utf-8"))
+                    summary_data["wp5_autosave_events"] = autosave_timeline
+                    source.write_text(json.dumps(summary_data, indent=2) + "\n", encoding="utf-8")
+                    os.chmod(source, 0o600)
 
         raw_files = [path for path in dirs["raw"].iterdir() if path.is_file()]
         journal_after = _read_regular_file_snapshot(dirs["journal"])
@@ -1177,16 +1472,22 @@ def main() -> int:
         today_brief_name = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
         brief_file_set_verified = False
         if test_returncode == 0:
-            expected_raw = 1 if options.http_smoke_only else 3
+            expected_raw = 1 if options.http_smoke_only or options.desktop_only else (0 if wp5_probe_mode else 3)
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
-            expected_journal_appends = 0 if options.http_smoke_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
+            expected_journal_appends = 0 if options.http_smoke_only or wp5_probe_mode else (
+                1 if options.desktop_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
+            )
             assert_journal_fixture_unchanged(
                 dirs["journal"], journal_fixture, expected_browser_appends=expected_journal_appends,
             )
-            _assert_exact_brief_file_set(dirs["briefs"], today_brief_name)
-            brief_file_set_verified = True
+            if wp5_probe_mode:
+                if any(dirs["briefs"].iterdir()):
+                    raise RuntimeError("focused WP5 probe unexpectedly wrote Daily Brief files")
+            else:
+                _assert_exact_brief_file_set(dirs["briefs"], today_brief_name)
+                brief_file_set_verified = True
         brief_directory_files = sum(
             1 for path in dirs["briefs"].iterdir() if path.is_file() and not path.is_symlink()
         )
@@ -1215,7 +1516,8 @@ def main() -> int:
         }
         (raw_artifacts / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         os.chmod(raw_artifacts / "run-summary.json", 0o600)
-        publish_verified_reports(raw_artifacts, publish_root, password_path)
+        expected_failure_viewports = {"desktop-1440x1000"} if options.desktop_only else None
+        publish_verified_reports(raw_artifacts, publish_root, password_path, expected_failure_viewports)
         mark_verified_artifact_output()
         result = test_returncode
         return result
