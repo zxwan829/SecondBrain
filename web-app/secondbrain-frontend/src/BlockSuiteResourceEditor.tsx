@@ -175,6 +175,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const [status, setStatus] = useState('正在载入 BlockSuite 资源…');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [recoveryCopyReady, setRecoveryCopyReady] = useState(false);
   noteRef.current = note;
 
   useEffect(() => {
@@ -256,14 +257,42 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     }
   };
 
+  const downloadRecoveryCopy = () => {
+    const store = (host.current as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null)?.__sbBlockSuiteStore;
+    if (!store) return;
+    const snapshot = store.getTransformer().docToSnapshot(store);
+    const spaceDoc = store.spaceDoc as Y.Doc;
+    const body = {
+      schemaVersion: 1,
+      resourceId: resourceRef.current.resourceId,
+      resourceKind: resourceRef.current.resourceKind,
+      docId: resourceRef.current.docId,
+      updateB64: base64(Y.encodeStateAsUpdate(spaceDoc)),
+      snapshot,
+      recoveryContext: { noteCollection: noteRef.current.collection, notePath: noteRef.current.path,
+        noteEtag: noteRef.current.etag, resourceEtag: resourceRef.current.etag },
+    };
+    const blob = new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `blocksuite-${resourceRef.current.resourceId}-recovery.json`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setRecoveryCopyReady(true);
+  };
+
   return <div className="blocksuite-resource-backdrop" role="presentation">
     <section className="blocksuite-resource-dialog" role="dialog" aria-modal="true" aria-label={initialResource.resourceKind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源'}>
       <header><strong>{initialResource.resourceKind === 'database' ? '独立 Database 资源' : '独立 Edgeless 画布'}</strong>
         <span role="status" aria-live="polite">{status}</span>
-        <button type="button" onClick={onClose} disabled={dirty || saving}>关闭</button>
+        <button type="button" onClick={onClose} disabled={saving || (dirty && !recoveryCopyReady)}>
+          {dirty && recoveryCopyReady ? '关闭（恢复副本已下载）' : '关闭'}
+        </button>
       </header>
       <div className="blocksuite-resource-host" ref={host} data-kind={initialResource.resourceKind} />
-      <footer><span>资源通过 Markdown 附件引用关联；Yjs update 为保存源。图片和 Blob 暂不支持。</span>
+      <footer><span>资源通过 Markdown 附件引用关联；Yjs update 为保存源。保存冲突或失败时可下载未保存恢复副本。</span>
+        <button type="button" onClick={downloadRecoveryCopy} disabled={!dirty || saving}>下载未保存恢复副本</button>
         <button type="button" onClick={() => void save()} disabled={!dirty || saving}>{saving ? '保存中…' : '保存资源'}</button>
       </footer>
     </section>
