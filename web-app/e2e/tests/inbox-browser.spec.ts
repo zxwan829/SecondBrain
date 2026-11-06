@@ -1369,6 +1369,8 @@ test.afterEach(async ({ page }, testInfo) => {
       page_error_names: observed?.pageErrorNames ?? [],
       page_error_categories: observed?.pageErrorCategories ?? [],
       page_error_sources: observed?.pageErrorSources ?? [],
+      blocksuite_module_statuses: observed?.requestRecords.filter((record) => record.method === 'GET'
+        && /blocksuite|node_modules\/\.vite/i.test(record.path)).map((record) => record.status).slice(-8) ?? [],
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
     }, null, 2), { mode: 0o600 });
   }
