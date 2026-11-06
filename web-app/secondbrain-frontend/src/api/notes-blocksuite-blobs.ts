@@ -19,7 +19,7 @@ export class NoteBoundBlockSuiteBlobSource implements BlobSource {
   async get(key: string): Promise<Blob | null> {
     assertCanonicalBlockSuiteBlobKey(key);
     const note = this.getNote();
-    const response = await this.fetcher(blobUrl(note, key), {
+    const response = await this.fetcher.call(globalThis, blobUrl(note, key), {
       credentials: 'same-origin', cache: 'no-store',
     });
     if (response.status === 404) return null;
@@ -50,7 +50,7 @@ export class NoteBoundBlockSuiteBlobSource implements BlobSource {
     }
     if (await blockSuiteSha(bytes) !== key) throw new Error('BlockSuite Blob key 与内容 SHA-256 不一致');
     const note = this.getNote();
-    const response = await this.fetcher(blobUrl(note, key), {
+    const response = await this.fetcher.call(globalThis, blobUrl(note, key), {
       method: 'PUT', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': mediaType, 'If-Match': `"${note.etag}"`,
         'If-Artifact-Set-Match': `"${this.artifactSetEtag || note.artifactSetEtag || ''}"` },
