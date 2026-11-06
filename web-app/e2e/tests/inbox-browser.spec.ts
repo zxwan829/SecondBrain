@@ -852,6 +852,54 @@ for (const viewport of activeViewports) {
       const readbackPayload = await readback.json() as { content?: unknown };
       expect(readbackPayload.content, 'wp5_focus_api_content_equal').toBe(savedPayload.content);
 
+      const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string) => {
+        const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources`, { timeout: 15000 });
+        observed.setDiagnosticAssertion('wp5_focus_put_received');
+        await page.getByRole('button', { name: buttonName }).click();
+        const created = await resourcePost;
+        expect(created.status(), `wp5_resource_${kind}_create`).toBe(201);
+        const resourceInfo = await created.json() as { resource_id: string; filename: string; reference: string; etag: string };
+        const referenceSave = page.waitForResponse((response) => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 15000 });
+        const resourceDialog = page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' });
+        await expect(resourceDialog).toBeVisible({ timeout: 20000 });
+        const referenceResult = await referenceSave;
+        expect(referenceResult.status(), `wp5_resource_${kind}_reference`).toBe(200);
+        const resourceHost = resourceDialog.locator('.blocksuite-resource-host');
+        await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '可编辑测试画布', { timeout: 15000 });
+        const editable = resourceHost.locator('[contenteditable="true"]').first();
+        await expect(editable).toBeVisible();
+        await editable.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await page.keyboard.insertText(marker);
+        await expect(resourceDialog.getByText('有未保存的资源修改')).toBeVisible();
+        const resourcePut = page.waitForResponse((response) => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`, { timeout: 15000 });
+        await resourceDialog.getByRole('button', { name: '保存资源' }).click();
+        const savedResource = await resourcePut;
+        expect(savedResource.status(), `wp5_resource_${kind}_save`).toBe(200);
+        expect((await savedResource.json() as { etag: string }).etag).not.toBe(resourceInfo.etag);
+        await expect(resourceDialog.getByRole('status')).toHaveText('BlockSuite 资源已保存');
+        const readResource = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
+        expect(readResource.status(), `wp5_resource_${kind}_readback`).toBe(200);
+        const readPayload = await readResource.json() as { updateB64: string; snapshot: Record<string, unknown> };
+        expect(readPayload.updateB64.length).toBeGreaterThan(4);
+        expect(JSON.stringify(readPayload.snapshot)).toContain(marker);
+        await resourceDialog.getByRole('button', { name: '关闭' }).click();
+        const resourceLink = page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' }).last();
+        await expect(resourceLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
+        await resourceLink.click();
+        await expect(page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' })).toBeVisible({ timeout: 15000 });
+        await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
+        await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
+      };
+
+      observed.setFailureStage('notes_blocksuite_edit');
+      await roundtripResource('database', '新建 BlockSuite Database', 'DB persistence marker');
+      await roundtripResource('edgeless-canvas', '新建 BlockSuite Edgeless 画布', 'Canvas persistence marker');
+
       observed.setFailureStage('notes_blocksuite_reopen');
       await page.reload();
       const reopenedRead = page.waitForResponse((response) => response.request().method() === 'GET'
