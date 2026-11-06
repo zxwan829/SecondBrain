@@ -1146,7 +1146,9 @@ for (const viewport of viewports) {
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const canvas = page.locator('.blocksuite-notes-canvas');
       observed.setDiagnosticAssertion('notes_blocksuite_canvas_visible');
-      await expect(canvas).toBeVisible();
+      // The optional editor is a large lazy-loaded chunk; do not apply the
+      // default 5s assertion timeout to its first mount in CI Chromium.
+      await expect(canvas).toBeVisible({ timeout: 20000 });
       observed.setDiagnosticAssertion('notes_blocksuite_save_status');
       await expect(page.getByRole('status').filter({ hasText: 'BlockSuite Page · Core Notes 保存' })).toBeVisible();
       observed.setDiagnosticAssertion('notes_blocksuite_body_visible');
