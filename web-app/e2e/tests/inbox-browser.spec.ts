@@ -1074,6 +1074,7 @@ for (const viewport of viewports) {
     const createdNote = await createNoteResponse.json() as { collection: string; path: string };
     expect(createdNote.collection).toBe('drafts');
     expect(createdNote.path).toMatch(/^[0-9a-f-]{36}$/i);
+    let activeNotePath = createdNote.path;
     const editor = page.locator('.ProseMirror');
     await expect(editor).toBeVisible();
 
@@ -1081,7 +1082,7 @@ for (const viewport of viewports) {
     observed.setFailureStage('notes_edit_save');
     const saveNoteResponsePromise = page.waitForResponse((response) => {
       const request = response.request();
-      return request.method() === 'PUT' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
+      return request.method() === 'PUT' && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`;
     }, { timeout: 5000 });
     observed.setDiagnosticAssertion('notes_save');
     await editor.fill(syntheticNoteBody);
@@ -1093,7 +1094,7 @@ for (const viewport of viewports) {
     await page.reload();
     const readNoteResponsePromise = page.waitForResponse((response) => {
       const request = response.request();
-      return request.method() === 'GET' && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`;
+      return request.method() === 'GET' && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`;
     }, { timeout: 5000 });
     observed.setDiagnosticAssertion('notes_readback');
     await page.getByRole('button', { name: syntheticNoteBody, exact: true }).click();
@@ -1117,20 +1118,23 @@ for (const viewport of viewports) {
       const syntheticFrontmatter = `---\ntitle: WP5 synthetic note\ntags:\n  - wp5-synthetic\ncustom: preserve-me\n---\n\n# WP5 synthetic note\n\n${syntheticNoteBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('notes_frontmatter_seed');
-      const seededStatus = await page.evaluate(async ({ path, etag, content }) => {
-        const response = await fetch(path, { method: 'PUT', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'If-Match': etag },
-          body: JSON.stringify({ content }) });
-        return response.status;
-      }, { path: `/api/notes/drafts/${createdNote.path}`, etag: readNoteResponse.headers()['etag'] ?? '',
-        content: syntheticFrontmatter });
+      const seededResult = await page.evaluate(async (content) => {
+        const response = await fetch('/api/notes', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+        return { status: response.status, note: response.ok ? await response.json() : null };
+      }, syntheticFrontmatter);
+      const seededStatus = seededResult.status;
       observed.setNotesSeedStatus(seededStatus);
       expect(seededStatus, 'notes_seed_synthetic_frontmatter').toBe(200);
+      const seededNote = seededResult.note as { collection?: unknown; path?: unknown };
+      expect(seededNote.collection).toBe('drafts');
+      expect(typeof seededNote.path).toBe('string');
+      activeNotePath = seededNote.path as string;
       observed.setFailureStage('notes_frontmatter_reopen');
       observed.setDiagnosticAssertion('notes_frontmatter_reopen');
       await page.reload();
       const frontmatterRead = page.waitForResponse((response) => response.request().method() === 'GET'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
       await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
       const rereadFrontmatter = await frontmatterRead;
       expect(rereadFrontmatter.status(), 'notes_frontmatter_read').toBe(200);
@@ -1150,7 +1154,7 @@ for (const viewport of viewports) {
       observed.setDiagnosticAssertion('notes_blocksuite_edit');
       const updatedBody = `WP5 BlockSuite 保存 ${viewport.name}`;
       const blocksuiteSave = page.waitForResponse((response) => response.request().method() === 'PUT'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 10000 });
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
       await block.click();
       await page.keyboard.press('Control+End');
       await page.keyboard.press('Enter');
@@ -1167,13 +1171,13 @@ for (const viewport of viewports) {
       // A concurrent Core edit advances the ETag. The stale editor must receive
       // 412 and leave that external content intact rather than overwrite it.
       const concurrentText = 'WP5 synthetic concurrent Core update';
-      const concurrent = await page.request.put(`${baseUrl}/api/notes/drafts/${createdNote.path}`, {
+      const concurrent = await page.request.put(`${baseUrl}/api/notes/drafts/${activeNotePath}`, {
         headers: { 'If-Match': saved.headers()['etag'] ?? '' },
         data: { content: `${savedPayload.content}\n${concurrentText}\n` },
       });
       expect(concurrent.status(), 'notes_seed_concurrent_update').toBe(200);
       const staleWrite = page.waitForResponse((response) => response.request().method() === 'PUT'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 10000 });
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
       await block.click();
       await page.keyboard.press('Control+End');
       await page.keyboard.press('Enter');
@@ -1181,7 +1185,7 @@ for (const viewport of viewports) {
       const rejected = await staleWrite;
       expect(rejected.status(), 'notes_blocksuite_conflict').toBe(412);
       await expect(page.getByRole('status').filter({ hasText: '版本冲突' })).toBeVisible();
-      const afterConflict = await page.request.get(`${baseUrl}/api/notes/drafts/${createdNote.path}`);
+      const afterConflict = await page.request.get(`${baseUrl}/api/notes/drafts/${activeNotePath}`);
       const currentAfterConflict = await afterConflict.json() as { content: string };
       expect(currentAfterConflict.content).toContain(concurrentText);
       expect(currentAfterConflict.content).not.toContain('WP5 stale browser edit must not replace Core');
@@ -1190,7 +1194,7 @@ for (const viewport of viewports) {
       page.once('dialog', (dialog) => void dialog.accept());
       await page.reload();
       const blockSuiteRead = page.waitForResponse((response) => response.request().method() === 'GET'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
       await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
       const reread = await blockSuiteRead;
       expect(reread.status(), 'notes_blocksuite_reopen').toBe(200);
@@ -1199,7 +1203,7 @@ for (const viewport of viewports) {
       await expect(page.locator('.blocksuite-notes-canvas')).toContainText('preserve-me');
       const quickSwitchEdit = 'WP5 quick fallback edit preserved';
       const quickSwitchSave = page.waitForResponse((response) => response.request().method() === 'PUT'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 10000 });
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 10000 });
       const reopenedBlock = page.locator('.blocksuite-notes-canvas [contenteditable="true"]').first();
       await reopenedBlock.click();
       await page.keyboard.press('Control+End');
@@ -1215,17 +1219,17 @@ for (const viewport of viewports) {
       // Setext is accepted by Core but may not be preserved by this Page
       // adapter. If round-trip comparison rejects it, the UI must keep the
       // legacy editor and source text available.
-      const latest = await page.request.get(`${baseUrl}/api/notes/drafts/${createdNote.path}`);
+      const latest = await page.request.get(`${baseUrl}/api/notes/drafts/${activeNotePath}`);
       const latestNote = await latest.json() as { content: string };
       const setextContent = `${latestNote.content}\nSetext compatibility heading\n===\n`;
-      const setextSeed = await page.request.put(`${baseUrl}/api/notes/drafts/${createdNote.path}`, {
+      const setextSeed = await page.request.put(`${baseUrl}/api/notes/drafts/${activeNotePath}`, {
         headers: { 'If-Match': latest.headers()['etag'] ?? '' }, data: { content: setextContent },
       });
       expect(setextSeed.status(), 'notes_seed_setext_fallback').toBe(200);
       page.once('dialog', (dialog) => void dialog.accept());
       await page.reload();
       const fallbackRead = page.waitForResponse((response) => response.request().method() === 'GET'
-        && new URL(response.url()).pathname === `/api/notes/drafts/${createdNote.path}`, { timeout: 5000 });
+        && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`, { timeout: 5000 });
       await page.getByRole('button', { name: 'WP5 synthetic note', exact: true }).click();
       await fallbackRead;
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
