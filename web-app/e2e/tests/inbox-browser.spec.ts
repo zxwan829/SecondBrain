@@ -940,7 +940,7 @@ for (const viewport of activeViewports) {
         const resourceHost = resourceDialog.locator('.blocksuite-resource-host');
         observed.setDiagnosticAssertion('wp5_resource_content_visible');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_007');
-        await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '独立 Edgeless 便签', { timeout: 15000 });
+        await expect(resourceHost.getByText(kind === 'database' ? '测试数据库' : '独立 Edgeless 便签', { exact: true }).first()).toBeVisible({ timeout: 15000 });
         if (kind === 'edgeless-canvas') await resourceHost.getByText('独立 Edgeless 便签', { exact: true }).dblclick();
         const editable = resourceHost.locator('[contenteditable="true"]:visible').first();
         observed.setDiagnosticAssertion('wp5_resource_editable');
@@ -1013,7 +1013,7 @@ for (const viewport of activeViewports) {
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_020');
         await expect(page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' })).toBeVisible({ timeout: 15000 });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_021');
-        await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
+        await expect(page.getByRole('dialog').locator('.blocksuite-resource-host').getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 15000 });
         await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
         await page.reload();
         const refreshedNoteRead = page.waitForResponse((response) => response.request().method() === 'GET'
@@ -1028,7 +1028,7 @@ for (const viewport of activeViewports) {
         await expect(refreshedLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
         await refreshedLink.click();
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_025');
-        await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
+        await expect(page.getByRole('dialog').locator('.blocksuite-resource-host').getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 15000 });
         const reopenedDialog = page.getByRole('dialog');
         if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
           const currentNoteResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
