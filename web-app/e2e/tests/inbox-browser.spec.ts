@@ -932,7 +932,20 @@ for (const viewport of activeViewports) {
         await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '可编辑测试画布', { timeout: 15000 });
         const editable = resourceHost.locator('[contenteditable="true"]:visible').first();
         observed.setDiagnosticAssertion('wp5_resource_editable');
-        await expect(editable).toBeVisible();
+        await expect(editable).toBeVisible().catch(async error => {
+          console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(await resourceHost.evaluate(host => {
+            const elements: Element[] = [];
+            const walk = (root: Element | ShadowRoot) => { for (const child of root.children) { elements.push(child); walk(child); if (child.shadowRoot) walk(child.shadowRoot); } };
+            walk(host);
+            return { editableTrue: elements.filter(e => e.getAttribute('contenteditable') === 'true').length,
+              editableFalse: elements.filter(e => e.getAttribute('contenteditable') === 'false').length,
+              richText: elements.filter(e => e.localName === 'rich-text').length,
+              hostHeight: Math.round(host.getBoundingClientRect().height),
+              connected: host.isConnected,
+              readonly: Boolean((host as HTMLElement & { __sbBlockSuiteStore?: { readonly: boolean } }).__sbBlockSuiteStore?.readonly) };
+          })));
+          throw error;
+        });
         await editable.click();
         await page.keyboard.press('End');
         await page.keyboard.press('Enter');
