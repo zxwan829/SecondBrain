@@ -1496,10 +1496,14 @@ for (const viewport of activeViewports) {
       const latest = await page.request.get(`${baseUrl}/api/notes/drafts/${activeNotePath}`);
       const latestNote = await latest.json() as { content: string };
       const setextContent = `${latestNote.content}\nSetext compatibility heading\n===\n`;
-      const setextSeed = await page.request.put(`${baseUrl}/api/notes/drafts/${activeNotePath}`, {
-        headers: { 'If-Match': latest.headers()['etag'] ?? '' }, data: { content: setextContent },
-      });
-      const setextStatus = setextSeed.status();
+      const setextStatus = await page.evaluate(async ({ path, content, etag }) => {
+        const response = await fetch(`/api/notes/drafts/${path}`, {
+          method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': etag },
+          body: JSON.stringify({ content }),
+        });
+        return response.status;
+      }, { path: activeNotePath, content: setextContent, etag: latest.headers()['etag'] ?? '' });
       observed.setDiagnosticAssertion(setextStatus === 200 ? 'notes_setext_seed_status_200'
         : setextStatus === 401 ? 'notes_setext_seed_status_401'
           : setextStatus === 403 ? 'notes_setext_seed_status_403'
