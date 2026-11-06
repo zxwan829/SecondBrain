@@ -942,7 +942,12 @@ for (const viewport of activeViewports) {
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_007');
         await expect(resourceHost.getByText(kind === 'database' ? '测试数据库' : '独立 Edgeless 便签', { exact: true }).first()).toBeVisible({ timeout: 15000 });
         observed.setDiagnosticAssertion('wp5_resource_focus');
-        if (kind === 'edgeless-canvas') await resourceHost.getByText('独立 Edgeless 便签', { exact: true }).dblclick();
+        if (kind === 'edgeless-canvas') {
+          // The gfx tool owns pointer events; the rendered text is pointer-events:none.
+          const bounds = await resourceHost.getByText('独立 Edgeless 便签', { exact: true }).first().boundingBox();
+          expect(bounds).not.toBeNull();
+          await page.mouse.dblclick(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+        }
         const editable = resourceHost.locator('[contenteditable="true"]:visible').first();
         observed.setDiagnosticAssertion('wp5_resource_editable');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_008');
