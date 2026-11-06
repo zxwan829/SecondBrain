@@ -410,6 +410,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
             normalized["notes_collection_statuses"] = notes_statuses
         if "notes_item_read_statuses" in entry:
             normalized["notes_item_read_statuses"] = notes_item_statuses
+        if "notes_write_statuses" in entry:
+            normalized["notes_write_statuses"] = notes_write_statuses
         if "notes_readback_failure" in entry:
             normalized["notes_readback_failure"] = notes_readback_failure
         if "notes_seed_status" in entry:
