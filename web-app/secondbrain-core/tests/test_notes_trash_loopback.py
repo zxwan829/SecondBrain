@@ -11,11 +11,14 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
+import pytest
 import uvicorn
 from fastapi import HTTPException
 
 from secondbrain_core.app import create_app
 import secondbrain_core.modules.notes_trash as notes_trash_module
+from secondbrain_core.modules.notes import NotesStore
+from secondbrain_core.modules.notes_trash import NotesTrashStore
 
 
 def _private(path):
@@ -82,9 +85,22 @@ def _rename_race_worker(source_root, target_root, target_name, barrier, results)
 def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exposed(tmp_path, monkeypatch):
     app, listener, host, port, origin, projects, vault = _run_core(tmp_path, monkeypatch)
     note = projects / "synthetic-note.md"
-    original = b"---\ntags: [keep-me]\n---\n\n# Synthetic\n\n[[unmodified wiki link]]\n"
+    original = b"---\ntags: [keep-me]\n---\n\n# Synthetic\n\nUnmodified Markdown body.\n"
     note.write_bytes(original)
     os.chmod(note, 0o600)
+    note_store = NotesStore(tmp_path / "drafts", {"projects": projects})
+    initial_note_etag = hashlib.sha256(original).hexdigest()
+    resource_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "trash_test_doc",
+                     "updateB64": "eWpzLXRyYXNoLXRlc3Q=", "snapshot": {"blocks": ["synthetic"]}}
+    created_resource = note_store.create_blocksuite_resource("projects", note.name, resource_body,
+                                                             initial_note_etag)
+    note_with_reference = original.decode("utf-8") + "\n" + created_resource["reference"] + "\n"
+    note_store.update("projects", note.name, note_with_reference, initial_note_etag)
+    original = note_with_reference.encode("utf-8")
+    resource_id = created_resource["resource_id"]
+    resource_source = projects / "attachments" / created_resource["filename"]
+    resource_raw = resource_source.read_bytes()
+    resource_sha = hashlib.sha256(resource_raw).hexdigest()
     attachment_dir = _private(projects / "attachments")
     attachment = attachment_dir / "shared.bin"
     attachment.write_bytes(b"synthetic-shared-attachment")
@@ -171,7 +187,12 @@ def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exp
             assert not note.exists()
             trash_item = vault / ".trash" / "secondbrain" / entry["trash_id"]
             assert (trash_item / "note.md").read_bytes() == original
+            assert (trash_item / "resources" / created_resource["filename"]).read_bytes() == resource_raw
+            assert not resource_source.exists()
             assert attachment.read_bytes() == b"synthetic-shared-attachment"
+            with pytest.raises(HTTPException) as trashed_resource_unreadable:
+                note_store.read_blocksuite_resource("projects", note.name, resource_id)
+            assert trashed_resource_unreadable.value.status_code == 404
 
             def deny_notes_restore(request, action):
                 if action == "notes.restore":
@@ -207,11 +228,47 @@ def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exp
                                    headers={"Origin": origin})
             assert conflict.status_code == 409
             assert note.read_bytes() == b"different preexisting content"
+            assert (trash_item / "resources" / created_resource["filename"]).read_bytes() == resource_raw
             note.unlink()
+
+            # Damaged and missing closure files fail closed without publishing
+            # note.md or altering an unrelated attachment.
+            trash_resource = trash_item / "resources" / created_resource["filename"]
+            trash_resource.write_bytes(resource_raw + b"damaged")
+            os.chmod(trash_resource, 0o600)
+            damaged = client.post(f"/api/notes/trash/{entry['trash_id']}/restore", headers={"Origin": origin})
+            assert damaged.status_code == 503
+            assert not note.exists() and not resource_source.exists()
+            trash_resource.write_bytes(resource_raw)
+            os.chmod(trash_resource, 0o600)
+            trash_resource.unlink()
+            missing = client.post(f"/api/notes/trash/{entry['trash_id']}/restore", headers={"Origin": origin})
+            assert missing.status_code == 503
+            assert not note.exists() and not resource_source.exists()
+            trash_resource.write_bytes(resource_raw)
+            os.chmod(trash_resource, 0o600)
+
+            # A conflicting resource destination is not overwritten and leaves
+            # both the note reference and original resource safely in Trash.
+            _private(resource_source.parent)
+            resource_source.write_bytes(b"synthetic conflicting resource")
+            os.chmod(resource_source, 0o600)
+            resource_conflict = client.post(f"/api/notes/trash/{entry['trash_id']}/restore",
+                                            headers={"Origin": origin})
+            assert resource_conflict.status_code == 409
+            assert not note.exists()
+            assert resource_source.read_bytes() == b"synthetic conflicting resource"
+            assert trash_resource.read_bytes() == resource_raw
+            resource_source.unlink()
+
             restored = client.post(f"/api/notes/trash/{entry['trash_id']}/restore",
                                    headers={"Origin": origin})
             assert restored.status_code == 201, restored.text
             assert note.read_bytes() == original
+            restored_resource = note_store.read_blocksuite_resource("projects", note.name, resource_id)
+            assert restored_resource["etag"] == created_resource["etag"]
+            assert hashlib.sha256(resource_source.read_bytes()).hexdigest() == resource_sha
+            assert restored_resource["updateB64"] == resource_body["updateB64"]
             assert attachment.read_bytes() == b"synthetic-shared-attachment"
             replay_restore = client.post(f"/api/notes/trash/{entry['trash_id']}/restore",
                                          headers={"Origin": origin})
@@ -251,6 +308,65 @@ def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exp
         thread.join(timeout=10)
         listener.close()
         assert not thread.is_alive()
+
+
+def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkeypatch):
+    vault = _private(tmp_path / "vault")
+    projects = _private(vault / "Projects")
+    _private(vault / ".trash")
+    drafts = _private(tmp_path / "drafts")
+    store = NotesStore(drafts, {"projects": projects})
+    note = projects / "closure-retry.md"
+    note_bytes = b"# Resource closure retry\n\nStable resource reference follows.\n"
+    note.write_bytes(note_bytes)
+    os.chmod(note, 0o600)
+    note_etag = hashlib.sha256(note_bytes).hexdigest()
+    resource_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "retry_doc",
+                     "updateB64": "c2FtcGxlLXlqcw==", "snapshot": {"blocks": ["retry"]}}
+    created = store.create_blocksuite_resource("projects", note.name, resource_body, note_etag)
+    note_with_reference = note_bytes.decode() + "\n" + created["reference"] + "\n"
+    store.update("projects", note.name, note_with_reference, note_etag)
+    final_note_etag = hashlib.sha256(note_with_reference.encode()).hexdigest()
+    resource_path = projects / "attachments" / created["filename"]
+    resource_bytes = resource_path.read_bytes()
+    trash_root = vault / ".trash" / "secondbrain"
+    trash = NotesTrashStore(store, str(trash_root))
+
+    real_rename = notes_trash_module._rename_noreplace
+    move_calls = 0
+
+    def fail_second_move(source_fd, source_name, target_fd, target_name):
+        nonlocal move_calls
+        move_calls += 1
+        if move_calls == 2:
+            raise OSError(errno.EIO, "synthetic interruption after note move")
+        return real_rename(source_fd, source_name, target_fd, target_name)
+
+    monkeypatch.setattr(notes_trash_module, "_rename_noreplace", fail_second_move)
+    with pytest.raises(HTTPException) as interrupted:
+        trash.trash("projects", note.name, final_note_etag, "closure-retry-key")
+    assert interrupted.value.status_code == 503
+    trash_id = hashlib.sha256(b"closure-retry-key").hexdigest()[:32]
+    item_dir = trash_root / trash_id
+    manifest = json.loads((item_dir / "manifest.json").read_text())
+    assert manifest["state"] == "pending"
+    assert manifest["resources"] == [{"resource_id": created["resource_id"],
+                                      "sha256": hashlib.sha256(resource_bytes).hexdigest(),
+                                      "size_bytes": len(resource_bytes)}]
+    assert not note.exists() and resource_path.read_bytes() == resource_bytes
+    with pytest.raises(HTTPException) as hidden:
+        store.read_blocksuite_resource("projects", note.name, created["resource_id"])
+    assert hidden.value.status_code == 404
+
+    monkeypatch.setattr(notes_trash_module, "_rename_noreplace", real_rename)
+    retried = trash.trash("projects", note.name, final_note_etag, "closure-retry-key")
+    assert retried["status"] == "trashed" and retried["duplicate"] is True
+    assert not resource_path.exists()
+    assert (item_dir / "resources" / created["filename"]).read_bytes() == resource_bytes
+    restored = trash.restore(trash_id)
+    assert restored["status"] == "restored"
+    assert note.read_bytes() == note_with_reference.encode()
+    assert store.read_blocksuite_resource("projects", note.name, created["resource_id"])["etag"] == created["etag"]
 
 
 def test_core_rebuild_recovers_persisted_trash_without_auto_purge(tmp_path, monkeypatch):
@@ -566,13 +682,10 @@ def test_concurrent_pending_replays_converge_on_one_atomic_move(tmp_path, monkey
             assert interrupted.status_code == 503
             monkeypatch.setattr(notes_trash_module, "_rename_noreplace", real_rename)
 
-        barrier = threading.Barrier(2)
-        def synchronized_rename(src_fd, src, dst_fd, dst):
-            if src == "pending-concurrent.md" and dst == "note.md":
-                barrier.wait(timeout=5)
-            return real_rename(src_fd, src, dst_fd, dst)
-
-        monkeypatch.setattr(notes_trash_module, "_rename_noreplace", synchronized_rename)
+        # The same per-parent Notes lock serializes Trash/resource closure with
+        # Notes writes and concurrent replays. Both requests must converge on
+        # one move without requiring two simultaneous rename attempts.
+        monkeypatch.setattr(notes_trash_module, "_rename_noreplace", real_rename)
         def replay():
             with httpx.Client(base_url=origin, timeout=8, trust_env=False, cookies=cookies) as client:
                 return client.delete("/api/notes/trash/projects/pending-concurrent.md",
