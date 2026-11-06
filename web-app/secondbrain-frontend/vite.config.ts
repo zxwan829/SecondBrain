@@ -14,6 +14,9 @@ export default defineConfig({
     // Vite's dependency optimizer bypasses the Vanilla Extract transform, so keep
     // this lazy editor graph in the normal plugin pipeline during dev.
     optimizeDeps: {
+        // This CJS child dependency of @blocksuite/store still needs Vite's
+        // ESM compatibility wrapper when its BlockSuite parent is excluded.
+        include: ['lodash.ismatch'],
         exclude: [
             '@blocksuite/affine-block-code', '@blocksuite/affine-block-divider',
             '@blocksuite/affine-block-list', '@blocksuite/affine-block-note',
