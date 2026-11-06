@@ -419,6 +419,18 @@ async function configurePage(page: Page) {
     pageErrorSources.push(source);
     pageErrorSummaries.push(safePageErrorSummary(error.message));
   });
+  page.on('console', (message) => {
+    // Lit catches errors thrown while updating custom elements and logs them,
+    // so some BlockSuite initialization faults do not surface as pageerror.
+    // Preserve only a fixed category, never the console text or stack.
+    if (message.type() === 'error' && /illegal constructor/i.test(message.text())
+        && pageErrorSummaries.length < 5) {
+      pageErrorNames.push('TypeError');
+      pageErrorCategories.push('invalid_runtime_symbol');
+      pageErrorSources.push('blocksuite_module');
+      pageErrorSummaries.push('illegal_constructor');
+    }
+  });
   const recordedResponses = new WeakSet<Request>();
   page.on('response', (response) => {
     const request = response.request();
