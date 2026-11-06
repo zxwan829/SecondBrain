@@ -381,7 +381,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                     } and not re.fullmatch(
                         r"fallback_(?:illegal_constructor|missing_custom_element|custom_element_conflict|missing_root|blocksuite_error|other)_(?:extension_setup|scope_create|host_render|host_mount|host_update)",
                         notes_ui_state,
-                    )))
+                    ))))
                 or not isinstance(page_error_names, list) or len(page_error_names) > 5
                 or any(not isinstance(name, str) or name not in {
                     "Error", "TypeError", "ReferenceError", "RangeError", "SyntaxError", "URIError", "unknown",
