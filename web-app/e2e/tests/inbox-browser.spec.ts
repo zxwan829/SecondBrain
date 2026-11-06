@@ -728,8 +728,7 @@ for (const viewport of activeViewports) {
     if ((wp5RoundtripOnly || wp5ConflictOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
-    if (wp5RoundtripOnly || wp5ConflictOnly) {
-      await page.addInitScript((marker) => {
+    await page.addInitScript((marker) => {
         const state = { marker, active: false, timerHookReady: false, observerReady: false,
           events: [] as { marker: string; at_ms: number; event: string; status?: number }[] };
         const emit = (event: string, status?: number) => {
@@ -777,7 +776,6 @@ for (const viewport of activeViewports) {
         observer.observe(document, { subtree: true, childList: true, characterData: true });
         state.observerReady = true;
       }, WP5_PROBE_MARKER);
-    }
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
     await signInAndCreateBlankSession(page, viewport, observed);
     if (wp5RoundtripOnly || wp5ConflictOnly) {
@@ -1644,6 +1642,19 @@ for (const viewport of activeViewports) {
       await expect(block).toContainText(syntheticNoteBody);
 
       observed.setFailureStage('notes_blocksuite_edit');
+      const browserProbeReady = await page.evaluate((marker) => {
+        const probe = (window as Window & { __sbWp5AutosaveProbe?: {
+          marker: string; active: boolean; timerHookReady: boolean; observerReady: boolean;
+          events: Wp5ProbeEvent[];
+        } }).__sbWp5AutosaveProbe;
+        if (!probe || probe.marker !== marker) return { found: false, timerHookReady: false, observerReady: false };
+        probe.active = true;
+        probe.events.push({ marker: probe.marker, at_ms: Date.now(), event: 'browser-probe-armed' });
+        return { found: true, timerHookReady: probe.timerHookReady, observerReady: probe.observerReady };
+      }, WP5_PROBE_MARKER);
+      observed.wp5AutosaveProbeEvents.push({ marker: WP5_PROBE_MARKER, at_ms: Date.now(), event: 'browser-probe-armed' });
+      observed.setDiagnosticAssertion('wp5_conflict_probe_hooks_ready');
+      expect(browserProbeReady, 'wp5_conflict_probe_hooks_ready').toEqual({ found: true, timerHookReady: true, observerReady: true });
       const updatedBody = `WP5 BlockSuite 保存 ${viewport.name}`;
       const blocksuiteSave = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${activeNotePath}`
