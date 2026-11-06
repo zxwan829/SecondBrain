@@ -676,7 +676,7 @@ for (const viewport of viewports) {
 
       const title = 'WP5 focused roundtrip';
       const originalBody = `Synthetic body ${randomUUID()}`;
-      const editMarker = `WP5 persisted edit ${randomUUID()}`;
+      const editMarker = `WP5 持久化编辑 ${randomUUID()}`;
       const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n\n- first synthetic list item\n- second synthetic list item\n\n> synthetic quote\n\n\`\`\`text\nsynthetic code block\n\`\`\`\n\n[synthetic link](https://example.invalid/wp5)\n\n| Column A | Column B |\n| --- | --- |\n| synthetic | table |\n`;
       observed.setFailureStage('notes_frontmatter_seed');
       observed.setDiagnosticAssertion('wp5_focus_note_seed');
@@ -724,6 +724,8 @@ for (const viewport of viewports) {
       observed.setDiagnosticAssertion('wp5_focus_put_response_content');
       expect(typeof savedPayload.content === 'string' && savedPayload.content.includes(editMarker),
         'wp5_focus_put_response_content').toBe(true);
+      observed.setDiagnosticAssertion('wp5_focus_put_response_matches_request');
+      expect(savedPayload.content, 'wp5_focus_put_response_matches_request').toBe(requestBody.content);
 
       observed.setDiagnosticAssertion('wp5_focus_api_readback');
       const readback = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
@@ -1326,8 +1328,14 @@ for (const viewport of viewports) {
       observed.setDiagnosticAssertion('notes_blocksuite_edit_save_response');
       const saved = await blocksuiteSave;
       expect(saved.status(), 'notes_blocksuite_save').toBe(200);
+      const requestedContent = JSON.parse(saved.request().postData() ?? '{}') as { content?: unknown };
+      observed.setDiagnosticAssertion('notes_blocksuite_request_content');
+      expect(typeof requestedContent.content === 'string' && requestedContent.content.includes(updatedBody),
+        'notes_blocksuite_request_content').toBe(true);
       observed.setDiagnosticAssertion('notes_blocksuite_edit_response_body');
       const savedPayload = await saved.json() as { content: string };
+      observed.setDiagnosticAssertion('notes_blocksuite_response_matches_request');
+      expect(savedPayload.content, 'notes_blocksuite_response_matches_request').toBe(requestedContent.content);
       observed.setDiagnosticAssertion('notes_blocksuite_saved_title');
       expect(savedPayload.content).toContain('title: WP5 synthetic note');
       observed.setDiagnosticAssertion('notes_blocksuite_saved_custom_property');
