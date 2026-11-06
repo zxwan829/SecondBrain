@@ -181,6 +181,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const uploadedBlobCopies = useRef(new Map<string, { contentType: string; bytes: Uint8Array }>());
   const [status, setStatus] = useState('正在载入 BlockSuite 资源…');
   const [dirty, setDirty] = useState(false);
+  const [storeReady, setStoreReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [recoveryCopyReady, setRecoveryCopyReady] = useState(false);
   const [recoveryCopyComplete, setRecoveryCopyComplete] = useState(false);
@@ -227,6 +228,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         offUpdate = () => doc.spaceDoc.off('update', onUpdate);
         setStatus(initialResource.resourceKind === 'database' ? 'BlockSuite Database 已就绪' : 'BlockSuite Edgeless 画布已就绪');
         Object.assign(host.current, { __sbBlockSuiteStore: store });
+        setStoreReady(true);
       } catch (error) {
         if (!disposed) setStatus(error instanceof Error ? `加载失败：${error.message}` : 'BlockSuite 资源无法载入');
         workspace?.dispose();
@@ -384,7 +386,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       <footer><span>资源通过 Markdown 附件引用关联；Yjs update 与同笔记 SHA-256 图片均受 Core ETag/配额保护。</span>
         {initialResource.resourceKind === 'edgeless-canvas' && <label className="blocksuite-resource-upload">
           添加画布图片
-          <input aria-label="选择 Edgeless 图片" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={saving || uploadingImage}
+          <input aria-label="选择 Edgeless 图片" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={!storeReady || saving || uploadingImage}
             onChange={(event) => { void addCanvasImage(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }} />
         </label>}
         <button type="button" onClick={() => void downloadRecoveryCopy()} disabled={!dirty || saving}>下载未保存恢复副本</button>

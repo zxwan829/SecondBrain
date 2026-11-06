@@ -914,6 +914,7 @@ for (const viewport of activeViewports) {
         let uploadedBlobUrl: string | undefined;
         let uploadedBlobBytes: Buffer | undefined;
         if (kind === 'edgeless-canvas') {
+          await expect(resourceDialog.getByRole('status')).toHaveText('BlockSuite Edgeless 画布已就绪', { timeout: 15000 });
           const imageDataUrl = await page.evaluate(() => {
             const canvas = document.createElement('canvas');
             canvas.width = 2; canvas.height = 2;
