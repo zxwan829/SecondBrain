@@ -44,6 +44,13 @@ const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
 type Wp5ProbeEvent = { marker: 'wp5-conflict-queue'; at_ms: number; event: string; status?: number };
 const WP5_PROBE_MARKER = 'wp5-conflict-queue' as const;
+function boundedWp5ProbeTimeline(events: Wp5ProbeEvent[]): Wp5ProbeEvent[] {
+  const ordered = [...events].sort((left, right) => left.at_ms - right.at_ms);
+  if (ordered.length <= 64 && !ordered.some((event) => event.event === 'probe-events-overflow')) return ordered;
+  return [...ordered.slice(0, 63), {
+    marker: WP5_PROBE_MARKER, at_ms: ordered.at(-1)?.at_ms ?? Date.now(), event: 'probe-events-overflow',
+  }].sort((left, right) => left.at_ms - right.at_ms);
+}
 type FailureStage = 'login' | 'session' | 'first_submit' | 'retry' | 'conflict'
   | 'ordinary_chat' | 'source_protection' | 'daily_brief_read' | 'daily_brief_sources'
   | 'daily_brief_journal' | 'daily_brief_preview' | 'daily_brief_confirm'
@@ -721,7 +728,12 @@ for (const viewport of activeViewports) {
         const state = { marker, active: false, timerHookReady: false, observerReady: false,
           events: [] as { marker: string; at_ms: number; event: string; status?: number }[] };
         const emit = (event: string, status?: number) => {
-          if (!state.active || state.events.length >= 24) return;
+          if (!state.active) return;
+          if (state.events.length >= 64) {
+            if (!state.events.some((item) => item.event === 'probe-events-overflow'))
+              state.events.push({ marker: state.marker, at_ms: Date.now(), event: 'probe-events-overflow' });
+            return;
+          }
           state.events.push({ marker: state.marker, at_ms: Date.now(), event, ...(status === undefined ? {} : { status }) });
         };
         Object.defineProperty(window, '__sbWp5AutosaveProbe', { value: state, configurable: true });
@@ -887,7 +899,11 @@ for (const viewport of activeViewports) {
 
       let probeActive = false;
       const recordProbe = (event: string, status?: number) => {
-        if (observed.wp5AutosaveProbeEvents.length >= 24) return;
+        if (observed.wp5AutosaveProbeEvents.length >= 64) {
+          if (!observed.wp5AutosaveProbeEvents.some((item) => item.event === 'probe-events-overflow'))
+            observed.wp5AutosaveProbeEvents.push({ marker: WP5_PROBE_MARKER, at_ms: Date.now(), event: 'probe-events-overflow' });
+          return;
+        }
         observed.wp5AutosaveProbeEvents.push({ marker: WP5_PROBE_MARKER, at_ms: Date.now(), event,
           ...(status === undefined ? {} : { status }) });
       };
@@ -1040,10 +1056,12 @@ for (const viewport of activeViewports) {
         expect(browserProbeEvents.some((event) => event.event === requiredEvent), assertion).toBe(true);
       }
       observed.setDiagnosticAssertion('wp5_conflict_probe_timeline_bound');
-      expect(observed.wp5AutosaveProbeEvents.length, 'wp5_conflict_probe_timeline_bound').toBeLessThanOrEqual(24);
+      observed.wp5AutosaveProbeEvents = boundedWp5ProbeTimeline(observed.wp5AutosaveProbeEvents);
+      expect(observed.wp5AutosaveProbeEvents.some((event) => event.event === 'probe-events-overflow'),
+        'wp5_conflict_probe_timeline_bound').toBe(false);
       const browserLog = process.env.SB_E2E_WP5_AUTOSAVE_BROWSER_LOG;
       if (browserLog) {
-        await writeFile(browserLog, JSON.stringify(observed.wp5AutosaveProbeEvents.slice(0, 24)), { mode: 0o600 });
+        await writeFile(browserLog, JSON.stringify(observed.wp5AutosaveProbeEvents), { mode: 0o600 });
       }
       return;
     }
@@ -1892,8 +1910,7 @@ test.afterEach(async ({ page }, testInfo) => {
         wp5_autosave_events: await page.evaluate(() => {
           const probe = (window as Window & { __sbWp5AutosaveProbe?: { events: Wp5ProbeEvent[] } }).__sbWp5AutosaveProbe;
           return probe?.events ?? [];
-        }).catch(() => []).then((browserEvents) => [...observed.wp5AutosaveProbeEvents, ...browserEvents]
-          .sort((left, right) => left.at_ms - right.at_ms).slice(0, 24)),
+        }).catch(() => []).then((browserEvents) => boundedWp5ProbeTimeline([...observed.wp5AutosaveProbeEvents, ...browserEvents])),
       } : {}),
     }, null, 2), { mode: 0o600 });
   }

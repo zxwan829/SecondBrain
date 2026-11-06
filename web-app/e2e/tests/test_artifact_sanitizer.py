@@ -216,7 +216,7 @@ def test_wp5_autosave_probe_timeline_accepts_only_bounded_safe_events():
         module._validate_failure_diagnostics([invalid])
     over_bound = {**diagnostic, "wp5_autosave_events": [
         {"marker": "wp5-conflict-queue", "at_ms": index, "event": "browser-put-request"}
-        for index in range(25)
+        for index in range(65)
     ]}
     with pytest.raises(RuntimeError):
         module._validate_failure_diagnostics([over_bound])

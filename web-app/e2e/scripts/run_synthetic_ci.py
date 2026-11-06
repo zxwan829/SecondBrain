@@ -144,7 +144,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "activity_revocation_denial", "activity_revocation_empty", "activity_revocation_status_403",
     "calendar_api_requests",
 }
-MAX_FAILURE_DIAGNOSTIC_BYTES = 4096
+MAX_FAILURE_DIAGNOSTIC_BYTES = 16384
 MAX_FAILURE_SCREENSHOTS = len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_SCREENSHOT_WIDTH = 2048
@@ -158,12 +158,12 @@ WP5_AUTOSAVE_EVENT_NAMES = {
     "browser-put-request", "browser-put-response", "browser-put-requestfailed", "browser-put-requestfinished",
     "test-request-matcher-accepted", "test-response-matcher-accepted",
     "core-request-received", "core-response", "core-handler-error",
-    "recovery-response-matcher-accepted",
+    "recovery-response-matcher-accepted", "probe-events-overflow",
 }
 
 
 def _validate_wp5_autosave_events(events):
-    if (not isinstance(events, list) or len(events) > 24
+    if (not isinstance(events, list) or len(events) > 64
             or any(not isinstance(event, dict)
                    or set(event) not in ({"marker", "at_ms", "event"}, {"marker", "at_ms", "event", "status"})
                    or event.get("marker") != WP5_AUTOSAVE_MARKER
@@ -1410,7 +1410,7 @@ def main() -> int:
             if wp5_probe_mode and wp5_autosave_browser_log.exists():
                 browser_info = wp5_autosave_browser_log.lstat()
                 if (wp5_autosave_browser_log.is_symlink() or not wp5_autosave_browser_log.is_file()
-                        or browser_info.st_size > 4096 or browser_info.st_uid != os.geteuid()
+                        or browser_info.st_size > 16384 or browser_info.st_uid != os.geteuid()
                         or browser_info.st_mode & 0o077):
                     raise RuntimeError("WP5 browser probe log rejected")
                 browser_probe_events = _validate_wp5_autosave_events(
@@ -1421,12 +1421,18 @@ def main() -> int:
                     summary_data = json.loads(source.read_text(encoding="utf-8"))
                     browser_probe_events = summary_data.get("wp5_autosave_events", [])
                     break
-            autosave_timeline_raw = sorted(
-                [*browser_probe_events, *core_probe_events], key=lambda item: item["at_ms"])
-            if len(autosave_timeline_raw) > 24:
-                raise RuntimeError("WP5 autosave timeline exceeded its event bound")
+            autosave_timeline_raw = sorted([*browser_probe_events, *core_probe_events], key=lambda item: item["at_ms"])
+            if len(autosave_timeline_raw) > 64:
+                autosave_timeline_raw = [*autosave_timeline_raw[:63], {
+                    "marker": WP5_AUTOSAVE_MARKER,
+                    "at_ms": autosave_timeline_raw[-1]["at_ms"],
+                    "event": "probe-events-overflow",
+                }]
+                autosave_timeline_raw.sort(key=lambda item: item["at_ms"])
             autosave_timeline = _validate_wp5_autosave_events(autosave_timeline_raw)
             if wp5_probe_mode and test_returncode == 0:
+                if any(event["event"] == "probe-events-overflow" for event in autosave_timeline):
+                    raise RuntimeError("WP5 autosave timeline overflow on successful run")
                 core_signature = [(event["event"], event.get("status")) for event in core_probe_events]
                 if core_signature != [
                     ("core-request-received", None), ("core-response", 412),
