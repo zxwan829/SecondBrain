@@ -930,7 +930,7 @@ for (const viewport of activeViewports) {
         const resourceHost = resourceDialog.locator('.blocksuite-resource-host');
         observed.setDiagnosticAssertion('wp5_resource_content_visible');
         await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '可编辑测试画布', { timeout: 15000 });
-        const editable = resourceHost.locator('[contenteditable="true"]').first();
+        const editable = resourceHost.locator('[contenteditable="true"]:visible').first();
         observed.setDiagnosticAssertion('wp5_resource_editable');
         await expect(editable).toBeVisible();
         await editable.click();
@@ -1014,7 +1014,7 @@ for (const viewport of activeViewports) {
               updateB64: currentResource.updateB64, snapshot: changedSnapshot },
           });
           expect(externalWrite.status(), 'wp5_resource_external_change').toBe(200);
-          const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]').first();
+          const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]:visible').first();
           await conflictEditor.click();
           await page.keyboard.press('End');
           await page.keyboard.press('Enter');
@@ -1033,7 +1033,7 @@ for (const viewport of activeViewports) {
           expect(JSON.stringify(firstCopy.snapshot)).toContain('unsaved resource conflict');
           expect(firstCopy.complete).toBe(true);
           await expect(close).toBeEnabled();
-          const conflictEditorAgain = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]').first();
+          const conflictEditorAgain = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]:visible').first();
           await conflictEditorAgain.click();
           await page.keyboard.press('End');
           await page.keyboard.press('Enter');
@@ -1048,7 +1048,7 @@ for (const viewport of activeViewports) {
           expect(JSON.stringify(secondCopy.snapshot)).toContain('later unsaved resource conflict');
         }
         if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
-          const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]').first();
+          const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]:visible').first();
           await conflictEditor.click();
           await page.keyboard.press('End');
           await page.keyboard.press('Enter');
