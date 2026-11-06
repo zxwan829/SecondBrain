@@ -106,6 +106,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_conflict_probe_hooks_ready' | 'wp5_conflict_probe_timer_scheduled' | 'wp5_conflict_probe_timer_fired'
   | 'wp5_conflict_probe_notes-queue-conflict' | 'wp5_conflict_probe_timeline_bound'
   | 'wp5_conflict_probe_readback' | 'wp5_conflict_probe_reopen' | 'wp5_conflict_probe_recovery_status'
+  | 'wp5_conflict_probe_reopen_canvas' | 'wp5_conflict_probe_reopen_ready'
   | 'wp5_conflict_probe_recovery_body' | 'wp5_conflict_probe_recovery_readback'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
@@ -994,7 +995,10 @@ for (const viewport of activeViewports) {
 
       // Leaving the conflict revision clears the blocked queue; a fresh reopen/edit must save normally.
       page.once('dialog', (dialog) => void dialog.accept());
-      if (wp5ConflictOnly) await page.reload();
+      if (wp5ConflictOnly) {
+        recordProbe('probe-reload-start');
+        await page.reload();
+      }
       else await page.getByRole('button', { name: 'WP5 focused roundtrip', exact: true }).click();
       if (wp5ConflictOnly) {
         const reopenedProbe = await page.evaluate((marker) => {
@@ -1011,6 +1015,7 @@ for (const viewport of activeViewports) {
         expect(reopenedProbe, 'wp5_conflict_probe_hooks_ready').toEqual({ found: true, timerHookReady: true, observerReady: true });
         recordProbe('probe-rearmed');
       }
+      observed.setDiagnosticAssertion('wp5_conflict_probe_reopen');
       const conflictReopenResponse = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === conflictUrlPath);
       await page.getByRole('button', { name: conflictTitle, exact: true }).click();
@@ -1018,9 +1023,14 @@ for (const viewport of activeViewports) {
       expect((await conflictReopenResponse).status(), 'wp5_conflict_probe_reopen').toBe(200);
       await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
       const reopenedCanvas = page.locator('.blocksuite-notes-canvas');
+      observed.setDiagnosticAssertion('wp5_conflict_probe_reopen_canvas');
       await expect(reopenedCanvas).toBeVisible({ timeout: 20000 });
       await expect(reopenedCanvas).toContainText(externalText);
+      observed.setDiagnosticAssertion('wp5_conflict_probe_reopen_ready');
+      await expect(reopenedCanvas).toHaveAttribute('aria-busy', 'false');
+      await expect(reopenedCanvas).toHaveAttribute('data-disabled', 'false');
       const recoveryText = 'WP5 autosave queue recovery';
+      observed.setDiagnosticAssertion('wp5_conflict_probe_recovery_status');
       const recoveryResponsePromise = page.waitForResponse((response) => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === conflictUrlPath, { timeout: 5000 }).then((response) => {
           recordProbe('recovery-response-matcher-accepted', response.status());

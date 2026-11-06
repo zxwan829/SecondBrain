@@ -131,7 +131,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_conflict_probe_timer_scheduled", "wp5_conflict_probe_timer_fired",
     "wp5_conflict_probe_notes-queue-conflict", "wp5_conflict_probe_timeline_bound",
     "wp5_conflict_probe_external_write", "wp5_conflict_probe_request_path", "wp5_conflict_probe_rejected",
-    "wp5_conflict_probe_readback", "wp5_conflict_probe_reopen", "wp5_conflict_probe_recovery_status",
+    "wp5_conflict_probe_readback", "wp5_conflict_probe_reopen", "wp5_conflict_probe_reopen_canvas",
+    "wp5_conflict_probe_reopen_ready", "wp5_conflict_probe_recovery_status",
     "wp5_conflict_probe_recovery_body", "wp5_conflict_probe_recovery_readback",
     "notes_blocksuite_reopen",
     "layout_notes", "layout_chat",
@@ -152,7 +153,8 @@ MAX_SCREENSHOT_HEIGHT = 1600
 ALLOW_FAILURE_SCREENSHOT_PUBLICATION = False
 WP5_AUTOSAVE_MARKER = "wp5-conflict-queue"
 WP5_AUTOSAVE_EVENT_NAMES = {
-    "probe-armed", "browser-probe-armed", "probe-rearmed", "notes-queue-unsaved", "notes-save-timer-scheduled",
+    "probe-armed", "probe-reload-start", "browser-probe-armed", "probe-rearmed",
+    "notes-queue-unsaved", "notes-save-timer-scheduled",
     "notes-save-timer-cancelled", "notes-save-timer-fired", "notes-queue-saving",
     "notes-queue-conflict", "notes-queue-saved", "notes-queue-failed",
     "browser-put-request", "browser-put-response", "browser-put-requestfailed", "browser-put-requestfinished",
