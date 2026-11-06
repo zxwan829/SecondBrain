@@ -71,7 +71,10 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_blocksuite_conflict_readback_status' | 'notes_blocksuite_conflict_readback_payload'
   | 'notes_blocksuite_reopen_note_selector' | 'notes_blocksuite_reopen_editor_entry'
   | 'notes_blocksuite_reopen_canvas'
-  | 'notes_setext_seed_status' | 'notes_setext_reopen_read' | 'notes_setext_editor_open' | 'notes_setext_fallback' | 'notes_setext_fallback_render'
+  | 'notes_setext_seed_status_200' | 'notes_setext_seed_status_401' | 'notes_setext_seed_status_403'
+  | 'notes_setext_seed_status_409' | 'notes_setext_seed_status_412' | 'notes_setext_seed_status_422'
+  | 'notes_setext_seed_status_428' | 'notes_setext_seed_status_other'
+  | 'notes_setext_reopen_read' | 'notes_setext_editor_open' | 'notes_setext_fallback' | 'notes_setext_fallback_render'
   | 'notes_attachment_select' | 'notes_attachment_open' | 'notes_attachment_fallback' | 'notes_attachment_render'
   | 'notes_unsafe_select' | 'notes_unsafe_source' | 'notes_unsafe_safety' | 'notes_unsafe_editor_hidden'
   | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
@@ -1482,8 +1485,15 @@ for (const viewport of activeViewports) {
       const setextSeed = await page.request.put(`${baseUrl}/api/notes/drafts/${activeNotePath}`, {
         headers: { 'If-Match': latest.headers()['etag'] ?? '' }, data: { content: setextContent },
       });
-      observed.setDiagnosticAssertion('notes_setext_seed_status');
-      expect(setextSeed.status(), 'notes_seed_setext_fallback').toBe(200);
+      const setextStatus = setextSeed.status();
+      observed.setDiagnosticAssertion(setextStatus === 200 ? 'notes_setext_seed_status_200'
+        : setextStatus === 401 ? 'notes_setext_seed_status_401'
+          : setextStatus === 403 ? 'notes_setext_seed_status_403'
+            : setextStatus === 409 ? 'notes_setext_seed_status_409'
+              : setextStatus === 412 ? 'notes_setext_seed_status_412'
+                : setextStatus === 422 ? 'notes_setext_seed_status_422'
+                  : setextStatus === 428 ? 'notes_setext_seed_status_428' : 'notes_setext_seed_status_other');
+      expect(setextStatus, 'notes_seed_setext_fallback').toBe(200);
       page.once('dialog', (dialog) => void dialog.accept());
       await page.reload();
       const fallbackRead = page.waitForResponse((response) => response.request().method() === 'GET'
