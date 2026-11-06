@@ -100,7 +100,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_conflict_seed_status_422' | 'notes_conflict_seed_status_428'
   | 'notes_conflict_seed_status_other'
   | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
-  | 'wp5_resource_focus' | 'wp5_resource_type' | 'wp5_resource_dirty' | 'wp5_resource_save' | 'wp5_resource_saved' | 'wp5_resource_close' | 'wp5_resource_reopen' | 'wp5_resource_dialog_open' | 'wp5_resource_content_visible' | 'wp5_resource_editable' | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
+  | 'wp5_resource_focus' | 'wp5_resource_type' | 'wp5_resource_dirty' | 'wp5_resource_save' | 'wp5_resource_saved' | 'wp5_resource_close' | 'wp5_resource_reopen' | 'wp5_resource_checkpoint_001' | 'wp5_resource_checkpoint_002' | 'wp5_resource_checkpoint_003' | 'wp5_resource_checkpoint_004' | 'wp5_resource_checkpoint_005' | 'wp5_resource_checkpoint_006' | 'wp5_resource_checkpoint_007' | 'wp5_resource_checkpoint_008' | 'wp5_resource_checkpoint_009' | 'wp5_resource_checkpoint_010' | 'wp5_resource_checkpoint_011' | 'wp5_resource_checkpoint_012' | 'wp5_resource_checkpoint_013' | 'wp5_resource_checkpoint_014' | 'wp5_resource_checkpoint_015' | 'wp5_resource_checkpoint_016' | 'wp5_resource_checkpoint_017' | 'wp5_resource_checkpoint_018' | 'wp5_resource_checkpoint_019' | 'wp5_resource_checkpoint_020' | 'wp5_resource_checkpoint_021' | 'wp5_resource_checkpoint_022' | 'wp5_resource_checkpoint_023' | 'wp5_resource_checkpoint_024' | 'wp5_resource_checkpoint_025' | 'wp5_resource_checkpoint_026' | 'wp5_resource_checkpoint_027' | 'wp5_resource_checkpoint_028' | 'wp5_resource_checkpoint_029' | 'wp5_resource_checkpoint_030' | 'wp5_resource_checkpoint_031' | 'wp5_resource_checkpoint_032' | 'wp5_resource_checkpoint_033' | 'wp5_resource_checkpoint_034' | 'wp5_resource_checkpoint_035' | 'wp5_resource_checkpoint_036' | 'wp5_resource_checkpoint_037' | 'wp5_resource_checkpoint_038' | 'wp5_resource_checkpoint_039' | 'wp5_resource_checkpoint_040' | 'wp5_resource_checkpoint_041' | 'wp5_resource_checkpoint_042' | 'wp5_resource_checkpoint_043' | 'wp5_resource_checkpoint_044' | 'wp5_resource_checkpoint_045' | 'wp5_resource_checkpoint_046' | 'wp5_resource_checkpoint_047' | 'wp5_resource_checkpoint_048' | 'wp5_resource_checkpoint_049' | 'wp5_resource_checkpoint_050' | 'wp5_resource_checkpoint_051' | 'wp5_resource_checkpoint_052' | 'wp5_resource_checkpoint_053' | 'wp5_resource_checkpoint_054' | 'wp5_resource_checkpoint_055' | 'wp5_resource_checkpoint_056' | 'wp5_resource_checkpoint_057' | 'wp5_resource_checkpoint_058' | 'wp5_resource_checkpoint_059' | 'wp5_resource_checkpoint_060' | 'wp5_resource_checkpoint_061' | 'wp5_resource_checkpoint_062' | 'wp5_resource_checkpoint_063' | 'wp5_resource_checkpoint_064' | 'wp5_resource_checkpoint_065' | 'wp5_resource_dialog_open' | 'wp5_resource_content_visible' | 'wp5_resource_editable' | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
   | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
   | 'wp5_focus_saved_status'
@@ -863,10 +863,12 @@ for (const viewport of activeViewports) {
       if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
 
       const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string): Promise<string | undefined> => {
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_001');
         await expect(page.locator('.notes-document-heading [role="status"]'), `wp5_${kind}_note_ready`)
           .toHaveText('已保存', { timeout: 15000 });
         const createButton = page.getByRole('button', { name: buttonName });
         observed.setDiagnosticAssertion('wp5_focus_saved_status');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_002');
         await expect(createButton, `wp5_${kind}_create_button_enabled`).toBeEnabled();
         const resourcePost = page.waitForResponse((response) => response.request().method() === 'POST'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources`, { timeout: 15000 });
@@ -899,12 +901,15 @@ for (const viewport of activeViewports) {
         }
         page.off('requestfailed', onResourceRequestFailed);
         const created = outcome.response;
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_003');
         expect(created.status(), `wp5_resource_${kind}_create`).toBe(200);
         const resourceInfo = await created.json() as { resource_id: string; filename: string; reference: string; etag: string };
         const resourceDialog = page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' });
         observed.setDiagnosticAssertion('wp5_resource_dialog_open');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_004');
         await expect(resourceDialog).toBeVisible({ timeout: 20000 });
         const referenceResult = await referenceSave;
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_005');
         expect(referenceResult.status(), `wp5_resource_${kind}_reference`).toBe(200);
         let uploadedBlobUrl: string | undefined;
         let uploadedBlobBytes: Buffer | undefined;
@@ -924,14 +929,17 @@ for (const viewport of activeViewports) {
             name: 'wp5-edgeless-synthetic.png', mimeType: 'image/png', buffer: uploadedBlobBytes,
           });
           const uploaded = await blobPut;
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_006');
           expect(uploaded.status(), 'wp5_edgeless_blob_create').toBe(201);
           uploadedBlobUrl = uploaded.url();
         }
         const resourceHost = resourceDialog.locator('.blocksuite-resource-host');
         observed.setDiagnosticAssertion('wp5_resource_content_visible');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_007');
         await expect(resourceHost).toContainText(kind === 'database' ? '测试数据库' : '可编辑测试画布', { timeout: 15000 });
         const editable = resourceHost.locator('[contenteditable="true"]:visible').first();
         observed.setDiagnosticAssertion('wp5_resource_editable');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_008');
         await expect(editable).toBeVisible().catch(async error => {
           console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(await resourceHost.evaluate(host => {
             const elements: Element[] = [];
@@ -953,31 +961,42 @@ for (const viewport of activeViewports) {
         await page.keyboard.press('Enter');
         await page.keyboard.insertText(marker);
         observed.setDiagnosticAssertion('wp5_resource_dirty');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_009');
         await expect(resourceDialog.getByText('有未保存的资源修改')).toBeVisible();
         const resourcePut = page.waitForResponse((response) => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`, { timeout: 15000 });
         observed.setDiagnosticAssertion('wp5_resource_save');
         await resourceDialog.getByRole('button', { name: '保存资源' }).click();
         const savedResource = await resourcePut;
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
         expect(savedResource.status(), `wp5_resource_${kind}_save`).toBe(200);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_011');
         expect((await savedResource.json() as { etag: string }).etag).not.toBe(resourceInfo.etag);
         observed.setDiagnosticAssertion('wp5_resource_saved');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_012');
         await expect(resourceDialog.getByRole('status')).toHaveText('BlockSuite 资源已保存');
         const readResource = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_013');
         expect(readResource.status(), `wp5_resource_${kind}_readback`).toBe(200);
         const readPayload = await readResource.json() as { updateB64: string; snapshot: Record<string, unknown> };
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_014');
         expect(readPayload.updateB64.length).toBeGreaterThan(4);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_015');
         expect(JSON.stringify(readPayload.snapshot)).toContain(marker);
         if (uploadedBlobUrl && uploadedBlobBytes) {
           const blobRead = await page.request.get(uploadedBlobUrl);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_016');
           expect(blobRead.status(), 'wp5_edgeless_blob_readback').toBe(200);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_017');
           expect(Buffer.from(await blobRead.body()), 'wp5_edgeless_blob_bytes').toEqual(uploadedBlobBytes);
           const blobId = decodeURIComponent(new URL(uploadedBlobUrl).pathname.split('/').pop() ?? '');
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_018');
           expect(JSON.stringify(readPayload.snapshot), 'wp5_edgeless_blob_reference').toContain(blobId);
         }
         observed.setDiagnosticAssertion('wp5_resource_close');
         await resourceDialog.getByRole('button', { name: '关闭' }).click();
         const resourceLink = page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' }).last();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_019');
         await expect(resourceLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
         observed.setDiagnosticAssertion('wp5_resource_reopen');
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(await resourceLink.evaluate(anchor => ({
@@ -986,25 +1005,33 @@ for (const viewport of activeViewports) {
           width: Math.round(anchor.getBoundingClientRect().width), height: Math.round(anchor.getBoundingClientRect().height),
         }))));
         await resourceLink.click();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_020');
         await expect(page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' })).toBeVisible({ timeout: 15000 });
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_021');
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
         await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
         await page.reload();
         const refreshedNoteRead = page.waitForResponse((response) => response.request().method() === 'GET'
           && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 10000 });
         await page.getByRole('button', { name: title, exact: true }).click();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_022');
         expect((await refreshedNoteRead).status(), `wp5_resource_${kind}_refresh_note`).toBe(200);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_023');
         await expect(page.locator('.blocksuite-notes-canvas')).toBeVisible({ timeout: 20000 });
         const refreshedLink = page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' }).last();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_024');
         await expect(refreshedLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
         await refreshedLink.click();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_025');
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host')).toContainText(marker, { timeout: 15000 });
         const reopenedDialog = page.getByRole('dialog');
         if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
           const currentNoteResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_026');
           expect(currentNoteResponse.status()).toBe(200);
           const currentNote = await currentNoteResponse.json() as { etag: string };
           const currentResourceResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_027');
           expect(currentResourceResponse.status()).toBe(200);
           const currentResource = await currentResourceResponse.json() as {
             schemaVersion: number; resourceId: string; resourceKind: string; docId: string;
@@ -1018,13 +1045,16 @@ for (const viewport of activeViewports) {
               resourceKind: currentResource.resourceKind, docId: currentResource.docId,
               updateB64: currentResource.updateB64, snapshot: laterSnapshot },
           });
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_028');
           expect(externalWrite.status(), 'wp5_edgeless_external_change').toBe(200);
         }
         if (kind === 'database') {
           const currentNoteResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}`);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_029');
           expect(currentNoteResponse.status()).toBe(200);
           const currentNote = await currentNoteResponse.json() as { etag: string };
           const currentResourceResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${note.path}/blocksuite/resources/${resourceInfo.resource_id}`);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_030');
           expect(currentResourceResponse.status()).toBe(200);
           const currentResource = await currentResourceResponse.json() as {
             schemaVersion: number; resourceId: string; resourceKind: string; docId: string;
@@ -1038,6 +1068,7 @@ for (const viewport of activeViewports) {
               resourceKind: currentResource.resourceKind, docId: currentResource.docId,
               updateB64: currentResource.updateB64, snapshot: changedSnapshot },
           });
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_031');
           expect(externalWrite.status(), 'wp5_resource_external_change').toBe(200);
           const conflictEditor = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]:visible').first();
           await conflictEditor.click();
@@ -1045,31 +1076,41 @@ for (const viewport of activeViewports) {
           await page.keyboard.press('Enter');
           await page.keyboard.insertText(' unsaved resource conflict');
           await reopenedDialog.getByRole('button', { name: '保存资源' }).click();
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_032');
           await expect(reopenedDialog.getByRole('status')).toContainText('版本冲突（412）；Core 未覆盖现有资源。当前修改仍保留');
           const close = reopenedDialog.getByRole('button', { name: '关闭' });
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_033');
           await expect(close).toBeDisabled();
           const firstDownloadPromise = page.waitForEvent('download');
           await reopenedDialog.getByRole('button', { name: '下载未保存恢复副本' }).click();
           const firstDownload = await firstDownloadPromise;
           const firstCopyPath = await firstDownload.path();
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_034');
           expect(firstCopyPath).toBeTruthy();
           const firstCopy = JSON.parse(await readFile(firstCopyPath!, 'utf8')) as { updateB64: string; snapshot: Record<string, unknown>; complete: boolean };
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_035');
           expect(firstCopy.updateB64.length).toBeGreaterThan(4);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_036');
           expect(JSON.stringify(firstCopy.snapshot)).toContain('unsaved resource conflict');
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_037');
           expect(firstCopy.complete).toBe(true);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_038');
           await expect(close).toBeEnabled();
           const conflictEditorAgain = reopenedDialog.locator('.blocksuite-resource-host [contenteditable="true"]:visible').first();
           await conflictEditorAgain.click();
           await page.keyboard.press('End');
           await page.keyboard.press('Enter');
           await page.keyboard.insertText(' later unsaved resource conflict');
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
           await expect(close).toBeDisabled();
           const secondDownloadPromise = page.waitForEvent('download');
           await reopenedDialog.getByRole('button', { name: '下载未保存恢复副本' }).click();
           const secondDownload = await secondDownloadPromise;
           const secondCopyPath = await secondDownload.path();
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_040');
           expect(secondCopyPath).toBeTruthy();
           const secondCopy = JSON.parse(await readFile(secondCopyPath!, 'utf8')) as { updateB64: string; snapshot: Record<string, unknown> };
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_041');
           expect(JSON.stringify(secondCopy.snapshot)).toContain('later unsaved resource conflict');
         }
         if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
@@ -1079,22 +1120,31 @@ for (const viewport of activeViewports) {
           await page.keyboard.press('Enter');
           await page.keyboard.insertText(' unsaved image conflict');
           await reopenedDialog.getByRole('button', { name: '保存资源' }).click();
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_042');
           await expect(reopenedDialog.getByRole('status')).toContainText('412');
           const close = reopenedDialog.getByRole('button', { name: '关闭' });
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_043');
           await expect(close).toBeDisabled();
           const copyPromise = page.waitForEvent('download');
           await reopenedDialog.getByRole('button', { name: '下载未保存恢复副本' }).click();
           const copyPath = await (await copyPromise).path();
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_044');
           expect(copyPath).toBeTruthy();
           const recovery = JSON.parse(await readFile(copyPath!, 'utf8')) as {
             updateB64: string; snapshot: Record<string, unknown>; complete: boolean;
             blobs: Array<{ id: string; base64: string }>; missingBlobs: string[];
           };
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_045');
           expect(recovery.complete, 'wp5_edgeless_conflict_copy_complete').toBe(true);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_046');
           expect(recovery.missingBlobs, 'wp5_edgeless_conflict_missing_blobs').toEqual([]);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_047');
           expect(recovery.updateB64.length).toBeGreaterThan(4);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_048');
           expect(JSON.stringify(recovery.snapshot)).toContain('unsaved image conflict');
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_049');
           expect(Buffer.from(recovery.blobs[0].base64, 'base64'), 'wp5_edgeless_conflict_cached_blob').toEqual(uploadedBlobBytes);
+          observed.setDiagnosticAssertion('wp5_resource_checkpoint_050');
           await expect(close).toBeEnabled();
         }
         await reopenedDialog.getByRole('button', { name: /关闭/ }).click();
@@ -1107,6 +1157,7 @@ for (const viewport of activeViewports) {
       const beforeEdgelessNoteRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 10000 });
       await page.getByRole('button', { name: title, exact: true }).click();
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_051');
       expect((await beforeEdgelessNoteRead).status(), 'wp5_before_edgeless_note_read').toBe(200);
       const edgelessBlobUrl = await roundtripResource('edgeless-canvas', '新建 BlockSuite Edgeless 画布', 'Canvas persistence marker');
 
@@ -1115,26 +1166,34 @@ for (const viewport of activeViewports) {
       const historyNoteRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 10000 });
       await page.getByRole('button', { name: title, exact: true }).click();
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_052');
       expect((await historyNoteRead).status(), 'wp5_snapshot_restore_note_read').toBe(200);
       await page.getByRole('button', { name: '查看可恢复版本' }).click();
       const snapshotRows = page.getByRole('list', { name: '可恢复 BlockSuite 快照' }).getByRole('button', { name: '选择并预览' });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_053');
       expect(await snapshotRows.count(), 'wp5_snapshot_restore_rows').toBeGreaterThan(0);
       const latestSnapshotRead = page.waitForResponse((response) => response.request().method() === 'GET'
         && new URL(response.url()).pathname.includes(`/api/notes/drafts/${note.path}/blocksuite/snapshots/`), { timeout: 15000 });
       await snapshotRows.last().click();
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_054');
       expect((await latestSnapshotRead).status(), 'wp5_snapshot_restore_detail').toBe(200);
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_055');
       await expect(page.getByLabel('BlockSuite 快照预览')).toContainText('图片 · image/png', { timeout: 15000 });
       page.once('dialog', (dialog) => dialog.accept());
       const restoreResponse = page.waitForResponse((response) => response.request().method() === 'POST'
         && new URL(response.url()).pathname.endsWith('/restore'), { timeout: 20000 });
       await page.getByRole('button', { name: '确认恢复此 BlockSuite 快照' }).click();
       const restored = await restoreResponse;
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_056');
       expect(restored.status(), 'wp5_snapshot_restore_status').toBe(200);
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_057');
       expect((await restored.json() as { restored: boolean }).restored, 'wp5_snapshot_restore_ack').toBe(true);
       if (edgelessBlobUrl) {
         const restoredBlob = await page.request.get(edgelessBlobUrl);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_058');
         expect(restoredBlob.status(), 'wp5_snapshot_restored_blob').toBe(200);
       }
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_059');
       await expect(page.getByText('BlockSuite 快照已恢复，并重新验证了正文与引用资源。')).toBeVisible({ timeout: 15000 });
 
       observed.setFailureStage('notes_blocksuite_reopen');
@@ -1143,15 +1202,21 @@ for (const viewport of activeViewports) {
         && new URL(response.url()).pathname === `/api/notes/drafts/${note.path}`, { timeout: 5000 });
       await page.getByRole('button', { name: title, exact: true }).click();
       const reopened = await reopenedRead;
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_060');
       expect(reopened.status(), 'wp5_focus_reopen_api').toBe(200);
       const reopenedPayload = await reopened.json() as { content?: string };
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_061');
       expect(reopenedPayload.content, 'wp5_focus_reopen_api').toContain(originalBody);
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_062');
       expect(reopenedPayload.content, 'wp5_focus_reopen_frontmatter').toContain('custom: preserve-focused');
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_063');
       expect((reopenedPayload.content?.match(/\]\(attachments\/[0-9a-f]{32}\.blocksuite\.json\)/g) ?? []).length,
         'wp5_focus_reopen_resource_references').toBe(2);
       observed.setDiagnosticAssertion('wp5_focus_reopen_content');
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_064');
       await expect(page.locator('.notes-raw-source')).toContainText(originalBody, { timeout: 20000 });
       const rawSource = page.locator('.notes-raw-source');
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_065');
       await expect(rawSource).toContainText('custom: preserve-focused');
       }
 
