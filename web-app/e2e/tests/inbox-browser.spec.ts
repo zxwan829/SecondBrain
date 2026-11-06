@@ -91,6 +91,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_attachment_select' | 'notes_attachment_open' | 'notes_attachment_fallback' | 'notes_attachment_render'
   | 'notes_unsafe_select' | 'notes_unsafe_source' | 'notes_unsafe_safety' | 'notes_unsafe_editor_hidden'
   | 'notes_blocksuite_reopen_scrollable' | 'notes_blocksuite_reopen_concurrent_update'
+  | 'wp5_unsupported_projection_seed' | 'wp5_unsupported_projection_open'
+  | 'wp5_unsupported_projection_rejected' | 'wp5_unsupported_projection_preserved'
+  | 'wp5_unsupported_projection_no_core_put'
   | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
   | 'notes_conflict_seed_status_403' | 'notes_conflict_seed_status_404'
   | 'notes_conflict_seed_status_409' | 'notes_conflict_seed_status_412'
@@ -1865,6 +1868,49 @@ for (const viewport of activeViewports) {
       await expect(page.locator('.notes-safety')).toBeVisible();
       observed.setDiagnosticAssertion('notes_unsafe_editor_hidden');
       await expect(page.getByRole('button', { name: 'BlockSuite 编辑器' })).toHaveCount(0);
+
+      // Exercise unsupported syntax introduced during an active BlockSuite
+      // session. Preserve the projection through fallback without a Core PUT.
+      const projectionTitle = 'WP5 dynamic unsupported projection';
+      const projectionBody = `# ${projectionTitle}\n\nSafe baseline text\n`;
+      observed.setFailureStage('notes_blocksuite_edit');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_seed');
+      const projectionSeed = await page.evaluate(async (content) => {
+        const response = await fetch('/api/notes', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+        return { status: response.status, note: response.ok ? await response.json() as { path: string } : null };
+      }, projectionBody);
+      expect(projectionSeed.status, 'wp5_unsupported_projection_seed').toBe(200);
+      const projectionUrl = `/api/notes/drafts/${projectionSeed.note!.path}`;
+      const projectionRead = page.waitForResponse((response) => response.request().method() === 'GET'
+        && new URL(response.url()).pathname === projectionUrl, { timeout: 5000 });
+      await page.getByRole('button', { name: projectionTitle, exact: true }).click();
+      expect((await projectionRead).status(), 'wp5_unsupported_projection_open').toBe(200);
+      await page.getByRole('button', { name: 'BlockSuite 编辑器', exact: true }).click();
+      const projectionCanvas = page.locator('.blocksuite-notes-canvas');
+      await expect(projectionCanvas).toBeVisible({ timeout: 20000 });
+      const baseline = projectionCanvas.getByText('Safe baseline text', { exact: true });
+      await expect(baseline).toBeVisible();
+      let projectionPutCount = 0;
+      const countProjectionPut = (request: Request) => {
+        if (request.method() === 'PUT' && new URL(request.url()).pathname === projectionUrl) projectionPutCount += 1;
+      };
+      page.on('request', countProjectionPut);
+      await baseline.click();
+      await page.keyboard.press('End');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText('Dynamic Setext heading');
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText('===');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_rejected');
+      await expect(page.getByRole('alert')).toContainText('已保留原文并切回旧版编辑器', { timeout: 5000 });
+      const fallbackProjection = page.locator('.notes-document .ProseMirror');
+      await expect(fallbackProjection).toContainText('Dynamic Setext heading');
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_preserved');
+      await page.waitForTimeout(1000);
+      observed.setDiagnosticAssertion('wp5_unsupported_projection_no_core_put');
+      expect(projectionPutCount, 'wp5_unsupported_projection_no_core_put').toBe(0);
+      page.off('request', countProjectionPut);
     }
     await expectNoHorizontalOverflow(page, observed, viewport, 'layout_notes');
 
