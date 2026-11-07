@@ -136,6 +136,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_archive_alignment_selection_ready", "wp5_archive_align_action_click",
     "wp5_archive_align_model_center", "wp5_archive_grip_visibility",
     "wp5_archive_drag_geometry", "wp5_archive_drag_order", "wp5_archive_drag_result",
+    "wp5_archive_cell_rich_text_missing", "wp5_archive_cell_editor_missing",
+    "wp5_archive_cell_readonly", "wp5_archive_cell_caret_not_in_cell", "wp5_archive_cell_focus_ready",
     "wp5_resource_dialog_open", "wp5_resource_content_visible", "wp5_resource_editable", "wp5_canvas_layout_stable",
     "wp5_focus_notes_navigation", "wp5_focus_note_seed", "wp5_focus_editor_open",
     "wp5_focus_body_target", "wp5_focus_put_received", "wp5_focus_put_request_content",

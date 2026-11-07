@@ -137,6 +137,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_alignment_selection_ready' | 'wp5_archive_align_action_click'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
+  | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing'
+  | 'wp5_archive_cell_readonly' | 'wp5_archive_cell_caret_not_in_cell' | 'wp5_archive_cell_focus_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
@@ -1816,12 +1818,36 @@ for (const viewport of activeViewports) {
           const table = element as HTMLElement & { dataManager?: { getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
           return table.dataManager?.getCell?.(target.rowId, target.columnId)?.text?.toString?.() ?? '';
         }, { rowId: targetRowId, columnId: targetColumnId });
+        const readTableCellFocus = (cell: Locator) => cell.evaluate((targetCell): string => {
+          const richText = targetCell.querySelector('rich-text');
+          if (!richText) return 'wp5_archive_cell_rich_text_missing';
+          const editor = richText.querySelector<HTMLElement>('.inline-editor');
+          if (!editor) return 'wp5_archive_cell_editor_missing';
+          if (editor.getAttribute('contenteditable') !== 'true') return 'wp5_archive_cell_readonly';
+          const selection = window.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          let current = anchor;
+          let caretInCell = false;
+          while (current) {
+            if (current === targetCell) { caretInCell = true; break; }
+            current = current instanceof ShadowRoot ? current.host : current.parentNode;
+          }
+          return selection?.isCollapsed && caretInCell ? 'wp5_archive_cell_focus_ready' : 'wp5_archive_cell_caret_not_in_cell';
+        });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_038');
         await firstCell.click();
+        await expect.poll(() => readTableCellFocus(firstCell).then(status => {
+          observed.setDiagnosticAssertion(status as DiagnosticAssertion);
+          return status;
+        }), { timeout: 5000, message: 'wp5_archive_table_cell_focus_ready' }).toBe('wp5_archive_cell_focus_ready');
         await page.keyboard.insertText(mergeSourceText);
         await expect.poll(() => readTableCellText(firstRowId!, firstColumnId!)).toContain(mergeSourceText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
         await secondCell.click();
+        await expect.poll(() => readTableCellFocus(secondCell).then(status => {
+          observed.setDiagnosticAssertion(status as DiagnosticAssertion);
+          return status;
+        }), { timeout: 5000, message: 'wp5_archive_table_second_cell_focus_ready' }).toBe('wp5_archive_cell_focus_ready');
         await page.keyboard.insertText(mergeCoveredText);
         await expect.poll(() => readTableCellText(secondRowId!, secondColumnId!)).toContain(mergeCoveredText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_040');
