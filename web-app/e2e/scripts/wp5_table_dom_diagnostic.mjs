@@ -147,6 +147,18 @@ try {
   await page.mouse.move(dragGeometry[1].x + dragGeometry[1].width / 3, dropY, { steps: 5 });
   await page.mouse.up();
   await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    window.__wp5CellEvents = [];
+    for (const name of ['pointerdown', 'click', 'focusin', 'focusout']) {
+      document.addEventListener(name, event => {
+        const path = event.composedPath().slice(0, 8).map(node => node instanceof Element
+          ? `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}${node.className && typeof node.className === 'string' ? `.${node.className.trim().replace(/\s+/g, '.')}` : ''}`
+          : node.constructor?.name ?? String(node));
+        window.__wp5CellEvents.push({ type: name, target: event.target instanceof Element ? event.target.tagName : String(event.target), path,
+          active: document.activeElement?.tagName ?? null });
+      }, true);
+    }
+  });
   await targetParagraph.hover();
   await dialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]').click();
   await page.getByTestId('普通表格').click();
@@ -160,55 +172,8 @@ try {
     cellIds.push({ row: await cell.getAttribute('data-row-id'), column: await cell.getAttribute('data-column-id') });
   }
   const firstCellEditor = cells.nth(0).locator('rich-text .inline-editor');
-  await page.evaluate(() => {
-    window.__wp5CellEvents = [];
-    for (const name of ['pointerdown', 'click', 'focusin', 'focusout']) {
-      document.addEventListener(name, event => {
-        const path = event.composedPath().slice(0, 8).map(node => node instanceof Element
-          ? `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}${node.className && typeof node.className === 'string' ? `.${node.className.trim().replace(/\s+/g, '.')}` : ''}`
-          : node.constructor?.name ?? String(node));
-        window.__wp5CellEvents.push({ type: name, target: event.target instanceof Element ? event.target.tagName : String(event.target), path,
-          active: document.activeElement?.tagName ?? null });
-      }, true);
-    }
-  });
-  const inspect = await table.evaluate((element, ids) => {
-    const deepQuery = (root, selector) => {
-      for (const node of root.querySelectorAll('*')) {
-        if (node.matches(selector)) return node;
-        if (node.shadowRoot) { const found = deepQuery(node.shadowRoot, selector); if (found) return found; }
-      }
-      return null;
-    };
-    const deepActiveElement = () => {
-      let active = document.activeElement;
-      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-      return active;
-    };
-    return ids.map(({ row, column }) => {
-      const td = element.querySelector(`td[data-row-id="${row}"][data-column-id="${column}"]`);
-      const richText = td?.querySelector('rich-text');
-      const editor = richText ? deepQuery(richText, '.inline-editor') : null;
-      const cell = element.dataManager?.getCell?.(row, column);
-      const selection = window.getSelection();
-      const active = deepActiveElement();
-      return {
-        tdPresent: Boolean(td), tdHTML: td?.innerHTML ?? null,
-        richTextPresent: Boolean(richText), shadowRootPresent: Boolean(richText?.shadowRoot),
-        lightDomEditorFound: Boolean(richText?.querySelector('.inline-editor')),
-        deepEditorFound: Boolean(editor), contenteditable: editor?.getAttribute('contenteditable') ?? null,
-        activeTag: active?.tagName ?? null, activeClass: active?.getAttribute('class') ?? null,
-        activeInsideCell: Boolean(td && active && td.contains(active)),
-        selectionCollapsed: selection?.isCollapsed ?? null,
-        selectionAnchorInsideCell: Boolean(selection?.anchorNode && td?.contains(selection.anchorNode)),
-        inlineRange: richText?.inlineEditor?.getInlineRange?.() ?? null,
-        yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null,
-      };
-    });
-  }, cellIds);
-  console.log('WP5_TABLE_DOM_BEFORE_EDIT', JSON.stringify(inspect));
-
-  console.log('WP5_TABLE_CELL_CLICK_TARGET', JSON.stringify({ locatorCount: await firstCellEditor.count(), box: await firstCellEditor.boundingBox() }));
+  const editableAtCheckpoint = await cells.nth(0).evaluate(targetCell => Boolean(targetCell.querySelector('rich-text .inline-editor[contenteditable="true"]')));
+  console.log('WP5_TABLE_DOM_AT_CHECKPOINT_038', JSON.stringify({ cellIds, editableAtCheckpoint }));
   await firstCellEditor.click();
   await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-CELL-EDIT');
   await page.waitForTimeout(500);
@@ -222,7 +187,7 @@ try {
     let active = document.activeElement;
     while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
     const selection = window.getSelection();
-    return { contenteditable: editor?.getAttribute('contenteditable') ?? null,
+    return { tdHtml: td?.innerHTML ?? null, contenteditable: editor?.getAttribute('contenteditable') ?? null,
       activeTag: active?.tagName ?? null, activeClass: active?.getAttribute('class') ?? null,
       activeInsideCell: Boolean(td && active && td.contains(active)),
       selectionCollapsed: selection?.isCollapsed ?? null,
