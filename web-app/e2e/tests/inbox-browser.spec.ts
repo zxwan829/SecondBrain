@@ -1873,10 +1873,14 @@ for (const viewport of activeViewports) {
           return cells;
         }, { first: { row: firstRowId!, column: firstColumnId! }, second: { row: secondRowId!, column: secondColumnId! } })));
         expect(firstRowId && firstColumnId && secondRowId && secondColumnId, 'wp5_archive_table_cell_addresses_present').toBeTruthy();
-        const readTableCellText = (targetRowId: string, targetColumnId: string) => archiveTable.evaluate((element, target) => {
-          const table = element as HTMLElement & { dataManager?: { getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
-          return table.dataManager?.getCell?.(target.rowId, target.columnId)?.text?.toString?.() ?? '';
-        }, { rowId: targetRowId, columnId: targetColumnId });
+        const waitForTableCellText = async (targetRowId: string, targetColumnId: string, text: string) => {
+          const tableId = await archiveTable.getAttribute('data-block-id');
+          expect(tableId, 'wp5_archive_table_block_id_present').toBeTruthy();
+          await page.waitForFunction(({ tableId, rowId, columnId, text }) => {
+            const table = document.querySelector<HTMLElement & { dataManager?: { getCell?: (row: string, column: string) => { text?: { toString?: () => string } } | undefined } }>(`affine-table[data-block-id="${tableId}"]`);
+            return (table?.dataManager?.getCell?.(rowId, columnId)?.text?.toString?.() ?? '').includes(text);
+          }, { tableId, rowId: targetRowId, columnId: targetColumnId, text }, { timeout: 5_000 });
+        };
         const assertTableCellEditable = async (cell: Locator) => cell.evaluate((targetCell): boolean => {
           const richText = targetCell.querySelector('rich-text');
           if (!richText) return false;
@@ -1895,12 +1899,12 @@ for (const viewport of activeViewports) {
         expect(await assertTableCellEditable(firstCell), 'wp5_archive_table_first_cell_editable').toBe(true);
         await focusTableCellEditor(firstCellEditor, firstRowId!, firstColumnId!);
         await page.keyboard.insertText(mergeSourceText);
-        await expect.poll(() => readTableCellText(firstRowId!, firstColumnId!)).toContain(mergeSourceText);
+        await waitForTableCellText(firstRowId!, firstColumnId!, mergeSourceText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
         expect(await assertTableCellEditable(secondCell), 'wp5_archive_table_second_cell_editable').toBe(true);
         await focusTableCellEditor(secondCellEditor, secondRowId!, secondColumnId!);
         await page.keyboard.insertText(mergeCoveredText);
-        await expect.poll(() => readTableCellText(secondRowId!, secondColumnId!)).toContain(mergeCoveredText);
+        await waitForTableCellText(secondRowId!, secondColumnId!, mergeCoveredText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_040');
         const firstCellBox = await firstCell.boundingBox();
         const secondCellBox = await secondCell.boundingBox();
