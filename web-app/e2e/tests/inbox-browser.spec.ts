@@ -1266,7 +1266,7 @@ for (const viewport of activeViewports) {
       expect(richResourceResponse.status(), 'wp5_rich_page_resource_created').toBe(200);
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_003');
       const richResourceInfo = await richResourceResponse.json() as { resource_id: string };
-      await expect(richDialog.locator('.sb-archive-surface')).toBeVisible({ timeout: 15000 });
+      await expect(richDialog.locator('.blocksuite-resource-host.sb-archive-surface')).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_004');
       await expect(richDialog.getByRole('button', { name: '导出 HTML' })).toBeVisible();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_005');
