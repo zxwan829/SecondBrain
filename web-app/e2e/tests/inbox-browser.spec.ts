@@ -1566,7 +1566,15 @@ for (const viewport of activeViewports) {
       const pageModeButton = modeGroup.getByRole('button', { name: '页面', exact: true });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
-      await pageModeButton.click();
+      try { await pageModeButton.click({ timeout: 5000 }); }
+      catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : '';
+        const action = message.includes('intercepts pointer events') ? 'pointer_intercepted'
+          : message.includes('not visible') ? 'not_visible' : message.includes('not stable') ? 'not_stable'
+            : message.includes('disabled') ? 'disabled' : message.includes('timeout') ? 'timeout' : 'other';
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ richPageAction: action }));
+        throw error;
+      }
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
       await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
       await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
