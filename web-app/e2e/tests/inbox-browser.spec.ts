@@ -433,7 +433,8 @@ async function configurePage(page: Page) {
   let dailyBriefPostCount = 0;
   let lastDailyBriefBody: Record<string, unknown> | null = null;
   let activityReadRevoked = false;
-  let wp5BlockSuiteNotePath: string | null = null;
+  const wp5BlockSuiteNotePaths = new Set<string>();
+  let wp5BlockSuiteForkCapturePending = false;
   let notesReadbackFailure: string | null = null;
   let notesSeedStatus: number | null = null;
   let wp5Step: Wp5DiagnosticStep = 'not_started';
@@ -581,9 +582,10 @@ async function configurePage(page: Page) {
         && /^\/api\/notes\/drafts\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(url.pathname))
     );
     const blocksuitePath = (() => {
-      if (!wp5BlockSuiteNotePath || params.size !== 0
-          || !url.pathname.startsWith(`${wp5BlockSuiteNotePath}/`)) return false;
-      const suffix = url.pathname.slice(wp5BlockSuiteNotePath.length);
+      if (params.size !== 0) return false;
+      const notePath = [...wp5BlockSuiteNotePaths].find(path => url.pathname.startsWith(`${path}/`));
+      if (!notePath) return false;
+      const suffix = url.pathname.slice(notePath.length);
       const method = route.request().method();
       if (suffix === '/blocksuite/resources') return method === 'POST';
       if (/^\/blocksuite\/resources\/[0-9a-f]{32}$/i.test(suffix)) return ['GET', 'PUT'].includes(method);
@@ -598,6 +600,20 @@ async function configurePage(page: Page) {
       && !activityPath && !calendarPath && !journalPath && !journalAppendPath && !taskListPath && !notesPath && !blocksuitePath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
+      return;
+    }
+    if (wp5BlockSuiteForkCapturePending && route.request().method() === 'POST'
+        && url.pathname === '/api/notes' && params.size === 0) {
+      wp5BlockSuiteForkCapturePending = false;
+      const response = await route.fetch();
+      const created = await response.json().catch(() => null) as null | { collection?: unknown; path?: unknown };
+      if (response.status() === 200 && created?.collection === 'drafts' && typeof created.path === 'string'
+          && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(created.path)) {
+        // Add only the synthetic fork returned by this one explicitly armed
+        // create, before the application can issue its first Blob request.
+        wp5BlockSuiteNotePaths.add(`/api/notes/drafts/${created.path}`);
+      }
+      await route.fulfill({ response });
       return;
     }
     if (activityReadRevoked && activityPath) {
@@ -635,8 +651,9 @@ async function configurePage(page: Page) {
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(path)) {
         throw new Error('WP5 BlockSuite allowlist requires the synthetic Note UUID');
       }
-      wp5BlockSuiteNotePath = `/api/notes/drafts/${path}`;
+      wp5BlockSuiteNotePaths.add(`/api/notes/drafts/${path}`);
     },
+    captureNextBlockSuiteFork() { wp5BlockSuiteForkCapturePending = true; },
     get lastInboxBody() { return lastInboxBody; },
     get dailyBriefPostCount() { return dailyBriefPostCount; },
     get lastDailyBriefBody() { return lastDailyBriefBody; },
@@ -2016,6 +2033,7 @@ for (const viewport of activeViewports) {
         && new URL(response.url()).pathname.includes('/blocksuite/resources/'), { timeout: 30000 }));
       const forkMarkdownProjection = page.waitForResponse(response => response.request().method() === 'PUT'
         && /^\/api\/notes\/drafts\/[^/]+$/.test(new URL(response.url()).pathname), { timeout: 30000 });
+      observed.captureNextBlockSuiteFork();
       await conflictRichDialog.getByRole('button', { name: '另存为新富 Page（保留原件）' }).click();
       const forkedNoteResponse = await forkNoteCreate;
       expect(forkedNoteResponse.status(), 'wp5_rich_page_explicit_fork_note').toBe(200);
