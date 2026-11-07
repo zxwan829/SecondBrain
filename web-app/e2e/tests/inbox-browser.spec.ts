@@ -1647,17 +1647,17 @@ for (const viewport of activeViewports) {
       const localRichMarker = `local rich-page ${randomUUID()}`;
       const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
-      let conflictAction = 'edgeless-text-geometry';
+      let conflictAction = 'paragraph-geometry';
       try {
-        const edgelessText = conflictRichDialog.locator('affine-edgeless-text').filter({ hasText: richText }).first();
-        const bounds = await edgelessText.boundingBox({ timeout: 5000 });
-        expect(bounds, 'wp5_rich_page_conflict_edgeless_text_visible').not.toBeNull();
+        const bounds = await localRichParagraph.boundingBox({ timeout: 5000 });
+        expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
         await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
         await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
-        conflictAction = 'edgeless-text-edit-gesture';
+        conflictAction = 'paragraph-edit-gesture';
         await page.mouse.dblclick(bounds!.x + 10, bounds!.y + 10, { delay: 100 });
         conflictAction = 'keyboard-edit';
         await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
+        await expect(localRichParagraph, 'wp5_rich_page_conflict_local_edit_visible').toContainText(localRichMarker, { timeout: 5000 });
         conflictAction = 'wait-save-enabled';
         await expect(conflictSaveButton).toBeEnabled({ timeout: 5000 });
         conflictAction = 'save-click';
