@@ -114,7 +114,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_conflict_seed_status_other'
   | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
   | 'wp5_resource_checkpoint_066' | 'wp5_resource_checkpoint_067' | 'wp5_resource_checkpoint_068'
-  | 'wp5_resource_checkpoint_069' | 'wp5_resource_checkpoint_070' | 'wp5_resource_checkpoint_071'
+  | 'wp5_resource_checkpoint_069' | 'wp5_resource_checkpoint_070' | 'wp5_resource_checkpoint_071' | 'wp5_resource_checkpoint_072'
   | 'wp5_resource_focus' | 'wp5_resource_type' | 'wp5_resource_dirty' | 'wp5_resource_save' | 'wp5_resource_saved' | 'wp5_resource_close' | 'wp5_resource_reopen' | 'wp5_resource_checkpoint_001' | 'wp5_resource_checkpoint_002' | 'wp5_resource_checkpoint_003' | 'wp5_resource_checkpoint_004' | 'wp5_resource_checkpoint_005' | 'wp5_resource_checkpoint_006' | 'wp5_resource_checkpoint_007' | 'wp5_resource_checkpoint_008' | 'wp5_resource_checkpoint_009' | 'wp5_resource_checkpoint_010' | 'wp5_resource_checkpoint_011' | 'wp5_resource_checkpoint_012' | 'wp5_resource_checkpoint_013' | 'wp5_resource_checkpoint_014' | 'wp5_resource_checkpoint_015' | 'wp5_resource_checkpoint_016' | 'wp5_resource_checkpoint_017' | 'wp5_resource_checkpoint_018' | 'wp5_resource_checkpoint_019' | 'wp5_resource_checkpoint_020' | 'wp5_resource_checkpoint_021' | 'wp5_resource_checkpoint_022' | 'wp5_resource_checkpoint_023' | 'wp5_resource_checkpoint_024' | 'wp5_resource_checkpoint_025' | 'wp5_resource_checkpoint_026' | 'wp5_resource_checkpoint_027' | 'wp5_resource_checkpoint_028' | 'wp5_resource_checkpoint_029' | 'wp5_resource_checkpoint_030' | 'wp5_resource_checkpoint_031' | 'wp5_resource_checkpoint_032' | 'wp5_resource_checkpoint_033' | 'wp5_resource_checkpoint_034' | 'wp5_resource_checkpoint_035' | 'wp5_resource_checkpoint_036' | 'wp5_resource_checkpoint_037' | 'wp5_resource_checkpoint_038' | 'wp5_resource_checkpoint_039' | 'wp5_resource_checkpoint_040' | 'wp5_resource_checkpoint_041' | 'wp5_resource_checkpoint_042' | 'wp5_resource_checkpoint_043' | 'wp5_resource_checkpoint_044' | 'wp5_resource_checkpoint_045' | 'wp5_resource_checkpoint_046' | 'wp5_resource_checkpoint_047' | 'wp5_resource_checkpoint_048' | 'wp5_resource_checkpoint_049' | 'wp5_resource_checkpoint_050' | 'wp5_resource_checkpoint_051' | 'wp5_resource_checkpoint_052' | 'wp5_resource_checkpoint_053' | 'wp5_resource_checkpoint_054' | 'wp5_resource_checkpoint_055' | 'wp5_resource_checkpoint_056' | 'wp5_resource_checkpoint_057' | 'wp5_resource_checkpoint_058' | 'wp5_resource_checkpoint_059' | 'wp5_resource_checkpoint_060' | 'wp5_resource_checkpoint_061' | 'wp5_resource_checkpoint_062' | 'wp5_resource_checkpoint_063' | 'wp5_resource_checkpoint_064' | 'wp5_resource_checkpoint_065' | 'wp5_resource_dialog_open' | 'wp5_resource_content_visible' | 'wp5_resource_editable' | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
   | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
@@ -1554,8 +1554,36 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_071');
       await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
       observed.setWp5Step('rich_page_mode_page');
+      const pageModeButton = richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true });
+      const pageModeEnabled = await pageModeButton.isEnabled().catch(() => false);
+      if (!pageModeEnabled) {
+        const [currentNoteResponse, currentResourceResponse, modeState] = await Promise.all([
+          page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`),
+          page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`),
+          richDialog.evaluate(dialog => {
+            const group = dialog.querySelector<HTMLElement>('[role="group"][aria-label="文档模式"]');
+            const pageButton = [...(group?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(button => button.textContent?.trim() === '页面');
+            const fieldset = group?.closest('fieldset');
+            const statusText = dialog.querySelector('.document-status')?.textContent?.trim() ?? '';
+            return { busy: dialog.getAttribute('aria-busy'), groupPresent: Boolean(group), fieldsetDisabled: fieldset?.disabled ?? null,
+              pageButtonDisabled: pageButton?.disabled ?? null, status: /冲突|412/.test(statusText) ? 'conflict'
+                : /失败|ERROR/.test(statusText) ? 'error' : /未保存|正在/.test(statusText) ? 'pending'
+                  : /已保存/.test(statusText) ? 'saved' : 'other' };
+          }),
+        ]);
+        const currentNote = currentNoteResponse.ok() ? await currentNoteResponse.json() as { etag?: string } : null;
+        const currentResource = currentResourceResponse.ok() ? await currentResourceResponse.json() as {
+          note_etag?: string; snapshot?: { secondbrainRichPage?: { markdownSha256?: string } };
+        } : null;
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ ...modeState, pageModeEnabled,
+          noteRead: currentNoteResponse.status(), resourceRead: currentResourceResponse.status(),
+          receiptMatchesNote: currentResource?.snapshot?.secondbrainRichPage?.markdownSha256 === currentNote?.etag,
+          resourceNoteMatchesNote: currentResource?.note_etag === currentNote?.etag }));
+      }
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
-      await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true }).click();
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_072');
+      expect(pageModeEnabled, 'wp5_rich_page_page_mode_enabled').toBe(true);
+      await pageModeButton.click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
       await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
       await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
