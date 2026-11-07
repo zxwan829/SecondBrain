@@ -1651,6 +1651,15 @@ for (const viewport of activeViewports) {
       try {
         const bounds = await localRichParagraph.boundingBox({ timeout: 5000 });
         expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
+        const viewportBounds = await conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox({ timeout: 5000 });
+        expect(viewportBounds, 'wp5_rich_page_conflict_edgeless_viewport_visible').not.toBeNull();
+        const visibleLeft = Math.max(bounds!.x, viewportBounds!.x);
+        const visibleTop = Math.max(bounds!.y, viewportBounds!.y);
+        const visibleRight = Math.min(bounds!.x + bounds!.width, viewportBounds!.x + viewportBounds!.width);
+        const visibleBottom = Math.min(bounds!.y + bounds!.height, viewportBounds!.y + viewportBounds!.height);
+        expect(visibleRight).toBeGreaterThan(visibleLeft);
+        expect(visibleBottom).toBeGreaterThan(visibleTop);
+        const clickPoint = { x: (visibleLeft + visibleRight) / 2, y: (visibleTop + visibleBottom) / 2 };
         await page.evaluate(() => {
           const target = window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> };
           target.__wp5NotePointerHits = [];
@@ -1665,10 +1674,43 @@ for (const viewport of activeViewports) {
           };
           window.addEventListener('pointerdown', recordPointer, true);
         });
-        await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
-        await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+        const readRichNoteState = () => localRichParagraph.evaluate(paragraph => {
+          let node: Node | null = paragraph;
+          while (node) {
+            if (node instanceof Element && node.localName === 'affine-edgeless-note') {
+              const note = node as HTMLElement & { model?: { id?: string }; gfx?: { selection?: { has?: (id: string) => boolean; editing?: boolean } } };
+              const selected = Boolean(note.model?.id && note.gfx?.selection?.has?.(note.model.id));
+              const editing = note.shadowRoot?.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]')?.dataset.editing === 'true';
+              let anchor: Node | null = window.getSelection()?.anchorNode ?? null;
+              let caretInParagraph = false;
+              while (anchor) {
+                if (anchor === paragraph) { caretInParagraph = true; break; }
+                if (anchor.parentNode) anchor = anchor.parentNode;
+                else {
+                  const root = anchor.getRootNode();
+                  anchor = root instanceof ShadowRoot ? root.host : null;
+                }
+              }
+              return { selected, editing, caretInParagraph };
+            }
+            if (node.parentNode) node = node.parentNode;
+            else {
+              const root = node.getRootNode();
+              node = root instanceof ShadowRoot ? root.host : null;
+            }
+          }
+          return null;
+        });
+        await page.mouse.click(clickPoint.x, clickPoint.y);
+        await expect.poll(async () => (await readRichNoteState())?.selected, { timeout: 5000 })
+          .toBe(true);
         conflictAction = 'paragraph-enter-edit';
-        await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
+        await page.mouse.click(clickPoint.x, clickPoint.y);
+        await expect.poll(async () => {
+          const state = await readRichNoteState();
+          return state?.editing === true && state.caretInParagraph;
+        }, { timeout: 5000 })
+          .toBe(true);
         conflictAction = 'keyboard-edit';
         await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
         await expect(localRichParagraph, 'wp5_rich_page_conflict_local_edit_visible').toContainText(localRichMarker, { timeout: 5000 });
@@ -1737,8 +1779,11 @@ for (const viewport of activeViewports) {
           }, { marker: localRichMarker }).catch(() => null),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
         ]);
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ e: error instanceof Error ? error.name : 'non_error',
-          action: conflictAction, state: interactionState }));
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ action: conflictAction,
+          pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [hit.note, hit.paragraph, hit.editable]),
+          note: [interactionState?.noteEditing, interactionState?.noteSelected, interactionState?.selectionEditing],
+          anchor: interactionState?.selectionInParagraph, focus: interactionState?.focusedContenteditable,
+          stored: interactionState?.markerInStore }));
         throw error;
       }
       await expect(conflictRichDialog.getByRole('alert')).toContainText('未自动合并或覆盖');
