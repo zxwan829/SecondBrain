@@ -1272,7 +1272,12 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_005');
       await expect(richDialog.locator('.blocksuite-resource-host .affine-page-viewport')).toBeVisible();
       const richText = 'Synthetic rich page round trip';
-      const richBody = richDialog.locator('affine-paragraph').filter({ hasText: '在这里开始编辑完整富格式内容。' }).first();
+      const richParagraphTexts = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
+        const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: { getBlocksByFlavour: (flavour: string) => Array<{ model: { props: { text?: { toString: () => string } } } }> } }).__sbBlockSuiteStore;
+        return store?.getBlocksByFlavour('affine:paragraph').map(({ model }) => model.props.text?.toString() ?? '') ?? [];
+      });
+      expect(richParagraphTexts).toEqual(['富 Page', '在这里开始编辑完整富格式内容。']);
+      const richBody = richDialog.locator('.affine-page-viewport affine-paragraph').nth(1);
       await expect(richBody).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_content_visible');
       await richBody.click();
