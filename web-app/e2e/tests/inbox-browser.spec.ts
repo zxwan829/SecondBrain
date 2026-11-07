@@ -1571,13 +1571,18 @@ for (const viewport of activeViewports) {
         const message = error instanceof Error ? error.message.toLowerCase() : '';
         const callLog = message.split('call log:').at(-1) ?? '';
         const action = callLog.includes('intercepts pointer events') ? 'pointer_intercepted'
-          : callLog.includes('element is not visible') ? 'not_visible' : callLog.includes('element is not enabled') ? 'not_enabled'
-            : callLog.includes('element is not stable') ? 'not_stable'
-              : callLog.includes('waiting for element to be visible, enabled and stable') ? 'waiting_visible_enabled_stable'
-                : callLog.includes('scrolling into view') ? 'scrolling_into_view'
-                  : callLog.includes('performing click action') ? 'performing_click_action'
-                    : callLog.includes('waiting for scheduled navigations') ? 'waiting_for_navigation' : 'timeout_without_action_detail';
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ richPageAction: action }));
+          : callLog.includes('waiting for element to receive pointer events') ? 'waiting_pointer_events'
+            : callLog.includes('element is not visible') ? 'not_visible' : callLog.includes('element is not enabled') ? 'not_enabled'
+              : callLog.includes('element is not stable') ? 'not_stable'
+                : callLog.includes('waiting for element to be visible, enabled and stable') ? 'waiting_visible_enabled_stable'
+                  : callLog.includes('waiting for locator') && !callLog.includes('locator resolved to') ? 'waiting_for_locator'
+                    : callLog.includes('locator resolved to') ? 'locator_resolved_actionability'
+                      : callLog.includes('scrolling into view') ? 'scrolling_into_view'
+                        : callLog.includes('performing click action') ? 'performing_click_action'
+                          : callLog.includes('waiting for scheduled navigations') ? 'waiting_for_navigation'
+                            : callLog ? 'unclassified_call_log' : message.includes('timeout') ? 'timeout_no_call_log' : 'non_timeout_no_call_log';
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ richPageAction: action,
+          errorName: error instanceof Error ? error.name : 'non_error', hasCallLog: Boolean(callLog) }));
         throw error;
       }
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
