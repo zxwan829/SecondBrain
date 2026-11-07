@@ -221,6 +221,26 @@ def test_wp5_autosave_probe_timeline_accepts_only_bounded_safe_events():
     with pytest.raises(RuntimeError):
         module._validate_failure_diagnostics([over_bound])
 
+
+def test_wp5_canvas_save_diagnostic_is_finite_and_sanitized():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+        "assertion_id": "wp5_resource_checkpoint_010", "activity_get_statuses": [],
+        "wp5_canvas_save": {
+            "checkpoint": "saved_status", "status": "previous_dirty", "close_enabled": False,
+            "readback_status": 200, "snapshot_matches_readback": False,
+            "live_text_bounds": [[120, 360, 320, 128]], "saved_text_bounds": [[120, 360, 320, 120]],
+        },
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    invalid = {**diagnostic, "wp5_canvas_save": {**diagnostic["wp5_canvas_save"], "status": "private note body"}}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([invalid])
+    over_bound = {**diagnostic, "wp5_canvas_save": {**diagnostic["wp5_canvas_save"],
+        "live_text_bounds": [[120, 360, 320, 1e10]]}}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([over_bound])
+
 @pytest.mark.parametrize("entry", [
     {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret", "notes_collection_statuses": []},
     {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},

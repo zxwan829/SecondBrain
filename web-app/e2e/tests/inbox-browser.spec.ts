@@ -51,6 +51,10 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_snapshot_restore' | 'rich_page_post_restore_reopen' | 'rich_page_conflict'
   | 'rich_page_recovery_copy' | 'rich_page_explicit_fork';
 type BlockSuiteRequestDiagnostic = { endpoint: 'resource_collection' | 'resource' | 'blob' | 'snapshot' | 'snapshot_restore'; method: 'GET' | 'POST' | 'PUT'; status: number | null };
+type CanvasSaveDiagnostic = { checkpoint: 'first_status' | 'second_save_response' | 'readback' | 'snapshot_compare' | 'saved_status' | 'close_enabled';
+  status: 'saved' | 'previous_dirty' | 'unsaved' | 'saving' | 'other'; close_enabled: boolean | null;
+  readback_status: number | null; snapshot_matches_readback: boolean | null;
+  live_text_bounds: number[][]; saved_text_bounds: number[][] };
 const WP5_PROBE_MARKER = 'wp5-conflict-queue' as const;
 function boundedWp5ProbeTimeline(events: Wp5ProbeEvent[]): Wp5ProbeEvent[] {
   const ordered = [...events].sort((left, right) => left.at_ms - right.at_ms);
@@ -385,6 +389,7 @@ async function configurePage(page: Page) {
   let notesReadbackFailure: string | null = null;
   let notesSeedStatus: number | null = null;
   let wp5Step: Wp5DiagnosticStep = 'not_started';
+  let wp5CanvasSaveDiagnostic: CanvasSaveDiagnostic | null = null;
   const pageErrorNames: string[] = [];
   const pageErrorCategories: string[] = [];
   const pageErrorSources: string[] = [];
@@ -620,6 +625,8 @@ async function configurePage(page: Page) {
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
+    setWp5CanvasSaveDiagnostic(value: CanvasSaveDiagnostic) { wp5CanvasSaveDiagnostic = value; },
+    get wp5CanvasSaveDiagnostic() { return wp5CanvasSaveDiagnostic; },
     setNotesReadbackFailure(detail: unknown) {
       const known: Record<string, string> = {
         'App session required': 'session_required',
@@ -1374,12 +1381,22 @@ for (const viewport of activeViewports) {
       const nestedCanvasStatus = nestedCanvasDialog.getByRole('status');
       const nestedCanvasClose = nestedCanvasDialog.getByRole('button', { name: '关闭', exact: true });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
+      const canvasStatusState = (value: string): CanvasSaveDiagnostic['status'] => value === 'BlockSuite 资源已保存' ? 'saved'
+        : value === '先前版本已保存；有未保存的资源修改' ? 'previous_dirty'
+          : value === '有未保存的资源修改' ? 'unsaved' : value === '保存中…' ? 'saving' : 'other';
+      const recordCanvasSave = (diagnostic: CanvasSaveDiagnostic) => observed.setWp5CanvasSaveDiagnostic(diagnostic);
+      recordCanvasSave({ checkpoint: 'first_status', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+        close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
+        live_text_bounds: [], saved_text_bounds: [] });
       await expect(nestedCanvasStatus).toHaveText(/^(BlockSuite 资源已保存|先前版本已保存；有未保存的资源修改)$/);
       if (await nestedCanvasStatus.innerText() !== 'BlockSuite 资源已保存') {
         const nestedCanvasResave = page.waitForResponse(response => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
         await nestedCanvasDialog.getByRole('button', { name: '保存资源' }).click();
         expect((await nestedCanvasResave).status(), 'wp5_rich_page_nested_canvas_resave').toBe(200);
+        recordCanvasSave({ checkpoint: 'second_save_response', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+          close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
+          live_text_bounds: [], saved_text_bounds: [] });
         const nestedCanvasReadback = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`);
         const nestedCanvasPersisted = nestedCanvasReadback.ok()
           ? await nestedCanvasReadback.json() as { snapshot?: Record<string, unknown> } : null;
@@ -1387,11 +1404,16 @@ for (const viewport of activeViewports) {
           const store = (element as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
           if (!store) return null;
           const snapshot = store.getTransformer().docToSnapshot(store) as Record<string, unknown>;
-          const textBounds: unknown[] = [];
+          const textBounds: number[][] = [];
           const visit = (value: unknown) => {
             if (!value || typeof value !== 'object') return;
             const record = value as Record<string, unknown>;
-            if (record.flavour === 'affine:edgeless-text') textBounds.push(record.xywh);
+            if (record.flavour === 'affine:edgeless-text' && typeof record.xywh === 'string') {
+              try {
+                const bounds = JSON.parse(record.xywh);
+                if (Array.isArray(bounds) && bounds.length === 4 && bounds.every(Number.isFinite)) textBounds.push(bounds as number[]);
+              } catch { /* bounded diagnostic omits invalid geometry */ }
+            }
             for (const child of Object.values(record)) {
               if (Array.isArray(child)) child.forEach(visit);
               else if (child && typeof child === 'object') visit(child);
@@ -1400,18 +1422,17 @@ for (const viewport of activeViewports) {
           visit(snapshot);
           return { snapshot, textBounds };
         });
-        const stableSnapshot = (value: unknown): string => {
-          if (Array.isArray(value)) return `[${value.map(stableSnapshot).join(',')}]`;
-          if (!value || typeof value !== 'object') return JSON.stringify(value);
-          return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
-            .map(([key, child]) => `${JSON.stringify(key)}:${stableSnapshot(child)}`).join(',')}}`;
-        };
-        const readEdgelessTextBounds = (value: unknown): unknown[] => {
-          const bounds: unknown[] = [];
+        const readEdgelessTextBounds = (value: unknown): number[][] => {
+          const bounds: number[][] = [];
           const visit = (item: unknown) => {
             if (!item || typeof item !== 'object') return;
             const record = item as Record<string, unknown>;
-            if (record.flavour === 'affine:edgeless-text') bounds.push(record.xywh);
+            if (record.flavour === 'affine:edgeless-text' && typeof record.xywh === 'string') {
+              try {
+                const value = JSON.parse(record.xywh);
+                if (Array.isArray(value) && value.length === 4 && value.every(Number.isFinite)) bounds.push(value as number[]);
+              } catch { /* bounded diagnostic omits invalid geometry */ }
+            }
             for (const child of Object.values(record)) {
               if (Array.isArray(child)) child.forEach(visit);
               else if (child && typeof child === 'object') visit(child);
@@ -1420,19 +1441,28 @@ for (const viewport of activeViewports) {
           visit(value);
           return bounds;
         };
-        const observedStatus = await nestedCanvasStatus.innerText();
-        console.log('WP5_CANVAS_SAVE_STATE', JSON.stringify({
-          status: ['BlockSuite 资源已保存', '先前版本已保存；有未保存的资源修改', '有未保存的资源修改'].includes(observedStatus)
-            ? observedStatus : 'other',
-          closeEnabled: await nestedCanvasClose.isEnabled(),
-          readbackStatus: nestedCanvasReadback.status(),
-          snapshotMatchesReadback: !!nestedCanvasLive && !!nestedCanvasPersisted
-            && stableSnapshot(nestedCanvasLive.snapshot) === stableSnapshot(nestedCanvasPersisted.snapshot),
-          liveEdgelessTextBounds: nestedCanvasLive?.textBounds,
-          savedEdgelessTextBounds: nestedCanvasPersisted ? readEdgelessTextBounds(nestedCanvasPersisted.snapshot) : null,
-        }));
+        const canonicalJson = (value: unknown): string => {
+          if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+          if (!value || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+          return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(',')}}`;
+        };
+        recordCanvasSave({ checkpoint: 'readback', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+          close_enabled: await nestedCanvasClose.isEnabled(), readback_status: nestedCanvasReadback.status(),
+          snapshot_matches_readback: null, live_text_bounds: [], saved_text_bounds: [] });
+        const readbackMatchesLive = !!nestedCanvasLive && !!nestedCanvasPersisted
+          && canonicalJson(nestedCanvasLive.snapshot) === canonicalJson(nestedCanvasPersisted.snapshot);
+        const liveTextBounds = nestedCanvasLive?.textBounds ?? [];
+        const savedTextBounds = nestedCanvasPersisted ? readEdgelessTextBounds(nestedCanvasPersisted.snapshot) : [];
+        recordCanvasSave({ checkpoint: 'saved_status', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+          close_enabled: await nestedCanvasClose.isEnabled(), readback_status: nestedCanvasReadback.status(),
+          snapshot_matches_readback: readbackMatchesLive, live_text_bounds: liveTextBounds,
+          saved_text_bounds: savedTextBounds });
         await expect(nestedCanvasStatus).toHaveText('BlockSuite 资源已保存');
       }
+      recordCanvasSave({ checkpoint: 'close_enabled', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+        close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
+        live_text_bounds: [], saved_text_bounds: [] });
       await expect(nestedCanvasClose).toBeEnabled();
       await nestedCanvasClose.click();
       await expect(nestedCanvasCard.getByText(/自动裁剪预览 · 1 个对象/)).toBeVisible({ timeout: 15000 });
@@ -2742,6 +2772,7 @@ test.afterEach(async ({ page }, testInfo) => {
         && /blocksuite|node_modules\/\.vite/i.test(record.path)).map((record) => record.status).slice(-8) ?? [],
       wp5_step: observed?.wp5Step ?? 'not_started',
       blocksuite_request_statuses: observed?.blockSuiteRequestStatuses ?? [],
+      ...(observed?.wp5CanvasSaveDiagnostic ? { wp5_canvas_save: observed.wp5CanvasSaveDiagnostic } : {}),
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
       ...(observed?.wp5AutosaveProbeEvents.length ? {
         wp5_autosave_events: await page.evaluate(() => {
