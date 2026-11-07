@@ -1408,9 +1408,10 @@ for (const viewport of activeViewports) {
           const visit = (value: unknown) => {
             if (!value || typeof value !== 'object') return;
             const record = value as Record<string, unknown>;
-            if (record.flavour === 'affine:edgeless-text' && typeof record.xywh === 'string') {
+            const props = record.props && typeof record.props === 'object' ? record.props as Record<string, unknown> : null;
+            if (record.flavour === 'affine:edgeless-text' && typeof props?.xywh === 'string') {
               try {
-                const bounds = JSON.parse(record.xywh);
+                const bounds = JSON.parse(props.xywh);
                 if (Array.isArray(bounds) && bounds.length === 4 && bounds.every(Number.isFinite)) textBounds.push(bounds as number[]);
               } catch { /* bounded diagnostic omits invalid geometry */ }
             }
@@ -1427,9 +1428,10 @@ for (const viewport of activeViewports) {
           const visit = (item: unknown) => {
             if (!item || typeof item !== 'object') return;
             const record = item as Record<string, unknown>;
-            if (record.flavour === 'affine:edgeless-text' && typeof record.xywh === 'string') {
+            const props = record.props && typeof record.props === 'object' ? record.props as Record<string, unknown> : null;
+            if (record.flavour === 'affine:edgeless-text' && typeof props?.xywh === 'string') {
               try {
-                const value = JSON.parse(record.xywh);
+                const value = JSON.parse(props.xywh);
                 if (Array.isArray(value) && value.length === 4 && value.every(Number.isFinite)) bounds.push(value as number[]);
               } catch { /* bounded diagnostic omits invalid geometry */ }
             }
