@@ -1901,7 +1901,8 @@ for (const viewport of activeViewports) {
         conflictAction = 'save-click';
         await conflictSaveButton.click({ timeout: 5000 });
         conflictAction = 'wait-conflict-status';
-        await expect(conflictRichDialog.getByRole('status').first()).toContainText('版本冲突', { timeout: 15000 });
+        await expect(conflictRichDialog.getByRole('alert').filter({ hasText: '版本冲突' }))
+          .toContainText('版本冲突', { timeout: 15000 });
       } catch (error) {
         const interactionState = await Promise.race([
           page.evaluate(({ marker }) => {
@@ -1982,7 +1983,8 @@ for (const viewport of activeViewports) {
             Number(interactionState?.selectionInParagraph), interactionState?.editableCount ?? 0] }));
         throw error;
       }
-      await expect(conflictRichDialog.getByRole('alert')).toContainText('未自动合并或覆盖');
+      await expect(conflictRichDialog.getByRole('alert').filter({ hasText: '未自动合并或覆盖' }))
+        .toContainText('未自动合并或覆盖');
       const preservedRemote = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
       expect(preservedRemote.status(), 'wp5_rich_page_conflict_remote_read').toBe(200);
       const preservedRemoteNote = await preservedRemote.json() as { content: string; etag: string };
