@@ -1627,12 +1627,11 @@ for (const viewport of activeViewports) {
           return store?.getBlocksByFlavour('affine:paragraph')?.find(({ model }: any) => model.props.text?.toString().includes(marker))?.model.id ?? null;
         }, 'Archive reorder target');
         expect(targetBlockId, 'wp5_desktop_page_plus_target_block_id').toBeTruthy();
-        await page.evaluate(({ targetId }) => {
-          const state = { targetPointerMatched: false, anchorMatched: false, menuOpen: false,
+        await richDialog.evaluate((dialog, { targetId }) => {
+          const probe = { targetPointerMatched: false, anchorMatched: false, menuOpen: false,
             plusVisible: false, gripVisible: false, pointerEvents: 0 };
-          Object.assign(window, { __wp5ArchiveUxProbe: state });
           const findWidget = () => {
-            const roots: Array<Document | ShadowRoot> = [document];
+            const roots: Array<Element | ShadowRoot> = [dialog];
             for (let index = 0; index < roots.length; index += 1) {
               for (const element of roots[index].querySelectorAll('*')) {
                 if (element.localName === 'sb-desktop-page-plus-widget') return element as HTMLElement & { anchor?: { id: string }; menuOpen?: boolean; renderRoot?: ShadowRoot };
@@ -1641,7 +1640,11 @@ for (const viewport of activeViewports) {
             }
             return null;
           };
-          document.addEventListener('pointermove', event => {
+          const onPointerMove = (event: Event) => {
+            if (probe.pointerEvents >= 8) {
+              dialog.removeEventListener('pointermove', onPointerMove);
+              return;
+            }
             const pointer = event as PointerEvent;
             const node = pointer.composedPath().find(item => item instanceof Element && item.hasAttribute('data-block-id')) as Element | undefined;
             const block = node?.closest('[data-block-id]');
@@ -1649,23 +1652,32 @@ for (const viewport of activeViewports) {
             const buttons = widget?.renderRoot?.querySelectorAll<HTMLButtonElement>('button[data-kind]');
             const plus = Array.from(buttons ?? []).find(button => button.dataset.kind === 'plus');
             const grip = Array.from(buttons ?? []).find(button => button.dataset.kind === 'grip');
-            const probe = (window as Window & { __wp5ArchiveUxProbe?: typeof state }).__wp5ArchiveUxProbe;
-            if (!probe) return;
-            probe.pointerEvents = Math.min(8, probe.pointerEvents + 1);
-            probe.targetPointerMatched ||= block?.getAttribute('data-block-id') === targetId;
-            probe.anchorMatched ||= widget?.anchor?.id === targetId;
-            probe.menuOpen ||= widget?.menuOpen === true;
-            probe.plusVisible ||= plus?.dataset.visible === 'true';
-            probe.gripVisible ||= grip?.dataset.visible === 'true';
-          });
+            probe.pointerEvents += 1;
+            probe.targetPointerMatched = block?.getAttribute('data-block-id') === targetId;
+            probe.anchorMatched = widget?.anchor?.id === targetId;
+            probe.menuOpen = widget?.menuOpen === true;
+            probe.plusVisible = plus?.dataset.visible === 'true';
+            probe.gripVisible = grip?.dataset.visible === 'true';
+          };
+          dialog.addEventListener('pointermove', onPointerMove);
+          Object.assign(window, { __wp5ArchiveUxProbe: probe,
+            __wp5ArchiveUxProbeCleanup: () => dialog.removeEventListener('pointermove', onPointerMove) });
         }, { targetId: targetBlockId });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_024');
-        await targetParagraph.hover();
-        const hoverProbe = await page.evaluate(() => (window as Window & { __wp5ArchiveUxProbe?: {
-          targetPointerMatched: boolean; anchorMatched: boolean; menuOpen: boolean;
-          plusVisible: boolean; gripVisible: boolean; pointerEvents: number;
-        } }).__wp5ArchiveUxProbe ?? null);
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(hoverProbe));
+        try {
+          await targetParagraph.hover();
+          const hoverProbe = await page.evaluate(() => (window as Window & { __wp5ArchiveUxProbe?: {
+            targetPointerMatched: boolean; anchorMatched: boolean; menuOpen: boolean;
+            plusVisible: boolean; gripVisible: boolean; pointerEvents: number;
+          } }).__wp5ArchiveUxProbe ?? null);
+          console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(hoverProbe));
+        } finally {
+          await page.evaluate(() => {
+            const runtime = window as Window & { __wp5ArchiveUxProbeCleanup?: () => void };
+            runtime.__wp5ArchiveUxProbeCleanup?.();
+            delete runtime.__wp5ArchiveUxProbeCleanup;
+          });
+        }
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_025');
         await expect(plus).toHaveAttribute('data-visible', 'true');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_026');
@@ -1681,6 +1693,22 @@ for (const viewport of activeViewports) {
         expect(Math.abs(controlGeometry[0].x - controlGeometry[1].x), 'wp5_desktop_page_plus_direction_gap').toBeLessThanOrEqual(26);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_028');
         await plus.click();
+        const clickProbe = await richDialog.evaluate(dialog => {
+          const roots: Array<Element | ShadowRoot> = [dialog];
+          let widget: (HTMLElement & { menuOpen?: boolean; renderRoot?: ShadowRoot }) | null = null;
+          for (let index = 0; index < roots.length && !widget; index += 1) {
+            for (const element of roots[index].querySelectorAll('*')) {
+              if (element.localName === 'sb-desktop-page-plus-widget') {
+                widget = element as typeof widget;
+                break;
+              }
+              if (element.shadowRoot) roots.push(element.shadowRoot);
+            }
+          }
+          return { menuOpen: widget?.menuOpen === true,
+            plusVisible: widget?.renderRoot?.querySelector<HTMLButtonElement>('button[data-kind="plus"]')?.dataset.visible === 'true' };
+        });
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ afterClick: clickProbe }));
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_029');
         await expect(page.getByText('一级标题', { exact: true })).toBeVisible();
         await page.getByText('一级标题', { exact: true }).click();
