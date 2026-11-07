@@ -1571,11 +1571,9 @@ for (const viewport of activeViewports) {
         const message = error instanceof Error ? error.message.toLowerCase() : '';
         const callLogIndex = message.indexOf('call log:');
         const callLog = callLogIndex >= 0 ? message.slice(callLogIndex + 'call log:'.length) : '';
-        const callLogSignals = [callLog.includes('waiting for locator') && 'wl', callLog.includes('locator resolved to') && 'lr',
-          callLog.includes('waiting for element') && 'we', callLog.includes('visible') && 'vis', callLog.includes('enabled') && 'en',
-          callLog.includes('stable') && 'st', callLog.includes('pointer') && 'ptr', callLog.includes('intercepts pointer events') && 'int',
-          callLog.includes('scrolling into view') && 'scr', callLog.includes('click action') && 'act',
-          callLog.includes('scheduled navigations') && 'nav'].filter(Boolean);
+        const callLogLines = callLog.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(-4)
+          .map(line => line.replace(/<[^>]*>/g, '[element]').replace(/\b[0-9a-f-]{16,}\b/gi, '[id]')
+            .replace(/[^\x20-\x7e]/g, '?').replace(/\s+/g, ' ').slice(0, 38));
         const actionState = await Promise.race([
           pageModeButton.evaluate(button => {
             const control = button as HTMLButtonElement;
@@ -1593,7 +1591,7 @@ for (const viewport of activeViewports) {
           new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
         ]);
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ e: error instanceof Error ? error.name : 'non_error',
-          log: callLogIndex >= 0, stages: callLogSignals, state: actionState }));
+          log: callLogIndex >= 0, lines: callLogLines, state: actionState }));
         throw error;
       }
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
