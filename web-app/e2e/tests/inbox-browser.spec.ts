@@ -1569,13 +1569,31 @@ for (const viewport of activeViewports) {
       try { await pageModeButton.click({ timeout: 5000 }); }
       catch (error) {
         const message = error instanceof Error ? error.message.toLowerCase() : '';
-        const callLog = message.split('call log:').at(-1) ?? '';
-        const callLogSignals = { wl: callLog.includes('waiting for locator'), lr: callLog.includes('locator resolved to'),
-          we: callLog.includes('waiting for element'), vis: callLog.includes('visible'), en: callLog.includes('enabled'),
-          st: callLog.includes('stable'), ptr: callLog.includes('pointer'), int: callLog.includes('intercepts pointer events'),
-          scr: callLog.includes('scrolling into view'), act: callLog.includes('click action'), nav: callLog.includes('scheduled navigations') };
+        const callLogIndex = message.indexOf('call log:');
+        const callLog = callLogIndex >= 0 ? message.slice(callLogIndex + 'call log:'.length) : '';
+        const callLogSignals = [callLog.includes('waiting for locator') && 'wl', callLog.includes('locator resolved to') && 'lr',
+          callLog.includes('waiting for element') && 'we', callLog.includes('visible') && 'vis', callLog.includes('enabled') && 'en',
+          callLog.includes('stable') && 'st', callLog.includes('pointer') && 'ptr', callLog.includes('intercepts pointer events') && 'int',
+          callLog.includes('scrolling into view') && 'scr', callLog.includes('click action') && 'act',
+          callLog.includes('scheduled navigations') && 'nav'].filter(Boolean);
+        const actionState = await Promise.race([
+          pageModeButton.evaluate(button => {
+            const control = button as HTMLButtonElement;
+            const dialog = button.closest<HTMLElement>('[role="dialog"]');
+            const rect = button.getBoundingClientRect();
+            const hit = rect.width > 0 && rect.height > 0
+              ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+            let disabledFieldsets = 0;
+            for (let parent = button.parentElement; parent; parent = parent.parentElement) {
+              if (parent instanceof HTMLFieldSetElement && parent.disabled) disabledFieldsets += 1;
+            }
+            return { c: button.isConnected, d: control.disabled, ad: button.getAttribute('aria-disabled') === 'true',
+              f: disabledFieldsets, h: Boolean(hit && (hit === button || button.contains(hit))), b: dialog?.getAttribute('aria-busy') ?? null };
+          }).catch(() => null),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
+        ]);
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ e: error instanceof Error ? error.name : 'non_error',
-          log: Boolean(callLog), ...callLogSignals }));
+          log: callLogIndex >= 0, stages: callLogSignals, state: actionState }));
         throw error;
       }
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
