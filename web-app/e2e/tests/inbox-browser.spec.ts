@@ -134,7 +134,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_align_no_selection' | 'wp5_archive_align_wrong_target' | 'wp5_archive_align_empty_selection'
   | 'wp5_archive_align_cross_block' | 'wp5_archive_align_model_range_missing' | 'wp5_archive_align_native_range_missing'
   | 'wp5_archive_align_native_conversion_missing' | 'wp5_archive_align_logical_selection_mismatch'
-  | 'wp5_archive_alignment_selection_ready'
+  | 'wp5_archive_alignment_selection_ready' | 'wp5_archive_align_action_click'
+  | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
+  | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
@@ -1746,17 +1748,22 @@ for (const viewport of activeViewports) {
           observed.setDiagnosticAssertion(failureAssertion as DiagnosticAssertion);
           return status;
         }), { timeout: 5000, message: 'wp5_archive_text_selection_ready' }).toBe('ready');
+        observed.setDiagnosticAssertion('wp5_archive_align_action_click');
         await centerAction.click();
+        observed.setDiagnosticAssertion('wp5_archive_align_model_center');
         await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.textAlign)
           .toBe('center');
 
+        observed.setDiagnosticAssertion('wp5_archive_grip_visibility');
         await targetParagraph.hover();
         await expect(grip).toHaveAttribute('data-visible', 'true');
         const gripBox = await grip.boundingBox();
         const bodyBox = await bodyParagraph.boundingBox();
+        observed.setDiagnosticAssertion('wp5_archive_drag_geometry');
         expect(gripBox, 'wp5_desktop_page_plus_grip_geometry').not.toBeNull();
         expect(bodyBox, 'wp5_desktop_page_plus_drop_geometry').not.toBeNull();
         const orderBeforeDrag = await readBlockOrder();
+        observed.setDiagnosticAssertion('wp5_archive_drag_order');
         expect(orderBeforeDrag.filter(block => block.text.includes('Archive reorder target')), 'wp5_desktop_page_plus_reorder_source_unique').toHaveLength(1);
         expect(orderBeforeDrag.filter(block => block.text.includes(richText)), 'wp5_desktop_page_plus_reorder_target_unique').toHaveLength(1);
         const beforeDrag = orderBeforeDrag.find(block => block.text.includes('Archive reorder target'))!;
@@ -1767,6 +1774,7 @@ for (const viewport of activeViewports) {
         await page.mouse.down();
         await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, bodyBox!.y + 1, { steps: 5 });
         await page.mouse.up();
+        observed.setDiagnosticAssertion('wp5_archive_drag_result');
         await expect.poll(async () => {
           const order = await readBlockOrder();
           const source = order.find(block => block.text.includes('Archive reorder target'));
