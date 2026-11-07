@@ -108,6 +108,7 @@ jobs:
         if: inputs.wp5_open_only == true
         env:
           SB_E2E_PRODUCTION_BUILD: "true"
+          WP5_EXACT_SPEC_DIAGNOSTIC: "true"
         run: node web-app/e2e/scripts/wp5_table_dom_diagnostic.mjs
       - name: Run isolated Core + Web browser acceptance
         id: synthetic
