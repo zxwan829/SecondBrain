@@ -1663,7 +1663,7 @@ for (const viewport of activeViewports) {
       type NoteClickState = { selected: boolean; editing: boolean; caretInParagraph: boolean; locked: boolean | null; rangeCount: number; anchorOffset: number | null };
       let firstClickState: NoteClickState | null = null;
       let secondClickState: NoteClickState | null = null;
-      let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
+      let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[]; hitTargets: [boolean, boolean, number] } | null = null;
       try {
         let bounds: Awaited<ReturnType<typeof localRichParagraph.boundingBox>> = null;
         let viewportBounds: typeof bounds = null;
@@ -1688,19 +1688,36 @@ for (const viewport of activeViewports) {
               if (!inner || inner === hit) break;
               hit = inner;
             }
-            const path: string[] = [];
+            const roots: Array<Document | ShadowRoot | HTMLElement> = [document];
+            const elements: Element[] = [];
+            for (let index = 0; index < roots.length; index += 1) {
+              for (const element of roots[index].querySelectorAll('*')) {
+                elements.push(element);
+                if (element.shadowRoot) roots.push(element.shadowRoot);
+              }
+            }
+            const targetParagraph = elements.find(element => element.localName === 'affine-paragraph'
+              && element.textContent?.includes('Synthetic rich page round trip'));
+            const targetNote = targetParagraph && elements.find(element => element.localName === 'affine-edgeless-note'
+              && [...element.querySelectorAll('affine-paragraph'), ...(element.shadowRoot?.querySelectorAll('affine-paragraph') ?? [])]
+                .includes(targetParagraph));
+            let hitParagraph = false;
+            let hitNote = false;
+            let depth = 0;
             let node: Node | null = hit;
-            while (node && path.length < 10) {
-              if (node instanceof Element) path.push(node.localName);
+            while (node && depth < 64) {
+              if (node === targetParagraph) hitParagraph = true;
+              if (node === targetNote) hitNote = true;
+              depth += 1;
               if (node.parentNode) node = node.parentNode;
               else {
                 const root = node.getRootNode();
                 node = root instanceof ShadowRoot ? root.host : null;
               }
             }
-            return path;
+            return { hitParagraph, hitNote, depth };
           }, clickPoint);
-          const targetHit = hitPath.includes('affine-edgeless-note') && hitPath.includes('affine-paragraph');
+          const targetHit = hitPath.hitParagraph && hitPath.hitNote;
           const geometry = JSON.stringify([bounds.x, bounds.y, bounds.width, bounds.height,
             viewportBounds.x, viewportBounds.y, viewportBounds.width, viewportBounds.height, hitPath]);
           stableTargetSamples = targetHit && geometry === previousHitGeometry ? stableTargetSamples + 1 : targetHit ? 1 : 0;
@@ -1720,7 +1737,7 @@ for (const viewport of activeViewports) {
         conflictAction = 'readonly-dom-structure';
         structureSummary = await page.evaluate(({ x, y, text }) => {
           const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog');
-          if (!dialog) return { hostKind: null, paragraphCount: 0, paragraphPath: [], paragraphRect: [], dialogRect: [], viewportRect: [], windowSize: [], notes: [], hitPath: [] };
+          if (!dialog) return { hostKind: null, paragraphCount: 0, paragraphPath: [], paragraphRect: [], dialogRect: [], viewportRect: [], windowSize: [], notes: [], hitPath: [], hitTargets: [false, false, 0] as [boolean, boolean, number] };
           const roots: Array<Document | ShadowRoot | HTMLElement> = [dialog];
           const elements: Element[] = [];
           for (let index = 0; index < roots.length; index += 1) {
@@ -1733,7 +1750,7 @@ for (const viewport of activeViewports) {
           const pathOf = (start: Node | null) => {
             const path: string[] = [];
             let node = start;
-            while (node && path.length < 10) {
+            while (node && path.length < 64) {
               if (node instanceof Element) path.push(node.localName);
               if (node.parentNode) node = node.parentNode;
               else {
@@ -1768,14 +1785,32 @@ for (const viewport of activeViewports) {
             if (!inner || inner === hit) break;
             hit = inner;
           }
+          const targetParagraph = paragraphs[0];
+          const targetNote = targetParagraph && elements.find(element => element.localName === 'affine-edgeless-note'
+            && [...element.querySelectorAll('affine-paragraph'), ...(element.shadowRoot?.querySelectorAll('affine-paragraph') ?? [])]
+              .includes(targetParagraph));
+          let hitParagraph = false;
+          let hitNote = false;
+          let hitDepth = 0;
+          let hitNode: Node | null = hit;
+          while (hitNode && hitDepth < 64) {
+            if (hitNode === targetParagraph) hitParagraph = true;
+            if (hitNode === targetNote) hitNote = true;
+            hitDepth += 1;
+            if (hitNode.parentNode) hitNode = hitNode.parentNode;
+            else {
+              const root = hitNode.getRootNode();
+              hitNode = root instanceof ShadowRoot ? root.host : null;
+            }
+          }
           return { hostKind: host?.dataset.kind ?? null, paragraphCount: paragraphs.length,
             paragraphPath: pathOf(paragraphs[0] ?? null), paragraphRect: rectValues(paragraphRect),
             dialogRect: rectValues(dialogRect), viewportRect: rectValues(viewportRect), windowSize: [innerWidth, innerHeight],
-            notes, hitPath: pathOf(hit) };
+            notes, hitPath: pathOf(hit), hitTargets: [hitParagraph, hitNote, hitDepth] as [boolean, boolean, number] };
         }, { x: confirmedClickPoint.x, y: confirmedClickPoint.y, text: richText });
         expect(structureSummary.notes.some(note => note[3]), 'wp5_rich_page_conflict_paragraph_belongs_to_active_note').toBe(true);
-        expect(structureSummary.hitPath).toContain('affine-edgeless-note');
-        expect(structureSummary.hitPath).toContain('affine-paragraph');
+        expect(structureSummary.hitTargets[0], 'wp5_rich_page_conflict_hit_target_paragraph').toBe(true);
+        expect(structureSummary.hitTargets[1], 'wp5_rich_page_conflict_hit_target_note').toBe(true);
         await page.evaluate(() => {
           const target = window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> };
           target.__wp5NotePointerHits = [];
@@ -1915,7 +1950,8 @@ for (const viewport of activeViewports) {
           Number(state.caretInParagraph), state.locked === null ? null : Number(state.locked), state.rangeCount, state.anchorOffset];
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ a: conflictAction,
           view: interactionState?.view, mode: interactionState?.docMode,
-          hit: structureSummary?.hitPath.includes('affine-paragraph') ?? false,
+          hit: structureSummary ? Number(structureSummary.hitTargets[0]) + Number(structureSummary.hitTargets[1]) : 0,
+          depth: structureSummary?.hitTargets[2] ?? 0,
           pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [Number(hit.note), Number(hit.paragraph), Number(hit.editable)]),
           clicks: [compactClickState(firstClickState), compactClickState(secondClickState)],
           state: [Number(Boolean(interactionState?.noteSelected)), Number(Boolean(interactionState?.selectionEditing)),
