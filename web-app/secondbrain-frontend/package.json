@@ -19,6 +19,7 @@
     "prepare:archive-ux": "node scripts/prepare-blocksuite-archive-ux.mjs --prepare-only"
   },
   "dependencies": {
+    "@blocksuite/affine": "0.22.4",
     "@blocksuite/affine-block-code": "0.22.4",
     "@blocksuite/affine-block-data-view": "0.22.4",
     "@blocksuite/affine-block-database": "0.22.4",
@@ -65,6 +66,7 @@
     "@blocksuite/std": "0.22.4",
     "@blocksuite/store": "0.22.4",
     "@blocksuite/sync": "0.22.4",
+    "@emoji-mart/data": "1.2.1",
     "@excalidraw/excalidraw": "0.17.6",
     "@tiptap/extension-image": "3.32.0",
     "@tiptap/extension-table": "3.32.0",
@@ -77,6 +79,7 @@
     "@toeverything/theme": "1.1.15",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "emoji-mart": "5.6.0",
     "marked": "17.0.6",
     "react": "18.3.1",
     "react-dom": "18.3.1",
