@@ -1630,13 +1630,18 @@ for (const viewport of activeViewports) {
       // JSON must remain readable for explicit resolution.
       const beforeExternalWrite = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
       const latestRichNote = await beforeExternalWrite.json() as { content: string; etag: string };
+      const latestArtifactSetEtag = beforeExternalWrite.headers()['x-artifact-set-etag'];
+      expect(latestArtifactSetEtag, 'wp5_rich_page_conflict_artifact_set_etag').toMatch(/^"[a-f0-9]{64}"$/);
+      if (!latestArtifactSetEtag) throw new Error('BlockSuite artifact set version is missing from the note read.');
       const externalRichMarker = `external rich-page ${randomUUID()}`;
       observed.setWp5Step('rich_page_conflict');
-      const externalRichWrite = await page.evaluate(async ({ path, content, etag, marker }) => {
+      const externalRichWrite = await page.evaluate(async ({ path, content, etag, artifactSetEtag, marker }) => {
         const response = await fetch(`/api/notes/drafts/${path}`, { method: 'PUT', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'If-Match': `"${etag}"` }, body: JSON.stringify({ content: `${content}\n${marker}\n` }) });
+          headers: { 'Content-Type': 'application/json', 'If-Match': `"${etag}"`, 'If-Artifact-Set-Match': artifactSetEtag },
+          body: JSON.stringify({ content: `${content}\n${marker}\n` }) });
         return response.status;
-      }, { path: richCreated.path, content: latestRichNote.content, etag: latestRichNote.etag, marker: externalRichMarker });
+      }, { path: richCreated.path, content: latestRichNote.content, etag: latestRichNote.etag,
+        artifactSetEtag: latestArtifactSetEtag, marker: externalRichMarker });
       expect(externalRichWrite, 'wp5_rich_page_external_markdown_write').toBe(200);
       const conflictRichDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
       const localRichMarker = `local rich-page ${randomUUID()}`;
