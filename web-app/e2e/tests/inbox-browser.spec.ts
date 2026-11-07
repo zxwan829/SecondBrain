@@ -1564,6 +1564,15 @@ for (const viewport of activeViewports) {
       const modeGroup = richDialog.getByRole('group', { name: '文档模式' });
       await expect(modeGroup).toBeVisible();
       const pageModeButton = modeGroup.getByRole('button', { name: '页面', exact: true });
+      const modeSwitchDom = await Promise.race([
+        page.evaluate(() => {
+          const dialogs = [...document.querySelectorAll<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]')];
+          return { readyState: document.readyState, count: dialogs.length,
+            labels: dialogs.slice(0, 2).map(dialog => dialog.getAttribute('aria-label')) };
+        }).catch(() => null),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 1500)),
+      ]);
+      console.log('WP5_RESOURCE_MODE_DOM', JSON.stringify(modeSwitchDom));
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
       try { await pageModeButton.click({ timeout: 5000 }); }
