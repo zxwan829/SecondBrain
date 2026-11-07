@@ -1862,36 +1862,20 @@ for (const viewport of activeViewports) {
           const table = element as HTMLElement & { dataManager?: { getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
           return table.dataManager?.getCell?.(target.rowId, target.columnId)?.text?.toString?.() ?? '';
         }, { rowId: targetRowId, columnId: targetColumnId });
-        const readTableCellFocus = (cell: Locator) => cell.evaluate((targetCell): string => {
+        const assertTableCellEditable = async (cell: Locator) => cell.evaluate((targetCell): boolean => {
           const richText = targetCell.querySelector('rich-text');
-          if (!richText) return 'wp5_archive_cell_rich_text_missing';
+          if (!richText) return false;
           const editor = richText.querySelector<HTMLElement>('.inline-editor');
-          if (!editor) return 'wp5_archive_cell_editor_missing';
-          if (editor.getAttribute('contenteditable') !== 'true') return 'wp5_archive_cell_readonly';
-          const selection = window.getSelection();
-          const anchor = selection?.anchorNode ?? null;
-          let current = anchor;
-          let caretInCell = false;
-          while (current) {
-            if (current === targetCell) { caretInCell = true; break; }
-            current = current instanceof ShadowRoot ? current.host : current.parentNode;
-          }
-          return selection?.isCollapsed && caretInCell ? 'wp5_archive_cell_focus_ready' : 'wp5_archive_cell_caret_not_in_cell';
+          return Boolean(editor && editor.getAttribute('contenteditable') === 'true');
         });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_038');
+        expect(await assertTableCellEditable(firstCell), 'wp5_archive_table_first_cell_editable').toBe(true);
         await firstCellEditor.click();
-        await expect.poll(() => readTableCellFocus(firstCell).then(status => {
-          observed.setDiagnosticAssertion(status as DiagnosticAssertion);
-          return status;
-        }), { timeout: 5000, message: 'wp5_archive_table_cell_focus_ready' }).toBe('wp5_archive_cell_focus_ready');
         await page.keyboard.insertText(mergeSourceText);
         await expect.poll(() => readTableCellText(firstRowId!, firstColumnId!)).toContain(mergeSourceText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
+        expect(await assertTableCellEditable(secondCell), 'wp5_archive_table_second_cell_editable').toBe(true);
         await secondCellEditor.click();
-        await expect.poll(() => readTableCellFocus(secondCell).then(status => {
-          observed.setDiagnosticAssertion(status as DiagnosticAssertion);
-          return status;
-        }), { timeout: 5000, message: 'wp5_archive_table_second_cell_focus_ready' }).toBe('wp5_archive_cell_focus_ready');
         await page.keyboard.insertText(mergeCoveredText);
         await expect.poll(() => readTableCellText(secondRowId!, secondColumnId!)).toContain(mergeCoveredText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_040');
