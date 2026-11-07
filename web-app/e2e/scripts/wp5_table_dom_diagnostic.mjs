@@ -70,7 +70,7 @@ try {
   const python = process.env.PYTHON ?? 'python';
   const core = start(python, ['-m', 'uvicorn', 'secondbrain_core.app:create_app', '--factory', '--host', '127.0.0.1', '--port', String(corePort)], coreDir);
   await waitReady(`${coreUrl}/health`, core);
-  const web = start('npx', ['--no-install', 'vite', 'preview', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], frontend);
+  const web = start('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], frontend);
   await waitReady(`${webUrl}/chat/blank`, web);
 
   browser = await chromium.launch({ headless: true });
@@ -141,6 +141,19 @@ try {
     const cell = cells.nth(index);
     cellIds.push({ row: await cell.getAttribute('data-row-id'), column: await cell.getAttribute('data-column-id') });
   }
+  const firstCellEditor = cells.nth(0).locator('rich-text .inline-editor');
+  await page.evaluate(() => {
+    window.__wp5CellEvents = [];
+    for (const name of ['pointerdown', 'click', 'focusin', 'focusout']) {
+      document.addEventListener(name, event => {
+        const path = event.composedPath().slice(0, 8).map(node => node instanceof Element
+          ? `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}${node.className && typeof node.className === 'string' ? `.${node.className.trim().replace(/\s+/g, '.')}` : ''}`
+          : node.constructor?.name ?? String(node));
+        window.__wp5CellEvents.push({ type: name, target: event.target instanceof Element ? event.target.tagName : String(event.target), path,
+          active: document.activeElement?.tagName ?? null });
+      }, true);
+    }
+  });
   const inspect = await table.evaluate((element, ids) => {
     const deepQuery = (root, selector) => {
       for (const node of root.querySelectorAll('*')) {
@@ -177,7 +190,8 @@ try {
   }, cellIds);
   console.log('WP5_TABLE_DOM_BEFORE_EDIT', JSON.stringify(inspect));
 
-  await cells.nth(0).locator('rich-text .inline-editor').click();
+  console.log('WP5_TABLE_CELL_CLICK_TARGET', JSON.stringify({ locatorCount: await firstCellEditor.count(), box: await firstCellEditor.boundingBox() }));
+  await firstCellEditor.click();
   const afterClick = await table.evaluate((element, ids) => {
     const td = element.querySelector(`td[data-row-id="${ids[0].row}"][data-column-id="${ids[0].column}"]`);
     const richText = td?.querySelector('rich-text');
@@ -191,7 +205,7 @@ try {
       inlineRange: richText?.inlineEditor?.getInlineRange?.() ?? null,
       yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null };
   }, cellIds);
-  console.log('WP5_TABLE_DOM_AFTER_CLICK', JSON.stringify(afterClick));
+  console.log('WP5_TABLE_DOM_AFTER_CLICK', JSON.stringify({ state: afterClick, events: await page.evaluate(() => window.__wp5CellEvents) }));
   await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-CELL-EDIT');
   await page.waitForTimeout(500);
   const afterEdit = await table.evaluate((element, ids) => ids.map(({ row, column }) => {
