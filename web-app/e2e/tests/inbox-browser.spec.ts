@@ -51,7 +51,8 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_nested_blob_upload' | 'rich_page_nested_canvas_save' | 'rich_page_parent_save'
   | 'rich_page_mode_edgeless' | 'rich_page_mode_edgeless_ready' | 'rich_page_mode_page' | 'rich_page_backup_preview'
   | 'rich_page_snapshot_restore' | 'rich_page_post_restore_reopen' | 'rich_page_conflict'
-  | 'rich_page_recovery_copy' | 'rich_page_explicit_fork';
+  | 'rich_page_recovery_copy' | 'rich_page_explicit_fork' | 'archive_ux_style_check'
+  | 'archive_ux_toolbar_select' | 'archive_ux_bold' | 'archive_ux_alignment';
 type BlockSuiteRequestDiagnostic = { endpoint: 'resource_collection' | 'resource' | 'blob' | 'snapshot' | 'snapshot_restore'; method: 'GET' | 'POST' | 'PUT'; status: number | null };
 type CanvasSaveDiagnostic = { checkpoint: 'layout_poll' | 'first_status' | 'second_save_response' | 'readback' | 'saved_status' | 'close_enabled';
   status: 'saved' | 'previous_dirty' | 'unsaved' | 'saving' | 'other'; close_enabled: boolean | null;
@@ -1611,6 +1612,14 @@ for (const viewport of activeViewports) {
         const archiveViewport = richHost.locator('.sb-archive-viewport');
         await expect(archiveViewport).toBeVisible();
         await expect(archiveViewport).toHaveClass(/affine-page-viewport/);
+        observed.setWp5Step('archive_ux_style_check');
+        const archivedPageStyle = await richHost.evaluate(host => {
+          const style = getComputedStyle(host);
+          return { fontFamily: style.fontFamily, fontSize: style.fontSize, lineHeight: style.lineHeight };
+        });
+        expect(archivedPageStyle.fontFamily, 'wp5_archive_page_font_family').toMatch(/Inter|ui-sans-serif|system-ui/i);
+        expect(archivedPageStyle.fontSize, 'wp5_archive_page_font_size').toBe('15px');
+        expect(Number.parseFloat(archivedPageStyle.lineHeight), 'wp5_archive_page_line_height').toBeCloseTo(24.75, 1);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_020');
         // Keep the paragraph locator rooted at the active Rich Page host;
         // its content is rendered through BlockSuite's nested Shadow DOM.
@@ -1659,12 +1668,46 @@ for (const viewport of activeViewports) {
           return (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => {
             const parent = store.getParent(model);
             return { id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
+              textAlign: model.props.textAlign ?? null, textDelta: model.props.text?.toDelta?.() ?? [],
               parent: parent?.id ?? null, order: parent?.children?.findIndex((child: any) => child.id === model.id) ?? -1 };
           });
         });
         await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.type)
           .toBe('h1');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_031');
+        const headingTextStyle = await targetParagraph.locator('.affine-paragraph-rich-text-wrapper').evaluate(element => {
+          const style = getComputedStyle(element);
+          return { fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight, lineHeight: style.lineHeight };
+        });
+        expect(headingTextStyle.fontFamily, 'wp5_archive_heading_font_family').toMatch(/Inter|ui-sans-serif|system-ui/i);
+        expect(Number.parseFloat(headingTextStyle.fontSize), 'wp5_archive_heading_font_size').toBeGreaterThan(15);
+        expect(headingTextStyle.fontWeight, 'wp5_archive_heading_weight').toBe('700');
+        expect(headingTextStyle.lineHeight, 'wp5_archive_heading_line_height').toMatch(/^\d+(?:\.\d+)?px$/);
+
+        // Exercise the archived inline and paragraph toolbars with a real
+        // keyboard selection, then verify the Yjs-backed block model changed.
+        observed.setWp5Step('archive_ux_toolbar_select');
+        await targetParagraph.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Shift+Home');
+        const boldAction = richDialog.getByRole('button', { name: '加粗', exact: true });
+        await expect(boldAction, 'wp5_archive_inline_toolbar_localized').toBeVisible({ timeout: 5000 });
+        observed.setWp5Step('archive_ux_bold');
+        await boldAction.click();
+        await expect.poll(async () => {
+          const block = (await readBlockOrder()).find(item => item.text.includes('Archive reorder target'));
+          return block?.textDelta.some((part: any) => part.attributes?.bold === true) ?? false;
+        }, { timeout: 5000 }).toBe(true);
+
+        observed.setWp5Step('archive_ux_alignment');
+        await targetParagraph.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Shift+Home');
+        const centerAction = richDialog.getByRole('button', { name: '居中对齐', exact: true });
+        await expect(centerAction, 'wp5_archive_alignment_toolbar_localized').toBeVisible({ timeout: 5000 });
+        await centerAction.click();
+        await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.textAlign)
+          .toBe('center');
 
         await targetParagraph.hover();
         await expect(grip).toHaveAttribute('data-visible', 'true');
@@ -1720,6 +1763,8 @@ for (const viewport of activeViewports) {
         const reopenedSource = orderAfterReopen.find(block => block.text.includes('Archive reorder target'))!;
         const reopenedTarget = orderAfterReopen.find(block => block.text.includes(richText))!;
         expect(reopenedSource.type, 'wp5_desktop_page_plus_heading_persisted').toBe('h1');
+        expect(reopenedSource.textAlign, 'wp5_archive_alignment_persisted').toBe('center');
+        expect(reopenedSource.textDelta.some((part: any) => part.attributes?.bold === true), 'wp5_archive_inline_style_persisted').toBe(true);
         expect(reopenedSource.parent, 'wp5_desktop_page_plus_reorder_parent_persisted').toBe(reopenedTarget.parent);
         expect(reopenedSource.order, 'wp5_desktop_page_plus_reorder_persisted').toBeLessThan(reopenedTarget.order);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_034');
