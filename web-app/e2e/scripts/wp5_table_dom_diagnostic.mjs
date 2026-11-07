@@ -16,6 +16,8 @@ const dirs = Object.fromEntries(['raw', 'review', 'state', 'knowledge', 'journal
 for (const path of Object.values(dirs)) { await mkdir(path, { mode: 0o700 }); }
 const passwordPath = join(temp, 'app-password');
 await writeFile(passwordPath, 'synthetic-wp5-dom-diagnostic-only\n', { mode: 0o600 });
+const rawArtifacts = join(temp, 'playwright-raw');
+await mkdir(rawArtifacts, { mode: 0o700 });
 
 async function freePort() {
   const server = createServer();
@@ -50,6 +52,10 @@ const env = {
   VITE_ENABLE_NOTES: 'true',
   SB_CORE_PROXY_TARGET: coreUrl,
   SB_E2E_BASE_URL: webUrl,
+  SB_E2E_PASSWORD_FILE: passwordPath,
+  SB_E2E_RAW_ARTIFACTS: rawArtifacts,
+  PLAYWRIGHT_JUNIT_OUTPUT_NAME: join(rawArtifacts, 'junit.xml'),
+  PLAYWRIGHT_HTML_OUTPUT_DIR: join(rawArtifacts, 'html'),
 };
 const children = [];
 function start(command, args, cwd) {
@@ -74,6 +80,21 @@ try {
     ? start('npx', ['--no-install', 'vite', 'preview', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], frontend)
     : start('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], frontend);
   await waitReady(`${webUrl}/chat/blank`, web);
+
+  if (process.env.WP5_EXACT_SPEC_DIAGNOSTIC === 'true') {
+    const e2eDir = join(root, 'web-app/e2e');
+    const result = await new Promise((resolve, reject) => {
+      const test = spawn('npm', ['test', '--', '--grep', 'explicit Inbox capture, retry, conflict and source protection at desktop-1440x1000'], {
+        cwd: e2eDir,
+        env: { ...env, SB_E2E_WP5_ARCHIVE_UX_ONLY: 'true', SB_E2E_WP5_OPEN_ONLY: 'false', CI: 'true' },
+        stdio: 'inherit',
+      });
+      test.once('error', reject);
+      test.once('exit', (code, signal) => resolve({ code: code ?? 1, signal }));
+    });
+    if (result.code !== 0) throw new Error(`Exact Playwright spec diagnostic failed: ${JSON.stringify(result)}`);
+    process.exitCode = 0;
+  } else {
 
   browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
@@ -244,6 +265,7 @@ try {
       activeInsideCell: Boolean(td?.contains(document.activeElement)) };
   }, cellIds[1]);
   console.log('WP5_TABLE_DOM_DELAYED_INPUT', JSON.stringify({ state: delayedEdit, events: await page.evaluate(() => window.__wp5CellEvents) }));
+  }
 } finally {
   if (browser) await browser.close();
   for (const child of children.reverse()) child.kill('SIGTERM');
