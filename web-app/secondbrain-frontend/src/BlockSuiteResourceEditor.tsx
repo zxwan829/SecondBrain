@@ -249,7 +249,8 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         setStatus(native ? 'BlockSuite 富 Page 已就绪' : initialResource.resourceKind === 'database' ? 'BlockSuite Database 已就绪' : 'BlockSuite Edgeless 画布已就绪');
         Object.assign(host.current, { __sbBlockSuiteStore: store, __sbBlockSuiteStd: std });
         setStoreReady(true);
-        if (initialResource.resourceKind === 'rich-page' && richPageMarkdownBinding(initialResource.snapshot) !== noteRef.current.etag) {
+        if (native && (richPageMarkdownBinding(editingResource.snapshot) !== editingResource.note_etag
+          || editingResource.note_etag !== noteRef.current.etag)) {
           setProjectionConflict(true);
           setStatus('富 Page 与 Markdown 版本冲突；仅在本地保留修改。请下载双方副本或另存新富 Page。');
         }
