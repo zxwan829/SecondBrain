@@ -191,7 +191,11 @@ export function bindArchiveSurface(viewport: HTMLElement, std: BlockStdScope, op
               const start=dragStart;dragStart=undefined;
               const endTable=tableFromEvent(e),end=cellFromEvent(e);
               if(!start||!endTable||!end||endTable.dataset.blockId!==start.table.dataset.blockId)return;
-              if(Math.hypot(e.clientX-start.x,e.clientY-start.y)<4)return;
+              if(Math.hypot(e.clientX-start.x,e.clientY-start.y)<4){
+                const editor=end.querySelector<HTMLElement>('rich-text .inline-editor[contenteditable="true"]');
+                if(editor)requestAnimationFrame(()=>{if(editor.isConnected)editor.focus({preventScroll:true});});
+                return;
+              }
               const table=start.table,rows=table.dataManager.rows$.value,columns=table.dataManager.columns$.value,endPoint=cellAtPoint(table,end,e.clientX,e.clientY);
               const r0=rows.findIndex((row:any)=>row.rowId===start.rowId),c0=columns.findIndex((column:any)=>column.columnId===start.columnId);
               const r1=rows.findIndex((row:any)=>row.rowId===endPoint?.rowId),c1=columns.findIndex((column:any)=>column.columnId===endPoint?.columnId);
