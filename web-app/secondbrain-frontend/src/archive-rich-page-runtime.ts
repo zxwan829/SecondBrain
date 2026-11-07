@@ -193,10 +193,13 @@ export function bindArchiveSurface(viewport: HTMLElement, std: BlockStdScope, op
               if(!start||!endTable||!end||endTable.dataset.blockId!==start.table.dataset.blockId)return;
               if(Math.hypot(e.clientX-start.x,e.clientY-start.y)<4){
                 const {rowId,columnId}=end.dataset;
-                const table=start.table;
+                const tableId=start.table.dataset.blockId;
+                if(!tableId||!rowId||!columnId)return;
                 requestAnimationFrame(()=>{
-                  if(!table.isConnected)return;
-                  const cell=Array.from((table as HTMLElement).querySelectorAll<HTMLTableCellElement>('td[data-row-id][data-column-id]'))
+                  const table=Array.from(viewport.querySelectorAll<HTMLElement>('affine-table'))
+                    .find(candidate=>candidate.dataset.blockId===tableId);
+                  if(!table)return;
+                  const cell=Array.from(table.querySelectorAll<HTMLTableCellElement>('td[data-row-id][data-column-id]'))
                     .find(candidate=>candidate.dataset.rowId===rowId&&candidate.dataset.columnId===columnId);
                   cell?.querySelector<HTMLElement>('rich-text .inline-editor[contenteditable="true"]')?.focus({preventScroll:true});
                 });
