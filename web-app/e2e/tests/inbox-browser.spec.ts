@@ -137,6 +137,10 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_alignment_selection_ready' | 'wp5_archive_align_action_click'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
+  | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
+  | 'wp5_archive_drag_parent_missing' | 'wp5_archive_drag_different_parents'
+  | 'wp5_archive_drag_invalid_index' | 'wp5_archive_drag_initial_order_unexpected'
+  | 'wp5_archive_drag_ready'
   | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing'
   | 'wp5_archive_cell_readonly' | 'wp5_archive_cell_caret_not_in_cell' | 'wp5_archive_cell_focus_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
@@ -1765,13 +1769,23 @@ for (const viewport of activeViewports) {
         expect(gripBox, 'wp5_desktop_page_plus_grip_geometry').not.toBeNull();
         expect(bodyBox, 'wp5_desktop_page_plus_drop_geometry').not.toBeNull();
         const orderBeforeDrag = await readBlockOrder();
-        observed.setDiagnosticAssertion('wp5_archive_drag_order');
-        expect(orderBeforeDrag.filter(block => block.text.includes('Archive reorder target')), 'wp5_desktop_page_plus_reorder_source_unique').toHaveLength(1);
-        expect(orderBeforeDrag.filter(block => block.text.includes(richText)), 'wp5_desktop_page_plus_reorder_target_unique').toHaveLength(1);
+        const dragPreflight = (() => {
+          const sources = orderBeforeDrag.filter(block => block.text.includes('Archive reorder target'));
+          const targets = orderBeforeDrag.filter(block => block.text.includes(richText));
+          if (sources.length !== 1) return 'wp5_archive_drag_source_not_unique';
+          if (targets.length !== 1) return 'wp5_archive_drag_target_not_unique';
+          const source = sources[0]!;
+          const target = targets[0]!;
+          if (!source.parent || !target.parent) return 'wp5_archive_drag_parent_missing';
+          if (source.parent !== target.parent) return 'wp5_archive_drag_different_parents';
+          if (source.order < 0 || target.order < 0) return 'wp5_archive_drag_invalid_index';
+          if (source.order <= target.order) return 'wp5_archive_drag_initial_order_unexpected';
+          return 'wp5_archive_drag_ready';
+        })();
+        observed.setDiagnosticAssertion(dragPreflight as DiagnosticAssertion);
+        expect(dragPreflight, 'wp5_archive_drag_preflight').toBe('wp5_archive_drag_ready');
         const beforeDrag = orderBeforeDrag.find(block => block.text.includes('Archive reorder target'))!;
         const beforeDragTarget = orderBeforeDrag.find(block => block.text.includes(richText))!;
-        expect(beforeDrag.parent, 'wp5_desktop_page_plus_reorder_same_parent').toBe(beforeDragTarget.parent);
-        expect(beforeDrag.order, 'wp5_desktop_page_plus_reorder_initial_order').toBeGreaterThan(beforeDragTarget.order);
         await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
         await page.mouse.down();
         await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, bodyBox!.y + 1, { steps: 5 });
