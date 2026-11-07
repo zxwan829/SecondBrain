@@ -141,6 +141,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_archive_drag_same_block", "wp5_archive_drag_source_missing_from_parent",
     "wp5_archive_drag_target_missing_from_parent", "wp5_archive_drag_child_index_mismatch",
     "wp5_archive_drag_source_after", "wp5_archive_drag_source_before",
+    "wp5_archive_fixture_split",
     "wp5_archive_cell_rich_text_missing", "wp5_archive_cell_editor_missing",
     "wp5_archive_cell_readonly", "wp5_archive_cell_caret_not_in_cell", "wp5_archive_cell_focus_ready",
     "wp5_resource_dialog_open", "wp5_resource_content_visible", "wp5_resource_editable", "wp5_canvas_layout_stable",

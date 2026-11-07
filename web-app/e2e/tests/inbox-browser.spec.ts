@@ -142,6 +142,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_drag_same_block' | 'wp5_archive_drag_source_missing_from_parent'
   | 'wp5_archive_drag_target_missing_from_parent' | 'wp5_archive_drag_child_index_mismatch'
   | 'wp5_archive_drag_source_after' | 'wp5_archive_drag_source_before'
+  | 'wp5_archive_fixture_split'
   | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing'
   | 'wp5_archive_cell_readonly' | 'wp5_archive_cell_caret_not_in_cell' | 'wp5_archive_cell_focus_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
@@ -1641,14 +1642,39 @@ for (const viewport of activeViewports) {
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_021');
         await expect(bodyParagraph).toBeVisible();
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_022');
-        await bodyParagraph.click();
+        const readBlockOrder = () => archiveViewport.evaluate(root => {
+          const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
+          const store = host?.__sbBlockSuiteStore;
+          return (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => {
+            const parent = store.getParent(model);
+            return { id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
+              textAlign: model.props.textAlign ?? null, textDelta: model.props.text?.toDelta?.() ?? [],
+              parent: parent?.id ?? null, order: parent?.children?.findIndex((child: any) => child.id === model.id) ?? -1,
+              childMapOrder: parent?.childMap?.value?.get(model.id) ?? -1 };
+          });
+        });
+        const originalBlockId = await bodyParagraph.getAttribute('data-block-id');
+        expect(originalBlockId, 'wp5_archive_fixture_original_block').toBeTruthy();
+        const inlineEditor = bodyParagraph.locator('rich-text .inline-editor');
+        await expect(inlineEditor, 'wp5_archive_fixture_inline_editor').toHaveAttribute('contenteditable', 'true');
+        const orderBeforeSplit = await readBlockOrder();
+        await inlineEditor.click();
         await page.keyboard.press('End');
         await page.keyboard.press('Enter');
+        observed.setDiagnosticAssertion('wp5_archive_fixture_split');
+        await expect.poll(async () => {
+          const previousIds = new Set(orderBeforeSplit.map(block => block.id));
+          return (await readBlockOrder()).some(block => !previousIds.has(block.id)
+            && block.parent === orderBeforeSplit.find(item => item.id === originalBlockId)?.parent
+            && block.text.length === 0);
+        }, { timeout: 5000, message: 'wp5_archive_fixture_new_empty_block' }).toBe(true);
         await page.keyboard.insertText('Archive reorder target');
         const targetParagraph = richHost.locator('affine-paragraph').filter({ hasText: 'Archive reorder target' });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_023');
         await expect(targetParagraph).toHaveCount(1);
         await expect(targetParagraph).toBeVisible();
+        await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.id)
+          .not.toBe(originalBlockId);
 
         const plus = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
         const grip = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="grip"]');
@@ -1675,17 +1701,6 @@ for (const viewport of activeViewports) {
         await expect(headingMenuItem).toBeVisible();
         await headingMenuItem.click({ timeout: 5000 });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_030');
-        const readBlockOrder = () => archiveViewport.evaluate(root => {
-          const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
-          const store = host?.__sbBlockSuiteStore;
-          return (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => {
-            const parent = store.getParent(model);
-            return { id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
-              textAlign: model.props.textAlign ?? null, textDelta: model.props.text?.toDelta?.() ?? [],
-              parent: parent?.id ?? null, order: parent?.children?.findIndex((child: any) => child.id === model.id) ?? -1,
-              childMapOrder: parent?.childMap?.value?.get(model.id) ?? -1 };
-          });
-        });
         await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.type)
           .toBe('h1');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_031');
