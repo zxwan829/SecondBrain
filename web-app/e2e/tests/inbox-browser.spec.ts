@@ -1567,8 +1567,20 @@ for (const viewport of activeViewports) {
       const modeSwitchDom = await Promise.race([
         page.evaluate(() => {
           const dialogs = [...document.querySelectorAll<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]')];
-          return { readyState: document.readyState, count: dialogs.length,
-            labels: dialogs.slice(0, 2).map(dialog => dialog.getAttribute('aria-label')) };
+          const dialog = dialogs[0];
+          if (!dialog) return { readyState: document.readyState, count: dialogs.length };
+          const style = getComputedStyle(dialog);
+          const details = dialog.querySelector<HTMLDetailsElement>('details.sb-properties-info');
+          const group = [...dialog.querySelectorAll<HTMLElement>('[role="group"]')]
+            .find(item => item.getAttribute('aria-label') === '文档模式');
+          return { readyState: document.readyState, count: dialogs.length, label: dialog.getAttribute('aria-label'),
+            ariaHidden: dialog.getAttribute('aria-hidden'), ariaModal: dialog.getAttribute('aria-modal'),
+            hidden: dialog.hidden, inert: dialog.inert, display: style.display, visibility: style.visibility,
+            detailsOpen: details?.open ?? null,
+            group: group ? { role: group.getAttribute('role'), label: group.getAttribute('aria-label'),
+              buttons: [...group.querySelectorAll<HTMLButtonElement>('button')].slice(0, 2).map(button => ({
+                text: button.textContent?.trim().slice(0, 20) ?? '', disabled: button.disabled,
+                ariaDisabled: button.getAttribute('aria-disabled') })) } : null };
         }).catch(() => null),
         new Promise<null>(resolve => setTimeout(() => resolve(null), 1500)),
       ]);
@@ -1577,30 +1589,14 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
       try { await pageModeButton.click({ timeout: 5000 }); }
       catch (error) {
-        const message = error instanceof Error ? error.message.toLowerCase() : '';
-        const callLogIndex = message.indexOf('call log:');
+        const message = error instanceof Error ? error.message : '';
+        const callLogIndex = message.toLowerCase().indexOf('call log:');
         const callLog = callLogIndex >= 0 ? message.slice(callLogIndex + 'call log:'.length) : '';
-        const callLogLines = callLog.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(-4)
+        const callLogLines = callLog.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(-3)
           .map(line => line.replace(/<[^>]*>/g, '[element]').replace(/\b[0-9a-f-]{16,}\b/gi, '[id]')
-            .replace(/[^\x20-\x7e]/g, '?').replace(/\s+/g, ' ').slice(0, 38));
-        const actionState = await Promise.race([
-          pageModeButton.evaluate(button => {
-            const control = button as HTMLButtonElement;
-            const dialog = button.closest<HTMLElement>('[role="dialog"]');
-            const rect = button.getBoundingClientRect();
-            const hit = rect.width > 0 && rect.height > 0
-              ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
-            let disabledFieldsets = 0;
-            for (let parent = button.parentElement; parent; parent = parent.parentElement) {
-              if (parent instanceof HTMLFieldSetElement && parent.disabled) disabledFieldsets += 1;
-            }
-            return { c: button.isConnected, d: control.disabled, ad: button.getAttribute('aria-disabled') === 'true',
-              f: disabledFieldsets, h: Boolean(hit && (hit === button || button.contains(hit))), b: dialog?.getAttribute('aria-busy') ?? null };
-          }).catch(() => null),
-          new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
-        ]);
+            .replace(/[^\x20-\x7e]/g, '?').replace(/\s+/g, ' ').slice(0, 160));
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ e: error instanceof Error ? error.name : 'non_error',
-          log: callLogIndex >= 0, lines: callLogLines, state: actionState }));
+          log: callLogIndex >= 0, lines: callLogLines }));
         throw error;
       }
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');

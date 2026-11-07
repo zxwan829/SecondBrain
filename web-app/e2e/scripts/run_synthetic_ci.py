@@ -1475,7 +1475,7 @@ def main() -> int:
                     for line in runner_log.read_text(encoding="utf-8", errors="replace").splitlines():
                         for marker in ("WP5_RESOURCE_CREATE_ERROR ", "WP5_RESOURCE_MODE_DOM "):
                             if marker in line:
-                                detail = line.split(marker, 1)[1].strip()[:240]
+                                detail = line.split(marker, 1)[1].strip()[:650]
                                 if not any(secret in detail.lower() for secret in ("bearer ", "password=", "token=")):
                                     print(marker + detail)
             core_probe_events = []
