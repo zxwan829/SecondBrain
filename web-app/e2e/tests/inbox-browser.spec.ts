@@ -1556,28 +1556,30 @@ for (const viewport of activeViewports) {
       await expect(richDialog.locator('.affine-edgeless-viewport')).toBeVisible({ timeout: 20000 });
       observed.setWp5Step('rich_page_mode_edgeless_ready');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_071');
-      await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
-      observed.setWp5Step('rich_page_mode_page');
-      const pageModeButton = richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_074');
       type RichPageModeProbe = { rendererResponsive: true; dialogPresent: boolean; busy: string | null; groupPresent: boolean;
         fieldsetDisabled: boolean | null; pageButtonDisabled: boolean | null; canvasButtonPressed: boolean | null;
-        status: 'conflict' | 'error' | 'pending' | 'saved' | 'other'; hostChildCount: number; storeAttached: boolean }
+        mountScope: 'page' | 'edgeless' | 'missing'; status: 'conflict' | 'error' | 'pending' | 'saved' | 'other';
+        hostChildCount: number; storeAttached: boolean }
         | { rendererResponsive: false };
       const modeProbe = await Promise.race<RichPageModeProbe>([
         page.evaluate((): RichPageModeProbe => {
           const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]');
           if (!dialog) return { rendererResponsive: true, dialogPresent: false, busy: null, groupPresent: false,
-            fieldsetDisabled: null, pageButtonDisabled: null, canvasButtonPressed: null, status: 'other', hostChildCount: 0, storeAttached: false };
+            fieldsetDisabled: null, pageButtonDisabled: null, canvasButtonPressed: null, mountScope: 'missing',
+            status: 'other', hostChildCount: 0, storeAttached: false };
           const group = dialog.querySelector<HTMLElement>('[role="group"][aria-label="文档模式"]');
           const buttons = [...(group?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
           const pageButton = buttons.find(button => button.textContent?.trim() === '页面');
           const canvasButton = buttons.find(button => button.textContent?.trim() === '画布');
           const host = dialog.querySelector<HTMLElement>('.blocksuite-resource-host');
           const statusText = dialog.querySelector('.document-status')?.textContent?.trim() ?? '';
+          const mountScope = host?.querySelector('.affine-edgeless-viewport') ? 'edgeless'
+            : host?.querySelector('.affine-page-viewport') ? 'page' : 'missing';
           return { rendererResponsive: true, dialogPresent: true, busy: dialog.getAttribute('aria-busy'), groupPresent: Boolean(group),
             fieldsetDisabled: group?.closest('fieldset')?.disabled ?? null, pageButtonDisabled: pageButton?.disabled ?? null,
             canvasButtonPressed: canvasButton?.getAttribute('aria-pressed') === 'true',
+            mountScope,
             status: /冲突|412/.test(statusText) ? 'conflict' : /失败|ERROR/.test(statusText) ? 'error'
               : /未保存|正在/.test(statusText) ? 'pending' : /已保存/.test(statusText) ? 'saved' : 'other',
             hostChildCount: host?.childElementCount ?? 0,
@@ -1585,25 +1587,34 @@ for (const viewport of activeViewports) {
         }).catch(() => ({ rendererResponsive: false as const })),
         new Promise<RichPageModeProbe>(resolve => setTimeout(() => resolve({ rendererResponsive: false }), 3000)),
       ]);
-      let bindingProbe: { noteRead: number; resourceRead: number; receiptMatchesNote: boolean; resourceNoteMatchesNote: boolean } | null = null;
-      if (modeProbe.rendererResponsive && modeProbe.pageButtonDisabled) {
-        const [currentNoteResponse, currentResourceResponse] = await Promise.all([
-          page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`, { timeout: 3000 }),
-          page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 3000 }),
-        ]);
-        const currentNote = currentNoteResponse.ok() ? await currentNoteResponse.json() as { etag?: string } : null;
-        const currentResource = currentResourceResponse.ok() ? await currentResourceResponse.json() as {
-          note_etag?: string; snapshot?: { secondbrainRichPage?: { markdownSha256?: string } };
-        } : null;
-        bindingProbe = { noteRead: currentNoteResponse.status(), resourceRead: currentResourceResponse.status(),
-          receiptMatchesNote: currentResource?.snapshot?.secondbrainRichPage?.markdownSha256 === currentNote?.etag,
-          resourceNoteMatchesNote: currentResource?.note_etag === currentNote?.etag };
-      }
-      console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ ...modeProbe, ...(bindingProbe ? { bindingProbe } : {}) }));
-      expect(modeProbe.rendererResponsive, 'wp5_rich_page_mode_renderer_responsive').toBe(true);
+      const [currentNoteResponse, currentResourceResponse] = await Promise.all([
+        page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`, { timeout: 3000 }).catch(() => null),
+        page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 3000 }).catch(() => null),
+      ]);
+      const currentNote = currentNoteResponse?.ok() ? await currentNoteResponse.json().catch(() => null) as { etag?: string } | null : null;
+      const currentResource = currentResourceResponse?.ok() ? await currentResourceResponse.json().catch(() => null) as {
+        note_etag?: string; snapshot?: { secondbrainRichPage?: { markdownSha256?: string } };
+      } | null : null;
+      const bindingProbe = { noteRead: currentNoteResponse?.status() ?? null, resourceRead: currentResourceResponse?.status() ?? null,
+        receiptMatchesNote: currentResource?.snapshot?.secondbrainRichPage?.markdownSha256 === currentNote?.etag,
+        resourceNoteMatchesNote: currentResource?.note_etag === currentNote?.etag };
+      console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ r: modeProbe.rendererResponsive,
+        d: modeProbe.rendererResponsive ? modeProbe.dialogPresent : null,
+        b: modeProbe.rendererResponsive ? modeProbe.busy : null,
+        s: modeProbe.rendererResponsive ? modeProbe.status : null,
+        m: modeProbe.rendererResponsive ? modeProbe.mountScope : null,
+        h: modeProbe.rendererResponsive ? modeProbe.hostChildCount : null,
+        store: modeProbe.rendererResponsive ? modeProbe.storeAttached : null,
+        n: bindingProbe.noteRead, q: bindingProbe.resourceRead,
+        receipt: bindingProbe.receiptMatchesNote, bound: bindingProbe.resourceNoteMatchesNote }));
+      // Keep the original readiness assertion as the failure under investigation;
+      // this probe records state but does not replace or relax that check.
+      await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
+      observed.setWp5Step('rich_page_mode_page');
+      const pageModeButton = richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
       expect(modeProbe.dialogPresent, 'wp5_rich_page_mode_dialog_present').toBe(true);
-      expect(modeProbe.pageButtonDisabled, 'wp5_rich_page_page_mode_enabled').toBe(false);
+      await expect(pageModeButton, 'wp5_rich_page_page_mode_enabled').toBeEnabled();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
       await pageModeButton.click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
