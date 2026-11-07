@@ -1264,11 +1264,12 @@ for (const viewport of activeViewports) {
       const richResourceResponse = await richResourceCreate;
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_002');
       expect(richResourceResponse.status(), 'wp5_rich_page_resource_created').toBe(200);
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_003');
       const richResourceInfo = await richResourceResponse.json() as { resource_id: string };
       await expect(richDialog.locator('.sb-archive-surface')).toBeVisible({ timeout: 15000 });
-      observed.setDiagnosticAssertion('wp5_resource_checkpoint_007');
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_004');
       await expect(richDialog.getByRole('button', { name: '导出 HTML' })).toBeVisible();
-      observed.setDiagnosticAssertion('wp5_resource_checkpoint_008');
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_005');
       const richText = 'Synthetic rich page round trip';
       const richBody = richDialog.locator('affine-paragraph').filter({ hasText: '在这里开始编辑完整富格式内容。' }).first();
       await expect(richBody).toBeVisible({ timeout: 15000 });
