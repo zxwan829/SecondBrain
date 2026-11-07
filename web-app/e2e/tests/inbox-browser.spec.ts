@@ -1664,7 +1664,7 @@ for (const viewport of activeViewports) {
       let firstClickState: NoteClickState | null = null;
       let secondClickState: NoteClickState | null = null;
       let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[]; hitTargets: [boolean, boolean, number] } | null = null;
-      let lastPointerProbe: { paragraphRect: number[] | null; viewportRect: number[] | null; hitParagraph: boolean; hitNote: boolean; depth: number } | null = null;
+      let lastPointerProbe: { hitParagraph: boolean; hitNote: boolean; depth: number; hitTag: string; stableSamples: number; geometryUnchanged: boolean } | null = null;
       try {
         let bounds: Awaited<ReturnType<typeof localRichParagraph.boundingBox>> = null;
         let viewportBounds: typeof bounds = null;
@@ -1716,17 +1716,20 @@ for (const viewport of activeViewports) {
                 node = root instanceof ShadowRoot ? root.host : null;
               }
             }
-            return { hitParagraph, hitNote, depth };
+            return { hitParagraph, hitNote, depth, hitTag: hit?.localName ?? 'none' };
           }, clickPoint);
           lastPointerProbe = {
-            paragraphRect: [bounds.x, bounds.y, bounds.width, bounds.height],
-            viewportRect: [viewportBounds.x, viewportBounds.y, viewportBounds.width, viewportBounds.height],
             ...hitPath,
+            stableSamples: 0,
+            geometryUnchanged: false,
           };
           const targetHit = hitPath.hitParagraph && hitPath.hitNote;
           const geometry = JSON.stringify([bounds.x, bounds.y, bounds.width, bounds.height,
             viewportBounds.x, viewportBounds.y, viewportBounds.width, viewportBounds.height, hitPath]);
-          stableTargetSamples = targetHit && geometry === previousHitGeometry ? stableTargetSamples + 1 : targetHit ? 1 : 0;
+          const geometryUnchanged = geometry === previousHitGeometry;
+          stableTargetSamples = targetHit && geometryUnchanged ? stableTargetSamples + 1 : targetHit ? 1 : 0;
+          lastPointerProbe.stableSamples = stableTargetSamples;
+          lastPointerProbe.geometryUnchanged = geometryUnchanged;
           previousHitGeometry = geometry;
           return stableTargetSamples >= 2;
         }, { timeout: 5000, message: 'wp5_rich_page_conflict_target_hit_stable_after_fit' }).toBe(true);
@@ -1958,7 +1961,8 @@ for (const viewport of activeViewports) {
           view: interactionState?.view, mode: interactionState?.docMode,
           hit: structureSummary ? Number(structureSummary.hitTargets[0]) + Number(structureSummary.hitTargets[1]) : 0,
           depth: structureSummary?.hitTargets[2] ?? 0,
-          probe: lastPointerProbe,
+          probe: lastPointerProbe && [Number(lastPointerProbe.hitParagraph), Number(lastPointerProbe.hitNote),
+            lastPointerProbe.depth, lastPointerProbe.stableSamples, Number(lastPointerProbe.geometryUnchanged), lastPointerProbe.hitTag],
           pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [Number(hit.note), Number(hit.paragraph), Number(hit.editable)]),
           clicks: [compactClickState(firstClickState), compactClickState(secondClickState)],
           state: [Number(Boolean(interactionState?.noteSelected)), Number(Boolean(interactionState?.selectionEditing)),
