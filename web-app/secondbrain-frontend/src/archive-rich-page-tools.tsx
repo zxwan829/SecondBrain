@@ -25,6 +25,8 @@ export function ArchiveDocumentHeader({ store, title, status, readonly, properti
   onExportPdf: () => void; devMode?: boolean;
 }) {
   const [renamingTitle, setRenamingTitle] = useState(false);
+  const critical = /失败|冲突|412|409|缺失|未能|ERROR/.test(status);
+  const pending = critical || /未保存|正在|等待/.test(status);
   return <div className="sb-archive-surface issue258" data-page-width={properties.pageWidth} data-edgeless-theme={properties.edgelessTheme}>
     <div className="document-title-row"><div className="document-title-stack">
       <div className="document-breadcrumb" aria-label="文档位置">富文档 <span>/</span> {properties.folderCollection === 'Unfiled' ? '未归档' : properties.folderCollection}</div>
@@ -32,7 +34,7 @@ export function ArchiveDocumentHeader({ store, title, status, readonly, properti
         ? <input autoFocus className="document-title-input" aria-label="重命名文档" value={title} disabled={readonly} onChange={event => onTitleChange(event.target.value)} onBlur={() => setRenamingTitle(false)} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setRenamingTitle(false); }} />
         : <h1 className="document-heading"><button type="button" disabled={readonly} className="document-title-edit" aria-label="重命名文档" title="重命名文档" onClick={() => setRenamingTitle(true)}>{title}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.8 2.3 2.9 2.9M3 13l2.8-.5 7.7-7.7a1.3 1.3 0 0 0-1.8-1.8L4 10.7 3 13Z" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg></button></h1>}
     </div><div className="document-controls" role="toolbar" aria-label="文档操作">
-      <span className="document-status" role="status" aria-live="polite">{status}</span>
+      <span className="document-status" data-severity={critical ? 'critical' : pending ? 'pending' : 'quiet'} role={critical ? 'alert' : 'status'} aria-live={critical ? 'assertive' : 'polite'}>{status}</span>
       <button className="icon-action pdf-export-action" aria-label="导出 PDF" title="导出 PDF" onClick={onExportPdf}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 2.5H4.5v15h11V7L11 2.5ZM11 2.5V7h4.5M10 9.5v5m-2-2 2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
       <button className="icon-action" disabled={readonly} aria-label="撤销" title="撤销（⌘Z）" aria-keyshortcuts="Meta+Z" onClick={() => store?.undo()}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 6 3.5 9.5 7 13M4 9.5h7a5 5 0 0 1 5 5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
       <button className="icon-action" disabled={readonly} aria-label="重做" title="重做（⇧⌘Z）" aria-keyshortcuts="Meta+Shift+Z" onClick={() => store?.redo()}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m13 6 3.5 3.5L13 13m3-3.5h-7a5 5 0 0 0-5 5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
@@ -120,7 +122,7 @@ export function archiveFocusMindMap(std: BlockStdScope) {
 }
 
 export type ArchiveDiagnosticsActions = {
-  writeClientMarker?: () => void; inspectDocument: () => void; reloadAfterGuard?: () => void;
+  writeClientMarker?: () => void; setParagraphAlign?: (align: 'left' | 'center' | 'right') => void; inspectDocument: () => void; reloadAfterGuard?: () => void;
   openPeer?: () => void; saveConflictCopy?: () => void; openConflictCopy?: () => void;
   createBackup?: () => void; restoreBackup?: () => void; inspectMindMap: () => void; focusMindMap: () => void;
 };
@@ -132,6 +134,9 @@ export function ArchiveNativeDiagnostics({ actions, readonly, conflict, hasConfl
   return <details className="diagnostics"><summary>高级工具与诊断</summary><div className="diagnostic-content">
     <div className="diagnostic-actions">
       <button disabled={readonly || !actions.writeClientMarker} onClick={actions.writeClientMarker}>写入客户端标记</button>
+      <button disabled={readonly || !actions.setParagraphAlign} onClick={() => actions.setParagraphAlign?.('left')}>正文左对齐</button>
+      <button disabled={readonly || !actions.setParagraphAlign} onClick={() => actions.setParagraphAlign?.('center')}>正文居中</button>
+      <button disabled={readonly || !actions.setParagraphAlign} onClick={() => actions.setParagraphAlign?.('right')}>正文右对齐</button>
       <button onClick={actions.inspectDocument}>核对文档</button>
       <button disabled={readonly || !actions.reloadAfterGuard} onClick={actions.reloadAfterGuard}>清临时缓存并重载</button>
       <button disabled={!actions.openPeer} onClick={actions.openPeer}>打开冲突客户端</button>
