@@ -1251,6 +1251,7 @@ for (const viewport of activeViewports) {
         && new URL(response.url()).pathname === '/api/notes', { timeout: 15000 });
       await page.getByRole('button', { name: '新建富 Page', exact: true }).click();
       const richCreatedResponse = await richNoteCreate;
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_001');
       expect(richCreatedResponse.status(), 'wp5_rich_page_note_created').toBe(200);
       const richCreated = await richCreatedResponse.json() as { collection: string; path: string; content: string };
       expect(richCreated.collection, 'wp5_rich_page_synthetic_draft').toBe('drafts');
@@ -1259,14 +1260,19 @@ for (const viewport of activeViewports) {
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
       const richDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
       await expect(richDialog).toBeVisible({ timeout: 25000 });
+      observed.setDiagnosticAssertion('wp5_resource_dialog_open');
       const richResourceResponse = await richResourceCreate;
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_002');
       expect(richResourceResponse.status(), 'wp5_rich_page_resource_created').toBe(200);
       const richResourceInfo = await richResourceResponse.json() as { resource_id: string };
       await expect(richDialog.locator('.sb-archive-surface')).toBeVisible({ timeout: 15000 });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_007');
       await expect(richDialog.getByRole('button', { name: '导出 HTML' })).toBeVisible();
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_008');
       const richText = 'Synthetic rich page round trip';
       const richBody = richDialog.locator('affine-paragraph').filter({ hasText: '在这里开始编辑完整富格式内容。' }).first();
       await expect(richBody).toBeVisible({ timeout: 15000 });
+      observed.setDiagnosticAssertion('wp5_resource_content_visible');
       await richBody.click();
       await page.keyboard.press('End');
       await page.keyboard.insertText(` ${richText}`);
