@@ -1622,7 +1622,19 @@ for (const viewport of activeViewports) {
       await expect(page.locator('.blocksuite-notes-canvas').getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
       const richReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
       await richReference.click();
-      await expect(page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' }).getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
+      const reopenedRichDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      await expect(reopenedRichDialog).toBeVisible({ timeout: 20000 });
+      await expect(reopenedRichDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
+      const reopenedEdgelessViewport = reopenedRichDialog.locator('.affine-edgeless-viewport');
+      if (await reopenedEdgelessViewport.count()) {
+        // A restored Edgeless document can retain a camera that leaves the
+        // Note outside the bounded viewport. Use the editor's visible control
+        // so the reopen assertion checks readable, actually reachable content.
+        const fitToScreen = reopenedRichDialog.locator('.affine-edgeless-viewport edgeless-zoom-toolbar edgeless-tool-icon-button').first();
+        await expect(fitToScreen, 'wp5_rich_page_reopen_fit_control_visible').toBeVisible({ timeout: 5000 });
+        await fitToScreen.click({ timeout: 5000 });
+      }
+      await expect(reopenedRichDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
       observed.setDiagnosticAssertion('wp5_resource_reopen');
 
       // Simulate an external Markdown edit while the local native document is
@@ -1653,13 +1665,6 @@ for (const viewport of activeViewports) {
       let secondClickState: NoteClickState | null = null;
       let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
       try {
-        // The backup restored the saved Edgeless mode; use its real fit-to-screen
-        // control before targeting the Note, since the persisted camera can put
-        // the paragraph just outside this bounded resource viewport.
-        conflictAction = 'edgeless-fit-to-screen';
-        const fitToScreen = conflictRichDialog.locator('.affine-edgeless-viewport edgeless-zoom-toolbar edgeless-tool-icon-button').first();
-        await expect(fitToScreen, 'wp5_rich_page_conflict_fit_control_visible').toBeVisible({ timeout: 5000 });
-        await fitToScreen.click({ timeout: 5000 });
         conflictAction = 'paragraph-geometry';
         await expect.poll(async () => {
           const paragraphBounds = await localRichParagraph.boundingBox();
