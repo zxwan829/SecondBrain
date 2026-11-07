@@ -200,6 +200,20 @@ try {
   if (!afterEdit[0]?.yText?.includes('WP5-DOM-DIAGNOSTIC-CELL-EDIT')) {
     throw new Error('The first table cell did not receive the diagnostic text in its Yjs text model');
   }
+  await cells.nth(1).locator('rich-text .inline-editor').click();
+  await page.waitForTimeout(150);
+  await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-DELAYED-EDIT');
+  await page.waitForTimeout(300);
+  const delayedEdit = await table.evaluate((element, id) => {
+    const cell = element.dataManager?.getCell?.(id.row, id.column);
+    const td = element.querySelector(`td[data-row-id="${id.row}"][data-column-id="${id.column}"]`);
+    const editor = td?.querySelector('rich-text .inline-editor');
+    return { yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null,
+      contenteditable: editor?.getAttribute('contenteditable') ?? null,
+      activeTag: document.activeElement?.tagName ?? null,
+      activeInsideCell: Boolean(td?.contains(document.activeElement)) };
+  }, cellIds[1]);
+  console.log('WP5_TABLE_DOM_DELAYED_INPUT', JSON.stringify({ state: delayedEdit, events: await page.evaluate(() => window.__wp5CellEvents) }));
 } finally {
   if (browser) await browser.close();
   for (const child of children.reverse()) child.kill('SIGTERM');
