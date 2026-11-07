@@ -10,6 +10,7 @@ import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import { assertRichPageMarkdownBinding, bindRichPageSnapshot, markdownSha256, richPageMarkdownBinding, richPageReadableMarkdown } from './rich-page-projection';
 import { forkRichPageNote, snapshotBlobIds, snapshotCanvasIds } from './rich-page-fork';
 import { nativeResourceSnapshot, remapNativeResourceReferences } from './native-resource-state';
+import { sameBlockSuiteSnapshot } from './resource-snapshot-equality';
 import { ArchiveDocumentHeader, ArchiveEmojiPicker, archiveExportHtml, archivePrintPdf, archiveInspectMindMap, archiveFocusMindMap, archiveFocusFrame, ArchiveNativeDiagnostics } from './archive-rich-page-tools';
 import type { ArchiveProperties } from './archive-rich-page-tools';
 import { archiveManagers, archiveViewExtensions, bindArchiveSurface } from './archive-rich-page-runtime';
@@ -157,6 +158,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const [storeReady, setStoreReady] = useState(false);
   const [projectionConflict, setProjectionConflict] = useState(false);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [recoveryCopyReady, setRecoveryCopyReady] = useState(false);
   const [recoveryCopyComplete, setRecoveryCopyComplete] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -221,6 +223,20 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         }
         const onUpdate = () => {
           editSequence.current += 1;
+          if (initialResource.resourceKind === 'edgeless-canvas') {
+            try {
+              const currentSnapshot = store.getTransformer().docToSnapshot(store);
+              if (currentSnapshot && sameBlockSuiteSnapshot(currentSnapshot, resourceRef.current.snapshot)) {
+                dirtyRef.current = false;
+                setDirty(false);
+                setRecoveryCopyReady(false);
+                if (!savingRef.current) setStatus('BlockSuite 资源已保存');
+                return;
+              }
+            } catch {
+              // Snapshot uncertainty is never grounds for enabling close.
+            }
+          }
           const wasDirty = dirtyRef.current;
           dirtyRef.current = true;
           setDirty(true);
@@ -254,7 +270,8 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
 
   const save = async (): Promise<boolean> => {
     const store = (host.current as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null)?.__sbBlockSuiteStore;
-    if (!store || saving) return false;
+    if (!store || savingRef.current) return false;
+    savingRef.current = true;
     setSaving(true);
     setStatus('正在保存 BlockSuite 资源…');
     let nativeWriteCommitted = false;
@@ -285,7 +302,6 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         resourceKind: resourceRef.current.resourceKind, docId: resourceRef.current.docId,
         updateB64: capturedUpdate, snapshot: projectionSha ? bindRichPageSnapshot(snapshot, projectionSha) : snapshot,
       };
-      const submittedSnapshotJson = JSON.stringify(snapshot);
       const result = await notesApi.saveBlockSuiteResource(basis, resourceRef.current, body);
       nativeWriteCommitted = true;
       resourceRef.current = { ...resourceRef.current, updateB64: body.updateB64, snapshot: body.snapshot, etag: result.etag, note_etag: result.note_etag, artifact_set_etag: result.artifact_set_etag };
@@ -308,18 +324,21 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       const currentSnapshot = initialResource.resourceKind === 'rich-page' ? nativeResourceSnapshot(store) : store.getTransformer().docToSnapshot(store);
       const unchanged = sequence === editSequence.current
         || (currentSnapshot !== null && typeof currentSnapshot === 'object'
-          && JSON.stringify(currentSnapshot) === submittedSnapshotJson);
+          && sameBlockSuiteSnapshot(currentSnapshot, snapshot));
       if (unchanged) {
         dirtyRef.current = false; setDirty(false);
         setStatus('BlockSuite 资源已保存');
       } else {
+        dirtyRef.current = true; setDirty(true); setRecoveryCopyReady(false);
         setStatus('先前版本已保存；有未保存的资源修改');
       }
       return unchanged;
     } catch (error) {
       const status = (error as Error & { status?: number })?.status;
-      if (initialResource.resourceKind === 'rich-page' && (status === 412 || projectionWriteStarted || nativeWriteCommitted)) {
-        dirtyRef.current = true; setDirty(true); setProjectionConflict(true);
+      if (status === 412 || projectionWriteStarted || nativeWriteCommitted) {
+        dirtyRef.current = true; setDirty(true);
+        if (initialResource.resourceKind === 'rich-page') setProjectionConflict(true);
+        setRecoveryCopyReady(false);
       }
       setStatus(status === 412
         ? initialResource.resourceKind === 'rich-page'
@@ -330,6 +349,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         : error instanceof Error ? `保存失败；修改仍保留，可重试。${error.message}` : '保存失败；修改仍保留，可重试。');
       return false;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
