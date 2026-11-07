@@ -1416,6 +1416,12 @@ for (const viewport of activeViewports) {
       expect(reopenedRichParagraphs.join('\n'), 'wp5_rich_page_close_reopen_content').toContain(richText);
       if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
 
+      // Keep archive-only UI checks independent from the separate resource
+      // lifecycle and Page/Edgeless mode journeys. The synthetic Rich Page is
+      // already saved and reopened above, so the controls can be exercised
+      // without paying for a nested canvas/blob round trip first.
+      let nestedCanvasResourceId: string | null = null;
+      if (!wp5ArchiveUxOnly) {
       const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
       observed.setWp5Step('rich_page_nested_canvas_create');
       const nestedCanvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
@@ -1424,6 +1430,7 @@ for (const viewport of activeViewports) {
       const nestedCanvasResponse = await nestedCanvasCreate;
       expect(nestedCanvasResponse.status(), 'wp5_rich_page_nested_canvas_create').toBe(200);
       const nestedCanvasInfo = await nestedCanvasResponse.json() as { resource_id: string };
+      nestedCanvasResourceId = nestedCanvasInfo.resource_id;
       const nestedCanvasCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: nestedCanvasInfo.resource_id });
       await expect(nestedCanvasCard).toBeVisible({ timeout: 15000 });
       observed.setWp5Step('rich_page_nested_canvas_open');
@@ -1596,6 +1603,7 @@ for (const viewport of activeViewports) {
       await expect(richDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_018');
       if (wp5RichPageModeOnly) return;
+      }
       if (wp5ArchiveUxOnly) {
         observed.setFailureStage('notes_blocksuite_open');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_019');
@@ -1644,6 +1652,7 @@ for (const viewport of activeViewports) {
         await expect(headingMenuItem).toHaveCount(1);
         await expect(headingMenuItem).toBeVisible();
         await headingMenuItem.click();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_030');
         const readBlockOrder = () => archiveViewport.evaluate(root => {
           const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
           const store = host?.__sbBlockSuiteStore;
@@ -1655,6 +1664,7 @@ for (const viewport of activeViewports) {
         });
         await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.type)
           .toBe('h1');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_031');
 
         await targetParagraph.hover();
         await expect(grip).toHaveAttribute('data-visible', 'true');
@@ -1684,6 +1694,7 @@ for (const viewport of activeViewports) {
         const afterDragTarget = orderAfterDrag.find(block => block.text.includes(richText))!;
         expect(afterDrag.parent, 'wp5_desktop_page_plus_reorder_same_parent_after').toBe(afterDragTarget.parent);
         expect(afterDrag.order, 'wp5_desktop_page_plus_reorder_changed_order').toBeLessThan(afterDragTarget.order);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_032');
 
         const savedArchiveResource = page.waitForResponse(response => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
@@ -1692,6 +1703,7 @@ for (const viewport of activeViewports) {
         await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
         expect((await savedArchiveResource).status(), 'wp5_archive_ux_resource_save').toBe(200);
         expect((await savedArchiveMarkdown).status(), 'wp5_archive_ux_markdown_save').toBe(200);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_033');
         await expect(richDialog.getByRole('status').first()).toContainText('已保存');
         await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
         await expect(richDialog).toHaveCount(0);
@@ -1710,8 +1722,10 @@ for (const viewport of activeViewports) {
         expect(reopenedSource.type, 'wp5_desktop_page_plus_heading_persisted').toBe('h1');
         expect(reopenedSource.parent, 'wp5_desktop_page_plus_reorder_parent_persisted').toBe(reopenedTarget.parent);
         expect(reopenedSource.order, 'wp5_desktop_page_plus_reorder_persisted').toBeLessThan(reopenedTarget.order);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_034');
         return;
       }
+      if (!nestedCanvasResourceId) throw new Error('Expected nested canvas resource identity for recovery verification');
       const restoreMarker = `restore probe ${randomUUID()}`;
       const restoreParagraph = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       await restoreParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${restoreMarker}`);
@@ -2137,7 +2151,7 @@ for (const viewport of activeViewports) {
       expect(recoveryJson.complete, 'wp5_rich_page_recovery_complete').toBe(true);
       expect(recoveryJson.remoteMarkdown?.content, 'wp5_rich_page_recovery_has_remote').toContain(externalRichMarker);
       expect(JSON.stringify(recoveryJson.snapshot), 'wp5_rich_page_recovery_has_local').toContain(localRichMarker);
-      expect(recoveryJson.resources.map(resource => resource.resourceId), 'wp5_rich_page_recovery_nested_resource_closure').toContain(nestedCanvasInfo.resource_id);
+      expect(recoveryJson.resources.map(resource => resource.resourceId), 'wp5_rich_page_recovery_nested_resource_closure').toContain(nestedCanvasResourceId);
       expect(recoveryJson.blobs.length, 'wp5_rich_page_recovery_nested_blob_closure').toBeGreaterThan(0);
       expect(recoveryJson.blobs.every(blob => blob.base64.length > 0), 'wp5_rich_page_recovery_blob_bytes').toBe(true);
 
