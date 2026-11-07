@@ -1371,8 +1371,19 @@ for (const viewport of activeViewports) {
       observed.setWp5Step('rich_page_nested_canvas_save');
       await nestedCanvasDialog.getByRole('button', { name: '保存资源' }).click();
       expect((await nestedCanvasSave).status(), 'wp5_rich_page_nested_canvas_save').toBe(200);
-      await expect(nestedCanvasDialog.getByRole('status')).toContainText('已保存', { timeout: 15000 });
-      await nestedCanvasDialog.getByRole('button', { name: '关闭', exact: true }).click();
+      const nestedCanvasStatus = nestedCanvasDialog.getByRole('status');
+      const nestedCanvasClose = nestedCanvasDialog.getByRole('button', { name: '关闭', exact: true });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
+      await expect(nestedCanvasStatus).toHaveText(/^(BlockSuite 资源已保存|先前版本已保存；有未保存的资源修改)$/);
+      if (await nestedCanvasStatus.innerText() !== 'BlockSuite 资源已保存') {
+        const nestedCanvasResave = page.waitForResponse(response => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
+        await nestedCanvasDialog.getByRole('button', { name: '保存资源' }).click();
+        expect((await nestedCanvasResave).status(), 'wp5_rich_page_nested_canvas_resave').toBe(200);
+        await expect(nestedCanvasStatus).toHaveText('BlockSuite 资源已保存');
+      }
+      await expect(nestedCanvasClose).toBeEnabled();
+      await nestedCanvasClose.click();
       await expect(nestedCanvasCard.getByText(/自动裁剪预览 · 1 个对象/)).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
       await expect(richDialog.getByRole('button', { name: '保存资源', exact: true })).toBeEnabled();
