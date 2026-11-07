@@ -1599,19 +1599,31 @@ for (const viewport of activeViewports) {
       if (wp5ArchiveUxOnly) {
         observed.setFailureStage('notes_blocksuite_open');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_019');
-        const archiveViewport = richDialog.locator('.affine-page-viewport');
-        const bodyParagraph = archiveViewport.locator('affine-paragraph').filter({ hasText: richText }).first();
+        const richHost = richDialog.locator('.blocksuite-resource-host.sb-archive-surface');
+        const archiveViewport = richHost.locator('.sb-archive-viewport');
+        await expect(archiveViewport).toBeVisible();
+        await expect(archiveViewport).toHaveClass(/affine-page-viewport/);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_020');
+        // Keep the paragraph locator rooted at the active Rich Page host;
+        // its content is rendered through BlockSuite's nested Shadow DOM.
+        const bodyParagraph = richHost.locator('affine-paragraph').filter({ hasText: richText });
+        await expect(bodyParagraph).toHaveCount(1);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_021');
         await expect(bodyParagraph).toBeVisible();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_022');
         await bodyParagraph.click();
         await page.keyboard.press('End');
         await page.keyboard.press('Enter');
         await page.keyboard.insertText('Archive reorder target');
-        const targetParagraph = archiveViewport.locator('affine-paragraph').filter({ hasText: 'Archive reorder target' }).first();
+        const targetParagraph = richHost.locator('affine-paragraph').filter({ hasText: 'Archive reorder target' });
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_023');
+        await expect(targetParagraph).toHaveCount(1);
         await expect(targetParagraph).toBeVisible();
 
         const plus = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
         const grip = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="grip"]');
         await targetParagraph.hover();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_024');
         await expect(plus).toHaveAttribute('data-visible', 'true');
         await expect(grip).toHaveAttribute('data-visible', 'true');
         const controlGeometry = await Promise.all([grip, plus].map(locator => locator.evaluate(button => {
