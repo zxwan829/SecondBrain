@@ -69,13 +69,14 @@ function PropertyRow({ label, children, hint }: { label: string; children: React
 }
 
 export function PropertiesPanel({
-  values, onChange, onModeChange, title, onTitleChange, devMode,
+  values, onChange, onModeChange, title, onTitleChange, devMode, readOnlyKeys = [],
 }: {
   values: MockProperties;
   onChange: (key: keyof MockProperties, value: unknown) => void;
   onModeChange: (mode: 'page' | 'edgeless') => void;
   title: string;
   onTitleChange: (value: string) => void;
+  readOnlyKeys?: Array<keyof MockProperties>;
   devMode: boolean;
 }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -84,6 +85,7 @@ export function PropertiesPanel({
   const [showAddedProperty, setShowAddedProperty] = useState<string[]>([]);
   const morePropertyCount = moreFields.filter(field => !showAddedProperty.includes(field.key as string)).length + showAddedProperty.length + values.custom.length;
   const changeString = (key: keyof MockProperties) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => onChange(key, event.target.value);
+  const isReadOnly = (key: keyof MockProperties) => readOnlyKeys.includes(key);
   const addCustom = (event: React.FormEvent) => {
     event.preventDefault();
     const name = customName.trim();
@@ -97,13 +99,13 @@ export function PropertiesPanel({
       <summary aria-label="展开或折叠属性"><span className="properties-chevron" aria-hidden="true"></span><span>属性</span></summary>
     <PropertyRow label="标题"><input className="sb-property-input" aria-label="文档标题" value={title} onChange={event => onTitleChange(event.target.value)} /></PropertyRow>
     <div className="sb-property-grid">
-      <PropertyRow label="标签"><input className="sb-property-input" aria-label="标签，逗号分隔" value={values.tags.join(', ')} placeholder="添加标签" onChange={event => onChange('tags', parseList(event.target.value))} /></PropertyRow>
+      <PropertyRow label="标签"><input className="sb-property-input" aria-label="标签，逗号分隔" value={values.tags.join(', ')} placeholder="添加标签" readOnly={isReadOnly('tags')} onChange={event => onChange('tags', parseList(event.target.value))} /></PropertyRow>
       <PropertyRow label="文档模式"><span className="sb-segmented" role="group" aria-label="文档模式">
         <button type="button" aria-pressed={values.docMode === 'page'} onClick={() => onModeChange('page')}>页面</button>
         <button type="button" aria-pressed={values.docMode === 'edgeless'} onClick={() => onModeChange('edgeless')}>画布</button>
       </span></PropertyRow>
-      <PropertyRow label="类型"><select className="sb-property-input" aria-label="类型" value={values.type} onChange={changeString('type')}><option value="Note">笔记</option><option value="Journal">日志</option><option value="Review">复盘</option><option value="Knowledge">知识</option></select></PropertyRow>
-      <PropertyRow label="状态"><select className="sb-property-input" aria-label="状态" value={values.status} onChange={changeString('status')}><option value="Draft">草稿</option><option value="Active">进行中</option><option value="Archived">已归档</option></select></PropertyRow>
+      <PropertyRow label="类型"><select className="sb-property-input" aria-label="类型" value={values.type} disabled={isReadOnly('type')} onChange={changeString('type')}><option value={values.type}>{values.type || '未设置'}</option></select></PropertyRow>
+      <PropertyRow label="状态"><select className="sb-property-input" aria-label="状态" value={values.status} disabled={isReadOnly('status')} onChange={changeString('status')}><option value={values.status}>{values.status || '未设置'}</option>{!isReadOnly('status') && <><option value="Draft">草稿</option><option value="Active">进行中</option><option value="Archived">已归档</option></>}</select></PropertyRow>
       <PropertyRow label="文件夹 / 集合"><input className="sb-property-input" aria-label="文件夹或集合" value={values.folderCollection} onChange={changeString('folderCollection')} /></PropertyRow>
       <PropertyRow label="更新时间"><span className="sb-property-readonly">{values.updated || '尚未保存'}</span></PropertyRow>
     </div>
@@ -114,9 +116,9 @@ export function PropertiesPanel({
           const value = values[field.key];
           const locked = field.kind === 'readonly';
           const hint = ['journal', 'source', 'sourceUrl', 'related', 'captureSource', 'workflowStage', 'promotedFrom', 'aiSummary', 'aiTags', 'aiStatus'].includes(field.key as string)
-            ? '仅为原型数据，尚未连接 Core。' : undefined;
+            ? '保存在本页的 Yjs 与快照中；不会改写普通 Markdown 属性。' : undefined;
           return <PropertyRow key={field.key} label={field.label} hint={hint}>
-            {locked ? <span className="sb-property-readonly">{String(value || 'Not set')}</span>
+            {locked || isReadOnly(field.key) ? <span className="sb-property-readonly">{String(value || 'Not set')}</span>
               : field.kind === 'textarea' ? <textarea className="sb-property-input" aria-label={field.label} value={String(value ?? '')} onChange={changeString(field.key)} rows={2}/>
                 : field.kind === 'select' ? <select className="sb-property-input" aria-label={field.label} value={String(value)} onChange={changeString(field.key)}>{field.options?.map(option => <option key={option} value={option}>{propertyOptionLabel(field.key, option)}</option>)}</select>
                   : <input className="sb-property-input" aria-label={field.label} value={Array.isArray(value) ? value.join(', ') : String(value ?? '')} onChange={event => onChange(field.key, ['aliases', 'related', 'aiTags'].includes(field.key as string) ? parseList(event.target.value) : event.target.value)} />}
@@ -137,7 +139,7 @@ export function PropertiesPanel({
         <input aria-label="新属性名称" placeholder="属性名称" value={customName} onChange={event => setCustomName(event.target.value)} />
         <input aria-label="新属性值" placeholder="属性值" value={customValue} onChange={event => setCustomValue(event.target.value)} />
         <button type="submit" disabled={!customName.trim()}>添加</button>
-        <small>自定义属性仅保存在此原型数据中。</small>
+        <small>自定义属性保存在本页的 Yjs 与快照中。</small>
       </form>}
     </details>
     </details>

@@ -18,11 +18,11 @@ export type { MockProperties as ArchiveProperties } from './properties-panel';
 
 /** Host owns the property persistence contract; this component never writes Markdown. */
 export function ArchiveDocumentHeader({ store, title, status, readonly, properties, onTitleChange, onPropertyChange,
-  onModeChange, onSave, onExportPdf, devMode = false }: {
+  onModeChange, onSave, onExportPdf, readOnlyKeys = [], devMode = false }: {
   store: any; title: string; status: string; readonly: boolean; properties: MockProperties;
   onTitleChange: (title: string) => void; onPropertyChange: (key: keyof MockProperties, value: unknown) => void;
   onModeChange: (mode: 'page' | 'edgeless') => void; onSave: () => void;
-  onExportPdf: () => void; devMode?: boolean;
+  onExportPdf: () => void; readOnlyKeys?: Array<keyof MockProperties>; devMode?: boolean;
 }) {
   const [renamingTitle, setRenamingTitle] = useState(false);
   const critical = /失败|冲突|412|409|缺失|未能|ERROR/.test(status);
@@ -40,7 +40,7 @@ export function ArchiveDocumentHeader({ store, title, status, readonly, properti
       <button className="icon-action" disabled={readonly} aria-label="重做" title="重做（⇧⌘Z）" aria-keyshortcuts="Meta+Shift+Z" onClick={() => store?.redo()}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m13 6 3.5 3.5L13 13m3-3.5h-7a5 5 0 0 0-5 5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
       <button className="icon-action save-action" disabled={readonly} aria-label="保存" title="保存文档" onClick={onSave}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3.5h10l2 2V16H4zM7 3.5v5h6v-5M7 16v-5h6v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg></button>
     </div></div>
-    <fieldset disabled={readonly} style={{ border: 0, padding: 0, margin: 0 }}><PropertiesPanel values={properties} title={title} onTitleChange={onTitleChange} onChange={onPropertyChange} onModeChange={onModeChange} devMode={devMode} /></fieldset>
+    <fieldset disabled={readonly} style={{ border: 0, padding: 0, margin: 0 }}><PropertiesPanel values={properties} title={title} onTitleChange={onTitleChange} onChange={onPropertyChange} onModeChange={onModeChange} readOnlyKeys={readOnlyKeys} devMode={devMode} /></fieldset>
   </div>;
 }
 
@@ -118,6 +118,15 @@ export function archiveFocusMindMap(std: BlockStdScope) {
   const element = (surface?.elementModels ?? []).find((value: any) => value.type === 'mindmap');
   const bound = element?.elementBound;
   if (!bound || !(bound.w > 0 && bound.h > 0)) throw new Error('当前画布没有可定位的思维导图。');
+  gfx.viewport.setViewportByBound(Bound.fromXYWH([bound.x, bound.y, bound.w, bound.h]), [48, 48, 48, 48], false, true);
+}
+
+export function archiveFocusFrame(std: BlockStdScope, frameId: string) {
+  const gfx = std.get(GfxControllerIdentifier);
+  const surface = std.store.getBlocksByFlavour('affine:surface')[0]?.model as any;
+  const element = (surface?.elementModels ?? []).find((value: any) => value.id === frameId && value.type === 'frame');
+  const bound = element?.elementBound;
+  if (!bound || !(bound.w > 0 && bound.h > 0)) throw new Error('找不到此内嵌画布范围。');
   gfx.viewport.setViewportByBound(Bound.fromXYWH([bound.x, bound.y, bound.w, bound.h]), [48, 48, 48, 48], false, true);
 }
 

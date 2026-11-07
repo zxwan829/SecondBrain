@@ -764,7 +764,7 @@ for (const viewport of activeViewports) {
     // conflict/recovery, and an unsupported-Markdown preservation probe. Give
     // that composed journey enough total execution budget without extending
     // any individual product wait/assertion or weakening its conditions.
-    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5RoundtripOnly ? 120_000 : 60_000);
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5RoundtripOnly ? 300_000 : 60_000);
     if ((wp5RoundtripOnly || wp5ConflictOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
@@ -1243,6 +1243,195 @@ for (const viewport of activeViewports) {
       await expect(page.locator('.blocksuite-notes-canvas').getByText(originalBody, { exact: true })).toBeVisible({ timeout: 20000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_065');
       await expect(page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' })).toHaveCount(2);
+
+      // Rich Page uses a dedicated synthetic Draft. This covers its controlled
+      // Yjs + snapshot + Markdown receipt path without changing the seed Note.
+      observed.setFailureStage('notes_blocksuite_open');
+      const richNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/notes', { timeout: 15000 });
+      await page.getByRole('button', { name: '新建富 Page', exact: true }).click();
+      const richCreatedResponse = await richNoteCreate;
+      expect(richCreatedResponse.status(), 'wp5_rich_page_note_created').toBe(200);
+      const richCreated = await richCreatedResponse.json() as { collection: string; path: string; content: string };
+      expect(richCreated.collection, 'wp5_rich_page_synthetic_draft').toBe('drafts');
+      observed.allowBlockSuiteNote(richCreated.path);
+      const richResourceCreate = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+      const richDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      await expect(richDialog).toBeVisible({ timeout: 25000 });
+      const richResourceResponse = await richResourceCreate;
+      expect(richResourceResponse.status(), 'wp5_rich_page_resource_created').toBe(200);
+      const richResourceInfo = await richResourceResponse.json() as { resource_id: string };
+      await expect(richDialog.locator('.sb-archive-surface')).toBeVisible({ timeout: 15000 });
+      await expect(richDialog.getByRole('button', { name: '导出 HTML' })).toBeVisible();
+      const richText = 'Synthetic rich page round trip';
+      const richBody = richDialog.locator('affine-paragraph').filter({ hasText: '在这里开始编辑完整富格式内容。' }).first();
+      await expect(richBody).toBeVisible({ timeout: 15000 });
+      await richBody.click();
+      await page.keyboard.press('End');
+      await page.keyboard.insertText(` ${richText}`);
+      const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
+      const nestedCanvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+      await canvasGallery.getByRole('button', { name: '新建独立画布' }).click();
+      const nestedCanvasResponse = await nestedCanvasCreate;
+      expect(nestedCanvasResponse.status(), 'wp5_rich_page_nested_canvas_create').toBe(200);
+      const nestedCanvasInfo = await nestedCanvasResponse.json() as { resource_id: string };
+      const nestedCanvasCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: nestedCanvasInfo.resource_id });
+      await expect(nestedCanvasCard).toBeVisible({ timeout: 15000 });
+      await nestedCanvasCard.getByRole('button', { name: '打开编辑' }).click();
+      const nestedCanvasDialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
+      await expect(nestedCanvasDialog).toBeVisible({ timeout: 15000 });
+      const nestedImageDataUrl = await page.evaluate(() => {
+        const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 2;
+        const context = canvas.getContext('2d'); if (!context) throw new Error('Canvas 2D context unavailable');
+        context.fillStyle = '#2f80ed'; context.fillRect(0, 0, 2, 2); return canvas.toDataURL('image/png');
+      });
+      const nestedBlobPut = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname.includes(`/api/notes/drafts/${richCreated.path}/blocksuite/blobs/`), { timeout: 20000 });
+      await nestedCanvasDialog.getByLabel('选择 Edgeless 图片').setInputFiles({ name: 'nested-canvas.png', mimeType: 'image/png',
+        buffer: Buffer.from(nestedImageDataUrl.split(',')[1], 'base64') });
+      expect((await nestedBlobPut).status(), 'wp5_rich_page_nested_canvas_blob').toBe(201);
+      const nestedCanvasSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
+      await nestedCanvasDialog.getByRole('button', { name: '保存资源' }).click();
+      expect((await nestedCanvasSave).status(), 'wp5_rich_page_nested_canvas_save').toBe(200);
+      await expect(nestedCanvasDialog.getByRole('status')).toContainText('已保存', { timeout: 15000 });
+      await nestedCanvasDialog.getByRole('button', { name: '关闭', exact: true }).click();
+      await expect(nestedCanvasCard.getByText(/自动裁剪预览 · 1 个对象/)).toBeVisible({ timeout: 15000 });
+      await expect(richDialog.getByRole('button', { name: '保存资源', exact: true })).toBeEnabled();
+      const richResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
+      const richMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
+      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      expect((await richResourceSave).status(), 'wp5_rich_page_native_save').toBe(200);
+      expect((await richMarkdownSave).status(), 'wp5_rich_page_projection_save').toBe(200);
+      await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
+      const richNoteRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect(richNoteRead.status(), 'wp5_rich_page_markdown_readback').toBe(200);
+      const richNote = await richNoteRead.json() as { content: string; etag: string };
+      expect(richNote.content, 'wp5_rich_page_readable_projection').toContain(richText);
+      const richResourceRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
+      expect(richResourceRead.status(), 'wp5_rich_page_native_readback').toBe(200);
+      const richResource = await richResourceRead.json() as { updateB64: string; snapshot: Record<string, unknown>; note_etag: string };
+      expect(richResource.updateB64.length, 'wp5_rich_page_yjs_persisted').toBeGreaterThan(4);
+      expect(JSON.stringify(richResource.snapshot), 'wp5_rich_page_native_text').toContain(richText);
+      expect(richResource.note_etag, 'wp5_rich_page_receipt_bound').toBe(richNote.etag);
+
+      // Page/Edgeless mode changes save first, then remount from the exact Yjs
+      // update. Switching back proves the text survives both view lifecycles.
+      await richDialog.getByText('属性', { exact: true }).click();
+      await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '画布', exact: true }).click();
+      await expect(richDialog.locator('.affine-edgeless-viewport')).toBeVisible({ timeout: 20000 });
+      await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true }).click();
+      await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
+      await expect(richDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 15000 });
+      const restoreMarker = `restore probe ${randomUUID()}`;
+      const restoreParagraph = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
+      await restoreParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${restoreMarker}`);
+      const restoreResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
+      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      expect((await restoreResourceSave).status(), 'wp5_rich_page_restore_probe_save').toBe(200);
+      await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
+      await richDialog.locator('details.diagnostics > summary').click();
+      await richDialog.getByRole('button', { name: '备份正文与画布' }).click();
+      await expect(richDialog).toHaveCount(0, { timeout: 15000 });
+      const backupSection = page.getByRole('region', { name: 'BlockSuite 快照恢复' });
+      await expect(backupSection).toBeVisible({ timeout: 15000 });
+      const snapshotChoice = backupSection.getByRole('button', { name: '选择并预览' }).first();
+      await expect(snapshotChoice).toBeVisible();
+      await snapshotChoice.click();
+      const snapshotPreview = backupSection.getByLabel('BlockSuite 快照预览');
+      await expect(snapshotPreview).toBeVisible();
+      await expect(snapshotPreview.locator('pre').first()).toContainText(richText);
+      await expect(snapshotPreview.locator('pre').first()).not.toContainText(restoreMarker);
+      page.once('dialog', dialog => dialog.accept());
+      const blockSuiteRestoreResponse = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname.includes('/blocksuite/snapshots/')
+        && new URL(response.url()).pathname.endsWith('/restore'), { timeout: 30000 });
+      await snapshotPreview.getByRole('button', { name: '确认恢复此 BlockSuite 快照' }).click();
+      expect((await blockSuiteRestoreResponse).status(), 'wp5_rich_page_snapshot_restore').toBe(200);
+      await expect(page.getByRole('alert')).toContainText('BlockSuite 快照已恢复', { timeout: 15000 });
+      const restoredMarkdown = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect(restoredMarkdown.status(), 'wp5_rich_page_snapshot_markdown_read').toBe(200);
+      expect((await restoredMarkdown.json() as { content: string }).content, 'wp5_rich_page_snapshot_markdown_content').toContain(richText);
+      expect((await restoredMarkdown.json() as { content: string }).content, 'wp5_rich_page_snapshot_markdown_removed_probe').not.toContain(restoreMarker);
+      const restoredNativeResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
+      expect(restoredNativeResponse.status(), 'wp5_rich_page_snapshot_resource_read').toBe(200);
+      expect(JSON.stringify((await restoredNativeResponse.json() as { snapshot: unknown }).snapshot), 'wp5_rich_page_snapshot_resource_content').toContain(richText);
+
+      await page.reload();
+      await page.getByRole('button', { name: '富 Page', exact: true }).click();
+      await expect(page.locator('.blocksuite-notes-canvas').getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
+      const richReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
+      await richReference.click();
+      await expect(page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' }).getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
+
+      // Simulate an external Markdown edit while the local native document is
+      // open. Its CAS must reject automatic projection; both sides and recovery
+      // JSON must remain readable for explicit resolution.
+      const beforeExternalWrite = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      const latestRichNote = await beforeExternalWrite.json() as { content: string; etag: string };
+      const externalRichMarker = `external rich-page ${randomUUID()}`;
+      const externalRichWrite = await page.evaluate(async ({ path, content, etag, marker }) => {
+        const response = await fetch(`/api/notes/drafts/${path}`, { method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': `"${etag}"` }, body: JSON.stringify({ content: `${content}\n${marker}\n` }) });
+        return response.status;
+      }, { path: richCreated.path, content: latestRichNote.content, etag: latestRichNote.etag, marker: externalRichMarker });
+      expect(externalRichWrite, 'wp5_rich_page_external_markdown_write').toBe(200);
+      const conflictRichDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      const localRichMarker = `local rich-page ${randomUUID()}`;
+      const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
+      await localRichParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
+      await conflictRichDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      await expect(conflictRichDialog.getByRole('status').first()).toContainText('版本冲突', { timeout: 15000 });
+      await expect(conflictRichDialog.getByRole('alert')).toContainText('未自动合并或覆盖');
+      const preservedRemote = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect(preservedRemote.status(), 'wp5_rich_page_conflict_remote_read').toBe(200);
+      const preservedRemoteNote = await preservedRemote.json() as { content: string; etag: string };
+      expect(preservedRemoteNote.content, 'wp5_rich_page_conflict_remote_marker').toContain(externalRichMarker);
+      expect(preservedRemoteNote.content, 'wp5_rich_page_conflict_remote_not_overwritten').not.toContain(localRichMarker);
+      const preservedNativeResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
+      expect(preservedNativeResponse.status(), 'wp5_rich_page_conflict_native_read').toBe(200);
+      const preservedNative = await preservedNativeResponse.json() as { snapshot: Record<string, unknown> };
+      expect(JSON.stringify(preservedNative.snapshot), 'wp5_rich_page_conflict_saved_native_preserved').toContain(richText);
+      expect(JSON.stringify(preservedNative.snapshot), 'wp5_rich_page_conflict_no_implicit_write').not.toContain(localRichMarker);
+      const recoveryDownloadPromise = page.waitForEvent('download');
+      await conflictRichDialog.getByRole('button', { name: '下载资源恢复副本' }).click();
+      const recoveryDownload = await recoveryDownloadPromise;
+      const recoveryJson = JSON.parse(await readFile(await recoveryDownload.path(), 'utf8')) as { complete: boolean; remoteMarkdown: { content: string } | null; snapshot: unknown; resources: Array<{ resourceId: string; snapshot: unknown }>; blobs: Array<{ id: string; base64: string }> };
+      expect(recoveryJson.complete, 'wp5_rich_page_recovery_complete').toBe(true);
+      expect(recoveryJson.remoteMarkdown?.content, 'wp5_rich_page_recovery_has_remote').toContain(externalRichMarker);
+      expect(JSON.stringify(recoveryJson.snapshot), 'wp5_rich_page_recovery_has_local').toContain(localRichMarker);
+      expect(recoveryJson.resources.map(resource => resource.resourceId), 'wp5_rich_page_recovery_nested_resource_closure').toContain(nestedCanvasInfo.resource_id);
+      expect(recoveryJson.blobs.length, 'wp5_rich_page_recovery_nested_blob_closure').toBeGreaterThan(0);
+      expect(recoveryJson.blobs.every(blob => blob.base64.length > 0), 'wp5_rich_page_recovery_blob_bytes').toBe(true);
+
+      const forkNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/notes', { timeout: 20000 });
+      const forkResourceCreates = [0, 1].map(() => page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname.endsWith('/blocksuite/resources'), { timeout: 30000 }));
+      const forkResourceUpdates = [0, 1, 2].map(() => page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname.includes('/blocksuite/resources/'), { timeout: 30000 }));
+      const forkMarkdownProjection = page.waitForResponse(response => response.request().method() === 'PUT'
+        && /^\/api\/notes\/drafts\/[^/]+$/.test(new URL(response.url()).pathname), { timeout: 30000 });
+      await conflictRichDialog.getByRole('button', { name: '另存为新富 Page（保留原件）' }).click();
+      const forkedNoteResponse = await forkNoteCreate;
+      expect(forkedNoteResponse.status(), 'wp5_rich_page_explicit_fork_note').toBe(200);
+      const forkedNote = await forkedNoteResponse.json() as { path: string; content: string };
+      expect(forkedNote.path, 'wp5_rich_page_explicit_fork_new_path').not.toBe(richCreated.path);
+      for (const response of await Promise.all(forkResourceCreates)) expect(response.status(), 'wp5_rich_page_explicit_fork_resource').toBe(200);
+      for (const response of await Promise.all(forkResourceUpdates)) expect(response.status(), 'wp5_rich_page_explicit_fork_resource_remap').toBe(200);
+      expect((await forkMarkdownProjection).status(), 'wp5_rich_page_explicit_fork_projection').toBe(200);
+      const originalAfterFork = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect((await originalAfterFork.json() as { content: string }).content, 'wp5_rich_page_original_remains').toContain(externalRichMarker);
+      const forkedNoteRead = await page.request.get(`${baseUrl}/api/notes/drafts/${forkedNote.path}`);
+      expect(forkedNoteRead.status(), 'wp5_rich_page_fork_readback').toBe(200);
+      const forkedMarkdown = (await forkedNoteRead.json() as { content: string }).content;
+      expect(forkedMarkdown, 'wp5_rich_page_fork_preserves_local_edit').toContain(localRichMarker);
+      expect(forkedMarkdown, 'wp5_rich_page_fork_preserves_external_markdown').toContain(externalRichMarker);
       }
 
       // Focused concurrency probe: only synthetic Notes, real Core PUT/If-Match,

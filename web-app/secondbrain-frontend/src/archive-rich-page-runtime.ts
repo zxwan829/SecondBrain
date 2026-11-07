@@ -21,10 +21,17 @@ import './archive-canvas-cards.css';
 // when the plain-Markdown subset manager is also used in the application.
 export const archiveStoreManager = new StoreExtensionManager([...getInternalStoreExtensions(), CanvasRefStoreExtension]);
 export const archiveViewManager = new ViewExtensionManager([...getInternalViewExtensions(), CanvasRefViewExtension]);
+const archiveViewCache = new Map<ViewScope, readonly unknown[]>();
 export function archiveViewExtensions(scope: ViewScope) {
-  const extensions = archiveViewManager.get(scope);
-  if (scope === 'page') extensions.push(ChineseSlashEmojiExtension, CanvasRefSlashExtension, CanvasRefPlusExtension, DesktopPageLeadingPlusExtension);
-  return extensions;
+  let extensions = archiveViewCache.get(scope);
+  if (!extensions) {
+    const base = archiveViewManager.get(scope);
+    extensions = scope === 'page'
+      ? [...base, ChineseSlashEmojiExtension, CanvasRefSlashExtension, CanvasRefPlusExtension, DesktopPageLeadingPlusExtension]
+      : [...base];
+    archiveViewCache.set(scope, extensions);
+  }
+  return [...extensions] as ReturnType<typeof archiveViewManager.get>;
 }
 export function archiveManagers() { return { stores: archiveStoreManager, views: { get: archiveViewExtensions } }; }
 

@@ -77,7 +77,7 @@ jobs:
           WP5_CONFLICT_ONLY: ${{ inputs.wp5_conflict_only }}
         run: |
           if [ "$WP5_ROUNDTRIP_ONLY" = "true" ] || [ "$WP5_CONFLICT_ONLY" = "true" ]; then
-            npm test -- --run src/NotesPage.test.tsx src/App.navigation.test.tsx src/blocksuite-markdown.test.ts src/zod-security.test.ts src/api/notes-blocksuite-blobs.test.ts
+            npm test -- --run src/NotesPage.test.tsx src/App.navigation.test.tsx src/blocksuite-markdown.test.ts src/zod-security.test.ts src/api/notes-blocksuite-blobs.test.ts src/rich-page-projection.test.ts src/plain-markdown-format-guard.test.ts
           else
             npm test
           fi

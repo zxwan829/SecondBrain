@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "postinstall": "node scripts/apply-blocksuite-zod4-compat.mjs",
+    "postinstall": "node scripts/prepare-blocksuite-archive-ux.mjs --prepare-only",
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
@@ -100,6 +100,7 @@
     "vitest": "5.0.4"
   },
   "overrides": {
+    "@blocksuite/icons": "2.2.12",
     "zod": "4.6.6",
     "minimatch": "^11.0.1",
     "undici": "^8.12.2",
