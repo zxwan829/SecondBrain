@@ -176,6 +176,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   useEffect(() => {
     let disposed = false;
     setStoreReady(false);
+    setStatus('正在载入 BlockSuite 资源…');
     let workspace: TransientMarkdownWorkspace | undefined;
     let std: BlockStdScope | undefined;
     let offUpdate: (() => void) | undefined;
@@ -246,14 +247,15 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         };
         doc.spaceDoc.on('update', onUpdate);
         offUpdate = () => doc.spaceDoc.off('update', onUpdate);
-        setStatus(native ? 'BlockSuite 富 Page 已就绪' : initialResource.resourceKind === 'database' ? 'BlockSuite Database 已就绪' : 'BlockSuite Edgeless 画布已就绪');
         Object.assign(host.current, { __sbBlockSuiteStore: store, __sbBlockSuiteStd: std });
-        setStoreReady(true);
         if (native && (richPageMarkdownBinding(editingResource.snapshot) !== editingResource.note_etag
           || editingResource.note_etag !== noteRef.current.etag)) {
           setProjectionConflict(true);
           setStatus('富 Page 与 Markdown 版本冲突；仅在本地保留修改。请下载双方副本或另存新富 Page。');
+        } else {
+          setStatus(native ? 'BlockSuite 富 Page 已就绪' : initialResource.resourceKind === 'database' ? 'BlockSuite Database 已就绪' : 'BlockSuite Edgeless 画布已就绪');
         }
+        setStoreReady(true);
       } catch (error) {
         if (!disposed) setStatus(error instanceof Error ? `加载失败：${error.message}` : 'BlockSuite 资源无法载入');
         workspace?.dispose();
@@ -395,7 +397,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       }
       return;
     }
-    if (saving || projectionConflict) return;
+    if (!storeReady || saving || projectionConflict) return;
     const store = currentStore();
     if (!store) return;
     store.spaceDoc.getMap('secondbrain-rich-page-properties').set('docMode', mode);
@@ -636,7 +638,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   return <div className="blocksuite-resource-backdrop" role="presentation">
     <section className="blocksuite-resource-dialog" role="dialog" aria-modal="true" aria-label={initialResource.resourceKind === 'database' ? 'BlockSuite 数据库资源' : initialResource.resourceKind === 'rich-page' ? 'BlockSuite 富 Page 资源' : 'BlockSuite Edgeless 资源'}>
       {initialResource.resourceKind === 'rich-page' ? <ArchiveDocumentHeader store={currentStore()} title={currentTitle()} status={status}
-        readonly={saving || projectionConflict} properties={archiveProperties} readOnlyKeys={['tags', 'type', 'aliases', 'created', 'updated', 'description', 'source', 'related']}
+        readonly={!storeReady || saving || projectionConflict} properties={archiveProperties} readOnlyKeys={['tags', 'type', 'aliases', 'created', 'updated', 'description', 'source', 'related']}
         onTitleChange={updateArchiveTitle} onPropertyChange={updateArchiveProperty} onModeChange={mode => { void switchViewMode(mode); }}
         onSave={() => { void save(); }} onExportPdf={() => { const store = currentStore(); if (store) void archivePrintPdf(store, currentTitle()).catch(error => setStatus(`PDF 导出失败：${error instanceof Error ? error.message : ''}`)); }} />
         : <header><strong>{initialResource.resourceKind === 'database' ? '独立 Database 资源' : '独立 Edgeless 画布'}</strong>
@@ -659,7 +661,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         <button type="button" onClick={() => { const store = currentStore(); if (store) { const url = URL.createObjectURL(new Blob([JSON.stringify(nativeResourceSnapshot(store), null, 2)], { type: 'application/json' })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'rich-page-snapshot.json'; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0); } }}>导出 JSON 快照</button>
       </div>}
       <div className="blocksuite-resource-host" ref={host} data-kind={initialResource.resourceKind} />
-      {initialResource.resourceKind === 'rich-page' && <ArchiveCanvasGallery cards={canvasCards} readonly={saving || projectionConflict}
+      {initialResource.resourceKind === 'rich-page' && <ArchiveCanvasGallery cards={canvasCards} readonly={!storeReady || saving || projectionConflict}
         onCreate={() => { const store = currentStore(); const parent = store?.getBlocksByFlavour('affine:note')[0]?.model.id; if (!store || !parent) return;
           const blockId = store.addBlock(CANVAS_REF_FLAVOUR, { title: '新建画布', state: 'creating' }, parent);
           host.current?.querySelector<HTMLElement>('.sb-archive-viewport')?.dispatchEvent(new CustomEvent('sb-canvas-ref-create', { bubbles: true, detail: { blockId } })); }}

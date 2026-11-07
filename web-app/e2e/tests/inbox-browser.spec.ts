@@ -1548,11 +1548,13 @@ for (const viewport of activeViewports) {
       await richDialog.getByText('属性', { exact: true }).click();
       await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '画布', exact: true }).click();
       await expect(richDialog.locator('.affine-edgeless-viewport')).toBeVisible({ timeout: 20000 });
+      await expect(richDialog.getByRole('status').first()).toHaveText('BlockSuite 富 Page 已就绪', { timeout: 20000 });
       observed.setWp5Step('rich_page_mode_page');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
       await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true }).click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
       await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
+      await expect(richDialog.getByRole('status').first()).toHaveText('BlockSuite 富 Page 已就绪', { timeout: 20000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_068');
       await expect(richDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_018');
