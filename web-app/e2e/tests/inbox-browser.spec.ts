@@ -1665,17 +1665,49 @@ for (const viewport of activeViewports) {
       let secondClickState: NoteClickState | null = null;
       let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
       try {
-        conflictAction = 'paragraph-geometry';
+        let bounds: Awaited<ReturnType<typeof localRichParagraph.boundingBox>> = null;
+        let viewportBounds: Awaited<ReturnType<typeof conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox>> = null;
+        let clickPoint: { x: number; y: number } | null = null;
+        let previousHitGeometry = '';
+        let stableTargetSamples = 0;
+        conflictAction = 'stable-pointer-target';
         await expect.poll(async () => {
-          const paragraphBounds = await localRichParagraph.boundingBox();
-          const viewportBounds = await conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox();
-          return Boolean(paragraphBounds && viewportBounds
-            && paragraphBounds.y + paragraphBounds.height > viewportBounds.y && paragraphBounds.y < viewportBounds.y + viewportBounds.height
-            && paragraphBounds.x + paragraphBounds.width > viewportBounds.x && paragraphBounds.x < viewportBounds.x + viewportBounds.width);
-        }, { timeout: 5000, message: 'wp5_rich_page_conflict_paragraph_after_fit_in_viewport' }).toBe(true);
-        const bounds = await localRichParagraph.boundingBox({ timeout: 5000 });
+          bounds = await localRichParagraph.boundingBox();
+          viewportBounds = await conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox();
+          if (!bounds || !viewportBounds) { stableTargetSamples = 0; return false; }
+          const visibleLeft = Math.max(bounds.x, viewportBounds.x);
+          const visibleTop = Math.max(bounds.y, viewportBounds.y);
+          const visibleRight = Math.min(bounds.x + bounds.width, viewportBounds.x + viewportBounds.width);
+          const visibleBottom = Math.min(bounds.y + bounds.height, viewportBounds.y + viewportBounds.height);
+          if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) { stableTargetSamples = 0; return false; }
+          clickPoint = { x: (visibleLeft + visibleRight) / 2, y: (visibleTop + visibleBottom) / 2 };
+          const hitPath = await page.evaluate(({ x, y }) => {
+            let hit: Element | null = document.elementFromPoint(x, y);
+            while (hit?.shadowRoot) {
+              const inner = hit.shadowRoot.elementFromPoint(x, y);
+              if (!inner || inner === hit) break;
+              hit = inner;
+            }
+            const path: string[] = [];
+            let node: Node | null = hit;
+            while (node && path.length < 10) {
+              if (node instanceof Element) path.push(node.localName);
+              if (node.parentNode) node = node.parentNode;
+              else {
+                const root = node.getRootNode();
+                node = root instanceof ShadowRoot ? root.host : null;
+              }
+            }
+            return path;
+          }, clickPoint);
+          const targetHit = hitPath.includes('affine-edgeless-note') && hitPath.includes('affine-paragraph');
+          const geometry = JSON.stringify([bounds.x, bounds.y, bounds.width, bounds.height,
+            viewportBounds.x, viewportBounds.y, viewportBounds.width, viewportBounds.height, hitPath]);
+          stableTargetSamples = targetHit && geometry === previousHitGeometry ? stableTargetSamples + 1 : targetHit ? 1 : 0;
+          previousHitGeometry = geometry;
+          return stableTargetSamples >= 2;
+        }, { timeout: 5000, message: 'wp5_rich_page_conflict_target_hit_stable_after_fit' }).toBe(true);
         expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
-        const viewportBounds = await conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox({ timeout: 5000 });
         expect(viewportBounds, 'wp5_rich_page_conflict_edgeless_viewport_visible').not.toBeNull();
         const visibleLeft = Math.max(bounds!.x, viewportBounds!.x);
         const visibleTop = Math.max(bounds!.y, viewportBounds!.y);
@@ -1683,7 +1715,8 @@ for (const viewport of activeViewports) {
         const visibleBottom = Math.min(bounds!.y + bounds!.height, viewportBounds!.y + viewportBounds!.height);
         expect(visibleRight).toBeGreaterThan(visibleLeft);
         expect(visibleBottom).toBeGreaterThan(visibleTop);
-        const clickPoint = { x: (visibleLeft + visibleRight) / 2, y: (visibleTop + visibleBottom) / 2 };
+        expect(clickPoint).not.toBeNull();
+        const confirmedClickPoint = clickPoint!;
         conflictAction = 'readonly-dom-structure';
         structureSummary = await page.evaluate(({ x, y, text }) => {
           const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog');
@@ -1739,7 +1772,7 @@ for (const viewport of activeViewports) {
             paragraphPath: pathOf(paragraphs[0] ?? null), paragraphRect: rectValues(paragraphRect),
             dialogRect: rectValues(dialogRect), viewportRect: rectValues(viewportRect), windowSize: [innerWidth, innerHeight],
             notes, hitPath: pathOf(hit) };
-        }, { x: clickPoint.x, y: clickPoint.y, text: richText });
+        }, { x: confirmedClickPoint.x, y: confirmedClickPoint.y, text: richText });
         expect(structureSummary.notes.some(note => note[3]), 'wp5_rich_page_conflict_paragraph_belongs_to_active_note').toBe(true);
         expect(structureSummary.hitPath).toContain('affine-edgeless-note');
         expect(structureSummary.hitPath).toContain('affine-paragraph');
@@ -1788,7 +1821,7 @@ for (const viewport of activeViewports) {
           return null;
         });
         conflictAction = 'note-click-1';
-        await page.mouse.click(clickPoint.x, clickPoint.y);
+        await page.mouse.click(confirmedClickPoint.x, confirmedClickPoint.y);
         conflictAction = 'note-wait-selection';
         await expect.poll(async () => {
           firstClickState = await readRichNoteState();
@@ -1796,7 +1829,7 @@ for (const viewport of activeViewports) {
         }, { timeout: 5000 })
           .toBe(true);
         conflictAction = 'note-click-2';
-        await page.mouse.click(clickPoint.x, clickPoint.y);
+        await page.mouse.click(confirmedClickPoint.x, confirmedClickPoint.y);
         conflictAction = 'note-wait-editing';
         await expect.poll(async () => {
           secondClickState = await readRichNoteState();
