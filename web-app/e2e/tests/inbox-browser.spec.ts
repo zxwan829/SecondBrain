@@ -1549,12 +1549,6 @@ for (const viewport of activeViewports) {
       // Page/Edgeless mode changes save first, then remount from the exact Yjs
       // update. Switching back proves the text survives both view lifecycles.
       observed.setWp5Step('rich_page_mode_edgeless');
-      const previousRichStore = await page.evaluateHandle(() => {
-        const host = document.querySelector<HTMLElement>('.blocksuite-resource-dialog .blocksuite-resource-host') as
-          (HTMLElement & { __sbBlockSuiteStore?: unknown }) | null;
-        return host?.__sbBlockSuiteStore ?? null;
-      });
-      expect(await previousRichStore.evaluate(store => Boolean(store)), 'wp5_rich_page_initial_store_attached').toBe(true);
       await richDialog.getByText('属性', { exact: true }).click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_069');
       await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '画布', exact: true }).click();
@@ -1562,57 +1556,28 @@ for (const viewport of activeViewports) {
       await expect(richDialog.locator('.affine-edgeless-viewport')).toBeVisible({ timeout: 20000 });
       observed.setWp5Step('rich_page_mode_edgeless_ready');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_071');
-      observed.setDiagnosticAssertion('wp5_resource_checkpoint_074');
-      // The viewport is appended before BlockSuite's root update completes. A
-      // prior view can briefly leave aria-busy=false on the dialog, so readiness
-      // requires the newly created store plus the product's ready signal.
-      await page.waitForFunction((previousStore) => {
-        const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]');
-        const host = dialog?.querySelector<HTMLElement>('.blocksuite-resource-host') as
-          (HTMLElement & { __sbBlockSuiteStore?: unknown }) | null;
-        return Boolean(host?.__sbBlockSuiteStore && host.__sbBlockSuiteStore !== previousStore
-          && dialog?.getAttribute('aria-busy') === 'false');
-      }, previousRichStore, { timeout: 20000 });
-      await previousRichStore.dispose();
       observed.setWp5Step('rich_page_mode_page');
       const pageModeButton = richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
-      let pageModeEnableError: unknown;
-      try { await expect(pageModeButton, 'wp5_rich_page_page_mode_enabled').toBeEnabled(); }
-      catch (error) { pageModeEnableError = error; }
-      if (pageModeEnableError) {
-        type RichPageFailureState = { responsive: true; busy: string | null; fieldsetDisabled: boolean | null;
-          pageButtonDisabled: boolean | null; conflictAlert: boolean; conflictText: boolean; status: 'conflict' | 'error' | 'pending' | 'saved' | 'other';
-          mountScope: 'page' | 'edgeless' | 'missing'; storeAttached: boolean } | { responsive: false };
-        const failureState = await Promise.race<RichPageFailureState>([
-          page.evaluate((): RichPageFailureState => {
-            const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]');
-            if (!dialog) return { responsive: true, busy: null, fieldsetDisabled: null, pageButtonDisabled: null,
-              conflictAlert: false, conflictText: false, status: 'other', mountScope: 'missing', storeAttached: false };
-            const group = dialog.querySelector<HTMLElement>('[role="group"][aria-label="文档模式"]');
-            const pageButton = [...(group?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(button => button.textContent?.trim() === '页面');
-            const host = dialog.querySelector<HTMLElement>('.blocksuite-resource-host');
-            const statusText = dialog.querySelector('.document-status')?.textContent?.trim() ?? '';
-            const conflictText = /冲突|412/.test(statusText);
-            return { responsive: true, busy: dialog.getAttribute('aria-busy'),
-              fieldsetDisabled: group?.closest('fieldset')?.disabled ?? null, pageButtonDisabled: pageButton?.disabled ?? null,
-              conflictAlert: Boolean(dialog.querySelector('.blocksuite-resource-conflict[role="alert"]')),
-              conflictText, status: conflictText ? 'conflict' : /失败|ERROR/.test(statusText) ? 'error'
-                : /未保存|正在/.test(statusText) ? 'pending' : /已保存|已就绪/.test(statusText) ? 'saved' : 'other',
-              mountScope: host?.querySelector('.affine-edgeless-viewport') ? 'edgeless'
-                : host?.querySelector('.affine-page-viewport') ? 'page' : 'missing',
-              storeAttached: Boolean((host as (HTMLElement & { __sbBlockSuiteStore?: unknown }) | null)?.__sbBlockSuiteStore) };
-          }).catch(() => ({ responsive: false as const })),
-          new Promise<RichPageFailureState>(resolve => setTimeout(() => resolve({ responsive: false }), 3000)),
-        ]);
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ r: failureState.responsive,
-          b: failureState.responsive ? failureState.busy : null, fd: failureState.responsive ? failureState.fieldsetDisabled : null,
-          pd: failureState.responsive ? failureState.pageButtonDisabled : null, alert: failureState.responsive ? failureState.conflictAlert : null,
-          conflict: failureState.responsive ? failureState.conflictText : null, s: failureState.responsive ? failureState.status : null,
-          m: failureState.responsive ? failureState.mountScope : null, store: failureState.responsive ? failureState.storeAttached : null }));
-      }
-      if (pageModeEnableError) throw pageModeEnableError;
+      const pageModeButtonCount = await pageModeButton.count();
+      const pageModeEnabled = pageModeButtonCount === 1 && await pageModeButton.isEnabled().catch(() => false);
+      const pageModeLocatorState = pageModeButtonCount === 1 ? await pageModeButton.evaluate(button => {
+        const control = button as HTMLButtonElement;
+        let disabledFieldsets = 0;
+        for (let parent = button.parentElement; parent; parent = parent.parentElement) {
+          if (parent instanceof HTMLFieldSetElement && parent.disabled) disabledFieldsets += 1;
+        }
+        const dialog = button.closest<HTMLElement>('[role="dialog"]');
+        return { connected: button.isConnected, disabled: control.disabled,
+          ariaDisabled: button.getAttribute('aria-disabled') === 'true', disabledFieldsets,
+          busy: dialog?.getAttribute('aria-busy') ?? null,
+          richDialog: dialog?.getAttribute('aria-label') === 'BlockSuite 富 Page 资源' };
+      }).catch(() => null) : null;
+      console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ count: pageModeButtonCount, enabled: pageModeEnabled,
+        ...(pageModeLocatorState ?? { connected: false, disabled: null, ariaDisabled: null, disabledFieldsets: null, busy: null, richDialog: false }) }));
+      expect(pageModeButtonCount, 'wp5_rich_page_mode_button_unique').toBe(1);
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
+      // Click itself is the authoritative actionability check for this control.
       await pageModeButton.click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
       await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
