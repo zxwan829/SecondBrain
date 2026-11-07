@@ -183,6 +183,24 @@ class DesktopPagePlusWidget extends WidgetComponent {
     const items = typeof config.items === 'function' ? config.items(context) : config.items;
     const controller = new AbortController();
     const menu = new SlashMenu(inlineEditor, controller);
+    // The resource editor is rendered in a modal stacking context above the
+    // theme's default popover layer. SlashMenu portals itself to document.body,
+    // so inherit a layer just above this editor's backdrop when present.
+    let resourceBackdrop: HTMLElement | null = null;
+    let currentRoot: Node | null = anchor.element;
+    while (currentRoot) {
+      if (currentRoot instanceof HTMLElement && currentRoot.matches('.blocksuite-resource-backdrop')) {
+        resourceBackdrop = currentRoot;
+        break;
+      }
+      currentRoot = currentRoot.parentNode ?? (currentRoot instanceof ShadowRoot ? currentRoot.host : null);
+    }
+    if (resourceBackdrop) {
+      const backdropZIndex = Number.parseInt(getComputedStyle(resourceBackdrop).zIndex, 10);
+      if (Number.isFinite(backdropZIndex)) {
+        menu.style.setProperty('--affine-z-index-popover', String(backdropZIndex + 1));
+      }
+    }
     this.menuOpen = true;
     this.cancelHide();
     menu.context = context;

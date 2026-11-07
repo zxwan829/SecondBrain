@@ -1651,7 +1651,7 @@ for (const viewport of activeViewports) {
         const headingMenuItem = page.getByTestId('一级标题');
         await expect(headingMenuItem).toHaveCount(1);
         await expect(headingMenuItem).toBeVisible();
-        await headingMenuItem.click();
+        await headingMenuItem.click({ timeout: 5000 });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_030');
         const readBlockOrder = () => archiveViewport.evaluate(root => {
           const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
