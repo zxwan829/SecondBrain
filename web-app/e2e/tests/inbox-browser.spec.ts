@@ -1898,11 +1898,13 @@ for (const viewport of activeViewports) {
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_038');
         expect(await assertTableCellEditable(firstCell), 'wp5_archive_table_first_cell_editable').toBe(true);
         await focusTableCellEditor(firstCellEditor, firstRowId!, firstColumnId!);
+        observed.setDiagnosticAssertion('wp5_archive_cell_focus_ready');
         await page.keyboard.insertText(mergeSourceText);
         await waitForTableCellText(firstRowId!, firstColumnId!, mergeSourceText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
         expect(await assertTableCellEditable(secondCell), 'wp5_archive_table_second_cell_editable').toBe(true);
         await focusTableCellEditor(secondCellEditor, secondRowId!, secondColumnId!);
+        observed.setDiagnosticAssertion('wp5_archive_cell_focus_ready');
         await page.keyboard.insertText(mergeCoveredText);
         await waitForTableCellText(secondRowId!, secondColumnId!, mergeCoveredText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_040');
