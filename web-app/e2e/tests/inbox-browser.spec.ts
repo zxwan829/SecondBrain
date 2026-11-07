@@ -1648,6 +1648,7 @@ for (const viewport of activeViewports) {
       const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
       let conflictAction = 'paragraph-geometry';
+      let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
       try {
         const bounds = await localRichParagraph.boundingBox({ timeout: 5000 });
         expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
@@ -1660,6 +1661,56 @@ for (const viewport of activeViewports) {
         expect(visibleRight).toBeGreaterThan(visibleLeft);
         expect(visibleBottom).toBeGreaterThan(visibleTop);
         const clickPoint = { x: (visibleLeft + visibleRight) / 2, y: (visibleTop + visibleBottom) / 2 };
+        conflictAction = 'readonly-dom-structure';
+        structureSummary = await page.evaluate(({ x, y, text }) => {
+          const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog');
+          if (!dialog) return { hostKind: null, paragraphCount: 0, paragraphPath: [], notes: [], hitPath: [] };
+          const roots: Array<Document | ShadowRoot | HTMLElement> = [dialog];
+          const elements: Element[] = [];
+          for (let index = 0; index < roots.length; index += 1) {
+            const root = roots[index];
+            for (const element of root.querySelectorAll('*')) {
+              elements.push(element);
+              if (element.shadowRoot) roots.push(element.shadowRoot);
+            }
+          }
+          const pathOf = (start: Node | null) => {
+            const path: string[] = [];
+            let node = start;
+            while (node && path.length < 10) {
+              if (node instanceof Element) path.push(node.localName);
+              if (node.parentNode) node = node.parentNode;
+              else {
+                const root = node.getRootNode();
+                node = root instanceof ShadowRoot ? root.host : null;
+              }
+            }
+            return path;
+          };
+          const paragraphs = elements.filter(element => element.localName === 'affine-paragraph'
+            && element.textContent?.includes(text));
+          const notes: Array<[string, number[], number, boolean]> = elements.filter(element => element.localName === 'affine-edgeless-note').slice(0, 3).map(element => {
+            const note = element as HTMLElement & { model?: { id?: string } };
+            const rect = note.getBoundingClientRect();
+            const bodyParagraphs = [...(note.shadowRoot?.querySelectorAll('affine-paragraph') ?? [])];
+            const includesTarget = paragraphs.some(paragraph => bodyParagraphs.includes(paragraph));
+            return [note.model?.id?.slice(-6) ?? '',
+              [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
+              bodyParagraphs.length, includesTarget] as [string, number[], number, boolean];
+          });
+          const host = dialog.querySelector<HTMLElement>('.blocksuite-resource-host');
+          let hit: Element | null = document.elementFromPoint(x, y);
+          while (hit?.shadowRoot) {
+            const inner = hit.shadowRoot.elementFromPoint(x, y);
+            if (!inner || inner === hit) break;
+            hit = inner;
+          }
+          return { hostKind: host?.dataset.kind ?? null, paragraphCount: paragraphs.length,
+            paragraphPath: pathOf(paragraphs[0] ?? null), notes, hitPath: pathOf(hit) };
+        }, { x: clickPoint.x, y: clickPoint.y, text: richText });
+        expect(structureSummary.notes.some(note => note[3]), 'wp5_rich_page_conflict_paragraph_belongs_to_active_note').toBe(true);
+        expect(structureSummary.hitPath).toContain('affine-edgeless-note');
+        expect(structureSummary.hitPath).toContain('affine-paragraph');
         await page.evaluate(() => {
           const target = window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> };
           target.__wp5NotePointerHits = [];
@@ -1779,11 +1830,15 @@ for (const viewport of activeViewports) {
           }, { marker: localRichMarker }).catch(() => null),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
         ]);
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ action: conflictAction,
-          pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [hit.note, hit.paragraph, hit.editable]),
-          note: [interactionState?.noteEditing, interactionState?.noteSelected, interactionState?.selectionEditing],
-          anchor: interactionState?.selectionInParagraph, focus: interactionState?.focusedContenteditable,
-          stored: interactionState?.markerInStore }));
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(structureSummary
+          ? { a: 'dom', host: structureSummary.hostKind, pc: structureSummary.paragraphCount,
+            p: structureSummary.paragraphPath.slice(0, 5).join('>'),
+            n: structureSummary.notes.map(([id, rect, count, target]) => [id, rect.join(','), count, Number(target)]),
+            h: structureSummary.hitPath.slice(0, 5).join('>') }
+          : { action: conflictAction, pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [hit.note, hit.paragraph, hit.editable]),
+            note: [interactionState?.noteEditing, interactionState?.noteSelected, interactionState?.selectionEditing],
+            anchor: interactionState?.selectionInParagraph, focus: interactionState?.focusedContenteditable,
+            stored: interactionState?.markerInStore }));
         throw error;
       }
       await expect(conflictRichDialog.getByRole('alert')).toContainText('未自动合并或覆盖');
