@@ -1473,11 +1473,11 @@ def main() -> int:
                 runner_log = root / "playwright-runner.log"
                 if runner_log.is_file() and runner_log.stat().st_size <= 4 * 1024 * 1024:
                     for line in runner_log.read_text(encoding="utf-8", errors="replace").splitlines():
-                        marker = "WP5_RESOURCE_CREATE_ERROR "
-                        if marker in line:
-                            detail = line.split(marker, 1)[1].strip()[:240]
-                            if not any(secret in detail.lower() for secret in ("bearer ", "password=", "token=")):
-                                print(marker + detail)
+                        for marker in ("WP5_RESOURCE_CREATE_ERROR ", "WP5_RESOURCE_MODE_DOM "):
+                            if marker in line:
+                                detail = line.split(marker, 1)[1].strip()[:240]
+                                if not any(secret in detail.lower() for secret in ("bearer ", "password=", "token=")):
+                                    print(marker + detail)
             core_probe_events = []
             if wp5_probe_mode and wp5_autosave_core_log.exists():
                 if wp5_autosave_core_log.stat().st_size > 2048 or not wp5_autosave_core_log.is_file():
