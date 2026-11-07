@@ -1270,6 +1270,7 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_004');
       await expect(richDialog.getByRole('button', { name: '导出 HTML' })).toBeVisible();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_005');
+      await expect(richDialog.locator('.blocksuite-resource-host .affine-page-viewport')).toBeVisible();
       const richText = 'Synthetic rich page round trip';
       const richBody = richDialog.locator('affine-paragraph').filter({ hasText: '在这里开始编辑完整富格式内容。' }).first();
       await expect(richBody).toBeVisible({ timeout: 15000 });

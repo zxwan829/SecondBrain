@@ -49,6 +49,10 @@ function seedResource(store: any, kind: BlockSuiteResourceKind) {
   const root = store.addBlock('affine:page', {}, null);
   const surface = store.addBlock('affine:surface', {}, root, 0);
   if (kind === 'rich-page') {
+    // Persist the intended opening mode with the native resource itself.
+    // Relying only on the UI fallback let a new resource mount in Edgeless
+    // without an explicit Page-mode value in its Yjs state.
+    store.spaceDoc.getMap('secondbrain-rich-page-properties').set('docMode', 'page');
     const note = store.addBlock('affine:note', {}, root);
     store.addBlock('affine:paragraph', { type: 'h1', text: new Text('富 Page') }, note);
     store.addBlock('affine:paragraph', { text: new Text('在这里开始编辑完整富格式内容。') }, note);
