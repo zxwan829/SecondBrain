@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request, type Response, type Route, type TestInfo } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Request, type Response, type Route, type TestInfo } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -162,6 +162,34 @@ async function expectNoteSavedStatus(page: Page, observed: Awaited<ReturnType<ty
     observed.setDiagnosticAssertion(stateAssertion);
     throw error;
   }
+}
+
+async function expectEdgelessTextLayoutSettled(dialog: Locator) {
+  await expect.poll(async () => dialog.locator('affine-edgeless-text').evaluate(async (element) => {
+    const block = element as HTMLElement & { model?: { xywh?: string }; gfx?: { viewport?: { zoom?: number } } };
+    const container = block.querySelector('.edgeless-text-block-container');
+    const sample = () => {
+      const zoom = block.gfx?.viewport?.zoom;
+      const xywh = block.model?.xywh;
+      if (!container || typeof zoom !== 'number' || !Number.isFinite(zoom) || zoom <= 0 || typeof xywh !== 'string') return null;
+      let bounds: unknown;
+      try { bounds = JSON.parse(xywh); } catch { return null; }
+      if (!Array.isArray(bounds) || bounds.length !== 4 || !Number.isFinite(bounds[3])) return null;
+      return { measuredHeight: container.getBoundingClientRect().height / zoom, modelHeight: bounds[3], zoom };
+    };
+    const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    await nextFrame();
+    const first = sample();
+    await nextFrame();
+    const second = sample();
+    if (!first || !second) return false;
+    const stable = (left: number, right: number) => Math.abs(left - right) <= 0.25;
+    return stable(first.measuredHeight, first.modelHeight)
+      && stable(second.measuredHeight, second.modelHeight)
+      && stable(first.measuredHeight, second.measuredHeight)
+      && stable(first.modelHeight, second.modelHeight)
+      && stable(first.zoom, second.zoom);
+  })).toBe(true);
 }
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -1373,6 +1401,7 @@ for (const viewport of activeViewports) {
       await nestedCanvasDialog.getByLabel('选择 Edgeless 图片').setInputFiles({ name: 'nested-canvas.png', mimeType: 'image/png',
         buffer: Buffer.from(nestedImageDataUrl.split(',')[1], 'base64') });
       expect((await nestedBlobPut).status(), 'wp5_rich_page_nested_canvas_blob').toBe(201);
+      await expectEdgelessTextLayoutSettled(nestedCanvasDialog);
       const nestedCanvasSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
       observed.setWp5Step('rich_page_nested_canvas_save');
