@@ -131,6 +131,10 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_conflict_probe_readback' | 'wp5_conflict_probe_reopen' | 'wp5_conflict_probe_recovery_status'
   | 'wp5_conflict_probe_reopen_canvas' | 'wp5_conflict_probe_reopen_ready'
   | 'wp5_conflict_probe_recovery_body' | 'wp5_conflict_probe_recovery_readback'
+  | 'wp5_archive_align_no_selection' | 'wp5_archive_align_wrong_target' | 'wp5_archive_align_empty_selection'
+  | 'wp5_archive_align_cross_block' | 'wp5_archive_align_model_range_missing' | 'wp5_archive_align_native_range_missing'
+  | 'wp5_archive_align_native_conversion_missing' | 'wp5_archive_align_logical_selection_mismatch'
+  | 'wp5_archive_alignment_selection_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
@@ -1707,20 +1711,41 @@ for (const viewport of activeViewports) {
         await expect(centerAction, 'wp5_archive_alignment_toolbar_localized').toBeVisible({ timeout: 5000 });
         const alignmentTargetId = await targetParagraph.getAttribute('data-block-id');
         expect(alignmentTargetId, 'wp5_archive_alignment_target_present').toBeTruthy();
-        observed.setDiagnosticAssertion('wp5_archive_alignment_selection_ready');
         await expect.poll(async () => archiveViewport.evaluate((root, targetId) => {
           const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStd?: any }) | null;
           const std = host?.__sbBlockSuiteStd;
           const selection = std?.selection?.value?.find((item: any) => item.type === 'text');
-          if (!targetId || selection?.from?.blockId !== targetId || selection.from.length <= 0
-            || (selection.to && selection.to.blockId !== targetId)) return false;
-          const modelRange = std.range.textSelectionToRange(selection);
+          const textSelectionCtor = selection ? {
+            fromTarget: Boolean(targetId && selection.from?.blockId === targetId),
+            nonempty: Number.isInteger(selection.from?.length) && selection.from.length > 0,
+            toTarget: !selection.to || selection.to.blockId === targetId,
+          } : null;
+          if (!selection) return 'wp5_archive_align_no_selection';
+          if (!textSelectionCtor?.fromTarget) return 'wp5_archive_align_wrong_target';
+          if (!textSelectionCtor.nonempty) return 'wp5_archive_align_empty_selection';
+          if (!textSelectionCtor.toTarget) return 'wp5_archive_align_cross_block';
+          const modelRange = std?.range?.textSelectionToRange(selection);
+          if (!modelRange) return 'wp5_archive_align_model_range_missing';
           const nativeSelection = window.getSelection();
-          if (!modelRange || !nativeSelection || nativeSelection.isCollapsed || nativeSelection.rangeCount === 0) return false;
+          if (!nativeSelection || nativeSelection.isCollapsed || nativeSelection.rangeCount === 0) return 'wp5_archive_align_native_range_missing';
           const nativeRange = nativeSelection.getRangeAt(0);
-          return modelRange.compareBoundaryPoints(Range.START_TO_START, nativeRange) === 0
-            && modelRange.compareBoundaryPoints(Range.END_TO_END, nativeRange) === 0;
-        }, alignmentTargetId), { timeout: 5000, message: 'wp5_archive_text_selection_ready' }).toBe(true);
+          const reverse = Boolean(nativeSelection.anchorNode && nativeSelection.focusNode
+            && (nativeSelection.anchorNode === nativeSelection.focusNode
+              ? nativeSelection.anchorOffset > nativeSelection.focusOffset
+              : Boolean(nativeSelection.anchorNode.compareDocumentPosition(nativeSelection.focusNode)
+                & Node.DOCUMENT_POSITION_PRECEDING)));
+          const nativeTextSelection = std.range.rangeToTextSelection(nativeRange, reverse);
+          if (!nativeTextSelection) return 'wp5_archive_align_native_conversion_missing';
+          const samePoint = (left: any, right: any) => left?.blockId === right?.blockId
+            && left?.index === right?.index && left?.length === right?.length;
+          const logicalMatch = samePoint(selection.from, nativeTextSelection.from)
+            && (selection.to === null ? nativeTextSelection.to === null : samePoint(selection.to, nativeTextSelection.to));
+          return logicalMatch ? 'ready' : 'wp5_archive_align_logical_selection_mismatch';
+        }, alignmentTargetId).then(status => {
+          const failureAssertion = status === 'ready' ? 'wp5_archive_alignment_selection_ready' : status;
+          observed.setDiagnosticAssertion(failureAssertion as DiagnosticAssertion);
+          return status;
+        }), { timeout: 5000, message: 'wp5_archive_text_selection_ready' }).toBe('ready');
         await centerAction.click();
         await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.textAlign)
           .toBe('center');
