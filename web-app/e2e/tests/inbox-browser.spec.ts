@@ -1707,45 +1707,21 @@ for (const viewport of activeViewports) {
         await expect(centerAction, 'wp5_archive_alignment_toolbar_localized').toBeVisible({ timeout: 5000 });
         const alignmentTargetId = await targetParagraph.getAttribute('data-block-id');
         expect(alignmentTargetId, 'wp5_archive_alignment_target_present').toBeTruthy();
-        const startAlignmentProbe = await archiveViewport.evaluate((root, targetId) => {
-          const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
-          const store = host?.__sbBlockSuiteStore;
-          if (!store || !targetId) return false;
-          const original = store.updateBlock;
-          const probe = { calls: 0, targetCalls: 0 };
-          store.__sbWp5AlignmentProbe = probe;
-          store.__sbWp5AlignmentOriginal = original;
-          store.updateBlock = function (model: any, props: any, ...rest: any[]) {
-            if (props && Object.prototype.hasOwnProperty.call(props, 'textAlign')) {
-              probe.calls++;
-              if (model?.id === targetId) probe.targetCalls++;
-            }
-            return original.call(this, model, props, ...rest);
-          };
-          return true;
-        }, alignmentTargetId);
-        expect(startAlignmentProbe, 'wp5_archive_alignment_probe_started').toBe(true);
-        let alignmentProbe = { updateCalls: 0, targetUpdateCalls: 0 };
-        try {
-          await centerAction.click();
-          alignmentProbe = await archiveViewport.evaluate(root => {
-            const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
-            const probe = host?.__sbBlockSuiteStore?.__sbWp5AlignmentProbe;
-            return { updateCalls: probe?.calls ?? 0, targetUpdateCalls: probe?.targetCalls ?? 0 };
-          });
-        } finally {
-          await archiveViewport.evaluate(root => {
-            const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
-            const store = host?.__sbBlockSuiteStore;
-            if (store?.__sbWp5AlignmentOriginal) store.updateBlock = store.__sbWp5AlignmentOriginal;
-            if (store) { delete store.__sbWp5AlignmentProbe; delete store.__sbWp5AlignmentOriginal; }
-          });
-        }
-        observed.setDiagnosticAssertion('wp5_archive_alignment_update_called');
-        expect(alignmentProbe.updateCalls, 'wp5_archive_alignment_update_called').toBeGreaterThan(0);
-        observed.setDiagnosticAssertion('wp5_archive_alignment_target_updated');
-        expect(alignmentProbe.targetUpdateCalls, 'wp5_archive_alignment_target_updated').toBeGreaterThan(0);
-        observed.setDiagnosticAssertion('wp5_resource_checkpoint_031');
+        observed.setDiagnosticAssertion('wp5_archive_alignment_selection_ready');
+        await expect.poll(async () => archiveViewport.evaluate((root, targetId) => {
+          const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStd?: any }) | null;
+          const std = host?.__sbBlockSuiteStd;
+          const selection = std?.selection?.value?.find((item: any) => item.type === 'text');
+          if (!targetId || selection?.from?.blockId !== targetId || selection.from.length <= 0
+            || (selection.to && selection.to.blockId !== targetId)) return false;
+          const modelRange = std.range.textSelectionToRange(selection);
+          const nativeSelection = window.getSelection();
+          if (!modelRange || !nativeSelection || nativeSelection.isCollapsed || nativeSelection.rangeCount === 0) return false;
+          const nativeRange = nativeSelection.getRangeAt(0);
+          return modelRange.compareBoundaryPoints(Range.START_TO_START, nativeRange) === 0
+            && modelRange.compareBoundaryPoints(Range.END_TO_END, nativeRange) === 0;
+        }, alignmentTargetId), { timeout: 5000, message: 'wp5_archive_text_selection_ready' }).toBe(true);
+        await centerAction.click();
         await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.textAlign)
           .toBe('center');
 
