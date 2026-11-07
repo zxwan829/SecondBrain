@@ -52,7 +52,7 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_mode_edgeless' | 'rich_page_mode_edgeless_ready' | 'rich_page_mode_page' | 'rich_page_backup_preview'
   | 'rich_page_snapshot_restore' | 'rich_page_post_restore_reopen' | 'rich_page_conflict'
   | 'rich_page_recovery_copy' | 'rich_page_explicit_fork' | 'archive_ux_style_check'
-  | 'archive_ux_toolbar_select' | 'archive_ux_bold' | 'archive_ux_alignment';
+  | 'archive_ux_toolbar_select' | 'archive_ux_bold' | 'archive_ux_alignment' | 'archive_ux_table';
 type BlockSuiteRequestDiagnostic = { endpoint: 'resource_collection' | 'resource' | 'blob' | 'snapshot' | 'snapshot_restore'; method: 'GET' | 'POST' | 'PUT'; status: number | null };
 type CanvasSaveDiagnostic = { checkpoint: 'layout_poll' | 'first_status' | 'second_save_response' | 'readback' | 'saved_status' | 'close_enabled';
   status: 'saved' | 'previous_dirty' | 'unsaved' | 'saving' | 'other'; close_enabled: boolean | null;
@@ -1788,6 +1788,75 @@ for (const viewport of activeViewports) {
         expect(afterDrag.order, 'wp5_desktop_page_plus_reorder_changed_order').toBeLessThan(afterDragTarget.order);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_032');
 
+        // Inherit the archived table path through the real Slash menu and
+        // pointer selection. The store is read only to confirm that UI edits
+        // reached the Yjs model before the resource is saved and reopened.
+        observed.setWp5Step('archive_ux_table');
+        await targetParagraph.hover();
+        await expect(plus).toHaveAttribute('data-visible', 'true');
+        await plus.click();
+        const tableMenuItem = page.getByTestId('普通表格');
+        await expect(tableMenuItem).toBeVisible();
+        await tableMenuItem.click();
+        const archiveTable = richHost.locator('affine-table').last();
+        await expect(archiveTable).toBeVisible();
+        const archiveTableCells = archiveTable.locator('td[data-row-id][data-column-id]');
+        await expect.poll(() => archiveTableCells.count()).toBeGreaterThan(3);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_035');
+        const firstCell = archiveTableCells.nth(0);
+        const secondCell = archiveTableCells.nth(1);
+        const mergeSourceText = `WP5 merge source ${randomUUID()}`;
+        const mergeCoveredText = `WP5 merge covered ${randomUUID()}`;
+        await firstCell.click();
+        await page.keyboard.insertText(mergeSourceText);
+        await secondCell.click();
+        await page.keyboard.insertText(mergeCoveredText);
+        const firstCellBox = await firstCell.boundingBox();
+        const secondCellBox = await secondCell.boundingBox();
+        expect(firstCellBox, 'wp5_archive_table_first_cell_geometry').not.toBeNull();
+        expect(secondCellBox, 'wp5_archive_table_second_cell_geometry').not.toBeNull();
+        await page.mouse.move(firstCellBox!.x + firstCellBox!.width / 2, firstCellBox!.y + firstCellBox!.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(secondCellBox!.x + secondCellBox!.width / 2, secondCellBox!.y + secondCellBox!.height / 2, { steps: 4 });
+        await page.mouse.up();
+        await secondCell.click({ button: 'right' });
+        const mergeCellsAction = page.getByText('合并单元格', { exact: true });
+        await expect(mergeCellsAction).toBeVisible();
+        await mergeCellsAction.click();
+        const tableMergeCount = await archiveTable.evaluate(element => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown> } } } };
+          return Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length;
+        });
+        expect(tableMergeCount, 'wp5_archive_table_merge_model').toBe(1);
+        await expect(archiveTable.locator('td[data-row-id][data-column-id]').first()).toHaveAttribute('colspan', '2');
+        const mergedCellTexts = await archiveTable.evaluate((element, expectedRowTexts) => {
+          const table = element as HTMLElement & { dataManager?: { rows$?: { value: Array<{ rowId: string }> }; columns$?: { value: Array<{ columnId: string }> }; getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
+          const row = table.dataManager?.rows$?.value[0];
+          const columns = table.dataManager?.columns$?.value ?? [];
+          if (!row || !table.dataManager?.getCell) return [];
+          return columns.slice(0, 2).map(column => table.dataManager!.getCell!(row.rowId, column.columnId)?.text?.toString?.() ?? '')
+            .filter(value => expectedRowTexts.some(text => value.includes(text)));
+        }, [mergeSourceText, mergeCoveredText]);
+        expect(mergedCellTexts.join('\n'), 'wp5_archive_table_merge_retains_cell_text').toContain(mergeSourceText);
+        expect(mergedCellTexts.join('\n'), 'wp5_archive_table_merge_retains_covered_text').toContain(mergeCoveredText);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_036');
+
+        const firstTableRow = archiveTable.locator('tr[data-row-id]').first();
+        const rowBox = await firstTableRow.boundingBox();
+        const rowId = await firstTableRow.getAttribute('data-row-id');
+        expect(rowBox, 'wp5_archive_table_row_geometry').not.toBeNull();
+        expect(rowId, 'wp5_archive_table_row_id_present').toBeTruthy();
+        await page.mouse.move(rowBox!.x + Math.min(rowBox!.width / 2, 80), rowBox!.y + rowBox!.height - 1);
+        await page.mouse.down();
+        await page.mouse.move(rowBox!.x + Math.min(rowBox!.width / 2, 80), rowBox!.y + rowBox!.height + 20, { steps: 3 });
+        await page.mouse.up();
+        const persistedRowHeight = await archiveTable.evaluate((element, targetRowId) => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { rows?: Record<string, { minHeight?: number }> } } } };
+          return table.dataManager?.model?.props?.rows?.[targetRowId ?? '']?.minHeight ?? null;
+        }, rowId);
+        expect(persistedRowHeight, 'wp5_archive_table_row_resize_model').toBeGreaterThan(38);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_037');
+
         const savedArchiveResource = page.waitForResponse(response => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
         const savedArchiveMarkdown = page.waitForResponse(response => response.request().method() === 'PUT'
@@ -1816,6 +1885,25 @@ for (const viewport of activeViewports) {
         expect(reopenedSource.textDelta.some((part: any) => part.attributes?.bold === true), 'wp5_archive_inline_style_persisted').toBe(true);
         expect(reopenedSource.parent, 'wp5_desktop_page_plus_reorder_parent_persisted').toBe(reopenedTarget.parent);
         expect(reopenedSource.order, 'wp5_desktop_page_plus_reorder_persisted').toBeLessThan(reopenedTarget.order);
+        const reopenedTable = richHost.locator('affine-table').last();
+        await expect(reopenedTable).toBeVisible();
+        const reopenedTableState = await reopenedTable.evaluate((element, targetRowId) => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown>; rows?: Record<string, { minHeight?: number }> } } } };
+          return { mergeCount: Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length,
+            rowHeight: table.dataManager?.model?.props?.rows?.[targetRowId ?? '']?.minHeight ?? 38 };
+        }, rowId);
+        expect(reopenedTableState.mergeCount, 'wp5_archive_table_merge_reopened').toBe(1);
+        expect(reopenedTableState.rowHeight, 'wp5_archive_table_row_resize_reopened').toBeGreaterThan(38);
+        const reopenedMergeTexts = await reopenedTable.evaluate((element, expectedRowTexts) => {
+          const table = element as HTMLElement & { dataManager?: { rows$?: { value: Array<{ rowId: string }> }; columns$?: { value: Array<{ columnId: string }> }; getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
+          const row = table.dataManager?.rows$?.value[0];
+          const columns = table.dataManager?.columns$?.value ?? [];
+          if (!row || !table.dataManager?.getCell) return [];
+          return columns.slice(0, 2).map(column => table.dataManager!.getCell!(row.rowId, column.columnId)?.text?.toString?.() ?? '')
+            .filter(value => expectedRowTexts.some(text => value.includes(text)));
+        }, [mergeSourceText, mergeCoveredText]);
+        expect(reopenedMergeTexts.join('\n'), 'wp5_archive_table_merge_source_reopened').toContain(mergeSourceText);
+        expect(reopenedMergeTexts.join('\n'), 'wp5_archive_table_merge_covered_reopened').toContain(mergeCoveredText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_034');
         return;
       }

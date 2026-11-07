@@ -426,7 +426,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                     "rich_page_mode_page", "rich_page_backup_preview", "rich_page_snapshot_restore",
                     "rich_page_post_restore_reopen", "rich_page_conflict", "rich_page_recovery_copy",
                     "rich_page_explicit_fork", "archive_ux_style_check", "archive_ux_toolbar_select",
-                    "archive_ux_bold", "archive_ux_alignment",
+                    "archive_ux_bold", "archive_ux_alignment", "archive_ux_table",
                 }))
                 or not isinstance(blocksuite_requests, list) or len(blocksuite_requests) > 24
                 or any(not isinstance(request, dict) or set(request) != {"endpoint", "method", "status"}
