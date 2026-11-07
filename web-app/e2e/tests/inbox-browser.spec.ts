@@ -1622,62 +1622,8 @@ for (const viewport of activeViewports) {
 
         const plus = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
         const grip = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="grip"]');
-        const targetBlockId = await richHost.evaluate((host, marker) => {
-          const store = (host as HTMLElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
-          return store?.getBlocksByFlavour('affine:paragraph')?.find(({ model }: any) => model.props.text?.toString().includes(marker))?.model.id ?? null;
-        }, 'Archive reorder target');
-        expect(targetBlockId, 'wp5_desktop_page_plus_target_block_id').toBeTruthy();
-        await richDialog.evaluate((dialog, { targetId }) => {
-          const probe = { targetPointerMatched: false, anchorMatched: false, menuOpen: false,
-            plusVisible: false, gripVisible: false, pointerEvents: 0 };
-          const findWidget = () => {
-            const roots: Array<Element | ShadowRoot> = [dialog];
-            for (let index = 0; index < roots.length; index += 1) {
-              for (const element of roots[index].querySelectorAll('*')) {
-                if (element.localName === 'sb-desktop-page-plus-widget') return element as HTMLElement & { anchor?: { id: string }; menuOpen?: boolean; renderRoot?: ShadowRoot };
-                if (element.shadowRoot) roots.push(element.shadowRoot);
-              }
-            }
-            return null;
-          };
-          const onPointerMove = (event: Event) => {
-            if (probe.pointerEvents >= 8) {
-              dialog.removeEventListener('pointermove', onPointerMove);
-              return;
-            }
-            const pointer = event as PointerEvent;
-            const node = pointer.composedPath().find(item => item instanceof Element && item.hasAttribute('data-block-id')) as Element | undefined;
-            const block = node?.closest('[data-block-id]');
-            const widget = findWidget();
-            const buttons = widget?.renderRoot?.querySelectorAll<HTMLButtonElement>('button[data-kind]');
-            const plus = Array.from(buttons ?? []).find(button => button.dataset.kind === 'plus');
-            const grip = Array.from(buttons ?? []).find(button => button.dataset.kind === 'grip');
-            probe.pointerEvents += 1;
-            probe.targetPointerMatched = block?.getAttribute('data-block-id') === targetId;
-            probe.anchorMatched = widget?.anchor?.id === targetId;
-            probe.menuOpen = widget?.menuOpen === true;
-            probe.plusVisible = plus?.dataset.visible === 'true';
-            probe.gripVisible = grip?.dataset.visible === 'true';
-          };
-          dialog.addEventListener('pointermove', onPointerMove);
-          Object.assign(window, { __wp5ArchiveUxProbe: probe,
-            __wp5ArchiveUxProbeCleanup: () => dialog.removeEventListener('pointermove', onPointerMove) });
-        }, { targetId: targetBlockId });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_024');
-        try {
-          await targetParagraph.hover();
-          const hoverProbe = await page.evaluate(() => (window as Window & { __wp5ArchiveUxProbe?: {
-            targetPointerMatched: boolean; anchorMatched: boolean; menuOpen: boolean;
-            plusVisible: boolean; gripVisible: boolean; pointerEvents: number;
-          } }).__wp5ArchiveUxProbe ?? null);
-          console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(hoverProbe));
-        } finally {
-          await page.evaluate(() => {
-            const runtime = window as Window & { __wp5ArchiveUxProbeCleanup?: () => void };
-            runtime.__wp5ArchiveUxProbeCleanup?.();
-            delete runtime.__wp5ArchiveUxProbeCleanup;
-          });
-        }
+        await targetParagraph.hover();
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_025');
         await expect(plus).toHaveAttribute('data-visible', 'true');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_026');
@@ -1693,65 +1639,11 @@ for (const viewport of activeViewports) {
         expect(Math.abs(controlGeometry[0].x - controlGeometry[1].x), 'wp5_desktop_page_plus_direction_gap').toBeLessThanOrEqual(26);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_028');
         await plus.click();
-        const clickProbe = await richDialog.evaluate(async (dialog, { targetId }) => {
-          const roots: Array<Element | ShadowRoot> = [dialog];
-          let widget: (HTMLElement & { menuOpen?: boolean; renderRoot?: ShadowRoot }) | null = null;
-          for (let index = 0; index < roots.length && !widget; index += 1) {
-            for (const element of roots[index].querySelectorAll('*')) {
-              if (element.localName === 'sb-desktop-page-plus-widget') {
-                widget = element as typeof widget;
-                break;
-              }
-              if (element.shadowRoot) roots.push(element.shadowRoot);
-            }
-          }
-          const menu = document.querySelector('affine-slash-menu') as (HTMLElement & {
-            updateComplete?: Promise<unknown>; abortController?: AbortController; shadowRoot: ShadowRoot;
-          }) | null;
-          await menu?.updateComplete;
-          const innerMenu = menu?.shadowRoot.querySelector('inner-slash-menu') as (HTMLElement & {
-            updateComplete?: Promise<unknown>; shadowRoot: ShadowRoot;
-          }) | null;
-          await innerMenu?.updateComplete;
-          const menuRoots: Array<Element | ShadowRoot> = menu?.shadowRoot ? [menu.shadowRoot] : [];
-          let headingItemPresent = false;
-          let renderedItemCount = 0;
-          for (let index = 0; index < menuRoots.length; index += 1) {
-            for (const element of menuRoots[index].querySelectorAll('*')) {
-              if (element.hasAttribute('data-testid')) renderedItemCount += 1;
-              if (element.getAttribute('data-testid') === '一级标题') headingItemPresent = true;
-              if (element.shadowRoot) menuRoots.push(element.shadowRoot);
-            }
-          }
-          const selection = window.getSelection();
-          const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-          let rangeInsideDialog = false;
-          let rangeNode: Node | null = range?.commonAncestorContainer ?? null;
-          let rangeTargetMatches = false;
-          while (rangeNode) {
-            if (rangeNode === dialog) { rangeInsideDialog = true; break; }
-            const element = rangeNode instanceof Element ? rangeNode : rangeNode.parentElement;
-            const block = element?.closest('[data-block-id]');
-            rangeTargetMatches ||= block?.getAttribute('data-block-id') === targetId;
-            if (rangeNode.parentNode) rangeNode = rangeNode.parentNode;
-            else if (rangeNode instanceof ShadowRoot) rangeNode = rangeNode.host;
-            else break;
-          }
-          return { menuOpen: widget?.menuOpen === true,
-            plusVisible: widget?.renderRoot?.querySelector<HTMLButtonElement>('button[data-kind="plus"]')?.dataset.visible === 'true',
-            menuConnected: menu?.isConnected === true,
-            menuAborted: menu?.abortController?.signal.aborted ?? null,
-            topLevelItemCount: Array.isArray(menu?.items) ? menu.items.length : 0,
-            nativeRangeCount: selection?.rangeCount ?? 0,
-            rangeInsideDialog,
-            rangeTargetMatches,
-            renderedItemCount,
-            headingItemPresent };
-        }, { targetId: targetBlockId });
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ afterClick: clickProbe }));
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_029');
-        await expect(page.getByText('一级标题', { exact: true })).toBeVisible();
-        await page.getByText('一级标题', { exact: true }).click();
+        const headingMenuItem = page.getByTestId('一级标题');
+        await expect(headingMenuItem).toHaveCount(1);
+        await expect(headingMenuItem).toBeVisible();
+        await headingMenuItem.click();
         const readBlockOrder = () => archiveViewport.evaluate(root => {
           const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
           const store = host?.__sbBlockSuiteStore;
