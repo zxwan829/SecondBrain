@@ -1798,10 +1798,15 @@ for (const viewport of activeViewports) {
             const pageViewport = find('.affine-page-viewport');
             const edgelessViewport = find('.affine-edgeless-viewport');
             const viewport = pageViewport ?? edgelessViewport;
-            const paragraph = allElements.find(element => element.localName === 'affine-paragraph'
-              && element.textContent?.includes('Synthetic rich page round trip')) as HTMLElement | undefined;
+            const paragraphs = allElements.filter(element => element.localName === 'affine-paragraph'
+              && element.textContent?.includes('Synthetic rich page round trip')) as HTMLElement[];
+            const paragraph = paragraphs[0];
             const paragraphRect = paragraph?.getBoundingClientRect();
             const viewportRect = viewport?.getBoundingClientRect();
+            const host = find('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | undefined;
+            const hostRect = host?.getBoundingClientRect();
+            const store = host?.__sbBlockSuiteStore;
+            const docMode = store?.spaceDoc?.getMap?.('secondbrain-rich-page-properties')?.get?.('docMode') ?? null;
             let active: Element | null = document.activeElement;
             while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
             const note = allElements.find(element => element.localName === 'affine-edgeless-note'
@@ -1821,12 +1826,14 @@ for (const viewport of activeViewports) {
               }
             }
             const pointerTarget = (window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> }).__wp5NotePointerHits ?? [];
-            const store = (find('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | undefined)?.__sbBlockSuiteStore;
             const markerInStore = Boolean(store?.getBlocksByFlavour('affine:paragraph')?.some(({ model }: any) =>
               model.props.text?.toString().includes(marker)));
             const saveButton = allElements.find(element => element.localName === 'button'
               && element.textContent?.trim() === '保存资源') as HTMLButtonElement | undefined;
-            return { view: pageViewport ? 'page' : edgelessViewport ? 'edgeless' : 'none',
+            const rectValues = (rect?: DOMRect) => rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] : [];
+            return { view: pageViewport ? 'page' : edgelessViewport ? 'edgeless' : 'none', docMode,
+              paragraphCount: paragraphs.length, paragraphRect: rectValues(paragraphRect), hostRect: rectValues(hostRect),
+              viewportRect: rectValues(viewportRect),
               paragraphIntersectsViewport: Boolean(paragraphRect && viewportRect && paragraphRect.bottom > viewportRect.top
                 && paragraphRect.top < viewportRect.bottom && paragraphRect.right > viewportRect.left
                 && paragraphRect.left < viewportRect.right),
@@ -1845,7 +1852,10 @@ for (const viewport of activeViewports) {
             paragraph: structureSummary.paragraphRect,
             note: structureSummary.notes.map(([id, rect, count, target]) => [id, rect, count, Number(target)]),
             hit: structureSummary.hitPath.length > 0 }
-          : { action: conflictAction, pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [hit.note, hit.paragraph, hit.editable]),
+          : { action: conflictAction, view: interactionState?.view, mode: interactionState?.docMode,
+            p: interactionState?.paragraphCount, pRect: interactionState?.paragraphRect,
+            host: interactionState?.hostRect, viewport: interactionState?.viewportRect,
+            pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [hit.note, hit.paragraph, hit.editable]),
             note: [interactionState?.noteEditing, interactionState?.noteSelected, interactionState?.selectionEditing],
             anchor: interactionState?.selectionInParagraph, focus: interactionState?.focusedContenteditable,
             stored: interactionState?.markerInStore }));
