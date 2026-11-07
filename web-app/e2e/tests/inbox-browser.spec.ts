@@ -1883,14 +1883,21 @@ for (const viewport of activeViewports) {
           const editor = richText.querySelector<HTMLElement>('.inline-editor');
           return Boolean(editor && editor.getAttribute('contenteditable') === 'true');
         });
+        const focusTableCellEditor = async (cell: Locator, editor: Locator) => {
+          await editor.click();
+          await expect.poll(() => cell.evaluate((targetCell): boolean => {
+            const editor = targetCell.querySelector<HTMLElement>('rich-text .inline-editor[contenteditable="true"]');
+            return Boolean(editor && document.activeElement === editor);
+          }), { message: 'table cell editor should own focus before keyboard input' }).toBe(true);
+        };
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_038');
         expect(await assertTableCellEditable(firstCell), 'wp5_archive_table_first_cell_editable').toBe(true);
-        await firstCellEditor.click();
+        await focusTableCellEditor(firstCell, firstCellEditor);
         await page.keyboard.insertText(mergeSourceText);
         await expect.poll(() => readTableCellText(firstRowId!, firstColumnId!)).toContain(mergeSourceText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
         expect(await assertTableCellEditable(secondCell), 'wp5_archive_table_second_cell_editable').toBe(true);
-        await secondCellEditor.click();
+        await focusTableCellEditor(secondCell, secondCellEditor);
         await page.keyboard.insertText(mergeCoveredText);
         await expect.poll(() => readTableCellText(secondRowId!, secondColumnId!)).toContain(mergeCoveredText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_040');
