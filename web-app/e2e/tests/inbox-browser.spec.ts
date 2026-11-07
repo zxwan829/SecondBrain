@@ -143,7 +143,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_drag_target_missing_from_parent' | 'wp5_archive_drag_child_index_mismatch'
   | 'wp5_archive_drag_source_after' | 'wp5_archive_drag_source_before'
   | 'wp5_archive_fixture_split'
-  | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing'
+  | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing' | 'wp5_archive_cell_click_complete'
   | 'wp5_archive_cell_readonly' | 'wp5_archive_cell_caret_not_in_cell' | 'wp5_archive_cell_focus_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
@@ -1889,6 +1889,7 @@ for (const viewport of activeViewports) {
         });
         const focusTableCellEditor = async (editor: Locator, rowId: string, columnId: string) => {
           await editor.click();
+          observed.setDiagnosticAssertion('wp5_archive_cell_click_complete');
           await page.waitForFunction(({ rowId, columnId }) => {
             const cell = document.querySelector<HTMLTableCellElement>(`td[data-row-id="${rowId}"][data-column-id="${columnId}"]`);
             const activeEditor = cell?.querySelector<HTMLElement>('rich-text .inline-editor[contenteditable="true"]');
