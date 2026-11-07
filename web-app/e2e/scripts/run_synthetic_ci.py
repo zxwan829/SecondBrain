@@ -1544,11 +1544,13 @@ def main() -> int:
         today_brief_name = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
         brief_file_set_verified = False
         if test_returncode == 0:
-            expected_raw = 1 if options.http_smoke_only or options.desktop_only else (0 if wp5_probe_mode else 3)
+            expected_raw = 1 if options.http_smoke_only or options.desktop_only else (
+                0 if wp5_probe_mode or options.wp5_rich_page_mode_only else 3
+            )
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
-            expected_journal_appends = 0 if options.http_smoke_only or wp5_probe_mode else (
+            expected_journal_appends = 0 if options.http_smoke_only or wp5_probe_mode or options.wp5_rich_page_mode_only else (
                 1 if options.desktop_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
             )
             assert_journal_fixture_unchanged(
