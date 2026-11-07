@@ -1549,6 +1549,12 @@ for (const viewport of activeViewports) {
       // Page/Edgeless mode changes save first, then remount from the exact Yjs
       // update. Switching back proves the text survives both view lifecycles.
       observed.setWp5Step('rich_page_mode_edgeless');
+      const previousRichStore = await page.evaluateHandle(() => {
+        const host = document.querySelector<HTMLElement>('.blocksuite-resource-dialog .blocksuite-resource-host') as
+          (HTMLElement & { __sbBlockSuiteStore?: unknown }) | null;
+        return host?.__sbBlockSuiteStore ?? null;
+      });
+      expect(await previousRichStore.evaluate(store => Boolean(store)), 'wp5_rich_page_initial_store_attached').toBe(true);
       await richDialog.getByText('属性', { exact: true }).click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_069');
       await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '画布', exact: true }).click();
@@ -1557,34 +1563,34 @@ for (const viewport of activeViewports) {
       observed.setWp5Step('rich_page_mode_edgeless_ready');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_071');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_074');
-      type RichPageModeProbe = { rendererResponsive: true; dialogPresent: boolean; busy: string | null; groupPresent: boolean;
-        fieldsetDisabled: boolean | null; pageButtonDisabled: boolean | null; canvasButtonPressed: boolean | null;
+      type RichPageModeProbe = { rendererResponsive: true; dialogPresent: boolean; busy: string | null;
+        fieldsetDisabled: boolean | null; pageButtonDisabled: boolean | null; storeChanged: boolean;
         mountScope: 'page' | 'edgeless' | 'missing'; status: 'conflict' | 'error' | 'pending' | 'saved' | 'other';
         hostChildCount: number; storeAttached: boolean }
         | { rendererResponsive: false };
       const modeProbe = await Promise.race<RichPageModeProbe>([
-        page.evaluate((): RichPageModeProbe => {
+        page.evaluate((previousStore): RichPageModeProbe => {
           const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]');
-          if (!dialog) return { rendererResponsive: true, dialogPresent: false, busy: null, groupPresent: false,
-            fieldsetDisabled: null, pageButtonDisabled: null, canvasButtonPressed: null, mountScope: 'missing',
+          if (!dialog) return { rendererResponsive: true, dialogPresent: false, busy: null,
+            fieldsetDisabled: null, pageButtonDisabled: null, storeChanged: false, mountScope: 'missing',
             status: 'other', hostChildCount: 0, storeAttached: false };
           const group = dialog.querySelector<HTMLElement>('[role="group"][aria-label="文档模式"]');
           const buttons = [...(group?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
           const pageButton = buttons.find(button => button.textContent?.trim() === '页面');
-          const canvasButton = buttons.find(button => button.textContent?.trim() === '画布');
           const host = dialog.querySelector<HTMLElement>('.blocksuite-resource-host');
+          const store = (host as (HTMLElement & { __sbBlockSuiteStore?: unknown }) | null)?.__sbBlockSuiteStore;
           const statusText = dialog.querySelector('.document-status')?.textContent?.trim() ?? '';
           const mountScope = host?.querySelector('.affine-edgeless-viewport') ? 'edgeless'
             : host?.querySelector('.affine-page-viewport') ? 'page' : 'missing';
-          return { rendererResponsive: true, dialogPresent: true, busy: dialog.getAttribute('aria-busy'), groupPresent: Boolean(group),
+          return { rendererResponsive: true, dialogPresent: true, busy: dialog.getAttribute('aria-busy'),
             fieldsetDisabled: group?.closest('fieldset')?.disabled ?? null, pageButtonDisabled: pageButton?.disabled ?? null,
-            canvasButtonPressed: canvasButton?.getAttribute('aria-pressed') === 'true',
+            storeChanged: Boolean(store && store !== previousStore),
             mountScope,
             status: /冲突|412/.test(statusText) ? 'conflict' : /失败|ERROR/.test(statusText) ? 'error'
               : /未保存|正在/.test(statusText) ? 'pending' : /已保存/.test(statusText) ? 'saved' : 'other',
             hostChildCount: host?.childElementCount ?? 0,
-            storeAttached: Boolean((host as (HTMLElement & { __sbBlockSuiteStore?: unknown }) | null)?.__sbBlockSuiteStore) };
-        }).catch(() => ({ rendererResponsive: false as const })),
+            storeAttached: Boolean(store) };
+        }, previousRichStore).catch(() => ({ rendererResponsive: false as const })),
         new Promise<RichPageModeProbe>(resolve => setTimeout(() => resolve({ rendererResponsive: false }), 3000)),
       ]);
       const [currentNoteResponse, currentResourceResponse] = await Promise.all([
@@ -1605,11 +1611,22 @@ for (const viewport of activeViewports) {
         m: modeProbe.rendererResponsive ? modeProbe.mountScope : null,
         h: modeProbe.rendererResponsive ? modeProbe.hostChildCount : null,
         store: modeProbe.rendererResponsive ? modeProbe.storeAttached : null,
+        chg: modeProbe.rendererResponsive ? modeProbe.storeChanged : null,
+        fd: modeProbe.rendererResponsive ? modeProbe.fieldsetDisabled : null,
+        pd: modeProbe.rendererResponsive ? modeProbe.pageButtonDisabled : null,
         n: bindingProbe.noteRead, q: bindingProbe.resourceRead,
         receipt: bindingProbe.receiptMatchesNote, bound: bindingProbe.resourceNoteMatchesNote }));
-      // Keep the original readiness assertion as the failure under investigation;
-      // this probe records state but does not replace or relax that check.
-      await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
+      // The viewport is appended before BlockSuite's root update completes. A
+      // prior view can briefly leave aria-busy=false on the dialog, so readiness
+      // requires the newly created store plus the product's ready signal.
+      await page.waitForFunction((previousStore) => {
+        const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]');
+        const host = dialog?.querySelector<HTMLElement>('.blocksuite-resource-host') as
+          (HTMLElement & { __sbBlockSuiteStore?: unknown }) | null;
+        return Boolean(host?.__sbBlockSuiteStore && host.__sbBlockSuiteStore !== previousStore
+          && dialog?.getAttribute('aria-busy') === 'false');
+      }, previousRichStore, { timeout: 20000 });
+      await previousRichStore.dispose();
       observed.setWp5Step('rich_page_mode_page');
       const pageModeButton = richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
