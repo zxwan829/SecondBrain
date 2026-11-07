@@ -105,6 +105,15 @@ try {
   await reference.click();
   await dialog.waitFor();
   await host.locator('.affine-page-viewport').waitFor();
+  await dialog.getByText('属性', { exact: true }).click();
+  const modeGroup = dialog.getByRole('group', { name: '文档模式' });
+  await modeGroup.getByRole('button', { name: '画布', exact: true }).click();
+  await host.locator('.affine-edgeless-viewport').waitFor();
+  const propertiesPanel = dialog.locator('details.sb-properties-info');
+  if (!await propertiesPanel.evaluate(details => details.open)) await propertiesPanel.locator('summary').click();
+  await dialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true }).click();
+  await host.locator('.affine-page-viewport').waitFor();
+  await dialog.getByText(richText, { exact: false }).waitFor();
   const bodyParagraph = host.locator('affine-paragraph').filter({ hasText: richText });
   // Reproduce the archive UX steps that precede the failing table input:
   // split a paragraph, add/reorder a paragraph, then format it with toolbars.
