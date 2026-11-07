@@ -139,7 +139,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
   | 'wp5_archive_drag_parent_missing' | 'wp5_archive_drag_different_parents'
-  | 'wp5_archive_drag_invalid_index' | 'wp5_archive_drag_source_after' | 'wp5_archive_drag_source_before'
+  | 'wp5_archive_drag_same_block' | 'wp5_archive_drag_source_missing_from_parent'
+  | 'wp5_archive_drag_target_missing_from_parent' | 'wp5_archive_drag_child_index_mismatch'
+  | 'wp5_archive_drag_source_after' | 'wp5_archive_drag_source_before'
   | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing'
   | 'wp5_archive_cell_readonly' | 'wp5_archive_cell_caret_not_in_cell' | 'wp5_archive_cell_focus_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
@@ -1680,7 +1682,8 @@ for (const viewport of activeViewports) {
             const parent = store.getParent(model);
             return { id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
               textAlign: model.props.textAlign ?? null, textDelta: model.props.text?.toDelta?.() ?? [],
-              parent: parent?.id ?? null, order: parent?.children?.findIndex((child: any) => child.id === model.id) ?? -1 };
+              parent: parent?.id ?? null, order: parent?.children?.findIndex((child: any) => child.id === model.id) ?? -1,
+              childMapOrder: parent?.childMap?.value?.get(model.id) ?? -1 };
           });
         });
         await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.type)
@@ -1775,9 +1778,12 @@ for (const viewport of activeViewports) {
           if (targets.length !== 1) return 'wp5_archive_drag_target_not_unique';
           const source = sources[0]!;
           const target = targets[0]!;
+          if (source.id === target.id) return 'wp5_archive_drag_same_block';
           if (!source.parent || !target.parent) return 'wp5_archive_drag_parent_missing';
           if (source.parent !== target.parent) return 'wp5_archive_drag_different_parents';
-          if (source.order < 0 || target.order < 0 || source.order === target.order) return 'wp5_archive_drag_invalid_index';
+          if (source.order < 0) return 'wp5_archive_drag_source_missing_from_parent';
+          if (target.order < 0) return 'wp5_archive_drag_target_missing_from_parent';
+          if (source.order !== source.childMapOrder || target.order !== target.childMapOrder) return 'wp5_archive_drag_child_index_mismatch';
           return source.order > target.order ? 'wp5_archive_drag_source_after' : 'wp5_archive_drag_source_before';
         })();
         observed.setDiagnosticAssertion(dragPreflight as DiagnosticAssertion);
