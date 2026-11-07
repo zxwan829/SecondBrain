@@ -1647,9 +1647,15 @@ for (const viewport of activeViewports) {
       const localRichMarker = `local rich-page ${randomUUID()}`;
       const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
-      let conflictAction = 'paragraph-click';
+      let conflictAction = 'edgeless-text-geometry';
       try {
-        await localRichParagraph.click({ timeout: 5000 });
+        const edgelessText = conflictRichDialog.locator('affine-edgeless-text').filter({ hasText: richText }).first();
+        const bounds = await edgelessText.boundingBox({ timeout: 5000 });
+        expect(bounds, 'wp5_rich_page_conflict_edgeless_text_visible').not.toBeNull();
+        await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
+        await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+        conflictAction = 'edgeless-text-edit-gesture';
+        await page.mouse.dblclick(bounds!.x + 10, bounds!.y + 10, { delay: 100 });
         conflictAction = 'keyboard-edit';
         await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
         conflictAction = 'wait-save-enabled';
