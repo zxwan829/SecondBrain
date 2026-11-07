@@ -86,7 +86,50 @@ try {
   const host = dialog.locator('.blocksuite-resource-host.sb-archive-surface');
   await host.locator('.affine-page-viewport').waitFor();
   const target = host.locator('affine-paragraph').filter({ hasText: '在这里开始编辑完整富格式内容。' });
-  await target.hover();
+  // Reproduce the archive UX steps that precede the failing table input:
+  // split a paragraph, add/reorder a paragraph, then format it with toolbars.
+  await target.locator('rich-text .inline-editor').click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.insertText('Archive reorder target');
+  const targetParagraph = host.locator('affine-paragraph').filter({ hasText: 'Archive reorder target' });
+  await targetParagraph.waitFor();
+  const plus = dialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
+  const grip = dialog.locator('sb-desktop-page-plus-widget button[data-kind="grip"]');
+  await targetParagraph.hover();
+  await plus.click();
+  await page.getByTestId('一级标题').click();
+  await targetParagraph.click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Shift+Home');
+  await dialog.getByRole('button', { name: '加粗', exact: true }).click();
+  await targetParagraph.click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Shift+Home');
+  await dialog.getByRole('button', { name: '居中对齐', exact: true }).click();
+  await targetParagraph.hover();
+  const dragGeometry = await Promise.all([grip, target].map(locator => locator.boundingBox()));
+  const blockOrder = await host.locator('.affine-page-viewport').evaluate(viewport => {
+    const store = viewport.closest('.blocksuite-resource-host')?.__sbBlockSuiteStore;
+    return (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }) => {
+      const parent = store.getParent(model);
+      return { id: model.id, text: model.props.text?.toString?.() ?? '', parent: parent?.id ?? null,
+        order: parent?.children?.findIndex(child => child.id === model.id) ?? -1 };
+    });
+  });
+  const source = blockOrder.find(block => block.text.includes('Archive reorder target'));
+  const destination = blockOrder.find(block => block.text.includes('在这里开始编辑完整富格式内容。'));
+  if (!source || !destination || source.parent !== destination.parent || !dragGeometry[0] || !dragGeometry[1]) {
+    throw new Error('Archive drag precondition did not match the formal journey');
+  }
+  const sourceBeforeTarget = source.order < destination.order;
+  await page.mouse.move(dragGeometry[0].x + dragGeometry[0].width / 2, dragGeometry[0].y + dragGeometry[0].height / 2);
+  await page.mouse.down();
+  const dropY = sourceBeforeTarget ? dragGeometry[1].y + dragGeometry[1].height - 1 : dragGeometry[1].y + 1;
+  await page.mouse.move(dragGeometry[1].x + dragGeometry[1].width / 3, dropY, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+  await targetParagraph.hover();
   await dialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]').click();
   await page.getByTestId('普通表格').click();
   const table = host.locator('affine-table').last();
@@ -135,6 +178,20 @@ try {
   console.log('WP5_TABLE_DOM_BEFORE_EDIT', JSON.stringify(inspect));
 
   await cells.nth(0).locator('rich-text .inline-editor').click();
+  const afterClick = await table.evaluate((element, ids) => {
+    const td = element.querySelector(`td[data-row-id="${ids[0].row}"][data-column-id="${ids[0].column}"]`);
+    const richText = td?.querySelector('rich-text');
+    let active = document.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    const selection = window.getSelection();
+    const cell = element.dataManager?.getCell?.(ids[0].row, ids[0].column);
+    return { activeTag: active?.tagName ?? null, activeClass: active?.getAttribute('class') ?? null,
+      activeInsideCell: Boolean(td && active && td.contains(active)), selectionCollapsed: selection?.isCollapsed ?? null,
+      selectionAnchorInsideCell: Boolean(selection?.anchorNode && td?.contains(selection.anchorNode)),
+      inlineRange: richText?.inlineEditor?.getInlineRange?.() ?? null,
+      yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null };
+  }, cellIds);
+  console.log('WP5_TABLE_DOM_AFTER_CLICK', JSON.stringify(afterClick));
   await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-CELL-EDIT');
   await page.waitForTimeout(500);
   const afterEdit = await table.evaluate((element, ids) => ids.map(({ row, column }) => {
