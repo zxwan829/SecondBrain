@@ -1557,27 +1557,15 @@ for (const viewport of activeViewports) {
       observed.setWp5Step('rich_page_mode_edgeless_ready');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_071');
       observed.setWp5Step('rich_page_mode_page');
-      const pageModeButton = richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true });
+      const propertiesPanel = richDialog.locator('details.sb-properties-info');
+      if (!await propertiesPanel.evaluate(details => (details as HTMLDetailsElement).open)) {
+        await propertiesPanel.locator('summary').click();
+      }
+      const modeGroup = richDialog.getByRole('group', { name: '文档模式' });
+      await expect(modeGroup).toBeVisible();
+      const pageModeButton = modeGroup.getByRole('button', { name: '页面', exact: true });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
-      const pageModeButtonCount = await pageModeButton.count();
-      const pageModeEnabled = pageModeButtonCount === 1 && await pageModeButton.isEnabled().catch(() => false);
-      const pageModeLocatorState = pageModeButtonCount === 1 ? await pageModeButton.evaluate(button => {
-        const control = button as HTMLButtonElement;
-        let disabledFieldsets = 0;
-        for (let parent = button.parentElement; parent; parent = parent.parentElement) {
-          if (parent instanceof HTMLFieldSetElement && parent.disabled) disabledFieldsets += 1;
-        }
-        const dialog = button.closest<HTMLElement>('[role="dialog"]');
-        return { connected: button.isConnected, disabled: control.disabled,
-          ariaDisabled: button.getAttribute('aria-disabled') === 'true', disabledFieldsets,
-          busy: dialog?.getAttribute('aria-busy') ?? null,
-          richDialog: dialog?.getAttribute('aria-label') === 'BlockSuite 富 Page 资源' };
-      }).catch(() => null) : null;
-      console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ count: pageModeButtonCount, enabled: pageModeEnabled,
-        ...(pageModeLocatorState ?? { connected: false, disabled: null, ariaDisabled: null, disabledFieldsets: null, busy: null, richDialog: false }) }));
-      expect(pageModeButtonCount, 'wp5_rich_page_mode_button_unique').toBe(1);
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
-      // Click itself is the authoritative actionability check for this control.
       await pageModeButton.click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
       await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
