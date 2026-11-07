@@ -139,8 +139,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
   | 'wp5_archive_drag_parent_missing' | 'wp5_archive_drag_different_parents'
-  | 'wp5_archive_drag_invalid_index' | 'wp5_archive_drag_initial_order_unexpected'
-  | 'wp5_archive_drag_ready'
+  | 'wp5_archive_drag_invalid_index' | 'wp5_archive_drag_source_after' | 'wp5_archive_drag_source_before'
   | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing'
   | 'wp5_archive_cell_readonly' | 'wp5_archive_cell_caret_not_in_cell' | 'wp5_archive_cell_focus_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
@@ -1778,30 +1777,38 @@ for (const viewport of activeViewports) {
           const target = targets[0]!;
           if (!source.parent || !target.parent) return 'wp5_archive_drag_parent_missing';
           if (source.parent !== target.parent) return 'wp5_archive_drag_different_parents';
-          if (source.order < 0 || target.order < 0) return 'wp5_archive_drag_invalid_index';
-          if (source.order <= target.order) return 'wp5_archive_drag_initial_order_unexpected';
-          return 'wp5_archive_drag_ready';
+          if (source.order < 0 || target.order < 0 || source.order === target.order) return 'wp5_archive_drag_invalid_index';
+          return source.order > target.order ? 'wp5_archive_drag_source_after' : 'wp5_archive_drag_source_before';
         })();
         observed.setDiagnosticAssertion(dragPreflight as DiagnosticAssertion);
-        expect(dragPreflight, 'wp5_archive_drag_preflight').toBe('wp5_archive_drag_ready');
+        expect(['wp5_archive_drag_source_after', 'wp5_archive_drag_source_before'], 'wp5_archive_drag_preflight').toContain(dragPreflight);
+        const expectedSourceBeforeTarget = dragPreflight === 'wp5_archive_drag_source_after';
         const beforeDrag = orderBeforeDrag.find(block => block.text.includes('Archive reorder target'))!;
         const beforeDragTarget = orderBeforeDrag.find(block => block.text.includes(richText))!;
         await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
         await page.mouse.down();
-        await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, bodyBox!.y + 1, { steps: 5 });
+        const dropY = dragPreflight === 'wp5_archive_drag_source_after'
+          ? bodyBox!.y + 1 : bodyBox!.y + bodyBox!.height - 1;
+        await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, dropY, { steps: 5 });
         await page.mouse.up();
         observed.setDiagnosticAssertion('wp5_archive_drag_result');
         await expect.poll(async () => {
           const order = await readBlockOrder();
           const source = order.find(block => block.text.includes('Archive reorder target'));
           const target = order.find(block => block.text.includes(richText));
-          return Boolean(source && target && source.parent === target.parent && source.order < target.order);
+          const sourceBeforeTarget = source && target ? source.order < target.order : null;
+          return Boolean(source && target && source.parent === target.parent && sourceBeforeTarget === expectedSourceBeforeTarget);
         }).toBe(true);
         const orderAfterDrag = await readBlockOrder();
         const afterDrag = orderAfterDrag.find(block => block.text.includes('Archive reorder target'))!;
         const afterDragTarget = orderAfterDrag.find(block => block.text.includes(richText))!;
         expect(afterDrag.parent, 'wp5_desktop_page_plus_reorder_same_parent_after').toBe(afterDragTarget.parent);
-        expect(afterDrag.order, 'wp5_desktop_page_plus_reorder_changed_order').toBeLessThan(afterDragTarget.order);
+        expect(afterDrag.order, 'wp5_desktop_page_plus_reorder_source_index_valid').toBeGreaterThanOrEqual(0);
+        expect(afterDragTarget.order, 'wp5_desktop_page_plus_reorder_target_index_valid').toBeGreaterThanOrEqual(0);
+        expect(afterDrag.order < afterDragTarget.order, 'wp5_desktop_page_plus_reorder_changed_order')
+          .toBe(expectedSourceBeforeTarget);
+        expect(afterDrag.order < afterDragTarget.order, 'wp5_desktop_page_plus_reorder_relationship_reversed')
+          .not.toBe(beforeDrag.order < beforeDragTarget.order);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_032');
 
         // Inherit the archived table path through the real Slash menu and
@@ -1940,7 +1947,11 @@ for (const viewport of activeViewports) {
         expect(reopenedSource.textAlign, 'wp5_archive_alignment_persisted').toBe('center');
         expect(reopenedSource.textDelta.some((part: any) => part.attributes?.bold === true), 'wp5_archive_inline_style_persisted').toBe(true);
         expect(reopenedSource.parent, 'wp5_desktop_page_plus_reorder_parent_persisted').toBe(reopenedTarget.parent);
-        expect(reopenedSource.order, 'wp5_desktop_page_plus_reorder_persisted').toBeLessThan(reopenedTarget.order);
+        expect(reopenedSource.order, 'wp5_desktop_page_plus_reorder_source_index_reopened').toBeGreaterThanOrEqual(0);
+        expect(reopenedTarget.order, 'wp5_desktop_page_plus_reorder_target_index_reopened').toBeGreaterThanOrEqual(0);
+        expect(reopenedSource.order < reopenedTarget.order, 'wp5_desktop_page_plus_reorder_persisted').toBe(expectedSourceBeforeTarget);
+        expect(reopenedSource.order < reopenedTarget.order, 'wp5_desktop_page_plus_reorder_reversal_persisted')
+          .not.toBe(beforeDrag.order < beforeDragTarget.order);
         const reopenedTable = richHost.locator('affine-table').last();
         await expect(reopenedTable).toBeVisible();
         const reopenedTableState = await reopenedTable.evaluate((element, targetRowId) => {
