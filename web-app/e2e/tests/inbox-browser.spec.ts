@@ -170,14 +170,18 @@ async function expectEdgelessTextLayoutSettled(dialog: Locator, report: (samples
     const result = await dialog.locator('affine-edgeless-text').evaluate(async (element) => {
     const block = element as HTMLElement & { model?: { xywh?: string }; gfx?: { viewport?: { zoom?: number } } };
     const container = block.querySelector('.edgeless-text-block-container');
+    const content = block.querySelector('.affine-block-children-container');
     const sample = () => {
       const zoom = block.gfx?.viewport?.zoom;
       const xywh = block.model?.xywh;
-      if (!container || typeof zoom !== 'number' || !Number.isFinite(zoom) || zoom <= 0 || typeof xywh !== 'string') return null;
+      if (!container || !content || typeof zoom !== 'number' || !Number.isFinite(zoom) || zoom <= 0 || typeof xywh !== 'string') return null;
       let bounds: unknown;
       try { bounds = JSON.parse(xywh); } catch { return null; }
       if (!Array.isArray(bounds) || bounds.length !== 4 || !Number.isFinite(bounds[3])) return null;
-      return { measuredHeight: container.getBoundingClientRect().height / zoom, modelHeight: bounds[3], zoom };
+      const style = getComputedStyle(container);
+      const verticalInsets = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth)
+        + Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+      return { measuredHeight: (content.getBoundingClientRect().height + verticalInsets) / zoom, modelHeight: bounds[3], zoom };
     };
     const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     await nextFrame();

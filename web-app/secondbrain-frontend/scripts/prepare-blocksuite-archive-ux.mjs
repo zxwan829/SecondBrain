@@ -39,6 +39,7 @@ if (!zodLockSeen || readJson(path.join(root, 'package.json')).overrides?.zod !==
   throw new Error('Zod 4.6.6 override is missing from the lock or manifest');
 }
 execFileSync(process.execPath, ['scripts/apply-blocksuite-zod4-compat.mjs'], { cwd: root, stdio: 'inherit' });
+execFileSync(process.execPath, ['scripts/apply-blocksuite-edgeless-text-sizing.mjs'], { cwd: root, stdio: 'inherit' });
 const writes = [];
 for (const entry of overlay.files) {
   if (!entry.path.startsWith('src/') || entry.path.split('/').includes('..')) throw new Error('Unsafe overlay path');
