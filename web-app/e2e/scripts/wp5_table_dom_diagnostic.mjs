@@ -210,20 +210,6 @@ try {
 
   console.log('WP5_TABLE_CELL_CLICK_TARGET', JSON.stringify({ locatorCount: await firstCellEditor.count(), box: await firstCellEditor.boundingBox() }));
   await firstCellEditor.click();
-  const afterClick = await table.evaluate((element, ids) => {
-    const td = element.querySelector(`td[data-row-id="${ids[0].row}"][data-column-id="${ids[0].column}"]`);
-    const richText = td?.querySelector('rich-text');
-    let active = document.activeElement;
-    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-    const selection = window.getSelection();
-    const cell = element.dataManager?.getCell?.(ids[0].row, ids[0].column);
-    return { activeTag: active?.tagName ?? null, activeClass: active?.getAttribute('class') ?? null,
-      activeInsideCell: Boolean(td && active && td.contains(active)), selectionCollapsed: selection?.isCollapsed ?? null,
-      selectionAnchorInsideCell: Boolean(selection?.anchorNode && td?.contains(selection.anchorNode)),
-      inlineRange: richText?.inlineEditor?.getInlineRange?.() ?? null,
-      yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null };
-  }, cellIds);
-  console.log('WP5_TABLE_DOM_AFTER_CLICK', JSON.stringify({ state: afterClick, events: await page.evaluate(() => window.__wp5CellEvents) }));
   await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-CELL-EDIT');
   await page.waitForTimeout(500);
   const afterEdit = await table.evaluate((element, ids) => ids.map(({ row, column }) => {
@@ -243,7 +229,7 @@ try {
       selectionAnchorInsideCell: Boolean(selection?.anchorNode && td?.contains(selection.anchorNode)),
       yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null };
   }), cellIds);
-  console.log('WP5_TABLE_DOM_AFTER_EDIT', JSON.stringify(afterEdit));
+  console.log('WP5_TABLE_DOM_AFTER_EDIT', JSON.stringify({ state: afterEdit, events: await page.evaluate(() => window.__wp5CellEvents) }));
   if (!afterEdit[0]?.yText?.includes('WP5-DOM-DIAGNOSTIC-CELL-EDIT')) {
     throw new Error('The first table cell did not receive the diagnostic text in its Yjs text model');
   }
