@@ -176,7 +176,27 @@ try {
   const firstCellEditor = cells.nth(0).locator('rich-text .inline-editor');
   const editableAtCheckpoint = await cells.nth(0).evaluate(targetCell => Boolean(targetCell.querySelector('rich-text .inline-editor[contenteditable="true"]')));
   console.log('WP5_TABLE_DOM_AT_CHECKPOINT_038', JSON.stringify({ cellIds, editableAtCheckpoint }));
+  const waitForCellFocus = async (cell, label) => {
+    try {
+      await page.waitForFunction(target => {
+        const td = document.querySelector(`td[data-row-id="${target.row}"][data-column-id="${target.column}"]`);
+        const editor = td?.querySelector('rich-text .inline-editor[contenteditable="true"]');
+        return Boolean(editor && document.activeElement === editor);
+      }, cell, { timeout: 1200 });
+      console.log('WP5_TABLE_DOM_FOCUS_READY', JSON.stringify({ label, focused: true }));
+    } catch {
+      const state = await cells.nth(label === 'first' ? 0 : 1).evaluate(targetCell => {
+        const editor = targetCell.querySelector('rich-text .inline-editor[contenteditable="true"]');
+        return { activeTag: document.activeElement?.tagName ?? null,
+          activeClass: document.activeElement?.getAttribute('class') ?? null,
+          activeInsideCell: Boolean(editor && editor === document.activeElement),
+          contenteditable: editor?.getAttribute('contenteditable') ?? null };
+      });
+      console.log('WP5_TABLE_DOM_FOCUS_MISSED', JSON.stringify({ label, state, events: await page.evaluate(() => window.__wp5CellEvents) }));
+    }
+  };
   await firstCellEditor.click();
+  await waitForCellFocus(cellIds[0], 'first');
   await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-CELL-EDIT');
   await page.waitForTimeout(500);
   const afterEdit = await table.evaluate((element, ids) => ids.map(({ row, column }) => {
@@ -201,6 +221,7 @@ try {
     throw new Error('The first table cell did not receive the diagnostic text in its Yjs text model');
   }
   await cells.nth(1).locator('rich-text .inline-editor').click();
+  await waitForCellFocus(cellIds[1], 'second');
   await page.waitForTimeout(150);
   await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-DELAYED-EDIT');
   await page.waitForTimeout(300);
