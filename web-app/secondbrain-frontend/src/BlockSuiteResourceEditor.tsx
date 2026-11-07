@@ -150,6 +150,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const blobSourceRef = useRef<NoteBoundBlockSuiteBlobSource | null>(null);
   const dirtyRef = useRef(false);
   const editSequence = useRef(0);
+  const retryableSaveRef = useRef(false);
   // Keep the exact bytes uploaded in this editing session so a later artifact
   // set conflict cannot make the only recovery copy depend on a stale server ETag.
   const uploadedBlobCopies = useRef(new Map<string, { contentType: string; bytes: Uint8Array }>());
@@ -157,6 +158,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const [dirty, setDirty] = useState(false);
   const [storeReady, setStoreReady] = useState(false);
   const [projectionConflict, setProjectionConflict] = useState(false);
+  const projectionConflictRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [recoveryCopyReady, setRecoveryCopyReady] = useState(false);
@@ -250,6 +252,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         Object.assign(host.current, { __sbBlockSuiteStore: store, __sbBlockSuiteStd: std });
         if (native && (richPageMarkdownBinding(editingResource.snapshot) !== editingResource.note_etag
           || editingResource.note_etag !== noteRef.current.etag)) {
+          projectionConflictRef.current = true;
           setProjectionConflict(true);
           setStatus('富 Page 与 Markdown 版本冲突；仅在本地保留修改。请下载双方副本或另存新富 Page。');
         } else {
@@ -274,6 +277,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const save = async (): Promise<boolean> => {
     const store = (host.current as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null)?.__sbBlockSuiteStore;
     if (!store || savingRef.current) return false;
+    retryableSaveRef.current = false;
     savingRef.current = true;
     setSaving(true);
     setStatus('正在保存 BlockSuite 资源…');
@@ -320,6 +324,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           note_etag: projected.etag, artifact_set_etag: nextArtifactSetEtag };
         noteRef.current = { ...projected, artifactSetEtag: nextArtifactSetEtag };
         if (blobSourceRef.current) blobSourceRef.current.artifactSetEtag = nextArtifactSetEtag;
+        projectionConflictRef.current = false;
         setProjectionConflict(false); onNoteSaved?.(noteRef.current);
       } else onResourceSaved?.(resourceRef.current, store);
       // Gfx may emit redundant Yjs layout transactions. Only clear dirty if
@@ -334,13 +339,18 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       } else {
         dirtyRef.current = true; setDirty(true); setRecoveryCopyReady(false);
         setStatus('先前版本已保存；有未保存的资源修改');
+        retryableSaveRef.current = true;
       }
       return unchanged;
     } catch (error) {
+      retryableSaveRef.current = false;
       const status = (error as Error & { status?: number })?.status;
       if (status === 412 || projectionWriteStarted || nativeWriteCommitted) {
         dirtyRef.current = true; setDirty(true);
-        if (initialResource.resourceKind === 'rich-page') setProjectionConflict(true);
+        if (initialResource.resourceKind === 'rich-page') {
+          projectionConflictRef.current = true;
+          setProjectionConflict(true);
+        }
         setRecoveryCopyReady(false);
       }
       setStatus(status === 412
@@ -402,7 +412,9 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     if (!store) return;
     store.spaceDoc.getMap('secondbrain-rich-page-properties').set('docMode', mode);
     setArchiveProperties(current => ({ ...current, docMode: mode }));
-    if (!await save()) return;
+    let persisted = await save();
+    if (!persisted && retryableSaveRef.current && dirtyRef.current && !projectionConflictRef.current) persisted = await save();
+    if (!persisted) return;
     setViewMode(mode);
   };
   const reloadFromCore = async () => {
@@ -636,7 +648,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   };
 
   return <div className="blocksuite-resource-backdrop" role="presentation">
-    <section className="blocksuite-resource-dialog" role="dialog" aria-modal="true" aria-label={initialResource.resourceKind === 'database' ? 'BlockSuite 数据库资源' : initialResource.resourceKind === 'rich-page' ? 'BlockSuite 富 Page 资源' : 'BlockSuite Edgeless 资源'}>
+    <section className="blocksuite-resource-dialog" role="dialog" aria-modal="true" aria-busy={!storeReady || saving} aria-label={initialResource.resourceKind === 'database' ? 'BlockSuite 数据库资源' : initialResource.resourceKind === 'rich-page' ? 'BlockSuite 富 Page 资源' : 'BlockSuite Edgeless 资源'}>
       {initialResource.resourceKind === 'rich-page' ? <ArchiveDocumentHeader store={currentStore()} title={currentTitle()} status={status}
         readonly={!storeReady || saving || projectionConflict} properties={archiveProperties} readOnlyKeys={['tags', 'type', 'aliases', 'created', 'updated', 'description', 'source', 'related']}
         onTitleChange={updateArchiveTitle} onPropertyChange={updateArchiveProperty} onModeChange={mode => { void switchViewMode(mode); }}
