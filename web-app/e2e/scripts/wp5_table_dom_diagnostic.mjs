@@ -111,7 +111,7 @@ try {
   await host.locator('.affine-edgeless-viewport').waitFor();
   const propertiesPanel = dialog.locator('details.sb-properties-info');
   if (!await propertiesPanel.evaluate(details => details.open)) await propertiesPanel.locator('summary').click();
-  await dialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true }).click();
+  await dialog.getByRole('group', { name: '文档模式' }).locator('button').filter({ hasText: /^页面$/ }).click();
   await host.locator('.affine-page-viewport').waitFor();
   await dialog.getByText(richText, { exact: false }).waitFor();
   const bodyParagraph = host.locator('affine-paragraph').filter({ hasText: richText });
