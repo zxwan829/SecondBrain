@@ -1849,6 +1849,8 @@ for (const viewport of activeViewports) {
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_035');
         const firstCell = archiveTableCells.nth(0);
         const secondCell = archiveTableCells.nth(1);
+        const firstCellEditor = firstCell.locator('rich-text .inline-editor');
+        const secondCellEditor = secondCell.locator('rich-text .inline-editor');
         const mergeSourceText = `WP5 merge source ${randomUUID()}`;
         const mergeCoveredText = `WP5 merge covered ${randomUUID()}`;
         const firstRowId = await firstCell.getAttribute('data-row-id');
@@ -1877,7 +1879,7 @@ for (const viewport of activeViewports) {
           return selection?.isCollapsed && caretInCell ? 'wp5_archive_cell_focus_ready' : 'wp5_archive_cell_caret_not_in_cell';
         });
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_038');
-        await firstCell.click();
+        await firstCellEditor.click();
         await expect.poll(() => readTableCellFocus(firstCell).then(status => {
           observed.setDiagnosticAssertion(status as DiagnosticAssertion);
           return status;
@@ -1885,7 +1887,7 @@ for (const viewport of activeViewports) {
         await page.keyboard.insertText(mergeSourceText);
         await expect.poll(() => readTableCellText(firstRowId!, firstColumnId!)).toContain(mergeSourceText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
-        await secondCell.click();
+        await secondCellEditor.click();
         await expect.poll(() => readTableCellFocus(secondCell).then(status => {
           observed.setDiagnosticAssertion(status as DiagnosticAssertion);
           return status;
