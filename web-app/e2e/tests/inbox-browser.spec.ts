@@ -1666,7 +1666,7 @@ for (const viewport of activeViewports) {
           const previousIds = new Set(orderBeforeSplit.map(block => block.id));
           return (await readBlockOrder()).some(block => !previousIds.has(block.id)
             && block.parent === orderBeforeSplit.find(item => item.id === originalBlockId)?.parent
-            && block.text.length === 0);
+            && block.text.trim().length === 0);
         }, { timeout: 5000, message: 'wp5_archive_fixture_new_empty_block' }).toBe(true);
         await page.keyboard.insertText('Archive reorder target');
         const targetParagraph = richHost.locator('affine-paragraph').filter({ hasText: 'Archive reorder target' });
