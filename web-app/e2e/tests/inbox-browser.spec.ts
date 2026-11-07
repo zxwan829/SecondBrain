@@ -1380,6 +1380,57 @@ for (const viewport of activeViewports) {
           && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
         await nestedCanvasDialog.getByRole('button', { name: '保存资源' }).click();
         expect((await nestedCanvasResave).status(), 'wp5_rich_page_nested_canvas_resave').toBe(200);
+        const nestedCanvasReadback = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`);
+        const nestedCanvasPersisted = nestedCanvasReadback.ok()
+          ? await nestedCanvasReadback.json() as { snapshot?: Record<string, unknown> } : null;
+        const nestedCanvasLive = await nestedCanvasDialog.locator('.blocksuite-resource-host').evaluate((element) => {
+          const store = (element as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+          if (!store) return null;
+          const snapshot = store.getTransformer().docToSnapshot(store) as Record<string, unknown>;
+          const textBounds: unknown[] = [];
+          const visit = (value: unknown) => {
+            if (!value || typeof value !== 'object') return;
+            const record = value as Record<string, unknown>;
+            if (record.flavour === 'affine:edgeless-text') textBounds.push(record.xywh);
+            for (const child of Object.values(record)) {
+              if (Array.isArray(child)) child.forEach(visit);
+              else if (child && typeof child === 'object') visit(child);
+            }
+          };
+          visit(snapshot);
+          return { snapshot, textBounds };
+        });
+        const stableSnapshot = (value: unknown): string => {
+          if (Array.isArray(value)) return `[${value.map(stableSnapshot).join(',')}]`;
+          if (!value || typeof value !== 'object') return JSON.stringify(value);
+          return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, child]) => `${JSON.stringify(key)}:${stableSnapshot(child)}`).join(',')}}`;
+        };
+        const readEdgelessTextBounds = (value: unknown): unknown[] => {
+          const bounds: unknown[] = [];
+          const visit = (item: unknown) => {
+            if (!item || typeof item !== 'object') return;
+            const record = item as Record<string, unknown>;
+            if (record.flavour === 'affine:edgeless-text') bounds.push(record.xywh);
+            for (const child of Object.values(record)) {
+              if (Array.isArray(child)) child.forEach(visit);
+              else if (child && typeof child === 'object') visit(child);
+            }
+          };
+          visit(value);
+          return bounds;
+        };
+        const observedStatus = await nestedCanvasStatus.innerText();
+        console.log('WP5_CANVAS_SAVE_STATE', JSON.stringify({
+          status: ['BlockSuite 资源已保存', '先前版本已保存；有未保存的资源修改', '有未保存的资源修改'].includes(observedStatus)
+            ? observedStatus : 'other',
+          closeEnabled: await nestedCanvasClose.isEnabled(),
+          readbackStatus: nestedCanvasReadback.status(),
+          snapshotMatchesReadback: !!nestedCanvasLive && !!nestedCanvasPersisted
+            && stableSnapshot(nestedCanvasLive.snapshot) === stableSnapshot(nestedCanvasPersisted.snapshot),
+          liveEdgelessTextBounds: nestedCanvasLive?.textBounds,
+          savedEdgelessTextBounds: nestedCanvasPersisted ? readEdgelessTextBounds(nestedCanvasPersisted.snapshot) : null,
+        }));
         await expect(nestedCanvasStatus).toHaveText('BlockSuite 资源已保存');
       }
       await expect(nestedCanvasClose).toBeEnabled();
