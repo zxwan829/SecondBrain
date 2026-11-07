@@ -1666,7 +1666,7 @@ for (const viewport of activeViewports) {
       let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
       try {
         let bounds: Awaited<ReturnType<typeof localRichParagraph.boundingBox>> = null;
-        let viewportBounds: Awaited<ReturnType<typeof conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox>> = null;
+        let viewportBounds: typeof bounds = null;
         let clickPoint: { x: number; y: number } | null = null;
         let previousHitGeometry = '';
         let stableTargetSamples = 0;
