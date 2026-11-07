@@ -318,6 +318,28 @@ def test_failure_diagnostic_can_include_bounded_blocksuite_runtime_state():
         module._validate_failure_diagnostics([diagnostic])
 
 
+def test_failure_diagnostic_can_include_sanitized_wp5_step_and_resource_statuses():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+        "assertion_id": "wp5_resource_content_visible", "activity_get_statuses": [200],
+        "wp5_step": "rich_page_first_save",
+        "blocksuite_request_statuses": [
+            {"endpoint": "resource", "method": "POST", "status": 200},
+            {"endpoint": "blob", "method": "PUT", "status": 201},
+        ],
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["wp5_step"] = "GET /api/notes/private"
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["wp5_step"] = "rich_page_first_save"
+    diagnostic["blocksuite_request_statuses"] = [
+        {"endpoint": "resource", "method": "PUT", "status": 700},
+    ]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
 def test_failure_diagnostic_can_include_bounded_daily_brief_get_statuses():
     diagnostic = {"viewport": "mobile-390x844", "stage": "daily_brief_read", "code": "timeout",
                   "assertion_id": "daily_brief_saved_readback", "activity_get_statuses": [200, 403],

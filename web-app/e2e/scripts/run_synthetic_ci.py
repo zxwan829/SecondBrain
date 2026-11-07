@@ -324,7 +324,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
                          "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
                          "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
-                         "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
+                         "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events",
+                         "wp5_step", "blocksuite_request_statuses")
         allowed_shapes = {
             frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
             for mask in range(1 << len(optional_keys))
@@ -349,6 +350,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         page_error_summaries = entry.get("page_error_summaries", [])
         brief_statuses = entry.get("daily_brief_get_statuses", [])
         autosave_events = entry.get("wp5_autosave_events", [])
+        wp5_step = entry.get("wp5_step")
+        blocksuite_requests = entry.get("blocksuite_request_statuses", [])
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
@@ -410,6 +413,21 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in brief_statuses)
+                or (wp5_step is not None and (not isinstance(wp5_step, str) or wp5_step not in {
+                    "not_started", "rich_page_create", "rich_page_open", "rich_page_seed_read", "rich_page_body_edit",
+                    "rich_page_first_save", "rich_page_first_readback", "rich_page_close", "rich_page_reopen",
+                    "rich_page_nested_canvas_create", "rich_page_nested_canvas_open", "rich_page_nested_blob_upload",
+                    "rich_page_nested_canvas_save", "rich_page_parent_save", "rich_page_mode_edgeless",
+                    "rich_page_mode_page", "rich_page_backup_preview", "rich_page_snapshot_restore",
+                    "rich_page_post_restore_reopen", "rich_page_conflict", "rich_page_recovery_copy",
+                    "rich_page_explicit_fork",
+                }))
+                or not isinstance(blocksuite_requests, list) or len(blocksuite_requests) > 24
+                or any(not isinstance(request, dict) or set(request) != {"endpoint", "method", "status"}
+                       or request.get("endpoint") not in {"resource_collection", "resource", "blob", "snapshot", "snapshot_restore"}
+                       or request.get("method") not in {"GET", "POST", "PUT"}
+                       or (request.get("status") is not None and (type(request.get("status")) is not int or not 100 <= request["status"] <= 599))
+                       for request in blocksuite_requests)
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
         autosave_events = _validate_wp5_autosave_events(autosave_events)
@@ -442,6 +460,10 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
             normalized["daily_brief_get_statuses"] = brief_statuses
         if "wp5_autosave_events" in entry:
             normalized["wp5_autosave_events"] = autosave_events
+        if "wp5_step" in entry:
+            normalized["wp5_step"] = wp5_step
+        if "blocksuite_request_statuses" in entry:
+            normalized["blocksuite_request_statuses"] = blocksuite_requests
         validated.append(normalized)
     return validated
 
@@ -536,7 +558,8 @@ def _collect_failure_diagnostics(
             optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
                              "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
                              "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
-                             "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
+                             "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events",
+                             "wp5_step", "blocksuite_request_statuses")
             allowed_shapes = {
                 frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
                 for mask in range(1 << len(optional_keys))
@@ -576,6 +599,10 @@ def _collect_failure_diagnostics(
                 diagnostics[-1]["daily_brief_get_statuses"] = raw["daily_brief_get_statuses"]
             if "wp5_autosave_events" in raw:
                 diagnostics[-1]["wp5_autosave_events"] = raw["wp5_autosave_events"]
+            if "wp5_step" in raw:
+                diagnostics[-1]["wp5_step"] = raw["wp5_step"]
+            if "blocksuite_request_statuses" in raw:
+                diagnostics[-1]["blocksuite_request_statuses"] = raw["blocksuite_request_statuses"]
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
