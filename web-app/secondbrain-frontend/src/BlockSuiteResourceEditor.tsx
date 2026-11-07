@@ -630,6 +630,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' })); const anchor = document.createElement('a');
           anchor.href = url; anchor.download = `${currentTitle()}.html`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0);
         }).catch(error => setStatus(`HTML 导出失败：${error instanceof Error ? error.message : ''}`)); }}>导出 HTML</button>
+        <button type="button" onClick={onClose} disabled={!storeReady || saving || dirty}>关闭富 Page</button>
         <button type="button" disabled={!storeReady || saving} onClick={() => void downloadRecoveryCopy()}>下载资源恢复副本</button>
         <button type="button" onClick={() => { const std = currentStd(); if (std) { const report = archiveInspectMindMap(std); setMindMapReport(JSON.stringify(report, null, 2)); setDiagnosticStatus('思维导图视口检查完成'); } }}>检查思维导图</button>
         <button type="button" onClick={() => { const std = currentStd(); if (std) try { archiveFocusMindMap(std); setDiagnosticStatus('已定位思维导图'); } catch (error) { setDiagnosticStatus(error instanceof Error ? error.message : '无法定位思维导图'); } }}>定位思维导图</button>

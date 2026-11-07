@@ -860,8 +860,6 @@ for (const viewport of activeViewports) {
       expect(savedPayload.content, 'wp5_focus_api_content_equal').toContain(originalBody);
       expect(savedPayload.content, 'wp5_focus_frontmatter_preserved').toContain('custom: preserve-focused');
 
-      if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
-
       const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string): Promise<string | undefined> => {
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_001');
         await expect(page.locator('.notes-document-heading [role="status"]'), `wp5_${kind}_note_ready`)
@@ -1177,6 +1175,7 @@ for (const viewport of activeViewports) {
         return uploadedBlobUrl;
       };
 
+      if (process.env.SB_E2E_WP5_OPEN_ONLY !== 'true') {
       observed.setFailureStage('notes_blocksuite_edit');
       await roundtripResource('database', '新建 BlockSuite Database', 'DB persistence marker');
       await page.reload();
@@ -1243,6 +1242,7 @@ for (const viewport of activeViewports) {
       await expect(page.locator('.blocksuite-notes-canvas').getByText(originalBody, { exact: true })).toBeVisible({ timeout: 20000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_065');
       await expect(page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' })).toHaveCount(2);
+      }
 
       // Rich Page uses a dedicated synthetic Draft. This covers its controlled
       // Yjs + snapshot + Markdown receipt path without changing the seed Note.
@@ -1283,6 +1283,34 @@ for (const viewport of activeViewports) {
       await richBody.click();
       await page.keyboard.press('End');
       await page.keyboard.insertText(` ${richText}`);
+      const firstRichResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
+      const firstRichMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
+      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      expect((await firstRichResourceSave).status(), 'wp5_rich_page_first_native_save').toBe(200);
+      expect((await firstRichMarkdownSave).status(), 'wp5_rich_page_first_projection_save').toBe(200);
+      await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
+      const firstMarkdownRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect(firstMarkdownRead.status(), 'wp5_rich_page_first_markdown_readback').toBe(200);
+      expect((await firstMarkdownRead.json() as { content: string }).content, 'wp5_rich_page_first_projection_content').toContain(richText);
+      const firstNativeRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
+      expect(firstNativeRead.status(), 'wp5_rich_page_first_native_readback').toBe(200);
+      expect(JSON.stringify((await firstNativeRead.json() as { snapshot: unknown }).snapshot), 'wp5_rich_page_first_native_content').toContain(richText);
+      await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
+      await expect(richDialog).toHaveCount(0, { timeout: 15000 });
+      const firstRichReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
+      await expect(firstRichReference).toBeVisible({ timeout: 15000 });
+      await firstRichReference.click();
+      await expect(richDialog).toBeVisible({ timeout: 20000 });
+      await expect(richDialog.locator('.blocksuite-resource-host .affine-page-viewport')).toBeVisible({ timeout: 15000 });
+      const reopenedRichParagraphs = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
+        const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: { getBlocksByFlavour: (flavour: string) => Array<{ model: { props: { text?: { toString: () => string } } } }> } }).__sbBlockSuiteStore;
+        return store?.getBlocksByFlavour('affine:paragraph').map(({ model }) => model.props.text?.toString() ?? '') ?? [];
+      });
+      expect(reopenedRichParagraphs.join('\n'), 'wp5_rich_page_close_reopen_content').toContain(richText);
+      if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
+
       const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
       const nestedCanvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
@@ -1312,6 +1340,7 @@ for (const viewport of activeViewports) {
       await expect(nestedCanvasDialog.getByRole('status')).toContainText('已保存', { timeout: 15000 });
       await nestedCanvasDialog.getByRole('button', { name: '关闭', exact: true }).click();
       await expect(nestedCanvasCard.getByText(/自动裁剪预览 · 1 个对象/)).toBeVisible({ timeout: 15000 });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
       await expect(richDialog.getByRole('button', { name: '保存资源', exact: true })).toBeEnabled();
       const richResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
@@ -1331,6 +1360,7 @@ for (const viewport of activeViewports) {
       expect(richResource.updateB64.length, 'wp5_rich_page_yjs_persisted').toBeGreaterThan(4);
       expect(JSON.stringify(richResource.snapshot), 'wp5_rich_page_native_text').toContain(richText);
       expect(richResource.note_etag, 'wp5_rich_page_receipt_bound').toBe(richNote.etag);
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_013');
 
       // Page/Edgeless mode changes save first, then remount from the exact Yjs
       // update. Switching back proves the text survives both view lifecycles.
@@ -1340,6 +1370,7 @@ for (const viewport of activeViewports) {
       await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true }).click();
       await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
       await expect(richDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 15000 });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_018');
       const restoreMarker = `restore probe ${randomUUID()}`;
       const restoreParagraph = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       await restoreParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${restoreMarker}`);
@@ -1374,6 +1405,7 @@ for (const viewport of activeViewports) {
       const restoredNativeResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
       expect(restoredNativeResponse.status(), 'wp5_rich_page_snapshot_resource_read').toBe(200);
       expect(JSON.stringify((await restoredNativeResponse.json() as { snapshot: unknown }).snapshot), 'wp5_rich_page_snapshot_resource_content').toContain(richText);
+      observed.setDiagnosticAssertion('wp5_resource_close');
 
       await page.reload();
       await page.getByRole('button', { name: '富 Page', exact: true }).click();
@@ -1381,6 +1413,7 @@ for (const viewport of activeViewports) {
       const richReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
       await richReference.click();
       await expect(page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' }).getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
+      observed.setDiagnosticAssertion('wp5_resource_reopen');
 
       // Simulate an external Markdown edit while the local native document is
       // open. Its CAS must reject automatic projection; both sides and recovery
