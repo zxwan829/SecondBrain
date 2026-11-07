@@ -1857,6 +1857,21 @@ for (const viewport of activeViewports) {
         const firstColumnId = await firstCell.getAttribute('data-column-id');
         const secondRowId = await secondCell.getAttribute('data-row-id');
         const secondColumnId = await secondCell.getAttribute('data-column-id');
+        console.log('WP5_TABLE_DOM_DIAG', JSON.stringify(await archiveTable.evaluate((element, ids) => {
+          const table = element as HTMLElement & { dataManager?: { getCell?: (r: string, c: string) => { text?: { toString?: () => string; length?: number } } | undefined } };
+          const cells = [ids.first, ids.second].map(({ row, column }) => {
+            const td = element.querySelector<HTMLTableCellElement>(`td[data-row-id="${row}"][data-column-id="${column}"]`);
+            const rich = td?.querySelector('rich-text') as (HTMLElement & { inlineEditor?: { getInlineRange?: () => unknown } }) | null;
+            const editor = rich?.querySelector<HTMLElement>('.inline-editor') ?? null;
+            const cell = table.dataManager?.getCell?.(row, column);
+            const selection = window.getSelection();
+            return { tdPresent: Boolean(td), tdHtml: td?.innerHTML ?? null, richText: Boolean(rich), contenteditable: editor?.getAttribute('contenteditable') ?? null,
+              activeInside: Boolean(editor && editor.contains(document.activeElement)), activeTag: document.activeElement?.tagName ?? null,
+              selectionCollapsed: selection?.isCollapsed ?? null, selectionNodeInCell: Boolean(selection?.anchorNode && td?.contains(selection.anchorNode)),
+              inlineRange: rich?.inlineEditor?.getInlineRange?.() ?? null, yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null };
+          });
+          return cells;
+        }, { first: { row: firstRowId!, column: firstColumnId! }, second: { row: secondRowId!, column: secondColumnId! } })));
         expect(firstRowId && firstColumnId && secondRowId && secondColumnId, 'wp5_archive_table_cell_addresses_present').toBeTruthy();
         const readTableCellText = (targetRowId: string, targetColumnId: string) => archiveTable.evaluate((element, target) => {
           const table = element as HTMLElement & { dataManager?: { getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
