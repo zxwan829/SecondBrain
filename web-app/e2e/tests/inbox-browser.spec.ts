@@ -1660,7 +1660,7 @@ for (const viewport of activeViewports) {
       const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
       let conflictAction = 'paragraph-geometry';
-      type NoteClickState = { selected: boolean; editing: boolean; caretInParagraph: boolean; locked: boolean | null; rangeCount: number; anchorOffset: number | null };
+      type NoteClickState = { selected: boolean; editing: boolean; gfxEditing: boolean; caretInParagraph: boolean; locked: boolean | null; rangeCount: number; anchorOffset: number | null };
       let firstClickState: NoteClickState | null = null;
       let secondClickState: NoteClickState | null = null;
       let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[]; hitTargets: [boolean, boolean, number] } | null = null;
@@ -1842,7 +1842,8 @@ for (const viewport of activeViewports) {
             if (node instanceof Element && node.localName === 'affine-edgeless-note') {
               const note = node as HTMLElement & { model?: { id?: string; isLocked?: () => boolean }; gfx?: { selection?: { has?: (id: string) => boolean; editing?: boolean } } };
               const selected = Boolean(note.model?.id && note.gfx?.selection?.has?.(note.model.id));
-              const editing = note.shadowRoot?.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]')?.dataset.editing === 'true';
+              const editing = note.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]')?.dataset.editing === 'true';
+              const gfxEditing = note.gfx?.selection?.editing === true;
               const nativeSelection = window.getSelection();
               let anchor: Node | null = nativeSelection?.anchorNode ?? null;
               const anchorOffset = nativeSelection?.anchorOffset ?? null;
@@ -1855,7 +1856,7 @@ for (const viewport of activeViewports) {
                   anchor = root instanceof ShadowRoot ? root.host : null;
                 }
               }
-              return { selected, editing, caretInParagraph, locked: note.model?.isLocked?.() ?? null,
+              return { selected, editing, gfxEditing, caretInParagraph, locked: note.model?.isLocked?.() ?? null,
                 rangeCount: nativeSelection?.rangeCount ?? 0, anchorOffset };
             }
             if (node.parentNode) node = node.parentNode;
@@ -1879,7 +1880,7 @@ for (const viewport of activeViewports) {
         conflictAction = 'note-wait-editing';
         await expect.poll(async () => {
           secondClickState = await readRichNoteState();
-          return secondClickState?.editing === true && secondClickState.caretInParagraph;
+          return secondClickState?.editing === true && secondClickState.gfxEditing && secondClickState.caretInParagraph;
         }, { timeout: 5000 })
           .toBe(true);
         const pointerHits = await page.evaluate(() =>
@@ -1931,8 +1932,8 @@ for (const viewport of activeViewports) {
             let active: Element | null = document.activeElement;
             while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
             const note = allElements.find(element => element.localName === 'affine-edgeless-note'
-              && element.shadowRoot?.querySelector('affine-paragraph')?.textContent?.includes('Synthetic rich page round trip')) as (HTMLElement & { model?: any; gfx?: any }) | undefined;
-            const noteContainer = note?.shadowRoot?.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]');
+              && element.querySelector('affine-paragraph')?.textContent?.includes('Synthetic rich page round trip')) as (HTMLElement & { model?: any; gfx?: any }) | undefined;
+            const noteContainer = note?.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]');
             const noteSelection = note?.gfx?.selection;
             const noteModelId = note?.model?.id;
             const nativeSelection = window.getSelection();
@@ -1963,11 +1964,11 @@ for (const viewport of activeViewports) {
               noteEditing: noteContainer?.dataset.editing ?? null,
               noteSelected: Boolean(noteModelId && noteSelection?.has?.(noteModelId)),
               selectionEditing: Boolean(noteSelection?.editing), selectionInParagraph,
-              editableCount: note?.shadowRoot?.querySelectorAll('[contenteditable="true"]').length ?? 0 };
+              editableCount: note?.querySelectorAll('[contenteditable="true"]').length ?? 0 };
           }, { marker: localRichMarker }).catch(() => null),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
         ]);
-        const compactClickState = (state: NoteClickState | null) => state && [Number(state.selected), Number(state.editing),
+        const compactClickState = (state: NoteClickState | null) => state && [Number(state.selected), Number(state.editing), Number(state.gfxEditing),
           Number(state.caretInParagraph), state.locked === null ? null : Number(state.locked), state.rangeCount, state.anchorOffset];
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ a: conflictAction,
           view: interactionState?.view, mode: interactionState?.docMode,
