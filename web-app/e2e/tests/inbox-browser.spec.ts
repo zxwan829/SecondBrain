@@ -1723,7 +1723,10 @@ for (const viewport of activeViewports) {
             stableSamples: 0,
             geometryUnchanged: false,
           };
-          const targetHit = hitPath.hitParagraph && hitPath.hitNote;
+          // Before editing, BlockSuite's Edgeless Note mask intentionally
+          // receives pointer input. The first real click selects the Note;
+          // only after the second click is paragraph editing/caret asserted.
+          const targetHit = hitPath.hitNote;
           const geometry = JSON.stringify([bounds.x, bounds.y, bounds.width, bounds.height,
             viewportBounds.x, viewportBounds.y, viewportBounds.width, viewportBounds.height, hitPath]);
           const geometryUnchanged = geometry === previousHitGeometry;
@@ -1818,7 +1821,6 @@ for (const viewport of activeViewports) {
             notes, hitPath: pathOf(hit), hitTargets: [hitParagraph, hitNote, hitDepth] as [boolean, boolean, number] };
         }, { x: confirmedClickPoint.x, y: confirmedClickPoint.y, text: richText });
         expect(structureSummary.notes.some(note => note[3]), 'wp5_rich_page_conflict_paragraph_belongs_to_active_note').toBe(true);
-        expect(structureSummary.hitTargets[0], 'wp5_rich_page_conflict_hit_target_paragraph').toBe(true);
         expect(structureSummary.hitTargets[1], 'wp5_rich_page_conflict_hit_target_note').toBe(true);
         await page.evaluate(() => {
           const target = window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> };
@@ -1880,9 +1882,19 @@ for (const viewport of activeViewports) {
           return secondClickState?.editing === true && secondClickState.caretInParagraph;
         }, { timeout: 5000 })
           .toBe(true);
+        const pointerHits = await page.evaluate(() =>
+          (window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> }).__wp5NotePointerHits ?? []);
+        expect(pointerHits, 'wp5_rich_page_conflict_real_pointer_clicks').toHaveLength(2);
+        expect(pointerHits.every(hit => hit.note), 'wp5_rich_page_conflict_pointer_stayed_in_target_note').toBe(true);
         conflictAction = 'keyboard-edit';
         await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
         await expect(localRichParagraph, 'wp5_rich_page_conflict_local_edit_visible').toContainText(localRichMarker, { timeout: 5000 });
+        const richResourceHost = conflictRichDialog.locator('.blocksuite-resource-host');
+        await expect.poll(async () => richResourceHost.evaluate((host, marker) => {
+          const store = (host as HTMLElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+          return Boolean(store?.getBlocksByFlavour('affine:paragraph')?.some(({ model }: any) =>
+            model.props.text?.toString().includes(marker)));
+        }, localRichMarker), { timeout: 5000, message: 'wp5_rich_page_conflict_local_marker_in_store' }).toBe(true);
         conflictAction = 'wait-save-enabled';
         await expect(conflictSaveButton).toBeEnabled({ timeout: 5000 });
         conflictAction = 'save-click';
