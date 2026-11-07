@@ -85,10 +85,28 @@ try {
   await dialog.waitFor();
   const host = dialog.locator('.blocksuite-resource-host.sb-archive-surface');
   await host.locator('.affine-page-viewport').waitFor();
-  const target = host.locator('affine-paragraph').filter({ hasText: '在这里开始编辑完整富格式内容。' });
+  const richText = 'Synthetic rich page round trip';
+  const initialBody = host.locator('affine-paragraph').filter({ hasText: '在这里开始编辑完整富格式内容。' });
+  await initialBody.click();
+  await page.keyboard.press('End');
+  await page.keyboard.insertText(` ${richText}`);
+  const initialResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname.includes('/blocksuite/resources/'));
+  const initialMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
+    && /\/api\/notes\/drafts\//.test(new URL(response.url()).pathname));
+  await dialog.getByRole('button', { name: '保存资源', exact: true }).click();
+  const saveResponses = await Promise.all([initialResourceSave, initialMarkdownSave]);
+  if (saveResponses.some(response => response.status() !== 200)) throw new Error('Initial Rich Page save failed');
+  await dialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
+  await dialog.waitFor({ state: 'detached' });
+  const reference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
+  await reference.click();
+  await dialog.waitFor();
+  await host.locator('.affine-page-viewport').waitFor();
+  const bodyParagraph = host.locator('affine-paragraph').filter({ hasText: richText });
   // Reproduce the archive UX steps that precede the failing table input:
   // split a paragraph, add/reorder a paragraph, then format it with toolbars.
-  await target.locator('rich-text .inline-editor').click();
+  await bodyParagraph.locator('rich-text .inline-editor').click();
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
   await page.keyboard.insertText('Archive reorder target');
@@ -108,7 +126,7 @@ try {
   await page.keyboard.press('Shift+Home');
   await dialog.getByRole('button', { name: '居中对齐', exact: true }).click();
   await targetParagraph.hover();
-  const dragGeometry = await Promise.all([grip, target].map(locator => locator.boundingBox()));
+  const dragGeometry = await Promise.all([grip, bodyParagraph].map(locator => locator.boundingBox()));
   const blockOrder = await host.locator('.affine-page-viewport').evaluate(viewport => {
     const store = viewport.closest('.blocksuite-resource-host')?.__sbBlockSuiteStore;
     return (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }) => {
@@ -118,7 +136,7 @@ try {
     });
   });
   const source = blockOrder.find(block => block.text.includes('Archive reorder target'));
-  const destination = blockOrder.find(block => block.text.includes('在这里开始编辑完整富格式内容。'));
+  const destination = blockOrder.find(block => block.text.includes(richText));
   if (!source || !destination || source.parent !== destination.parent || !dragGeometry[0] || !dragGeometry[1]) {
     throw new Error('Archive drag precondition did not match the formal journey');
   }
