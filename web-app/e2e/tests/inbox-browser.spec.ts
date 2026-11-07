@@ -1648,6 +1648,9 @@ for (const viewport of activeViewports) {
       const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
       let conflictAction = 'paragraph-geometry';
+      type NoteClickState = { selected: boolean; editing: boolean; caretInParagraph: boolean; locked: boolean | null; rangeCount: number; anchorOffset: number | null };
+      let firstClickState: NoteClickState | null = null;
+      let secondClickState: NoteClickState | null = null;
       let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
       try {
         // The backup restored the saved Edgeless mode; use its real fit-to-screen
@@ -1753,10 +1756,12 @@ for (const viewport of activeViewports) {
           let node: Node | null = paragraph;
           while (node) {
             if (node instanceof Element && node.localName === 'affine-edgeless-note') {
-              const note = node as HTMLElement & { model?: { id?: string }; gfx?: { selection?: { has?: (id: string) => boolean; editing?: boolean } } };
+              const note = node as HTMLElement & { model?: { id?: string; isLocked?: () => boolean }; gfx?: { selection?: { has?: (id: string) => boolean; editing?: boolean } } };
               const selected = Boolean(note.model?.id && note.gfx?.selection?.has?.(note.model.id));
               const editing = note.shadowRoot?.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]')?.dataset.editing === 'true';
-              let anchor: Node | null = window.getSelection()?.anchorNode ?? null;
+              const nativeSelection = window.getSelection();
+              let anchor: Node | null = nativeSelection?.anchorNode ?? null;
+              const anchorOffset = nativeSelection?.anchorOffset ?? null;
               let caretInParagraph = false;
               while (anchor) {
                 if (anchor === paragraph) { caretInParagraph = true; break; }
@@ -1766,7 +1771,8 @@ for (const viewport of activeViewports) {
                   anchor = root instanceof ShadowRoot ? root.host : null;
                 }
               }
-              return { selected, editing, caretInParagraph };
+              return { selected, editing, caretInParagraph, locked: note.model?.isLocked?.() ?? null,
+                rangeCount: nativeSelection?.rangeCount ?? 0, anchorOffset };
             }
             if (node.parentNode) node = node.parentNode;
             else {
@@ -1776,14 +1782,20 @@ for (const viewport of activeViewports) {
           }
           return null;
         });
+        conflictAction = 'note-click-1';
         await page.mouse.click(clickPoint.x, clickPoint.y);
-        await expect.poll(async () => (await readRichNoteState())?.selected, { timeout: 5000 })
-          .toBe(true);
-        conflictAction = 'paragraph-enter-edit';
-        await page.mouse.click(clickPoint.x, clickPoint.y);
+        conflictAction = 'note-wait-selection';
         await expect.poll(async () => {
-          const state = await readRichNoteState();
-          return state?.editing === true && state.caretInParagraph;
+          firstClickState = await readRichNoteState();
+          return firstClickState?.selected;
+        }, { timeout: 5000 })
+          .toBe(true);
+        conflictAction = 'note-click-2';
+        await page.mouse.click(clickPoint.x, clickPoint.y);
+        conflictAction = 'note-wait-editing';
+        await expect.poll(async () => {
+          secondClickState = await readRichNoteState();
+          return secondClickState?.editing === true && secondClickState.caretInParagraph;
         }, { timeout: 5000 })
           .toBe(true);
         conflictAction = 'keyboard-edit';
@@ -1861,19 +1873,15 @@ for (const viewport of activeViewports) {
           }, { marker: localRichMarker }).catch(() => null),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
         ]);
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(structureSummary
-          ? { a: 'layout', host: structureSummary.hostKind, wh: structureSummary.windowSize,
-            dialog: structureSummary.dialogRect, viewport: structureSummary.viewportRect,
-            paragraph: structureSummary.paragraphRect,
-            note: structureSummary.notes.map(([id, rect, count, target]) => [id, rect, count, Number(target)]),
-            hit: structureSummary.hitPath.length > 0 }
-          : { action: conflictAction, view: interactionState?.view, mode: interactionState?.docMode,
-            p: interactionState?.paragraphCount, pRect: interactionState?.paragraphRect,
-            host: interactionState?.hostRect, viewport: interactionState?.viewportRect,
-            pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [hit.note, hit.paragraph, hit.editable]),
-            note: [interactionState?.noteEditing, interactionState?.noteSelected, interactionState?.selectionEditing],
-            anchor: interactionState?.selectionInParagraph, focus: interactionState?.focusedContenteditable,
-            stored: interactionState?.markerInStore }));
+        const compactClickState = (state: NoteClickState | null) => state && [Number(state.selected), Number(state.editing),
+          Number(state.caretInParagraph), state.locked === null ? null : Number(state.locked), state.rangeCount, state.anchorOffset];
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ a: conflictAction,
+          view: interactionState?.view, mode: interactionState?.docMode,
+          hit: structureSummary?.hitPath.includes('affine-paragraph') ?? false,
+          pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [Number(hit.note), Number(hit.paragraph), Number(hit.editable)]),
+          clicks: [compactClickState(firstClickState), compactClickState(secondClickState)],
+          state: [Number(Boolean(interactionState?.noteSelected)), Number(Boolean(interactionState?.selectionEditing)),
+            Number(interactionState?.selectionInParagraph), interactionState?.editableCount ?? 0] }));
         throw error;
       }
       await expect(conflictRichDialog.getByRole('alert')).toContainText('未自动合并或覆盖');
