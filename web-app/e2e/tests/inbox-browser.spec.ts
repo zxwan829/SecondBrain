@@ -39,6 +39,7 @@ const viewports = [
 const wp5RoundtripOnly = process.env.SB_E2E_WP5_ROUNDTRIP_ONLY === 'true';
 const wp5ConflictOnly = process.env.SB_E2E_WP5_CONFLICT_ONLY === 'true';
 const wp5RichPageModeOnly = process.env.SB_E2E_WP5_RICH_PAGE_MODE_ONLY === 'true';
+const wp5ArchiveUxOnly = process.env.SB_E2E_WP5_ARCHIVE_UX_ONLY === 'true';
 const desktopOnly = process.env.SB_E2E_DESKTOP_ONLY === 'true';
 const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 
@@ -858,8 +859,8 @@ for (const viewport of activeViewports) {
     // conflict/recovery, and an unsupported-Markdown preservation probe. Give
     // that composed journey enough total execution budget without extending
     // any individual product wait/assertion or weakening its conditions.
-    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5RichPageModeOnly ? 120_000 : wp5RoundtripOnly ? 300_000 : 60_000);
-    if ((wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5ArchiveUxOnly ? 180_000 : wp5RichPageModeOnly ? 120_000 : wp5RoundtripOnly ? 300_000 : 60_000);
+    if ((wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly || wp5ArchiveUxOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
     await page.addInitScript((marker) => {
@@ -912,14 +913,14 @@ for (const viewport of activeViewports) {
       }, WP5_PROBE_MARKER);
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
     await signInAndCreateBlankSession(page, viewport, observed);
-    if (wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly) {
+    if (wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly || wp5ArchiveUxOnly) {
       observed.setFailureStage('notes_navigation');
       observed.setDiagnosticAssertion('wp5_focus_notes_navigation');
       await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
       await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
 
       if (!wp5ConflictOnly) {
-      if (!wp5RichPageModeOnly) {
+      if (!wp5RichPageModeOnly && !wp5ArchiveUxOnly) {
       const title = 'WP5 focused roundtrip';
       const originalBody = `Synthetic body ${randomUUID()}`;
       const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n`;
@@ -1595,6 +1596,103 @@ for (const viewport of activeViewports) {
       await expect(richDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_018');
       if (wp5RichPageModeOnly) return;
+      if (wp5ArchiveUxOnly) {
+        observed.setFailureStage('notes_blocksuite_open');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_019');
+        const archiveViewport = richDialog.locator('.affine-page-viewport');
+        const bodyParagraph = archiveViewport.locator('affine-paragraph').filter({ hasText: richText }).first();
+        await expect(bodyParagraph).toBeVisible();
+        await bodyParagraph.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await page.keyboard.insertText('Archive reorder target');
+        const targetParagraph = archiveViewport.locator('affine-paragraph').filter({ hasText: 'Archive reorder target' }).first();
+        await expect(targetParagraph).toBeVisible();
+
+        const plus = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
+        const grip = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="grip"]');
+        await targetParagraph.hover();
+        await expect(plus).toHaveAttribute('data-visible', 'true');
+        await expect(grip).toHaveAttribute('data-visible', 'true');
+        const controlGeometry = await Promise.all([grip, plus].map(locator => locator.evaluate(button => {
+          const rect = button.getBoundingClientRect();
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        })));
+        expect(Math.abs((controlGeometry[0].y + controlGeometry[0].height / 2)
+          - (controlGeometry[1].y + controlGeometry[1].height / 2)), 'wp5_desktop_page_plus_center_alignment').toBeLessThan(2);
+        expect(Math.abs(controlGeometry[0].x - controlGeometry[1].x), 'wp5_desktop_page_plus_direction_gap').toBeGreaterThanOrEqual(22);
+        expect(Math.abs(controlGeometry[0].x - controlGeometry[1].x), 'wp5_desktop_page_plus_direction_gap').toBeLessThanOrEqual(26);
+        await plus.click();
+        await expect(page.getByText('一级标题', { exact: true })).toBeVisible();
+        await page.getByText('一级标题', { exact: true }).click();
+        const readBlockOrder = () => archiveViewport.evaluate(root => {
+          const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
+          const store = host?.__sbBlockSuiteStore;
+          return (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => {
+            const parent = store.getParent(model);
+            return { id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
+              parent: parent?.id ?? null, order: parent?.children?.findIndex((child: any) => child.id === model.id) ?? -1 };
+          });
+        });
+        await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.type)
+          .toBe('h1');
+
+        await targetParagraph.hover();
+        await expect(grip).toHaveAttribute('data-visible', 'true');
+        const gripBox = await grip.boundingBox();
+        const bodyBox = await bodyParagraph.boundingBox();
+        expect(gripBox, 'wp5_desktop_page_plus_grip_geometry').not.toBeNull();
+        expect(bodyBox, 'wp5_desktop_page_plus_drop_geometry').not.toBeNull();
+        const orderBeforeDrag = await readBlockOrder();
+        expect(orderBeforeDrag.filter(block => block.text.includes('Archive reorder target')), 'wp5_desktop_page_plus_reorder_source_unique').toHaveLength(1);
+        expect(orderBeforeDrag.filter(block => block.text.includes(richText)), 'wp5_desktop_page_plus_reorder_target_unique').toHaveLength(1);
+        const beforeDrag = orderBeforeDrag.find(block => block.text.includes('Archive reorder target'))!;
+        const beforeDragTarget = orderBeforeDrag.find(block => block.text.includes(richText))!;
+        expect(beforeDrag.parent, 'wp5_desktop_page_plus_reorder_same_parent').toBe(beforeDragTarget.parent);
+        expect(beforeDrag.order, 'wp5_desktop_page_plus_reorder_initial_order').toBeGreaterThan(beforeDragTarget.order);
+        await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, bodyBox!.y + 1, { steps: 5 });
+        await page.mouse.up();
+        await expect.poll(async () => {
+          const order = await readBlockOrder();
+          const source = order.find(block => block.text.includes('Archive reorder target'));
+          const target = order.find(block => block.text.includes(richText));
+          return Boolean(source && target && source.parent === target.parent && source.order < target.order);
+        }).toBe(true);
+        const orderAfterDrag = await readBlockOrder();
+        const afterDrag = orderAfterDrag.find(block => block.text.includes('Archive reorder target'))!;
+        const afterDragTarget = orderAfterDrag.find(block => block.text.includes(richText))!;
+        expect(afterDrag.parent, 'wp5_desktop_page_plus_reorder_same_parent_after').toBe(afterDragTarget.parent);
+        expect(afterDrag.order, 'wp5_desktop_page_plus_reorder_changed_order').toBeLessThan(afterDragTarget.order);
+
+        const savedArchiveResource = page.waitForResponse(response => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
+        const savedArchiveMarkdown = page.waitForResponse(response => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
+        await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+        expect((await savedArchiveResource).status(), 'wp5_archive_ux_resource_save').toBe(200);
+        expect((await savedArchiveMarkdown).status(), 'wp5_archive_ux_markdown_save').toBe(200);
+        await expect(richDialog.getByRole('status').first()).toContainText('已保存');
+        await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
+        await expect(richDialog).toHaveCount(0);
+        const savedArchiveReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
+        await expect(savedArchiveReference).toBeVisible();
+        await savedArchiveReference.click();
+        await expect(richDialog).toBeVisible();
+        await expect(richDialog).toHaveAttribute('aria-busy', 'false');
+        await expect.poll(async () => (await readBlockOrder()).filter(block => block.text.includes('Archive reorder target')).length)
+          .toBe(1);
+        const orderAfterReopen = await readBlockOrder();
+        expect(orderAfterReopen.filter(block => block.text.includes('Archive reorder target')), 'wp5_desktop_page_plus_reorder_source_after_reopen').toHaveLength(1);
+        expect(orderAfterReopen.filter(block => block.text.includes(richText)), 'wp5_desktop_page_plus_reorder_target_after_reopen').toHaveLength(1);
+        const reopenedSource = orderAfterReopen.find(block => block.text.includes('Archive reorder target'))!;
+        const reopenedTarget = orderAfterReopen.find(block => block.text.includes(richText))!;
+        expect(reopenedSource.type, 'wp5_desktop_page_plus_heading_persisted').toBe('h1');
+        expect(reopenedSource.parent, 'wp5_desktop_page_plus_reorder_parent_persisted').toBe(reopenedTarget.parent);
+        expect(reopenedSource.order, 'wp5_desktop_page_plus_reorder_persisted').toBeLessThan(reopenedTarget.order);
+        return;
+      }
       const restoreMarker = `restore probe ${randomUUID()}`;
       const restoreParagraph = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       await restoreParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${restoreMarker}`);
