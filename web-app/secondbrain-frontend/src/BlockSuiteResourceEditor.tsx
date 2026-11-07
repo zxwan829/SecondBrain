@@ -415,6 +415,9 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     let persisted = await save();
     if (!persisted && retryableSaveRef.current && dirtyRef.current && !projectionConflictRef.current) persisted = await save();
     if (!persisted) return;
+    // Invalidate the current view synchronously with the mode state change so
+    // the previous store's `aria-busy=false` cannot make a remount look ready.
+    setStoreReady(false);
     setViewMode(mode);
   };
   const reloadFromCore = async () => {
