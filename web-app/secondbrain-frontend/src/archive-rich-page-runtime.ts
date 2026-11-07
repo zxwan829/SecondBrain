@@ -195,14 +195,17 @@ export function bindArchiveSurface(viewport: HTMLElement, std: BlockStdScope, op
                 const {rowId,columnId}=end.dataset;
                 const tableId=start.table.dataset.blockId;
                 if(!tableId||!rowId||!columnId)return;
-                requestAnimationFrame(()=>{
+                // BlockSuite can finish its own pointer selection/render work in
+                // the first frame after pointerup. Restore the editing caret in
+                // the following frame so that work cannot leave focus on the TD.
+                requestAnimationFrame(()=>requestAnimationFrame(()=>{
                   const table=Array.from(viewport.querySelectorAll<HTMLElement>('affine-table'))
                     .find(candidate=>candidate.dataset.blockId===tableId);
                   if(!table)return;
                   const cell=Array.from(table.querySelectorAll<HTMLTableCellElement>('td[data-row-id][data-column-id]'))
                     .find(candidate=>candidate.dataset.rowId===rowId&&candidate.dataset.columnId===columnId);
                   cell?.querySelector<HTMLElement>('rich-text .inline-editor[contenteditable="true"]')?.focus({preventScroll:true});
-                });
+                }));
                 return;
               }
               const table=start.table,rows=table.dataManager.rows$.value,columns=table.dataManager.columns$.value,endPoint=cellAtPoint(table,end,e.clientX,e.clientY);

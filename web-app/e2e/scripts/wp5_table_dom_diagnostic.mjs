@@ -42,6 +42,7 @@ const env = {
   SB_PROJECTS_INDEX_ROOT: dirs.projects,
   SB_DAILY_BRIEF_STORE_ROOT: dirs.briefs,
   SB_NOTES_DRAFTS_ROOT: dirs.notes,
+  SB_NOTES_AUTHORIZED_ROOTS: '{}',
   SB_APP_PASSWORD_FILE: passwordPath,
   SB_DASHBOARD_ORIGINS: webUrl,
   SB_CORE_ALLOWED_HOSTS: '127.0.0.1,localhost',
