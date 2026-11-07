@@ -106,6 +106,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_unsupported_projection_seed' | 'wp5_unsupported_projection_open'
   | 'wp5_unsupported_projection_rejected' | 'wp5_unsupported_projection_preserved'
   | 'wp5_unsupported_projection_no_core_put'
+  | 'wp5_canvas_layout_stable'
   | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
   | 'notes_conflict_seed_status_403' | 'notes_conflict_seed_status_404'
   | 'notes_conflict_seed_status_409' | 'notes_conflict_seed_status_412'
@@ -167,7 +168,7 @@ async function expectNoteSavedStatus(page: Page, observed: Awaited<ReturnType<ty
 async function expectEdgelessTextLayoutSettled(dialog: Locator) {
   await expect.poll(async () => dialog.locator('affine-edgeless-text').evaluate(async (element) => {
     const block = element as HTMLElement & { model?: { xywh?: string }; gfx?: { viewport?: { zoom?: number } } };
-    const container = block.querySelector('.edgeless-text-block-container');
+    const container = block.shadowRoot?.querySelector('.edgeless-text-block-container');
     const sample = () => {
       const zoom = block.gfx?.viewport?.zoom;
       const xywh = block.model?.xywh;
@@ -1401,6 +1402,7 @@ for (const viewport of activeViewports) {
       await nestedCanvasDialog.getByLabel('选择 Edgeless 图片').setInputFiles({ name: 'nested-canvas.png', mimeType: 'image/png',
         buffer: Buffer.from(nestedImageDataUrl.split(',')[1], 'base64') });
       expect((await nestedBlobPut).status(), 'wp5_rich_page_nested_canvas_blob').toBe(201);
+      observed.setDiagnosticAssertion('wp5_canvas_layout_stable');
       await expectEdgelessTextLayoutSettled(nestedCanvasDialog);
       const nestedCanvasSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
