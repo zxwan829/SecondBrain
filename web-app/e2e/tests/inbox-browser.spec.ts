@@ -38,6 +38,7 @@ const viewports = [
 ] as const;
 const wp5RoundtripOnly = process.env.SB_E2E_WP5_ROUNDTRIP_ONLY === 'true';
 const wp5ConflictOnly = process.env.SB_E2E_WP5_CONFLICT_ONLY === 'true';
+const wp5RichPageModeOnly = process.env.SB_E2E_WP5_RICH_PAGE_MODE_ONLY === 'true';
 const desktopOnly = process.env.SB_E2E_DESKTOP_ONLY === 'true';
 const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 
@@ -47,7 +48,7 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_body_edit' | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
   | 'rich_page_reopen' | 'rich_page_nested_canvas_create' | 'rich_page_nested_canvas_open'
   | 'rich_page_nested_blob_upload' | 'rich_page_nested_canvas_save' | 'rich_page_parent_save'
-  | 'rich_page_mode_edgeless' | 'rich_page_mode_page' | 'rich_page_backup_preview'
+  | 'rich_page_mode_edgeless' | 'rich_page_mode_edgeless_ready' | 'rich_page_mode_page' | 'rich_page_backup_preview'
   | 'rich_page_snapshot_restore' | 'rich_page_post_restore_reopen' | 'rich_page_conflict'
   | 'rich_page_recovery_copy' | 'rich_page_explicit_fork';
 type BlockSuiteRequestDiagnostic = { endpoint: 'resource_collection' | 'resource' | 'blob' | 'snapshot' | 'snapshot_restore'; method: 'GET' | 'POST' | 'PUT'; status: number | null };
@@ -114,7 +115,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'notes_conflict_seed_status_other'
   | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
   | 'wp5_resource_checkpoint_066' | 'wp5_resource_checkpoint_067' | 'wp5_resource_checkpoint_068'
-  | 'wp5_resource_checkpoint_069' | 'wp5_resource_checkpoint_070' | 'wp5_resource_checkpoint_071' | 'wp5_resource_checkpoint_072' | 'wp5_resource_checkpoint_073'
+  | 'wp5_resource_checkpoint_069' | 'wp5_resource_checkpoint_070' | 'wp5_resource_checkpoint_071' | 'wp5_resource_checkpoint_072' | 'wp5_resource_checkpoint_073' | 'wp5_resource_checkpoint_074' | 'wp5_resource_checkpoint_075'
   | 'wp5_resource_focus' | 'wp5_resource_type' | 'wp5_resource_dirty' | 'wp5_resource_save' | 'wp5_resource_saved' | 'wp5_resource_close' | 'wp5_resource_reopen' | 'wp5_resource_checkpoint_001' | 'wp5_resource_checkpoint_002' | 'wp5_resource_checkpoint_003' | 'wp5_resource_checkpoint_004' | 'wp5_resource_checkpoint_005' | 'wp5_resource_checkpoint_006' | 'wp5_resource_checkpoint_007' | 'wp5_resource_checkpoint_008' | 'wp5_resource_checkpoint_009' | 'wp5_resource_checkpoint_010' | 'wp5_resource_checkpoint_011' | 'wp5_resource_checkpoint_012' | 'wp5_resource_checkpoint_013' | 'wp5_resource_checkpoint_014' | 'wp5_resource_checkpoint_015' | 'wp5_resource_checkpoint_016' | 'wp5_resource_checkpoint_017' | 'wp5_resource_checkpoint_018' | 'wp5_resource_checkpoint_019' | 'wp5_resource_checkpoint_020' | 'wp5_resource_checkpoint_021' | 'wp5_resource_checkpoint_022' | 'wp5_resource_checkpoint_023' | 'wp5_resource_checkpoint_024' | 'wp5_resource_checkpoint_025' | 'wp5_resource_checkpoint_026' | 'wp5_resource_checkpoint_027' | 'wp5_resource_checkpoint_028' | 'wp5_resource_checkpoint_029' | 'wp5_resource_checkpoint_030' | 'wp5_resource_checkpoint_031' | 'wp5_resource_checkpoint_032' | 'wp5_resource_checkpoint_033' | 'wp5_resource_checkpoint_034' | 'wp5_resource_checkpoint_035' | 'wp5_resource_checkpoint_036' | 'wp5_resource_checkpoint_037' | 'wp5_resource_checkpoint_038' | 'wp5_resource_checkpoint_039' | 'wp5_resource_checkpoint_040' | 'wp5_resource_checkpoint_041' | 'wp5_resource_checkpoint_042' | 'wp5_resource_checkpoint_043' | 'wp5_resource_checkpoint_044' | 'wp5_resource_checkpoint_045' | 'wp5_resource_checkpoint_046' | 'wp5_resource_checkpoint_047' | 'wp5_resource_checkpoint_048' | 'wp5_resource_checkpoint_049' | 'wp5_resource_checkpoint_050' | 'wp5_resource_checkpoint_051' | 'wp5_resource_checkpoint_052' | 'wp5_resource_checkpoint_053' | 'wp5_resource_checkpoint_054' | 'wp5_resource_checkpoint_055' | 'wp5_resource_checkpoint_056' | 'wp5_resource_checkpoint_057' | 'wp5_resource_checkpoint_058' | 'wp5_resource_checkpoint_059' | 'wp5_resource_checkpoint_060' | 'wp5_resource_checkpoint_061' | 'wp5_resource_checkpoint_062' | 'wp5_resource_checkpoint_063' | 'wp5_resource_checkpoint_064' | 'wp5_resource_checkpoint_065' | 'wp5_resource_dialog_open' | 'wp5_resource_content_visible' | 'wp5_resource_editable' | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
   | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
@@ -840,8 +841,8 @@ for (const viewport of activeViewports) {
     // conflict/recovery, and an unsupported-Markdown preservation probe. Give
     // that composed journey enough total execution budget without extending
     // any individual product wait/assertion or weakening its conditions.
-    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5RoundtripOnly ? 300_000 : 60_000);
-    if ((wp5RoundtripOnly || wp5ConflictOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5RichPageModeOnly ? 120_000 : wp5RoundtripOnly ? 300_000 : 60_000);
+    if ((wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
     await page.addInitScript((marker) => {
@@ -894,13 +895,14 @@ for (const viewport of activeViewports) {
       }, WP5_PROBE_MARKER);
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
     await signInAndCreateBlankSession(page, viewport, observed);
-    if (wp5RoundtripOnly || wp5ConflictOnly) {
+    if (wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly) {
       observed.setFailureStage('notes_navigation');
       observed.setDiagnosticAssertion('wp5_focus_notes_navigation');
       await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
       await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
 
       if (!wp5ConflictOnly) {
+      if (!wp5RichPageModeOnly) {
       const title = 'WP5 focused roundtrip';
       const originalBody = `Synthetic body ${randomUUID()}`;
       const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n`;
@@ -1319,6 +1321,7 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_065');
       await expect(page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' })).toHaveCount(2);
       }
+      }
 
       // Rich Page uses a dedicated synthetic Draft. This covers its controlled
       // Yjs + snapshot + Markdown receipt path without changing the seed Note.
@@ -1551,41 +1554,57 @@ for (const viewport of activeViewports) {
       await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '画布', exact: true }).click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_070');
       await expect(richDialog.locator('.affine-edgeless-viewport')).toBeVisible({ timeout: 20000 });
+      observed.setWp5Step('rich_page_mode_edgeless_ready');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_071');
       await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
       observed.setWp5Step('rich_page_mode_page');
       const pageModeButton = richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '页面', exact: true });
-      const pageModeEnabled = await pageModeButton.isEnabled().catch(() => false);
-      if (!pageModeEnabled) {
-        observed.setDiagnosticAssertion('wp5_resource_checkpoint_073');
-        const [currentNoteResponse, currentResourceResponse, modeState] = await Promise.all([
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_074');
+      type RichPageModeProbe = { rendererResponsive: true; dialogPresent: boolean; busy: string | null; groupPresent: boolean;
+        fieldsetDisabled: boolean | null; pageButtonDisabled: boolean | null; canvasButtonPressed: boolean | null;
+        status: 'conflict' | 'error' | 'pending' | 'saved' | 'other'; hostChildCount: number; storeAttached: boolean }
+        | { rendererResponsive: false };
+      const modeProbe = await Promise.race<RichPageModeProbe>([
+        page.evaluate((): RichPageModeProbe => {
+          const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]');
+          if (!dialog) return { rendererResponsive: true, dialogPresent: false, busy: null, groupPresent: false,
+            fieldsetDisabled: null, pageButtonDisabled: null, canvasButtonPressed: null, status: 'other', hostChildCount: 0, storeAttached: false };
+          const group = dialog.querySelector<HTMLElement>('[role="group"][aria-label="文档模式"]');
+          const buttons = [...(group?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+          const pageButton = buttons.find(button => button.textContent?.trim() === '页面');
+          const canvasButton = buttons.find(button => button.textContent?.trim() === '画布');
+          const host = dialog.querySelector<HTMLElement>('.blocksuite-resource-host');
+          const statusText = dialog.querySelector('.document-status')?.textContent?.trim() ?? '';
+          return { rendererResponsive: true, dialogPresent: true, busy: dialog.getAttribute('aria-busy'), groupPresent: Boolean(group),
+            fieldsetDisabled: group?.closest('fieldset')?.disabled ?? null, pageButtonDisabled: pageButton?.disabled ?? null,
+            canvasButtonPressed: canvasButton?.getAttribute('aria-pressed') === 'true',
+            status: /冲突|412/.test(statusText) ? 'conflict' : /失败|ERROR/.test(statusText) ? 'error'
+              : /未保存|正在/.test(statusText) ? 'pending' : /已保存/.test(statusText) ? 'saved' : 'other',
+            hostChildCount: host?.childElementCount ?? 0,
+            storeAttached: Boolean((host as (HTMLElement & { __sbBlockSuiteStore?: unknown }) | null)?.__sbBlockSuiteStore) };
+        }).catch(() => ({ rendererResponsive: false as const })),
+        new Promise<RichPageModeProbe>(resolve => setTimeout(() => resolve({ rendererResponsive: false }), 3000)),
+      ]);
+      let bindingProbe: { noteRead: number; resourceRead: number; receiptMatchesNote: boolean; resourceNoteMatchesNote: boolean } | null = null;
+      if (modeProbe.rendererResponsive && modeProbe.pageButtonDisabled) {
+        const [currentNoteResponse, currentResourceResponse] = await Promise.all([
           page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`, { timeout: 3000 }),
           page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 3000 }),
-          page.evaluate(() => {
-            const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]');
-            if (!dialog) return { dialogPresent: false, busy: null, groupPresent: false, fieldsetDisabled: null, pageButtonDisabled: null, status: 'dialog_missing' };
-            const group = dialog.querySelector<HTMLElement>('[role="group"][aria-label="文档模式"]');
-            const pageButton = [...(group?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(button => button.textContent?.trim() === '页面');
-            const fieldset = group?.closest('fieldset');
-            const statusText = dialog.querySelector('.document-status')?.textContent?.trim() ?? '';
-            return { dialogPresent: true, busy: dialog.getAttribute('aria-busy'), groupPresent: Boolean(group), fieldsetDisabled: fieldset?.disabled ?? null,
-              pageButtonDisabled: pageButton?.disabled ?? null, status: /冲突|412/.test(statusText) ? 'conflict'
-                : /失败|ERROR/.test(statusText) ? 'error' : /未保存|正在/.test(statusText) ? 'pending'
-                  : /已保存/.test(statusText) ? 'saved' : 'other' };
-          }),
         ]);
         const currentNote = currentNoteResponse.ok() ? await currentNoteResponse.json() as { etag?: string } : null;
         const currentResource = currentResourceResponse.ok() ? await currentResourceResponse.json() as {
           note_etag?: string; snapshot?: { secondbrainRichPage?: { markdownSha256?: string } };
         } : null;
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ ...modeState, pageModeEnabled,
-          noteRead: currentNoteResponse.status(), resourceRead: currentResourceResponse.status(),
+        bindingProbe = { noteRead: currentNoteResponse.status(), resourceRead: currentResourceResponse.status(),
           receiptMatchesNote: currentResource?.snapshot?.secondbrainRichPage?.markdownSha256 === currentNote?.etag,
-          resourceNoteMatchesNote: currentResource?.note_etag === currentNote?.etag }));
+          resourceNoteMatchesNote: currentResource?.note_etag === currentNote?.etag };
       }
+      console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ ...modeProbe, ...(bindingProbe ? { bindingProbe } : {}) }));
+      expect(modeProbe.rendererResponsive, 'wp5_rich_page_mode_renderer_responsive').toBe(true);
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
+      expect(modeProbe.dialogPresent, 'wp5_rich_page_mode_dialog_present').toBe(true);
+      expect(modeProbe.pageButtonDisabled, 'wp5_rich_page_page_mode_enabled').toBe(false);
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
-      observed.setDiagnosticAssertion('wp5_resource_checkpoint_072');
-      expect(pageModeEnabled, 'wp5_rich_page_page_mode_enabled').toBe(true);
       await pageModeButton.click();
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
       await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
@@ -1593,6 +1612,7 @@ for (const viewport of activeViewports) {
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_068');
       await expect(richDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_018');
+      if (wp5RichPageModeOnly) return;
       const restoreMarker = `restore probe ${randomUUID()}`;
       const restoreParagraph = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       await restoreParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${restoreMarker}`);
