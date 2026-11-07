@@ -1646,9 +1646,60 @@ for (const viewport of activeViewports) {
       const conflictRichDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
       const localRichMarker = `local rich-page ${randomUUID()}`;
       const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
-      await localRichParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
-      await conflictRichDialog.getByRole('button', { name: '保存资源', exact: true }).click();
-      await expect(conflictRichDialog.getByRole('status').first()).toContainText('版本冲突', { timeout: 15000 });
+      const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
+      let conflictAction = 'paragraph-click';
+      try {
+        await localRichParagraph.click({ timeout: 5000 });
+        conflictAction = 'keyboard-edit';
+        await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
+        conflictAction = 'wait-save-enabled';
+        await expect(conflictSaveButton).toBeEnabled({ timeout: 5000 });
+        conflictAction = 'save-click';
+        await conflictSaveButton.click({ timeout: 5000 });
+        conflictAction = 'wait-conflict-status';
+        await expect(conflictRichDialog.getByRole('status').first()).toContainText('版本冲突', { timeout: 15000 });
+      } catch (error) {
+        const interactionState = await Promise.race([
+          page.evaluate(({ marker }) => {
+            const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog');
+            if (!dialog) return null;
+            const roots: Array<ShadowRoot | HTMLElement> = [dialog];
+            const allElements: Element[] = [];
+            for (let index = 0; index < roots.length; index += 1) {
+              const root = roots[index];
+              for (const element of root.querySelectorAll('*')) {
+                allElements.push(element);
+                if (element.shadowRoot) roots.push(element.shadowRoot);
+              }
+            }
+            const find = (selector: string) => roots.map(root => root.querySelector(selector)).find(Boolean) as HTMLElement | undefined;
+            const pageViewport = find('.affine-page-viewport');
+            const edgelessViewport = find('.affine-edgeless-viewport');
+            const viewport = pageViewport ?? edgelessViewport;
+            const paragraph = allElements.find(element => element.localName === 'affine-paragraph'
+              && element.textContent?.includes('Synthetic rich page round trip')) as HTMLElement | undefined;
+            const paragraphRect = paragraph?.getBoundingClientRect();
+            const viewportRect = viewport?.getBoundingClientRect();
+            let active: Element | null = document.activeElement;
+            while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+            const store = (find('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | undefined)?.__sbBlockSuiteStore;
+            const markerInStore = Boolean(store?.getBlocksByFlavour('affine:paragraph')?.some(({ model }: any) =>
+              model.props.text?.toString().includes(marker)));
+            const saveButton = allElements.find(element => element.localName === 'button'
+              && element.textContent?.trim() === '保存资源') as HTMLButtonElement | undefined;
+            return { view: pageViewport ? 'page' : edgelessViewport ? 'edgeless' : 'none',
+              paragraphIntersectsViewport: Boolean(paragraphRect && viewportRect && paragraphRect.bottom > viewportRect.top
+                && paragraphRect.top < viewportRect.bottom && paragraphRect.right > viewportRect.left
+                && paragraphRect.left < viewportRect.right),
+              focusedContenteditable: Boolean(active && (active as HTMLElement).isContentEditable), markerInStore,
+              saveEnabled: Boolean(saveButton && !saveButton.disabled) };
+          }, { marker: localRichMarker }).catch(() => null),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
+        ]);
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ e: error instanceof Error ? error.name : 'non_error',
+          action: conflictAction, state: interactionState }));
+        throw error;
+      }
       await expect(conflictRichDialog.getByRole('alert')).toContainText('未自动合并或覆盖');
       const preservedRemote = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
       expect(preservedRemote.status(), 'wp5_rich_page_conflict_remote_read').toBe(200);
