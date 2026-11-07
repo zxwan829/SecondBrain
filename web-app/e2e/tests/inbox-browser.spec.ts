@@ -1664,6 +1664,7 @@ for (const viewport of activeViewports) {
       let firstClickState: NoteClickState | null = null;
       let secondClickState: NoteClickState | null = null;
       let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[]; hitTargets: [boolean, boolean, number] } | null = null;
+      let lastPointerProbe: { paragraphRect: number[] | null; viewportRect: number[] | null; hitParagraph: boolean; hitNote: boolean; depth: number } | null = null;
       try {
         let bounds: Awaited<ReturnType<typeof localRichParagraph.boundingBox>> = null;
         let viewportBounds: typeof bounds = null;
@@ -1681,26 +1682,26 @@ for (const viewport of activeViewports) {
           const visibleBottom = Math.min(bounds.y + bounds.height, viewportBounds.y + viewportBounds.height);
           if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) { stableTargetSamples = 0; return false; }
           clickPoint = { x: (visibleLeft + visibleRight) / 2, y: (visibleTop + visibleBottom) / 2 };
-          const hitPath = await page.evaluate(({ x, y }) => {
+          const hitPath = await localRichParagraph.evaluate((targetParagraph, { x, y }) => {
             let hit: Element | null = document.elementFromPoint(x, y);
             while (hit?.shadowRoot) {
               const inner = hit.shadowRoot.elementFromPoint(x, y);
               if (!inner || inner === hit) break;
               hit = inner;
             }
-            const roots: Array<Document | ShadowRoot | HTMLElement> = [document];
-            const elements: Element[] = [];
-            for (let index = 0; index < roots.length; index += 1) {
-              for (const element of roots[index].querySelectorAll('*')) {
-                elements.push(element);
-                if (element.shadowRoot) roots.push(element.shadowRoot);
+            let targetNote: Element | null = null;
+            let targetNode: Node | null = targetParagraph;
+            while (targetNode) {
+              if (targetNode instanceof Element && targetNode.localName === 'affine-edgeless-note') {
+                targetNote = targetNode;
+                break;
+              }
+              if (targetNode.parentNode) targetNode = targetNode.parentNode;
+              else {
+                const root = targetNode.getRootNode();
+                targetNode = root instanceof ShadowRoot ? root.host : null;
               }
             }
-            const targetParagraph = elements.find(element => element.localName === 'affine-paragraph'
-              && element.textContent?.includes('Synthetic rich page round trip'));
-            const targetNote = targetParagraph && elements.find(element => element.localName === 'affine-edgeless-note'
-              && [...element.querySelectorAll('affine-paragraph'), ...(element.shadowRoot?.querySelectorAll('affine-paragraph') ?? [])]
-                .includes(targetParagraph));
             let hitParagraph = false;
             let hitNote = false;
             let depth = 0;
@@ -1717,6 +1718,11 @@ for (const viewport of activeViewports) {
             }
             return { hitParagraph, hitNote, depth };
           }, clickPoint);
+          lastPointerProbe = {
+            paragraphRect: [bounds.x, bounds.y, bounds.width, bounds.height],
+            viewportRect: [viewportBounds.x, viewportBounds.y, viewportBounds.width, viewportBounds.height],
+            ...hitPath,
+          };
           const targetHit = hitPath.hitParagraph && hitPath.hitNote;
           const geometry = JSON.stringify([bounds.x, bounds.y, bounds.width, bounds.height,
             viewportBounds.x, viewportBounds.y, viewportBounds.width, viewportBounds.height, hitPath]);
@@ -1952,6 +1958,7 @@ for (const viewport of activeViewports) {
           view: interactionState?.view, mode: interactionState?.docMode,
           hit: structureSummary ? Number(structureSummary.hitTargets[0]) + Number(structureSummary.hitTargets[1]) : 0,
           depth: structureSummary?.hitTargets[2] ?? 0,
+          probe: lastPointerProbe,
           pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [Number(hit.note), Number(hit.paragraph), Number(hit.editable)]),
           clicks: [compactClickState(firstClickState), compactClickState(secondClickState)],
           state: [Number(Boolean(interactionState?.noteSelected)), Number(Boolean(interactionState?.selectionEditing)),
