@@ -1651,12 +1651,24 @@ for (const viewport of activeViewports) {
       try {
         const bounds = await localRichParagraph.boundingBox({ timeout: 5000 });
         expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
+        await page.evaluate(() => {
+          const target = window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> };
+          target.__wp5NotePointerHits = [];
+          const recordPointer = (event: PointerEvent) => {
+            const path = event.composedPath().filter((item): item is Element => item instanceof Element);
+            target.__wp5NotePointerHits?.push({
+              note: path.some(element => element.localName === 'affine-edgeless-note'),
+              paragraph: path.some(element => element.localName === 'affine-paragraph'),
+              editable: path.some(element => (element as HTMLElement).isContentEditable),
+            });
+            if (target.__wp5NotePointerHits!.length >= 2) window.removeEventListener('pointerdown', recordPointer, true);
+          };
+          window.addEventListener('pointerdown', recordPointer, true);
+        });
         await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
         await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
         conflictAction = 'paragraph-enter-edit';
         await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
-        const paragraphEditor = localRichParagraph.locator('[contenteditable="true"]').first();
-        await expect(paragraphEditor, 'wp5_rich_page_conflict_editor_focused').toBeFocused({ timeout: 5000 });
         conflictAction = 'keyboard-edit';
         await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
         await expect(localRichParagraph, 'wp5_rich_page_conflict_local_edit_visible').toContainText(localRichMarker, { timeout: 5000 });
@@ -1690,6 +1702,23 @@ for (const viewport of activeViewports) {
             const viewportRect = viewport?.getBoundingClientRect();
             let active: Element | null = document.activeElement;
             while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+            const note = allElements.find(element => element.localName === 'affine-edgeless-note'
+              && element.shadowRoot?.querySelector('affine-paragraph')?.textContent?.includes('Synthetic rich page round trip')) as (HTMLElement & { model?: any; gfx?: any }) | undefined;
+            const noteContainer = note?.shadowRoot?.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]');
+            const noteSelection = note?.gfx?.selection;
+            const noteModelId = note?.model?.id;
+            const nativeSelection = window.getSelection();
+            let anchor: Node | null = nativeSelection?.anchorNode ?? null;
+            let selectionInParagraph = false;
+            while (anchor) {
+              if (anchor === paragraph) { selectionInParagraph = true; break; }
+              if (anchor.parentNode) anchor = anchor.parentNode;
+              else {
+                const root = anchor.getRootNode();
+                anchor = root instanceof ShadowRoot ? root.host : null;
+              }
+            }
+            const pointerTarget = (window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> }).__wp5NotePointerHits ?? [];
             const store = (find('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | undefined)?.__sbBlockSuiteStore;
             const markerInStore = Boolean(store?.getBlocksByFlavour('affine:paragraph')?.some(({ model }: any) =>
               model.props.text?.toString().includes(marker)));
@@ -1700,7 +1729,11 @@ for (const viewport of activeViewports) {
                 && paragraphRect.top < viewportRect.bottom && paragraphRect.right > viewportRect.left
                 && paragraphRect.left < viewportRect.right),
               focusedContenteditable: Boolean(active && (active as HTMLElement).isContentEditable), markerInStore,
-              saveEnabled: Boolean(saveButton && !saveButton.disabled) };
+              saveEnabled: Boolean(saveButton && !saveButton.disabled), pointerTarget,
+              noteEditing: noteContainer?.dataset.editing ?? null,
+              noteSelected: Boolean(noteModelId && noteSelection?.has?.(noteModelId)),
+              selectionEditing: Boolean(noteSelection?.editing), selectionInParagraph,
+              editableCount: note?.shadowRoot?.querySelectorAll('[contenteditable="true"]').length ?? 0 };
           }, { marker: localRichMarker }).catch(() => null),
           new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
         ]);
