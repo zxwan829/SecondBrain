@@ -206,7 +206,7 @@ try {
   };
   await firstCellEditor.click();
   await waitForCellFocus(cellIds[0], 'first');
-  await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-CELL-EDIT');
+  await page.keyboard.insertText('WP5 merge source 12345678-1234-1234-1234-123456789abc');
   await page.waitForTimeout(500);
   const afterEdit = await table.evaluate((element, ids) => ids.map(({ row, column }) => {
     const td = element.querySelector(`td[data-row-id="${row}"][data-column-id="${column}"]`);
@@ -226,13 +226,13 @@ try {
       yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null };
   }), cellIds);
   console.log('WP5_TABLE_DOM_AFTER_EDIT', JSON.stringify({ state: afterEdit, events: await page.evaluate(() => window.__wp5CellEvents) }));
-  if (!afterEdit[0]?.yText?.includes('WP5-DOM-DIAGNOSTIC-CELL-EDIT')) {
+  if (!afterEdit[0]?.yText?.includes('WP5 merge source 12345678-1234-1234-1234-123456789abc')) {
     throw new Error('The first table cell did not receive the diagnostic text in its Yjs text model');
   }
   await cells.nth(1).locator('rich-text .inline-editor').click();
   await waitForCellFocus(cellIds[1], 'second');
   await page.waitForTimeout(150);
-  await page.keyboard.insertText('WP5-DOM-DIAGNOSTIC-DELAYED-EDIT');
+  await page.keyboard.insertText('WP5 merge covered 12345678-1234-1234-1234-123456789abc');
   await page.waitForTimeout(300);
   const delayedEdit = await table.evaluate((element, id) => {
     const cell = element.dataManager?.getCell?.(id.row, id.column);
