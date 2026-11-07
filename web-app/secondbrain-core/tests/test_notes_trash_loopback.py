@@ -314,7 +314,8 @@ def test_real_core_trash_roundtrip_no_overwrite_idempotency_and_purge_is_not_exp
         assert not thread.is_alive()
 
 
-def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkeypatch):
+@pytest.mark.parametrize("resource_kind", ["database", "rich-page"])
+def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkeypatch, resource_kind):
     vault = _private(tmp_path / "vault")
     projects = _private(vault / "Projects")
     _private(vault / ".trash")
@@ -325,7 +326,7 @@ def test_resource_closure_recovers_after_interrupted_trash_move(tmp_path, monkey
     note.write_bytes(note_bytes)
     os.chmod(note, 0o600)
     note_etag = hashlib.sha256(note_bytes).hexdigest()
-    resource_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "retry_doc",
+    resource_body = {"schemaVersion": 1, "resourceKind": resource_kind, "docId": "retry_doc",
                      "updateB64": "c2FtcGxlLXlqcw==", "snapshot": {"blocks": ["retry"]}}
     created = store.create_blocksuite_resource("projects", note.name, resource_body, note_etag)
     image_buffer = BytesIO()

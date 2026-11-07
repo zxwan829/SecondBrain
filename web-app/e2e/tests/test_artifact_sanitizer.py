@@ -221,6 +221,27 @@ def test_wp5_autosave_probe_timeline_accepts_only_bounded_safe_events():
     with pytest.raises(RuntimeError):
         module._validate_failure_diagnostics([over_bound])
 
+
+def test_wp5_canvas_save_diagnostic_is_finite_and_sanitized():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+        "assertion_id": "wp5_resource_checkpoint_010", "activity_get_statuses": [],
+        "wp5_canvas_save": {
+            "checkpoint": "saved_status", "status": "previous_dirty", "close_enabled": False,
+            "readback_status": 200, "snapshot_matches_readback": False,
+            "live_text_bounds": [[120, 360, 320, 128]], "saved_text_bounds": [[120, 360, 320, 120]],
+            "layout_samples": [[128, 128, 130, 128, 20, 20, 18, 1, 1, 1, 1]],
+        },
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    invalid = {**diagnostic, "wp5_canvas_save": {**diagnostic["wp5_canvas_save"], "status": "private note body"}}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([invalid])
+    over_bound = {**diagnostic, "wp5_canvas_save": {**diagnostic["wp5_canvas_save"],
+        "live_text_bounds": [[120, 360, 320, 1e10]]}}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([over_bound])
+
 @pytest.mark.parametrize("entry", [
     {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret", "notes_collection_statuses": []},
     {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
@@ -314,6 +335,28 @@ def test_failure_diagnostic_can_include_bounded_blocksuite_runtime_state():
         module._validate_failure_diagnostics([diagnostic])
     diagnostic["blocksuite_module_statuses"] = [200, 504]
     diagnostic["page_error_summaries"] = ["/Users/person/private.txt"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_sanitized_wp5_step_and_resource_statuses():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+        "assertion_id": "wp5_resource_content_visible", "activity_get_statuses": [200],
+        "wp5_step": "rich_page_first_save",
+        "blocksuite_request_statuses": [
+            {"endpoint": "resource", "method": "POST", "status": 200},
+            {"endpoint": "blob", "method": "PUT", "status": 201},
+        ],
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["wp5_step"] = "GET /api/notes/private"
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["wp5_step"] = "rich_page_first_save"
+    diagnostic["blocksuite_request_statuses"] = [
+        {"endpoint": "resource", "method": "PUT", "status": 700},
+    ]
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([diagnostic])
 

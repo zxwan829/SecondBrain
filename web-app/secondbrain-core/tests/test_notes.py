@@ -640,7 +640,64 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(rejected_identity_change.status_code, 409)
         self.assertEqual(client.get(resource_url).json()["docId"], "table_doc")
 
+    def test_rich_page_reuses_note_versions_blob_snapshot_and_quota_without_migrating_markdown(self):
+        original = "# Ordinary Markdown\n\nKeep this readable source.\n"
+        note = self.store.create(original)
+        body = {"schemaVersion": 1, "resourceKind": "rich-page", "docId": "rich_page_1",
+                "updateB64": base64.b64encode(b"synthetic-yjs-page-v1").decode("ascii"),
+                "snapshot": {"blocks": {"textAlign": "center", "mergeRegions": {"region": [1, 2]}}}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], body, note["etag"])
+        # Creating a native Page never rewrites or migrates its ordinary Markdown owner.
+        self.assertEqual(self.store.read("drafts", note["path"])["content"], original)
+        png = self._png_blob("blue")
+        blob_id = self._blob_id(png)
+        blob = self.store.put_blocksuite_blob("drafts", note["path"], blob_id, png, "image/png",
+                                              note["etag"], created["artifact_set_etag"])
+        projection = original + "\n" + created["reference"] + "\n"
+        owner = self.store.update("drafts", note["path"], projection, note["etag"],
+                                  expected_artifacts=blob["artifact_set_etag"])
+        first = self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        replacement = {**body, "resourceId": created["resource_id"],
+                       "updateB64": base64.b64encode(b"synthetic-yjs-page-v2").decode("ascii"),
+                       "snapshot": {"blocks": {"textAlign": "right", "sourceId": blob_id}}}
+        saved = self.store.update_blocksuite_resource("drafts", note["path"], created["resource_id"],
+                                                      replacement, owner["etag"], first["etag"],
+                                                      first["artifact_set_etag"])
+        target = next(row for row in self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+                      if row["note_sha256"] == owner["etag"]
+                      and row["artifact_set_etag"] == first["artifact_set_etag"])
+        # An external Markdown writer retains its source; stale rich-page writes cannot overwrite it.
+        external = self.store.update("drafts", note["path"], projection + "\nExternal edit.\n", owner["etag"],
+                                     expected_artifacts=saved["artifact_set_etag"])
+        with self.assertRaises(HTTPException) as conflict:
+            self.store.update_blocksuite_resource("drafts", note["path"], created["resource_id"], replacement,
+                                                  owner["etag"], saved["etag"], saved["artifact_set_etag"])
+        self.assertEqual(conflict.exception.status_code, 412)
+        self.assertEqual(self.store.read("drafts", note["path"])["content"], external["content"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])["updateB64"],
+                         replacement["updateB64"])
+        with patch("secondbrain_core.modules.notes.MAX_BLOCKSUITE_RESOURCES_PER_NOTE", 2):
+            with self.assertRaises(HTTPException) as limited:
+                self.store.create_blocksuite_resource("drafts", note["path"], {**body, "docId": "second_rich_page"},
+                                                      external["etag"], saved["artifact_set_etag"])
+        self.assertEqual(limited.exception.status_code, 413)
+        # Recovery is explicit and guarded by the latest owner and artifact-set versions.
+        restored = self.store.restore_blocksuite_snapshot("drafts", note["path"], target["snapshot_id"],
+                                                          external["etag"], saved["artifact_set_etag"])
+        self.assertTrue(restored["restored"])
+        self.assertEqual(self.store.read("drafts", note["path"])["content"], projection)
+        reloaded = self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        self.assertEqual(reloaded["resourceKind"], "rich-page")
+        self.assertEqual(reloaded["snapshot"], body["snapshot"])
+        self.assertEqual(self.store.read_blocksuite_blob("drafts", note["path"], blob_id)["data"], png)
+
     def test_blocksuite_snapshot_routes_expose_read_and_dual_etag_restore(self):
+        self._check_blocksuite_snapshot_routes("database")
+
+    def test_rich_page_http_routes_reuse_auth_and_dual_etag_snapshot_restore(self):
+        self._check_blocksuite_snapshot_routes("rich-page")
+
+    def _check_blocksuite_snapshot_routes(self, resource_kind):
         class SessionAuth:
             def require_action(self, request: Request, action: str):
                 if request.cookies.get("session") != "owner":
@@ -654,7 +711,7 @@ class NotesStoreTests(unittest.TestCase):
         client = TestClient(app)
         client.cookies.set("session", "owner")
         base = f"/api/notes/drafts/{note['path']}/blocksuite"
-        create_body = {"schemaVersion": 1, "resourceKind": "database", "docId": "route_doc",
+        create_body = {"schemaVersion": 1, "resourceKind": resource_kind, "docId": "route_doc",
                        "updateB64": base64.b64encode(b"before").decode("ascii"), "snapshot": {"blocks": []}}
         created = client.post(f"{base}/resources", json=create_body,
                               headers={"If-Match": f'"{note["etag"]}"',
