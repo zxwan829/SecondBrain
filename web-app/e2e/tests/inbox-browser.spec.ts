@@ -1563,42 +1563,14 @@ for (const viewport of activeViewports) {
       }
       const modeGroup = richDialog.getByRole('group', { name: '文档模式' });
       await expect(modeGroup).toBeVisible();
-      const pageModeButton = modeGroup.getByRole('button', { name: '页面', exact: true });
-      const modeSwitchDom = await Promise.race([
-        page.evaluate(() => {
-          const dialogs = [...document.querySelectorAll<HTMLElement>('.blocksuite-resource-dialog[role="dialog"]')];
-          const dialog = dialogs[0];
-          if (!dialog) return { readyState: document.readyState, count: dialogs.length };
-          const style = getComputedStyle(dialog);
-          const details = dialog.querySelector<HTMLDetailsElement>('details.sb-properties-info');
-          const group = [...dialog.querySelectorAll<HTMLElement>('[role="group"]')]
-            .find(item => item.getAttribute('aria-label') === '文档模式');
-          return { readyState: document.readyState, count: dialogs.length, label: dialog.getAttribute('aria-label'),
-            ariaHidden: dialog.getAttribute('aria-hidden'), ariaModal: dialog.getAttribute('aria-modal'),
-            hidden: dialog.hidden, inert: dialog.inert, display: style.display, visibility: style.visibility,
-            detailsOpen: details?.open ?? null,
-            group: group ? { role: group.getAttribute('role'), label: group.getAttribute('aria-label'),
-              buttons: [...group.querySelectorAll<HTMLButtonElement>('button')].slice(0, 2).map(button => ({
-                text: button.textContent?.trim().slice(0, 20) ?? '', disabled: button.disabled,
-                ariaDisabled: button.getAttribute('aria-disabled') })) } : null };
-        }).catch(() => null),
-        new Promise<null>(resolve => setTimeout(() => resolve(null), 1500)),
-      ]);
-      console.log('WP5_RESOURCE_MODE_DOM', JSON.stringify(modeSwitchDom));
+      const pageModeButton = modeGroup.locator('button').filter({ hasText: /^页面$/ });
+      await expect(pageModeButton).toHaveCount(1);
+      await expect(pageModeButton).toBeVisible();
+      await expect(pageModeButton).toBeEnabled();
+      await expect(pageModeButton).toHaveAttribute('aria-pressed', 'false');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
-      try { await pageModeButton.click({ timeout: 5000 }); }
-      catch (error) {
-        const message = error instanceof Error ? error.message : '';
-        const callLogIndex = message.toLowerCase().indexOf('call log:');
-        const callLog = callLogIndex >= 0 ? message.slice(callLogIndex + 'call log:'.length) : '';
-        const callLogLines = callLog.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(-3)
-          .map(line => line.replace(/<[^>]*>/g, '[element]').replace(/\b[0-9a-f-]{16,}\b/gi, '[id]')
-            .replace(/[^\x20-\x7e]/g, '?').replace(/\s+/g, ' ').slice(0, 160));
-        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ e: error instanceof Error ? error.name : 'non_error',
-          log: callLogIndex >= 0, lines: callLogLines }));
-        throw error;
-      }
+      await pageModeButton.click({ timeout: 5000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
       await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
       await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
