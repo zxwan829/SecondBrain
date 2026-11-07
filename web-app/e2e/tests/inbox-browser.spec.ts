@@ -1650,6 +1650,21 @@ for (const viewport of activeViewports) {
       let conflictAction = 'paragraph-geometry';
       let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
       try {
+        // The backup restored the saved Edgeless mode; use its real fit-to-screen
+        // control before targeting the Note, since the persisted camera can put
+        // the paragraph just outside this bounded resource viewport.
+        conflictAction = 'edgeless-fit-to-screen';
+        const fitToScreen = conflictRichDialog.locator('.affine-edgeless-viewport edgeless-zoom-toolbar edgeless-tool-icon-button').first();
+        await expect(fitToScreen, 'wp5_rich_page_conflict_fit_control_visible').toBeVisible({ timeout: 5000 });
+        await fitToScreen.click({ timeout: 5000 });
+        conflictAction = 'paragraph-geometry';
+        await expect.poll(async () => {
+          const paragraphBounds = await localRichParagraph.boundingBox();
+          const viewportBounds = await conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox();
+          return Boolean(paragraphBounds && viewportBounds
+            && paragraphBounds.y + paragraphBounds.height > viewportBounds.y && paragraphBounds.y < viewportBounds.y + viewportBounds.height
+            && paragraphBounds.x + paragraphBounds.width > viewportBounds.x && paragraphBounds.x < viewportBounds.x + viewportBounds.width);
+        }, { timeout: 5000, message: 'wp5_rich_page_conflict_paragraph_after_fit_in_viewport' }).toBe(true);
         const bounds = await localRichParagraph.boundingBox({ timeout: 5000 });
         expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
         const viewportBounds = await conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox({ timeout: 5000 });
