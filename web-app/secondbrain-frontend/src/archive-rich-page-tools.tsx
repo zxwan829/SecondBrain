@@ -118,3 +118,28 @@ export function archiveFocusMindMap(std: BlockStdScope) {
   if (!bound || !(bound.w > 0 && bound.h > 0)) throw new Error('当前画布没有可定位的思维导图。');
   gfx.viewport.setViewportByBound(Bound.fromXYWH([bound.x, bound.y, bound.w, bound.h]), [48, 48, 48, 48], false, true);
 }
+
+export type ArchiveDiagnosticsActions = {
+  writeClientMarker?: () => void; inspectDocument: () => void; reloadAfterGuard?: () => void;
+  openPeer?: () => void; saveConflictCopy?: () => void; openConflictCopy?: () => void;
+  createBackup?: () => void; restoreBackup?: () => void; inspectMindMap: () => void; focusMindMap: () => void;
+};
+/** Development tools remain explicit host actions, never mock routes or global cache deletion. */
+export function ArchiveNativeDiagnostics({ actions, readonly, conflict, hasConflictCopy, hasBackup, client, revision, documentId, report }: {
+  actions: ArchiveDiagnosticsActions; readonly: boolean; conflict: boolean; hasConflictCopy: boolean; hasBackup: boolean;
+  client: string; revision: string; documentId: string; report: string;
+}) {
+  return <details className="diagnostics"><summary>高级工具与诊断</summary><div className="diagnostic-content">
+    <div className="diagnostic-actions">
+      <button disabled={readonly || !actions.writeClientMarker} onClick={actions.writeClientMarker}>写入客户端标记</button>
+      <button onClick={actions.inspectDocument}>核对文档</button>
+      <button disabled={readonly || !actions.reloadAfterGuard} onClick={actions.reloadAfterGuard}>清临时缓存并重载</button>
+      <button disabled={!actions.openPeer} onClick={actions.openPeer}>打开冲突客户端</button>
+      <button disabled={!conflict || hasConflictCopy || !actions.saveConflictCopy} onClick={actions.saveConflictCopy}>保存冲突副本</button>
+      <button disabled={!hasConflictCopy || !actions.openConflictCopy} onClick={actions.openConflictCopy}>打开冲突副本</button>
+      <button disabled={readonly || !actions.createBackup} onClick={actions.createBackup}>备份正文与画布</button>
+      <button disabled={!hasBackup || !actions.restoreBackup} onClick={actions.restoreBackup}>恢复闭包备份</button>
+      <button onClick={actions.inspectMindMap}>检查思维导图视口</button><button onClick={actions.focusMindMap}>定位思维导图</button>
+    </div><div className="meta"><b>客户端：</b>{client}<br /><b>服务端版本：</b><code>{revision}</code><br /><b>文档：</b><code>{documentId}</code><pre>{report}</pre></div>
+  </div></details>;
+}
