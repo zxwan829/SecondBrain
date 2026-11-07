@@ -50,11 +50,32 @@ const edits = [
         }`],
 ];
 
+const styleAnchor = `      text-align: var(--edgeless-text-text-align);
+    }
+  `;
+const styleReplacement = `      text-align: var(--edgeless-text-text-align);
+    }
+
+    .edgeless-text-block-container .affine-block-children-container rich-text,
+    .edgeless-text-block-container .affine-block-children-container .inline-editor {
+      height: auto;
+    }
+  `;
+
 for (const [relative, before, after] of edits) {
   const target = path.join(pkg, relative);
   let source = fs.readFileSync(target, 'utf8');
   if (source.includes(after)) continue;
   if (!source.includes(before)) throw new Error(`Edgeless Text sizing patch context missing: ${relative}`);
   source = source.replace(before, after);
+  fs.writeFileSync(target, source);
+}
+
+for (const relative of ['src/edgeless-text-block.ts', 'dist/edgeless-text-block.js']) {
+  const target = path.join(pkg, relative);
+  let source = fs.readFileSync(target, 'utf8');
+  if (source.includes(styleReplacement)) continue;
+  if (!source.includes(styleAnchor)) throw new Error(`Edgeless Text intrinsic-height style anchor missing: ${relative}`);
+  source = source.replace(styleAnchor, styleReplacement);
   fs.writeFileSync(target, source);
 }
