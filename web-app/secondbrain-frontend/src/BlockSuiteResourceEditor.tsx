@@ -318,9 +318,11 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         dirtyRef.current = true; setDirty(true); setProjectionConflict(true);
       }
       setStatus(status === 412
-        ? nativeWriteCommitted
-          ? 'Markdown 投影遇到版本冲突（412）；刚保存的富 Page 资源与双方 Markdown 均保留，请显式另存或恢复。'
-          : '版本冲突（412）；远端资源与当前修改均保留，Core 未覆盖。请下载恢复副本后显式处理。'
+        ? initialResource.resourceKind === 'rich-page'
+          ? nativeWriteCommitted
+            ? 'Markdown 投影遇到版本冲突（412）；刚保存的富 Page 资源与双方 Markdown 均保留，请显式另存或恢复。'
+            : '版本冲突（412）；远端资源与当前修改均保留，Core 未覆盖。请下载恢复副本后显式处理。'
+          : '版本冲突（412）；Core 未覆盖现有资源。当前修改仍保留，请下载恢复副本后重试。'
         : error instanceof Error ? `保存失败；修改仍保留，可重试。${error.message}` : '保存失败；修改仍保留，可重试。');
       return false;
     } finally {
