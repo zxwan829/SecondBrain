@@ -1807,10 +1807,24 @@ for (const viewport of activeViewports) {
         const secondCell = archiveTableCells.nth(1);
         const mergeSourceText = `WP5 merge source ${randomUUID()}`;
         const mergeCoveredText = `WP5 merge covered ${randomUUID()}`;
+        const firstRowId = await firstCell.getAttribute('data-row-id');
+        const firstColumnId = await firstCell.getAttribute('data-column-id');
+        const secondRowId = await secondCell.getAttribute('data-row-id');
+        const secondColumnId = await secondCell.getAttribute('data-column-id');
+        expect(firstRowId && firstColumnId && secondRowId && secondColumnId, 'wp5_archive_table_cell_addresses_present').toBeTruthy();
+        const readTableCellText = (targetRowId: string, targetColumnId: string) => archiveTable.evaluate((element, target) => {
+          const table = element as HTMLElement & { dataManager?: { getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
+          return table.dataManager?.getCell?.(target.rowId, target.columnId)?.text?.toString?.() ?? '';
+        }, { rowId: targetRowId, columnId: targetColumnId });
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_038');
         await firstCell.click();
         await page.keyboard.insertText(mergeSourceText);
+        await expect.poll(() => readTableCellText(firstRowId!, firstColumnId!)).toContain(mergeSourceText);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
         await secondCell.click();
         await page.keyboard.insertText(mergeCoveredText);
+        await expect.poll(() => readTableCellText(secondRowId!, secondColumnId!)).toContain(mergeCoveredText);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_040');
         const firstCellBox = await firstCell.boundingBox();
         const secondCellBox = await secondCell.boundingBox();
         expect(firstCellBox, 'wp5_archive_table_first_cell_geometry').not.toBeNull();
@@ -1823,12 +1837,14 @@ for (const viewport of activeViewports) {
         const mergeCellsAction = page.getByText('合并单元格', { exact: true });
         await expect(mergeCellsAction).toBeVisible();
         await mergeCellsAction.click();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_041');
         const tableMergeCount = await archiveTable.evaluate(element => {
           const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown> } } } };
           return Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length;
         });
         expect(tableMergeCount, 'wp5_archive_table_merge_model').toBe(1);
         await expect(archiveTable.locator('td[data-row-id][data-column-id]').first()).toHaveAttribute('colspan', '2');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_042');
         const mergedCellTexts = await archiveTable.evaluate((element, expectedRowTexts) => {
           const table = element as HTMLElement & { dataManager?: { rows$?: { value: Array<{ rowId: string }> }; columns$?: { value: Array<{ columnId: string }> }; getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
           const row = table.dataManager?.rows$?.value[0];
