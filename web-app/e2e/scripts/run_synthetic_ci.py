@@ -445,7 +445,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                                   for bounds in canvas_save[key])
                            for key in ("live_text_bounds", "saved_text_bounds"))
                     or not isinstance(canvas_save.get("layout_samples"), list) or len(canvas_save["layout_samples"]) > 2
-                    or any(not isinstance(sample, list) or len(sample) != 3
+                    or any(not isinstance(sample, list) or len(sample) != 11
                            or any(type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 100000
                                   for value in sample)
                            for sample in canvas_save["layout_samples"])

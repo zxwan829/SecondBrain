@@ -181,7 +181,13 @@ async function expectEdgelessTextLayoutSettled(dialog: Locator, report: (samples
       const style = getComputedStyle(container);
       const verticalInsets = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth)
         + Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
-      return { measuredHeight: (content.getBoundingClientRect().height + verticalInsets) / zoom, modelHeight: bounds[3], zoom };
+      const paragraph = content.querySelector('affine-paragraph');
+      const richText = paragraph?.querySelector('rich-text') ?? null;
+      const inlineEditor = richText?.querySelector('.inline-editor') ?? null;
+      const height = (target: Element | null) => target ? target.getBoundingClientRect().height / zoom : -1;
+      return { measuredHeight: (content.getBoundingClientRect().height + verticalInsets) / zoom, modelHeight: bounds[3], zoom,
+        layout: [block.getBoundingClientRect().height / zoom, height(container), height(content),
+          height(paragraph), height(richText), height(inlineEditor), Number.parseFloat(style.borderTopWidth), Number.parseFloat(style.borderBottomWidth)] };
     };
     const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
     await nextFrame();
@@ -195,7 +201,8 @@ async function expectEdgelessTextLayoutSettled(dialog: Locator, report: (samples
       && stable(first.measuredHeight, second.measuredHeight)
       && stable(first.modelHeight, second.modelHeight)
       && stable(first.zoom, second.zoom),
-      samples: [[first.measuredHeight, first.modelHeight, first.zoom], [second.measuredHeight, second.modelHeight, second.zoom]] };
+      samples: [[first.measuredHeight, first.modelHeight, first.zoom, ...first.layout],
+        [second.measuredHeight, second.modelHeight, second.zoom, ...second.layout]] };
     });
     report(result.samples);
     return result.settled;
