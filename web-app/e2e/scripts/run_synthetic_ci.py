@@ -1556,7 +1556,7 @@ def main() -> int:
             assert_journal_fixture_unchanged(
                 dirs["journal"], journal_fixture, expected_browser_appends=expected_journal_appends,
             )
-            if wp5_probe_mode:
+            if wp5_probe_mode or options.wp5_rich_page_mode_only:
                 if any(dirs["briefs"].iterdir()):
                     raise RuntimeError("focused WP5 probe unexpectedly wrote Daily Brief files")
             else:
