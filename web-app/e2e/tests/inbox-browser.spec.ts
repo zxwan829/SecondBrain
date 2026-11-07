@@ -1648,7 +1648,7 @@ for (const viewport of activeViewports) {
       const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
       let conflictAction = 'paragraph-geometry';
-      let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
+      let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[] } | null = null;
       try {
         const bounds = await localRichParagraph.boundingBox({ timeout: 5000 });
         expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
@@ -1664,7 +1664,7 @@ for (const viewport of activeViewports) {
         conflictAction = 'readonly-dom-structure';
         structureSummary = await page.evaluate(({ x, y, text }) => {
           const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog');
-          if (!dialog) return { hostKind: null, paragraphCount: 0, paragraphPath: [], notes: [], hitPath: [] };
+          if (!dialog) return { hostKind: null, paragraphCount: 0, paragraphPath: [], paragraphRect: [], dialogRect: [], viewportRect: [], windowSize: [], notes: [], hitPath: [] };
           const roots: Array<Document | ShadowRoot | HTMLElement> = [dialog];
           const elements: Element[] = [];
           for (let index = 0; index < roots.length; index += 1) {
@@ -1702,6 +1702,10 @@ for (const viewport of activeViewports) {
               bodyParagraphs.length, includesTarget] as [string, number[], number, boolean];
           });
           const host = dialog.querySelector<HTMLElement>('.blocksuite-resource-host');
+          const dialogRect = dialog.getBoundingClientRect();
+          const viewportRect = dialog.querySelector<HTMLElement>('.affine-edgeless-viewport')?.getBoundingClientRect();
+          const paragraphRect = paragraphs[0]?.getBoundingClientRect();
+          const rectValues = (rect?: DOMRect) => rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] : [];
           let hit: Element | null = document.elementFromPoint(x, y);
           while (hit?.shadowRoot) {
             const inner = hit.shadowRoot.elementFromPoint(x, y);
@@ -1709,7 +1713,9 @@ for (const viewport of activeViewports) {
             hit = inner;
           }
           return { hostKind: host?.dataset.kind ?? null, paragraphCount: paragraphs.length,
-            paragraphPath: pathOf(paragraphs[0] ?? null), notes, hitPath: pathOf(hit) };
+            paragraphPath: pathOf(paragraphs[0] ?? null), paragraphRect: rectValues(paragraphRect),
+            dialogRect: rectValues(dialogRect), viewportRect: rectValues(viewportRect), windowSize: [innerWidth, innerHeight],
+            notes, hitPath: pathOf(hit) };
         }, { x: clickPoint.x, y: clickPoint.y, text: richText });
         expect(structureSummary.notes.some(note => note[3]), 'wp5_rich_page_conflict_paragraph_belongs_to_active_note').toBe(true);
         expect(structureSummary.hitPath).toContain('affine-edgeless-note');
@@ -1834,10 +1840,11 @@ for (const viewport of activeViewports) {
           new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
         ]);
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(structureSummary
-          ? { a: 'dom', host: structureSummary.hostKind, pc: structureSummary.paragraphCount,
-            p: structureSummary.paragraphPath.join('>'),
-            n: structureSummary.notes.map(([id, rect, count, target]) => [id, rect.join(','), count, Number(target)]),
-            h: structureSummary.hitPath.join('>') }
+          ? { a: 'layout', host: structureSummary.hostKind, wh: structureSummary.windowSize,
+            dialog: structureSummary.dialogRect, viewport: structureSummary.viewportRect,
+            paragraph: structureSummary.paragraphRect,
+            note: structureSummary.notes.map(([id, rect, count, target]) => [id, rect, count, Number(target)]),
+            hit: structureSummary.hitPath.length > 0 }
           : { action: conflictAction, pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [hit.note, hit.paragraph, hit.editable]),
             note: [interactionState?.noteEditing, interactionState?.noteSelected, interactionState?.selectionEditing],
             anchor: interactionState?.selectionInParagraph, focus: interactionState?.focusedContenteditable,
