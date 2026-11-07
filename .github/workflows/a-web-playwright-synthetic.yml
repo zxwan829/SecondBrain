@@ -97,7 +97,6 @@ jobs:
           npm run test:blocksuite-lifecycle
           npm run typecheck
       - name: Build Web assets
-        if: inputs.wp5_open_only != true
         working-directory: web-app/secondbrain-frontend
         env:
           VITE_ENABLE_NOTES: "true"
@@ -107,6 +106,8 @@ jobs:
         run: python -m pytest -q web-app/e2e/tests/test_artifact_sanitizer.py
       - name: Run independent WP5 table DOM diagnostic
         if: inputs.wp5_open_only == true
+        env:
+          SB_E2E_PRODUCTION_BUILD: "true"
         run: node web-app/e2e/scripts/wp5_table_dom_diagnostic.mjs
       - name: Run isolated Core + Web browser acceptance
         id: synthetic

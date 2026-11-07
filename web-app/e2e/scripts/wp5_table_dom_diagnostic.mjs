@@ -70,7 +70,9 @@ try {
   const python = process.env.PYTHON ?? 'python';
   const core = start(python, ['-m', 'uvicorn', 'secondbrain_core.app:create_app', '--factory', '--host', '127.0.0.1', '--port', String(corePort)], coreDir);
   await waitReady(`${coreUrl}/health`, core);
-  const web = start('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], frontend);
+  const web = process.env.SB_E2E_PRODUCTION_BUILD === 'true'
+    ? start('npx', ['--no-install', 'vite', 'preview', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], frontend)
+    : start('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', String(webPort), '--strictPort'], frontend);
   await waitReady(`${webUrl}/chat/blank`, web);
 
   browser = await chromium.launch({ headless: true });
