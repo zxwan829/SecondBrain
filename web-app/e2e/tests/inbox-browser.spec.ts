@@ -1692,7 +1692,10 @@ for (const viewport of activeViewports) {
           const notes: Array<[string, number[], number, boolean]> = elements.filter(element => element.localName === 'affine-edgeless-note').slice(0, 3).map(element => {
             const note = element as HTMLElement & { model?: { id?: string } };
             const rect = note.getBoundingClientRect();
-            const bodyParagraphs = [...(note.shadowRoot?.querySelectorAll('affine-paragraph') ?? [])];
+            const bodyParagraphs = [...new Set([
+              ...note.querySelectorAll('affine-paragraph'),
+              ...(note.shadowRoot?.querySelectorAll('affine-paragraph') ?? []),
+            ])];
             const includesTarget = paragraphs.some(paragraph => bodyParagraphs.includes(paragraph));
             return [note.model?.id?.slice(-6) ?? '',
               [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
@@ -1832,9 +1835,9 @@ for (const viewport of activeViewports) {
         ]);
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify(structureSummary
           ? { a: 'dom', host: structureSummary.hostKind, pc: structureSummary.paragraphCount,
-            p: structureSummary.paragraphPath.slice(0, 5).join('>'),
+            p: structureSummary.paragraphPath.join('>'),
             n: structureSummary.notes.map(([id, rect, count, target]) => [id, rect.join(','), count, Number(target)]),
-            h: structureSummary.hitPath.slice(0, 5).join('>') }
+            h: structureSummary.hitPath.join('>') }
           : { action: conflictAction, pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [hit.note, hit.paragraph, hit.editable]),
             note: [interactionState?.noteEditing, interactionState?.noteSelected, interactionState?.selectionEditing],
             anchor: interactionState?.selectionInParagraph, focus: interactionState?.focusedContenteditable,
