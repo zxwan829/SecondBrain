@@ -1653,8 +1653,10 @@ for (const viewport of activeViewports) {
         expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
         await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
         await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
-        conflictAction = 'paragraph-edit-gesture';
-        await page.mouse.dblclick(bounds!.x + 10, bounds!.y + 10, { delay: 100 });
+        conflictAction = 'paragraph-enter-edit';
+        await page.mouse.click(bounds!.x + 10, bounds!.y + 10);
+        const paragraphEditor = localRichParagraph.locator('[contenteditable="true"]').first();
+        await expect(paragraphEditor, 'wp5_rich_page_conflict_editor_focused').toBeFocused({ timeout: 5000 });
         conflictAction = 'keyboard-edit';
         await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
         await expect(localRichParagraph, 'wp5_rich_page_conflict_local_edit_visible').toContainText(localRichMarker, { timeout: 5000 });
