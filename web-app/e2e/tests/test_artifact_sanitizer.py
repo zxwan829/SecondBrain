@@ -230,6 +230,7 @@ def test_wp5_canvas_save_diagnostic_is_finite_and_sanitized():
             "checkpoint": "saved_status", "status": "previous_dirty", "close_enabled": False,
             "readback_status": 200, "snapshot_matches_readback": False,
             "live_text_bounds": [[120, 360, 320, 128]], "saved_text_bounds": [[120, 360, 320, 120]],
+            "layout_samples": [],
         },
     }
     assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]

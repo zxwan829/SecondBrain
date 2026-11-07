@@ -430,8 +430,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or (canvas_save is not None and (
                     not isinstance(canvas_save, dict)
                     or set(canvas_save) != {"checkpoint", "status", "close_enabled", "readback_status",
-                                            "snapshot_matches_readback", "live_text_bounds", "saved_text_bounds"}
-                    or canvas_save.get("checkpoint") not in {"first_status", "second_save_response", "readback", "saved_status", "close_enabled"}
+                                            "snapshot_matches_readback", "live_text_bounds", "saved_text_bounds", "layout_samples"}
+                    or canvas_save.get("checkpoint") not in {"layout_poll", "first_status", "second_save_response", "readback", "saved_status", "close_enabled"}
                     or canvas_save.get("status") not in {"saved", "previous_dirty", "unsaved", "saving", "other"}
                     or (canvas_save.get("close_enabled") is not None and type(canvas_save.get("close_enabled")) is not bool)
                     or (canvas_save.get("readback_status") is not None and
@@ -444,6 +444,11 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                                          for value in bounds)
                                   for bounds in canvas_save[key])
                            for key in ("live_text_bounds", "saved_text_bounds"))
+                    or not isinstance(canvas_save.get("layout_samples"), list) or len(canvas_save["layout_samples"]) > 2
+                    or any(not isinstance(sample, list) or len(sample) != 3
+                           or any(type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 100000
+                                  for value in sample)
+                           for sample in canvas_save["layout_samples"])
                 ))
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")

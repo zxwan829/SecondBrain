@@ -51,10 +51,10 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_snapshot_restore' | 'rich_page_post_restore_reopen' | 'rich_page_conflict'
   | 'rich_page_recovery_copy' | 'rich_page_explicit_fork';
 type BlockSuiteRequestDiagnostic = { endpoint: 'resource_collection' | 'resource' | 'blob' | 'snapshot' | 'snapshot_restore'; method: 'GET' | 'POST' | 'PUT'; status: number | null };
-type CanvasSaveDiagnostic = { checkpoint: 'first_status' | 'second_save_response' | 'readback' | 'snapshot_compare' | 'saved_status' | 'close_enabled';
+type CanvasSaveDiagnostic = { checkpoint: 'layout_poll' | 'first_status' | 'second_save_response' | 'readback' | 'saved_status' | 'close_enabled';
   status: 'saved' | 'previous_dirty' | 'unsaved' | 'saving' | 'other'; close_enabled: boolean | null;
   readback_status: number | null; snapshot_matches_readback: boolean | null;
-  live_text_bounds: number[][]; saved_text_bounds: number[][] };
+  live_text_bounds: number[][]; saved_text_bounds: number[][]; layout_samples: number[][] };
 const WP5_PROBE_MARKER = 'wp5-conflict-queue' as const;
 function boundedWp5ProbeTimeline(events: Wp5ProbeEvent[]): Wp5ProbeEvent[] {
   const ordered = [...events].sort((left, right) => left.at_ms - right.at_ms);
@@ -165,10 +165,11 @@ async function expectNoteSavedStatus(page: Page, observed: Awaited<ReturnType<ty
   }
 }
 
-async function expectEdgelessTextLayoutSettled(dialog: Locator) {
-  await expect.poll(async () => dialog.locator('affine-edgeless-text').evaluate(async (element) => {
+async function expectEdgelessTextLayoutSettled(dialog: Locator, report: (samples: number[][]) => void) {
+  await expect.poll(async () => {
+    const result = await dialog.locator('affine-edgeless-text').evaluate(async (element) => {
     const block = element as HTMLElement & { model?: { xywh?: string }; gfx?: { viewport?: { zoom?: number } } };
-    const container = block.shadowRoot?.querySelector('.edgeless-text-block-container');
+    const container = block.querySelector('.edgeless-text-block-container');
     const sample = () => {
       const zoom = block.gfx?.viewport?.zoom;
       const xywh = block.model?.xywh;
@@ -183,14 +184,18 @@ async function expectEdgelessTextLayoutSettled(dialog: Locator) {
     const first = sample();
     await nextFrame();
     const second = sample();
-    if (!first || !second) return false;
+    if (!first || !second) return { settled: false, samples: [] as number[][] };
     const stable = (left: number, right: number) => Math.abs(left - right) <= 0.25;
-    return stable(first.measuredHeight, first.modelHeight)
+    return { settled: stable(first.measuredHeight, first.modelHeight)
       && stable(second.measuredHeight, second.modelHeight)
       && stable(first.measuredHeight, second.measuredHeight)
       && stable(first.modelHeight, second.modelHeight)
-      && stable(first.zoom, second.zoom);
-  })).toBe(true);
+      && stable(first.zoom, second.zoom),
+      samples: [[first.measuredHeight, first.modelHeight, first.zoom], [second.measuredHeight, second.modelHeight, second.zoom]] };
+    });
+    report(result.samples);
+    return result.settled;
+  }).toBe(true);
 }
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -1403,7 +1408,10 @@ for (const viewport of activeViewports) {
         buffer: Buffer.from(nestedImageDataUrl.split(',')[1], 'base64') });
       expect((await nestedBlobPut).status(), 'wp5_rich_page_nested_canvas_blob').toBe(201);
       observed.setDiagnosticAssertion('wp5_canvas_layout_stable');
-      await expectEdgelessTextLayoutSettled(nestedCanvasDialog);
+      await expectEdgelessTextLayoutSettled(nestedCanvasDialog, (samples) => observed.setWp5CanvasSaveDiagnostic({
+        checkpoint: 'layout_poll', status: 'other', close_enabled: null, readback_status: null,
+        snapshot_matches_readback: null, live_text_bounds: [], saved_text_bounds: [], layout_samples: samples,
+      }));
       const nestedCanvasSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
       observed.setWp5Step('rich_page_nested_canvas_save');
@@ -1418,7 +1426,7 @@ for (const viewport of activeViewports) {
       const recordCanvasSave = (diagnostic: CanvasSaveDiagnostic) => observed.setWp5CanvasSaveDiagnostic(diagnostic);
       recordCanvasSave({ checkpoint: 'first_status', status: canvasStatusState(await nestedCanvasStatus.innerText()),
         close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
-        live_text_bounds: [], saved_text_bounds: [] });
+        live_text_bounds: [], saved_text_bounds: [], layout_samples: [] });
       await expect(nestedCanvasStatus).toHaveText(/^(BlockSuite 资源已保存|先前版本已保存；有未保存的资源修改)$/);
       if (await nestedCanvasStatus.innerText() !== 'BlockSuite 资源已保存') {
         const nestedCanvasResave = page.waitForResponse(response => response.request().method() === 'PUT'
@@ -1427,7 +1435,7 @@ for (const viewport of activeViewports) {
         expect((await nestedCanvasResave).status(), 'wp5_rich_page_nested_canvas_resave').toBe(200);
         recordCanvasSave({ checkpoint: 'second_save_response', status: canvasStatusState(await nestedCanvasStatus.innerText()),
           close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
-          live_text_bounds: [], saved_text_bounds: [] });
+          live_text_bounds: [], saved_text_bounds: [], layout_samples: [] });
         const nestedCanvasReadback = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`);
         const nestedCanvasPersisted = nestedCanvasReadback.ok()
           ? await nestedCanvasReadback.json() as { snapshot?: Record<string, unknown> } : null;
@@ -1482,7 +1490,7 @@ for (const viewport of activeViewports) {
         };
         recordCanvasSave({ checkpoint: 'readback', status: canvasStatusState(await nestedCanvasStatus.innerText()),
           close_enabled: await nestedCanvasClose.isEnabled(), readback_status: nestedCanvasReadback.status(),
-          snapshot_matches_readback: null, live_text_bounds: [], saved_text_bounds: [] });
+          snapshot_matches_readback: null, live_text_bounds: [], saved_text_bounds: [], layout_samples: [] });
         const readbackMatchesLive = !!nestedCanvasLive && !!nestedCanvasPersisted
           && canonicalJson(nestedCanvasLive.snapshot) === canonicalJson(nestedCanvasPersisted.snapshot);
         const liveTextBounds = nestedCanvasLive?.textBounds ?? [];
@@ -1490,12 +1498,12 @@ for (const viewport of activeViewports) {
         recordCanvasSave({ checkpoint: 'saved_status', status: canvasStatusState(await nestedCanvasStatus.innerText()),
           close_enabled: await nestedCanvasClose.isEnabled(), readback_status: nestedCanvasReadback.status(),
           snapshot_matches_readback: readbackMatchesLive, live_text_bounds: liveTextBounds,
-          saved_text_bounds: savedTextBounds });
+          saved_text_bounds: savedTextBounds, layout_samples: [] });
         await expect(nestedCanvasStatus).toHaveText('BlockSuite 资源已保存');
       }
       recordCanvasSave({ checkpoint: 'close_enabled', status: canvasStatusState(await nestedCanvasStatus.innerText()),
         close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
-        live_text_bounds: [], saved_text_bounds: [] });
+        live_text_bounds: [], saved_text_bounds: [], layout_samples: [] });
       await expect(nestedCanvasClose).toBeEnabled();
       await nestedCanvasClose.click();
       await expect(nestedCanvasCard.getByText(/自动裁剪预览 · 1 个对象/)).toBeVisible({ timeout: 15000 });
