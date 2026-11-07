@@ -1693,7 +1693,7 @@ for (const viewport of activeViewports) {
         expect(Math.abs(controlGeometry[0].x - controlGeometry[1].x), 'wp5_desktop_page_plus_direction_gap').toBeLessThanOrEqual(26);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_028');
         await plus.click();
-        const clickProbe = await richDialog.evaluate(async dialog => {
+        const clickProbe = await richDialog.evaluate(async (dialog, { targetId }) => {
           const roots: Array<Element | ShadowRoot> = [dialog];
           let widget: (HTMLElement & { menuOpen?: boolean; renderRoot?: ShadowRoot }) | null = null;
           for (let index = 0; index < roots.length && !widget; index += 1) {
@@ -1713,7 +1713,7 @@ for (const viewport of activeViewports) {
             updateComplete?: Promise<unknown>; shadowRoot: ShadowRoot;
           }) | null;
           await innerMenu?.updateComplete;
-          const menuRoots: Array<Element | ShadowRoot> = menu ? [menu] : [];
+          const menuRoots: Array<Element | ShadowRoot> = menu?.shadowRoot ? [menu.shadowRoot] : [];
           let headingItemPresent = false;
           let renderedItemCount = 0;
           for (let index = 0; index < menuRoots.length; index += 1) {
@@ -1727,8 +1727,12 @@ for (const viewport of activeViewports) {
           const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
           let rangeInsideDialog = false;
           let rangeNode: Node | null = range?.commonAncestorContainer ?? null;
+          let rangeTargetMatches = false;
           while (rangeNode) {
             if (rangeNode === dialog) { rangeInsideDialog = true; break; }
+            const element = rangeNode instanceof Element ? rangeNode : rangeNode.parentElement;
+            const block = element?.closest('[data-block-id]');
+            rangeTargetMatches ||= block?.getAttribute('data-block-id') === targetId;
             if (rangeNode.parentNode) rangeNode = rangeNode.parentNode;
             else if (rangeNode instanceof ShadowRoot) rangeNode = rangeNode.host;
             else break;
@@ -1737,11 +1741,13 @@ for (const viewport of activeViewports) {
             plusVisible: widget?.renderRoot?.querySelector<HTMLButtonElement>('button[data-kind="plus"]')?.dataset.visible === 'true',
             menuConnected: menu?.isConnected === true,
             menuAborted: menu?.abortController?.signal.aborted ?? null,
+            topLevelItemCount: Array.isArray(menu?.items) ? menu.items.length : 0,
             nativeRangeCount: selection?.rangeCount ?? 0,
             rangeInsideDialog,
+            rangeTargetMatches,
             renderedItemCount,
             headingItemPresent };
-        });
+        }, { targetId: targetBlockId });
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ afterClick: clickProbe }));
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_029');
         await expect(page.getByText('一级标题', { exact: true })).toBeVisible();
