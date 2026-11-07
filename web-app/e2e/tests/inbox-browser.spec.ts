@@ -1693,7 +1693,7 @@ for (const viewport of activeViewports) {
         expect(Math.abs(controlGeometry[0].x - controlGeometry[1].x), 'wp5_desktop_page_plus_direction_gap').toBeLessThanOrEqual(26);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_028');
         await plus.click();
-        const clickProbe = await richDialog.evaluate(dialog => {
+        const clickProbe = await richDialog.evaluate(async dialog => {
           const roots: Array<Element | ShadowRoot> = [dialog];
           let widget: (HTMLElement & { menuOpen?: boolean; renderRoot?: ShadowRoot }) | null = null;
           for (let index = 0; index < roots.length && !widget; index += 1) {
@@ -1705,8 +1705,42 @@ for (const viewport of activeViewports) {
               if (element.shadowRoot) roots.push(element.shadowRoot);
             }
           }
+          const menu = document.querySelector('affine-slash-menu') as (HTMLElement & {
+            updateComplete?: Promise<unknown>; abortController?: AbortController; shadowRoot: ShadowRoot;
+          }) | null;
+          await menu?.updateComplete;
+          const innerMenu = menu?.shadowRoot.querySelector('inner-slash-menu') as (HTMLElement & {
+            updateComplete?: Promise<unknown>; shadowRoot: ShadowRoot;
+          }) | null;
+          await innerMenu?.updateComplete;
+          const menuRoots: Array<Element | ShadowRoot> = menu ? [menu] : [];
+          let headingItemPresent = false;
+          let renderedItemCount = 0;
+          for (let index = 0; index < menuRoots.length; index += 1) {
+            for (const element of menuRoots[index].querySelectorAll('*')) {
+              if (element.hasAttribute('data-testid')) renderedItemCount += 1;
+              if (element.getAttribute('data-testid') === '一级标题') headingItemPresent = true;
+              if (element.shadowRoot) menuRoots.push(element.shadowRoot);
+            }
+          }
+          const selection = window.getSelection();
+          const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+          let rangeInsideDialog = false;
+          let rangeNode: Node | null = range?.commonAncestorContainer ?? null;
+          while (rangeNode) {
+            if (rangeNode === dialog) { rangeInsideDialog = true; break; }
+            if (rangeNode.parentNode) rangeNode = rangeNode.parentNode;
+            else if (rangeNode instanceof ShadowRoot) rangeNode = rangeNode.host;
+            else break;
+          }
           return { menuOpen: widget?.menuOpen === true,
-            plusVisible: widget?.renderRoot?.querySelector<HTMLButtonElement>('button[data-kind="plus"]')?.dataset.visible === 'true' };
+            plusVisible: widget?.renderRoot?.querySelector<HTMLButtonElement>('button[data-kind="plus"]')?.dataset.visible === 'true',
+            menuConnected: menu?.isConnected === true,
+            menuAborted: menu?.abortController?.signal.aborted ?? null,
+            nativeRangeCount: selection?.rangeCount ?? 0,
+            rangeInsideDialog,
+            renderedItemCount,
+            headingItemPresent };
         });
         console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ afterClick: clickProbe }));
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_029');
