@@ -2091,7 +2091,7 @@ for (const viewport of activeViewports) {
           ? bodyBox!.y + 1 : bodyBox!.y + bodyBox!.height - 1;
         await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, dropY, { steps: 5 });
         const expectedDropBefore = dropY < bodyBox!.y + bodyBox!.height / 2;
-        const dragRouting = await archiveViewport.evaluate((root, point) => {
+        const dragRouting = await richDialog.evaluate((root, point) => {
           const widget = root.querySelector('sb-desktop-page-plus-widget') as (HTMLElement & {
             dragSource?: { id?: string } | null; dropTarget?: { id?: string; before?: boolean } | null;
           }) | null;
