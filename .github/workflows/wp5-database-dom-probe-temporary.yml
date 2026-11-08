@@ -1,0 +1,30 @@
+name: Temporary WP5 Database DOM diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-database-dom:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated Core dependencies
+        run: python -m pip install -e 'web-app/secondbrain-core[test]'
+      - name: Install frontend and Playwright dependencies
+        run: |
+          npm ci --prefix web-app/secondbrain-frontend
+          npm ci --prefix web-app/e2e
+      - name: Install Linux Chromium
+        run: npx --prefix web-app/e2e playwright install --with-deps chromium
+      - name: Run standalone synthetic Database DOM probe
+        run: python web-app/e2e/scripts/run_wp5_database_dom_probe.py
