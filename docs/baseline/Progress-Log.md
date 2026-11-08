@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-11-09 — WP5 最终 Notes UX App-only 部署与生产交互验收等待登录
+
+- **部署源码：** PR #313 候选 `b68c1cfe61bc92a3aa966821cc02aaa7ca35ffda` 已通过独立 Review、四条 Linux Chromium Gate、typecheck、production build、trace 脱敏与 Native Notes 独立 build；候选 tree `18863acd770457255b12e2fa4c7c00062dbd35bc` 与 merge commit `c76b06f725a5eab02b88866515d6d9943d5df163` 一致。PR #312 部署记录文档合并为 main `3ac9c8c73d32cd090027f12457491721ab2c03e4`；相对 #313 合并 tree 只有 `00-CURRENT.md`、`Environment-Baseline.md`、`Progress-Log.md` 差异，`web-app/` 与 `.github/` 无差异。
+- **切换前检查与回滚：** 实时确认旧 App 镜像 `sha256:533660ecd3dcdc67fd2ab309390dc9bd09ea2f3397fde0ac55537759d52d3229` healthy、Hermes identity、当前 Compose 和 App-only 配置。切换前快照 `/volume1/docker/secondbrain/rollback/wp5-notes-final-predeploy-20261108T181339Z/`，目录 `0700 root:root`、Compose 与 image tar `0600 root:root`；Compose SHA-256 `ecd61561d45e14227c18cff614bbd017cd10506bf0ac37456db3df1ec1bd45d2`，旧 image tar SHA-256 `d43061ebc5aee33a6f330650cbb1859065461e7771cbf636312aa5cdba447f46`。未使用凭据暴露 helper。
+- **App-only 部署：** NAS 仅更新 Compose 中 `secondbrain-app` image 至 `secondbrain-app:candidate-3ac9c8c73d32cd090027f12457491721ab2c03e4`，执行 `--no-deps --no-build --pull never --force-recreate --wait`。部署源码输入 SHA-256 `e0cf1e5cf73f8378ca890965401fc3f8c3f57477eec45231b474637d775ffb06`。新镜像 ID `sha256:6e2f2c14d5c434d6217626b254a874a98e07cef975ba5d6e76cf11646d377bc9`，revision label `3ac9c8c73d32cd090027f12457491721ab2c03e4`；App 容器 `6cea3d5c44d694a093534d7dfcd9ce8916cc1be2de41e5fb6928c0288c15aa56` healthy、RestartCount 0。Live Compose SHA-256 `2cc49e2b16c3a9322398b7021d39d7da948f3d56c9f42a010d31ef21500179e3`，相对快照仅 App image 行改变。
+- **安全与健康验证：** `/health`、`/`、`/login`、`/notes` HTTPS 均 200，health JSON 表示 `status=ok`、`promote_enabled=false`、`hermes_configured=true`。Hermes 容器、镜像、StartedAt、RestartCount 未变；App UID/GID `1026:100`、只读 rootfs、no-new-privileges、Knowledge RO、Private 未挂载、现有 Secrets RO、端口和其他配置不变。未改其他容器、Secret、ACL、挂载、网络、Vault、Obsidian 或业务数据。
+- **登录态测试边界：** 生产 Edge 标签页刷新后只显示密码登录表单。没有读取或输入凭据，没有检查或编辑旧笔记；因此本轮未创建生产合成笔记，八项修复对应的登录态场景（原生页面新建、中文/Enter/Backspace/Undo/Redo、唯一标题与正文持久化、六点手柄/加号、保存返回重开刷新、表格/Kanban/Canvas、412 冲突和安全恢复）仍待登录后验证。
+- **交付状态：** `ENGINEERING_PASS / DEPLOYED / PRODUCTION_TEST_PARTIAL_LOGIN_REQUIRED / USER_UAT_PENDING`。生产健康与安全配置验证通过，不等于编辑器交互生产测试通过。用户在 `https://zxwan520.com:63013/notes` 手工登录后可继续验收；没有用户实际确认，不标记 `USER_UAT_PASS`。工作包 6 未启动，未追加视觉精修。
+
 ## 2026-11-09 — WP5 最终 Notes UX 合并与 App-only 部署前置阻断
 
 - **工程合并：** PR [#313](https://github.com/zxwan829/SecondBrain/pull/313) 固定候选 `b68c1cfe61bc92a3aa966821cc02aaa7ca35ffda` 已按预期 head SHA 合并，merge commit `c76b06f725a5eab02b88866515d6d9943d5df163`。main tree `18863acd770457255b12e2fa4c7c00062dbd35bc` 与候选 tree 相同，确认八项修复及其经过验证的代码进入 main，没有额外源码差异。
