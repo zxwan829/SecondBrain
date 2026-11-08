@@ -19,6 +19,10 @@ const readState = () => page.locator('.blocksuite-resource-host').evaluate((host
   return {
     markerPresent: text.includes(value),
     paragraphTypes: blocks.map(({ model }) => model.props.type ?? 'text'),
+    canUndo: Boolean(store?.canUndo),
+    canRedo: Boolean(store?.canRedo),
+    undoStackDepth: store?.history?.undoManager?.undoStack?.length ?? null,
+    redoStackDepth: store?.history?.undoManager?.redoStack?.length ?? null,
     contenteditable: editable?.getAttribute('contenteditable') ?? null,
     selectionInsideEditor: Boolean(selection?.anchorNode && editable?.contains(selection.anchorNode)),
     selectionCollapsed: selection?.isCollapsed ?? null,
@@ -31,6 +35,16 @@ try {
   const baseUrl = process.env.SB_E2E_BASE_URL;
   if (!baseUrl) throw new Error('isolated synthetic base URL was not configured');
   await page.goto(new URL('/chat/blank', baseUrl).toString());
+  await page.evaluate(() => {
+    window.__wp5UndoKeyEvents = [];
+    document.addEventListener('keydown', event => {
+    if (event.ctrlKey && event.key.toLowerCase() === 'z') {
+      setTimeout(() => (window).__wp5UndoKeyEvents?.push({ key: event.key, ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey, defaultPrevented: event.defaultPrevented,
+        targetTag: event.target instanceof Element ? event.target.tagName : null }), 0);
+    }
+    });
+  });
   await page.getByLabel('SecondBrain 登录口令').fill(password);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
@@ -57,10 +71,20 @@ try {
   await page.keyboard.press('Control+Shift+z');
   await page.waitForTimeout(750);
   const afterRedo = await readState();
+  const keyEventEvidence = await page.evaluate(() => (window).__wp5UndoKeyEvents ?? []);
+  await editor.getByRole('button', { name: '撤销', exact: true }).click();
+  await page.waitForTimeout(750);
+  const afterToolbarUndo = await readState();
+  await editor.getByRole('button', { name: '重做', exact: true }).click();
+  await page.waitForTimeout(750);
+  const afterToolbarRedo = await readState();
   await page.screenshot({ path: process.env.SB_WP5_UNDO_REPRO_SCREENSHOT_PATH, fullPage: false });
   const evidence = { scope: 'synthetic isolated Notes page', viewport: '1440x1000',
-    sequence: { beforeUndo, afterInsert, afterUndo, afterRedo },
+    sequence: { beforeUndo, afterInsert, afterUndo, afterRedo, afterToolbarUndo, afterToolbarRedo },
+    keyEvents: keyEventEvidence,
     undoRemovedTypedText: !afterUndo.markerPresent, redoRestoredTypedText: afterRedo.markerPresent,
+    toolbarUndoRemovedTypedText: !afterToolbarUndo.markerPresent,
+    toolbarRedoRestoredTypedText: afterToolbarRedo.markerPresent,
     observationOnly: true };
   await writeFile(process.env.SB_WP5_UNDO_REPRO_JSON_PATH, JSON.stringify(evidence, null, 2));
   process.stdout.write(`WP5_UNDO_MINIMAL_REPRO ${JSON.stringify(evidence)}\n`);
