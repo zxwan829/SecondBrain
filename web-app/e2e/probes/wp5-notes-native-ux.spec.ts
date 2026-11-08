@@ -312,6 +312,47 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(Math.abs(blockControls[0]!.y - blockControls[1]!.y)).toBeLessThan(2);
   expect(Math.abs(blockControls[0]!.x - blockControls[1]!.x)).toBeGreaterThanOrEqual(22);
   expect(Math.abs(blockControls[0]!.x - blockControls[1]!.x)).toBeLessThanOrEqual(26);
+  const secondTarget = editor.locator('affine-paragraph').filter({ hasText: 'Second paragraph after Enter' }).last();
+  const dragOrder = async () => {
+    const [firstBox, secondBox] = await Promise.all([target.boundingBox(), secondTarget.boundingBox()]);
+    if (!firstBox || !secondBox) throw new Error('BlockSuite drag targets were not visible');
+    return { firstY: firstBox.y, secondY: secondBox.y };
+  };
+  const dragGripTo = async (dropBefore: boolean) => {
+    await target.hover();
+    await expect(grip).toHaveAttribute('data-visible', 'true');
+    const [gripBox, targetBox] = await Promise.all([grip.boundingBox(), secondTarget.boundingBox()]);
+    if (!gripBox || !targetBox) throw new Error('BlockSuite drag geometry was unavailable');
+    await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(targetBox.x + targetBox.width / 3,
+      dropBefore ? targetBox.y + 1 : targetBox.y + targetBox.height - 1, { steps: 8 });
+    await page.mouse.up();
+  };
+  await dragGripTo(false);
+  await expect.poll(async () => {
+    const order = await dragOrder();
+    return order.firstY > order.secondY;
+  }).toBe(true);
+  await dragGripTo(true);
+  await expect.poll(async () => {
+    const order = await dragOrder();
+    return order.firstY < order.secondY;
+  }).toBe(true);
+  const dragResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${created.resource_id}`));
+  const dragMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
+    && /\/api\/notes\/drafts\/[^/]+$/.test(new URL(response.url()).pathname));
+  await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
+  expect((await dragResourceSave).status()).toBe(200);
+  expect((await dragMarkdownSave).status()).toBe(200);
+  await expect(editor.getByRole('status').first()).toContainText('已保存');
+  await page.reload();
+  await expect(editor).toBeVisible();
+  await expect.poll(async () => {
+    const order = await dragOrder();
+    return order.firstY < order.secondY;
+  }).toBe(true);
   await page.locator('.notes-layout').screenshot({ path: process.env.SB_WP5_NATIVE_SCREENSHOT_PATH! });
   await plus.click();
   const headingMenuItem = page.getByTestId('一级标题');
@@ -349,8 +390,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   });
   const evidence: Record<string, unknown> = { viewport: '1440x1000', enter, titleBoundary, firstOpen, warmOpen, refreshOpen,
     firstOpenSetup, titleAndBody, blockControls,
-    journey: ['new note', 'title', 'first line', 'Enter', 'multi paragraph', 'composition event', 'Backspace',
-      'undo/redo', 'save', 'switch note', 'reopen', 'reload', 'six-dot hover', 'plus insert'] };
+    journey: ['new note', 'title', 'first line', 'Enter', 'multi paragraph', 'Chromium IME composition', 'Backspace',
+      'undo/redo', 'save', 'switch note', 'reopen', 'reload', 'six-dot hover and drag reorder', 'save and reload reorder', 'plus insert'] };
   expect(titleAndBody.visibleTitleHeadings).toHaveLength(1);
   expect(titleAndBody.hiddenTitleDisplay).toBe('none');
   expect(titleAndBody.modalEditorCount).toBe(0);
