@@ -51,7 +51,9 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_title_boundary_after_backspace' | 'rich_page_title_boundary_state_read' | 'rich_page_title_boundary_title'
   | 'rich_page_title_boundary_body' | 'rich_page_title_boundary_block' | 'rich_page_title_boundary_state_wait_title_mismatch'
   | 'rich_page_title_boundary_state_wait_body_mismatch' | 'rich_page_title_boundary_state_wait_block_mismatch'
-  | 'rich_page_title_boundary_state_wait_read_error' | 'rich_page_title_boundary_state_wait_match'
+  | 'rich_page_title_boundary_state_wait_read_error' | 'rich_page_title_boundary_state_wait_host_missing'
+  | 'rich_page_title_boundary_state_wait_store_missing' | 'rich_page_title_boundary_state_wait_store_error'
+  | 'rich_page_title_boundary_state_wait_match'
   | 'rich_page_ready_measurement'
   | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
   | 'rich_page_reopen' | 'rich_page_nested_canvas_create' | 'rich_page_nested_canvas_open'
@@ -1545,14 +1547,25 @@ for (const viewport of activeViewports) {
       })).toBe(0);
       await page.keyboard.press('Backspace');
       observed.setWp5Step('rich_page_title_boundary_after_backspace');
-      const readFirstParagraphBackspace = () => richDialog.locator('.blocksuite-resource-host').evaluate(host => {
-        const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
-        const blocks = (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => ({
-          id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
-        }));
-        return { title: blocks.find(block => block.type === 'h1')?.text ?? '',
-          firstBody: blocks.find(block => block.text.includes(richText)) ?? null, titleId: blocks.find(block => block.type === 'h1')?.id };
-      });
+      let firstParagraphBackspace: { title: string; firstBody: { id: string; text: string; type: string } | null; titleId?: string } | null = null;
+      const readFirstParagraphBackspace = () => page.evaluate((targetText) => {
+        const host = document.querySelector('.blocksuite-resource-host') as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null;
+        if (!host) return { status: 'host_missing' as const, title: '', firstBody: null, titleId: undefined };
+        const store = host.__sbBlockSuiteStore;
+        if (!store || typeof store.getBlocksByFlavour !== 'function') {
+          return { status: 'store_missing' as const, title: '', firstBody: null, titleId: undefined };
+        }
+        try {
+          const blocks = store.getBlocksByFlavour('affine:paragraph').map(({ model }: any) => ({
+            id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
+          }));
+          const title = blocks.find((block: any) => block.type === 'h1');
+          return { status: 'ready' as const, title: title?.text ?? '',
+            firstBody: blocks.find((block: any) => block.text.includes(targetText)) ?? null, titleId: title?.id };
+        } catch {
+          return { status: 'store_error' as const, title: '', firstBody: null, titleId: undefined };
+        }
+      }, richText);
       await expect.poll(async () => {
         let state: Awaited<ReturnType<typeof readFirstParagraphBackspace>>;
         try {
@@ -1561,14 +1574,27 @@ for (const viewport of activeViewports) {
           observed.setWp5Step('rich_page_title_boundary_state_wait_read_error');
           return { titleMatches: false, bodyMatches: false, blocksDistinct: false };
         }
+        if (state.status === 'host_missing') {
+          observed.setWp5Step('rich_page_title_boundary_state_wait_host_missing');
+          return { titleMatches: false, bodyMatches: false, blocksDistinct: false };
+        }
+        if (state.status === 'store_missing') {
+          observed.setWp5Step('rich_page_title_boundary_state_wait_store_missing');
+          return { titleMatches: false, bodyMatches: false, blocksDistinct: false };
+        }
+        if (state.status === 'store_error') {
+          observed.setWp5Step('rich_page_title_boundary_state_wait_store_error');
+          return { titleMatches: false, bodyMatches: false, blocksDistinct: false };
+        }
         const status = { titleMatches: state.title === '新建笔记', bodyMatches: state.firstBody?.text === richText,
           blocksDistinct: Boolean(state.firstBody?.id && state.titleId && state.firstBody.id !== state.titleId) };
+        if (status.titleMatches && status.bodyMatches && status.blocksDistinct) firstParagraphBackspace = state;
         observed.setWp5Step(!status.titleMatches ? 'rich_page_title_boundary_state_wait_title_mismatch'
           : !status.bodyMatches ? 'rich_page_title_boundary_state_wait_body_mismatch'
             : !status.blocksDistinct ? 'rich_page_title_boundary_state_wait_block_mismatch' : 'rich_page_title_boundary_state_wait_match');
         return status;
       }, { timeout: 5000 }).toEqual({ titleMatches: true, bodyMatches: true, blocksDistinct: true });
-      const firstParagraphBackspace = await readFirstParagraphBackspace();
+      if (!firstParagraphBackspace) throw new Error('Expected verified Yjs title boundary state');
       observed.setWp5Step('rich_page_title_boundary_state_read');
       observed.setWp5Step('rich_page_title_boundary_title');
       expect(firstParagraphBackspace.title, 'wp5_rich_page_backspace_title_boundary').toBe('新建笔记');
