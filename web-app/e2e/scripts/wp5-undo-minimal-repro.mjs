@@ -28,7 +28,9 @@ const readState = () => page.locator('.blocksuite-resource-host').evaluate((host
 }, marker);
 
 try {
-  await page.goto('/chat/blank');
+  const baseUrl = process.env.SB_E2E_BASE_URL;
+  if (!baseUrl) throw new Error('isolated synthetic base URL was not configured');
+  await page.goto(new URL('/chat/blank', baseUrl).toString());
   await page.getByLabel('SecondBrain 登录口令').fill(password);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
