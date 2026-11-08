@@ -497,10 +497,28 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
   const createRichPage = page.waitForResponse(response => response.request().method() === 'POST'
     && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname));
   await page.getByRole('button', { name: '新建笔记', exact: true }).click();
-  expect((await createRichPage).status()).toBe(200);
+  const richPageCreated = await createRichPage;
+  expect(richPageCreated.status()).toBe(200);
+  const richPage = await richPageCreated.json() as { resource_id: string };
   const editor = page.locator('.blocksuite-resource-inline');
   await expect(editor).toBeVisible();
   await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+
+  const longBody = editor.locator('.blocksuite-resource-host affine-paragraph').nth(1);
+  await longBody.click();
+  await page.keyboard.press('End');
+  for (let index = 0; index < 12; index += 1) {
+    if (index > 0) await page.keyboard.press('Enter');
+    await page.keyboard.insertText(`Synthetic canvas layout paragraph ${index + 1}`);
+  }
+  await expect(editor.locator('.blocksuite-resource-host affine-paragraph')).toHaveCount(13);
+  const saveRichResource = page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${richPage.resource_id}`));
+  const saveRichMarkdown = page.waitForResponse(response => response.request().method() === 'PUT'
+    && /\/api\/notes\/drafts\/[^/]+$/.test(new URL(response.url()).pathname));
+  await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
+  expect((await saveRichResource).status()).toBe(200);
+  expect((await saveRichMarkdown).status()).toBe(200);
 
   await editor.locator('.blocksuite-canvas-tools > summary').click();
   const createCanvas = page.waitForResponse(response => response.request().method() === 'POST'
@@ -511,6 +529,20 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
   const canvas = await canvasCreated.json() as { resource_id: string };
   const card = editor.locator('.canvas-b-card').filter({ hasText: canvas.resource_id });
   await expect(card).toBeVisible();
+  const canvasLayout = await page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>('.blocksuite-resource-host');
+    const viewport = host?.querySelector<HTMLElement>('.sb-archive-viewport');
+    const gallery = document.querySelector<HTMLElement>('.blocksuite-canvas-tools');
+    const paragraphs = [...(host?.querySelectorAll<HTMLElement>('affine-paragraph') ?? [])];
+    const hostBottom = host?.getBoundingClientRect().bottom ?? 0;
+    const galleryTop = gallery?.getBoundingClientRect().top ?? 0;
+    const lastParagraphBottom = paragraphs.at(-1)?.getBoundingClientRect().bottom ?? 0;
+    return { paragraphCount: paragraphs.length, hostBottom, galleryTop, lastParagraphBottom,
+      noOverlap: Boolean(viewport && gallery && paragraphs.length >= 12 && galleryTop >= hostBottom - 1
+        && galleryTop >= lastParagraphBottom - 1) };
+  });
+  expect(canvasLayout.paragraphCount).toBe(13);
+  expect(canvasLayout.noOverlap).toBe(true);
   const canvasRead = page.waitForResponse(response => response.request().method() === 'GET'
     && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${canvas.resource_id}`), { timeout: 15_000 });
   const openButton = card.getByRole('button', { name: '打开编辑', exact: true });
@@ -535,7 +567,7 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
     nestedEditorVisible: Boolean(document.querySelector('.blocksuite-resource-backdrop [data-kind="edgeless-canvas"]')?.getClientRects().length),
   }));
   const evidence = { result: 'PASS', scope: 'independent synthetic canvas-open repro',
-    resourceReadStatus: readResponse.status(), ...canvasUi };
+    resourceReadStatus: readResponse.status(), canvasLayout, ...canvasUi };
   await writeFile(process.env.SB_WP5_NATIVE_CANVAS_OPEN_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
   await page.screenshot({ path: process.env.SB_WP5_NATIVE_CANVAS_OPEN_SCREENSHOT_PATH!, fullPage: false });
 });

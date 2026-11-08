@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -329,8 +330,24 @@ def main() -> int:
             if not source_canvas_open_screenshot.is_file() or not source_canvas_open_evidence.is_file():
                 raise RuntimeError("independent nested canvas open repro did not produce its evidence files")
             canvas_open = json.loads(source_canvas_open_evidence.read_text(encoding="utf-8"))
-            if (canvas_open != {"result": "PASS", "scope": "independent synthetic canvas-open repro",
-                                "resourceReadStatus": 200, "dialogVisible": True, "nestedEditorVisible": True}):
+            canvas_layout = canvas_open.get("canvasLayout") if isinstance(canvas_open, dict) else None
+            if (not isinstance(canvas_open, dict)
+                    or set(canvas_open) != {"result", "scope", "resourceReadStatus", "dialogVisible",
+                                            "nestedEditorVisible", "canvasLayout"}
+                    or canvas_open.get("result") != "PASS"
+                    or canvas_open.get("scope") != "independent synthetic canvas-open repro"
+                    or type(canvas_open.get("resourceReadStatus")) is not int or canvas_open["resourceReadStatus"] != 200
+                    or canvas_open.get("dialogVisible") is not True
+                    or canvas_open.get("nestedEditorVisible") is not True
+                    or not isinstance(canvas_layout, dict)
+                    or set(canvas_layout) != {"paragraphCount", "hostBottom", "galleryTop", "lastParagraphBottom", "noOverlap"}
+                    or type(canvas_layout.get("paragraphCount")) is not int or canvas_layout["paragraphCount"] != 13
+                    or any(type(canvas_layout.get(key)) not in (int, float) or not math.isfinite(canvas_layout[key])
+                           or abs(canvas_layout[key]) > 100000
+                           for key in ("hostBottom", "galleryTop", "lastParagraphBottom"))
+                    or canvas_layout.get("noOverlap") is not True
+                    or canvas_layout["galleryTop"] < canvas_layout["hostBottom"] - 1
+                    or canvas_layout["galleryTop"] < canvas_layout["lastParagraphBottom"] - 1):
                 raise RuntimeError("independent nested canvas open evidence rejected")
             screenshot_target = output / "wp5-notes-native-1440x1000.png"
             mobile_screenshot_target = output / "wp5-notes-native-390x844.png"
