@@ -1,10 +1,17 @@
 ---
 created: 2026-09-28
-updated: 2026-11-08
+updated: 2026-11-09
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
+
+## 2026-11-09 WP5 final UX merge and blocked App-only preflight
+
+- **工程版本：** PR #313 候选 `b68c1cfe61bc92a3aa966821cc02aaa7ca35ffda` 已合并，merge SHA `c76b06f725a5eab02b88866515d6d9943d5df163`；合并后的 main tree `18863acd770457255b12e2fa4c7c00062dbd35bc` 与候选 tree 完全一致。四条 Linux Chromium Gate [#42497477160](https://github.com/zxwan829/SecondBrain/actions/runs/42497477160)、[#42497475747](https://github.com/zxwan829/SecondBrain/actions/runs/42497475747)、[#42497731848](https://github.com/zxwan829/SecondBrain/actions/runs/42497731848)、[#42497920166](https://github.com/zxwan829/SecondBrain/actions/runs/42497920166) 均 SUCCESS；typecheck、production build、trace artifact redaction 在三个 `synthetic-browser` jobs 中通过，Native Notes job 的独立前端 build 通过。独立只读 Review 在固定候选 SHA 通过，无 P1/P2。
+- **生产部署前置检查：** 通过 NAS 专用 SSH alias `secondbrain-nas`（用户 `Joe`，UID 1026、组 `users`/`administrators`）只执行只读检查。Compose 文件 SHA-256 为 `ecd61561d45e14227c18cff614bbd017cd10506bf0ac37456db3df1ec1bd45d2`，与 2026-11-08 已记录快照一致；这不能证明当前容器仍运行同一版本。系统 Docker CLI 可执行，但请求 Docker daemon 时返回 `permission denied`；`/run/docker.sock` 与 `/var/run/docker.sock` 为 `root:root 0660`，当前账户不可读/写。App 容器、镜像 ID、当前 health、安全开关及 Compose 解析后的 App 配置因此无法实时核验。
+- **回滚准备状态：** NAS rollback 根目录可列出历史目录名，但包括 `wp5-app-6d867ece-predeploy-20261108T081300Z` 在内的相关目录属主/模式为 `root:root 0700`；当前账户不能检查快照文件、旧镜像 tar 或哈希。因此本次无法验证即时快照和上一版 App image，未创建/修改回滚资产，未触碰 Compose、容器、镜像、Secrets、挂载、ACL、网络、Hermes、Vault、Obsidian 或业务数据。未使用 sudo、危险辅助脚本或绕过权限。
+- **交付状态：** `ENGINEERING_PASS / NOT_DEPLOYED / PRODUCTION_TEST_NOT_RUN / USER_UAT_PENDING`。2026-11-08 PR #311 image 的健康、安全和旧版生产合成 UAT 记录仍作为历史有效，但不验证 PR #313 八项最终 UX 修复。此前用户实际体验曾为 `USER_UAT_FAIL`；最终修复尚未上线，未进行新的生产体验。配置的 Notes 入口为 `https://zxwan520.com:63013/notes`，本次未做可用性探测。
 
 ## 2026-11-08 WP5 / PR #309 App-only 部署与生产合成 UAT
 
