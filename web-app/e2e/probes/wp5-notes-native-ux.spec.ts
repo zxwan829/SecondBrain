@@ -530,32 +530,26 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
   const card = editor.locator('.canvas-b-card').filter({ hasText: canvas.resource_id });
   await expect(card).toBeVisible();
   const canvasLayout = await page.evaluate(() => {
-    const host = document.querySelector<HTMLElement>('.blocksuite-resource-host');
+    const inline = document.querySelector<HTMLElement>('.blocksuite-resource-inline');
+    const host = inline?.querySelector<HTMLElement>('.blocksuite-resource-host') ?? null;
     const viewport = host?.querySelector<HTMLElement>('.sb-archive-viewport');
-    const gallery = document.querySelector<HTMLElement>('.blocksuite-canvas-tools');
+    const gallery = inline?.querySelector<HTMLElement>('.blocksuite-canvas-tools') ?? null;
     const paragraphs = [...(host?.querySelectorAll<HTMLElement>('affine-paragraph') ?? [])];
     const hostBottom = host?.getBoundingClientRect().bottom ?? 0;
     const galleryTop = gallery?.getBoundingClientRect().top ?? 0;
     const lastParagraphBottom = paragraphs.at(-1)?.getBoundingClientRect().bottom ?? 0;
-    const metrics = (element: HTMLElement | null) => element ? {
-      top: element.getBoundingClientRect().top, bottom: element.getBoundingClientRect().bottom,
-      height: element.getBoundingClientRect().height, clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight, display: getComputedStyle(element).display,
-      position: getComputedStyle(element).position, overflow: getComputedStyle(element).overflow,
-      cssHeight: getComputedStyle(element).height, minHeight: getComputedStyle(element).minHeight,
-      flex: getComputedStyle(element).flex, flexGrow: getComputedStyle(element).flexGrow,
-      alignSelf: getComputedStyle(element).alignSelf,
-    } : null;
-    return { paragraphCount: paragraphs.length, hostBottom, galleryTop, lastParagraphBottom,
-      host: metrics(host), viewport: metrics(viewport), pageRoot: metrics(host?.querySelector<HTMLElement>('affine-page-root') ?? null),
-      editorHosts: [...(host?.querySelectorAll<HTMLElement>('editor-host') ?? [])].map(metrics),
-      paragraphRects: paragraphs.map(paragraph => ({ text: paragraph.textContent?.slice(0, 40) ?? '',
-        ...metrics(paragraph), parent: metrics(paragraph.parentElement) })),
+    const hostHeight = host?.getBoundingClientRect().height ?? 0;
+    const lastParagraphHeight = paragraphs.at(-1)?.getBoundingClientRect().height ?? 0;
+    return { paragraphCount: paragraphs.length, hostCount: document.querySelectorAll('.blocksuite-resource-host').length,
+      inlineHostCount: inline?.querySelectorAll('.blocksuite-resource-host').length ?? 0,
+      hostHeight, hostScrollHeight: host?.scrollHeight ?? 0, lastParagraphHeight,
+      hostBottom, galleryTop, lastParagraphBottom,
       noOverlap: Boolean(viewport && gallery && paragraphs.length >= 12 && galleryTop >= hostBottom - 1
         && galleryTop >= lastParagraphBottom - 1) };
   });
   console.log(`WP5_NATIVE_CANVAS_LAYOUT ${JSON.stringify(canvasLayout)}`);
   expect(canvasLayout.paragraphCount).toBe(13);
+  expect(canvasLayout.inlineHostCount).toBe(1);
   expect(canvasLayout.noOverlap, `canvas gallery must follow the full document body: ${JSON.stringify(canvasLayout)}`).toBe(true);
   const canvasRead = page.waitForResponse(response => response.request().method() === 'GET'
     && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${canvas.resource_id}`), { timeout: 15_000 });
