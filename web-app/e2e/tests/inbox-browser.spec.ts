@@ -1130,7 +1130,7 @@ for (const viewport of activeViewports) {
           observed.setDiagnosticAssertion('wp5_archive_database_group');
           await expect(kanban.first(), 'wp5_archive_database_group').toBeVisible({ timeout: 10000 });
           observed.setDiagnosticAssertion('wp5_archive_database_card');
-          await expect(resourceHost.locator('affine-data-view-kanban-card').first(), 'wp5_archive_database_card')
+          await expect(resourceHost.locator('affine-data-view-kanban-card').filter({ hasText: '测试记录' }).first(), 'wp5_archive_database_card')
             .toContainText('测试记录');
         }
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_009');
@@ -1196,7 +1196,7 @@ for (const viewport of activeViewports) {
           await expect(sameResourceDialog.locator('affine-data-view-kanban-group').first(), 'wp5_archive_database_reopen_group')
             .toBeVisible({ timeout: 10000 });
           observed.setDiagnosticAssertion('wp5_archive_database_reopen_card');
-          await expect(sameResourceDialog.locator('affine-data-view-kanban-card').first(), 'wp5_archive_database_reopen_card')
+          await expect(sameResourceDialog.locator('affine-data-view-kanban-card').filter({ hasText: '测试记录' }).first(), 'wp5_archive_database_reopen_card')
             .toContainText('测试记录');
         }
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_021');
@@ -1221,7 +1221,7 @@ for (const viewport of activeViewports) {
           await expect(refreshedDatabaseDialog.locator('affine-data-view-kanban-group').first(), 'wp5_archive_database_refresh_group')
             .toBeVisible({ timeout: 10000 });
           observed.setDiagnosticAssertion('wp5_archive_database_refresh_card');
-          await expect(refreshedDatabaseDialog.locator('affine-data-view-kanban-card').first(), 'wp5_archive_database_refresh_card')
+          await expect(refreshedDatabaseDialog.locator('affine-data-view-kanban-card').filter({ hasText: '测试记录' }).first(), 'wp5_archive_database_refresh_card')
             .toContainText('测试记录');
         }
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host').getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 15000 });
