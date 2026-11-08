@@ -140,6 +140,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_archive_emoji_command_visible",
     "wp5_archive_emoji_picker_visible",
     "wp5_archive_emoji_search_results",
+    "wp5_archive_emoji_dom_target_present",
+    "wp5_archive_emoji_dom_target_missing",
     "wp5_archive_emoji_insert",
     "wp5_archive_html_export",
     "wp5_archive_pdf_preview",

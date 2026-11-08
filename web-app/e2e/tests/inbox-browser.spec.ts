@@ -139,7 +139,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_database_kanban'
   | 'wp5_archive_canvas_reference_lifecycle'
   | 'wp5_archive_emoji_command_visible' | 'wp5_archive_emoji_picker_visible'
-  | 'wp5_archive_emoji_search_results' | 'wp5_archive_emoji_insert'
+  | 'wp5_archive_emoji_search_results' | 'wp5_archive_emoji_dom_target_present'
+  | 'wp5_archive_emoji_dom_target_missing' | 'wp5_archive_emoji_insert'
   | 'wp5_archive_html_export' | 'wp5_archive_pdf_preview' | 'wp5_archive_pdf_frame_attached'
   | 'wp5_archive_pdf_body_text' | 'wp5_archive_save_close'
   | 'wp5_archive_saved_reopen' | 'wp5_archive_table_state_reopened'
@@ -2084,11 +2085,16 @@ for (const viewport of activeViewports) {
         await expect(emojiSearch, 'wp5_archive_emoji_picker_visible').toHaveAttribute('placeholder', '搜索');
         await emojiSearch.fill('笑脸');
         observed.setDiagnosticAssertion('wp5_archive_emoji_search_results');
-        // Emoji Mart marks search-result order with aria-posinset. Use the
-        // first result, then verify its native emoji label before selecting it.
-        const grinningEmoji = emojiPicker.locator('button[aria-posinset="1"]');
+        // Read the actual picker shadow DOM and select the requested native
+        // emoji by its accessible label; search ranking can reorder results.
+        const hasGrinningEmoji = await emojiPicker.evaluate(picker =>
+          [...(picker.shadowRoot?.querySelectorAll('button[aria-posinset]') ?? [])]
+            .some(button => button.getAttribute('aria-label') === '😀'));
+        observed.setDiagnosticAssertion(hasGrinningEmoji
+          ? 'wp5_archive_emoji_dom_target_present' : 'wp5_archive_emoji_dom_target_missing');
+        expect(hasGrinningEmoji, 'wp5_archive_emoji_search_dom_target').toBe(true);
+        const grinningEmoji = emojiPicker.locator('button[aria-label="😀"]');
         await expect(grinningEmoji, 'wp5_archive_emoji_search_results').toBeVisible({ timeout: 10000 });
-        await expect(grinningEmoji, 'wp5_archive_emoji_search_results').toHaveAttribute('aria-label', /^😀/);
         await grinningEmoji.click();
         observed.setDiagnosticAssertion('wp5_archive_emoji_insert');
         await expect(emojiParagraph, 'wp5_archive_emoji_insert').toContainText('😀', { timeout: 5000 });
