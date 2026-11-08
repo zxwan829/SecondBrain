@@ -35,6 +35,27 @@ test.afterEach(async ({ page }, testInfo) => {
   await writeFile(process.env.SB_WP5_NATIVE_FAILURE_EVIDENCE_PATH, JSON.stringify(failure, null, 2));
   const screenshotPath = process.env.SB_WP5_NATIVE_SCREENSHOT_PATH;
   if (screenshotPath) await page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => undefined);
+  if (testInfo.title === 'WP5 independent nested canvas open minimal reproduction') {
+    const canvasOpenState = await page.evaluate(() => {
+      const visible = (element: Element | null) => Boolean(element && (element as HTMLElement).getClientRects().length);
+      const buttons = [...document.querySelectorAll<HTMLButtonElement>('.canvas-b-card button')]
+        .filter(button => button.textContent?.trim() === '打开编辑');
+      return {
+        galleryExpanded: document.querySelector<HTMLElement>('.blocksuite-canvas-tools')?.hasAttribute('open') ?? false,
+        canvasCardCount: document.querySelectorAll('.canvas-b-card').length,
+        openButtonCount: buttons.length,
+        openButtonsEnabled: buttons.filter(button => !button.disabled).length,
+        resourceDialogVisible: visible(document.querySelector('[role="dialog"][aria-label="BlockSuite Edgeless 资源"]')),
+        nestedEditorVisible: visible(document.querySelector('.blocksuite-resource-backdrop [data-kind="edgeless-canvas"]')),
+      };
+    }).catch(() => ({ galleryExpanded: false, canvasCardCount: 0, openButtonCount: 0,
+      openButtonsEnabled: 0, resourceDialogVisible: false, nestedEditorVisible: false }));
+    await writeFile(process.env.SB_WP5_NATIVE_CANVAS_OPEN_FAILURE_EVIDENCE_PATH!, JSON.stringify({
+      result: 'FAIL', scope: 'independent synthetic canvas-open repro', viewport: '1440x1000', canvasOpenState,
+    }, null, 2));
+    const canvasFailureScreenshot = process.env.SB_WP5_NATIVE_CANVAS_OPEN_FAILURE_SCREENSHOT_PATH;
+    if (canvasFailureScreenshot) await page.screenshot({ path: canvasFailureScreenshot, fullPage: false }).catch(() => undefined);
+  }
 });
 
 test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async ({ page }) => {
@@ -492,7 +513,17 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
   await expect(card).toBeVisible();
   const canvasRead = page.waitForResponse(response => response.request().method() === 'GET'
     && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${canvas.resource_id}`), { timeout: 15_000 });
-  await card.getByRole('button', { name: '打开编辑', exact: true }).click();
+  const openButton = card.getByRole('button', { name: '打开编辑', exact: true });
+  await expect(openButton).toBeVisible();
+  const openButtonBox = await openButton.boundingBox();
+  expect(openButtonBox).not.toBeNull();
+  const receivesPointer = await openButton.evaluate(button => {
+    const rect = button.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return hit === button || (hit instanceof Node && button.contains(hit));
+  });
+  expect(receivesPointer).toBe(true);
+  await page.mouse.click(openButtonBox!.x + openButtonBox!.width / 2, openButtonBox!.y + openButtonBox!.height / 2);
   const readResponse = await canvasRead;
   expect(readResponse.status()).toBe(200);
   const dialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });

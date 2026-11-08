@@ -176,6 +176,27 @@ def verify_failure_evidence(source: Path, target: Path) -> dict:
     return safe
 
 
+def verify_canvas_open_failure_evidence(source: Path, target: Path) -> dict:
+    evidence = json.loads(source.read_text(encoding="utf-8"))
+    state = evidence.get("canvasOpenState")
+    expected_keys = {"galleryExpanded", "canvasCardCount", "openButtonCount", "openButtonsEnabled",
+                     "resourceDialogVisible", "nestedEditorVisible"}
+    if (evidence.get("result") != "FAIL" or evidence.get("scope") != "independent synthetic canvas-open repro"
+            or evidence.get("viewport") != "1440x1000" or not isinstance(state, dict)
+            or set(state) != expected_keys
+            or any(type(state.get(key)) is not bool for key in
+                   ("galleryExpanded", "resourceDialogVisible", "nestedEditorVisible"))
+            or any(type(state.get(key)) is not int or not 0 <= state[key] <= 12
+                   for key in ("canvasCardCount", "openButtonCount", "openButtonsEnabled"))
+            or state["openButtonsEnabled"] > state["openButtonCount"]):
+        raise RuntimeError("canvas open failure evidence rejected")
+    safe = {"result": "FAIL", "scope": "independent synthetic canvas-open repro",
+            "viewport": "1440x1000", "canvasOpenState": state}
+    target.write_text(json.dumps(safe, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.chmod(target, 0o600)
+    return safe
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -206,6 +227,8 @@ def main() -> int:
         source_mobile_diagnostic = temp / "wp5-notes-native-mobile-diagnostic.json"
         source_canvas_open_screenshot = temp / "wp5-notes-native-canvas-open.png"
         source_canvas_open_evidence = temp / "wp5-notes-native-canvas-open.json"
+        source_canvas_open_failure_screenshot = temp / "wp5-notes-native-canvas-open-failure.png"
+        source_canvas_open_failure_evidence = temp / "wp5-notes-native-canvas-open-failure.json"
         source_undo_screenshot = temp / "wp5-undo-minimal.png"
         source_undo_evidence = temp / "wp5-undo-minimal.json"
         env = os.environ.copy()
@@ -230,6 +253,8 @@ def main() -> int:
             "SB_WP5_NATIVE_MOBILE_SCREENSHOT_PATH": str(source_mobile_screenshot),
             "SB_WP5_NATIVE_CANVAS_OPEN_SCREENSHOT_PATH": str(source_canvas_open_screenshot),
             "SB_WP5_NATIVE_CANVAS_OPEN_EVIDENCE_PATH": str(source_canvas_open_evidence),
+            "SB_WP5_NATIVE_CANVAS_OPEN_FAILURE_SCREENSHOT_PATH": str(source_canvas_open_failure_screenshot),
+            "SB_WP5_NATIVE_CANVAS_OPEN_FAILURE_EVIDENCE_PATH": str(source_canvas_open_failure_evidence),
             "SB_WP5_NATIVE_UX_PROBE_ONLY": "true", "VITE_ENABLE_NOTES": "true",
             "SB_WP5_UNDO_REPRO_SCREENSHOT_PATH": str(source_undo_screenshot),
             "SB_WP5_UNDO_REPRO_JSON_PATH": str(source_undo_evidence),
@@ -274,6 +299,14 @@ def main() -> int:
                                                                         else "wp5-notes-native-failure-desktop.png"),
                                      mobile=image_width)
                     print(json.dumps(failure, ensure_ascii=False))
+                if source_canvas_open_failure_evidence.is_file():
+                    canvas_failure_target = output / "wp5-notes-native-canvas-open-failure-evidence.json"
+                    canvas_failure = verify_canvas_open_failure_evidence(source_canvas_open_failure_evidence,
+                                                                          canvas_failure_target)
+                    if source_canvas_open_failure_screenshot.is_file():
+                        sanitize_png(source_canvas_open_failure_screenshot,
+                                     output / "wp5-notes-native-canvas-open-failure-1440x1000.png")
+                    print(json.dumps(canvas_failure, ensure_ascii=False))
                 return result.returncode
             if args.undo_minimal_repro:
                 if not source_undo_screenshot.is_file() or not source_undo_evidence.is_file():

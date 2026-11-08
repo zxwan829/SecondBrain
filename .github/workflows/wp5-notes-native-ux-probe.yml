@@ -82,6 +82,10 @@ jobs:
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-1440x1000.png
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-390x844.png
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-evidence.json
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-canvas-open-1440x1000.png
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-canvas-open-evidence.json
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-canvas-open-failure-1440x1000.png
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-canvas-open-failure-evidence.json
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-evidence.json
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-desktop.png
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-mobile.png

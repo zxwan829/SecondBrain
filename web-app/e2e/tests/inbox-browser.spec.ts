@@ -1692,7 +1692,18 @@ for (const viewport of activeViewports) {
       const nestedCanvasCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: nestedCanvasInfo.resource_id });
       await expect(nestedCanvasCard).toBeVisible({ timeout: 15000 });
       observed.setWp5Step('rich_page_nested_canvas_open');
-      await nestedCanvasCard.getByRole('button', { name: '打开编辑' }).click();
+      const nestedCanvasOpenButton = nestedCanvasCard.getByRole('button', { name: '打开编辑' });
+      await expect(nestedCanvasOpenButton).toBeVisible();
+      const nestedCanvasOpenBox = await nestedCanvasOpenButton.boundingBox();
+      expect(nestedCanvasOpenBox, 'wp5_nested_canvas_open_button_geometry').not.toBeNull();
+      const nestedCanvasButtonReceivesPointer = await nestedCanvasOpenButton.evaluate(button => {
+        const rect = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return hit === button || (hit instanceof Node && button.contains(hit));
+      });
+      expect(nestedCanvasButtonReceivesPointer, 'wp5_nested_canvas_open_button_hit_test').toBe(true);
+      await page.mouse.click(nestedCanvasOpenBox!.x + nestedCanvasOpenBox!.width / 2,
+        nestedCanvasOpenBox!.y + nestedCanvasOpenBox!.height / 2);
       const nestedCanvasDialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
       await expect(nestedCanvasDialog).toBeVisible({ timeout: 15000 });
       const nestedImageDataUrl = await page.evaluate(() => {
