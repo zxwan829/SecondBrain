@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       wp5_open_only:
-        description: Verify only BlockSuite editor initialization with a synthetic note
+        description: Independent Linux Chromium DOM/focus diagnostic; not formal acceptance
         required: false
         type: boolean
         default: false
@@ -102,8 +102,14 @@ jobs:
         run: npm run build
       - name: Verify trace artifact redaction
         run: python -m pytest -q web-app/e2e/tests/test_artifact_sanitizer.py
+      - name: Run independent WP5 paragraph DOM diagnostic
+        if: inputs.wp5_open_only == true
+        env:
+          SB_E2E_PRODUCTION_BUILD: "true"
+        run: node web-app/e2e/scripts/wp5_table_dom_diagnostic.mjs
       - name: Run isolated Core + Web browser acceptance
         id: synthetic
+        if: inputs.wp5_open_only != true
         env:
           WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only || inputs.wp5_open_only }}
           WP5_CONFLICT_ONLY: ${{ inputs.wp5_conflict_only }}
