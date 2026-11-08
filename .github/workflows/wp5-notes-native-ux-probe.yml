@@ -2,6 +2,12 @@ name: WP5 isolated Notes native editor Chromium probe
 
 on:
   workflow_dispatch:
+    inputs:
+      undo_minimal_repro_only:
+        description: Observe fresh-page undo/redo behavior without pass/fail expectations
+        required: false
+        type: boolean
+        default: false
   pull_request:
     branches: [main]
     paths:
@@ -56,7 +62,14 @@ jobs:
         working-directory: web-app/e2e
         run: npx playwright install chromium
       - name: Run independent synthetic Core + Linux Chromium journey
-        run: python web-app/e2e/scripts/run_wp5_notes_native_ux_probe.py --output-dir "$RUNNER_TEMP/wp5-notes-native-ux"
+        env:
+          WP5_UNDO_MINIMAL_REPRO_ONLY: ${{ inputs.undo_minimal_repro_only }}
+        run: |
+          if [ "$WP5_UNDO_MINIMAL_REPRO_ONLY" = "true" ]; then
+            python web-app/e2e/scripts/run_wp5_notes_native_ux_probe.py --undo-minimal-repro --output-dir "$RUNNER_TEMP/wp5-notes-native-ux"
+          else
+            python web-app/e2e/scripts/run_wp5_notes_native_ux_probe.py --output-dir "$RUNNER_TEMP/wp5-notes-native-ux"
+          fi
       - name: Upload verified synthetic DOM and screenshot evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -69,5 +82,7 @@ jobs:
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-evidence.json
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-desktop.png
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-mobile.png
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-undo-minimal-1440x1000.png
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-undo-minimal-evidence.json
           if-no-files-found: ignore
           retention-days: 7

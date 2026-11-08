@@ -179,6 +179,8 @@ def verify_failure_evidence(source: Path, target: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--undo-minimal-repro", action="store_true",
+                        help="run an independent fresh-page undo/redo observation, without pass/fail assertions")
     args = parser.parse_args()
     output = args.output_dir.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -201,6 +203,8 @@ def main() -> int:
         source_mobile_screenshot = temp / "wp5-notes-native-mobile.png"
         source_evidence = temp / "wp5-notes-native-dom.json"
         source_failure_evidence = temp / "wp5-notes-native-failure.json"
+        source_undo_screenshot = temp / "wp5-undo-minimal.png"
+        source_undo_evidence = temp / "wp5-undo-minimal.json"
         env = os.environ.copy()
         env.update({
             "SB_REVIEW_ROOT": str(roots["review"]), "SB_KNOWLEDGE_ROOT": str(roots["knowledge"]),
@@ -221,6 +225,8 @@ def main() -> int:
             "SB_WP5_NATIVE_FAILURE_EVIDENCE_PATH": str(source_failure_evidence),
             "SB_WP5_NATIVE_MOBILE_SCREENSHOT_PATH": str(source_mobile_screenshot),
             "SB_WP5_NATIVE_UX_PROBE_ONLY": "true", "VITE_ENABLE_NOTES": "true",
+            "SB_WP5_UNDO_REPRO_SCREENSHOT_PATH": str(source_undo_screenshot),
+            "SB_WP5_UNDO_REPRO_JSON_PATH": str(source_undo_evidence),
             "CI": "true",
         })
         processes: list[subprocess.Popen[bytes]] = []
@@ -244,7 +250,8 @@ def main() -> int:
                                    stdout=web_log, stderr=subprocess.STDOUT, start_new_session=True)
             processes.append(web)
             wait_http(web_url + "/chat/blank", web, "Web preview")
-            command = ["npx", "--no-install", "playwright", "test", "--config=playwright.wp5-notes-native-ux.config.ts"]
+            command = (["node", "scripts/wp5-undo-minimal-repro.mjs"] if args.undo_minimal_repro else
+                       ["npx", "--no-install", "playwright", "test", "--config=playwright.wp5-notes-native-ux.config.ts"])
             result = subprocess.run(command, cwd=E2E, env=env, check=False)
             if result.returncode:
                 failure_target = output / "wp5-notes-native-failure-evidence.json"
@@ -259,6 +266,22 @@ def main() -> int:
                                      mobile=image_width)
                     print(json.dumps(failure, ensure_ascii=False))
                 return result.returncode
+            if args.undo_minimal_repro:
+                if not source_undo_screenshot.is_file() or not source_undo_evidence.is_file():
+                    raise RuntimeError("independent undo reproduction did not produce evidence")
+                screenshot_target = output / "wp5-undo-minimal-1440x1000.png"
+                evidence_target = output / "wp5-undo-minimal-evidence.json"
+                dimensions = sanitize_png(source_undo_screenshot, screenshot_target)
+                evidence = json.loads(source_undo_evidence.read_text(encoding="utf-8"))
+                if evidence.get("scope") != "synthetic isolated Notes page":
+                    raise RuntimeError("undo reproduction scope rejected")
+                evidence_target.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                os.chmod(evidence_target, 0o600)
+                print(json.dumps({"result": "OBSERVED", "screenshot": screenshot_target.name,
+                                  "screenshot_dimensions": dimensions, "sequence": evidence["sequence"],
+                                  "undoRemovedTypedText": evidence["undoRemovedTypedText"],
+                                  "redoRestoredTypedText": evidence["redoRestoredTypedText"]}, ensure_ascii=False))
+                return 0
             if not source_screenshot.is_file() or not source_mobile_screenshot.is_file() or not source_evidence.is_file():
                 raise RuntimeError("focused Chromium journey did not produce its evidence files")
             screenshot_target = output / "wp5-notes-native-1440x1000.png"
