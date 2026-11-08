@@ -172,6 +172,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_archive_resource_save_status_missing",
     "wp5_archive_align_model_center", "wp5_archive_grip_visibility",
     "wp5_archive_drag_geometry", "wp5_archive_drag_order", "wp5_archive_drag_result",
+    "wp5_archive_drag_anchor_match", "wp5_archive_drag_pointer_routing",
     "wp5_archive_drag_source_not_unique", "wp5_archive_drag_target_not_unique",
     "wp5_archive_drag_parent_missing", "wp5_archive_drag_different_parents",
     "wp5_archive_drag_same_block", "wp5_archive_drag_source_missing_from_parent",

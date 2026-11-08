@@ -166,6 +166,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_resource_save_status_pending' | 'wp5_archive_resource_save_status_error'
   | 'wp5_archive_resource_save_status_other' | 'wp5_archive_resource_save_status_missing'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
+  | 'wp5_archive_drag_anchor_match' | 'wp5_archive_drag_pointer_routing'
   | 'wp5_archive_drag_parent_missing' | 'wp5_archive_drag_different_parents'
   | 'wp5_archive_drag_same_block' | 'wp5_archive_drag_source_missing_from_parent'
   | 'wp5_archive_drag_target_missing_from_parent' | 'wp5_archive_drag_child_index_mismatch'
@@ -2080,11 +2081,29 @@ for (const viewport of activeViewports) {
         const expectedSourceBeforeTarget = dragPreflight === 'wp5_archive_drag_source_after';
         const beforeDrag = orderBeforeDrag.find(block => block.text.includes('Archive reorder target'))!;
         const beforeDragTarget = orderBeforeDrag.find(block => block.text.includes(richText))!;
+        const dragWidget = archiveViewport.locator('sb-desktop-page-plus-widget');
+        const anchorId = await dragWidget.evaluate(widget => (widget as HTMLElement & { anchor?: { id?: string } | null }).anchor?.id ?? null);
+        expect(anchorId, 'wp5_archive_drag_anchor_match').toBe(beforeDrag.id);
         await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
         await page.mouse.down();
         const dropY = dragPreflight === 'wp5_archive_drag_source_after'
           ? bodyBox!.y + 1 : bodyBox!.y + bodyBox!.height - 1;
         await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, dropY, { steps: 5 });
+        const expectedDropBefore = dropY < bodyBox!.y + bodyBox!.height / 2;
+        const dragRouting = await archiveViewport.evaluate((root, point) => {
+          const widget = root.querySelector('sb-desktop-page-plus-widget') as (HTMLElement & {
+            dragSource?: { id?: string } | null; dropTarget?: { id?: string; before?: boolean } | null;
+          }) | null;
+          const hit = document.elementFromPoint(point.x, point.y)?.closest('[data-block-id]') as HTMLElement | null;
+          const gripButton = widget?.shadowRoot?.querySelector('button[data-kind="grip"]') as HTMLButtonElement | null;
+          return { dragSourceMatches: widget?.dragSource?.id === point.sourceId,
+            hitMatchesTarget: hit?.getAttribute('data-block-id') === point.targetId,
+            dropTargetMatches: widget?.dropTarget?.id === point.targetId,
+            dropBefore: widget?.dropTarget?.before ?? null,
+            pointerCaptured: gripButton?.hasPointerCapture(1) ?? false };
+        }, { x: bodyBox!.x + bodyBox!.width / 3, y: dropY, sourceId: beforeDrag.id, targetId: beforeDragTarget.id });
+        expect(dragRouting, 'wp5_archive_drag_pointer_routing').toEqual({ dragSourceMatches: true,
+          hitMatchesTarget: true, dropTargetMatches: true, dropBefore: expectedDropBefore, pointerCaptured: true });
         await page.mouse.up();
         observed.setDiagnosticAssertion('wp5_archive_drag_result');
         await expect.poll(async () => {
