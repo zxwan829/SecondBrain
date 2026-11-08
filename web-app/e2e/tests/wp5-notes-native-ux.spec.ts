@@ -50,8 +50,6 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await page.getByLabel('SecondBrain 登录口令').fill(password);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
-  await page.getByRole('button', { name: '创建合成会话' }).click();
-  await expect(page.getByRole('heading', { name: '合成会话 1' })).toBeVisible();
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
 
@@ -69,14 +67,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const openMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<Record<string, unknown>> }).__wp5ReadyEvents ?? []);
   expect(openMetrics.length).toBeGreaterThan(0);
   const firstOpenSetup = openMetrics.at(-1);
+  await expect(page.locator('.notes-properties')).toHaveCount(0);
 
-  await editor.getByRole('button', { name: '重命名文档' }).click();
-  const titleInput = editor.getByRole('textbox', { name: '重命名文档' });
-  await titleInput.fill('WP5 Native Probe');
-  await titleInput.press('Enter');
-  const titleBlock = editor.locator('.blocksuite-resource-host [data-sb-document-title-block="true"]');
-  await expect(titleBlock).toBeHidden();
-  await expect(editor.locator('.document-heading')).toContainText('WP5 Native Probe');
   const paragraphs = editor.locator('.blocksuite-resource-host .affine-page-viewport affine-paragraph');
   await expect(paragraphs).toHaveCount(2);
   const body = paragraphs.nth(1);
@@ -89,6 +81,13 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   })).toBe(true);
   const firstOpen = await page.evaluate(start => ({ durationMs: Date.now() - start,
     viewport: `${window.innerWidth}x${window.innerHeight}` }), firstOpenStarted);
+  await editor.getByRole('button', { name: '重命名文档' }).click();
+  const titleInput = editor.getByRole('textbox', { name: '重命名文档' });
+  await titleInput.fill('WP5 Native Probe');
+  await titleInput.press('Enter');
+  const titleBlock = editor.locator('.blocksuite-resource-host [data-sb-document-title-block="true"]');
+  await expect(titleBlock).toBeHidden();
+  await expect(editor.locator('.document-heading')).toContainText('WP5 Native Probe');
   await page.keyboard.insertText('First line after title');
   await page.keyboard.press('Enter');
   await page.keyboard.insertText('Second paragraph after Enter');
@@ -150,6 +149,34 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(titleBoundary.title).toBe('WP5 Native Probe');
   expect(titleBoundary.firstBody?.text).toBe('First line after title');
   expect(titleBoundary.firstBody?.id).not.toBe(titleBoundary.titleBlockId);
+
+  const segmentedParagraph = editor.locator('affine-paragraph').filter({ hasText: 'First line after title' }).first();
+  await segmentedParagraph.locator('rich-text').evaluate(node => {
+    const inlineEditor = (node as HTMLElement & { inlineEditor?: { formatText: (range: { index: number; length: number }, attributes: Record<string, unknown>) => void; rootElement?: HTMLElement } }).inlineEditor;
+    if (!inlineEditor) throw new Error('BlockSuite inline editor was unavailable');
+    inlineEditor.formatText({ index: 0, length: 5 }, { bold: true });
+    const textNodes = [...(inlineEditor.rootElement ?? node).querySelectorAll('[data-v-text="true"]')]
+      .map(element => [...element.childNodes].find(child => child instanceof Text))
+      .filter((child): child is Text => child instanceof Text);
+    if (textNodes.length < 2) throw new Error('Formatted paragraph did not expose separate text nodes');
+    const selection = window.getSelection();
+    if (!selection) throw new Error('Browser selection was unavailable');
+    const range = document.createRange();
+    range.setStart(textNodes[1]!, 0);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  const segmentedRichText = segmentedParagraph.locator('rich-text');
+  await expect.poll(() => segmentedRichText.evaluate(node => {
+    const inlineEditor = (node as HTMLElement & { inlineEditor?: { getInlineRange: () => { index: number; length: number } | null } }).inlineEditor;
+    const range = inlineEditor?.getInlineRange() ?? null;
+    return { range, domOffset: window.getSelection()?.anchorOffset ?? null };
+  })).toEqual({ range: { index: 5, length: 0 }, domOffset: 0 });
+  await page.keyboard.press('Backspace');
+  await expect(segmentedParagraph).toContainText('Firs line after title');
+  await page.keyboard.press('Control+z');
+  await expect(segmentedParagraph).toContainText('First line after title');
 
   const resourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
     && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${created.resource_id}`));

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { DatabaseBlockDataSource, databaseViewInitTemplate, richTextColumnConfig } from '@blocksuite/affine-block-database';
 import { ShapeType } from '@blocksuite/affine-model';
-import { BlockStdScope } from '@blocksuite/std';
+import { BlockStdScope, TextSelection } from '@blocksuite/std';
 import { Text } from '@blocksuite/store';
 import * as Y from 'yjs';
 import { notesApi, type BlockSuiteResource, type BlockSuiteResourceKind, type BlockSuiteResourceWrite, type Note } from './api/notes';
@@ -40,11 +40,11 @@ function markDocumentTitleBlock(host: HTMLElement | null, blockId?: string) {
   block?.setAttribute('data-sb-document-title-block', 'true');
   host.dataset.sbDocumentTitleBlockId = blockId;
 }
-function bindDocumentTitleBackspaceBoundary(viewport: HTMLElement, store: any) {
+function bindDocumentTitleBackspaceBoundary(viewport: HTMLElement, store: any, std: BlockStdScope) {
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== 'Backspace' || event.isComposing || event.keyCode === 229) return;
-    const selection = window.getSelection();
-    if (!selection?.isCollapsed || selection.anchorOffset !== 0) return;
+    const selection = std.selection.find(TextSelection);
+    if (!selection?.isCollapsed() || selection.from.index !== 0) return;
     const paragraph = event.composedPath().find((node): node is HTMLElement => node instanceof HTMLElement
       && node.localName === 'affine-paragraph');
     const blockId = paragraph?.dataset.blockId;
@@ -265,7 +265,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           setArchiveTitle(titleText || markdownTitle(noteRef.current.content) || '新建笔记');
           markDocumentTitleBlock(host.current, titleBlock?.model.id);
         }
-        if (native) offTitleBoundary = bindDocumentTitleBackspaceBoundary(viewport, store);
+        if (native) offTitleBoundary = bindDocumentTitleBackspaceBoundary(viewport, store, std);
         if (native && scope === 'edgeless' && focusFrameAfterView.current) {
           try { archiveFocusFrame(std!, focusFrameAfterView.current); setStatus('已打开内嵌画布范围。'); }
           catch (error) { setStatus(error instanceof Error ? error.message : '无法定位内嵌画布'); }

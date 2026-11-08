@@ -1033,7 +1033,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           </>}
           <button type="button" disabled={blockSuiteSnapshotBusy} onClick={() => { setBlockSuiteSnapshots(null); setBlockSuiteSnapshotPreview(null); setBlockSuiteRestoreFailed(false); setBlockSuiteSnapshotRecoveryCopy(null); setBlockSuiteSnapshotRecoveryComplete(false); }}>关闭</button>
         </section>}
-        {note && state === '已保存' && !loading && <NotePropertiesPanel key={noteKey(note)} note={note} onSaved={(saved) => {
+        {note && state === '已保存' && !loading && blockSuiteResource?.resourceKind !== 'rich-page' && <NotePropertiesPanel key={noteKey(note)} note={note} onSaved={(saved) => {
           setCurrent(saved, saved.content); setState('已保存'); setMessage(''); void refresh(saved.collection);
         }} />}
         {blockSuiteResource?.resourceKind === 'rich-page' ? null : note ? note.read_only || editorMode === 'source' ? <>
