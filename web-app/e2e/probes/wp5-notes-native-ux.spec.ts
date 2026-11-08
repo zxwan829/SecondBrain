@@ -514,6 +514,7 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
   const canvasRead = page.waitForResponse(response => response.request().method() === 'GET'
     && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${canvas.resource_id}`), { timeout: 15_000 });
   const openButton = card.getByRole('button', { name: '打开编辑', exact: true });
+  await openButton.scrollIntoViewIfNeeded();
   await expect(openButton).toBeVisible();
   const openButtonBox = await openButton.boundingBox();
   expect(openButtonBox).not.toBeNull();

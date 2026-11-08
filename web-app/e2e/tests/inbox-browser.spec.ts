@@ -1693,6 +1693,7 @@ for (const viewport of activeViewports) {
       await expect(nestedCanvasCard).toBeVisible({ timeout: 15000 });
       observed.setWp5Step('rich_page_nested_canvas_open');
       const nestedCanvasOpenButton = nestedCanvasCard.getByRole('button', { name: '打开编辑' });
+      await nestedCanvasOpenButton.scrollIntoViewIfNeeded();
       await expect(nestedCanvasOpenButton).toBeVisible();
       const nestedCanvasOpenBox = await nestedCanvasOpenButton.boundingBox();
       expect(nestedCanvasOpenBox, 'wp5_nested_canvas_open_button_geometry').not.toBeNull();
