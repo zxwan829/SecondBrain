@@ -540,9 +540,18 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
     const lastParagraphBottom = paragraphs.at(-1)?.getBoundingClientRect().bottom ?? 0;
     const hostHeight = host?.getBoundingClientRect().height ?? 0;
     const lastParagraphHeight = paragraphs.at(-1)?.getBoundingClientRect().height ?? 0;
+    const box = (element: HTMLElement | null) => element ? {
+      height: element.getBoundingClientRect().height, scrollHeight: element.scrollHeight,
+      cssHeight: getComputedStyle(element).height, minHeight: getComputedStyle(element).minHeight,
+      display: getComputedStyle(element).display, flex: getComputedStyle(element).flex,
+    } : null;
     return { paragraphCount: paragraphs.length, hostCount: document.querySelectorAll('.blocksuite-resource-host').length,
       inlineHostCount: inline?.querySelectorAll('.blocksuite-resource-host').length ?? 0,
       hostHeight, hostScrollHeight: host?.scrollHeight ?? 0, lastParagraphHeight,
+      hostStyle: box(host), viewportStyle: box(viewport),
+      editorHostStyle: box(host?.querySelector<HTMLElement>('editor-host') ?? null),
+      pageRootStyle: box(host?.querySelector<HTMLElement>('affine-page-root') ?? null),
+      paragraphStyles: paragraphs.slice(1, 3).concat(paragraphs.slice(-1)).map(box),
       hostBottom, galleryTop, lastParagraphBottom,
       noOverlap: Boolean(viewport && gallery && paragraphs.length >= 12 && galleryTop >= hostBottom - 1
         && galleryTop >= lastParagraphBottom - 1) };
