@@ -63,6 +63,32 @@ function bindDocumentTitleBackspaceBoundary(viewport: HTMLElement, store: any, s
   return () => viewport.removeEventListener('keydown', onKeyDown, true);
 }
 
+function bindNativeHistoryShortcuts(viewport: HTMLElement, store: any) {
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.isComposing || event.keyCode === 229 || event.altKey) return;
+    const modifier = event.metaKey || event.ctrlKey;
+    const key = event.key.toLowerCase();
+    if (!modifier || !(key === 'z' || (!isMac && key === 'y'))) return;
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    const editable = anchor instanceof Element ? anchor.closest('[contenteditable="true"]')
+      : anchor?.parentElement?.closest('[contenteditable="true"]');
+    if (!anchor || !viewport.contains(anchor) || !editable) return;
+    const history = store.history?.undoManager;
+    if (!history) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const redo = key === 'y' || event.shiftKey;
+    if (redo ? history.canRedo() : history.canUndo()) {
+      if (redo) store.redo();
+      else store.undo();
+    }
+  };
+  viewport.addEventListener('keydown', onKeyDown, true);
+  return () => viewport.removeEventListener('keydown', onKeyDown, true);
+}
+
 function referencedBlockSuiteBlobIds(store: any): string[] {
   const ids = new Set<string>();
   for (const block of store.getBlocksByFlavour(['affine:image', 'affine:attachment'])) {
@@ -219,6 +245,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     let std: BlockStdScope | undefined;
     let offUpdate: (() => void) | undefined;
     let offTitleBoundary: (() => void) | undefined;
+    let offHistoryShortcuts: (() => void) | undefined;
     const setup = async () => {
       try {
         const editingResource = resourceRef.current;
@@ -266,7 +293,10 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           setArchiveTitle(titleText || markdownTitle(noteRef.current.content) || '新建笔记');
           markDocumentTitleBlock(host.current, titleBlock?.model.id);
         }
-        if (native) offTitleBoundary = bindDocumentTitleBackspaceBoundary(viewport, store, std);
+        if (native) {
+          offTitleBoundary = bindDocumentTitleBackspaceBoundary(viewport, store, std);
+          offHistoryShortcuts = bindNativeHistoryShortcuts(viewport, store);
+        }
         if (native && scope === 'edgeless' && focusFrameAfterView.current) {
           try { archiveFocusFrame(std!, focusFrameAfterView.current); setStatus('已打开内嵌画布范围。'); }
           catch (error) { setStatus(error instanceof Error ? error.message : '无法定位内嵌画布'); }
@@ -334,6 +364,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       disposed = true;
       offUpdate?.();
       offTitleBoundary?.();
+      offHistoryShortcuts?.();
       std?.unmount();
       workspace?.dispose();
       host.current?.replaceChildren();
