@@ -54,6 +54,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [collection, setCollection] = useState('drafts');
   const [items, setItems] = useState<{ path: string; title: string }[]>([]);
   const [note, setNote] = useState<Note | null>(null);
+  const [propertiesNote, setPropertiesNote] = useState<Note | null>(null);
   const [content, setContent] = useState('');
   const projectionPending = useRef(false);
   const [projectionBusy, setProjectionBusy] = useState(false);
@@ -222,6 +223,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   }, []);
 
   const open = async (path: string, openedAtOverride?: number) => {
+    setPropertiesNote(null);
     if (blockSuiteResourceOpen.current) { requestResourceExit(() => { void open(path); }); return; }
     if (!protectUnsaved()) return;
     const openedAt = openedAtOverride ?? performance.now();
@@ -249,6 +251,30 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       }
     } catch { if (viewRevision.current === revision) setMessage('笔记读取失败，原有内容未更改。'); }
     finally { if (viewRevision.current === revision) setLoading(false); }
+  };
+
+  const openNoteProperties = (path: string) => {
+    const loadPropertiesTarget = async () => {
+      const targetCollection = collection;
+      const revision = beginTransition();
+      setLoading(true);
+      setMessage('');
+      try {
+        const loaded = await notesApi.read(targetCollection, path);
+        if (viewRevision.current !== revision) return;
+        setCurrent(null);
+        setPropertiesNote(loaded);
+      } catch {
+        if (viewRevision.current === revision) setMessage('笔记属性暂时无法读取；正文与类型标签均未修改。');
+      } finally {
+        if (viewRevision.current === revision) setLoading(false);
+      }
+    };
+    if (blockSuiteResourceOpen.current) {
+      requestResourceExit(() => { void loadPropertiesTarget(); });
+      return;
+    }
+    if (protectUnsaved()) void loadPropertiesTarget();
   };
 
   useEffect(() => {
@@ -946,7 +972,12 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         }}>
           {collections.map((item) => <option key={item.id} value={item.id}>{item.kind === 'drafts' ? 'Drafts' : item.id}</option>)}
         </select>
-        <ul>{items.map((item) => <li key={item.path}><button type="button" onClick={() => void open(item.path)}>{item.title}</button></li>)}</ul>
+        <ul>{items.map((item) => <li key={item.path} className="notes-item-row">
+          <button type="button" className="notes-item-open" onClick={() => void open(item.path)}>{item.title}</button>
+          <details className="notes-item-more"><summary aria-label={`更多操作：${item.title}`}>⋯</summary>
+            <button type="button" onClick={() => openNoteProperties(item.path)}>编辑类型与标签</button>
+          </details>
+        </li>)}</ul>
       </aside>
       <section className={`notes-document${blockSuiteResource?.resourceKind === 'rich-page' ? ' notes-document-rich-page' : ''}`} aria-label="笔记编辑区">
         {blockSuiteResource?.resourceKind !== 'rich-page' && <div className="notes-document-heading">
@@ -1058,6 +1089,14 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
             {state === '版本冲突' ? '读取最新笔记并追加 BlockSuite 资源引用' : '重试保存 BlockSuite 资源引用'}
           </button>}
       </section>
+      {propertiesNote && <section className="notes-properties-entry" aria-label="笔记属性编辑">
+        <div><h2>{propertiesNote.content.match(/^#\s+(.+)$/m)?.[1]?.trim() || propertiesNote.path}</h2>
+          <button type="button" onClick={() => setPropertiesNote(null)}>返回笔记列表</button>
+        </div>
+        <NotePropertiesPanel key={noteKey(propertiesNote)} note={propertiesNote} onSaved={(saved) => {
+          setPropertiesNote(saved); setMessage('类型与标签已保存；正文及原生编辑资源保持不变。'); void refresh(saved.collection);
+        }} />
+      </section>}
     </div>}
     {blockSuiteResource && note && blockSuiteResource.resourceKind !== 'rich-page' && <Suspense fallback={<p role="status">正在加载 BlockSuite 资源编辑器…</p>}>
       <BlockSuiteResourceEditor key={`${noteKey(note)}:${blockSuiteResource.resourceId}`} note={note} resource={blockSuiteResource}

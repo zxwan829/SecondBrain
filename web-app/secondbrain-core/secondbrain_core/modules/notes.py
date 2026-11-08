@@ -934,6 +934,27 @@ class NotesStore:
             artifacts = self._blocksuite_artifacts_at(directory_fd)
             if not metadata_only:
                 self._check_artifact_set_etag(artifacts, expected_artifacts)
+            new_note_etag = self._digest(content)
+            rebound_resources = []
+            if metadata_only:
+                for artifact in artifacts:
+                    if artifact["kind"] != "resource":
+                        continue
+                    try:
+                        resource = json.loads(artifact["data"])
+                    except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                        raise HTTPException(status_code=409, detail="BlockSuite resource cannot be rebound safely") from exc
+                    if resource.get("resourceKind") != "rich-page":
+                        continue
+                    snapshot = resource.get("snapshot")
+                    receipt = snapshot.get("secondbrainRichPage") if isinstance(snapshot, dict) else None
+                    if (not isinstance(receipt, dict) or receipt.get("schemaVersion") != 1
+                            or receipt.get("markdownSha256") != current_etag):
+                        raise HTTPException(status_code=412, detail="Rich Page binding is stale; reload and reconcile before editing properties")
+                    rebound = {**resource, "snapshot": {**snapshot,
+                        "secondbrainRichPage": {**receipt, "markdownSha256": new_note_etag}}}
+                    raw = self._validate_blocksuite_resource(artifact["id"], rebound)
+                    rebound_resources.append((artifact["filename"], artifact["data"], raw))
             self._snapshot_current_locked(collection, relative, directory_fd, current, artifacts)
             namespace = self._history_namespace(collection, relative)
             history_fd = self._open_history_directory_for_update(directory_fd, namespace)
@@ -949,7 +970,29 @@ class NotesStore:
             else:
                 if previous != current:
                     raise HTTPException(status_code=409, detail="History entry is not safe to replace")
-            self._atomic_write(path, content.encode("utf-8"), directory_fd=directory_fd)
+            if rebound_resources:
+                attachments_fd = self._open_attachments_directory(directory_fd)
+                try:
+                    try:
+                        for filename, _old_raw, rebound_raw in rebound_resources:
+                            self._atomic_write(directory / "attachments" / filename, rebound_raw,
+                                               directory_fd=attachments_fd)
+                        self._atomic_write(path, content.encode("utf-8"), directory_fd=directory_fd)
+                    except Exception:
+                        try:
+                            for filename, old_raw, _rebound_raw in rebound_resources:
+                                self._atomic_write(directory / "attachments" / filename, old_raw,
+                                                   directory_fd=attachments_fd)
+                            self._atomic_write(path, current.encode("utf-8"), directory_fd=directory_fd)
+                        except Exception as rollback_error:
+                            raise HTTPException(status_code=503,
+                                detail="Property update failed; a verified BlockSuite snapshot is retained for recovery") from rollback_error
+                        raise
+                finally:
+                    os.close(attachments_fd)
+            else:
+                self._atomic_write(path, content.encode("utf-8"), directory_fd=directory_fd)
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
         finally:
             if history_fd is not None:
                 os.close(history_fd)

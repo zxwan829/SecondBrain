@@ -244,7 +244,7 @@ def main() -> int:
                                    stdout=web_log, stderr=subprocess.STDOUT, start_new_session=True)
             processes.append(web)
             wait_http(web_url + "/chat/blank", web, "Web preview")
-            command = ["npx", "--no-install", "playwright", "test", "tests/wp5-notes-native-ux.spec.ts"]
+            command = ["npx", "--no-install", "playwright", "test", "--config=playwright.wp5-notes-native-ux.config.ts"]
             result = subprocess.run(command, cwd=E2E, env=env, check=False)
             if result.returncode:
                 failure_target = output / "wp5-notes-native-failure-evidence.json"

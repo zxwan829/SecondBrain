@@ -691,6 +691,52 @@ class NotesStoreTests(unittest.TestCase):
         self.assertEqual(reloaded["snapshot"], body["snapshot"])
         self.assertEqual(self.store.read_blocksuite_blob("drafts", note["path"], blob_id)["data"], png)
 
+    def test_managed_property_update_rebinds_rich_page_receipt_without_changing_yjs(self):
+        initial = '---\ncustom: keep\n类型: "摘要"\ntags: ["SecondBrain"]\n---\n\n# Property-bound Page\n'
+        note = self.store.create("# Placeholder\n")
+        note_path = self.drafts / note["path"] / "note.md"
+        note_path.write_text(initial, encoding="utf-8")
+        note_path.chmod(0o600)
+        note = self.store.read("drafts", note["path"])
+        update = base64.b64encode(b"synthetic-yjs-preserved").decode("ascii")
+        body = {"schemaVersion": 1, "resourceKind": "rich-page", "docId": "property_bound_page",
+                "updateB64": update,
+                "snapshot": {"blocks": {}, "secondbrainRichPage": {"schemaVersion": 1,
+                    "markdownSha256": note["etag"]}}}
+        created = self.store.create_blocksuite_resource("drafts", note["path"], body, note["etag"])
+        projection = f'{initial.rstrip()}\n\n{created["reference"]}\n'
+        note = self.store.update("drafts", note["path"], projection, note["etag"],
+                                 expected_artifacts=created["artifact_set_etag"])
+        resource = self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        bound_body = {key: resource[key] for key in ("schemaVersion", "resourceId", "resourceKind", "docId", "updateB64", "snapshot")}
+        bound_body["snapshot"] = {**bound_body["snapshot"], "secondbrainRichPage": {
+            **bound_body["snapshot"]["secondbrainRichPage"], "markdownSha256": note["etag"]}}
+        saved_resource = self.store.update_blocksuite_resource("drafts", note["path"], created["resource_id"],
+            bound_body, note["etag"], resource["etag"], resource["artifact_set_etag"])
+
+        saved_note = self.store.update_properties("drafts", note["path"], "笔记", ["SecondBrain"], note["etag"])
+        rebound = self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])
+        self.assertNotEqual(saved_note["etag"], note["etag"])
+        self.assertEqual(rebound["note_etag"], saved_note["etag"])
+        self.assertEqual(rebound["snapshot"]["secondbrainRichPage"]["markdownSha256"], saved_note["etag"])
+        self.assertEqual(rebound["updateB64"], update)
+        self.assertNotEqual(rebound["etag"], saved_resource["etag"])
+        self.assertIn('custom: keep', saved_note["content"])
+        self.assertIn('# Property-bound Page', saved_note["content"])
+        stale_receipt = {key: rebound[key] for key in (
+            "schemaVersion", "resourceId", "resourceKind", "docId", "updateB64", "snapshot")}
+        stale_receipt["snapshot"] = {**stale_receipt["snapshot"], "secondbrainRichPage": {
+            **stale_receipt["snapshot"]["secondbrainRichPage"], "markdownSha256": "f" * 64}}
+        corrupted = self.store.update_blocksuite_resource("drafts", note["path"], created["resource_id"],
+            stale_receipt, saved_note["etag"], rebound["etag"], rebound["artifact_set_etag"])
+        before = self.store.read("drafts", note["path"])
+        with self.assertRaises(HTTPException) as stale_binding:
+            self.store.update_properties("drafts", note["path"], "摘要", [], before["etag"])
+        self.assertEqual(stale_binding.exception.status_code, 412)
+        self.assertEqual(self.store.read("drafts", note["path"])["content"], before["content"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], created["resource_id"])["etag"],
+                         corrupted["etag"])
+
     def test_blocksuite_snapshot_routes_expose_read_and_dual_etag_restore(self):
         self._check_blocksuite_snapshot_routes("database")
 

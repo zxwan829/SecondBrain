@@ -88,6 +88,11 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const titleBlock = editor.locator('.blocksuite-resource-host [data-sb-document-title-block="true"]');
   await expect(titleBlock).toBeHidden();
   await expect(editor.locator('.document-heading')).toContainText('WP5 Native Probe');
+  await body.click();
+  await expect.poll(() => inline.evaluate(node => {
+    const selection = window.getSelection();
+    return node.getAttribute('contenteditable') === 'true' && Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
+  })).toBe(true);
   await page.keyboard.insertText('First line after title');
   await page.keyboard.press('Enter');
   await page.keyboard.insertText('Second paragraph after Enter');
@@ -151,10 +156,20 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(titleBoundary.firstBody?.id).not.toBe(titleBoundary.titleBlockId);
 
   const segmentedParagraph = editor.locator('affine-paragraph').filter({ hasText: 'First line after title' }).first();
+  const segmentedRichText = segmentedParagraph.locator('rich-text');
   await segmentedParagraph.locator('rich-text').evaluate(node => {
-    const inlineEditor = (node as HTMLElement & { inlineEditor?: { formatText: (range: { index: number; length: number }, attributes: Record<string, unknown>) => void; rootElement?: HTMLElement } }).inlineEditor;
+    const inlineEditor = (node as HTMLElement & { inlineEditor?: { formatText: (range: { index: number; length: number }, attributes: Record<string, unknown>) => void } }).inlineEditor;
     if (!inlineEditor) throw new Error('BlockSuite inline editor was unavailable');
     inlineEditor.formatText({ index: 0, length: 5 }, { bold: true });
+  });
+  await expect.poll(() => segmentedRichText.evaluate(node => {
+    const inlineEditor = (node as HTMLElement & { inlineEditor?: { rootElement?: HTMLElement } }).inlineEditor;
+    return [...(inlineEditor?.rootElement ?? node).querySelectorAll('[data-v-text="true"]')]
+      .filter(element => [...element.childNodes].some(child => child instanceof Text)).length;
+  })).toBeGreaterThanOrEqual(2);
+  await segmentedRichText.evaluate(node => {
+    const inlineEditor = (node as HTMLElement & { inlineEditor?: { rootElement?: HTMLElement } }).inlineEditor;
+    if (!inlineEditor) throw new Error('BlockSuite inline editor was unavailable');
     const textNodes = [...(inlineEditor.rootElement ?? node).querySelectorAll('[data-v-text="true"]')]
       .map(element => [...element.childNodes].find(child => child instanceof Text))
       .filter((child): child is Text => child instanceof Text);
@@ -167,7 +182,6 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     selection.removeAllRanges();
     selection.addRange(range);
   });
-  const segmentedRichText = segmentedParagraph.locator('rich-text');
   await expect.poll(() => segmentedRichText.evaluate(node => {
     const inlineEditor = (node as HTMLElement & { inlineEditor?: { getInlineRange: () => { index: number; length: number } | null } }).inlineEditor;
     const range = inlineEditor?.getInlineRange() ?? null;
@@ -188,6 +202,16 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await expect(editor.getByRole('status').first()).toContainText('已保存');
   const firstPath = await page.locator('.notes-sidebar li button').filter({ hasText: 'WP5 Native Probe' }).last().textContent();
   expect(firstPath).toContain('WP5 Native Probe');
+
+  const noteRow = page.locator('.notes-sidebar li.notes-item-row').filter({ hasText: 'WP5 Native Probe' }).last();
+  await noteRow.locator('.notes-item-more > summary').click();
+  await noteRow.getByRole('button', { name: '编辑类型与标签' }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '笔记属性编辑' })).toBeVisible();
+  await expect(page.locator('.notes-properties')).toBeVisible();
+  await page.getByRole('button', { name: '返回笔记列表' }).click();
+  await noteRow.locator('.notes-item-open').click();
+  await expect(editor).toBeVisible();
 
   await editor.getByRole('button', { name: '返回笔记列表' }).click();
   await expect(editor).toHaveCount(0);
