@@ -88,6 +88,11 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const titleBlock = editor.locator('.blocksuite-resource-host [data-sb-document-title-block="true"]');
   await expect(titleBlock).toBeHidden();
   await expect(editor.locator('.document-heading')).toContainText('WP5 Native Probe');
+  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate(host => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    const title = store?.getBlocksByFlavour('affine:paragraph').find(({ model }: any) => model.props.type === 'h1')?.model;
+    return title?.props.text?.toString?.() ?? '';
+  })).toBe('WP5 Native Probe');
   await body.click();
   await expect.poll(() => inline.evaluate(node => {
     const selection = window.getSelection();

@@ -505,7 +505,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     if (!title) return;
     const text = title.props.text;
     if (text?.length) text.delete(0, text.length);
-    text?.insert(0, value);
+    text?.insert(value, 0);
     setArchiveTitle(value);
   };
   const currentTitle = () => {
