@@ -25,6 +25,7 @@ const readState = () => page.locator('.blocksuite-resource-host').evaluate((host
     paragraphs: blocks.map(({ model }) => ({ id: model.id, type: model.props.type ?? 'text',
       text: model.props.text?.toString?.() ?? '' })),
     titleText: title?.props.text?.toString?.() ?? null,
+    visibleHeadingText: host.closest('.blocksuite-resource-inline')?.querySelector('.document-heading')?.textContent?.trim() ?? null,
     logicalSelection: logicalSelection ? { blockId: logicalSelection.from.blockId,
       index: logicalSelection.from.index, length: logicalSelection.from.length } : null,
     canUndo: Boolean(store?.canUndo),
@@ -73,11 +74,13 @@ try {
   const titleInput = editor.getByRole('textbox', { name: '重命名文档' });
   await titleInput.fill('WP5 Boundary Title');
   await titleInput.press('Enter');
+  const afterTitleRename = await readState();
   await body.click();
   await expect.poll(() => inline.evaluate(node => {
     const selection = window.getSelection();
     return node.getAttribute('contenteditable') === 'true' && Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
   })).toBe(true);
+  const afterBodyRefocus = await readState();
   const beforeUndo = await readState();
   await page.keyboard.insertText(marker);
   await expect.poll(async () => (await readState()).markerPresent).toBe(true);
@@ -104,7 +107,7 @@ try {
   const allKeyEvents = await page.evaluate(() => (window).__wp5UndoKeyEvents ?? []);
   await page.screenshot({ path: process.env.SB_WP5_UNDO_REPRO_SCREENSHOT_PATH, fullPage: false });
   const evidence = { scope: 'synthetic isolated Notes page', viewport: '1440x1000',
-    sequence: { beforeUndo, afterInsert, afterUndo, afterRedo, afterToolbarUndo, afterToolbarRedo,
+    sequence: { afterTitleRename, afterBodyRefocus, beforeUndo, afterInsert, afterUndo, afterRedo, afterToolbarUndo, afterToolbarRedo,
       beforeBoundaryBackspace, afterBoundaryBackspace },
     keyEvents: allKeyEvents,
     undoRemovedTypedText: !afterUndo.markerPresent, redoRestoredTypedText: afterRedo.markerPresent,
