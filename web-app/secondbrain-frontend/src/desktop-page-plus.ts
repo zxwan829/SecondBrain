@@ -258,7 +258,7 @@ class DesktopPagePlusWidget extends WidgetComponent {
     if (!plus || !grip || !anchor || !anchor.element.isConnected) return this.hide();
     const rect = anchor.element.getBoundingClientRect();
     const line = this.firstVisualLineRect(anchor.element);
-    const left = Math.min(rect.left, line?.left ?? rect.left);
+    const left = line?.left ?? rect.left;
     // Keep the visual centers on the paragraph's first text line while the
     // glyphs remain 16–18px, matching the text baseline without covering it.
     // Headings with children expose a 32px collapse toggle at text-left - 32px.

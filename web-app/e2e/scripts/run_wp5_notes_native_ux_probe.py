@@ -127,6 +127,9 @@ def verify_evidence(source: Path, target: Path) -> dict:
     if routing != {"anchorIsSource": True, "dragSourceIsSource": True, "hitIsDropTarget": True,
                    "dropTargetIsDropTarget": True, "dropBefore": False, "pointerCaptured": True}:
         raise RuntimeError("browser evidence formatted heading pointer routing check failed")
+    handle_gap = formatted_drag.get("handleGapPx")
+    if not isinstance(handle_gap, (int, float)) or abs(handle_gap - 64) >= 2:
+        raise RuntimeError("browser evidence centered heading handle alignment check failed")
     if not (formatted_drag.get("sourceBefore", -1) < formatted_drag.get("targetBefore", -1)
             and formatted_drag.get("sourceAfterDrop", -1) > formatted_drag.get("targetAfterDrop", -1)
             and formatted_drag.get("sourceAfterReturn", -1) < formatted_drag.get("targetAfterReturn", -1)):
@@ -151,6 +154,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
                                    "distinctBlock": boundary.get("firstBody", {}).get("id") != boundary.get("titleBlockId")},
         "formattedHeadingDrag": {"type": formatted_state["type"], "textAlign": formatted_state["textAlign"],
                                  "bold": formatted_state["bold"], "anchorMatchesSource": routing["anchorIsSource"],
+                                 "gripToTextGapPx": round(handle_gap, 1),
                                  "pointerCapture": routing["pointerCaptured"], "hitMatchesTarget": routing["hitIsDropTarget"],
                                  "dropTargetMatches": routing["dropTargetIsDropTarget"],
                                  "dropBefore": routing["dropBefore"],

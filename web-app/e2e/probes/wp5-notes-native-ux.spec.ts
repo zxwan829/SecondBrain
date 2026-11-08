@@ -431,10 +431,29 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(formattedOrderBefore.source).toBeLessThan(formattedOrderBefore.target);
   await target.hover();
   await expect(grip).toHaveAttribute('data-visible', 'true');
+  const centeredHandleGeometry = await target.evaluate(block => {
+    const pending: (Document | ShadowRoot | HTMLElement)[] = [block];
+    let editable: HTMLElement | null = null;
+    while (pending.length && !editable) {
+      const root = pending.shift()!;
+      editable = root.querySelector<HTMLElement>('[contenteditable="true"]');
+      if (!editable) root.querySelectorAll('*').forEach(element => { if (element.shadowRoot) pending.push(element.shadowRoot); });
+    }
+    if (!editable) return null;
+    const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT);
+    let node: Node | null = null;
+    while ((node = walker.nextNode())) if (node.textContent?.length) break;
+    if (!node?.textContent?.length) return null;
+    const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 1);
+    const rect = range.getBoundingClientRect();
+    return { firstLineLeft: rect.left, firstLineTop: rect.top };
+  });
   const [formattedGripBox, formattedDropBox] = await Promise.all([grip.boundingBox(), secondTarget.boundingBox()]);
   if (!formattedGripBox || !formattedDropBox) {
     throw new Error('Formatted heading drag geometry was unavailable');
   }
+  expect(centeredHandleGeometry).not.toBeNull();
+  expect(Math.abs(centeredHandleGeometry!.firstLineLeft - (formattedGripBox.x + formattedGripBox.width) - 64)).toBeLessThan(2);
   await page.mouse.move(formattedGripBox.x + formattedGripBox.width / 2, formattedGripBox.y + formattedGripBox.height / 2);
   await page.mouse.down();
   const formattedDropX = formattedDropBox.x + formattedDropBox.width / 3;
@@ -472,7 +491,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const formattedOrderAfterReturn = await formattedSiblingOrder();
   expect(formattedOrderAfterReturn.sameParent).toBe(true);
   expect(formattedOrderAfterReturn.source).toBeLessThan(formattedOrderAfterReturn.target);
-  const formattedHeadingDrag = { formattedState, routing, sourceBefore: formattedOrderBefore.source,
+  const formattedHeadingDrag = { formattedState, routing, handleGapPx: centeredHandleGeometry!.firstLineLeft
+      - (formattedGripBox.x + formattedGripBox.width), sourceBefore: formattedOrderBefore.source,
     targetBefore: formattedOrderBefore.target, sourceAfterDrop: formattedOrderAfterDrop.source,
     targetAfterDrop: formattedOrderAfterDrop.target, sourceAfterReturn: formattedOrderAfterReturn.source,
     targetAfterReturn: formattedOrderAfterReturn.target };

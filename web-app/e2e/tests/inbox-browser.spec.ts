@@ -2081,7 +2081,7 @@ for (const viewport of activeViewports) {
         const expectedSourceBeforeTarget = dragPreflight === 'wp5_archive_drag_source_after';
         const beforeDrag = orderBeforeDrag.find(block => block.text.includes('Archive reorder target'))!;
         const beforeDragTarget = orderBeforeDrag.find(block => block.text.includes(richText))!;
-        const dragWidget = archiveViewport.locator('sb-desktop-page-plus-widget');
+        const dragWidget = richDialog.locator('sb-desktop-page-plus-widget');
         const anchorId = await dragWidget.evaluate(widget => (widget as HTMLElement & { anchor?: { id?: string } | null }).anchor?.id ?? null);
         expect(anchorId, 'wp5_archive_drag_anchor_match').toBe(beforeDrag.id);
         await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
