@@ -90,9 +90,8 @@ try {
   });
   console.log('WP5_INDEPENDENT_SLASH_DOM ' + JSON.stringify(keyboardEvidence));
 
-  await page.keyboard.insertText('表情');
-  await page.waitForTimeout(300);
-  const filteredEvidence = await page.evaluate(() => {
+  await page.getByText('插入表情图标', { exact: true }).scrollIntoViewIfNeeded();
+  const scrolledEvidence = await page.evaluate(() => {
     const visit = (node, result = []) => {
       if (node instanceof Element && node.matches('[data-testid="插入表情图标"]')) result.push(node);
       for (const child of node.children ?? []) visit(child, result);
@@ -100,14 +99,14 @@ try {
       return result;
     };
     const items = visit(document);
-    return { stage: 'keyboard-slash-filter', itemCount: items.length, items: items.map(item => {
+    return { stage: 'keyboard-slash-command-scroll', itemCount: items.length, items: items.map(item => {
       const rect = item.getBoundingClientRect();
       const style = getComputedStyle(item);
       return { rect: [rect.x, rect.y, rect.width, rect.height], visibility: style.visibility,
         display: style.display, text: item.textContent?.trim() ?? '' };
     }) };
   });
-  console.log('WP5_INDEPENDENT_SLASH_DOM ' + JSON.stringify(filteredEvidence));
+  console.log('WP5_INDEPENDENT_SLASH_DOM ' + JSON.stringify(scrolledEvidence));
 
   await page.keyboard.press('Escape');
   await paragraph.hover();

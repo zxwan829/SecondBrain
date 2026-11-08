@@ -2064,6 +2064,10 @@ for (const viewport of activeViewports) {
         await page.keyboard.press('End');
         await page.keyboard.press('/');
         const emojiSlashItem = page.getByText('插入表情图标', { exact: true });
+        // The native slash menu is a scrollable list; this command is below
+        // its initial viewport, so bring the actual menu item into view before
+        // asserting visibility and exercising its picker action.
+        await emojiSlashItem.scrollIntoViewIfNeeded();
         await expect(emojiSlashItem, 'wp5_archive_emoji_command_visible').toBeVisible({ timeout: 10000 });
         await emojiSlashItem.click();
         const emojiDialog = page.getByRole('dialog', { name: '选择表情' });
