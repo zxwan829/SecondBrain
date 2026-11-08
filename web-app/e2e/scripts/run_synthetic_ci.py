@@ -377,7 +377,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                          "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
                          "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
                          "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events",
-                         "wp5_step", "blocksuite_request_statuses", "wp5_canvas_save", "wp5_canvas_open_state")
+                         "wp5_step", "blocksuite_request_statuses", "wp5_canvas_save")
         allowed_keys = base_keys | set(optional_keys)
         if not isinstance(entry, dict) or not base_keys.issubset(entry) or not set(entry).issubset(allowed_keys):
             raise RuntimeError("failure diagnostic fields rejected; upload withheld")
@@ -402,7 +402,6 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         wp5_step = entry.get("wp5_step")
         blocksuite_requests = entry.get("blocksuite_request_statuses", [])
         canvas_save = entry.get("wp5_canvas_save")
-        canvas_open = entry.get("wp5_canvas_open_state")
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
@@ -513,23 +512,6 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                                   for value in sample)
                            for sample in canvas_save["layout_samples"])
                 ))
-                or (canvas_open is not None and (
-                    not isinstance(canvas_open, dict)
-                    or set(canvas_open) != {"viewportFoundBeforeClick", "openEventReceived", "canvasGalleryExpanded",
-                                            "canvasCardCount", "openButtonCount", "openButtonsEnabled",
-                                            "nestedCanvasEditorVisible", "visibleResourceDialogs"}
-                    or any(type(canvas_open.get(key)) is not bool for key in
-                           ("viewportFoundBeforeClick", "canvasGalleryExpanded", "nestedCanvasEditorVisible"))
-                    or type(canvas_open.get("openEventReceived")) is not int or not 0 <= canvas_open["openEventReceived"] <= 8
-                    or any(type(canvas_open.get(key)) is not int or not 0 <= canvas_open[key] <= 12
-                           for key in ("canvasCardCount", "openButtonCount", "openButtonsEnabled"))
-                    or canvas_open["openButtonsEnabled"] > canvas_open["openButtonCount"]
-                    or not isinstance(canvas_open.get("visibleResourceDialogs"), list)
-                    or len(canvas_open["visibleResourceDialogs"]) > 4
-                    or any(not isinstance(label, str) or label not in
-                           ("笔记编辑器", "BlockSuite Edgeless 资源", "BlockSuite 数据库资源", "unlabelled")
-                           for label in canvas_open["visibleResourceDialogs"])
-                ))
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
         autosave_events = _validate_wp5_autosave_events(autosave_events)
@@ -568,8 +550,6 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
             normalized["blocksuite_request_statuses"] = blocksuite_requests
         if "wp5_canvas_save" in entry:
             normalized["wp5_canvas_save"] = canvas_save
-        if "wp5_canvas_open_state" in entry:
-            normalized["wp5_canvas_open_state"] = canvas_open
         validated.append(normalized)
     return validated
 
@@ -665,7 +645,7 @@ def _collect_failure_diagnostics(
                              "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
                              "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
                              "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events",
-                             "wp5_step", "blocksuite_request_statuses", "wp5_canvas_save", "wp5_canvas_open_state")
+                             "wp5_step", "blocksuite_request_statuses", "wp5_canvas_save")
             allowed_keys = base_keys | set(optional_keys)
             if (not isinstance(raw, dict) or not base_keys.issubset(raw) or not set(raw).issubset(allowed_keys)
                     or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 2
@@ -708,8 +688,6 @@ def _collect_failure_diagnostics(
                 diagnostics[-1]["blocksuite_request_statuses"] = raw["blocksuite_request_statuses"]
             if "wp5_canvas_save" in raw:
                 diagnostics[-1]["wp5_canvas_save"] = raw["wp5_canvas_save"]
-            if "wp5_canvas_open_state" in raw:
-                diagnostics[-1]["wp5_canvas_open_state"] = raw["wp5_canvas_open_state"]
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}

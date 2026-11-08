@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DatabaseBlockDataSource, databaseViewInitTemplate, richTextColumnConfig } from '@blocksuite/affine-block-database';
 import { ShapeType } from '@blocksuite/affine-model';
 import { BlockStdScope, TextSelection } from '@blocksuite/std';
@@ -16,7 +16,7 @@ import type { ArchiveProperties } from './archive-rich-page-tools';
 import { archiveManagers, archiveViewExtensions, bindArchiveSurface } from './archive-rich-page-runtime';
 import { ArchiveCanvasGallery, type ArchiveCanvasCard } from './archive-canvas-gallery';
 import { toCanvasPreviewShape } from './canvas-preview';
-import { CANVAS_REF_FLAVOUR, CANVAS_REF_OPEN_EVENT, CANVAS_REF_COPY_EVENT } from './canvas-ref-block';
+import { CANVAS_REF_FLAVOUR, CANVAS_REF_COPY_EVENT } from './canvas-ref-block';
 import { DEFAULT_ARCHIVE_PROPERTIES } from './archive-rich-page-tools';
 import { readKnownFrontmatter } from './markdown-frontmatter';
 import './blocksuite-resource.css';
@@ -547,6 +547,14 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     if (dirtyRef.current && !await save()) return;
     onOpenBackups?.();
   };
+  const openNestedCanvas = useCallback(async (resourceId: string) => {
+    const latest = await notesApi.readWithArtifactSet(noteRef.current.collection, noteRef.current.path);
+    const resource = await notesApi.readBlockSuiteResource(latest, resourceId);
+    if (latest.etag !== resource.note_etag || latest.artifactSetEtag !== resource.artifact_set_etag) {
+      throw Object.assign(new Error('笔记或资源集合已变化，请刷新后重试'), { status: 412 });
+    }
+    setNestedResource(resource);
+  }, []);
 
   useEffect(() => {
     if (initialResource.resourceKind !== 'rich-page' || !storeReady) return;
@@ -591,10 +599,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       },
       onCanvasOpen: async detail => {
         if (!detail.resourceId) return;
-        const latest = await notesApi.readWithArtifactSet(noteRef.current.collection, noteRef.current.path);
-        const resource = await notesApi.readBlockSuiteResource(latest, detail.resourceId);
-        if (latest.etag !== resource.note_etag || latest.artifactSetEtag !== resource.artifact_set_etag) throw Object.assign(new Error('笔记或资源集合已变化，请刷新后重试'), { status: 412 });
-        setNestedResource(resource);
+        await openNestedCanvas(detail.resourceId);
       },
       onCanvasCopy: async detail => {
         const sourceReference = store.getBlock(detail.blockId)?.model;
@@ -645,7 +650,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     archiveSurfaceRef.current = cleanup;
     refreshCanvasCards(store);
     return () => { cleanup.dispose(); if (archiveSurfaceRef.current === cleanup) archiveSurfaceRef.current = null; };
-  }, [initialResource.resourceKind, storeReady, viewMode]);
+  }, [initialResource.resourceKind, openNestedCanvas, storeReady, viewMode]);
 
   const addCanvasImage = async (file?: File) => {
     const store = (host.current as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null)?.__sbBlockSuiteStore;
@@ -798,7 +803,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         onCreate={() => { const store = currentStore(); const parent = store?.getBlocksByFlavour('affine:note')[0]?.model.id; if (!store || !parent) return;
           const blockId = store.addBlock(CANVAS_REF_FLAVOUR, { title: '新建画布', state: 'creating' }, parent);
           host.current?.querySelector<HTMLElement>('.sb-archive-viewport')?.dispatchEvent(new CustomEvent('sb-canvas-ref-create', { bubbles: true, detail: { blockId } })); }}
-        onOpen={card => { host.current?.querySelector<HTMLElement>('.sb-archive-viewport')?.dispatchEvent(new CustomEvent(CANVAS_REF_OPEN_EVENT, { bubbles: true, detail: { blockId: card.blockId, resourceId: card.resourceId } })); }}
+        onOpen={card => { void openNestedCanvas(card.resourceId).catch(() => setStatus('画布操作未完成；当前内容仍保留。')); }}
         onCopy={card => { host.current?.querySelector<HTMLElement>('.sb-archive-viewport')?.dispatchEvent(new CustomEvent(CANVAS_REF_COPY_EVENT, { bubbles: true, detail: { blockId: card.blockId, resourceId: card.resourceId } })); }}
         onRemoveReference={card => { const store = currentStore(); if (store) { store.deleteBlock(card.blockId); refreshCanvasCards(store); setStatus('已移除引用；画布原件保留。保存笔记以持久化。'); } }} /></details>}
       {projectionConflict && initialResource.resourceKind === 'rich-page' && <section className="blocksuite-resource-conflict" role="alert">

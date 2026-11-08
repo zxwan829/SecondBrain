@@ -1692,13 +1692,6 @@ for (const viewport of activeViewports) {
       const nestedCanvasCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: nestedCanvasInfo.resource_id });
       await expect(nestedCanvasCard).toBeVisible({ timeout: 15000 });
       observed.setWp5Step('rich_page_nested_canvas_open');
-      await page.evaluate(() => {
-        const host = document.querySelector<HTMLElement>('.blocksuite-resource-host');
-        const viewport = host?.querySelector<HTMLElement>('.sb-archive-viewport');
-        const state = { viewportFound: Boolean(viewport), eventReceived: 0 };
-        (window as Window & { __wp5CanvasOpenDiagnostic?: typeof state }).__wp5CanvasOpenDiagnostic = state;
-        viewport?.addEventListener('sb-canvas-ref-open', () => { state.eventReceived += 1; }, true);
-      });
       await nestedCanvasCard.getByRole('button', { name: '打开编辑' }).click();
       const nestedCanvasDialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
       await expect(nestedCanvasDialog).toBeVisible({ timeout: 15000 });
@@ -4097,27 +4090,6 @@ test.afterEach(async ({ page }, testInfo) => {
       if (!document.body.childElementCount || (root && !root.childElementCount)) return 'app_blank';
       return 'canvas_missing';
     }).catch(() => 'unavailable');
-    const wp5CanvasOpenState = await page.evaluate(() => {
-      const probe = (window as Window & { __wp5CanvasOpenDiagnostic?: { viewportFound: boolean; eventReceived: number } }).__wp5CanvasOpenDiagnostic;
-      const host = document.querySelector<HTMLElement>('.blocksuite-resource-host');
-      const visible = (element: Element | null) => Boolean(element && (element as HTMLElement).getClientRects().length);
-      const dialogLabels = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')]
-        .filter(visible).map(dialog => dialog.getAttribute('aria-label') ?? 'unlabelled')
-        .filter(label => ['笔记编辑器', 'BlockSuite Edgeless 资源', 'BlockSuite 数据库资源'].includes(label));
-      const gallery = document.querySelector<HTMLElement>('.blocksuite-canvas-tools');
-      const openButtons = [...document.querySelectorAll<HTMLButtonElement>('.canvas-b-card button')]
-        .filter(button => button.textContent?.trim() === '打开编辑');
-      return {
-        viewportFoundBeforeClick: probe?.viewportFound ?? false,
-        openEventReceived: probe?.eventReceived ?? 0,
-        canvasGalleryExpanded: gallery?.open ?? false,
-        canvasCardCount: document.querySelectorAll('.canvas-b-card').length,
-        openButtonCount: openButtons.length,
-        openButtonsEnabled: openButtons.filter(button => !button.disabled).length,
-        nestedCanvasEditorVisible: visible(host?.querySelector('[data-kind="edgeless-canvas"]') ?? null),
-        visibleResourceDialogs: dialogLabels,
-      };
-    }).catch(() => null);
     const isTimeout = errors.some((error) => error.name === 'TimeoutError' || /timeout/i.test(error.message));
     const isAssertion = errors.some((error) => /\bexpect(?:\(|\.)|\bExpected:|\bReceived:/i.test(error.message));
     await writeFile(join(testInfo.outputDir, 'failure-summary.json'), JSON.stringify({
@@ -4133,7 +4105,6 @@ test.afterEach(async ({ page }, testInfo) => {
       notes_readback_failure: observed?.notesReadbackFailure ?? null,
       notes_seed_status: observed?.notesSeedStatus ?? null,
       notes_ui_state: notesUiState,
-      ...(wp5CanvasOpenState ? { wp5_canvas_open_state: wp5CanvasOpenState } : {}),
       page_error_names: observed?.pageErrorNames ?? [],
       page_error_categories: observed?.pageErrorCategories ?? [],
       page_error_sources: observed?.pageErrorSources ?? [],
