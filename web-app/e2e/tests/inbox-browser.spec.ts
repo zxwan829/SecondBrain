@@ -1542,7 +1542,7 @@ for (const viewport of activeViewports) {
       })).toBe(0);
       await page.keyboard.press('Backspace');
       observed.setWp5Step('rich_page_title_boundary_after_backspace');
-      const firstParagraphBackspace = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
+      const readFirstParagraphBackspace = () => richDialog.locator('.blocksuite-resource-host').evaluate(host => {
         const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
         const blocks = (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => ({
           id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
@@ -1550,6 +1550,14 @@ for (const viewport of activeViewports) {
         return { title: blocks.find(block => block.type === 'h1')?.text ?? '',
           firstBody: blocks.find(block => block.text.includes(richText)) ?? null, titleId: blocks.find(block => block.type === 'h1')?.id };
       });
+      await expect.poll(async () => {
+        const state = await readFirstParagraphBackspace();
+        return { title: state.title, bodyText: state.firstBody?.text ?? null,
+          titleBlockPresent: Boolean(state.titleId), bodyBlockPresent: Boolean(state.firstBody?.id),
+          distinctBlocks: Boolean(state.firstBody?.id && state.titleId && state.firstBody.id !== state.titleId) };
+      }, { timeout: 5000 }).toEqual({ title: '新建笔记', bodyText: richText,
+        titleBlockPresent: true, bodyBlockPresent: true, distinctBlocks: true });
+      const firstParagraphBackspace = await readFirstParagraphBackspace();
       observed.setWp5Step('rich_page_title_boundary_state_read');
       observed.setWp5Step('rich_page_title_boundary_title');
       expect(firstParagraphBackspace.title, 'wp5_rich_page_backspace_title_boundary').toBe('新建笔记');
