@@ -132,9 +132,21 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await expect(editor.locator('affine-paragraph').filter({ hasText: backspaceText.slice(0, -1) })).toBeVisible();
   const undoText = ` undo-${Date.now()}`;
   await page.keyboard.insertText(undoText);
+  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate((host, marker) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    return (store?.getBlocksByFlavour('affine:paragraph') ?? []).some(({ model }: any) => model.props.text?.toString?.().includes(marker));
+  }, undoText)).toBe(true);
   await page.keyboard.press('Control+z');
+  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate((host, marker) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    return (store?.getBlocksByFlavour('affine:paragraph') ?? []).some(({ model }: any) => model.props.text?.toString?.().includes(marker));
+  }, undoText)).toBe(false);
   await expect(editor.locator('affine-paragraph').filter({ hasText: undoText })).toHaveCount(0);
   await page.keyboard.press('Control+Shift+z');
+  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate((host, marker) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    return (store?.getBlocksByFlavour('affine:paragraph') ?? []).some(({ model }: any) => model.props.text?.toString?.().includes(marker));
+  }, undoText)).toBe(true);
   await expect(editor.locator('affine-paragraph').filter({ hasText: undoText })).toBeVisible();
 
   const firstBodyParagraph = editor.locator('affine-paragraph').filter({ hasText: 'First line after title' }).first();
