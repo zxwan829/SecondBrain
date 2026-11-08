@@ -368,6 +368,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     return order.firstY < order.secondY;
   }).toBe(true);
   await page.locator('.notes-layout').screenshot({ path: process.env.SB_WP5_NATIVE_SCREENSHOT_PATH! });
+  await target.hover();
+  await expect(plus).toHaveAttribute('data-visible', 'true');
   await plus.click();
   const headingMenuItem = page.getByTestId('一级标题');
   await expect(headingMenuItem).toBeVisible();
