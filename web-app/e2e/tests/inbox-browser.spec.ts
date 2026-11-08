@@ -2095,9 +2095,13 @@ for (const viewport of activeViewports) {
         expect(anchorId, 'wp5_archive_drag_anchor_match').toBe(beforeDrag.id);
         await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
         await page.mouse.down();
+        // The centered selection toolbar can cover the middle of the earlier
+        // paragraph. Drop over its left text gutter so elementFromPoint sees
+        // the intended sibling block rather than the floating toolbar.
+        const dropX = bodyBox!.x + Math.min(24, bodyBox!.width / 4);
         const dropY = dragPreflight === 'wp5_archive_drag_source_after'
           ? bodyBox!.y + 1 : bodyBox!.y + bodyBox!.height - 1;
-        await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, dropY, { steps: 5 });
+        await page.mouse.move(dropX, dropY, { steps: 5 });
         const expectedDropBefore = dropY < bodyBox!.y + bodyBox!.height / 2;
         const dragRouting = await richDialog.evaluate((root, point) => {
           const widget = root.querySelector('sb-desktop-page-plus-widget') as (HTMLElement & {
@@ -2113,7 +2117,7 @@ for (const viewport of activeViewports) {
             dropTargetMatches: widget?.dropTarget?.id === point.targetId,
             dropBefore: widget?.dropTarget?.before ?? null,
             pointerCaptured: gripButton?.hasPointerCapture(1) ?? false };
-        }, { x: bodyBox!.x + bodyBox!.width / 3, y: dropY, sourceId: beforeDrag.id, targetId: beforeDragTarget.id });
+        }, { x: dropX, y: dropY, sourceId: beforeDrag.id, targetId: beforeDragTarget.id });
         const routingAssertion: DiagnosticAssertion = !dragRouting.dragSourceMatches ? 'wp5_archive_drag_source_match'
           : !dragRouting.hitMatchesTarget ? dragRouting.hitIsSource ? 'wp5_archive_drag_hit_source'
             : dragRouting.hitHasBlock ? 'wp5_archive_drag_hit_other_block' : 'wp5_archive_drag_hit_no_block'
