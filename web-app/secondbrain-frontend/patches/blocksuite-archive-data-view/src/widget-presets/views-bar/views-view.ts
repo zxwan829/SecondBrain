@@ -131,6 +131,7 @@ export class DataViewHeaderViews extends WidgetBase {
               isSelected: this.viewManager.currentViewId$.value === id,
               select: () => {
                 this.viewManager.setCurrentView(id);
+                this.onChangeView?.(id);
               },
               postfix: html`<div
                 class="dv-hover dv-round-4"

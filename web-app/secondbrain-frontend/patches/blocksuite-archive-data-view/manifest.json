@@ -174,8 +174,8 @@
     {
       "path": "src/widget-presets/views-bar/views-view.ts",
       "before": "7046510fcf4c4091be1695c57993df646508041fda8589dd58409cd260ce860e",
-      "after": "00cf7ed2cfbd50ec3f477b6283ec6dbabeeb43879d95e53ec359e36267899284",
-      "final": "00cf7ed2cfbd50ec3f477b6283ec6dbabeeb43879d95e53ec359e36267899284"
+      "after": "0ccf9783b907f46db9a20a0d343fce7d8428bcedd67406b2e330d74074ad6c1c",
+      "final": "0ccf9783b907f46db9a20a0d343fce7d8428bcedd67406b2e330d74074ad6c1c"
     }
   ]
 }

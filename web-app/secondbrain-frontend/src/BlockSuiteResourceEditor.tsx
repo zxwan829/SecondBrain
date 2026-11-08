@@ -166,6 +166,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const [uploadingImage, setUploadingImage] = useState(false);
   const [viewMode, setViewMode] = useState<'page' | 'edgeless'>(() => initialResource.resourceKind === 'rich-page' ? initialArchiveProperties(note, initialResource).docMode : 'edgeless');
   const [archiveProperties, setArchiveProperties] = useState<ArchiveProperties>(() => initialArchiveProperties(note, initialResource));
+  const [archiveTitle, setArchiveTitle] = useState('富 Page');
   const [emojiModelId, setEmojiModelId] = useState<string | null>(null);
   const [canvasCards, setCanvasCards] = useState<ArchiveCanvasCard[]>([]);
   const [nestedResource, setNestedResource] = useState<BlockSuiteResource | null>(null);
@@ -200,6 +201,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         Y.applyUpdate(doc.spaceDoc, unbase64(editingResource.updateB64));
         doc.load();
         const store = doc.getStore();
+        if (native) setArchiveTitle(((store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1')?.model as any)?.props.text?.toString?.()) || '富 Page');
         (store as any).__sbNativeResource = native;
         // Capture the verified image closure before enabling an editing session.
         // A later remote conflict must not remove its complete recovery copy.
@@ -243,6 +245,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           const wasDirty = dirtyRef.current;
           dirtyRef.current = true;
           setDirty(true);
+          if (native) setArchiveTitle(((store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1')?.model as any)?.props.text?.toString?.()) || '富 Page');
           setRecoveryCopyReady(false);
           // Layout updates must not overwrite upload/save failure diagnostics.
           if (!wasDirty) setStatus('有未保存的资源修改');
@@ -393,6 +396,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     const text = title.props.text;
     if (text?.length) text.delete(0, text.length);
     text?.insert(0, value);
+    setArchiveTitle(value);
   };
   const currentTitle = () => {
     const title = currentStore()?.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1')?.model.props.text;
@@ -429,6 +433,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     } catch (error) { setStatus(`重读未完成；当前编辑会话仍保留。${error instanceof Error ? error.message : ''}`); }
   };
   const openBackups = async () => {
+    if (projectionConflictRef.current || savingRef.current) return;
     if (dirtyRef.current && !await save()) return;
     onOpenBackups?.();
   };
@@ -655,8 +660,8 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   };
 
   return <div className="blocksuite-resource-backdrop" role="presentation">
-    <section className="blocksuite-resource-dialog" role="dialog" aria-modal="true" aria-busy={!storeReady || saving} aria-label={initialResource.resourceKind === 'database' ? 'BlockSuite 数据库资源' : initialResource.resourceKind === 'rich-page' ? 'BlockSuite 富 Page 资源' : 'BlockSuite Edgeless 资源'}>
-      {initialResource.resourceKind === 'rich-page' ? <ArchiveDocumentHeader store={currentStore()} title={currentTitle()} status={status}
+    <section className="blocksuite-resource-dialog" data-page-width={initialResource.resourceKind === 'rich-page' ? archiveProperties.pageWidth : undefined} data-edgeless-theme={initialResource.resourceKind === 'rich-page' ? archiveProperties.edgelessTheme : undefined} role="dialog" aria-modal="true" aria-busy={!storeReady || saving} aria-label={initialResource.resourceKind === 'database' ? 'BlockSuite 数据库资源' : initialResource.resourceKind === 'rich-page' ? 'BlockSuite 富 Page 资源' : 'BlockSuite Edgeless 资源'}>
+      {initialResource.resourceKind === 'rich-page' ? <ArchiveDocumentHeader store={currentStore()} title={archiveTitle} status={status}
         readonly={!storeReady || saving || projectionConflict} properties={archiveProperties} readOnlyKeys={['tags', 'type', 'aliases', 'created', 'updated', 'description', 'source', 'related']}
         onTitleChange={updateArchiveTitle} onPropertyChange={updateArchiveProperty} onModeChange={mode => { void switchViewMode(mode); }}
         onSave={() => { void save(); }} onExportPdf={() => { const store = currentStore(); if (store) void archivePrintPdf(store, currentTitle()).catch(error => setStatus(`PDF 导出失败：${error instanceof Error ? error.message : ''}`)); }} />
@@ -692,7 +697,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         actions={{ writeClientMarker: () => { const store = currentStore(); if (store) store.spaceDoc.getMap('secondbrain-rich-page-properties').set('clientMarker', crypto.randomUUID()); },
           inspectDocument: () => setDiagnosticStatus(`资源 ${resourceRef.current.resourceId} · ${resourceRef.current.resourceKind} · ${dirtyRef.current ? '未保存' : '已保存'}`),
           reloadAfterGuard: reloadFromCore, openConflictCopy: () => setDiagnosticStatus('冲突恢复副本采用下载的 JSON；可通过“另存为新富 Page”显式创建 Core 副本。'),
-          createBackup: openBackups, restoreBackup: onOpenBackups, saveConflictCopy: downloadRecoveryCopy,
+          createBackup: openBackups, restoreBackup: openBackups, saveConflictCopy: downloadRecoveryCopy,
           inspectMindMap: () => { const std = currentStd(); if (std) setMindMapReport(JSON.stringify(archiveInspectMindMap(std), null, 2)); },
           focusMindMap: () => { const std = currentStd(); if (std) try { archiveFocusMindMap(std); } catch (error) { setDiagnosticStatus(error instanceof Error ? error.message : '无法定位'); } } }} />}
       {projectionConflict && initialResource.resourceKind === 'rich-page' && <section className="blocksuite-resource-conflict" role="alert">

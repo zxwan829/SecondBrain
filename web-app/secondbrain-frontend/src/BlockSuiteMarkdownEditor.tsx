@@ -89,6 +89,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
   const [status, setStatus] = useState('正在载入 BlockSuite Page…');
   const [ready, setReady] = useState(false);
   const [formatViolation, setFormatViolation] = useState(false);
+  const formatViolationRef = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -171,6 +172,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
               } catch (error) {
                 if (!(error instanceof PlainMarkdownFormatError)) throw error;
                 current.store.readonly = true;
+                formatViolationRef.current = true;
                 setFormatViolation(true);
                 setStatus('此格式无法安全写回普通 Markdown；原文与本地编辑均保留。请下载完整恢复副本后显式另存为富 Page。');
                 pendingCallback.current?.(true);
@@ -187,7 +189,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
                 return;
               }
               onChangeRef.current(next);
-            }).then(() => { if (!disposed && editorRef.current === current && sequence === projectionSequence.current) pendingCallback.current?.(false); }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
+            }).then(() => { if (!disposed && !formatViolationRef.current && editorRef.current === current && sequence === projectionSequence.current) pendingCallback.current?.(false); }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
           }, 250);
         };
         // BlockSuite text content is stored in nested Y.Text values. The

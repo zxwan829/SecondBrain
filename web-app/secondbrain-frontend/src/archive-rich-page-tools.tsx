@@ -152,7 +152,7 @@ export function ArchiveNativeDiagnostics({ actions, readonly, conflict, hasConfl
       <button disabled={!conflict || hasConflictCopy || !actions.saveConflictCopy} onClick={actions.saveConflictCopy}>保存冲突副本</button>
       <button disabled={!hasConflictCopy || !actions.openConflictCopy} onClick={actions.openConflictCopy}>打开冲突副本</button>
       <button disabled={readonly || !actions.createBackup} onClick={actions.createBackup}>备份正文与画布</button>
-      <button disabled={!hasBackup || !actions.restoreBackup} onClick={actions.restoreBackup}>恢复闭包备份</button>
+      <button disabled={readonly || !hasBackup || !actions.restoreBackup} onClick={actions.restoreBackup}>恢复闭包备份</button>
       <button onClick={actions.inspectMindMap}>检查思维导图视口</button><button onClick={actions.focusMindMap}>定位思维导图</button>
     </div><div className="meta"><b>客户端：</b>{client}<br /><b>服务端版本：</b><code>{revision}</code><br /><b>文档：</b><code>{documentId}</code><pre>{report}</pre></div>
   </div></details>;
