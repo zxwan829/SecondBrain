@@ -47,7 +47,8 @@ type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: s
 type Wp5ProbeEvent = { marker: 'wp5-conflict-queue'; at_ms: number; event: string; status?: number };
 type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' | 'rich_page_seed_read'
   | 'rich_page_body_edit' | 'rich_page_enter' | 'rich_page_enter_verify' | 'rich_page_ime'
-  | 'rich_page_backspace_undo' | 'rich_page_title_boundary' | 'rich_page_ready_measurement'
+  | 'rich_page_backspace_undo' | 'rich_page_title_boundary' | 'rich_page_title_boundary_title'
+  | 'rich_page_title_boundary_body' | 'rich_page_title_boundary_block' | 'rich_page_ready_measurement'
   | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
   | 'rich_page_reopen' | 'rich_page_nested_canvas_create' | 'rich_page_nested_canvas_open'
   | 'rich_page_nested_blob_upload' | 'rich_page_nested_canvas_save' | 'rich_page_parent_save'
@@ -1541,8 +1542,11 @@ for (const viewport of activeViewports) {
         return { title: blocks.find(block => block.type === 'h1')?.text ?? '',
           firstBody: blocks.find(block => block.text.includes(richText)) ?? null, titleId: blocks.find(block => block.type === 'h1')?.id };
       });
+      observed.setWp5Step('rich_page_title_boundary_title');
       expect(firstParagraphBackspace.title, 'wp5_rich_page_backspace_title_boundary').toBe('新建笔记');
+      observed.setWp5Step('rich_page_title_boundary_body');
       expect(firstParagraphBackspace.firstBody?.text, 'wp5_rich_page_backspace_keeps_first_paragraph').toBe(richText);
+      observed.setWp5Step('rich_page_title_boundary_block');
       expect(firstParagraphBackspace.firstBody?.id, 'wp5_rich_page_backspace_keeps_first_paragraph_id').not.toBe(firstParagraphBackspace.titleId);
       const readyMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<{ durationMs: number; viewport: string }> }).__wp5ReadyEvents ?? []);
       observed.setWp5Step('rich_page_ready_measurement');
