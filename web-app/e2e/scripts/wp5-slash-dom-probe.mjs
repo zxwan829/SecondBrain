@@ -54,10 +54,20 @@ try {
       const style = getComputedStyle(menu);
       const rect = menu.getBoundingClientRect();
       const item = deepQueryAll(menu, '[data-testid="插入表情图标"]')[0];
+      const panel = menu.shadowRoot?.querySelector('.slash-menu');
+      const panelRect = panel?.getBoundingClientRect();
+      const itemRect = item?.getBoundingClientRect();
       return { tag: menu.tagName.toLowerCase(), testIds: deepQueryAll(menu, '[data-testid]').map(item => item.getAttribute('data-testid')),
         visible: style.visibility, display: style.display, opacity: style.opacity, zIndex: style.zIndex,
-        rect: [rect.x, rect.y, rect.width, rect.height], emojiItemPresent: Boolean(item) };
+        rect: [rect.x, rect.y, rect.width, rect.height], cssPopoverLayer: style.getPropertyValue('--affine-z-index-popover').trim(),
+        panel: panelRect ? { rect: [panelRect.x, panelRect.y, panelRect.width, panelRect.height],
+          visibility: getComputedStyle(panel).visibility, zIndex: getComputedStyle(panel).zIndex,
+          transform: getComputedStyle(panel).transform } : null,
+        itemRect: itemRect ? [itemRect.x, itemRect.y, itemRect.width, itemRect.height] : null, emojiItemPresent: Boolean(item) };
     });
+    const nativeRange = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const rangeRect = nativeRange?.getBoundingClientRect();
+    const backdrop = document.querySelector('.blocksuite-resource-backdrop');
     let inlineRange = null;
     try { inlineRange = rich?.inlineEditor?.getInlineRange?.() ?? null; } catch {}
     return {
@@ -70,7 +80,10 @@ try {
       selectionAnchorTag: selection?.anchorNode instanceof Element ? selection.anchorNode.tagName : selection?.anchorNode?.parentElement?.tagName ?? null,
       selectionAnchorOffset: selection?.anchorOffset ?? null,
       selectionIsInsideEditor: Boolean(selection?.anchorNode && composedContains(editor, selection.anchorNode)),
-      inlineRange, textSelectionApiPresent: typeof root?.__sbBlockSuiteStd?.selection?.find === 'function',
+      inlineRange, nativeRangeRect: rangeRect ? [rangeRect.x, rangeRect.y, rangeRect.width, rangeRect.height] : null,
+      nativeRangeClientRects: nativeRange ? Array.from(nativeRange.getClientRects()).map(rect => [rect.x, rect.y, rect.width, rect.height]) : [],
+      backdrop: backdrop ? { zIndex: getComputedStyle(backdrop).zIndex, rect: (() => { const r = backdrop.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })() } : null,
+      textSelectionApiPresent: typeof root?.__sbBlockSuiteStd?.selection?.find === 'function',
       slashMenuWidgetCount: document.querySelectorAll('affine-slash-menu-widget').length,
       slashMenuCount: menus.length, emojiCommandCount: menus.filter(menu => menu.emojiItemPresent).length, menus,
     };
