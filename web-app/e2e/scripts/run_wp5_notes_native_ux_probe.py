@@ -204,6 +204,8 @@ def main() -> int:
         source_evidence = temp / "wp5-notes-native-dom.json"
         source_failure_evidence = temp / "wp5-notes-native-failure.json"
         source_mobile_diagnostic = temp / "wp5-notes-native-mobile-diagnostic.json"
+        source_canvas_open_screenshot = temp / "wp5-notes-native-canvas-open.png"
+        source_canvas_open_evidence = temp / "wp5-notes-native-canvas-open.json"
         source_undo_screenshot = temp / "wp5-undo-minimal.png"
         source_undo_evidence = temp / "wp5-undo-minimal.json"
         env = os.environ.copy()
@@ -226,6 +228,8 @@ def main() -> int:
             "SB_WP5_NATIVE_FAILURE_EVIDENCE_PATH": str(source_failure_evidence),
             "SB_WP5_NATIVE_MOBILE_DIAGNOSTIC_PATH": str(source_mobile_diagnostic),
             "SB_WP5_NATIVE_MOBILE_SCREENSHOT_PATH": str(source_mobile_screenshot),
+            "SB_WP5_NATIVE_CANVAS_OPEN_SCREENSHOT_PATH": str(source_canvas_open_screenshot),
+            "SB_WP5_NATIVE_CANVAS_OPEN_EVIDENCE_PATH": str(source_canvas_open_evidence),
             "SB_WP5_NATIVE_UX_PROBE_ONLY": "true", "VITE_ENABLE_NOTES": "true",
             "SB_WP5_UNDO_REPRO_SCREENSHOT_PATH": str(source_undo_screenshot),
             "SB_WP5_UNDO_REPRO_JSON_PATH": str(source_undo_evidence),
@@ -289,15 +293,28 @@ def main() -> int:
                 return 0
             if not source_screenshot.is_file() or not source_mobile_screenshot.is_file() or not source_evidence.is_file():
                 raise RuntimeError("focused Chromium journey did not produce its evidence files")
+            if not source_canvas_open_screenshot.is_file() or not source_canvas_open_evidence.is_file():
+                raise RuntimeError("independent nested canvas open repro did not produce its evidence files")
+            canvas_open = json.loads(source_canvas_open_evidence.read_text(encoding="utf-8"))
+            if (canvas_open != {"result": "PASS", "scope": "independent synthetic canvas-open repro",
+                                "resourceReadStatus": 200, "dialogVisible": True, "nestedEditorVisible": True}):
+                raise RuntimeError("independent nested canvas open evidence rejected")
             screenshot_target = output / "wp5-notes-native-1440x1000.png"
             mobile_screenshot_target = output / "wp5-notes-native-390x844.png"
+            canvas_open_screenshot_target = output / "wp5-notes-native-canvas-open-1440x1000.png"
             evidence_target = output / "wp5-notes-native-evidence.json"
             dimensions = sanitize_png(source_screenshot, screenshot_target)
             mobile_dimensions = sanitize_png(source_mobile_screenshot, mobile_screenshot_target, mobile=True)
+            canvas_open_dimensions = sanitize_png(source_canvas_open_screenshot, canvas_open_screenshot_target)
             evidence = verify_evidence(source_evidence, evidence_target)
+            canvas_open_target = output / "wp5-notes-native-canvas-open-evidence.json"
+            canvas_open_target.write_text(json.dumps(canvas_open, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.chmod(canvas_open_target, 0o600)
             print(json.dumps({"result": "PASS", "screenshot": screenshot_target.name,
                               "screenshot_dimensions": dimensions, "click_to_editable_ms": evidence["clickToEditableMs"],
                               "mobile_screenshot": mobile_screenshot_target.name, "mobile_dimensions": mobile_dimensions,
+                              "canvas_open_screenshot": canvas_open_screenshot_target.name,
+                              "canvas_open_dimensions": canvas_open_dimensions,
                               "viewport": evidence["viewport"]}, ensure_ascii=False))
             return 0
         finally:

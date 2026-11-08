@@ -461,3 +461,51 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   evidence.mobileLayout = mobileLayout;
   await writeFile(process.env.SB_WP5_NATIVE_DOM_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
 });
+
+test('WP5 independent nested canvas open minimal reproduction', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/chat/blank');
+  const password = (await readFile(process.env.SB_E2E_PASSWORD_FILE!, 'utf8')).trim();
+  await page.getByLabel('SecondBrain 登录口令').fill(password);
+  await page.getByRole('button', { name: '登录' }).click();
+  await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
+  await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
+  await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+
+  const createRichPage = page.waitForResponse(response => response.request().method() === 'POST'
+    && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname));
+  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  expect((await createRichPage).status()).toBe(200);
+  const editor = page.locator('.blocksuite-resource-inline');
+  await expect(editor).toBeVisible();
+  await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+
+  await editor.locator('.blocksuite-canvas-tools > summary').click();
+  const createCanvas = page.waitForResponse(response => response.request().method() === 'POST'
+    && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname));
+  await editor.getByRole('button', { name: '新建独立画布', exact: true }).click();
+  const canvasCreated = await createCanvas;
+  expect(canvasCreated.status()).toBe(200);
+  const canvas = await canvasCreated.json() as { resource_id: string };
+  const card = editor.locator('.canvas-b-card').filter({ hasText: canvas.resource_id });
+  await expect(card).toBeVisible();
+  const canvasRead = page.waitForResponse(response => response.request().method() === 'GET'
+    && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${canvas.resource_id}`), { timeout: 15_000 });
+  await card.getByRole('button', { name: '打开编辑', exact: true }).click();
+  const readResponse = await canvasRead;
+  expect(readResponse.status()).toBe(200);
+  const dialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
+  await expect(dialog).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+  const evidence = await page.evaluate(() => ({
+    result: 'PASS', scope: 'independent synthetic canvas-open repro',
+    resourceReadStatus: 200,
+    dialogVisible: Boolean(document.querySelector('[role="dialog"][aria-label="BlockSuite Edgeless 资源"]')?.getClientRects().length),
+    nestedEditorVisible: Boolean(document.querySelector('.blocksuite-resource-backdrop [data-kind="edgeless-canvas"]')?.getClientRects().length),
+  }));
+  await writeFile(process.env.SB_WP5_NATIVE_CANVAS_OPEN_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
+  await page.screenshot({ path: process.env.SB_WP5_NATIVE_CANVAS_OPEN_SCREENSHOT_PATH!, fullPage: false });
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+});
