@@ -408,6 +408,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await page.keyboard.press('Shift+Home');
   await page.getByRole('button', { name: '居中对齐', exact: true }).click();
   const dropTargetBlockId = await secondTarget.getAttribute('data-block-id');
+  if (!formattedBlockId || !dropTargetBlockId) throw new Error('Formatted heading drag block identity was unavailable');
   const formattedState = await editor.locator('.blocksuite-resource-host').evaluate((host, ids) => {
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
     const model = store?.getBlock(ids.sourceId)?.model;
@@ -415,10 +416,23 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
       bold: model?.props.text?.toDelta?.().some((part: any) => part.attributes?.bold === true) ?? false };
   }, { sourceId: formattedBlockId });
   expect(formattedState).toEqual({ type: 'h1', textAlign: 'center', bold: true });
+  const formattedSiblingOrder = async () => editor.locator('.blocksuite-resource-host').evaluate((host, ids) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    const source = store?.getBlock(ids.sourceId)?.model;
+    const targetBlock = store?.getBlock(ids.targetId)?.model;
+    const sourceParent = source && store?.getParent(source);
+    const targetParent = targetBlock && store?.getParent(targetBlock);
+    return { sameParent: Boolean(sourceParent && sourceParent.id === targetParent?.id),
+      source: sourceParent?.children?.findIndex((child: any) => child.id === ids.sourceId) ?? -1,
+      target: targetParent?.children?.findIndex((child: any) => child.id === ids.targetId) ?? -1 };
+  }, { sourceId: formattedBlockId, targetId: dropTargetBlockId });
+  const formattedOrderBefore = await formattedSiblingOrder();
+  expect(formattedOrderBefore.sameParent).toBe(true);
+  expect(formattedOrderBefore.source).toBeLessThan(formattedOrderBefore.target);
   await target.hover();
   await expect(grip).toHaveAttribute('data-visible', 'true');
   const [formattedGripBox, formattedDropBox] = await Promise.all([grip.boundingBox(), secondTarget.boundingBox()]);
-  if (!formattedGripBox || !formattedDropBox || !formattedBlockId || !dropTargetBlockId) {
+  if (!formattedGripBox || !formattedDropBox) {
     throw new Error('Formatted heading drag geometry was unavailable');
   }
   await page.mouse.move(formattedGripBox.x + formattedGripBox.width / 2, formattedGripBox.y + formattedGripBox.height / 2);
@@ -443,6 +457,9 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(routing).toEqual({ anchorIsSource: true, dragSourceIsSource: true, hitIsDropTarget: true,
     dropTargetIsDropTarget: true, dropBefore: false, pointerCaptured: true });
   await page.mouse.up();
+  const formattedOrderAfterDrop = await formattedSiblingOrder();
+  expect(formattedOrderAfterDrop.sameParent).toBe(true);
+  expect(formattedOrderAfterDrop.source).toBeGreaterThan(formattedOrderAfterDrop.target);
   await expect.poll(async () => {
     const order = await dragOrder();
     return order.firstY > order.secondY;
@@ -452,6 +469,13 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     const order = await dragOrder();
     return order.firstY < order.secondY;
   }).toBe(true);
+  const formattedOrderAfterReturn = await formattedSiblingOrder();
+  expect(formattedOrderAfterReturn.sameParent).toBe(true);
+  expect(formattedOrderAfterReturn.source).toBeLessThan(formattedOrderAfterReturn.target);
+  const formattedHeadingDrag = { formattedState, routing, sourceBefore: formattedOrderBefore.source,
+    targetBefore: formattedOrderBefore.target, sourceAfterDrop: formattedOrderAfterDrop.source,
+    targetAfterDrop: formattedOrderAfterDrop.target, sourceAfterReturn: formattedOrderAfterReturn.source,
+    targetAfterReturn: formattedOrderAfterReturn.target };
   await page.locator('.notes-layout').screenshot({ path: process.env.SB_WP5_NATIVE_SCREENSHOT_PATH! });
   await target.hover();
   await expect(plus).toHaveAttribute('data-visible', 'true');
@@ -490,7 +514,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
       modalEditorCount: document.querySelectorAll('.blocksuite-resource-backdrop').length };
   });
   const evidence: Record<string, unknown> = { viewport: '1440x1000', enter, titleBoundary, firstOpen, warmOpen, refreshOpen,
-    firstOpenSetup, titleAndBody, blockControls,
+    firstOpenSetup, titleAndBody, blockControls, formattedHeadingDrag,
     journey: ['new note', 'title', 'first line', 'Enter', 'multi paragraph', 'Chromium IME composition', 'Backspace',
       'undo/redo', 'save', 'switch note', 'reopen', 'reload', 'six-dot hover and drag reorder', 'save and reload reorder', 'plus insert'] };
   expect(titleAndBody.visibleTitleHeadings).toHaveLength(1);

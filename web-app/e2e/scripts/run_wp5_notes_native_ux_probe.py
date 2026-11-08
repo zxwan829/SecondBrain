@@ -119,6 +119,18 @@ def verify_evidence(source: Path, target: Path) -> dict:
         raise RuntimeError("browser evidence mobile control visibility check failed")
     if not mobile.get("plusVisible") or not mobile.get("gripVisible"):
         raise RuntimeError("browser evidence mobile block control visibility check failed")
+    formatted_drag = evidence.get("formattedHeadingDrag", {})
+    formatted_state = formatted_drag.get("formattedState", {})
+    routing = formatted_drag.get("routing", {})
+    if formatted_state != {"type": "h1", "textAlign": "center", "bold": True}:
+        raise RuntimeError("browser evidence formatted heading state check failed")
+    if routing != {"anchorIsSource": True, "dragSourceIsSource": True, "hitIsDropTarget": True,
+                   "dropTargetIsDropTarget": True, "dropBefore": False, "pointerCaptured": True}:
+        raise RuntimeError("browser evidence formatted heading pointer routing check failed")
+    if not (formatted_drag.get("sourceBefore", -1) < formatted_drag.get("targetBefore", -1)
+            and formatted_drag.get("sourceAfterDrop", -1) > formatted_drag.get("targetAfterDrop", -1)
+            and formatted_drag.get("sourceAfterReturn", -1) < formatted_drag.get("targetAfterReturn", -1)):
+        raise RuntimeError("browser evidence formatted heading Yjs order check failed")
     safe_text = lambda value: value if value in {"WP5 Native Probe", "新建笔记", "First line after title",
         "Second paragraph after Enter", "中文输入法内容"} else "backspace probe" if value.startswith(" backspace-") \
         else "undo probe" if value.startswith(" undo-") else "[redacted]"
@@ -137,6 +149,17 @@ def verify_evidence(source: Path, target: Path) -> dict:
         "titleBackspaceBoundary": {"titleRetained": boundary.get("title") == "WP5 Native Probe",
                                    "firstParagraphRetained": boundary.get("firstBody", {}).get("text") == "First line after title",
                                    "distinctBlock": boundary.get("firstBody", {}).get("id") != boundary.get("titleBlockId")},
+        "formattedHeadingDrag": {"type": formatted_state["type"], "textAlign": formatted_state["textAlign"],
+                                 "bold": formatted_state["bold"], "anchorMatchesSource": routing["anchorIsSource"],
+                                 "pointerCapture": routing["pointerCaptured"], "hitMatchesTarget": routing["hitIsDropTarget"],
+                                 "dropTargetMatches": routing["dropTargetIsDropTarget"],
+                                 "dropBefore": routing["dropBefore"],
+                                 "sourceOrderBefore": formatted_drag["sourceBefore"],
+                                 "targetOrderBefore": formatted_drag["targetBefore"],
+                                 "sourceOrderAfterDrop": formatted_drag["sourceAfterDrop"],
+                                 "targetOrderAfterDrop": formatted_drag["targetAfterDrop"],
+                                 "sourceOrderAfterReturn": formatted_drag["sourceAfterReturn"],
+                                 "targetOrderAfterReturn": formatted_drag["targetAfterReturn"]},
         "journey": evidence.get("journey", []),
         "mobileLayout": mobile,
         "result": "PASS",
