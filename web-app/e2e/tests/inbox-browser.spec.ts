@@ -47,7 +47,8 @@ type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: s
 type Wp5ProbeEvent = { marker: 'wp5-conflict-queue'; at_ms: number; event: string; status?: number };
 type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' | 'rich_page_seed_read'
   | 'rich_page_body_edit' | 'rich_page_enter' | 'rich_page_enter_verify' | 'rich_page_ime'
-  | 'rich_page_backspace_undo' | 'rich_page_title_boundary' | 'rich_page_title_boundary_title'
+  | 'rich_page_backspace_undo' | 'rich_page_title_boundary' | 'rich_page_title_boundary_before_backspace'
+  | 'rich_page_title_boundary_after_backspace' | 'rich_page_title_boundary_state_read' | 'rich_page_title_boundary_title'
   | 'rich_page_title_boundary_body' | 'rich_page_title_boundary_block' | 'rich_page_ready_measurement'
   | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
   | 'rich_page_reopen' | 'rich_page_nested_canvas_create' | 'rich_page_nested_canvas_open'
@@ -1533,7 +1534,10 @@ for (const viewport of activeViewports) {
       await expect(richDialog.locator('affine-paragraph').filter({ hasText: undoProbe })).toBeVisible();
       const firstBodyBlock = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
       observed.setWp5Step('rich_page_title_boundary');
-      await firstBodyBlock.click(); await page.keyboard.press('Home'); await page.keyboard.press('Backspace');
+      await firstBodyBlock.click(); await page.keyboard.press('Home');
+      observed.setWp5Step('rich_page_title_boundary_before_backspace');
+      await page.keyboard.press('Backspace');
+      observed.setWp5Step('rich_page_title_boundary_after_backspace');
       const firstParagraphBackspace = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
         const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
         const blocks = (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => ({
@@ -1542,6 +1546,7 @@ for (const viewport of activeViewports) {
         return { title: blocks.find(block => block.type === 'h1')?.text ?? '',
           firstBody: blocks.find(block => block.text.includes(richText)) ?? null, titleId: blocks.find(block => block.type === 'h1')?.id };
       });
+      observed.setWp5Step('rich_page_title_boundary_state_read');
       observed.setWp5Step('rich_page_title_boundary_title');
       expect(firstParagraphBackspace.title, 'wp5_rich_page_backspace_title_boundary').toBe('新建笔记');
       observed.setWp5Step('rich_page_title_boundary_body');
