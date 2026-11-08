@@ -388,6 +388,70 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     const order = await dragOrder();
     return order.firstY < order.secondY;
   }).toBe(true);
+
+  // Independent minimal reproduction of the failing archive sequence: format
+  // the source as a bold, centered H1, then drag it across a sibling paragraph.
+  await target.hover();
+  await plus.click();
+  await page.getByTestId('一级标题').click();
+  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate((host, blockId) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    return store?.getBlock(blockId)?.model.props.type ?? null;
+  }, await target.getAttribute('data-block-id'))).toBe('h1');
+  await target.click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Shift+Home');
+  await page.getByRole('button', { name: '加粗', exact: true }).click();
+  await target.click();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Shift+Home');
+  await page.getByRole('button', { name: '居中对齐', exact: true }).click();
+  const formattedBlockId = await target.getAttribute('data-block-id');
+  const dropTargetBlockId = await secondTarget.getAttribute('data-block-id');
+  const formattedState = await editor.locator('.blocksuite-resource-host').evaluate((host, ids) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    const model = store?.getBlock(ids.sourceId)?.model;
+    return { type: model?.props.type ?? null, textAlign: model?.props.textAlign ?? null,
+      bold: model?.props.text?.toDelta?.().some((part: any) => part.attributes?.bold === true) ?? false };
+  }, { sourceId: formattedBlockId });
+  expect(formattedState).toEqual({ type: 'h1', textAlign: 'center', bold: true });
+  await target.hover();
+  await expect(grip).toHaveAttribute('data-visible', 'true');
+  const [formattedGripBox, formattedDropBox] = await Promise.all([grip.boundingBox(), secondTarget.boundingBox()]);
+  if (!formattedGripBox || !formattedDropBox || !formattedBlockId || !dropTargetBlockId) {
+    throw new Error('Formatted heading drag geometry was unavailable');
+  }
+  await page.mouse.move(formattedGripBox.x + formattedGripBox.width / 2, formattedGripBox.y + formattedGripBox.height / 2);
+  await page.mouse.down();
+  const formattedDropX = formattedDropBox.x + formattedDropBox.width / 3;
+  const formattedDropY = formattedDropBox.y + formattedDropBox.height - 1;
+  await page.mouse.move(formattedDropX, formattedDropY, { steps: 8 });
+  const routing = await editor.locator('.blocksuite-resource-host').evaluate((host, point) => {
+    const widget = host.querySelector('sb-desktop-page-plus-widget') as (HTMLElement & {
+      anchor?: { id?: string } | null; dragSource?: { id?: string } | null;
+      dropTarget?: { id?: string; before?: boolean } | null;
+    }) | null;
+    const hit = document.elementFromPoint(point.x, point.y)?.closest('[data-block-id]') as HTMLElement | null;
+    const gripButton = widget?.shadowRoot?.querySelector('button[data-kind="grip"]') as HTMLButtonElement | null;
+    return { anchorIsSource: widget?.anchor?.id === point.sourceId,
+      dragSourceIsSource: widget?.dragSource?.id === point.sourceId,
+      hitIsDropTarget: hit?.getAttribute('data-block-id') === point.targetId,
+      dropTargetIsDropTarget: widget?.dropTarget?.id === point.targetId,
+      dropBefore: widget?.dropTarget?.before ?? null,
+      pointerCaptured: gripButton?.hasPointerCapture(1) ?? false };
+  }, { x: formattedDropX, y: formattedDropY, sourceId: formattedBlockId, targetId: dropTargetBlockId });
+  expect(routing).toEqual({ anchorIsSource: true, dragSourceIsSource: true, hitIsDropTarget: true,
+    dropTargetIsDropTarget: true, dropBefore: false, pointerCaptured: true });
+  await page.mouse.up();
+  await expect.poll(async () => {
+    const order = await dragOrder();
+    return order.firstY > order.secondY;
+  }).toBe(true);
+  await dragGripTo(true);
+  await expect.poll(async () => {
+    const order = await dragOrder();
+    return order.firstY < order.secondY;
+  }).toBe(true);
   await page.locator('.notes-layout').screenshot({ path: process.env.SB_WP5_NATIVE_SCREENSHOT_PATH! });
   await target.hover();
   await expect(plus).toHaveAttribute('data-visible', 'true');
