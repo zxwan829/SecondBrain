@@ -359,6 +359,10 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(mobileLayout.controlsVisible.every(item => item.visibleAndWithinViewport)).toBe(true);
   expect(mobileLayout.plusVisible).toBe(true);
   expect(mobileLayout.gripVisible).toBe(true);
+  const mobilePlus = mobileLayout.plusControl!;
+  const mobileGrip = mobileLayout.gripControl!;
+  expect(mobilePlus.x < mobileGrip.x + mobileGrip.width && mobileGrip.x < mobilePlus.x + mobilePlus.width
+    && mobilePlus.y < mobileGrip.y + mobileGrip.height && mobileGrip.y < mobilePlus.y + mobilePlus.height).toBe(false);
   await page.locator('.notes-layout').screenshot({ path: process.env.SB_WP5_NATIVE_MOBILE_SCREENSHOT_PATH! });
   evidence.mobileLayout = mobileLayout;
   await writeFile(process.env.SB_WP5_NATIVE_DOM_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
