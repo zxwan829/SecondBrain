@@ -140,6 +140,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_canvas_reference_lifecycle'
   | 'wp5_archive_emoji_command_visible' | 'wp5_archive_emoji_picker_visible'
   | 'wp5_archive_emoji_search_results' | 'wp5_archive_emoji_insert'
+  | 'wp5_archive_html_export' | 'wp5_archive_pdf_preview' | 'wp5_archive_save_close'
+  | 'wp5_archive_saved_reopen' | 'wp5_archive_table_state_reopened'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'wp5_archive_resource_save_status_saved' | 'wp5_archive_resource_save_status_unsaved'
@@ -2171,6 +2173,7 @@ for (const viewport of activeViewports) {
         }).catch(() => 'missing');
         observed.setDiagnosticAssertion(`wp5_archive_resource_save_status_${archiveSaveState}` as DiagnosticAssertion);
         expect(archiveSaveState, 'wp5_archive_ux_resource_save_status').toBe('saved');
+        observed.setDiagnosticAssertion('wp5_archive_html_export');
         const htmlExport = page.waitForEvent('download');
         await richDialog.getByRole('button', { name: '导出 HTML' }).click();
         const htmlDownload = await htmlExport;
@@ -2180,13 +2183,16 @@ for (const viewport of activeViewports) {
         const htmlExportContent = await readFile(htmlExportPath!, 'utf8');
         expect(htmlExportContent, 'wp5_archive_html_download_content').toContain(mergeSourceText);
         expect(htmlExportContent, 'wp5_archive_html_export_script_free').not.toMatch(/<script\b/i);
+        observed.setDiagnosticAssertion('wp5_archive_pdf_preview');
         await richDialog.getByRole('button', { name: '导出 PDF' }).click();
         const printPreview = page.locator('iframe[title="富文档 PDF 打印"]');
         await expect(printPreview, 'wp5_archive_pdf_print_preview').toBeAttached({ timeout: 10000 });
         await expect(page.frameLocator('iframe[title="富文档 PDF 打印"]').locator('body'), 'wp5_archive_pdf_print_preview')
           .toContainText(mergeSourceText, { timeout: 10000 });
+        observed.setDiagnosticAssertion('wp5_archive_save_close');
         await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
         await expect(richDialog).toHaveCount(0);
+        observed.setDiagnosticAssertion('wp5_archive_saved_reopen');
         const savedArchiveReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
         await expect(savedArchiveReference).toBeVisible();
         await savedArchiveReference.click();
@@ -2209,6 +2215,7 @@ for (const viewport of activeViewports) {
         expect(reopenedSource.order < reopenedTarget.order, 'wp5_desktop_page_plus_reorder_reversal_persisted')
           .not.toBe(beforeDrag.order < beforeDragTarget.order);
         const reopenedTable = richHost.locator('affine-table').last();
+        observed.setDiagnosticAssertion('wp5_archive_table_state_reopened');
         await expect(reopenedTable).toBeVisible();
         const reopenedGallery = richDialog.getByRole('region', { name: '独立画布资源' });
         const reopenedCopiedCard = reopenedGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
