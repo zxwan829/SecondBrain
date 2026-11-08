@@ -537,7 +537,15 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
     const hostBottom = host?.getBoundingClientRect().bottom ?? 0;
     const galleryTop = gallery?.getBoundingClientRect().top ?? 0;
     const lastParagraphBottom = paragraphs.at(-1)?.getBoundingClientRect().bottom ?? 0;
+    const metrics = (element: HTMLElement | null) => element ? {
+      top: element.getBoundingClientRect().top, bottom: element.getBoundingClientRect().bottom,
+      height: element.getBoundingClientRect().height, clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight, display: getComputedStyle(element).display,
+      position: getComputedStyle(element).position, overflow: getComputedStyle(element).overflow,
+    } : null;
     return { paragraphCount: paragraphs.length, hostBottom, galleryTop, lastParagraphBottom,
+      host: metrics(host), viewport: metrics(viewport), pageRoot: metrics(host?.querySelector<HTMLElement>('affine-page-root') ?? null),
+      paragraphRects: paragraphs.map(paragraph => ({ text: paragraph.textContent?.slice(0, 40) ?? '', ...metrics(paragraph) })),
       noOverlap: Boolean(viewport && gallery && paragraphs.length >= 12 && galleryTop >= hostBottom - 1
         && galleryTop >= lastParagraphBottom - 1) };
   });
@@ -568,7 +576,11 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
     nestedEditorVisible: Boolean(document.querySelector('.blocksuite-resource-backdrop [data-kind="edgeless-canvas"]')?.getClientRects().length),
   }));
   const evidence = { result: 'PASS', scope: 'independent synthetic canvas-open repro',
-    resourceReadStatus: readResponse.status(), canvasLayout, ...canvasUi };
+    resourceReadStatus: readResponse.status(), canvasLayout: {
+      paragraphCount: canvasLayout.paragraphCount, hostBottom: canvasLayout.hostBottom,
+      galleryTop: canvasLayout.galleryTop, lastParagraphBottom: canvasLayout.lastParagraphBottom,
+      noOverlap: canvasLayout.noOverlap,
+    }, ...canvasUi };
   await writeFile(process.env.SB_WP5_NATIVE_CANVAS_OPEN_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
   await page.screenshot({ path: process.env.SB_WP5_NATIVE_CANVAS_OPEN_SCREENSHOT_PATH!, fullPage: false });
 });
