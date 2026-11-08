@@ -1,10 +1,26 @@
 ---
 created: 2026-09-28
-updated: 2026-11-05
+updated: 2026-11-09
 status: current
 type: environment-baseline
 ---
 # Environment Baseline
+
+## 2026-11-09 WP5 final UX merge and blocked App-only preflight
+
+- **工程版本：** PR #313 候选 `b68c1cfe61bc92a3aa966821cc02aaa7ca35ffda` 已合并，merge SHA `c76b06f725a5eab02b88866515d6d9943d5df163`；合并后的 main tree `18863acd770457255b12e2fa4c7c00062dbd35bc` 与候选 tree 完全一致。四条 Linux Chromium Gate [#42497477160](https://github.com/zxwan829/SecondBrain/actions/runs/42497477160)、[#42497475747](https://github.com/zxwan829/SecondBrain/actions/runs/42497475747)、[#42497731848](https://github.com/zxwan829/SecondBrain/actions/runs/42497731848)、[#42497920166](https://github.com/zxwan829/SecondBrain/actions/runs/42497920166) 均 SUCCESS；typecheck、production build、trace artifact redaction 在三个 `synthetic-browser` jobs 中通过，Native Notes job 的独立前端 build 通过。独立只读 Review 在固定候选 SHA 通过，无 P1/P2。
+- **生产部署前置检查：** 通过 NAS 专用 SSH alias `secondbrain-nas`（用户 `Joe`，UID 1026、组 `users`/`administrators`）只执行只读检查。Compose 文件 SHA-256 为 `ecd61561d45e14227c18cff614bbd017cd10506bf0ac37456db3df1ec1bd45d2`，与 2026-11-08 已记录快照一致；这不能证明当前容器仍运行同一版本。系统 Docker CLI 可执行，但请求 Docker daemon 时返回 `permission denied`；`/run/docker.sock` 与 `/var/run/docker.sock` 为 `root:root 0660`，当前账户不可读/写。App 容器、镜像 ID、当前 health、安全开关及 Compose 解析后的 App 配置因此无法实时核验。
+- **回滚准备状态：** NAS rollback 根目录可列出历史目录名，但包括 `wp5-app-6d867ece-predeploy-20261108T081300Z` 在内的相关目录属主/模式为 `root:root 0700`；当前账户不能检查快照文件、旧镜像 tar 或哈希。因此本次无法验证即时快照和上一版 App image，未创建/修改回滚资产，未触碰 Compose、容器、镜像、Secrets、挂载、ACL、网络、Hermes、Vault、Obsidian 或业务数据。未使用 sudo、危险辅助脚本或绕过权限。
+- **交付状态：** `ENGINEERING_PASS / NOT_DEPLOYED / PRODUCTION_TEST_NOT_RUN / USER_UAT_PENDING`。2026-11-08 PR #311 image 的健康、安全和旧版生产合成 UAT 记录仍作为历史有效，但不验证 PR #313 八项最终 UX 修复。此前用户实际体验曾为 `USER_UAT_FAIL`；最终修复尚未上线，未进行新的生产体验。配置的 Notes 入口为 `https://zxwan520.com:63013/notes`，本次未做可用性探测。
+
+## 2026-11-08 WP5 / PR #309 App-only 部署与生产合成 UAT
+
+- **源码与镜像来源：** PR #311 只读 Review PASS（无 P1/P2；1 项 P3 指出既有 release-candidate workflow 会在 Dockerfile 变更时连带构建 Hermes）。PR head `6d867ece987a7b3f97baa510a33bc61d8a315a7c` 唯一改动是 `web-app/Dockerfile.app` 在 `npm ci` 前复制 `scripts/` 与 `patches/`；独立审查确认准备脚本校验并应用 22 个锁定补丁。PR #311 合并至 main，merge `fa0ddd3c16220df146c87bbcf09c52169b6b64a4`；merge tree `0c98142111323d11bde60dc3be1cd08281501fd8` 与已构建 PR head tree 一致。GitHub `build-and-smoke` [Actions #42460365303](https://github.com/zxwan829/SecondBrain/actions/runs/42460365303) SUCCESS；该旧 workflow 同时构建了 Hermes 候选，但没有部署或加载它。NAS App 镜像由固定 PR head `6d867ece…` 的 App-only 构建输入生成，Image ID `sha256:533660ecd3dcdc67fd2ab309390dc9bd09ea2f3397fde0ac55537759d52d3229`，平台 `linux/amd64`，revision label 与 PR head 一致；镜像应用代码树与 main merge tree 完全相同。候选隔离启动 smoke 已通过。
+- **部署结果：** 仅更改 `/volume1/docker/secondbrain/compose.yaml` 的 App image 引用，由 `candidate-7272b738…` 切至 `candidate-6d867ece…`，然后执行 App-only `up --no-deps --no-build --pull never --force-recreate --wait`。Compose 配置校验通过，唯一差异为 App `image:` 行。新 App 容器 `617f657f8bda85f7d1f0fb143866b8e4e5d7d21a613ac8f38910e7f6dc5da014` running/healthy，RestartCount 0，UID/GID `1026:100`，端口仍为 `127.0.0.1:9120→8000`。正式 Compose SHA-256 `ecd61561d45e14227c18cff614bbd017cd10506bf0ac37456db3df1ec1bd45d2`，属主/模式 `1026:100 / 0640`。匿名 GET `/health`、`/`、`/login`、`/notes` 均 HTTP 200。
+- **隔离边界复核：** Hermes 容器 `a1f6740847641df8b04567ebe2f65a307e4728395570d42b2b3baeba7d45072d`、镜像 `sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821`、StartedAt `2026-10-29T15:08:17.386341569Z`、RestartCount 0，部署前后均未变。App 保持 UID/GID、端口和所有挂载不变：Core state RW、Review RW、Capture Inbox RW、Knowledge RO、两个现有 Secret RO；Private 未挂载。`SB_PROMOTE_ENABLED=false`，`SB_WEIXIN_INBOX_ENABLED` 未设置。未改其他容器、网络、权限或生产数据；未观察到需要数据库 schema migration 的代码路径。
+- **回滚资产：** `/volume1/docker/secondbrain/rollback/wp5-app-6d867ece-predeploy-20261108T081300Z/`，目录 `0700 root:root`；`compose-before.yaml` 与切换前 live Compose SHA-256 均为 `f5760550d5d9fe197cd58bd07c77bc178fb04fec27a9e990342d642530ace020`，文件 `0600 root:root`；旧 App image tar SHA-256 `80479e0304052e305dbc6a522efda5f83ea750f0a17a75ba6d6e704eae4c79c2`，文件 `0600 root:root`。旧镜像 `sha256:d73bb0fb73b77a728c4f6eecde44c8309695abb573e00048c6ba3affb50fc1e1` 仍在 NAS。回滚仅恢复上述 Compose 并只重建 `secondbrain-app`，保留 Core-state；未实际触发回滚。
+- **生产合成 UAT（2026-11-08）：** 登录与 Notes 页面打开 `PASS`。仅操作合成 Draft `SB-WP5-UAT-20261108-RP-6157富 Page`（路径 ID `44baea9c-4b40-470b-ab41-ed7160c55d0d`）及其显式派生 fork；未打开或修改其他笔记正文。Rich Page 编辑、保存、关闭/重开后正文与 Table 标记回读 `PASS`；Database 增加 Kanban 视图，2 组/3 卡片，在整页刷新后资源可重新打开 `PASS`；Edgeless 合成便签保存并整页刷新重开 `PASS`。资源快照列出 Rich Page、Database、Edgeless 三类资源；选择最新快照后显式确认恢复，界面报告“BlockSuite 快照已恢复，并重新验证了正文与引用资源” `PASS`。版本冲突保护收到 412，明确保留远端与本地修改，随后“另存为新富 Page”生成隔离 fork，原件和远端内容均保留 `PASS`。未进行对底层 Yjs endpoint 的额外直连接口请求；Yjs/资源持久性依据已保存资源在编辑器关闭重开、整页刷新重开及快照恢复后的产品 UI 回读验证。用户仍需亲自体验确认，故 `PRODUCTION_TEST_PASS`，`USER_UAT_PENDING`，不是 `USER_UAT_PASS`。访问入口：`https://zxwan520.com:63013/notes`。
+- **NAS SSH 诊断：** `~/.ssh/config` 中 `secondbrain-nas` 指向 `Joe@192.168.3.27` 并使用 `~/.ssh/id_ed25519_secondbrain_nas`；该私钥文件仍存在、模式 `0600`。agent 只加载 GitHub key，但 SSH 客户端直接读取本地 identity 成功。此前以 `joe@IP` 直连绕过别名和配置，因此没有选择 NAS 专用 key；没有读取私钥内容、尝试密码、使用有风险 helper 或修改 SSH/账户权限。
 
 ## 2026-11-05 PR #277 Notes / Journal 生产合成数据 UAT（部分通过）
 

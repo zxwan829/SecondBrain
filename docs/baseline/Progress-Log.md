@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-09 — WP5 最终 Notes UX 合并与 App-only 部署前置阻断
+
+- **工程合并：** PR [#313](https://github.com/zxwan829/SecondBrain/pull/313) 固定候选 `b68c1cfe61bc92a3aa966821cc02aaa7ca35ffda` 已按预期 head SHA 合并，merge commit `c76b06f725a5eab02b88866515d6d9943d5df163`。main tree `18863acd770457255b12e2fa4c7c00062dbd35bc` 与候选 tree 相同，确认八项修复及其经过验证的代码进入 main，没有额外源码差异。
+- **门禁复核：** 固定 SHA 上四条 Linux Chromium Gate #42497477160 / #42497475747 / #42497731848 / #42497920166 均 SUCCESS。三个 `synthetic-browser` job 的 Web regression/typecheck、production build、artifact trace redaction 均成功；Native Notes job 也完成精确 SHA 检查、前端 build 和独立 Chromium journey。PR 独立只读 Review PASS、无 P1/P2。没有重复运行工程回归。
+- **部署前置检查与停止原因：** NAS SSH 专用别名成功连接，远端 `Joe` 为 UID 1026，归属 `users` 和 `administrators`；Compose SHA-256 与最近 2026-11-08 快照相同。NAS Docker CLI 虽可执行，但调用 daemon 返回 `permission denied`；Docker socket 是 `root:root 0660`。相关 rollback 目录为 `root:root 0700`，只能看到目录名称，无法核验即时快照、旧镜像、运行容器、镜像 ID、健康状态、挂载和安全开关。因无法完成必要的实时检查和回滚准备，立即停止；不使用 sudo/helper，不改生产文件或容器。
+- **生产与用户验收边界：** PR #313 的修复未部署，本次新版本生产合成测试 `NOT RUN`；2026-11-08 对 PR #311 App 镜像的生产运行/合成验收仅是旧版本历史证据，不覆盖新修复。状态为 `ENGINEERING_PASS / NOT_DEPLOYED / PRODUCTION_TEST_NOT_RUN / USER_UAT_PENDING`。既有 `USER_UAT_FAIL` 仍是问题来源，不宣称用户验收通过。访问入口此前记录为 `https://zxwan520.com:63013/notes`，本次未探测。
+- **后续条件：** 用户已授权 App-only 更新，不需要重复申请该授权；继续前只需通过受支持、最小权限的部署路径使 App/Compose/镜像/回滚资产可实时核验，并确保可保留既有 Hermes、真实 Vault/Obsidian、其他容器、Secrets、ACL、挂载、网络和安全开关。获得该访问能力后按本授权继续，不启动工作包 6、不扩展视觉范围。
+
 ## 2026-11-08 — WP5 / PR #309 Database Kanban DOM 根因与修复
 
 - **真实 Chromium 诊断：** 独立 Linux Chromium DOM 探针 [Actions #42455661925](https://github.com/zxwan829/SecondBrain/actions/runs/42455661925) 在产品修复候选 `033cd86e440294a6b4d0a7ac3785394093826978` 上，不通过正式 Playwright runner 直接读取 synthetic Database：新增看板后 `currentViewId` 与 sessionStorage `blocksuite:databaseBlock:view:currentViewList` 的 viewId 一致；DOM 有 2 个 Kanban group、3 个 card 节点，实际“测试记录”卡片含“仅供体验”和“进行中”；关闭重开及整页刷新后上述视图、分组、卡片、Yjs 数据仍在。该探针只输出诊断日志，不生成/伪造正式验收产物。
