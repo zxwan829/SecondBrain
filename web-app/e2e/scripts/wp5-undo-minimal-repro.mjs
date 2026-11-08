@@ -16,9 +16,17 @@ const readState = () => page.locator('.blocksuite-resource-host').evaluate((host
   const active = document.activeElement;
   const paragraph = [...host.querySelectorAll('affine-paragraph')].find(element => element.textContent?.includes(value));
   const richText = paragraph?.querySelector('rich-text');
+  const std = host.__sbBlockSuiteStd;
+  const logicalSelection = std?.selection?.value?.find(({ type }) => type === 'text');
+  const title = blocks.find(({ model }) => model.props.type === 'h1')?.model;
   return {
     markerPresent: text.includes(value),
     paragraphTypes: blocks.map(({ model }) => model.props.type ?? 'text'),
+    paragraphs: blocks.map(({ model }) => ({ id: model.id, type: model.props.type ?? 'text',
+      text: model.props.text?.toString?.() ?? '' })),
+    titleText: title?.props.text?.toString?.() ?? null,
+    logicalSelection: logicalSelection ? { blockId: logicalSelection.from.blockId,
+      index: logicalSelection.from.index, length: logicalSelection.from.length } : null,
     canUndo: Boolean(store?.canUndo),
     canRedo: Boolean(store?.canRedo),
     undoStackDepth: store?.history?.undoManager?.undoStack?.length ?? null,
@@ -38,12 +46,12 @@ try {
   await page.evaluate(() => {
     window.__wp5UndoKeyEvents = [];
     document.addEventListener('keydown', event => {
-    if (event.ctrlKey && event.key.toLowerCase() === 'z') {
+    if (['z', 'Backspace'].includes(event.key)) {
       setTimeout(() => (window).__wp5UndoKeyEvents?.push({ key: event.key, ctrlKey: event.ctrlKey,
         shiftKey: event.shiftKey, defaultPrevented: event.defaultPrevented,
         targetTag: event.target instanceof Element ? event.target.tagName : null }), 0);
     }
-    });
+    }, true);
   });
   await page.getByLabel('SecondBrain 登录口令').fill(password);
   await page.getByRole('button', { name: '登录' }).click();
@@ -61,6 +69,15 @@ try {
     const selection = window.getSelection();
     return Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
   })).toBe(true);
+  await editor.getByRole('button', { name: '重命名文档' }).click();
+  const titleInput = editor.getByRole('textbox', { name: '重命名文档' });
+  await titleInput.fill('WP5 Boundary Title');
+  await titleInput.press('Enter');
+  await body.click();
+  await expect.poll(() => inline.evaluate(node => {
+    const selection = window.getSelection();
+    return node.getAttribute('contenteditable') === 'true' && Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
+  })).toBe(true);
   const beforeUndo = await readState();
   await page.keyboard.insertText(marker);
   await expect.poll(async () => (await readState()).markerPresent).toBe(true);
@@ -71,20 +88,30 @@ try {
   await page.keyboard.press('Control+Shift+z');
   await page.waitForTimeout(750);
   const afterRedo = await readState();
-  const keyEventEvidence = await page.evaluate(() => (window).__wp5UndoKeyEvents ?? []);
   await editor.getByRole('button', { name: '撤销', exact: true }).click();
   await page.waitForTimeout(750);
   const afterToolbarUndo = await readState();
   await editor.getByRole('button', { name: '重做', exact: true }).click();
   await page.waitForTimeout(750);
   const afterToolbarRedo = await readState();
+  await body.click();
+  await page.keyboard.press('Home');
+  await page.waitForTimeout(250);
+  const beforeBoundaryBackspace = await readState();
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(500);
+  const afterBoundaryBackspace = await readState();
+  const allKeyEvents = await page.evaluate(() => (window).__wp5UndoKeyEvents ?? []);
   await page.screenshot({ path: process.env.SB_WP5_UNDO_REPRO_SCREENSHOT_PATH, fullPage: false });
   const evidence = { scope: 'synthetic isolated Notes page', viewport: '1440x1000',
-    sequence: { beforeUndo, afterInsert, afterUndo, afterRedo, afterToolbarUndo, afterToolbarRedo },
-    keyEvents: keyEventEvidence,
+    sequence: { beforeUndo, afterInsert, afterUndo, afterRedo, afterToolbarUndo, afterToolbarRedo,
+      beforeBoundaryBackspace, afterBoundaryBackspace },
+    keyEvents: allKeyEvents,
     undoRemovedTypedText: !afterUndo.markerPresent, redoRestoredTypedText: afterRedo.markerPresent,
     toolbarUndoRemovedTypedText: !afterToolbarUndo.markerPresent,
     toolbarRedoRestoredTypedText: afterToolbarRedo.markerPresent,
+    backspacePreservedTitle: beforeBoundaryBackspace.titleText === afterBoundaryBackspace.titleText,
+    backspacePreservedBodyBlock: afterBoundaryBackspace.paragraphs.some(item => item.text === marker),
     observationOnly: true };
   await writeFile(process.env.SB_WP5_UNDO_REPRO_JSON_PATH, JSON.stringify(evidence, null, 2));
   process.stdout.write(`WP5_UNDO_MINIMAL_REPRO ${JSON.stringify(evidence)}\n`);
