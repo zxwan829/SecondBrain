@@ -46,7 +46,9 @@ const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
 type Wp5ProbeEvent = { marker: 'wp5-conflict-queue'; at_ms: number; event: string; status?: number };
 type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' | 'rich_page_seed_read'
-  | 'rich_page_body_edit' | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
+  | 'rich_page_body_edit' | 'rich_page_enter' | 'rich_page_enter_verify' | 'rich_page_ime'
+  | 'rich_page_backspace_undo' | 'rich_page_title_boundary' | 'rich_page_ready_measurement'
+  | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
   | 'rich_page_reopen' | 'rich_page_nested_canvas_create' | 'rich_page_nested_canvas_open'
   | 'rich_page_nested_blob_upload' | 'rich_page_nested_canvas_save' | 'rich_page_parent_save'
   | 'rich_page_mode_edgeless' | 'rich_page_mode_edgeless_ready' | 'rich_page_mode_page' | 'rich_page_backup_preview'
@@ -1479,6 +1481,7 @@ for (const viewport of activeViewports) {
         return editor.getAttribute('contenteditable') === 'true' && Boolean(selection?.anchorNode && editor.contains(selection.anchorNode));
       })).toBe(true);
       await page.keyboard.insertText(richText);
+      observed.setWp5Step('rich_page_enter');
       await page.keyboard.press('Enter');
       const secondRichLine = 'Second paragraph after Enter';
       await page.keyboard.insertText(secondRichLine);
@@ -1507,9 +1510,11 @@ for (const viewport of activeViewports) {
       expect(firstEnterBlock?.parentId, 'wp5_rich_page_enter_same_parent').toBe(secondEnterBlock?.parentId);
       expect(firstEnterBlock!.index, 'wp5_rich_page_enter_order').toBeLessThan(secondEnterBlock!.index);
       expect(liveEnterEvidence.anchorInsideEditor).toBe(true);
+      observed.setWp5Step('rich_page_enter_verify');
       await expect(richDialog.locator('affine-paragraph').filter({ hasText: richText })).toBeVisible();
       await expect(richDialog.locator('affine-paragraph').filter({ hasText: secondRichLine })).toBeVisible();
       const secondLineEditor = richDialog.locator('affine-paragraph').filter({ hasText: secondRichLine }).last().locator('rich-text .inline-editor');
+      observed.setWp5Step('rich_page_ime');
       await secondLineEditor.evaluate(editor => editor.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' })));
       await page.keyboard.insertText(' 中文输入法内容');
       await secondLineEditor.evaluate(editor => editor.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文输入法内容' })));
@@ -1519,12 +1524,14 @@ for (const viewport of activeViewports) {
       await page.keyboard.press('Backspace');
       await expect(richDialog.locator('affine-paragraph').filter({ hasText: backspaceProbe.slice(0, -1) })).toBeVisible();
       const undoProbe = ` undo-probe-${randomUUID()}`;
+      observed.setWp5Step('rich_page_backspace_undo');
       await page.keyboard.insertText(undoProbe);
       await page.keyboard.press('Control+z');
       await expect(richDialog.locator('affine-paragraph').filter({ hasText: undoProbe })).toHaveCount(0);
       await page.keyboard.press('Control+Shift+z');
       await expect(richDialog.locator('affine-paragraph').filter({ hasText: undoProbe })).toBeVisible();
       const firstBodyBlock = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
+      observed.setWp5Step('rich_page_title_boundary');
       await firstBodyBlock.click(); await page.keyboard.press('Home'); await page.keyboard.press('Backspace');
       const firstParagraphBackspace = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
         const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
@@ -1538,6 +1545,7 @@ for (const viewport of activeViewports) {
       expect(firstParagraphBackspace.firstBody?.text, 'wp5_rich_page_backspace_keeps_first_paragraph').toBe(richText);
       expect(firstParagraphBackspace.firstBody?.id, 'wp5_rich_page_backspace_keeps_first_paragraph_id').not.toBe(firstParagraphBackspace.titleId);
       const readyMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<{ durationMs: number; viewport: string }> }).__wp5ReadyEvents ?? []);
+      observed.setWp5Step('rich_page_ready_measurement');
       expect(readyMetrics.length).toBeGreaterThan(0);
       expect(readyMetrics.at(-1)?.viewport).toBe('1440x1000');
       const firstRichResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'

@@ -465,6 +465,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                        for status in brief_statuses)
                 or (wp5_step is not None and (not isinstance(wp5_step, str) or wp5_step not in {
                     "not_started", "rich_page_create", "rich_page_open", "rich_page_seed_read", "rich_page_body_edit",
+                    "rich_page_enter", "rich_page_enter_verify", "rich_page_ime", "rich_page_backspace_undo",
+                    "rich_page_title_boundary", "rich_page_ready_measurement",
                     "rich_page_first_save", "rich_page_first_readback", "rich_page_close", "rich_page_reopen",
                     "rich_page_nested_canvas_create", "rich_page_nested_canvas_open", "rich_page_nested_blob_upload",
                     "rich_page_nested_canvas_save", "rich_page_parent_save", "rich_page_mode_edgeless", "rich_page_mode_edgeless_ready",
