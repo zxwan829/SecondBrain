@@ -242,6 +242,37 @@ def test_wp5_canvas_save_diagnostic_is_finite_and_sanitized():
     with pytest.raises(RuntimeError):
         module._validate_failure_diagnostics([over_bound])
 
+
+def test_wp5_canvas_open_diagnostic_is_allowlisted_and_projected(tmp_path):
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+        "assertion_id": "wp5_resource_content_visible", "activity_get_statuses": [],
+        "wp5_canvas_open_state": {
+            "viewportFoundBeforeClick": True, "openEventReceived": 1, "canvasGalleryExpanded": True,
+            "canvasCardCount": 1, "openButtonCount": 1, "openButtonsEnabled": 1,
+            "nestedCanvasEditorVisible": False, "visibleResourceDialogs": ["笔记编辑器"],
+        },
+    }
+    assert module._validate_failure_diagnostics([diagnostic])[0]["wp5_canvas_open_state"] == diagnostic["wp5_canvas_open_state"]
+    invalid = {**diagnostic, "wp5_canvas_open_state": {
+        **diagnostic["wp5_canvas_open_state"], "visibleResourceDialogs": ["secret note title"],
+    }}
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([invalid])
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_junit(raw, {"desktop-1440x1000"})
+    result_dir = raw / "test-results" / _screenshot_dir("desktop-1440x1000")
+    result_dir.mkdir(parents=True)
+    (result_dir / "failure-summary.json").write_text(json.dumps({
+        "schema_version": 2, **diagnostic,
+    }))
+    assert module._collect_failure_diagnostics(raw) == [{
+        **{key: diagnostic[key] for key in ("viewport", "stage", "code", "assertion_id", "activity_get_statuses")},
+        "wp5_canvas_open_state": diagnostic["wp5_canvas_open_state"],
+    }]
+
 @pytest.mark.parametrize("entry", [
     {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret", "notes_collection_statuses": []},
     {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
