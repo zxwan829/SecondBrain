@@ -1103,11 +1103,12 @@ for (const viewport of activeViewports) {
               propertyAdd?: (position: string, options: { type: string; name: string }) => string | undefined;
               propertyDataSet?: (id: string, data: Record<string, unknown>) => void;
               cellValueChange?: (rowId: string, propertyId: string, value: unknown) => void;
-              rows$?: { value: Array<{ rowId: string }> };
-            } } };
+            } }; model?: { children?: Array<{ id: string }> } };
             const source = component.dataSource?.value;
             const columnId = source?.propertyAdd?.('end', { type: 'select', name: '状态' });
-            const rowId = source?.rows$?.value[0]?.rowId;
+            // DatabaseBlockDataSource exposes cell/property APIs, while row
+            // models remain children of the affine:database block.
+            const rowId = component.model?.children?.[0]?.id;
             if (!source || !columnId || !rowId) return false;
             source.propertyDataSet?.(columnId, { options: [{ id: 'wp5-in-progress', value: '进行中', color: '#3b82f6' }] });
             source.cellValueChange?.(rowId, columnId, 'wp5-in-progress');
