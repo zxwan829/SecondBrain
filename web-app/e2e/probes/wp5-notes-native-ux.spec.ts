@@ -172,7 +172,9 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(titleBoundary.firstBody?.text).toBe('First line after title');
   expect(titleBoundary.firstBody?.id).not.toBe(titleBoundary.titleBlockId);
 
-  const segmentedParagraph = editor.locator('affine-paragraph').filter({ hasText: 'First line after title' }).first();
+  const firstBodyBlockId = await firstBodyParagraph.getAttribute('data-block-id');
+  expect(firstBodyBlockId).toBeTruthy();
+  const segmentedParagraph = editor.locator(`affine-paragraph[data-block-id="${firstBodyBlockId}"]`);
   const segmentedRichText = segmentedParagraph.locator('rich-text');
   await segmentedParagraph.locator('rich-text').evaluate(node => {
     const inlineEditor = (node as HTMLElement & { inlineEditor?: { formatText: (range: { index: number; length: number }, attributes: Record<string, unknown>) => void } }).inlineEditor;
