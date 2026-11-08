@@ -2081,10 +2081,11 @@ for (const viewport of activeViewports) {
         await expect(emojiSearch, 'wp5_archive_emoji_picker_visible').toHaveAttribute('placeholder', '搜索');
         await emojiSearch.fill('笑脸');
         observed.setDiagnosticAssertion('wp5_archive_emoji_search_results');
-        // Emoji Mart may append a Unicode variation selector to the native
-        // emoji aria-label; match the stable visible glyph prefix.
-        const grinningEmoji = emojiPicker.locator('button[aria-label^="😀"]');
+        // Emoji Mart marks search-result order with aria-posinset. Use the
+        // first result, then verify its native emoji label before selecting it.
+        const grinningEmoji = emojiPicker.locator('button[aria-posinset="1"]');
         await expect(grinningEmoji, 'wp5_archive_emoji_search_results').toBeVisible({ timeout: 10000 });
+        await expect(grinningEmoji, 'wp5_archive_emoji_search_results').toHaveAttribute('aria-label', /^😀/);
         await grinningEmoji.click();
         observed.setDiagnosticAssertion('wp5_archive_emoji_insert');
         await expect(emojiParagraph, 'wp5_archive_emoji_insert').toContainText('😀', { timeout: 5000 });
