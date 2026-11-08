@@ -334,15 +334,23 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
       const rect = element.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.right <= window.innerWidth + 1;
     };
+    const controlState = (element: Element | null) => {
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      return { visible: element.dataset.visible === 'true', display: getComputedStyle(element).display,
+        x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+        withinViewport: rectWithinViewport(element) };
+    };
+    const plus = root.querySelector('sb-desktop-page-plus-widget button[data-kind="plus"]');
+    const grip = root.querySelector('sb-desktop-page-plus-widget button[data-kind="grip"]');
     const controls = [...root.querySelectorAll('.document-controls button, .blocksuite-resource-toolbar > button, .blocksuite-more-tools > summary')];
     return { viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth,
       notesWidth: (root as HTMLElement).scrollWidth,
       controlsVisible: controls.map(button => ({ label: button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '',
         visibleAndWithinViewport: rectWithinViewport(button) })),
-      plusVisible: rectWithinViewport(root.querySelector('sb-desktop-page-plus-widget button[data-kind="plus"]'))
-        && root.querySelector('sb-desktop-page-plus-widget button[data-kind="plus"]')?.getAttribute('data-visible') === 'true',
-      gripVisible: rectWithinViewport(root.querySelector('sb-desktop-page-plus-widget button[data-kind="grip"]'))
-        && root.querySelector('sb-desktop-page-plus-widget button[data-kind="grip"]')?.getAttribute('data-visible') === 'true' };
+      plusVisible: rectWithinViewport(plus) && plus?.getAttribute('data-visible') === 'true',
+      gripVisible: rectWithinViewport(grip) && grip?.getAttribute('data-visible') === 'true',
+      plusControl: controlState(plus), gripControl: controlState(grip) };
   });
   await writeFile(process.env.SB_WP5_NATIVE_MOBILE_DIAGNOSTIC_PATH!, JSON.stringify(mobileLayout, null, 2));
   expect(mobileLayout.documentWidth).toBeLessThanOrEqual(390);
