@@ -140,7 +140,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_canvas_reference_lifecycle'
   | 'wp5_archive_emoji_command_visible' | 'wp5_archive_emoji_picker_visible'
   | 'wp5_archive_emoji_search_results' | 'wp5_archive_emoji_insert'
-  | 'wp5_archive_html_export' | 'wp5_archive_pdf_preview' | 'wp5_archive_save_close'
+  | 'wp5_archive_html_export' | 'wp5_archive_pdf_preview' | 'wp5_archive_pdf_frame_attached'
+  | 'wp5_archive_pdf_body_text' | 'wp5_archive_save_close'
   | 'wp5_archive_saved_reopen' | 'wp5_archive_table_state_reopened'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
@@ -2186,7 +2187,15 @@ for (const viewport of activeViewports) {
         observed.setDiagnosticAssertion('wp5_archive_pdf_preview');
         await richDialog.getByRole('button', { name: '导出 PDF' }).click();
         const printPreview = page.locator('iframe[title="富文档 PDF 打印"]');
+        observed.setDiagnosticAssertion('wp5_archive_pdf_frame_attached');
         await expect(printPreview, 'wp5_archive_pdf_print_preview').toBeAttached({ timeout: 10000 });
+        observed.setDiagnosticAssertion('wp5_archive_pdf_body_text');
+        const printBodyState = await printPreview.evaluate((frame, marker) => {
+          const body = (frame as HTMLIFrameElement).contentDocument?.body;
+          return !body ? 'missing_body' : body.innerText.includes(marker) ? 'contains_source' : 'source_missing';
+        }, mergeSourceText);
+        observed.setDiagnosticAssertion(`wp5_archive_pdf_body_${printBodyState}` as DiagnosticAssertion);
+        expect(printBodyState, 'wp5_archive_pdf_print_preview_dom').toBe('contains_source');
         await expect(page.frameLocator('iframe[title="富文档 PDF 打印"]').locator('body'), 'wp5_archive_pdf_print_preview')
           .toContainText(mergeSourceText, { timeout: 10000 });
         observed.setDiagnosticAssertion('wp5_archive_save_close');
