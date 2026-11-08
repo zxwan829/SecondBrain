@@ -52,7 +52,7 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_mode_edgeless' | 'rich_page_mode_edgeless_ready' | 'rich_page_mode_page' | 'rich_page_backup_preview'
   | 'rich_page_snapshot_restore' | 'rich_page_post_restore_reopen' | 'rich_page_conflict'
   | 'rich_page_recovery_copy' | 'rich_page_explicit_fork' | 'archive_ux_style_check'
-  | 'archive_ux_toolbar_select' | 'archive_ux_bold' | 'archive_ux_alignment' | 'archive_ux_table';
+  | 'archive_ux_toolbar_select' | 'archive_ux_bold' | 'archive_ux_alignment' | 'archive_ux_table' | 'archive_ux_emoji';
 type BlockSuiteRequestDiagnostic = { endpoint: 'resource_collection' | 'resource' | 'blob' | 'snapshot' | 'snapshot_restore'; method: 'GET' | 'POST' | 'PUT'; status: number | null };
 type CanvasSaveDiagnostic = { checkpoint: 'layout_poll' | 'first_status' | 'second_save_response' | 'readback' | 'saved_status' | 'close_enabled';
   status: 'saved' | 'previous_dirty' | 'unsaved' | 'saving' | 'other'; close_enabled: boolean | null;
@@ -138,7 +138,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_table_vertical_menu_action'
   | 'wp5_archive_database_kanban'
   | 'wp5_archive_canvas_reference_lifecycle'
-  | 'wp5_archive_emoji_search'
+  | 'wp5_archive_emoji_command_visible' | 'wp5_archive_emoji_picker_visible'
+  | 'wp5_archive_emoji_search_results' | 'wp5_archive_emoji_insert'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
@@ -879,7 +880,7 @@ for (const viewport of activeViewports) {
     // conflict/recovery, and an unsupported-Markdown preservation probe. Give
     // that composed journey enough total execution budget without extending
     // any individual product wait/assertion or weakening its conditions.
-    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5ArchiveUxOnly ? 180_000 : wp5RichPageModeOnly ? 120_000 : wp5RoundtripOnly ? 300_000 : 60_000);
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5ArchiveUxOnly ? 240_000 : wp5RichPageModeOnly ? 120_000 : wp5RoundtripOnly ? 300_000 : 60_000);
     if ((wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly || wp5ArchiveUxOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
@@ -1087,6 +1088,7 @@ for (const viewport of activeViewports) {
         await page.keyboard.insertText(marker);
         observed.setDiagnosticAssertion('wp5_resource_dirty');
         if (kind === 'database') {
+          observed.setDiagnosticAssertion('wp5_archive_database_kanban');
           const database = resourceHost.locator('affine-database').first();
           const seededGroup = await database.evaluate(element => {
             const component = element as HTMLElement & { dataSource?: { value?: {
@@ -2054,24 +2056,29 @@ for (const viewport of activeViewports) {
         expect(persistedRowHeight, 'wp5_archive_table_row_resize_model').toBeGreaterThan(38);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_037');
 
-        observed.setDiagnosticAssertion('wp5_archive_emoji_search');
+        observed.setWp5Step('archive_ux_emoji');
+        observed.setDiagnosticAssertion('wp5_archive_emoji_command_visible');
         const emojiTarget = targetParagraph.locator('rich-text .inline-editor');
         await emojiTarget.click();
         await page.keyboard.press('End');
         await page.keyboard.press('/');
         const emojiSlashItem = page.getByText('插入表情图标', { exact: true });
-        await expect(emojiSlashItem, 'wp5_archive_emoji_search').toBeVisible({ timeout: 10000 });
+        await expect(emojiSlashItem, 'wp5_archive_emoji_command_visible').toBeVisible({ timeout: 10000 });
         await emojiSlashItem.click();
         const emojiDialog = page.getByRole('dialog', { name: '选择表情' });
-        await expect(emojiDialog, 'wp5_archive_emoji_search').toBeVisible();
+        observed.setDiagnosticAssertion('wp5_archive_emoji_picker_visible');
+        await expect(emojiDialog, 'wp5_archive_emoji_picker_visible').toBeVisible();
         const emojiPicker = emojiDialog.locator('em-emoji-picker');
         const emojiSearch = emojiPicker.locator('input[type="search"]');
-        await expect(emojiSearch, 'wp5_archive_emoji_search').toHaveAttribute('placeholder', '搜索');
+        await expect(emojiSearch, 'wp5_archive_emoji_picker_visible').toHaveAttribute('placeholder', '搜索');
         await emojiSearch.fill('笑脸');
-        await expect.poll(() => emojiPicker.locator('.emoji-mart-emoji').count(), { timeout: 10000 })
-          .toBeGreaterThan(0);
-        await page.keyboard.press('Escape');
-        await expect(emojiDialog, 'wp5_archive_emoji_search_close').toHaveCount(0);
+        observed.setDiagnosticAssertion('wp5_archive_emoji_search_results');
+        const grinningEmoji = emojiPicker.locator('button[aria-label="😀"]');
+        await expect(grinningEmoji, 'wp5_archive_emoji_search_results').toBeVisible({ timeout: 10000 });
+        await grinningEmoji.click();
+        observed.setDiagnosticAssertion('wp5_archive_emoji_insert');
+        await expect(targetParagraph, 'wp5_archive_emoji_insert').toContainText('😀', { timeout: 5000 });
+        await expect(emojiDialog, 'wp5_archive_emoji_insert').toHaveCount(0);
 
         const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
         observed.setDiagnosticAssertion('wp5_archive_canvas_reference_lifecycle');
@@ -2120,7 +2127,8 @@ for (const viewport of activeViewports) {
         const copiedCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
         await expect(copiedCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
         await expect(copiedCard.locator('.canvas-b-card-preview'), 'wp5_archive_canvas_copy_preview').toContainText('自动裁剪预览');
-        await expect(canvasGallery.locator('.canvas-b-card'), 'wp5_archive_canvas_copy_retargets_reference').toHaveCount(2);
+        await expect(sourceCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        await expect(canvasGallery.locator('.canvas-b-card'), 'wp5_archive_canvas_reference_lifecycle').toHaveCount(3);
         const sourceCanvasRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`);
         const copiedCanvasRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${copiedCanvas.resource_id}`);
         expect(sourceCanvasRead.status(), 'wp5_archive_canvas_source_preserved').toBe(200);
@@ -2185,7 +2193,9 @@ for (const viewport of activeViewports) {
         await expect(reopenedTable).toBeVisible();
         const reopenedGallery = richDialog.getByRole('region', { name: '独立画布资源' });
         const reopenedCopiedCard = reopenedGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
-        await expect(reopenedGallery.locator('.canvas-b-card'), 'wp5_archive_canvas_reference_reopen').toHaveCount(1);
+        const reopenedSourceCard = reopenedGallery.locator('.canvas-b-card').filter({ hasText: sourceCanvas.resource_id });
+        await expect(reopenedGallery.locator('.canvas-b-card'), 'wp5_archive_canvas_reference_reopen').toHaveCount(2);
+        await expect(reopenedSourceCard, 'wp5_archive_canvas_reference_reopen').toBeVisible();
         await expect(reopenedCopiedCard, 'wp5_archive_canvas_reference_reopen').toBeVisible();
         await expect(reopenedCopiedCard.locator('.canvas-b-card-preview'), 'wp5_archive_canvas_preview_reopen')
           .toContainText('自动裁剪预览');
@@ -2200,6 +2210,11 @@ for (const viewport of activeViewports) {
         }, rowId);
         expect(reopenedTableState.mergeCount, 'wp5_archive_table_merge_reopened').toBe(1);
         expect(reopenedTableState.rowHeight, 'wp5_archive_table_row_resize_reopened').toBeGreaterThan(38);
+        const reopenedVerticalAlignment = await reopenedTable.evaluate((element, address) => {
+          const table = element as HTMLElement & { dataManager?: { getCell?: (row: string, column: string) => { verticalAlign?: string } | undefined } };
+          return table.dataManager?.getCell?.(address.row, address.column)?.verticalAlign ?? 'top';
+        }, { row: firstRowId!, column: firstColumnId! });
+        expect(reopenedVerticalAlignment, 'wp5_archive_table_vertical_menu_action').toBe('middle');
         const reopenedMergeTexts = await reopenedTable.evaluate((element, expectedRowTexts) => {
           const table = element as HTMLElement & { dataManager?: { rows$?: { value: Array<{ rowId: string }> }; columns$?: { value: Array<{ columnId: string }> }; getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
           const row = table.dataManager?.rows$?.value[0];

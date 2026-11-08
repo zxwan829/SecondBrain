@@ -137,7 +137,10 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_archive_table_vertical_menu_action",
     "wp5_archive_database_kanban",
     "wp5_archive_canvas_reference_lifecycle",
-    "wp5_archive_emoji_search",
+    "wp5_archive_emoji_command_visible",
+    "wp5_archive_emoji_picker_visible",
+    "wp5_archive_emoji_search_results",
+    "wp5_archive_emoji_insert",
     "wp5_archive_align_model_center", "wp5_archive_grip_visibility",
     "wp5_archive_drag_geometry", "wp5_archive_drag_order", "wp5_archive_drag_result",
     "wp5_archive_drag_source_not_unique", "wp5_archive_drag_target_not_unique",
@@ -439,7 +442,7 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                     "rich_page_mode_page", "rich_page_backup_preview", "rich_page_snapshot_restore",
                     "rich_page_post_restore_reopen", "rich_page_conflict", "rich_page_recovery_copy",
                     "rich_page_explicit_fork", "archive_ux_style_check", "archive_ux_toolbar_select",
-                    "archive_ux_bold", "archive_ux_alignment", "archive_ux_table",
+                    "archive_ux_bold", "archive_ux_alignment", "archive_ux_table", "archive_ux_emoji",
                 }))
                 or not isinstance(blocksuite_requests, list) or len(blocksuite_requests) > 24
                 or any(not isinstance(request, dict) or set(request) != {"endpoint", "method", "status"}
