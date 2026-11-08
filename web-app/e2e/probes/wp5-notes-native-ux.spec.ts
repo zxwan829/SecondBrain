@@ -535,7 +535,21 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
     const viewport = host?.querySelector<HTMLElement>('.sb-archive-viewport');
     const gallery = inline?.querySelector<HTMLElement>('.blocksuite-canvas-tools') ?? null;
     const paragraphs = [...(host?.querySelectorAll<HTMLElement>('affine-paragraph') ?? [])];
-    const richTexts = [...(host?.querySelectorAll<HTMLElement>('affine-paragraph > rich-text') ?? [])]
+    const deepQueryAll = (root: Element, selector: string): HTMLElement[] => {
+      const found: HTMLElement[] = [];
+      const visit = (parent: ParentNode) => {
+        for (const child of [...parent.children]) {
+          if (child instanceof HTMLElement && child.matches(selector)) found.push(child);
+          visit(child);
+          if (child.shadowRoot) visit(child.shadowRoot);
+        }
+      };
+      visit(root);
+      return found;
+    };
+    const richTexts = paragraphs.flatMap(paragraph => deepQueryAll(paragraph, 'rich-text'))
+      .filter(element => element.getClientRects().length > 0);
+    const inlineEditors = richTexts.flatMap(richText => deepQueryAll(richText, '.inline-editor'))
       .filter(element => element.getClientRects().length > 0);
     const measure = () => {
       const hostBottom = host?.getBoundingClientRect().bottom ?? 0;
@@ -544,7 +558,7 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
       const lastParagraphBottom = lastParagraph?.getBoundingClientRect().bottom ?? 0;
       const visibleParagraphs = paragraphs.filter(paragraph => paragraph.getClientRects().length > 0);
       const sampleRichText = richTexts[1] ?? richTexts[0] ?? null;
-      const sampleInlineEditor = sampleRichText?.querySelector<HTMLElement>('.inline-editor') ?? null;
+      const sampleInlineEditor = inlineEditors[1] ?? inlineEditors[0] ?? null;
       const dimensions = (element: HTMLElement | null) => element ? {
         height: element.getBoundingClientRect().height, scrollHeight: element.scrollHeight,
         cssHeight: getComputedStyle(element).height, display: getComputedStyle(element).display,
@@ -560,14 +574,16 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
           && galleryTop >= lastParagraphBottom - 1) };
     };
     const initial = measure();
-    const diagnosticStyle = document.createElement('style');
-    diagnosticStyle.dataset.wp5LayoutDiagnostic = 'true';
-    diagnosticStyle.textContent = '.blocksuite-resource-inline .blocksuite-resource-host affine-paragraph > rich-text { height: auto !important; }';
-    document.head.append(diagnosticStyle);
+    const originalStyles = new Map<HTMLElement, string | null>();
+    for (const element of [...richTexts, ...inlineEditors]) originalStyles.set(element, element.getAttribute('style'));
+    for (const richText of richTexts) richText.style.setProperty('height', 'auto', 'important');
     const richTextAuto = measure();
-    diagnosticStyle.textContent += '\n.blocksuite-resource-inline .blocksuite-resource-host affine-paragraph > rich-text > .inline-editor { height: auto !important; }';
+    for (const editor of inlineEditors) editor.style.setProperty('height', 'auto', 'important');
     const richTextAndInlineEditorAuto = measure();
-    diagnosticStyle.remove();
+    for (const [element, style] of originalStyles) {
+      if (style === null) element.removeAttribute('style');
+      else element.setAttribute('style', style);
+    }
     return { paragraphCount: paragraphs.length, hostCount: document.querySelectorAll('.blocksuite-resource-host').length,
       inlineHostCount: inline?.querySelectorAll('.blocksuite-resource-host').length ?? 0,
       initial, richTextAuto, richTextAndInlineEditorAuto, ...initial };
