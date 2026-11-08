@@ -328,30 +328,30 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
 
   await page.setViewportSize({ width: 390, height: 844 });
   await target.hover();
-  const mobileLayout = await page.locator('.notes-layout').evaluate(root => {
+  await expect(plus).toHaveAttribute('data-visible', 'true');
+  await expect(grip).toHaveAttribute('data-visible', 'true');
+  const mobileBlockControls = await Promise.all([grip, plus].map(locator => locator.evaluate(element => {
+    const rect = element.getBoundingClientRect(); const style = getComputedStyle(element);
+    return { kind: element.getAttribute('data-kind'), visible: element.getAttribute('data-visible') === 'true'
+      && rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden',
+      x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+      withinViewport: rect.left >= 0 && rect.right <= window.innerWidth + 1 };
+  })));
+  const mobileLayout = await page.locator('.notes-layout').evaluate((root, blockControls) => {
     const rectWithinViewport = (element: Element | null) => {
       if (!element) return false;
       const rect = element.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.right <= window.innerWidth + 1;
     };
-    const controlState = (element: Element | null) => {
-      if (!(element instanceof HTMLElement)) return null;
-      const rect = element.getBoundingClientRect();
-      return { visible: element.dataset.visible === 'true', display: getComputedStyle(element).display,
-        x: rect.x, y: rect.y, width: rect.width, height: rect.height,
-        withinViewport: rectWithinViewport(element) };
-    };
-    const plus = root.querySelector('sb-desktop-page-plus-widget button[data-kind="plus"]');
-    const grip = root.querySelector('sb-desktop-page-plus-widget button[data-kind="grip"]');
     const controls = [...root.querySelectorAll('.document-controls button, .blocksuite-resource-toolbar > button, .blocksuite-more-tools > summary')];
     return { viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth,
       notesWidth: (root as HTMLElement).scrollWidth,
       controlsVisible: controls.map(button => ({ label: button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '',
         visibleAndWithinViewport: rectWithinViewport(button) })),
-      plusVisible: rectWithinViewport(plus) && plus?.getAttribute('data-visible') === 'true',
-      gripVisible: rectWithinViewport(grip) && grip?.getAttribute('data-visible') === 'true',
-      plusControl: controlState(plus), gripControl: controlState(grip) };
-  });
+      plusVisible: blockControls[1]?.visible && blockControls[1]?.withinViewport,
+      gripVisible: blockControls[0]?.visible && blockControls[0]?.withinViewport,
+      plusControl: blockControls[1] ?? null, gripControl: blockControls[0] ?? null };
+  }, mobileBlockControls);
   await writeFile(process.env.SB_WP5_NATIVE_MOBILE_DIAGNOSTIC_PATH!, JSON.stringify(mobileLayout, null, 2));
   expect(mobileLayout.documentWidth).toBeLessThanOrEqual(390);
   expect(mobileLayout.notesWidth).toBeLessThanOrEqual(390);
