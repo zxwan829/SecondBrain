@@ -271,11 +271,10 @@ class DesktopPagePlusWidget extends WidgetComponent {
       grip.style.left = `${gripLeft}px`;
       plus.style.top = `${lineTop}px`;
       grip.style.top = `${lineTop}px`;
-    } else if (left >= 48) {
-      // On narrow viewports both legacy offsets clamp to the same x=4px,
-      // causing the plus and grip to overlap. Keep the 2px gap immediately
-      // before the text instead.
-      const rowLeft = Math.max(0, left - 48);
+    } else if (left >= 52) {
+      // Keep a 4px viewport gutter on narrow screens while retaining the
+      // 2px gap before the text. Both legacy offsets otherwise clamp together.
+      const rowLeft = left - 48;
       grip.style.left = `${rowLeft}px`;
       plus.style.left = `${rowLeft + 24}px`;
       plus.style.top = `${lineTop}px`;

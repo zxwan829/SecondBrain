@@ -268,6 +268,24 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const refreshOpen = await page.evaluate(start => ({ durationMs: Date.now() - start,
     viewport: `${window.innerWidth}x${window.innerHeight}` }), refreshStarted);
 
+  // Remove temporary interaction markers before capturing a user-facing
+  // screenshot, then verify the cleaned synthetic paragraph survives a save
+  // and reload through the normal editor path.
+  const cleanParagraph = editor.locator('affine-paragraph')
+    .filter({ hasText: 'Second paragraph after Enter' }).last().locator('rich-text .inline-editor');
+  await cleanParagraph.fill('Second paragraph after Enter 中文输入法内容');
+  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate(host => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    return store?.getBlocksByFlavour('affine:paragraph')
+      .find(({ model }: any) => model.props.text?.toString?.().includes('Second paragraph after Enter'))
+      ?.model.props.text?.toString?.() ?? '';
+  })).toBe('Second paragraph after Enter 中文输入法内容');
+  await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
+  await expect(editor.getByRole('status').first()).toContainText('已保存');
+  await page.reload();
+  await expect(editor).toBeVisible();
+  await expect(editor.getByText('Second paragraph after Enter 中文输入法内容', { exact: true })).toBeVisible();
+
   const target = editor.locator('affine-paragraph').filter({ hasText: 'First line after title' }).last();
   const plus = editor.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
   const grip = editor.locator('sb-desktop-page-plus-widget button[data-kind="grip"]');
@@ -361,6 +379,13 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(mobileLayout.gripVisible).toBe(true);
   const mobilePlus = mobileLayout.plusControl!;
   const mobileGrip = mobileLayout.gripControl!;
+  expect(mobileGrip.x).toBeGreaterThanOrEqual(4);
+  const gripDots = await grip.evaluate(button => [...button.querySelectorAll('.grip-dots i')].map(dot => {
+    const rect = dot.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+  }));
+  expect(gripDots).toHaveLength(6);
+  expect(gripDots.every(dot => dot.left >= 0 && dot.right <= 390 && dot.top >= 0 && dot.bottom <= 844)).toBe(true);
   expect(mobilePlus.x < mobileGrip.x + mobileGrip.width && mobileGrip.x < mobilePlus.x + mobilePlus.width
     && mobilePlus.y < mobileGrip.y + mobileGrip.height && mobileGrip.y < mobilePlus.y + mobilePlus.height).toBe(false);
   await page.locator('.notes-layout').screenshot({ path: process.env.SB_WP5_NATIVE_MOBILE_SCREENSHOT_PATH! });
