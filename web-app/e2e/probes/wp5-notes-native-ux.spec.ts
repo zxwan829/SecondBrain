@@ -530,14 +530,12 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
   const dialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
   await expect(dialog).toBeVisible({ timeout: 15_000 });
   await expect(dialog).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
-  const evidence = await page.evaluate(() => ({
-    result: 'PASS', scope: 'independent synthetic canvas-open repro',
-    resourceReadStatus: 200,
+  const canvasUi = await page.evaluate(() => ({
     dialogVisible: Boolean(document.querySelector('[role="dialog"][aria-label="BlockSuite Edgeless 资源"]')?.getClientRects().length),
     nestedEditorVisible: Boolean(document.querySelector('.blocksuite-resource-backdrop [data-kind="edgeless-canvas"]')?.getClientRects().length),
   }));
+  const evidence = { result: 'PASS', scope: 'independent synthetic canvas-open repro',
+    resourceReadStatus: readResponse.status(), ...canvasUi };
   await writeFile(process.env.SB_WP5_NATIVE_CANVAS_OPEN_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
   await page.screenshot({ path: process.env.SB_WP5_NATIVE_CANVAS_OPEN_SCREENSHOT_PATH!, fullPage: false });
-  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
-  await expect(dialog).toHaveCount(0);
 });

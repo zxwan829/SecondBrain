@@ -57,6 +57,9 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_ready_measurement'
   | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
   | 'rich_page_reopen' | 'rich_page_nested_canvas_create' | 'rich_page_nested_canvas_open'
+  | 'rich_page_nested_canvas_button_visible' | 'rich_page_nested_canvas_pointer_hit'
+  | 'rich_page_nested_canvas_pointer_dispatch' | 'rich_page_nested_canvas_resource_read'
+  | 'rich_page_nested_canvas_dialog_ready'
   | 'rich_page_nested_blob_upload' | 'rich_page_nested_canvas_save' | 'rich_page_parent_save'
   | 'rich_page_mode_edgeless' | 'rich_page_mode_edgeless_ready' | 'rich_page_mode_page' | 'rich_page_backup_preview'
   | 'rich_page_snapshot_restore' | 'rich_page_post_restore_reopen' | 'rich_page_conflict'
@@ -1697,16 +1700,21 @@ for (const viewport of activeViewports) {
       await expect(nestedCanvasOpenButton).toBeVisible();
       const nestedCanvasOpenBox = await nestedCanvasOpenButton.boundingBox();
       expect(nestedCanvasOpenBox, 'wp5_nested_canvas_open_button_geometry').not.toBeNull();
+      observed.setWp5Step('rich_page_nested_canvas_button_visible');
       const nestedCanvasButtonReceivesPointer = await nestedCanvasOpenButton.evaluate(button => {
         const rect = button.getBoundingClientRect();
         const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
         return hit === button || (hit instanceof Node && button.contains(hit));
       });
+      observed.setWp5Step('rich_page_nested_canvas_pointer_hit');
       expect(nestedCanvasButtonReceivesPointer, 'wp5_nested_canvas_open_button_hit_test').toBe(true);
+      observed.setWp5Step('rich_page_nested_canvas_pointer_dispatch');
       await page.mouse.click(nestedCanvasOpenBox!.x + nestedCanvasOpenBox!.width / 2,
         nestedCanvasOpenBox!.y + nestedCanvasOpenBox!.height / 2);
+      observed.setWp5Step('rich_page_nested_canvas_resource_read');
       const nestedCanvasDialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
       await expect(nestedCanvasDialog).toBeVisible({ timeout: 15000 });
+      observed.setWp5Step('rich_page_nested_canvas_dialog_ready');
       const nestedImageDataUrl = await page.evaluate(() => {
         const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 2;
         const context = canvas.getContext('2d'); if (!context) throw new Error('Canvas 2D context unavailable');
