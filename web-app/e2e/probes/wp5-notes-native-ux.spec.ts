@@ -542,10 +542,15 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
       height: element.getBoundingClientRect().height, clientHeight: element.clientHeight,
       scrollHeight: element.scrollHeight, display: getComputedStyle(element).display,
       position: getComputedStyle(element).position, overflow: getComputedStyle(element).overflow,
+      cssHeight: getComputedStyle(element).height, minHeight: getComputedStyle(element).minHeight,
+      flex: getComputedStyle(element).flex, flexGrow: getComputedStyle(element).flexGrow,
+      alignSelf: getComputedStyle(element).alignSelf,
     } : null;
     return { paragraphCount: paragraphs.length, hostBottom, galleryTop, lastParagraphBottom,
       host: metrics(host), viewport: metrics(viewport), pageRoot: metrics(host?.querySelector<HTMLElement>('affine-page-root') ?? null),
-      paragraphRects: paragraphs.map(paragraph => ({ text: paragraph.textContent?.slice(0, 40) ?? '', ...metrics(paragraph) })),
+      editorHosts: [...(host?.querySelectorAll<HTMLElement>('editor-host') ?? [])].map(metrics),
+      paragraphRects: paragraphs.map(paragraph => ({ text: paragraph.textContent?.slice(0, 40) ?? '',
+        ...metrics(paragraph), parent: metrics(paragraph.parentElement) })),
       noOverlap: Boolean(viewport && gallery && paragraphs.length >= 12 && galleryTop >= hostBottom - 1
         && galleryTop >= lastParagraphBottom - 1) };
   });
