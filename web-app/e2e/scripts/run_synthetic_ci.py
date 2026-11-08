@@ -147,6 +147,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_archive_pdf_preview",
     "wp5_archive_pdf_frame_attached",
     "wp5_archive_pdf_body_text",
+    "wp5_archive_pdf_export_error",
+    "wp5_archive_pdf_no_frame",
     "wp5_archive_pdf_body_missing_body",
     "wp5_archive_pdf_body_contains_source",
     "wp5_archive_pdf_body_source_missing",

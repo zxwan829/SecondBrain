@@ -142,7 +142,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_emoji_search_results' | 'wp5_archive_emoji_dom_target_present'
   | 'wp5_archive_emoji_dom_target_missing' | 'wp5_archive_emoji_insert'
   | 'wp5_archive_html_export' | 'wp5_archive_pdf_preview' | 'wp5_archive_pdf_frame_attached'
-  | 'wp5_archive_pdf_body_text' | 'wp5_archive_save_close'
+  | 'wp5_archive_pdf_body_text' | 'wp5_archive_pdf_export_error' | 'wp5_archive_pdf_no_frame'
+  | 'wp5_archive_save_close'
   | 'wp5_archive_saved_reopen' | 'wp5_archive_table_state_reopened'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
@@ -2193,8 +2194,19 @@ for (const viewport of activeViewports) {
         observed.setDiagnosticAssertion('wp5_archive_pdf_preview');
         await richDialog.getByRole('button', { name: '导出 PDF' }).click();
         const printPreview = page.locator('iframe[title="富文档 PDF 打印"]');
+        await expect.poll(async () => (await printPreview.count()) > 0
+          || (await richDialog.locator('.document-status').textContent() ?? '').includes('PDF 导出失败'), { timeout: 10000 })
+          .toBe(true);
+        const pdfExportState = await page.evaluate(() => {
+          const frame = document.querySelector('iframe[title="富文档 PDF 打印"]');
+          const status = document.querySelector('.blocksuite-resource-host .document-status')?.textContent ?? '';
+          return frame ? 'frame_attached' : status.includes('PDF 导出失败') ? 'export_error' : 'no_frame';
+        });
+        observed.setDiagnosticAssertion(pdfExportState === 'export_error' ? 'wp5_archive_pdf_export_error'
+          : pdfExportState === 'no_frame' ? 'wp5_archive_pdf_no_frame' : 'wp5_archive_pdf_frame_attached');
+        expect(pdfExportState, 'wp5_archive_pdf_frame_state').toBe('frame_attached');
         observed.setDiagnosticAssertion('wp5_archive_pdf_frame_attached');
-        await expect(printPreview, 'wp5_archive_pdf_print_preview').toBeAttached({ timeout: 10000 });
+        await expect(printPreview, 'wp5_archive_pdf_print_preview').toBeAttached({ timeout: 1000 });
         observed.setDiagnosticAssertion('wp5_archive_pdf_body_text');
         const printBodyState = await printPreview.evaluate((frame, marker) => {
           const body = (frame as HTMLIFrameElement).contentDocument?.body;
