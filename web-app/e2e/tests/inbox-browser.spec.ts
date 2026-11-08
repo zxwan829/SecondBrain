@@ -143,6 +143,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_drag_target_missing_from_parent' | 'wp5_archive_drag_child_index_mismatch'
   | 'wp5_archive_drag_source_after' | 'wp5_archive_drag_source_before'
   | 'wp5_archive_fixture_split'
+  | 'wp5_archive_fixture_click_complete' | 'wp5_archive_fixture_caret_ready'
   | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing' | 'wp5_archive_cell_click_complete'
   | 'wp5_archive_cell_readonly' | 'wp5_archive_cell_caret_not_in_cell' | 'wp5_archive_cell_focus_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
@@ -1659,6 +1660,13 @@ for (const viewport of activeViewports) {
         await expect(inlineEditor, 'wp5_archive_fixture_inline_editor').toHaveAttribute('contenteditable', 'true');
         const orderBeforeSplit = await readBlockOrder();
         await inlineEditor.click();
+        observed.setDiagnosticAssertion('wp5_archive_fixture_click_complete');
+        await expect(inlineEditor, 'wp5_archive_fixture_editor_focused').toBeFocused({ timeout: 5000 });
+        await expect.poll(() => inlineEditor.evaluate(editor => {
+          const selection = window.getSelection();
+          return Boolean(selection?.anchorNode && editor.contains(selection.anchorNode));
+        }), { timeout: 5000, message: 'wp5_archive_fixture_caret_in_editor' }).toBe(true);
+        observed.setDiagnosticAssertion('wp5_archive_fixture_caret_ready');
         await page.keyboard.press('End');
         await page.keyboard.press('Enter');
         observed.setDiagnosticAssertion('wp5_archive_fixture_split');
