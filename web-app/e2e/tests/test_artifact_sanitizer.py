@@ -259,6 +259,11 @@ def test_wp5_canvas_open_diagnostic_is_allowlisted_and_projected(tmp_path):
     }}
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([invalid])
+    invalid_label_type = {**diagnostic, "wp5_canvas_open_state": {
+        **diagnostic["wp5_canvas_open_state"], "visibleResourceDialogs": [{"untrusted": "value"}],
+    }}
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([invalid_label_type])
 
     raw = tmp_path / "raw"
     raw.mkdir()

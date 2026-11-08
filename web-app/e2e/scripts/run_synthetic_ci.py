@@ -526,7 +526,8 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                     or canvas_open["openButtonsEnabled"] > canvas_open["openButtonCount"]
                     or not isinstance(canvas_open.get("visibleResourceDialogs"), list)
                     or len(canvas_open["visibleResourceDialogs"]) > 4
-                    or any(label not in {"笔记编辑器", "BlockSuite Edgeless 资源", "BlockSuite 数据库资源", "unlabelled"}
+                    or any(not isinstance(label, str) or label not in
+                           ("笔记编辑器", "BlockSuite Edgeless 资源", "BlockSuite 数据库资源", "unlabelled")
                            for label in canvas_open["visibleResourceDialogs"])
                 ))
                 or viewport in seen_viewports):
