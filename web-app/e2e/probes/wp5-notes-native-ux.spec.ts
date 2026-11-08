@@ -127,9 +127,20 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(secondEnteredBlock?.text).toContain('Second paragraph after Enter');
 
   const second = editor.locator('affine-paragraph').filter({ hasText: 'Second paragraph after Enter' }).last().locator('rich-text .inline-editor');
-  await second.evaluate(node => node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' })));
-  await page.keyboard.insertText(' 中文输入法内容');
-  await second.evaluate(node => node.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文输入法内容' })));
+  await page.evaluate(() => {
+    (window as Window & { __wp5CompositionEvents?: string[] }).__wp5CompositionEvents = [];
+    for (const type of ['compositionstart', 'compositionupdate', 'compositionend']) {
+      window.addEventListener(type, () => (window as Window & { __wp5CompositionEvents?: string[] })
+        .__wp5CompositionEvents?.push(type), true);
+    }
+  });
+  const ime = await page.context().newCDPSession(page);
+  await ime.send('Input.imeSetComposition', { text: ' 中文输入法内容', selectionStart: 8, selectionEnd: 8 });
+  await expect(second).toContainText('中文输入法内容');
+  await ime.send('Input.insertText', { text: ' 中文输入法内容' });
+  await ime.detach();
+  await expect.poll(() => page.evaluate(() => (window as Window & { __wp5CompositionEvents?: string[] })
+    .__wp5CompositionEvents ?? [])).toEqual(expect.arrayContaining(['compositionstart', 'compositionupdate', 'compositionend']));
   await expect(editor.locator('affine-paragraph').filter({ hasText: '中文输入法内容' })).toBeVisible();
   const backspaceText = ` backspace-${Date.now()}`;
   await page.keyboard.insertText(backspaceText);
