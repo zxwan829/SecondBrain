@@ -1661,7 +1661,8 @@ for (const viewport of activeViewports) {
         const orderBeforeSplit = await readBlockOrder();
         await inlineEditor.click();
         observed.setDiagnosticAssertion('wp5_archive_fixture_click_complete');
-        await expect(inlineEditor, 'wp5_archive_fixture_editor_focused').toBeFocused({ timeout: 5000 });
+        // BlockSuite keeps the page root as document.activeElement while the
+        // caret lives in the contenteditable's Yjs-backed inline selection.
         await expect.poll(() => inlineEditor.evaluate(editor => {
           const selection = window.getSelection();
           return Boolean(selection?.anchorNode && editor.contains(selection.anchorNode));
