@@ -17,6 +17,11 @@ SPEC = importlib.util.spec_from_file_location("run_synthetic_ci", SCRIPT)
 module = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(module)
+PROBE_SCRIPT = E2E / "scripts" / "run_wp5_notes_native_ux_probe.py"
+PROBE_SPEC = importlib.util.spec_from_file_location("wp5_native_probe", PROBE_SCRIPT)
+probe_module = importlib.util.module_from_spec(PROBE_SPEC)
+assert PROBE_SPEC and PROBE_SPEC.loader
+PROBE_SPEC.loader.exec_module(probe_module)
 
 
 def _screenshot_dir(viewport: str) -> str:
@@ -241,6 +246,34 @@ def test_wp5_canvas_save_diagnostic_is_finite_and_sanitized():
         "live_text_bounds": [[120, 360, 320, 1e10]]}}
     with pytest.raises(RuntimeError):
         module._validate_failure_diagnostics([over_bound])
+
+
+def test_wp5_canvas_open_failure_evidence_is_bounded_and_explicit_fail(tmp_path):
+    source = tmp_path / "canvas-open-failure.json"
+    target = tmp_path / "sanitized-canvas-open-failure.json"
+    source.write_text(json.dumps({
+        "result": "FAIL", "scope": "independent synthetic canvas-open repro", "viewport": "1440x1000",
+        "canvasOpenState": {"galleryExpanded": True, "canvasCardCount": 1, "openButtonCount": 1,
+                             "openButtonsEnabled": 1, "resourceDialogVisible": False, "nestedEditorVisible": False},
+    }))
+    safe = probe_module.verify_canvas_open_failure_evidence(source, target)
+    assert safe["result"] == "FAIL"
+    assert json.loads(target.read_text()) == safe
+    invalid = json.loads(source.read_text())
+    invalid["canvasOpenState"]["openButtonsEnabled"] = 1000
+    source.write_text(json.dumps(invalid))
+    with pytest.raises(RuntimeError, match="canvas open failure evidence rejected"):
+        probe_module.verify_canvas_open_failure_evidence(source, target)
+
+
+def test_wp5_canvas_open_pass_and_failure_artifacts_are_uploaded():
+    workflow = (E2E.parents[1] / ".github" / "workflows" / "wp5-notes-native-ux-probe.yml").read_text()
+    for artifact in ("wp5-notes-native-canvas-open-1440x1000.png",
+                     "wp5-notes-native-canvas-open-evidence.json",
+                     "wp5-notes-native-canvas-open-failure-1440x1000.png",
+                     "wp5-notes-native-canvas-open-failure-evidence.json"):
+        assert artifact in workflow
+
 
 @pytest.mark.parametrize("entry", [
     {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret", "notes_collection_statuses": []},

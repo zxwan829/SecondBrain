@@ -23,7 +23,7 @@ const writePayload = (resource: BlockSuiteResourceWrite): BlockSuiteResourceWrit
 /** Explicit fork: read one pinned source closure, then write only a new Draft. */
 export async function forkRichPageNote(sourceNote: Note, payload: BlockSuiteResourceWrite, copies: Map<string, VerifiedBlobCopy>,
   remap?: (payload: BlockSuiteResourceWrite, mapping: Map<string, string>) => BlockSuiteResourceWrite) {
-  if (payload.resourceKind !== 'rich-page') throw new Error('只能将富 Page 另存为新笔记');
+  if (payload.resourceKind !== 'rich-page') throw new Error('只能将完整格式笔记另存为新笔记');
   const nestedIds = snapshotCanvasIds(payload.snapshot);
   if (nestedIds.length && !remap) throw new Error('画布深拷贝尚未就绪；未创建新笔记');
   // Pin the current Markdown and native-resource collection together, even if
@@ -56,7 +56,7 @@ export async function forkRichPageNote(sourceNote: Note, payload: BlockSuiteReso
       verified.set(id, { contentType: blob.type, bytes: new Uint8Array(await blob.arrayBuffer()) });
     }
   }
-  let note = await notesApi.create('# 富 Page 冲突副本\n\n');
+  let note = await notesApi.create('# 笔记冲突副本\n\n');
   const destinationBlobs = new NoteBoundBlockSuiteBlobSource(() => note, fetch, etag => { note = { ...note, artifactSetEtag: etag }; });
   for (const id of new Set([...graph.values()].flatMap(value => snapshotBlobIds(value.snapshot)))) {
     const copy = verified.get(id)!;

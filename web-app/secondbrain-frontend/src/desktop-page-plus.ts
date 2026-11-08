@@ -258,17 +258,36 @@ class DesktopPagePlusWidget extends WidgetComponent {
     if (!plus || !grip || !anchor || !anchor.element.isConnected) return this.hide();
     const rect = anchor.element.getBoundingClientRect();
     const line = this.firstVisualLineRect(anchor.element);
-    const left = Math.min(rect.left, line?.left ?? rect.left);
+    const left = line?.left ?? rect.left;
     // Keep the visual centers on the paragraph's first text line while the
     // glyphs remain 16–18px, matching the text baseline without covering it.
     // Headings with children expose a 32px collapse toggle at text-left - 32px.
     // Keep an 8px gap to that control while preserving the 2px gap between grip and plus.
-    plus.style.left = `${Math.max(4, left - 62)}px`;
-    grip.style.left = `${Math.max(4, left - 86)}px`;
-    // Center both controls on the measured first-character rect, not the whole block line-height.
-    const top = `${Math.max(4, (line?.top ?? rect.top) + ((line?.height ?? 22) - 22) / 2)}px`;
-    plus.style.top = top;
-    grip.style.top = top;
+    const lineTop = Math.max(4, (line?.top ?? rect.top) + ((line?.height ?? 22) - 22) / 2);
+    const plusLeft = left - 62;
+    const gripLeft = left - 86;
+    if (left >= 90) {
+      plus.style.left = `${plusLeft}px`;
+      grip.style.left = `${gripLeft}px`;
+      plus.style.top = `${lineTop}px`;
+      grip.style.top = `${lineTop}px`;
+    } else if (left >= 52) {
+      // Keep a 4px viewport gutter on narrow screens while retaining the
+      // 2px gap before the text. Both legacy offsets otherwise clamp together.
+      const rowLeft = left - 48;
+      grip.style.left = `${rowLeft}px`;
+      plus.style.left = `${rowLeft + 24}px`;
+      plus.style.top = `${lineTop}px`;
+      grip.style.top = `${lineTop}px`;
+    } else {
+      // If even one horizontal row cannot fit before the text, stack the
+      // controls in the left gutter without covering the first character.
+      const gutterLeft = Math.max(10, Math.min(32, left - 26));
+      grip.style.left = `${gutterLeft}px`;
+      plus.style.left = `${gutterLeft}px`;
+      grip.style.top = `${Math.max(4, lineTop - 24)}px`;
+      plus.style.top = `${Math.max(4, lineTop - 24) + 24}px`;
+    }
     plus.dataset.visible = 'true';
     grip.dataset.visible = 'true';
   }

@@ -14,11 +14,11 @@ export function richPageMarkdownBinding(snapshot: Record<string, unknown>): stri
 }
 export function assertRichPageMarkdownBinding(note: Note, snapshot: Record<string, unknown>) {
   if (richPageMarkdownBinding(snapshot) !== note.etag) {
-    throw Object.assign(new Error('富 Page 与 Markdown 版本不一致；双方均已保留。请下载双方副本后显式处理，未自动覆盖。'), { status: 412 });
+    throw Object.assign(new Error('笔记内容与 Markdown 版本不一致；双方均已保留。请下载双方副本后显式处理，未自动覆盖。'), { status: 412 });
   }
 }
 export function bindRichPageSnapshot(snapshot: Record<string, unknown>, markdownSha256: string): Record<string, unknown> {
-  if (!hex.test(markdownSha256)) throw new Error('富 Page Markdown 版本无效');
+  if (!hex.test(markdownSha256)) throw new Error('笔记 Markdown 版本无效');
   return { ...snapshot, [marker]: { ...(object(snapshot[marker]) ? snapshot[marker] : {}), schemaVersion: 1, markdownSha256 } };
 }
 export async function markdownSha256(content: string): Promise<string> {
@@ -29,7 +29,7 @@ const escapeText = (value: string) => value.replace(/[\\`*_{}\[\]<>#|]/g, '\\$&'
 
 /** A readable derivative, never a replacement for the complete native state. */
 export function richPageReadableMarkdown(note: Note, resource: Pick<BlockSuiteResource, 'resourceId'>, snapshot: Record<string, unknown>): string {
-  if (!resourceId.test(resource.resourceId)) throw new Error('富 Page 资源标识无效');
+  if (!resourceId.test(resource.resourceId)) throw new Error('笔记资源标识无效');
   const lines: string[] = [];
   const references = new Set<string>([resource.resourceId]);
   const propsText = (value: unknown): string[] => {
@@ -39,6 +39,7 @@ export function richPageReadableMarkdown(note: Note, resource: Pick<BlockSuiteRe
     return Object.entries(value).filter(([key]) => key !== marker).flatMap(([key, nested]) =>
       ['text', 'title', 'name', 'description', 'label', 'caption'].includes(key) && typeof nested === 'string' ? [nested] : propsText(nested));
   };
+  let documentTitleConsumed = false;
   const walk = (value: unknown) => {
     if (!object(value)) return;
     if (object(value.props)) {
@@ -46,7 +47,9 @@ export function richPageReadableMarkdown(note: Note, resource: Pick<BlockSuiteRe
         if (!resourceId.test(value.props.resourceId)) throw new Error('画布引用尚未创建完成；请完成后再保存');
         references.add(value.props.resourceId);
       }
-      const text = propsText(value.props).filter(value => value.trim()).map(escapeText).join(' | ');
+      const isDocumentTitle = value.props.type === 'h1' && !documentTitleConsumed;
+      if (isDocumentTitle) documentTitleConsumed = true;
+      const text = isDocumentTitle ? '' : propsText(value.props).filter(value => value.trim()).map(escapeText).join(' | ');
       if (text) lines.push(text);
     }
     if (Array.isArray(value.children)) value.children.forEach(walk);
@@ -70,6 +73,7 @@ export function richPageReadableMarkdown(note: Note, resource: Pick<BlockSuiteRe
   // resource links. Existing frontmatter remains byte-for-byte as authored;
   // taxonomy changes continue through Core's controlled properties API.
   const prefix = splitOpaqueFrontmatter(note.content).prefix;
-  const links = [...references].map(id => `[${id === resource.resourceId ? '富 Page 原生资源' : 'BlockSuite resource'}](attachments/${id}.blocksuite.json)`).join('\n\n');
-  return `${prefix}# ${escapeText(pageTitle(snapshot.blocks) || '富 Page')}\n\n${links}\n\n## 可读内容\n\n${lines.join('\n\n') || '（此富 Page 暂无文字；完整格式与图片保存在原生资源中。）'}\n`;
+  const links = [...references].map(id => `[${id === resource.resourceId ? '笔记数据' : '画布数据'}](attachments/${id}.blocksuite.json)`).join('\n\n');
+  const body = lines.join('\n\n');
+  return `${prefix}# ${escapeText(pageTitle(snapshot.blocks) || '新建笔记')}\n\n${links}${body ? `\n\n## 正文\n\n${body}` : ''}\n`;
 }
