@@ -155,8 +155,15 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await expect(editor.locator('affine-paragraph').filter({ hasText: undoText })).toBeVisible();
 
   const firstBodyParagraph = editor.locator('affine-paragraph').filter({ hasText: 'First line after title' }).first();
-  await firstBodyParagraph.click();
+  const firstBodyBlockId = await firstBodyParagraph.getAttribute('data-block-id');
+  expect(firstBodyBlockId).toBeTruthy();
+  const titleBodyParagraph = editor.locator(`affine-paragraph[data-block-id="${firstBodyBlockId}"]`);
+  await titleBodyParagraph.click();
   await page.keyboard.press('Home');
+  await expect.poll(() => titleBodyParagraph.locator('rich-text').evaluate(node => {
+    const inlineEditor = (node as HTMLElement & { inlineEditor?: { getInlineRange: () => { index: number; length: number } | null } }).inlineEditor;
+    return inlineEditor?.getInlineRange()?.index ?? null;
+  })).toBe(0);
   await page.keyboard.press('Backspace');
   const titleBoundary = await editor.locator('.blocksuite-resource-host').evaluate(host => {
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
@@ -172,8 +179,6 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(titleBoundary.firstBody?.text).toBe('First line after title');
   expect(titleBoundary.firstBody?.id).not.toBe(titleBoundary.titleBlockId);
 
-  const firstBodyBlockId = await firstBodyParagraph.getAttribute('data-block-id');
-  expect(firstBodyBlockId).toBeTruthy();
   const segmentedParagraph = editor.locator(`affine-paragraph[data-block-id="${firstBodyBlockId}"]`);
   const segmentedRichText = segmentedParagraph.locator('rich-text');
   await segmentedParagraph.locator('rich-text').evaluate(node => {
@@ -287,8 +292,12 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
     return store?.getBlocksByFlavour('affine:paragraph').find(({ model }: any) => model.props.text?.toString?.().includes('First line after title'))?.model.props.type;
   })).toBe('h1');
-  await firstBodyParagraph.click();
+  await titleBodyParagraph.click();
   await page.keyboard.press('Home');
+  await expect.poll(() => titleBodyParagraph.locator('rich-text').evaluate(node => {
+    const inlineEditor = (node as HTMLElement & { inlineEditor?: { getInlineRange: () => { index: number; length: number } | null } }).inlineEditor;
+    return inlineEditor?.getInlineRange()?.index ?? null;
+  })).toBe(0);
   await page.keyboard.press('Backspace');
   await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate((host, titleBlockId) => {
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
