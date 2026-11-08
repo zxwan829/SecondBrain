@@ -45,9 +45,7 @@ function bindDocumentTitleBackspaceBoundary(viewport: HTMLElement, store: any, s
     if (event.key !== 'Backspace' || event.isComposing || event.keyCode === 229) return;
     const selection = std.selection.find(TextSelection);
     if (!selection?.isCollapsed() || selection.from.index !== 0) return;
-    const paragraph = event.composedPath().find((node): node is HTMLElement => node instanceof HTMLElement
-      && node.localName === 'affine-paragraph');
-    const blockId = paragraph?.dataset.blockId;
+    const blockId = selection.from.blockId;
     if (!blockId) return;
     const current = store.getBlock(blockId)?.model;
     if (current?.props?.type !== 'text') return;
