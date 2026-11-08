@@ -2058,7 +2058,8 @@ for (const viewport of activeViewports) {
 
         observed.setWp5Step('archive_ux_emoji');
         observed.setDiagnosticAssertion('wp5_archive_emoji_command_visible');
-        const emojiTarget = targetParagraph.locator('rich-text .inline-editor');
+        const emojiParagraph = richHost.locator('affine-paragraph').filter({ hasText: richText }).first();
+        const emojiTarget = emojiParagraph.locator('rich-text .inline-editor');
         await emojiTarget.click();
         await page.keyboard.press('End');
         await page.keyboard.press('/');
@@ -2077,7 +2078,7 @@ for (const viewport of activeViewports) {
         await expect(grinningEmoji, 'wp5_archive_emoji_search_results').toBeVisible({ timeout: 10000 });
         await grinningEmoji.click();
         observed.setDiagnosticAssertion('wp5_archive_emoji_insert');
-        await expect(targetParagraph, 'wp5_archive_emoji_insert').toContainText('😀', { timeout: 5000 });
+        await expect(emojiParagraph, 'wp5_archive_emoji_insert').toContainText('😀', { timeout: 5000 });
         await expect(emojiDialog, 'wp5_archive_emoji_insert').toHaveCount(0);
 
         const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
