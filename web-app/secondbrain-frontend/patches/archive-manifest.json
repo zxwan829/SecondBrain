@@ -25,7 +25,7 @@
     {
       "script": "patches/apply-slash-localization.mjs",
       "archiveSha256": "f3414683ccb54c448052298c49831fa42d68e40d602ad455ff678f6143ed3ca6",
-      "adaptedSha256": "56ed2436b00ed2d5aa711e2b64f2a01378b765880aa27aba739e57f7169e37e4"
+      "adaptedSha256": "dbc397497e494017cfc168bfbb3f85d8f89e6da054ba22305f4f08bc8cfb6ace"
     },
     {
       "script": "patches/apply-mindmap-tab-edit.mjs",

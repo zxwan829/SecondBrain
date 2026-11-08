@@ -15,16 +15,6 @@ if (source.includes(identity)) {
   throw new Error('Slash widget transform anchor missing');
 }
 
-const rangeMarker = '// wp5-native-slash-sync-range-v1';
-const rangeAnchor = `      const inlineRange = inlineEditor.getInlineRange();
-      if (!inlineRange) return;`;
-if (!source.includes(rangeMarker)) {
-  if (!source.includes(rangeAnchor)) throw new Error('Slash widget inline range anchor missing');
-  source = source.replace(rangeAnchor, `${rangeAnchor}
-      ${rangeMarker}
-      inlineEditor.syncInlineRange(inlineRange);`);
-}
-
 const layerMarker = '// wp5-native-slash-modal-layer-v1';
 const portalAnchor = '    container.append(slashMenu);';
 if (!source.includes(layerMarker)) {
