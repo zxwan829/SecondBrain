@@ -104,11 +104,30 @@ try {
   await page.keyboard.press('Backspace');
   await page.waitForTimeout(500);
   const afterBoundaryBackspace = await readState();
+  const plus = editor.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
+  await body.hover();
+  await expect(plus).toHaveAttribute('data-visible', 'true');
+  await plus.click();
+  const headingItem = page.getByTestId('一级标题');
+  await expect(headingItem).toBeVisible();
+  await headingItem.click();
+  await expect.poll(async () => (await readState()).paragraphs.find(item => item.text.includes(marker))?.type).toBe('h1');
+  const afterHeadingInsert = await readState();
+  await body.click();
+  await page.keyboard.press('Home');
+  const beforeHeadingBackspace = await readState();
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(500);
+  const afterHeadingBackspace = await readState();
   const allKeyEvents = await page.evaluate(() => (window).__wp5UndoKeyEvents ?? []);
   await page.screenshot({ path: process.env.SB_WP5_UNDO_REPRO_SCREENSHOT_PATH, fullPage: false });
   const evidence = { scope: 'synthetic isolated Notes page', viewport: '1440x1000',
     sequence: { afterTitleRename, afterBodyRefocus, beforeUndo, afterInsert, afterUndo, afterRedo, afterToolbarUndo, afterToolbarRedo,
       beforeBoundaryBackspace, afterBoundaryBackspace },
+    headingBoundary: { afterHeadingInsert, beforeBackspace: beforeHeadingBackspace,
+      afterBackspace: afterHeadingBackspace,
+      titlePreserved: beforeHeadingBackspace.titleText === afterHeadingBackspace.titleText,
+      bodyRetained: afterHeadingBackspace.paragraphs.some(item => item.text === marker) },
     keyEvents: allKeyEvents,
     undoRemovedTypedText: !afterUndo.markerPresent, redoRestoredTypedText: afterRedo.markerPresent,
     toolbarUndoRemovedTypedText: !afterToolbarUndo.markerPresent,
