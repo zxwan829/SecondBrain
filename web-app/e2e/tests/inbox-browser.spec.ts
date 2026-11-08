@@ -49,7 +49,10 @@ type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' |
   | 'rich_page_body_edit' | 'rich_page_enter' | 'rich_page_enter_verify' | 'rich_page_ime'
   | 'rich_page_backspace_undo' | 'rich_page_title_boundary' | 'rich_page_title_boundary_before_backspace'
   | 'rich_page_title_boundary_after_backspace' | 'rich_page_title_boundary_state_read' | 'rich_page_title_boundary_title'
-  | 'rich_page_title_boundary_body' | 'rich_page_title_boundary_block' | 'rich_page_ready_measurement'
+  | 'rich_page_title_boundary_body' | 'rich_page_title_boundary_block' | 'rich_page_title_boundary_state_wait_title_mismatch'
+  | 'rich_page_title_boundary_state_wait_body_mismatch' | 'rich_page_title_boundary_state_wait_block_mismatch'
+  | 'rich_page_title_boundary_state_wait_read_error' | 'rich_page_title_boundary_state_wait_match'
+  | 'rich_page_ready_measurement'
   | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
   | 'rich_page_reopen' | 'rich_page_nested_canvas_create' | 'rich_page_nested_canvas_open'
   | 'rich_page_nested_blob_upload' | 'rich_page_nested_canvas_save' | 'rich_page_parent_save'
@@ -1551,12 +1554,20 @@ for (const viewport of activeViewports) {
           firstBody: blocks.find(block => block.text.includes(richText)) ?? null, titleId: blocks.find(block => block.type === 'h1')?.id };
       });
       await expect.poll(async () => {
-        const state = await readFirstParagraphBackspace();
-        return { title: state.title, bodyText: state.firstBody?.text ?? null,
-          titleBlockPresent: Boolean(state.titleId), bodyBlockPresent: Boolean(state.firstBody?.id),
-          distinctBlocks: Boolean(state.firstBody?.id && state.titleId && state.firstBody.id !== state.titleId) };
-      }, { timeout: 5000 }).toEqual({ title: '新建笔记', bodyText: richText,
-        titleBlockPresent: true, bodyBlockPresent: true, distinctBlocks: true });
+        let state: Awaited<ReturnType<typeof readFirstParagraphBackspace>>;
+        try {
+          state = await readFirstParagraphBackspace();
+        } catch {
+          observed.setWp5Step('rich_page_title_boundary_state_wait_read_error');
+          return { titleMatches: false, bodyMatches: false, blocksDistinct: false };
+        }
+        const status = { titleMatches: state.title === '新建笔记', bodyMatches: state.firstBody?.text === richText,
+          blocksDistinct: Boolean(state.firstBody?.id && state.titleId && state.firstBody.id !== state.titleId) };
+        observed.setWp5Step(!status.titleMatches ? 'rich_page_title_boundary_state_wait_title_mismatch'
+          : !status.bodyMatches ? 'rich_page_title_boundary_state_wait_body_mismatch'
+            : !status.blocksDistinct ? 'rich_page_title_boundary_state_wait_block_mismatch' : 'rich_page_title_boundary_state_wait_match');
+        return status;
+      }, { timeout: 5000 }).toEqual({ titleMatches: true, bodyMatches: true, blocksDistinct: true });
       const firstParagraphBackspace = await readFirstParagraphBackspace();
       observed.setWp5Step('rich_page_title_boundary_state_read');
       observed.setWp5Step('rich_page_title_boundary_title');
