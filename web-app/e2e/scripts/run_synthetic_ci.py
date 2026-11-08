@@ -174,6 +174,8 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_archive_drag_geometry", "wp5_archive_drag_order", "wp5_archive_drag_result",
     "wp5_archive_drag_anchor_match", "wp5_archive_drag_pointer_routing",
     "wp5_archive_drag_source_match", "wp5_archive_drag_hit_match",
+    "wp5_archive_drag_target_locator_match", "wp5_archive_drag_hit_source",
+    "wp5_archive_drag_hit_other_block", "wp5_archive_drag_hit_no_block",
     "wp5_archive_drag_drop_target_match", "wp5_archive_drag_drop_boundary_match",
     "wp5_archive_drag_capture_match",
     "wp5_archive_drag_source_not_unique", "wp5_archive_drag_target_not_unique",

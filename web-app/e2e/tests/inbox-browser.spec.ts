@@ -168,6 +168,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
   | 'wp5_archive_drag_anchor_match' | 'wp5_archive_drag_pointer_routing'
   | 'wp5_archive_drag_source_match' | 'wp5_archive_drag_hit_match'
+  | 'wp5_archive_drag_target_locator_match' | 'wp5_archive_drag_hit_source'
+  | 'wp5_archive_drag_hit_other_block' | 'wp5_archive_drag_hit_no_block'
   | 'wp5_archive_drag_drop_target_match' | 'wp5_archive_drag_drop_boundary_match'
   | 'wp5_archive_drag_capture_match'
   | 'wp5_archive_drag_parent_missing' | 'wp5_archive_drag_different_parents'
@@ -2084,6 +2086,9 @@ for (const viewport of activeViewports) {
         const expectedSourceBeforeTarget = dragPreflight === 'wp5_archive_drag_source_after';
         const beforeDrag = orderBeforeDrag.find(block => block.text.includes('Archive reorder target'))!;
         const beforeDragTarget = orderBeforeDrag.find(block => block.text.includes(richText))!;
+        const bodyDomBlockId = await bodyParagraph.getAttribute('data-block-id');
+        observed.setDiagnosticAssertion('wp5_archive_drag_target_locator_match');
+        expect(bodyDomBlockId, 'wp5_archive_drag_target_locator_match').toBe(beforeDragTarget.id);
         const dragWidget = richDialog.locator('sb-desktop-page-plus-widget');
         const anchorId = await dragWidget.evaluate(widget => (widget as HTMLElement & { anchor?: { id?: string } | null }).anchor?.id ?? null);
         observed.setDiagnosticAssertion('wp5_archive_drag_anchor_match');
@@ -2100,20 +2105,25 @@ for (const viewport of activeViewports) {
           }) | null;
           const hit = document.elementFromPoint(point.x, point.y)?.closest('[data-block-id]') as HTMLElement | null;
           const gripButton = widget?.shadowRoot?.querySelector('button[data-kind="grip"]') as HTMLButtonElement | null;
+          const hitId = hit?.getAttribute('data-block-id') ?? null;
           return { dragSourceMatches: widget?.dragSource?.id === point.sourceId,
             hitMatchesTarget: hit?.getAttribute('data-block-id') === point.targetId,
+            hitIsSource: hitId === point.sourceId,
+            hitHasBlock: hitId !== null,
             dropTargetMatches: widget?.dropTarget?.id === point.targetId,
             dropBefore: widget?.dropTarget?.before ?? null,
             pointerCaptured: gripButton?.hasPointerCapture(1) ?? false };
         }, { x: bodyBox!.x + bodyBox!.width / 3, y: dropY, sourceId: beforeDrag.id, targetId: beforeDragTarget.id });
         const routingAssertion: DiagnosticAssertion = !dragRouting.dragSourceMatches ? 'wp5_archive_drag_source_match'
-          : !dragRouting.hitMatchesTarget ? 'wp5_archive_drag_hit_match'
+          : !dragRouting.hitMatchesTarget ? dragRouting.hitIsSource ? 'wp5_archive_drag_hit_source'
+            : dragRouting.hitHasBlock ? 'wp5_archive_drag_hit_other_block' : 'wp5_archive_drag_hit_no_block'
             : !dragRouting.dropTargetMatches ? 'wp5_archive_drag_drop_target_match'
               : dragRouting.dropBefore !== expectedDropBefore ? 'wp5_archive_drag_drop_boundary_match'
                 : !dragRouting.pointerCaptured ? 'wp5_archive_drag_capture_match' : 'wp5_archive_drag_pointer_routing';
         observed.setDiagnosticAssertion(routingAssertion);
         expect(dragRouting, 'wp5_archive_drag_pointer_routing').toEqual({ dragSourceMatches: true,
-          hitMatchesTarget: true, dropTargetMatches: true, dropBefore: expectedDropBefore, pointerCaptured: true });
+          hitMatchesTarget: true, hitIsSource: false, hitHasBlock: true,
+          dropTargetMatches: true, dropBefore: expectedDropBefore, pointerCaptured: true });
         await page.mouse.up();
         observed.setDiagnosticAssertion('wp5_archive_drag_result');
         await expect.poll(async () => {
