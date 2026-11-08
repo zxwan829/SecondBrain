@@ -394,10 +394,11 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await target.hover();
   await plus.click();
   await page.getByTestId('一级标题').click();
+  const formattedBlockId = await target.getAttribute('data-block-id');
   await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate((host, blockId) => {
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
     return store?.getBlock(blockId)?.model.props.type ?? null;
-  }, await target.getAttribute('data-block-id'))).toBe('h1');
+  }, formattedBlockId)).toBe('h1');
   await target.click();
   await page.keyboard.press('End');
   await page.keyboard.press('Shift+Home');
@@ -406,7 +407,6 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await page.keyboard.press('End');
   await page.keyboard.press('Shift+Home');
   await page.getByRole('button', { name: '居中对齐', exact: true }).click();
-  const formattedBlockId = await target.getAttribute('data-block-id');
   const dropTargetBlockId = await secondTarget.getAttribute('data-block-id');
   const formattedState = await editor.locator('.blocksuite-resource-host').evaluate((host, ids) => {
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
