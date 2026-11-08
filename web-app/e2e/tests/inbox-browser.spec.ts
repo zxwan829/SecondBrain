@@ -137,6 +137,8 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_alignment_selection_ready' | 'wp5_archive_align_action_click'
   | 'wp5_archive_table_vertical_menu_action'
   | 'wp5_archive_database_kanban'
+  | 'wp5_archive_canvas_reference_lifecycle'
+  | 'wp5_archive_canvas_reference_lifecycle'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
@@ -2052,6 +2054,55 @@ for (const viewport of activeViewports) {
         expect(persistedRowHeight, 'wp5_archive_table_row_resize_model').toBeGreaterThan(38);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_037');
 
+        const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
+        const canvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+        await canvasGallery.getByRole('button', { name: '新建独立画布' }).click();
+        const canvasCreated = await canvasCreate;
+        expect(canvasCreated.status(), 'wp5_archive_canvas_reference_lifecycle').toBe(200);
+        const sourceCanvas = await canvasCreated.json() as { resource_id: string };
+        const sourceCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: sourceCanvas.resource_id });
+        await expect(sourceCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        await sourceCard.getByRole('button', { name: '打开编辑' }).click();
+        const sourceCanvasDialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
+        const sourceCanvasText = sourceCanvasDialog.locator('.blocksuite-resource-host').getByText('独立 Edgeless 便签', { exact: true }).first();
+        await expect(sourceCanvasText, 'wp5_archive_canvas_reference_lifecycle').toBeVisible({ timeout: 15000 });
+        const sourceCanvasTextBox = await sourceCanvasText.boundingBox();
+        expect(sourceCanvasTextBox, 'wp5_archive_canvas_reference_lifecycle').not.toBeNull();
+        await page.mouse.dblclick(sourceCanvasTextBox!.x + sourceCanvasTextBox!.width / 2, sourceCanvasTextBox!.y + sourceCanvasTextBox!.height / 2);
+        await page.keyboard.press('End');
+        const canvasReferenceMarker = `Canvas gallery ${randomUUID()}`;
+        await page.keyboard.insertText(` ${canvasReferenceMarker}`);
+        const sourceCanvasSave = page.waitForResponse(response => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`, { timeout: 20000 });
+        await sourceCanvasDialog.getByRole('button', { name: '保存资源' }).click();
+        expect((await sourceCanvasSave).status(), 'wp5_archive_canvas_reference_lifecycle').toBe(200);
+        await expect(sourceCanvasDialog.getByRole('status')).toHaveText('BlockSuite 资源已保存', { timeout: 15000 });
+        await sourceCanvasDialog.getByRole('button', { name: '关闭', exact: true }).click();
+        await expect(sourceCard.locator('.canvas-b-card-preview'), 'wp5_archive_canvas_reference_lifecycle')
+          .toContainText('自动裁剪预览', { timeout: 10000 });
+
+        const canvasCopy = page.waitForResponse(response => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+        await sourceCard.getByRole('button', { name: '深拷贝画布' }).click();
+        const copiedCanvasResponse = await canvasCopy;
+        expect(copiedCanvasResponse.status(), 'wp5_archive_canvas_reference_lifecycle').toBe(200);
+        const copiedCanvas = await copiedCanvasResponse.json() as { resource_id: string };
+        expect(copiedCanvas.resource_id, 'wp5_archive_canvas_reference_lifecycle').not.toBe(sourceCanvas.resource_id);
+        const copiedCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
+        await expect(copiedCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        const sourceCanvasRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`);
+        const copiedCanvasRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${copiedCanvas.resource_id}`);
+        expect(sourceCanvasRead.status(), 'wp5_archive_canvas_source_preserved').toBe(200);
+        expect(copiedCanvasRead.status(), 'wp5_archive_canvas_copy_readback').toBe(200);
+        const copiedCanvasBody = await copiedCanvasRead.json() as { snapshot: Record<string, unknown> };
+        expect(JSON.stringify(copiedCanvasBody.snapshot), 'wp5_archive_canvas_copy_content').toContain(canvasReferenceMarker);
+        await sourceCard.getByRole('button', { name: '移除引用' }).click();
+        await expect(sourceCard, 'wp5_archive_canvas_reference_lifecycle').toHaveCount(0);
+        expect((await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`)).status(),
+          'wp5_archive_canvas_original_not_deleted').toBe(200);
+        observed.setDiagnosticAssertion('wp5_archive_canvas_reference_lifecycle');
+
         const savedArchiveResource = page.waitForResponse(response => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
         const savedArchiveMarkdown = page.waitForResponse(response => response.request().method() === 'PUT'
@@ -2086,6 +2137,16 @@ for (const viewport of activeViewports) {
           .not.toBe(beforeDrag.order < beforeDragTarget.order);
         const reopenedTable = richHost.locator('affine-table').last();
         await expect(reopenedTable).toBeVisible();
+        const reopenedGallery = richDialog.getByRole('region', { name: '独立画布资源' });
+        const reopenedCopiedCard = reopenedGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
+        await expect(reopenedGallery.locator('.canvas-b-card'), 'wp5_archive_canvas_reference_reopen').toHaveCount(1);
+        await expect(reopenedCopiedCard, 'wp5_archive_canvas_reference_reopen').toBeVisible();
+        await expect(reopenedCopiedCard.locator('.canvas-b-card-preview'), 'wp5_archive_canvas_preview_reopen')
+          .toContainText('自动裁剪预览');
+        const reopenedCopiedResource = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${copiedCanvas.resource_id}`);
+        expect(reopenedCopiedResource.status(), 'wp5_archive_canvas_reference_reopen').toBe(200);
+        expect(JSON.stringify((await reopenedCopiedResource.json() as { snapshot: Record<string, unknown> }).snapshot),
+          'wp5_archive_canvas_reference_reopen').toContain(canvasReferenceMarker);
         const reopenedTableState = await reopenedTable.evaluate((element, targetRowId) => {
           const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown>; rows?: Record<string, { minHeight?: number }> } } } };
           return { mergeCount: Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length,
