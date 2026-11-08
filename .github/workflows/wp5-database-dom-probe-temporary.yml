@@ -2,6 +2,9 @@ name: Temporary WP5 Database DOM diagnostic
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/wp5-rich-page
 
 permissions:
   contents: read
