@@ -2083,6 +2083,7 @@ for (const viewport of activeViewports) {
         const beforeDragTarget = orderBeforeDrag.find(block => block.text.includes(richText))!;
         const dragWidget = richDialog.locator('sb-desktop-page-plus-widget');
         const anchorId = await dragWidget.evaluate(widget => (widget as HTMLElement & { anchor?: { id?: string } | null }).anchor?.id ?? null);
+        observed.setDiagnosticAssertion('wp5_archive_drag_anchor_match');
         expect(anchorId, 'wp5_archive_drag_anchor_match').toBe(beforeDrag.id);
         await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
         await page.mouse.down();
@@ -2102,6 +2103,7 @@ for (const viewport of activeViewports) {
             dropBefore: widget?.dropTarget?.before ?? null,
             pointerCaptured: gripButton?.hasPointerCapture(1) ?? false };
         }, { x: bodyBox!.x + bodyBox!.width / 3, y: dropY, sourceId: beforeDrag.id, targetId: beforeDragTarget.id });
+        observed.setDiagnosticAssertion('wp5_archive_drag_pointer_routing');
         expect(dragRouting, 'wp5_archive_drag_pointer_routing').toEqual({ dragSourceMatches: true,
           hitMatchesTarget: true, dropTargetMatches: true, dropBefore: expectedDropBefore, pointerCaptured: true });
         await page.mouse.up();
