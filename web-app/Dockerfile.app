@@ -2,6 +2,10 @@ FROM node:22-alpine AS frontend-build
 WORKDIR /build
 ARG VITE_ENABLE_NOTES=false
 COPY secondbrain-frontend/package.json secondbrain-frontend/package-lock.json ./
+# The locked npm postinstall applies the pinned archive UX patches. Copy its
+# scripts and patch payload before npm ci so a clean container build succeeds.
+COPY secondbrain-frontend/scripts/ ./scripts/
+COPY secondbrain-frontend/patches/ ./patches/
 RUN npm ci
 COPY secondbrain-frontend/ ./
 RUN npm run typecheck && VITE_ENABLE_NOTES=${VITE_ENABLE_NOTES} npm run build
