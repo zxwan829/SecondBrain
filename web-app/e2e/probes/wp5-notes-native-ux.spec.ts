@@ -335,6 +335,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
       gripVisible: rectWithinViewport(root.querySelector('sb-desktop-page-plus-widget button[data-kind="grip"]'))
         && root.querySelector('sb-desktop-page-plus-widget button[data-kind="grip"]')?.getAttribute('data-visible') === 'true' };
   });
+  console.info(`WP5_MOBILE_LAYOUT ${JSON.stringify(mobileLayout)}`);
   expect(mobileLayout.documentWidth).toBeLessThanOrEqual(390);
   expect(mobileLayout.notesWidth).toBeLessThanOrEqual(390);
   expect(mobileLayout.controlsVisible.length).toBeGreaterThan(0);
