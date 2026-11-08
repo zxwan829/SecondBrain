@@ -1536,6 +1536,10 @@ for (const viewport of activeViewports) {
       observed.setWp5Step('rich_page_title_boundary');
       await firstBodyBlock.click(); await page.keyboard.press('Home');
       observed.setWp5Step('rich_page_title_boundary_before_backspace');
+      await expect.poll(() => firstBodyBlock.locator('rich-text').evaluate(node => {
+        const inlineEditor = (node as HTMLElement & { inlineEditor?: { getInlineRange: () => { index: number; length: number } | null } }).inlineEditor;
+        return inlineEditor?.getInlineRange()?.index ?? null;
+      })).toBe(0);
       await page.keyboard.press('Backspace');
       observed.setWp5Step('rich_page_title_boundary_after_backspace');
       const firstParagraphBackspace = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
