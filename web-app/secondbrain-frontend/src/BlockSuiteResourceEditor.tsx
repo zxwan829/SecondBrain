@@ -50,6 +50,7 @@ function bindDocumentTitleBackspaceBoundary(viewport: HTMLElement, store: any, s
     const blockId = paragraph?.dataset.blockId;
     if (!blockId) return;
     const current = store.getBlock(blockId)?.model;
+    if (current?.props?.type !== 'text') return;
     const parent = current && store.getParent(current);
     const index = parent?.children.findIndex((item: any) => item.id === blockId) ?? -1;
     const titleBlockId = viewport.parentElement?.closest<HTMLElement>('.blocksuite-resource-host')?.dataset.sbDocumentTitleBlockId;

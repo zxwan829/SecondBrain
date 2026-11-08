@@ -268,6 +268,15 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
     return store?.getBlocksByFlavour('affine:paragraph').find(({ model }: any) => model.props.text?.toString?.().includes('First line after title'))?.model.props.type;
   })).toBe('h1');
+  await firstBodyParagraph.click();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Backspace');
+  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate((host, titleBlockId) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    const blocks = store?.getBlocksByFlavour('affine:paragraph') ?? [];
+    return { bodyType: blocks.find(({ model }: any) => model.props.text?.toString?.().includes('First line after title'))?.model.props.type,
+      titleText: blocks.find(({ model }: any) => model.id === titleBlockId)?.model.props.text?.toString?.() ?? null };
+  }, titleBoundary.titleBlockId)).toEqual({ bodyType: 'text', titleText: 'WP5 Native Probe' });
 
   const titleAndBody = await page.locator('.notes-document-rich-page').evaluate(root => {
     const visible = (node: Element) => { const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(node).display !== 'none'; };
