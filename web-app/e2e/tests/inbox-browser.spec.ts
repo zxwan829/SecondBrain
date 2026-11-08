@@ -136,6 +136,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_align_native_conversion_missing' | 'wp5_archive_align_logical_selection_mismatch'
   | 'wp5_archive_alignment_selection_ready' | 'wp5_archive_align_action_click'
   | 'wp5_archive_table_vertical_menu_action'
+  | 'wp5_archive_database_kanban'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
@@ -1083,6 +1084,35 @@ for (const viewport of activeViewports) {
         await page.keyboard.press('Enter');
         await page.keyboard.insertText(marker);
         observed.setDiagnosticAssertion('wp5_resource_dirty');
+        if (kind === 'database') {
+          const database = resourceHost.locator('affine-database').first();
+          const seededGroup = await database.evaluate(element => {
+            const component = element as HTMLElement & { dataSource?: { value?: {
+              propertyAdd?: (position: string, options: { type: string; name: string }) => string | undefined;
+              propertyDataSet?: (id: string, data: Record<string, unknown>) => void;
+              cellValueChange?: (rowId: string, propertyId: string, value: unknown) => void;
+              rows$?: { value: Array<{ rowId: string }> };
+            } } };
+            const source = component.dataSource?.value;
+            const columnId = source?.propertyAdd?.('end', { type: 'select', name: '状态' });
+            const rowId = source?.rows$?.value[0]?.rowId;
+            if (!source || !columnId || !rowId) return false;
+            source.propertyDataSet?.(columnId, { options: [{ id: 'wp5-in-progress', value: '进行中', color: '#3b82f6' }] });
+            source.cellValueChange?.(rowId, columnId, 'wp5-in-progress');
+            return true;
+          });
+          expect(seededGroup, 'wp5_archive_database_kanban').toBe(true);
+          const addView = resourceHost.getByTestId('database-add-view-button');
+          await expect(addView, 'wp5_archive_database_add_view_button').toBeVisible();
+          await addView.click();
+          const kanbanMenuItem = page.getByText('看板视图', { exact: true }).last();
+          await expect(kanbanMenuItem, 'wp5_archive_database_kanban').toBeVisible();
+          await kanbanMenuItem.click();
+          const kanban = resourceHost.locator('affine-data-view-kanban-group');
+          await expect(kanban.first(), 'wp5_archive_database_kanban').toBeVisible({ timeout: 10000 });
+          await expect(resourceHost.locator('affine-data-view-kanban-card').first(), 'wp5_archive_database_kanban')
+            .toContainText('测试记录');
+        }
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_009');
         await expect(resourceDialog.getByRole('button', { name: '保存资源' })).toBeEnabled();
         const resourcePut = page.waitForResponse((response) => response.request().method() === 'PUT'
@@ -1140,6 +1170,13 @@ for (const viewport of activeViewports) {
         await resourceLink.click();
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_020');
         await expect(page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' })).toBeVisible({ timeout: 15000 });
+        const sameResourceDialog = page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' });
+        if (kind === 'database') {
+          await expect(sameResourceDialog.locator('affine-data-view-kanban-group').first(), 'wp5_archive_database_kanban')
+            .toBeVisible({ timeout: 10000 });
+          await expect(sameResourceDialog.locator('affine-data-view-kanban-card').first(), 'wp5_archive_database_kanban')
+            .toContainText('测试记录');
+        }
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_021');
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host').getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 15000 });
         await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
@@ -1156,6 +1193,13 @@ for (const viewport of activeViewports) {
         await expect(refreshedLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
         await refreshedLink.click();
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_025');
+        if (kind === 'database') {
+          const refreshedDatabaseDialog = page.getByRole('dialog', { name: 'BlockSuite 数据库资源' });
+          await expect(refreshedDatabaseDialog.locator('affine-data-view-kanban-group').first(), 'wp5_archive_database_kanban')
+            .toBeVisible({ timeout: 10000 });
+          await expect(refreshedDatabaseDialog.locator('affine-data-view-kanban-card').first(), 'wp5_archive_database_kanban')
+            .toContainText('测试记录');
+        }
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host').getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 15000 });
         const reopenedDialog = page.getByRole('dialog');
         if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
