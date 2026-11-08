@@ -167,6 +167,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_resource_save_status_other' | 'wp5_archive_resource_save_status_missing'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
   | 'wp5_archive_drag_anchor_match' | 'wp5_archive_drag_pointer_routing'
+  | 'wp5_archive_drag_source_match' | 'wp5_archive_drag_hit_match'
+  | 'wp5_archive_drag_drop_target_match' | 'wp5_archive_drag_drop_boundary_match'
+  | 'wp5_archive_drag_capture_match'
   | 'wp5_archive_drag_parent_missing' | 'wp5_archive_drag_different_parents'
   | 'wp5_archive_drag_same_block' | 'wp5_archive_drag_source_missing_from_parent'
   | 'wp5_archive_drag_target_missing_from_parent' | 'wp5_archive_drag_child_index_mismatch'
@@ -2103,7 +2106,12 @@ for (const viewport of activeViewports) {
             dropBefore: widget?.dropTarget?.before ?? null,
             pointerCaptured: gripButton?.hasPointerCapture(1) ?? false };
         }, { x: bodyBox!.x + bodyBox!.width / 3, y: dropY, sourceId: beforeDrag.id, targetId: beforeDragTarget.id });
-        observed.setDiagnosticAssertion('wp5_archive_drag_pointer_routing');
+        const routingAssertion: DiagnosticAssertion = !dragRouting.dragSourceMatches ? 'wp5_archive_drag_source_match'
+          : !dragRouting.hitMatchesTarget ? 'wp5_archive_drag_hit_match'
+            : !dragRouting.dropTargetMatches ? 'wp5_archive_drag_drop_target_match'
+              : dragRouting.dropBefore !== expectedDropBefore ? 'wp5_archive_drag_drop_boundary_match'
+                : !dragRouting.pointerCaptured ? 'wp5_archive_drag_capture_match' : 'wp5_archive_drag_pointer_routing';
+        observed.setDiagnosticAssertion(routingAssertion);
         expect(dragRouting, 'wp5_archive_drag_pointer_routing').toEqual({ dragSourceMatches: true,
           hitMatchesTarget: true, dropTargetMatches: true, dropBefore: expectedDropBefore, pointerCaptured: true });
         await page.mouse.up();
