@@ -2192,30 +2192,37 @@ for (const viewport of activeViewports) {
         expect(htmlExportContent, 'wp5_archive_html_download_content').toContain(mergeSourceText);
         expect(htmlExportContent, 'wp5_archive_html_export_script_free').not.toMatch(/<script\b/i);
         observed.setDiagnosticAssertion('wp5_archive_pdf_preview');
-        await richDialog.getByRole('button', { name: '导出 PDF' }).click();
-        const printPreview = page.locator('iframe[title="富文档 PDF 打印"]');
-        await expect.poll(async () => (await printPreview.count()) > 0
-          || (await richDialog.locator('.document-status').textContent() ?? '').includes('PDF 导出失败'), { timeout: 10000 })
-          .toBe(true);
-        const pdfExportState = await page.evaluate(() => {
-          const frame = document.querySelector('iframe[title="富文档 PDF 打印"]');
-          const status = document.querySelector('.blocksuite-resource-host .document-status')?.textContent ?? '';
-          return frame ? 'frame_attached' : status.includes('PDF 导出失败') ? 'export_error' : 'no_frame';
-        });
-        observed.setDiagnosticAssertion(pdfExportState === 'export_error' ? 'wp5_archive_pdf_export_error'
-          : pdfExportState === 'no_frame' ? 'wp5_archive_pdf_no_frame' : 'wp5_archive_pdf_frame_attached');
-        expect(pdfExportState, 'wp5_archive_pdf_frame_state').toBe('frame_attached');
-        observed.setDiagnosticAssertion('wp5_archive_pdf_frame_attached');
-        await expect(printPreview, 'wp5_archive_pdf_print_preview').toBeAttached({ timeout: 1000 });
-        observed.setDiagnosticAssertion('wp5_archive_pdf_body_text');
-        const printBodyState = await printPreview.evaluate((frame, marker) => {
-          const body = (frame as HTMLIFrameElement).contentDocument?.body;
-          return !body ? 'missing_body' : body.innerText.includes(marker) ? 'contains_source' : 'source_missing';
+        await page.evaluate((marker) => {
+          const probeWindow = window as Window & { __wp5PdfProbe?: { state: string } };
+          probeWindow.__wp5PdfProbe = { state: 'waiting' };
+          const observer = new MutationObserver(() => {
+            const frame = document.querySelector<HTMLIFrameElement>('iframe[title="富文档 PDF 打印"]');
+            if (!frame) return;
+            observer.disconnect();
+            frame.addEventListener('load', () => {
+              const body = frame.contentDocument?.body;
+              probeWindow.__wp5PdfProbe = { state: !body ? 'missing_body'
+                : body.innerText.includes(marker) ? 'body_contains_source' : 'body_source_missing' };
+            }, { once: true });
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
         }, mergeSourceText);
-        observed.setDiagnosticAssertion(`wp5_archive_pdf_body_${printBodyState}` as DiagnosticAssertion);
-        expect(printBodyState, 'wp5_archive_pdf_print_preview_dom').toBe('contains_source');
-        await expect(page.frameLocator('iframe[title="富文档 PDF 打印"]').locator('body'), 'wp5_archive_pdf_print_preview')
-          .toContainText(mergeSourceText, { timeout: 10000 });
+        await richDialog.getByRole('button', { name: '导出 PDF' }).click();
+        await expect.poll(async () => {
+          const state = await page.evaluate(() => (window as Window & { __wp5PdfProbe?: { state: string } }).__wp5PdfProbe?.state ?? 'waiting');
+          const status = await richDialog.locator('.document-status').textContent().catch(() => '');
+          return state !== 'waiting' ? state : status?.includes('PDF 导出失败') ? 'export_error' : 'waiting';
+        }, { timeout: 10000 }).not.toBe('waiting');
+        const pdfProbeState = await page.evaluate(() => {
+          const state = (window as Window & { __wp5PdfProbe?: { state: string } }).__wp5PdfProbe?.state ?? 'waiting';
+          const status = document.querySelector('.document-status')?.textContent ?? '';
+          return state !== 'waiting' ? state : status.includes('PDF 导出失败') ? 'export_error' : 'no_frame';
+        });
+        observed.setDiagnosticAssertion(pdfProbeState === 'body_contains_source' ? 'wp5_archive_pdf_body_contains_source'
+          : pdfProbeState === 'export_error' ? 'wp5_archive_pdf_export_error'
+            : pdfProbeState === 'no_frame' ? 'wp5_archive_pdf_no_frame'
+              : pdfProbeState === 'missing_body' ? 'wp5_archive_pdf_body_missing_body' : 'wp5_archive_pdf_body_source_missing');
+        expect(pdfProbeState, 'wp5_archive_pdf_print_preview_dom').toBe('body_contains_source');
         observed.setDiagnosticAssertion('wp5_archive_save_close');
         await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
         await expect(richDialog).toHaveCount(0);
