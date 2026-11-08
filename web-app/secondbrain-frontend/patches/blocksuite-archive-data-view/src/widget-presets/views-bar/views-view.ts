@@ -83,6 +83,7 @@ export class DataViewHeaderViews extends WidgetBase {
   private addView(type: string) {
     const id = this.viewManager.viewAdd(type);
     this.viewManager.setCurrentView(id);
+    this.onChangeView?.(id);
     this.dataViewLogic.root.config.eventTrace('AddDatabaseView', {
       type: type,
     });
