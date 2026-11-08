@@ -282,8 +282,9 @@ class DesktopPagePlusWidget extends WidgetComponent {
     } else {
       // If even one horizontal row cannot fit before the text, stack the
       // controls in the left gutter without covering the first character.
-      grip.style.left = '4px';
-      plus.style.left = '4px';
+      const gutterLeft = Math.max(10, Math.min(32, left - 26));
+      grip.style.left = `${gutterLeft}px`;
+      plus.style.left = `${gutterLeft}px`;
       grip.style.top = `${Math.max(4, lineTop - 24)}px`;
       plus.style.top = `${Math.max(4, lineTop - 24) + 24}px`;
     }

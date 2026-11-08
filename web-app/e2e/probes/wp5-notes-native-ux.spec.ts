@@ -447,7 +447,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect(mobileLayout.gripVisible).toBe(true);
   const mobilePlus = mobileLayout.plusControl!;
   const mobileGrip = mobileLayout.gripControl!;
-  expect(mobileGrip.x).toBeGreaterThanOrEqual(4);
+  expect(mobileGrip.x).toBeGreaterThanOrEqual(10);
+  expect(mobilePlus.x).toBeGreaterThanOrEqual(10);
   const gripDots = await grip.evaluate(button => [...button.querySelectorAll('.grip-dots i')].map(dot => {
     const rect = dot.getBoundingClientRect();
     return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
