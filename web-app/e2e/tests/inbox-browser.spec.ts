@@ -135,6 +135,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_align_cross_block' | 'wp5_archive_align_model_range_missing' | 'wp5_archive_align_native_range_missing'
   | 'wp5_archive_align_native_conversion_missing' | 'wp5_archive_align_logical_selection_mismatch'
   | 'wp5_archive_alignment_selection_ready' | 'wp5_archive_align_action_click'
+  | 'wp5_archive_table_vertical_menu_action'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
@@ -1952,7 +1953,8 @@ for (const viewport of activeViewports) {
 
         const mergedCell = archiveTable.locator('td[data-row-id][data-column-id][colspan="2"]').first();
         await mergedCell.click({ button: 'right' });
-        const verticalMiddleAction = page.getByText('垂直居中', { exact: true });
+        observed.setDiagnosticAssertion('wp5_archive_table_vertical_menu_action');
+        const verticalMiddleAction = page.getByRole('button', { name: '垂直居中', exact: true });
         await expect(verticalMiddleAction, 'wp5_archive_table_vertical_menu_action').toBeVisible();
         await verticalMiddleAction.click();
         const verticalAlignment = await archiveTable.evaluate((element, address) => {

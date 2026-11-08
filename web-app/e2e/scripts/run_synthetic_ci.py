@@ -134,6 +134,7 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "wp5_archive_align_cross_block", "wp5_archive_align_model_range_missing", "wp5_archive_align_native_range_missing",
     "wp5_archive_align_native_conversion_missing", "wp5_archive_align_logical_selection_mismatch",
     "wp5_archive_alignment_selection_ready", "wp5_archive_align_action_click",
+    "wp5_archive_table_vertical_menu_action",
     "wp5_archive_align_model_center", "wp5_archive_grip_visibility",
     "wp5_archive_drag_geometry", "wp5_archive_drag_order", "wp5_archive_drag_result",
     "wp5_archive_drag_source_not_unique", "wp5_archive_drag_target_not_unique",
