@@ -282,15 +282,29 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   // Remove temporary interaction markers before capturing a user-facing
   // screenshot, then verify the cleaned synthetic paragraph survives a save
   // and reload through the normal editor path.
-  const cleanParagraph = editor.locator('affine-paragraph')
-    .filter({ hasText: 'Second paragraph after Enter' }).last().locator('rich-text .inline-editor');
-  await cleanParagraph.fill('Second paragraph after Enter 中文输入法内容');
-  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate(host => {
+  const cleanParagraphBlock = editor.locator('affine-paragraph')
+    .filter({ hasText: 'Second paragraph after Enter' }).last();
+  const cleanParagraphBlockId = await cleanParagraphBlock.getAttribute('data-block-id');
+  expect(cleanParagraphBlockId).toBeTruthy();
+  const cleanParagraph = cleanParagraphBlock.locator('rich-text .inline-editor');
+  await cleanParagraph.click();
+  await expect.poll(() => cleanParagraph.evaluate(node => {
+    const selection = window.getSelection();
+    return node.getAttribute('contenteditable') === 'true'
+      && Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
+  })).toBe(true);
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Shift+End');
+  const fullParagraphText = await editor.locator('.blocksuite-resource-host').evaluate((host, blockId) => {
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
-    return store?.getBlocksByFlavour('affine:paragraph')
-      .find(({ model }: any) => model.props.text?.toString?.().includes('Second paragraph after Enter'))
-      ?.model.props.text?.toString?.() ?? '';
-  })).toBe('Second paragraph after Enter 中文输入法内容');
+    return store?.getBlock(blockId)?.model.props.text?.toString?.() ?? '';
+  }, cleanParagraphBlockId);
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe(fullParagraphText);
+  await page.keyboard.insertText('Second paragraph after Enter 中文输入法内容');
+  await expect.poll(() => editor.locator('.blocksuite-resource-host').evaluate((host, blockId) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    return store?.getBlock(blockId)?.model.props.text?.toString?.() ?? '';
+  }, cleanParagraphBlockId)).toBe('Second paragraph after Enter 中文输入法内容');
   await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
   await expect(editor.getByRole('status').first()).toContainText('已保存');
   await page.reload();
