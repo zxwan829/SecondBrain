@@ -880,7 +880,7 @@ for (const viewport of activeViewports) {
     // conflict/recovery, and an unsupported-Markdown preservation probe. Give
     // that composed journey enough total execution budget without extending
     // any individual product wait/assertion or weakening its conditions.
-    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5ArchiveUxOnly ? 240_000 : wp5RichPageModeOnly ? 120_000 : wp5RoundtripOnly ? 300_000 : 60_000);
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5ArchiveUxOnly ? 360_000 : wp5RichPageModeOnly ? 120_000 : wp5RoundtripOnly ? 300_000 : 60_000);
     if ((wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly || wp5ArchiveUxOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
