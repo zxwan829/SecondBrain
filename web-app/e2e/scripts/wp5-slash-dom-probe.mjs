@@ -90,6 +90,25 @@ try {
   });
   console.log('WP5_INDEPENDENT_SLASH_DOM ' + JSON.stringify(keyboardEvidence));
 
+  await page.keyboard.insertText('表情');
+  await page.waitForTimeout(300);
+  const filteredEvidence = await page.evaluate(() => {
+    const visit = (node, result = []) => {
+      if (node instanceof Element && node.matches('[data-testid="插入表情图标"]')) result.push(node);
+      for (const child of node.children ?? []) visit(child, result);
+      if (node.shadowRoot) visit(node.shadowRoot, result);
+      return result;
+    };
+    const items = visit(document);
+    return { stage: 'keyboard-slash-filter', itemCount: items.length, items: items.map(item => {
+      const rect = item.getBoundingClientRect();
+      const style = getComputedStyle(item);
+      return { rect: [rect.x, rect.y, rect.width, rect.height], visibility: style.visibility,
+        display: style.display, text: item.textContent?.trim() ?? '' };
+    }) };
+  });
+  console.log('WP5_INDEPENDENT_SLASH_DOM ' + JSON.stringify(filteredEvidence));
+
   await page.keyboard.press('Escape');
   await paragraph.hover();
   const plus = dialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
