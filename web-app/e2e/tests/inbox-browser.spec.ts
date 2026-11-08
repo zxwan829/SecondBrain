@@ -1950,6 +1950,46 @@ for (const viewport of activeViewports) {
         expect(mergedCellTexts.join('\n'), 'wp5_archive_table_merge_retains_covered_text').toContain(mergeCoveredText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_036');
 
+        const mergedCell = archiveTable.locator('td[data-row-id][data-column-id][colspan="2"]').first();
+        await mergedCell.click({ button: 'right' });
+        const verticalMiddleAction = page.getByText('垂直居中', { exact: true });
+        await expect(verticalMiddleAction, 'wp5_archive_table_vertical_menu_action').toBeVisible();
+        await verticalMiddleAction.click();
+        const verticalAlignment = await archiveTable.evaluate((element, address) => {
+          const table = element as HTMLElement & { dataManager?: { getCell?: (row: string, column: string) => { verticalAlign?: string } | undefined } };
+          return table.dataManager?.getCell?.(address.row, address.column)?.verticalAlign ?? 'top';
+        }, { row: firstRowId!, column: firstColumnId! });
+        expect(verticalAlignment, 'wp5_archive_table_vertical_alignment_model').toBe('middle');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_043');
+        await mergedCell.click({ button: 'right' });
+        const splitCellAction = page.getByText('拆分单元格', { exact: true });
+        await expect(splitCellAction, 'wp5_archive_table_split_menu_action').toBeVisible();
+        await splitCellAction.click();
+        const mergeCountAfterSplit = await archiveTable.evaluate(element => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown> } } } };
+          return Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length;
+        });
+        expect(mergeCountAfterSplit, 'wp5_archive_table_split_model').toBe(0);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_044');
+        const splitFirstBox = await firstCell.boundingBox();
+        const splitSecondBox = await secondCell.boundingBox();
+        expect(splitFirstBox, 'wp5_archive_table_split_first_cell_geometry').not.toBeNull();
+        expect(splitSecondBox, 'wp5_archive_table_split_second_cell_geometry').not.toBeNull();
+        await page.mouse.move(splitFirstBox!.x + splitFirstBox!.width / 2, splitFirstBox!.y + splitFirstBox!.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(splitSecondBox!.x + splitSecondBox!.width / 2, splitSecondBox!.y + splitSecondBox!.height / 2, { steps: 4 });
+        await page.mouse.up();
+        await secondCell.click({ button: 'right' });
+        const remergeAction = page.getByText('合并单元格', { exact: true });
+        await expect(remergeAction, 'wp5_archive_table_remerge_menu_action').toBeVisible();
+        await remergeAction.click();
+        const mergeCountAfterRemerge = await archiveTable.evaluate(element => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown> } } } };
+          return Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length;
+        });
+        expect(mergeCountAfterRemerge, 'wp5_archive_table_remerge_model').toBe(1);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_045');
+
         const firstTableRow = archiveTable.locator('tr[data-row-id]').first();
         const rowBox = await firstTableRow.boundingBox();
         const rowId = await firstTableRow.getAttribute('data-row-id');
