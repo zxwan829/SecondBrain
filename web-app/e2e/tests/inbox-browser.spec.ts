@@ -142,6 +142,9 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_emoji_search_results' | 'wp5_archive_emoji_insert'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
+  | 'wp5_archive_resource_save_status_saved' | 'wp5_archive_resource_save_status_unsaved'
+  | 'wp5_archive_resource_save_status_pending' | 'wp5_archive_resource_save_status_error'
+  | 'wp5_archive_resource_save_status_other' | 'wp5_archive_resource_save_status_missing'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
   | 'wp5_archive_drag_parent_missing' | 'wp5_archive_drag_different_parents'
   | 'wp5_archive_drag_same_block' | 'wp5_archive_drag_source_missing_from_parent'
@@ -2155,8 +2158,16 @@ for (const viewport of activeViewports) {
         await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
         expect((await savedArchiveResource).status(), 'wp5_archive_ux_resource_save').toBe(200);
         expect((await savedArchiveMarkdown).status(), 'wp5_archive_ux_markdown_save').toBe(200);
-        observed.setDiagnosticAssertion('wp5_resource_checkpoint_033');
-        await expect(richDialog.getByRole('status').first()).toContainText('已保存');
+        const archiveSaveState = await richDialog.locator('.document-status').evaluate(element => {
+          const status = (element.textContent ?? '').trim();
+          if (status === 'BlockSuite 资源已保存') return 'saved';
+          if (/失败|冲突|412|409|缺失|未能|ERROR/.test(status)) return 'error';
+          if (/正在保存|保存中/.test(status)) return 'pending';
+          if (/未保存/.test(status)) return 'unsaved';
+          return 'other';
+        }).catch(() => 'missing');
+        observed.setDiagnosticAssertion(`wp5_archive_resource_save_status_${archiveSaveState}` as DiagnosticAssertion);
+        expect(archiveSaveState, 'wp5_archive_ux_resource_save_status').toBe('saved');
         const htmlExport = page.waitForEvent('download');
         await richDialog.getByRole('button', { name: '导出 HTML' }).click();
         const htmlDownload = await htmlExport;
