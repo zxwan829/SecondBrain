@@ -535,26 +535,42 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
     const viewport = host?.querySelector<HTMLElement>('.sb-archive-viewport');
     const gallery = inline?.querySelector<HTMLElement>('.blocksuite-canvas-tools') ?? null;
     const paragraphs = [...(host?.querySelectorAll<HTMLElement>('affine-paragraph') ?? [])];
-    const hostBottom = host?.getBoundingClientRect().bottom ?? 0;
-    const galleryTop = gallery?.getBoundingClientRect().top ?? 0;
-    const lastParagraphBottom = paragraphs.at(-1)?.getBoundingClientRect().bottom ?? 0;
-    const hostHeight = host?.getBoundingClientRect().height ?? 0;
-    const lastParagraphHeight = paragraphs.at(-1)?.getBoundingClientRect().height ?? 0;
-    const box = (element: HTMLElement | null) => element ? {
-      height: element.getBoundingClientRect().height, scrollHeight: element.scrollHeight,
-      cssHeight: getComputedStyle(element).height, minHeight: getComputedStyle(element).minHeight,
-      display: getComputedStyle(element).display, flex: getComputedStyle(element).flex,
-    } : null;
+    const richTexts = [...(host?.querySelectorAll<HTMLElement>('affine-paragraph > rich-text') ?? [])]
+      .filter(element => element.getClientRects().length > 0);
+    const measure = () => {
+      const hostBottom = host?.getBoundingClientRect().bottom ?? 0;
+      const galleryTop = gallery?.getBoundingClientRect().top ?? 0;
+      const lastParagraph = paragraphs.at(-1) ?? null;
+      const lastParagraphBottom = lastParagraph?.getBoundingClientRect().bottom ?? 0;
+      const visibleParagraphs = paragraphs.filter(paragraph => paragraph.getClientRects().length > 0);
+      const sampleRichText = richTexts[1] ?? richTexts[0] ?? null;
+      const sampleInlineEditor = sampleRichText?.querySelector<HTMLElement>('.inline-editor') ?? null;
+      const dimensions = (element: HTMLElement | null) => element ? {
+        height: element.getBoundingClientRect().height, scrollHeight: element.scrollHeight,
+        cssHeight: getComputedStyle(element).height, display: getComputedStyle(element).display,
+      } : null;
+      return { hostHeight: host?.getBoundingClientRect().height ?? 0, hostScrollHeight: host?.scrollHeight ?? 0,
+        viewportHeight: viewport?.getBoundingClientRect().height ?? 0, paragraphCount: paragraphs.length,
+        visibleParagraphCount: visibleParagraphs.length,
+        firstBodyHeight: visibleParagraphs[0]?.getBoundingClientRect().height ?? 0,
+        lastParagraphHeight: lastParagraph?.getBoundingClientRect().height ?? 0,
+        richTextCount: richTexts.length, richText: dimensions(sampleRichText), inlineEditor: dimensions(sampleInlineEditor),
+        hostBottom, galleryTop, lastParagraphBottom,
+        noOverlap: Boolean(viewport && gallery && visibleParagraphs.length >= 12 && galleryTop >= hostBottom - 1
+          && galleryTop >= lastParagraphBottom - 1) };
+    };
+    const initial = measure();
+    const diagnosticStyle = document.createElement('style');
+    diagnosticStyle.dataset.wp5LayoutDiagnostic = 'true';
+    diagnosticStyle.textContent = '.blocksuite-resource-inline .blocksuite-resource-host affine-paragraph > rich-text { height: auto !important; }';
+    document.head.append(diagnosticStyle);
+    const richTextAuto = measure();
+    diagnosticStyle.textContent += '\n.blocksuite-resource-inline .blocksuite-resource-host affine-paragraph > rich-text > .inline-editor { height: auto !important; }';
+    const richTextAndInlineEditorAuto = measure();
+    diagnosticStyle.remove();
     return { paragraphCount: paragraphs.length, hostCount: document.querySelectorAll('.blocksuite-resource-host').length,
       inlineHostCount: inline?.querySelectorAll('.blocksuite-resource-host').length ?? 0,
-      hostHeight, hostScrollHeight: host?.scrollHeight ?? 0, lastParagraphHeight,
-      hostStyle: box(host), viewportStyle: box(viewport),
-      editorHostStyle: box(host?.querySelector<HTMLElement>('editor-host') ?? null),
-      pageRootStyle: box(host?.querySelector<HTMLElement>('affine-page-root') ?? null),
-      paragraphStyles: paragraphs.slice(1, 3).concat(paragraphs.slice(-1)).map(box),
-      hostBottom, galleryTop, lastParagraphBottom,
-      noOverlap: Boolean(viewport && gallery && paragraphs.length >= 12 && galleryTop >= hostBottom - 1
-        && galleryTop >= lastParagraphBottom - 1) };
+      initial, richTextAuto, richTextAndInlineEditorAuto, ...initial };
   });
   console.log(`WP5_NATIVE_CANVAS_LAYOUT ${JSON.stringify(canvasLayout)}`);
   expect(canvasLayout.paragraphCount).toBe(13);
