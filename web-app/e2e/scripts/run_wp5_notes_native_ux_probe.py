@@ -203,6 +203,7 @@ def main() -> int:
         source_mobile_screenshot = temp / "wp5-notes-native-mobile.png"
         source_evidence = temp / "wp5-notes-native-dom.json"
         source_failure_evidence = temp / "wp5-notes-native-failure.json"
+        source_mobile_diagnostic = temp / "wp5-notes-native-mobile-diagnostic.json"
         source_undo_screenshot = temp / "wp5-undo-minimal.png"
         source_undo_evidence = temp / "wp5-undo-minimal.json"
         env = os.environ.copy()
@@ -223,6 +224,7 @@ def main() -> int:
             "SB_E2E_PRODUCTION_BUILD": "true", "SB_WP5_NATIVE_SCREENSHOT_PATH": str(source_screenshot),
             "SB_WP5_NATIVE_DOM_EVIDENCE_PATH": str(source_evidence),
             "SB_WP5_NATIVE_FAILURE_EVIDENCE_PATH": str(source_failure_evidence),
+            "SB_WP5_NATIVE_MOBILE_DIAGNOSTIC_PATH": str(source_mobile_diagnostic),
             "SB_WP5_NATIVE_MOBILE_SCREENSHOT_PATH": str(source_mobile_screenshot),
             "SB_WP5_NATIVE_UX_PROBE_ONLY": "true", "VITE_ENABLE_NOTES": "true",
             "SB_WP5_UNDO_REPRO_SCREENSHOT_PATH": str(source_undo_screenshot),
@@ -254,6 +256,9 @@ def main() -> int:
                        ["npx", "--no-install", "playwright", "test", "--config=playwright.wp5-notes-native-ux.config.ts"])
             result = subprocess.run(command, cwd=E2E, env=env, check=False)
             if result.returncode:
+                if source_mobile_diagnostic.is_file():
+                    mobile_diagnostic = json.loads(source_mobile_diagnostic.read_text(encoding="utf-8"))
+                    print(f"WP5_NATIVE_MOBILE_DIAGNOSTIC {json.dumps(mobile_diagnostic, ensure_ascii=False)}")
                 failure_target = output / "wp5-notes-native-failure-evidence.json"
                 if source_failure_evidence.is_file():
                     failure = verify_failure_evidence(source_failure_evidence, failure_target)
