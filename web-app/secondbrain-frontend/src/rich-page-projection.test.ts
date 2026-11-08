@@ -8,10 +8,13 @@ describe('rich-page readable projection and exact revision binding', () => {
   it('keeps frontmatter and readable text while the native snapshot retains rich geometry', () => {
     const richSnapshot = { ...snapshot, blocks: { ...snapshot.blocks, children: [
       { props: { type: 'h1', text: { delta: [{ insert: 'My title' }] } }, children: [] },
+      { props: { type: 'h1', text: { delta: [{ insert: 'Body heading' }] } }, children: [] },
       ...snapshot.blocks.children,
     ] } };
     const markdown = richPageReadableMarkdown(note, { resourceId: id }, richSnapshot);
     expect(markdown).toContain('# My title');
+    expect(markdown).toContain('Body heading');
+    expect(markdown).not.toContain('My title | Body heading');
     expect(markdown).toContain('---\ncustom: preserve\n---\n\n');
     expect(markdown).toContain(`attachments/${id}.blocksuite.json`);
     expect(markdown).toContain('正文 \\<script\\>\n下一行');

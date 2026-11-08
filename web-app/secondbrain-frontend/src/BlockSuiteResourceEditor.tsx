@@ -11,7 +11,7 @@ import { assertRichPageMarkdownBinding, bindRichPageSnapshot, markdownSha256, ri
 import { forkRichPageNote, snapshotBlobIds, snapshotCanvasIds } from './rich-page-fork';
 import { nativeResourceSnapshot, remapNativeResourceReferences } from './native-resource-state';
 import { sameBlockSuiteSnapshot } from './resource-snapshot-equality';
-import { ArchiveDocumentHeader, ArchiveEmojiPicker, archiveExportHtml, archivePrintPdf, archiveInspectMindMap, archiveFocusMindMap, archiveFocusFrame, ArchiveNativeDiagnostics } from './archive-rich-page-tools';
+import { ArchiveDocumentHeader, ArchiveEmojiPicker, archiveExportHtml, archiveExportMarkdown, archivePrintPdf, archiveFocusFrame } from './archive-rich-page-tools';
 import type { ArchiveProperties } from './archive-rich-page-tools';
 import { archiveManagers, archiveViewExtensions, bindArchiveSurface } from './archive-rich-page-runtime';
 import { ArchiveCanvasGallery, type ArchiveCanvasCard } from './archive-canvas-gallery';
@@ -31,6 +31,36 @@ const unbase64 = (value: string) => {
   const raw = atob(value);
   return Uint8Array.from(raw, char => char.charCodeAt(0));
 };
+const markdownTitle = (value: string) => /^#\s+(.+)$/m.exec(value)?.[1]?.trim() ?? '';
+function markDocumentTitleBlock(host: HTMLElement | null, blockId?: string) {
+  if (!host || !blockId) return;
+  host.querySelectorAll('[data-sb-document-title-block]').forEach(node => node.removeAttribute('data-sb-document-title-block'));
+  const block = [...host.querySelectorAll<HTMLElement>('[data-block-id]')]
+    .find(node => node.getAttribute('data-block-id') === blockId);
+  block?.setAttribute('data-sb-document-title-block', 'true');
+  host.dataset.sbDocumentTitleBlockId = blockId;
+}
+function bindDocumentTitleBackspaceBoundary(viewport: HTMLElement, store: any) {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Backspace' || event.isComposing || event.keyCode === 229) return;
+    const selection = window.getSelection();
+    if (!selection?.isCollapsed || selection.anchorOffset !== 0) return;
+    const paragraph = event.composedPath().find((node): node is HTMLElement => node instanceof HTMLElement
+      && node.localName === 'affine-paragraph');
+    const blockId = paragraph?.dataset.blockId;
+    if (!blockId) return;
+    const current = store.getBlock(blockId)?.model;
+    const parent = current && store.getParent(current);
+    const index = parent?.children.findIndex((item: any) => item.id === blockId) ?? -1;
+    const titleBlockId = viewport.parentElement?.closest<HTMLElement>('.blocksuite-resource-host')?.dataset.sbDocumentTitleBlockId;
+    if (!titleBlockId) return;
+    if (index <= 0 || parent.children[index - 1]?.id !== titleBlockId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  viewport.addEventListener('keydown', onKeyDown, true);
+  return () => viewport.removeEventListener('keydown', onKeyDown, true);
+}
 
 function referencedBlockSuiteBlobIds(store: any): string[] {
   const ids = new Set<string>();
@@ -55,8 +85,8 @@ function seedResource(store: any, kind: BlockSuiteResourceKind) {
     // without an explicit Page-mode value in its Yjs state.
     store.spaceDoc.getMap('secondbrain-rich-page-properties').set('docMode', 'page');
     const note = store.addBlock('affine:note', {}, root);
-    store.addBlock('affine:paragraph', { type: 'h1', text: new Text('富 Page') }, note);
-    store.addBlock('affine:paragraph', { text: new Text('在这里开始编辑完整富格式内容。') }, note);
+    store.addBlock('affine:paragraph', { type: 'h1', text: new Text('新建笔记') }, note);
+    store.addBlock('affine:paragraph', { text: new Text('') }, note);
   } else if (kind === 'database') {
     const note = store.addBlock('affine:note', {}, root);
     store.addBlock('affine:paragraph', { type: 'h1', text: new Text('独立数据库') }, note);
@@ -136,11 +166,13 @@ function initialArchiveProperties(note: Note, resource: BlockSuiteResource): Arc
   };
 }
 
-export function BlockSuiteResourceEditor({ note, resource: initialResource, onClose, onNoteVersionChange, onNoteSaved, onResourceSaved, onForked, onOpenBackups }: {
+export function BlockSuiteResourceEditor({ note, resource: initialResource, onClose, onNoteVersionChange, onNoteSaved, onResourceSaved, onForked, onOpenBackups, inline = false, onDirtyChange, onSavingChange, onConflictChange, onSaveRequest, openedAt }: {
   onNoteSaved?: (note: Note) => void; onForked?: (note: Note, resource: BlockSuiteResource) => void;
   onResourceSaved?: (resource: BlockSuiteResource, store: any) => void;
   onOpenBackups?: () => void;
-  note: Note; resource: BlockSuiteResource; onClose: () => void; onNoteVersionChange: (artifactSetEtag: string) => void;
+  onDirtyChange?: (dirty: boolean) => void; onSavingChange?: (saving: boolean) => void; onConflictChange?: (conflict: boolean) => void;
+  onSaveRequest?: (save: (() => Promise<boolean>) | null) => void; openedAt?: number; inline?: boolean;
+  note: Note; resource: BlockSuiteResource; onClose: (state?: { dirty: boolean; saving: boolean; conflict: boolean }) => void; onNoteVersionChange: (artifactSetEtag: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const archiveSurfaceRef = useRef<ReturnType<typeof bindArchiveSurface> | null>(null);
@@ -166,15 +198,17 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   const [uploadingImage, setUploadingImage] = useState(false);
   const [viewMode, setViewMode] = useState<'page' | 'edgeless'>(() => initialResource.resourceKind === 'rich-page' ? initialArchiveProperties(note, initialResource).docMode : 'edgeless');
   const [archiveProperties, setArchiveProperties] = useState<ArchiveProperties>(() => initialArchiveProperties(note, initialResource));
-  const [archiveTitle, setArchiveTitle] = useState('富 Page');
+  const [archiveTitle, setArchiveTitle] = useState('新建笔记');
   const [emojiModelId, setEmojiModelId] = useState<string | null>(null);
   const [canvasCards, setCanvasCards] = useState<ArchiveCanvasCard[]>([]);
   const [nestedResource, setNestedResource] = useState<BlockSuiteResource | null>(null);
-  const [mindMapReport, setMindMapReport] = useState('');
-  const [diagnosticStatus, setDiagnosticStatus] = useState('');
   const [hasBackup, setHasBackup] = useState(false);
   const [reloadGeneration, setReloadGeneration] = useState(0);
   noteRef.current = note;
+
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => { onSavingChange?.(saving); }, [saving, onSavingChange]);
+  useEffect(() => { onConflictChange?.(projectionConflict); }, [projectionConflict, onConflictChange]);
 
   useEffect(() => {
     let disposed = false;
@@ -183,6 +217,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     let workspace: TransientMarkdownWorkspace | undefined;
     let std: BlockStdScope | undefined;
     let offUpdate: (() => void) | undefined;
+    let offTitleBoundary: (() => void) | undefined;
     const setup = async () => {
       try {
         const editingResource = resourceRef.current;
@@ -201,7 +236,10 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         Y.applyUpdate(doc.spaceDoc, unbase64(editingResource.updateB64));
         doc.load();
         const store = doc.getStore();
-        if (native) setArchiveTitle(((store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1')?.model as any)?.props.text?.toString?.()) || '富 Page');
+        if (native) {
+          const titleBlock = store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1');
+          setArchiveTitle((titleBlock?.model as any)?.props.text?.toString?.() || markdownTitle(noteRef.current.content) || '新建笔记');
+        }
         (store as any).__sbNativeResource = native;
         // Capture the verified image closure before enabling an editing session.
         // A later remote conflict must not remove its complete recovery copy.
@@ -221,6 +259,13 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         viewport.append(root);
         await root.getUpdateComplete();
         if (disposed) return;
+        if (native) {
+          const titleBlock = store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1');
+          const titleText = (titleBlock?.model as any)?.props.text?.toString?.();
+          setArchiveTitle(titleText || markdownTitle(noteRef.current.content) || '新建笔记');
+          markDocumentTitleBlock(host.current, titleBlock?.model.id);
+        }
+        if (native) offTitleBoundary = bindDocumentTitleBackspaceBoundary(viewport, store);
         if (native && scope === 'edgeless' && focusFrameAfterView.current) {
           try { archiveFocusFrame(std!, focusFrameAfterView.current); setStatus('已打开内嵌画布范围。'); }
           catch (error) { setStatus(error instanceof Error ? error.message : '无法定位内嵌画布'); }
@@ -245,7 +290,15 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           const wasDirty = dirtyRef.current;
           dirtyRef.current = true;
           setDirty(true);
-          if (native) setArchiveTitle(((store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1')?.model as any)?.props.text?.toString?.()) || '富 Page');
+          onDirtyChange?.(true);
+          if (native) {
+            const titleBlock = store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1');
+            if (titleBlock?.model.id) {
+              markDocumentTitleBlock(host.current, titleBlock.model.id);
+              requestAnimationFrame(() => markDocumentTitleBlock(host.current, titleBlock.model.id));
+              setArchiveTitle((titleBlock.model as any).props.text?.toString?.() || '新建笔记');
+            }
+          }
           setRecoveryCopyReady(false);
           // Layout updates must not overwrite upload/save failure diagnostics.
           if (!wasDirty) setStatus('有未保存的资源修改');
@@ -257,11 +310,19 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           || editingResource.note_etag !== noteRef.current.etag)) {
           projectionConflictRef.current = true;
           setProjectionConflict(true);
-          setStatus('富 Page 与 Markdown 版本冲突；仅在本地保留修改。请下载双方副本或另存新富 Page。');
+          onConflictChange?.(true);
+          setStatus('笔记正文与 Markdown 版本冲突；本地修改仍保留。请下载双方副本或另存为新笔记。');
         } else {
-          setStatus(native ? 'BlockSuite 富 Page 已就绪' : initialResource.resourceKind === 'database' ? 'BlockSuite Database 已就绪' : 'BlockSuite Edgeless 画布已就绪');
+          setStatus(native ? '笔记已就绪' : initialResource.resourceKind === 'database' ? '数据库已就绪' : '画布已就绪');
         }
         setStoreReady(true);
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (!disposed && typeof performance !== 'undefined') {
+          const durationMs = Math.max(0, performance.now() - (openedAt ?? performance.now()));
+          window.dispatchEvent(new CustomEvent('sb:blocksuite-editor-ready', { detail: {
+            resourceKind: editingResource.resourceKind, durationMs, viewport: `${window.innerWidth}x${window.innerHeight}`,
+          } }));
+        }
       } catch (error) {
         if (!disposed) setStatus(error instanceof Error ? `加载失败：${error.message}` : 'BlockSuite 资源无法载入');
         workspace?.dispose();
@@ -271,6 +332,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     return () => {
       disposed = true;
       offUpdate?.();
+      offTitleBoundary?.();
       std?.unmount();
       workspace?.dispose();
       host.current?.replaceChildren();
@@ -283,6 +345,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     retryableSaveRef.current = false;
     savingRef.current = true;
     setSaving(true);
+    onSavingChange?.(true);
     setStatus('正在保存 BlockSuite 资源…');
     let nativeWriteCommitted = false;
     let projectionWriteStarted = false;
@@ -329,6 +392,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         if (blobSourceRef.current) blobSourceRef.current.artifactSetEtag = nextArtifactSetEtag;
         projectionConflictRef.current = false;
         setProjectionConflict(false); onNoteSaved?.(noteRef.current);
+        onConflictChange?.(false);
       } else onResourceSaved?.(resourceRef.current, store);
       // Gfx may emit redundant Yjs layout transactions. Only clear dirty if
       // the complete current semantic snapshot still equals the submitted one.
@@ -338,9 +402,12 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           && sameBlockSuiteSnapshot(currentSnapshot, snapshot));
       if (unchanged) {
         dirtyRef.current = false; setDirty(false);
+        onDirtyChange?.(false);
+        if (initialResource.resourceKind === 'rich-page') setHasBackup(true);
         setStatus('BlockSuite 资源已保存');
       } else {
         dirtyRef.current = true; setDirty(true); setRecoveryCopyReady(false);
+        onDirtyChange?.(true);
         setStatus('先前版本已保存；有未保存的资源修改');
         retryableSaveRef.current = true;
       }
@@ -350,16 +417,18 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
       const status = (error as Error & { status?: number })?.status;
       if (status === 412 || projectionWriteStarted || nativeWriteCommitted) {
         dirtyRef.current = true; setDirty(true);
+        onDirtyChange?.(true);
         if (initialResource.resourceKind === 'rich-page') {
           projectionConflictRef.current = true;
           setProjectionConflict(true);
+          onConflictChange?.(true);
         }
         setRecoveryCopyReady(false);
       }
       setStatus(status === 412
         ? initialResource.resourceKind === 'rich-page'
           ? nativeWriteCommitted
-            ? 'Markdown 投影遇到版本冲突（412）；刚保存的富 Page 资源与双方 Markdown 均保留，请显式另存或恢复。'
+            ? 'Markdown 投影遇到版本冲突（412）；刚保存的笔记与双方 Markdown 均保留，请显式另存或恢复。'
             : '版本冲突（412）；远端资源与当前修改均保留，Core 未覆盖。请下载恢复副本后显式处理。'
           : '版本冲突（412）；Core 未覆盖现有资源。当前修改仍保留，请下载恢复副本后重试。'
         : error instanceof Error ? `保存失败；修改仍保留，可重试。${error.message}` : '保存失败；修改仍保留，可重试。');
@@ -367,8 +436,11 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     } finally {
       savingRef.current = false;
       setSaving(false);
+      onSavingChange?.(false);
     }
   };
+
+  useEffect(() => { onSaveRequest?.(save); return () => onSaveRequest?.(null); }, [onSaveRequest, dirty, saving, projectionConflict]);
 
   const currentStore = () => (host.current as (HTMLDivElement & { __sbBlockSuiteStore?: any }) | null)?.__sbBlockSuiteStore;
   const currentStd = () => (host.current as (HTMLDivElement & { __sbBlockSuiteStd?: BlockStdScope }) | null)?.__sbBlockSuiteStd;
@@ -391,7 +463,15 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   };
   const updateArchiveTitle = (value: string) => {
     const store = currentStore();
-    const title = store?.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1')?.model;
+    let title = store?.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1')?.model;
+    if (!title && store) {
+      const note = store.getBlocksByFlavour('affine:note')[0]?.model;
+      if (note) {
+        const blockId = store.addBlock('affine:paragraph', { type: 'h1', text: new Text(value) }, note, 0);
+        title = store.getBlock(blockId)?.model;
+        markDocumentTitleBlock(host.current, blockId);
+      }
+    }
     if (!title) return;
     const text = title.props.text;
     if (text?.length) text.delete(0, text.length);
@@ -400,7 +480,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
   };
   const currentTitle = () => {
     const title = currentStore()?.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1')?.model.props.text;
-    return title?.toString?.() || '富 Page';
+    return title?.toString?.() || '新建笔记';
   };
   const switchViewMode = async (mode: 'page' | 'edgeless') => {
     if (mode === viewMode && archiveProperties.docMode === mode) {
@@ -473,7 +553,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           if (blobSourceRef.current) blobSourceRef.current.artifactSetEtag = created.artifact_set_etag;
           onNoteVersionChange(created.artifact_set_etag);
           setReference(detail.blockId, { resourceId: created.resource_id, docId: created.doc_id, title: detail.title || '独立画布', state: 'ready', revision: created.etag, previewJson: '[]' });
-          setStatus('独立画布已创建并绑定到此富 Page；保存富 Page 以持久化引用。');
+          setStatus('独立画布已创建并绑定到此笔记；保存笔记以持久化引用。');
         } catch (error) {
           setReference(detail.blockId, { state: 'error' });
           setStatus(`独立画布创建失败；引用仍可重试，未删除任何资源。${error instanceof Error ? error.message : ''}`);
@@ -496,7 +576,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         const nestedIds = new Set<string>();
         const visit = (value: any) => { if (!value || typeof value !== 'object') return; if (Array.isArray(value)) return value.forEach(visit); for (const [key, item] of Object.entries(value)) { if (key === 'resourceId' && typeof item === 'string' && item !== source.resourceId) nestedIds.add(item); else visit(item); } };
         visit(source.snapshot);
-        if (nestedIds.size) throw new Error('此画布含有嵌套画布引用；请先另存整个富 Page，以完整复制资源闭包。');
+        if (nestedIds.size) throw new Error('此画布含有嵌套画布引用；请先另存整篇笔记，以完整复制资源闭包。');
         const blobIds: string[] = [];
         const collect = (value: any) => { if (!value || typeof value !== 'object') return; if (Array.isArray(value)) return value.forEach(collect); for (const [key, item] of Object.entries(value)) { if (key === 'sourceId' && typeof item === 'string') blobIds.push(item); else collect(item); } };
         collect(source.snapshot);
@@ -522,14 +602,14 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           previewJson: typeof sourceReference.props.previewJson === 'string' ? sourceReference.props.previewJson : '[]', error: ''
         }], 'after');
         refreshCanvasCards(store);
-        setStatus('画布已深拷贝为新资源；源引用与源画布均保留。保存富 Page 以持久化副本引用。');
+        setStatus('画布已深拷贝为新资源；源引用与源画布均保留。保存笔记以持久化副本引用。');
       },
       onCanvasRemoveReference: detail => {
         store.deleteBlock(detail.blockId);
         refreshCanvasCards(store);
-        setStatus('已从富 Page 移除引用；原画布资源保留在笔记附件中。');
+        setStatus('已从笔记移除引用；原画布资源保留在附件中。');
       },
-      onCanvasResize: () => setStatus('画布预览尺寸已更新；保存富 Page 以持久化。'),
+      onCanvasResize: () => setStatus('画布预览尺寸已更新；保存笔记以持久化。'),
       onEmbeddedCanvasOpen: frameId => { focusFrameAfterView.current = frameId; void switchViewMode('edgeless'); },
     });
     archiveSurfaceRef.current = cleanup;
@@ -659,53 +739,44 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     }
   };
 
-  return <div className="blocksuite-resource-backdrop" role="presentation">
-    <section className="blocksuite-resource-dialog" data-page-width={initialResource.resourceKind === 'rich-page' ? archiveProperties.pageWidth : undefined} data-edgeless-theme={initialResource.resourceKind === 'rich-page' ? archiveProperties.edgelessTheme : undefined} role="dialog" aria-modal="true" aria-busy={!storeReady || saving} aria-label={initialResource.resourceKind === 'database' ? 'BlockSuite 数据库资源' : initialResource.resourceKind === 'rich-page' ? 'BlockSuite 富 Page 资源' : 'BlockSuite Edgeless 资源'}>
+  const resourceView = <><section className={`blocksuite-resource-dialog${inline ? ' blocksuite-resource-inline' : ''}`} data-page-width={initialResource.resourceKind === 'rich-page' ? archiveProperties.pageWidth : undefined} data-edgeless-theme={initialResource.resourceKind === 'rich-page' ? archiveProperties.edgelessTheme : undefined} role={inline ? undefined : 'dialog'} aria-modal={inline ? undefined : true} aria-busy={!storeReady || saving} aria-label={initialResource.resourceKind === 'database' ? 'BlockSuite 数据库资源' : initialResource.resourceKind === 'rich-page' ? '笔记编辑器' : 'BlockSuite Edgeless 资源'}>
       {initialResource.resourceKind === 'rich-page' ? <ArchiveDocumentHeader store={currentStore()} title={archiveTitle} status={status}
         readonly={!storeReady || saving || projectionConflict} properties={archiveProperties} readOnlyKeys={['tags', 'type', 'aliases', 'created', 'updated', 'description', 'source', 'related']}
         onTitleChange={updateArchiveTitle} onPropertyChange={updateArchiveProperty} onModeChange={mode => { void switchViewMode(mode); }}
-        onSave={() => { void save(); }} onExportPdf={() => { const store = currentStore(); if (store) void archivePrintPdf(store, currentTitle()).catch(error => setStatus(`PDF 导出失败：${error instanceof Error ? error.message : ''}`)); }} />
+        onSave={() => { void save(); }} onBack={() => onClose({ dirty: dirtyRef.current || dirty, saving: savingRef.current || saving, conflict: projectionConflictRef.current })} onExportPdf={() => { const store = currentStore(); if (store) void archivePrintPdf(store, currentTitle()).catch(error => setStatus(`PDF 导出失败：${error instanceof Error ? error.message : ''}`)); }} />
         : <header><strong>{initialResource.resourceKind === 'database' ? '独立 Database 资源' : '独立 Edgeless 画布'}</strong>
         <span role="status" aria-live="polite">{status}</span>
-        <button type="button" onClick={onClose} disabled={saving || (dirty && !recoveryCopyReady)}>
+        <button type="button" onClick={() => onClose()} disabled={saving || (dirty && !recoveryCopyReady)}>
           {dirty && recoveryCopyReady
             ? recoveryCopyComplete ? '关闭（完整恢复副本已下载）' : '关闭（部分恢复副本已下载）'
             : '关闭'}
         </button></header>}
-      {initialResource.resourceKind === 'rich-page' && <div className="blocksuite-resource-toolbar" role="toolbar" aria-label="富 Page 工具">
-        <button type="button" onClick={() => { const store = currentStore(); if (store) void archiveExportHtml(store).then(html => {
+      {initialResource.resourceKind === 'rich-page' && <div className="blocksuite-resource-toolbar" role="toolbar" aria-label="笔记工具">
+        <button type="button" aria-label="导出 HTML" title="导出 HTML" onClick={() => { const store = currentStore(); if (store) void archiveExportHtml(store).then(html => {
           const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' })); const anchor = document.createElement('a');
           anchor.href = url; anchor.download = `${currentTitle()}.html`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0);
-        }).catch(error => setStatus(`HTML 导出失败：${error instanceof Error ? error.message : ''}`)); }}>导出 HTML</button>
-        <button type="button" onClick={onClose} disabled={!storeReady || saving || dirty}>关闭富 Page</button>
-        <button type="button" disabled={!storeReady || saving} onClick={() => void downloadRecoveryCopy()}>下载资源恢复副本</button>
-        <button type="button" onClick={() => { const std = currentStd(); if (std) { const report = archiveInspectMindMap(std); setMindMapReport(JSON.stringify(report, null, 2)); setDiagnosticStatus('思维导图视口检查完成'); } }}>检查思维导图</button>
-        <button type="button" onClick={() => { const std = currentStd(); if (std) try { archiveFocusMindMap(std); setDiagnosticStatus('已定位思维导图'); } catch (error) { setDiagnosticStatus(error instanceof Error ? error.message : '无法定位思维导图'); } }}>定位思维导图</button>
-        <button type="button" onClick={() => { const count = archiveSurfaceRef.current?.cropEmbeddedFrames() ?? 0; setStatus(count ? `已按现有内容调整 ${count} 个内嵌画布范围；保存富 Page 以持久化。` : '当前没有可裁切的内嵌画布。'); }}>裁切内嵌画布</button>
-        <button type="button" onClick={() => { const store = currentStore(); if (store) { const url = URL.createObjectURL(new Blob([JSON.stringify(nativeResourceSnapshot(store), null, 2)], { type: 'application/json' })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'rich-page-snapshot.json'; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0); } }}>导出 JSON 快照</button>
+        }).catch(error => setStatus(`HTML 导出失败：${error instanceof Error ? error.message : ''}`)); }}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 2.5h8l4 4V17.5H4zM12 2.5v4h4M10 9v6m-2-2 2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></button>
+        <details className="blocksuite-more-tools"><summary>更多</summary><div>
+          {(dirty || projectionConflict) && <button type="button" disabled={!storeReady || saving} onClick={() => void downloadRecoveryCopy()}>下载恢复副本</button>}
+          {hasBackup && <button type="button" disabled={!storeReady || saving || projectionConflict} onClick={() => void openBackups()}>查看版本与恢复</button>}
+          <button type="button" onClick={() => { const store = currentStore(); if (store) void archiveExportMarkdown(store).then(markdown => { const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${currentTitle()}.md`; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 0); }).catch(error => setStatus(`Markdown 导出失败：${error instanceof Error ? error.message : ''}`)); }}>导出 Markdown</button>
+          <button type="button" onClick={() => { const count = archiveSurfaceRef.current?.cropEmbeddedFrames() ?? 0; setStatus(count ? `已调整 ${count} 个内嵌画布范围，请保存。` : '当前没有可调整的内嵌画布。'); }}>整理内嵌画布</button>
+        </div></details>
       </div>}
       <div className="blocksuite-resource-host" ref={host} data-kind={initialResource.resourceKind} />
-      {initialResource.resourceKind === 'rich-page' && <ArchiveCanvasGallery cards={canvasCards} readonly={!storeReady || saving || projectionConflict}
+      {initialResource.resourceKind === 'rich-page' && <details className="blocksuite-canvas-tools"><summary>插入 / 管理画布</summary><ArchiveCanvasGallery cards={canvasCards} readonly={!storeReady || saving || projectionConflict}
         onCreate={() => { const store = currentStore(); const parent = store?.getBlocksByFlavour('affine:note')[0]?.model.id; if (!store || !parent) return;
           const blockId = store.addBlock(CANVAS_REF_FLAVOUR, { title: '新建画布', state: 'creating' }, parent);
           host.current?.querySelector<HTMLElement>('.sb-archive-viewport')?.dispatchEvent(new CustomEvent('sb-canvas-ref-create', { bubbles: true, detail: { blockId } })); }}
         onOpen={card => { host.current?.querySelector<HTMLElement>('.sb-archive-viewport')?.dispatchEvent(new CustomEvent(CANVAS_REF_OPEN_EVENT, { bubbles: true, detail: { blockId: card.blockId, resourceId: card.resourceId } })); }}
         onCopy={card => { host.current?.querySelector<HTMLElement>('.sb-archive-viewport')?.dispatchEvent(new CustomEvent(CANVAS_REF_COPY_EVENT, { bubbles: true, detail: { blockId: card.blockId, resourceId: card.resourceId } })); }}
-        onRemoveReference={card => { const store = currentStore(); if (store) { store.deleteBlock(card.blockId); refreshCanvasCards(store); setStatus('已移除引用；画布原件仍保留。保存富 Page 以持久化。'); } }} />}
-      {initialResource.resourceKind === 'rich-page' && <ArchiveNativeDiagnostics readonly={saving || dirty || projectionConflict} conflict={projectionConflict} hasConflictCopy={recoveryCopyReady} hasBackup={hasBackup}
-        client={navigator.userAgent.slice(0, 160)} revision={resourceRef.current.etag} documentId={resourceRef.current.docId} report={`${diagnosticStatus}${mindMapReport ? `\n${mindMapReport}` : ''}`}
-        actions={{ writeClientMarker: () => { const store = currentStore(); if (store) store.spaceDoc.getMap('secondbrain-rich-page-properties').set('clientMarker', crypto.randomUUID()); },
-          inspectDocument: () => setDiagnosticStatus(`资源 ${resourceRef.current.resourceId} · ${resourceRef.current.resourceKind} · ${dirtyRef.current ? '未保存' : '已保存'}`),
-          reloadAfterGuard: reloadFromCore, openConflictCopy: () => setDiagnosticStatus('冲突恢复副本采用下载的 JSON；可通过“另存为新富 Page”显式创建 Core 副本。'),
-          createBackup: openBackups, restoreBackup: openBackups, saveConflictCopy: downloadRecoveryCopy,
-          inspectMindMap: () => { const std = currentStd(); if (std) setMindMapReport(JSON.stringify(archiveInspectMindMap(std), null, 2)); },
-          focusMindMap: () => { const std = currentStd(); if (std) try { archiveFocusMindMap(std); } catch (error) { setDiagnosticStatus(error instanceof Error ? error.message : '无法定位'); } } }} />}
+        onRemoveReference={card => { const store = currentStore(); if (store) { store.deleteBlock(card.blockId); refreshCanvasCards(store); setStatus('已移除引用；画布原件保留。保存笔记以持久化。'); } }} /></details>}
       {projectionConflict && initialResource.resourceKind === 'rich-page' && <section className="blocksuite-resource-conflict" role="alert">
-        <p>Markdown 与富 Page 未自动合并或覆盖。可下载双方副本，或将当前本地富 Page 另存为新 Draft；原笔记与远端资源均保留。</p>
+        <p>Markdown 与本地笔记修改未自动合并或覆盖。可下载双方副本，或将本地修改另存为新笔记；原笔记与远端内容均保留。</p>
         <button type="button" disabled={saving || !storeReady} onClick={() => { void (async () => {
           const store = (host.current as any)?.__sbBlockSuiteStore;
           if (!store) return;
-          setSaving(true);
+          setSaving(true); onSavingChange?.(true);
           try {
             const snapshot = nativeResourceSnapshot(store);
             const forked = await forkRichPageNote(noteRef.current, { schemaVersion: 1, resourceId: resourceRef.current.resourceId,
@@ -713,18 +784,18 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
               updateB64: base64(Y.encodeStateAsUpdate(store.spaceDoc)), snapshot }, uploadedBlobCopies.current, remapNativeResourceReferences);
             onForked?.(forked.note, forked.resource);
           } catch (error) { setStatus(`另存未完成；原件与当前编辑均保留。${error instanceof Error ? error.message : ''}`); }
-          finally { setSaving(false); }
-        })(); }}>另存为新富 Page（保留原件）</button>
+          finally { setSaving(false); onSavingChange?.(false); }
+        })(); }}>另存为新笔记（保留原件）</button>
       </section>}
-      <footer><span>资源通过 Markdown 附件引用关联；Yjs update 与同笔记 SHA-256 图片均受 Core ETag/配额保护。</span>
+      {initialResource.resourceKind !== 'rich-page' && <footer><span>Yjs 资源与附件受版本校验保护。</span>
         {initialResource.resourceKind === 'edgeless-canvas' && <label className="blocksuite-resource-upload">
           添加画布图片
           <input aria-label="选择 Edgeless 图片" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={!storeReady || saving || uploadingImage}
             onChange={(event) => { void addCanvasImage(event.currentTarget.files?.[0]); event.currentTarget.value = ''; }} />
         </label>}
-        <button type="button" onClick={() => void downloadRecoveryCopy()} disabled={!dirty || saving}>下载未保存恢复副本</button>
+        {dirty && <button type="button" onClick={() => void downloadRecoveryCopy()} disabled={saving}>下载未保存恢复副本</button>}
         <button type="button" onClick={() => void save()} disabled={!dirty || projectionConflict || saving || uploadingImage}>{saving ? '保存中…' : '保存资源'}</button>
-      </footer>
+      </footer>}
     </section>
     {emojiModelId && currentStd() && <ArchiveEmojiPicker std={currentStd()!} modelId={emojiModelId} onClose={() => setEmojiModelId(null)} />}
     {nestedResource && <BlockSuiteResourceEditor key={`nested:${nestedResource.resourceId}`} note={noteRef.current} resource={nestedResource}
@@ -738,5 +809,6 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           if (parentStore) refreshCanvasCards(parentStore);
         }}
       onClose={() => setNestedResource(null)} />}
-  </div>;
+  </>;
+  return inline ? resourceView : <div className="blocksuite-resource-backdrop" role="presentation">{resourceView}</div>;
 }

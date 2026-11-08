@@ -1,0 +1,67 @@
+name: WP5 isolated Notes native editor Chromium probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wp5-notes-native-ux-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-notes-chromium:
+    if: github.repository == 'zxwan829/SecondBrain' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify exact probe source
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            web-app/secondbrain-frontend/package-lock.json
+            web-app/e2e/package-lock.json
+      - name: Install isolated Core dependencies
+        working-directory: web-app/secondbrain-core
+        run: python -m pip install -e ".[test]"
+      - name: Install frontend and Playwright packages
+        run: |
+          npm ci --prefix web-app/secondbrain-frontend
+          npm ci --prefix web-app/e2e
+      - name: Build SecondBrain frontend
+        working-directory: web-app/secondbrain-frontend
+        env:
+          VITE_ENABLE_NOTES: "true"
+        run: npm run build
+      - name: Install Linux Chromium
+        working-directory: web-app/e2e
+        run: npx playwright install chromium
+      - name: Run independent synthetic Core + Linux Chromium journey
+        run: python web-app/e2e/scripts/run_wp5_notes_native_ux_probe.py --output-dir "$RUNNER_TEMP/wp5-notes-native-ux"
+      - name: Upload verified synthetic DOM and screenshot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wp5-notes-native-ux-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-1440x1000.png
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-390x844.png
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-evidence.json
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-evidence.json
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-desktop.png
+            ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-failure-mobile.png
+          if-no-files-found: ignore
+          retention-days: 7

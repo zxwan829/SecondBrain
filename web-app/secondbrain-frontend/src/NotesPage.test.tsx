@@ -29,6 +29,11 @@ vi.mock('./BlockSuiteResourceEditor', () => ({
 
 import { NotesPage } from './NotesPage';
 
+async function createMarkdownDraft() {
+  fireEvent.click(await screen.findByText('更多新建'));
+  fireEvent.click(await screen.findByRole('button', { name: '新建 Markdown 草稿' }));
+}
+
 describe('NotesPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
@@ -99,7 +104,7 @@ describe('NotesPage', () => {
 
     render(<NotesPage />);
     await screen.findByRole('heading', { name: '笔记' });
-    fireEvent.click(screen.getByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: '# Still here\n\nUnsaved content.' } });
     await screen.findByText('未保存');
@@ -119,7 +124,7 @@ describe('NotesPage', () => {
     });
 
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: '# Keep this edit\n\nConflict content.' } });
     expect(await screen.findByText('版本冲突', {}, { timeout: 3000 })).toBeTruthy();
@@ -146,7 +151,7 @@ describe('NotesPage', () => {
     });
 
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     vi.useFakeTimers();
     fireEvent.change(editor, { target: { value: '# First projection\n' } });
@@ -184,7 +189,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     vi.useFakeTimers();
     fireEvent.change(editor, { target: { value: '# First edit\n' } });
@@ -213,7 +218,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     const { unmount } = render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     vi.useFakeTimers();
     fireEvent.change(editor, { target: { value: '# First edit\n' } });
@@ -247,7 +252,7 @@ describe('NotesPage', () => {
     });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: '# Unsaved\n' } });
     fireEvent.change(document.getElementById('notes-collection')!, { target: { value: 'personal' } });
@@ -266,7 +271,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
     await screen.findByRole('region', { name: '历史版本预览' });
@@ -286,7 +291,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
     expect(await screen.findByText('暂无可恢复版本。')).toBeTruthy();
@@ -310,7 +315,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
     expect(await screen.findByText(expected as string)).toBeTruthy();
@@ -384,7 +389,7 @@ describe('NotesPage', () => {
     });
 
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     fireEvent.click(await screen.findByRole('button', { name: button }));
     await screen.findByRole('dialog', { name: '合成图形编辑器' });
     expect(await screen.findByRole('button', { name: '打开图形附件' })).toBeTruthy();
@@ -416,7 +421,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     fireEvent.click(await screen.findByRole('button', { name: '插入思维导图' }));
     const source = await screen.findByLabelText('合成图形源') as HTMLTextAreaElement;
     fireEvent.change(source, { target: { value: '{"data":{"text":"pending graph"},"children":[]}' } });
@@ -444,7 +449,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     fireEvent.click(await screen.findByRole('button', { name: '插入思维导图' }));
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     await screen.findByText(/图形源文件已创建，但 Markdown 引用未确认保存；正文保留在编辑区。/);
@@ -490,7 +495,7 @@ describe('NotesPage', () => {
     });
 
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     fireEvent.click(await screen.findByRole('button', { name: '新建 BlockSuite Database' }));
     await screen.findByText('版本冲突');
     const retry = await screen.findByRole('button', { name: '读取最新笔记并追加 BlockSuite 资源引用' });

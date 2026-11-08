@@ -83,6 +83,12 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [creatingBlockSuiteResource, setCreatingBlockSuiteResource] = useState(false);
   const [pendingBlockSuiteReference, setPendingBlockSuiteReference] = useState<{ note: Note; resource: BlockSuiteResource } | null>(null);
   const [blockSuiteResource, setBlockSuiteResource] = useState<BlockSuiteResource | null>(null);
+  const [resourceDirty, setResourceDirty] = useState(false);
+  const [resourceSaving, setResourceSaving] = useState(false);
+  const [resourceConflict, setResourceConflict] = useState(false);
+  const [resourceOpenedAt, setResourceOpenedAt] = useState<number>();
+  const [resourceExitPending, setResourceExitPending] = useState(false);
+  const [resourceRouteExitPending, setResourceRouteExitPending] = useState(false);
   const [savingVisual, setSavingVisual] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const viewRevision = useRef(0);
@@ -90,13 +96,20 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const conflictedSave = useRef<{ key: string; revision: number } | null>(null);
   const visualOpenSequence = useRef(0);
   const noteRef = useRef<Note | null>(null);
+  const notesMountedAt = useRef(performance.now());
   const contentRef = useRef('');
   const savedContent = useRef('');
   const visualNavigationRisk = useRef(false);
   const blockSuiteResourceOpen = useRef(false);
+  const resourceSaveRequest = useRef<(() => Promise<boolean>) | null>(null);
+  const resourceExitAction = useRef<(() => void) | null>(null);
+  const resourceDirtyRef = useRef(false);
+  const resourceSavingRef = useRef(false);
+  const resourceConflictRef = useRef(false);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingSaves = useRef(0);
   const trashIdempotencyKeys = useRef<Record<string, string>>({});
+  const selectionRestoreAttempted = useRef(false);
 
   const setCurrent = (next: Note | null, body = '') => {
     noteRef.current = next;
@@ -114,7 +127,19 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       return false;
     }
     if (blockSuiteResourceOpen.current) {
-      setMessage('请先保存并关闭当前 BlockSuite 资源编辑器，再切换笔记。');
+      if (!resourceDirtyRef.current && !resourceSavingRef.current && !resourceConflictRef.current) {
+        blockSuiteResourceOpen.current = false;
+        setBlockSuiteResource(null);
+        setCurrent(null);
+        try { sessionStorage.removeItem('sb-notes-selection'); } catch { /* best effort */ }
+        return true;
+      }
+      resourceExitAction.current = () => {
+        setCurrent(null);
+        try { sessionStorage.removeItem('sb-notes-selection'); } catch { /* best effort */ }
+      };
+      setResourceRouteExitPending(true);
+      setResourceExitPending(true);
       return false;
     }
     const dirty = projectionPending.current || (!!noteRef.current && contentRef.current !== savedContent.current)
@@ -122,6 +147,42 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     return !dirty || window.confirm('当前笔记或图形有尚未保存的修改。离开后这些修改可能丢失，仍要继续吗？');
   }, [unpersistedVisual]);
   const protectUnsaved = canNavigateAway;
+  const finishResourceExit = (action: () => void) => {
+    blockSuiteResourceOpen.current = false;
+    setBlockSuiteResource(null);
+    setResourceDirty(false);
+    resourceDirtyRef.current = false;
+    resourceSavingRef.current = false;
+    resourceConflictRef.current = false;
+    setResourceSaving(false);
+    setResourceConflict(false);
+    setResourceExitPending(false);
+    setResourceRouteExitPending(false);
+    resourceSaveRequest.current = null;
+    action();
+  };
+  const requestResourceExit = (action: () => void, liveState?: { dirty: boolean; saving: boolean; conflict: boolean }) => {
+    resourceExitAction.current = action;
+    setResourceRouteExitPending(false);
+    if (liveState) {
+      resourceDirtyRef.current = liveState.dirty;
+      resourceSavingRef.current = liveState.saving;
+      resourceConflictRef.current = liveState.conflict;
+      setResourceDirty(liveState.dirty); setResourceSaving(liveState.saving); setResourceConflict(liveState.conflict);
+    }
+    if (liveState?.dirty || liveState?.saving || resourceDirtyRef.current || resourceSavingRef.current) setResourceExitPending(true);
+    else finishResourceExit(action);
+  };
+  const resolveResourceExit = async (decision: 'save' | 'discard' | 'cancel') => {
+    if (decision === 'cancel') { setResourceExitPending(false); setResourceRouteExitPending(false); resourceExitAction.current = null; return; }
+    if (decision === 'discard' && resourceConflictRef.current) return;
+    if (decision === 'save') {
+      const saved = await resourceSaveRequest.current?.();
+      if (!saved) return;
+    }
+    const action = resourceExitAction.current;
+    if (action) finishResourceExit(action);
+  };
   const updateVisualNavigationRisk = useCallback((risk: boolean) => { visualNavigationRisk.current = risk; }, []);
   const beginTransition = () => {
     projectionPending.current = false; setProjectionBusy(false);
@@ -160,8 +221,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     viewRevision.current += 1;
   }, []);
 
-  const open = async (path: string) => {
+  const open = async (path: string, openedAtOverride?: number) => {
+    if (blockSuiteResourceOpen.current) { requestResourceExit(() => { void open(path); }); return; }
     if (!protectUnsaved()) return;
+    const openedAt = openedAtOverride ?? performance.now();
+    setResourceOpenedAt(openedAt);
     const revision = beginTransition();
     const targetCollection = collection;
     setLoading(true); setMessage(''); blockSuiteFallbackReason.current = null;
@@ -172,9 +236,33 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       if (viewRevision.current !== revision) return;
       setCurrent(consistent, consistent.content); setState('已保存'); setEditorMode('blocksuite');
       setMessage(consistent.read_only ? `此文件含有当前富文本编辑器不能安全往返的语法（${consistent.safety_reasons.join('、')}），已保留原文并设为只读。` : '');
+      try { sessionStorage.setItem('sb-notes-selection', JSON.stringify({ collection: targetCollection, path })); } catch { /* selection persistence is best-effort */ }
+      const richId = [...consistent.content.matchAll(/\]\(attachments\/([0-9a-f]{32})\.blocksuite\.json\)/ig)]
+        .map(match => match[1])[0];
+      if (richId) {
+        try {
+          const candidate = await notesApi.readBlockSuiteResource(consistent, richId);
+          if (candidate.resourceKind === 'rich-page' && viewRevision.current === revision) {
+            setBlockSuiteResource(candidate); blockSuiteResourceOpen.current = true;
+          }
+        } catch { if (viewRevision.current === revision) setMessage('笔记正文可用，但原生编辑资源暂时无法读取。'); }
+      }
     } catch { if (viewRevision.current === revision) setMessage('笔记读取失败，原有内容未更改。'); }
     finally { if (viewRevision.current === revision) setLoading(false); }
   };
+
+  useEffect(() => {
+    if (!collections.length || selectionRestoreAttempted.current) return;
+    let saved: { collection?: string; path?: string } | null = null;
+    try { saved = JSON.parse(sessionStorage.getItem('sb-notes-selection') ?? 'null'); } catch { saved = null; }
+    if (!saved?.collection || !saved.path || !collections.some(item => item.id === saved!.collection)) {
+      selectionRestoreAttempted.current = true;
+      return;
+    }
+    if (collection !== saved.collection) { setCollection(saved.collection); return; }
+    selectionRestoreAttempted.current = true;
+    void open(saved.path, notesMountedAt.current);
+  }, [collections, collection]);
 
   const save = useCallback((target: Note, body: string, revision: number, sequence: number): Promise<Note | null> => {
     const key = noteKey(target);
@@ -393,15 +481,18 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
 
   const createRichPageDraft = async () => {
     if (!protectUnsaved()) return;
+    const openedAt = performance.now();
+    setResourceOpenedAt(openedAt);
     const revision = beginTransition();
     setLoading(true); setMessage('');
     try {
-      const created = await notesApi.create('# 富 Page\n\n');
+      const created = await notesApi.create('# 新建笔记\n\n');
       if (viewRevision.current !== revision) return;
       setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('blocksuite');
+      try { sessionStorage.setItem('sb-notes-selection', JSON.stringify({ collection: created.collection, path: created.path })); } catch { /* selection persistence is best-effort */ }
       await attachBlockSuiteResource('rich-page', created);
       void refresh('drafts');
-    } catch { if (viewRevision.current === revision) setMessage('新建富 Page 未完成；已有笔记未改变。'); }
+    } catch { if (viewRevision.current === revision) setMessage('新建笔记未完成；已有笔记未改变。'); }
     finally { if (viewRevision.current === revision) setLoading(false); }
   };
 
@@ -465,6 +556,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       setMessage('此 BlockSuite 资源没有当前笔记中的稳定引用，已拒绝打开。');
       return;
     }
+    setResourceOpenedAt(performance.now());
     setLoading(true);
     try {
       const consistentTarget = await notesApi.readWithArtifactSet(target.collection, target.path);
@@ -709,7 +801,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const confirmBlockSuiteRestore = async () => {
     const preview = blockSuiteSnapshotPreview;
     const current = noteRef.current;
-    if (!preview || !current || projectionPending.current || state !== '已保存' || blockSuiteSnapshotBusy || !protectUnsaved()) return;
+    const inlineEditorWasOpen = blockSuiteResourceOpen.current;
+    const inlineEditorCanRestore = inlineEditorWasOpen && !resourceDirtyRef.current
+      && !resourceSavingRef.current && !resourceConflictRef.current;
+    if (!preview || !current || projectionPending.current || state !== '已保存' || blockSuiteSnapshotBusy
+        || (inlineEditorWasOpen ? !inlineEditorCanRestore : !protectUnsaved())) return;
     if (current.etag !== preview.currentNoteEtag || current.artifactSetEtag !== preview.currentArtifactSetEtag) {
       setBlockSuiteRestoreFailed(true);
       setBlockSuiteSnapshotRecoveryCopy(JSON.stringify({ schemaVersion: 1, recoveryType: 'blocksuite-snapshot-restore-conflict',
@@ -756,14 +852,19 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         artifactSetEtag: current.artifactSetEtag, resources: currentResources, blobs: currentBlobs }, null, 2);
       setBlockSuiteSnapshotRecoveryCopy(recoveryCopy);
       setBlockSuiteSnapshotRecoveryComplete(true);
+      const resourceArtifacts = preview.detail.artifacts.filter((artifact) => artifactKind(artifact) === 'resource');
+      const blobArtifacts = preview.detail.artifacts.filter((artifact) => artifactKind(artifact) === 'blob');
+      const inlineResourceId = inlineEditorWasOpen ? blockSuiteResource?.resourceId : undefined;
+      if (inlineResourceId && !resourceArtifacts.some(artifact => artifactId(artifact) === inlineResourceId)) {
+        throw new Error('此快照不含当前笔记的原生编辑资源；未执行恢复。');
+      }
       const result = await notesApi.restoreBlockSuiteSnapshot(current, preview.entry.snapshot_id);
       if (!result.restored || result.snapshot_id !== preview.entry.snapshot_id) throw new Error('Core 未确认此快照恢复成功。');
       const restored = await notesApi.readWithArtifactSet(current.collection, current.path);
       if (restored.etag !== result.note_etag || restored.artifactSetEtag !== result.artifact_set_etag) {
         throw Object.assign(new Error('恢复响应与重新读取的 Note/资源版本不一致。'), { status: 412 });
       }
-      const resourceArtifacts = preview.detail.artifacts.filter((artifact) => artifactKind(artifact) === 'resource');
-      const blobArtifacts = preview.detail.artifacts.filter((artifact) => artifactKind(artifact) === 'blob');
+      let restoredRichResource: BlockSuiteResource | null = null;
       for (const artifact of resourceArtifacts) {
         const id = artifactId(artifact);
         const loaded = await notesApi.readBlockSuiteResource(restored, id);
@@ -771,6 +872,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
             || loaded.note_etag !== restored.etag || loaded.artifact_set_etag !== restored.artifactSetEtag) {
           throw new Error(`恢复后的资源 ${id} 无法验证。`);
         }
+        if (loaded.resourceKind === 'rich-page' && id === inlineResourceId) restoredRichResource = loaded;
       }
       if (blobArtifacts.length) {
         const { NoteBoundBlockSuiteBlobSource } = await import('./api/notes-blocksuite-blobs');
@@ -783,11 +885,17 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(current)) throw new Error('笔记已切换；恢复结果未应用到当前视图。');
       setCurrent(restored, restored.content);
       setEditorGeneration(value => value + 1);
+      if (inlineEditorWasOpen) {
+        setBlockSuiteResource(restoredRichResource);
+        blockSuiteResourceOpen.current = Boolean(restoredRichResource);
+      }
       setState('已保存');
       setBlockSuiteSnapshots(null); setBlockSuiteSnapshotPreview(null); setBlockSuiteRestoreFailed(false);
       setBlockSuiteSnapshotRecoveryCopy(null);
       setBlockSuiteSnapshotRecoveryComplete(false);
-      setMessage('BlockSuite 快照已恢复，并重新验证了正文与引用资源。');
+      setMessage(restoredRichResource || !inlineEditorWasOpen
+        ? 'BlockSuite 快照已恢复，并重新验证了正文与引用资源。'
+        : 'BlockSuite 快照已恢复；此版本不含原生笔记编辑资源，当前 Markdown 内容已重新载入。');
       void refresh(restored.collection);
     } catch (error) {
       const status = (error as Error & { status?: number }).status;
@@ -807,8 +915,10 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   return <main className="notes-page">
     <header className="module-header"><div><p className="eyebrow">SECONDBRAIN / NOTES</p><h1>笔记</h1><p className="workspace-subtitle">以 Markdown 文件为正文来源；普通目录仅显示已显式授权的范围。</p></div>
       <div className="notes-header-actions">
-        <button type="button" onClick={() => trashView ? closeTrash() : void openTrash()} disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
-        {!trashView && <><button type="button" onClick={() => void createDraft()} disabled={loading}>新建 Draft</button><button type="button" onClick={() => void createRichPageDraft()} disabled={loading || creatingBlockSuiteResource}>新建富 Page</button></>}
+      <button type="button" onClick={() => trashView ? closeTrash()
+        : blockSuiteResourceOpen.current ? requestResourceExit(() => { void openTrash(); }) : void openTrash()}
+        disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
+        {!trashView && <><button type="button" className="notes-primary-create" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createRichPageDraft(); }) : void createRichPageDraft()} disabled={loading || creatingBlockSuiteResource}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
       </div></header>
     {trashView ? <section className="notes-trash" aria-label="回收站">
       <h2>回收站</h2>
@@ -830,13 +940,16 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     </section> : <div className="notes-layout">
       <aside className="notes-sidebar" aria-label="笔记目录">
         <label htmlFor="notes-collection">笔记目录</label>
-        <select id="notes-collection" value={collection} onChange={(event) => selectCollection(event.target.value)}>
+        <select id="notes-collection" value={collection} onChange={(event) => {
+          const next = event.target.value;
+          blockSuiteResourceOpen.current ? requestResourceExit(() => selectCollection(next)) : selectCollection(next);
+        }}>
           {collections.map((item) => <option key={item.id} value={item.id}>{item.kind === 'drafts' ? 'Drafts' : item.id}</option>)}
         </select>
         <ul>{items.map((item) => <li key={item.path}><button type="button" onClick={() => void open(item.path)}>{item.title}</button></li>)}</ul>
       </aside>
-      <section className="notes-document" aria-label="Markdown 笔记编辑区">
-        <div className="notes-document-heading">
+      <section className={`notes-document${blockSuiteResource?.resourceKind === 'rich-page' ? ' notes-document-rich-page' : ''}`} aria-label="笔记编辑区">
+        {blockSuiteResource?.resourceKind !== 'rich-page' && <div className="notes-document-heading">
           <span>{note ? `${note.collection} / ${note.path}` : '选择笔记或新建 Draft'}</span>
           <span role="status" aria-live="polite">{state}</span>
           {note && !note.read_only && <>
@@ -848,7 +961,31 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           {note && note.collection === 'drafts' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(note.path) && onOpenInboxSource && <button type="button" onClick={() => { if (protectUnsaved()) onOpenInboxSource(note.collection, note.path); }}>单来源 Inbox 审批</button>}
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
           {note && <button type="button" onClick={() => void trashSelectedNote()} disabled={state !== '已保存' || loading || creatingVisual || savingVisual || visualAsset !== null || unpersistedVisual !== null}>移到回收站</button>}
-        </div>
+        </div>}
+        {blockSuiteResource?.resourceKind === 'rich-page' && note && <Suspense fallback={<p role="status">正在加载笔记编辑器…</p>}><BlockSuiteResourceEditor key={`${noteKey(note)}:${blockSuiteResource.resourceId}:${editorGeneration}`} note={note} resource={blockSuiteResource} inline openedAt={resourceOpenedAt}
+          onDirtyChange={value => { resourceDirtyRef.current = value; setResourceDirty(value); }}
+          onSavingChange={value => { resourceSavingRef.current = value; setResourceSaving(value); }}
+          onConflictChange={value => { resourceConflictRef.current = value; setResourceConflict(value); }}
+          onSaveRequest={save => { resourceSaveRequest.current = save; }}
+          onOpenBackups={() => { const target = noteRef.current; if (target) void notesApi.readBlockSuiteSnapshots(target).then(result => {
+            if (noteRef.current && noteKey(noteRef.current) === noteKey(target)
+                && noteRef.current.etag === target.etag && noteRef.current.artifactSetEtag === target.artifactSetEtag) {
+              setBlockSuiteSnapshots({ note: target, result });
+              setMessage(result.snapshots.length ? '选择一个快照查看目标正文与资源；当前笔记尚未改变。' : '暂无可恢复的完整快照；当前笔记未改变。');
+            }
+          }).catch(() => setMessage('恢复版本暂时无法读取；当前笔记未改变。')); }}
+          onNoteSaved={(saved) => { setCurrent(saved, saved.content); setState('已保存'); void refresh(saved.collection); }}
+          onNoteVersionChange={(artifactSetEtag) => { if (!noteRef.current || noteKey(noteRef.current) !== noteKey(note)) return; const next = { ...noteRef.current, artifactSetEtag }; noteRef.current = next; setNote(next); }}
+          onForked={(saved, resource) => { setCollection(saved.collection); setCurrent(saved, saved.content); setState('已保存'); setBlockSuiteResource(resource); blockSuiteResourceOpen.current = true; void refresh(saved.collection); }}
+          onClose={liveState => requestResourceExit(() => { setCurrent(null); try { sessionStorage.removeItem('sb-notes-selection'); } catch { /* best effort */ } }, liveState)} /></Suspense>}
+        {resourceExitPending && <section className="notes-resource-exit" role="alertdialog" aria-label="未保存修改">
+          <p>{resourceSaving ? '笔记正在保存。' : resourceRouteExitPending
+            ? '离开 Notes 前需要处理未保存的笔记。完成后请再次选择目标页面。'
+            : '笔记有未保存的修改。请选择如何继续。'}</p>
+          <button type="button" disabled={resourceSaving} onClick={() => void resolveResourceExit('save')}>{resourceRouteExitPending ? '保存并返回笔记列表' : '保存并继续'}</button>
+          <button type="button" disabled={resourceSaving || resourceConflict || resourceConflictRef.current} onClick={() => void resolveResourceExit('discard')}>放弃本次修改</button>
+          <button type="button" onClick={() => void resolveResourceExit('cancel')}>取消</button>
+        </section>}
         {note && (note.read_only || editorMode === 'source') && <button type="button" onClick={() => {
           const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
           const url = URL.createObjectURL(blob);
@@ -899,7 +1036,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         {note && state === '已保存' && !loading && <NotePropertiesPanel key={noteKey(note)} note={note} onSaved={(saved) => {
           setCurrent(saved, saved.content); setState('已保存'); setMessage(''); void refresh(saved.collection);
         }} />}
-        {note ? note.read_only || editorMode === 'source' ? <>
+        {blockSuiteResource?.resourceKind === 'rich-page' ? null : note ? note.read_only || editorMode === 'source' ? <>
           <div className="notes-safety" role="status">{note.read_only
             ? `此文件含有当前 BlockSuite 编辑器不能安全往返的语法（${note.safety_reasons.join('、')}），原始 Markdown 保留只读。`
             : (editorMode === 'source'
@@ -922,7 +1059,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           </button>}
       </section>
     </div>}
-    {blockSuiteResource && note && <Suspense fallback={<p role="status">正在加载 BlockSuite 资源编辑器…</p>}>
+    {blockSuiteResource && note && blockSuiteResource.resourceKind !== 'rich-page' && <Suspense fallback={<p role="status">正在加载 BlockSuite 资源编辑器…</p>}>
       <BlockSuiteResourceEditor key={`${noteKey(note)}:${blockSuiteResource.resourceId}`} note={note} resource={blockSuiteResource}
         onOpenBackups={() => { blockSuiteResourceOpen.current = false; setBlockSuiteResource(null); void restore(); }}
         onNoteSaved={(saved) => {
@@ -931,7 +1068,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         onForked={(saved, resource) => {
           setCollection(saved.collection); setCurrent(saved, saved.content); setState('已保存');
           setEditorGeneration(value => value + 1); setBlockSuiteResource(resource); blockSuiteResourceOpen.current = true;
-          setMessage('已另存为新富 Page，原笔记与远端内容保持原状。'); void refresh(saved.collection);
+          setMessage('已另存为新笔记，原笔记与远端内容保持原状。'); void refresh(saved.collection);
         }}
         onNoteVersionChange={(artifactSetEtag) => {
           if (!noteRef.current || noteKey(noteRef.current) !== noteKey(note)) return;

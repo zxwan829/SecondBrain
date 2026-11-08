@@ -1432,7 +1432,11 @@ for (const viewport of activeViewports) {
       observed.setWp5Step('rich_page_create');
       const richNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
         && new URL(response.url()).pathname === '/api/notes', { timeout: 15000 });
-      await page.getByRole('button', { name: '新建富 Page', exact: true }).click();
+      await page.addInitScript(() => { (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
+        window.addEventListener('sb:blocksuite-editor-ready', event => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail)); });
+      await page.evaluate(() => { (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
+        window.addEventListener('sb:blocksuite-editor-ready', event => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail)); });
+      await page.getByRole('button', { name: '新建笔记', exact: true }).click();
       const richCreatedResponse = await richNoteCreate;
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_001');
       expect(richCreatedResponse.status(), 'wp5_rich_page_note_created').toBe(200);
@@ -1442,8 +1446,9 @@ for (const viewport of activeViewports) {
       observed.setWp5Step('rich_page_open');
       const richResourceCreate = page.waitForResponse(response => response.request().method() === 'POST'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
-      const richDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      const richDialog = page.locator('.blocksuite-resource-inline');
       await expect(richDialog).toBeVisible({ timeout: 25000 });
+      await expect(page.getByRole('dialog', { name: '笔记编辑器' })).toHaveCount(0);
       observed.setDiagnosticAssertion('wp5_resource_dialog_open');
       const richResourceResponse = await richResourceCreate;
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_002');
@@ -1461,20 +1466,86 @@ for (const viewport of activeViewports) {
         const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: { getBlocksByFlavour: (flavour: string) => Array<{ model: { props: { text?: { toString: () => string } } } }> } }).__sbBlockSuiteStore;
         return store?.getBlocksByFlavour('affine:paragraph').map(({ model }) => model.props.text?.toString() ?? '') ?? [];
       });
-      expect(richParagraphTexts).toEqual(['富 Page', '在这里开始编辑完整富格式内容。']);
+      expect(richParagraphTexts).toEqual(['新建笔记', '']);
+      await expect(richDialog.locator('[data-sb-document-title-block="true"]')).toBeHidden();
+      await expect(richDialog.locator('.document-heading')).toHaveCount(1);
       const richBody = richDialog.locator('.affine-page-viewport affine-paragraph').nth(1);
       await expect(richBody).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_content_visible');
       observed.setWp5Step('rich_page_body_edit');
       await richBody.click();
-      await page.keyboard.press('End');
-      await page.keyboard.insertText(` ${richText}`);
+      await expect.poll(() => richBody.locator('rich-text .inline-editor').evaluate(editor => {
+        const selection = window.getSelection();
+        return editor.getAttribute('contenteditable') === 'true' && Boolean(selection?.anchorNode && editor.contains(selection.anchorNode));
+      })).toBe(true);
+      await page.keyboard.insertText(richText);
+      await page.keyboard.press('Enter');
+      const secondRichLine = 'Second paragraph after Enter';
+      await page.keyboard.insertText(secondRichLine);
+      const liveEnterEvidence = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
+        const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+        const blocks = (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any, index: number) => ({
+          id: model.id, parentId: store.getParent(model)?.id, index,
+          text: model.props.text?.toString?.() ?? '', type: model.props.type,
+        }));
+        const active = document.activeElement as HTMLElement | null;
+        const selection = window.getSelection();
+        const editor = active?.getAttribute('contenteditable') === 'true' ? active : selection?.anchorNode?.parentElement?.closest('[contenteditable="true"]');
+        return { activeTag: active?.tagName ?? null, activeRole: active?.getAttribute('role') ?? null,
+          editorTag: editor?.tagName ?? null, contenteditable: editor?.getAttribute('contenteditable') ?? null,
+          selectionText: selection?.toString() ?? '', anchorOffset: selection?.anchorOffset ?? null,
+          anchorInsideEditor: Boolean(selection?.anchorNode && editor?.contains(selection.anchorNode)), blocks };
+      });
+      console.log(`WP5_NATIVE_ENTER_DOM ${JSON.stringify(liveEnterEvidence)}`);
+      const firstEnterBlock = liveEnterEvidence.blocks.find(block => block.text.includes(richText));
+      const secondEnterBlock = liveEnterEvidence.blocks.find(block => block.text.includes(secondRichLine));
+      expect(firstEnterBlock?.text, 'wp5_rich_page_enter_first_paragraph_exact').toBe(richText);
+      expect(secondEnterBlock?.text, 'wp5_rich_page_enter_second_paragraph_content').toContain(secondRichLine);
+      expect(firstEnterBlock?.id, 'wp5_rich_page_enter_distinct_block_ids').toBeTruthy();
+      expect(secondEnterBlock?.id, 'wp5_rich_page_enter_distinct_block_ids').toBeTruthy();
+      expect(firstEnterBlock?.id, 'wp5_rich_page_enter_distinct_block_ids').not.toBe(secondEnterBlock?.id);
+      expect(firstEnterBlock?.parentId, 'wp5_rich_page_enter_same_parent').toBe(secondEnterBlock?.parentId);
+      expect(firstEnterBlock!.index, 'wp5_rich_page_enter_order').toBeLessThan(secondEnterBlock!.index);
+      expect(liveEnterEvidence.anchorInsideEditor).toBe(true);
+      await expect(richDialog.locator('affine-paragraph').filter({ hasText: richText })).toBeVisible();
+      await expect(richDialog.locator('affine-paragraph').filter({ hasText: secondRichLine })).toBeVisible();
+      const secondLineEditor = richDialog.locator('affine-paragraph').filter({ hasText: secondRichLine }).last().locator('rich-text .inline-editor');
+      await secondLineEditor.evaluate(editor => editor.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' })));
+      await page.keyboard.insertText(' 中文输入法内容');
+      await secondLineEditor.evaluate(editor => editor.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文输入法内容' })));
+      await expect(richDialog.locator('affine-paragraph').filter({ hasText: '中文输入法内容' })).toBeVisible();
+      const backspaceProbe = ` backspace-probe-${randomUUID()}`;
+      await page.keyboard.insertText(backspaceProbe);
+      await page.keyboard.press('Backspace');
+      await expect(richDialog.locator('affine-paragraph').filter({ hasText: backspaceProbe.slice(0, -1) })).toBeVisible();
+      const undoProbe = ` undo-probe-${randomUUID()}`;
+      await page.keyboard.insertText(undoProbe);
+      await page.keyboard.press('Control+z');
+      await expect(richDialog.locator('affine-paragraph').filter({ hasText: undoProbe })).toHaveCount(0);
+      await page.keyboard.press('Control+Shift+z');
+      await expect(richDialog.locator('affine-paragraph').filter({ hasText: undoProbe })).toBeVisible();
+      const firstBodyBlock = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
+      await firstBodyBlock.click(); await page.keyboard.press('Home'); await page.keyboard.press('Backspace');
+      const firstParagraphBackspace = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
+        const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+        const blocks = (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => ({
+          id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
+        }));
+        return { title: blocks.find(block => block.type === 'h1')?.text ?? '',
+          firstBody: blocks.find(block => block.text.includes(richText)) ?? null, titleId: blocks.find(block => block.type === 'h1')?.id };
+      });
+      expect(firstParagraphBackspace.title, 'wp5_rich_page_backspace_title_boundary').toBe('新建笔记');
+      expect(firstParagraphBackspace.firstBody?.text, 'wp5_rich_page_backspace_keeps_first_paragraph').toBe(richText);
+      expect(firstParagraphBackspace.firstBody?.id, 'wp5_rich_page_backspace_keeps_first_paragraph_id').not.toBe(firstParagraphBackspace.titleId);
+      const readyMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<{ durationMs: number; viewport: string }> }).__wp5ReadyEvents ?? []);
+      expect(readyMetrics.length).toBeGreaterThan(0);
+      expect(readyMetrics.at(-1)?.viewport).toBe('1440x1000');
       const firstRichResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
       const firstRichMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
       observed.setWp5Step('rich_page_first_save');
-      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      await richDialog.getByRole('button', { name: '保存笔记', exact: true }).click();
       expect((await firstRichResourceSave).status(), 'wp5_rich_page_first_native_save').toBe(200);
       expect((await firstRichMarkdownSave).status(), 'wp5_rich_page_first_projection_save').toBe(200);
       await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
@@ -1482,16 +1553,16 @@ for (const viewport of activeViewports) {
       const firstMarkdownRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
       expect(firstMarkdownRead.status(), 'wp5_rich_page_first_markdown_readback').toBe(200);
       expect((await firstMarkdownRead.json() as { content: string }).content, 'wp5_rich_page_first_projection_content').toContain(richText);
+      expect((await firstMarkdownRead.json() as { content: string }).content, 'wp5_rich_page_placeholder_not_persisted').not.toContain('在这里开始编辑');
+      expect((await firstMarkdownRead.json() as { content: string }).content, 'wp5_rich_page_neutral_reference_label').toContain('[笔记数据]');
       const firstNativeRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
       expect(firstNativeRead.status(), 'wp5_rich_page_first_native_readback').toBe(200);
       expect(JSON.stringify((await firstNativeRead.json() as { snapshot: unknown }).snapshot), 'wp5_rich_page_first_native_content').toContain(richText);
       observed.setWp5Step('rich_page_close');
-      await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
+      await richDialog.getByRole('button', { name: '返回笔记列表' }).click();
       await expect(richDialog).toHaveCount(0, { timeout: 15000 });
-      const firstRichReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
-      await expect(firstRichReference).toBeVisible({ timeout: 15000 });
       observed.setWp5Step('rich_page_reopen');
-      await firstRichReference.click();
+      await page.locator('.notes-sidebar li button').filter({ hasText: '新建笔记' }).last().click();
       await expect(richDialog).toBeVisible({ timeout: 20000 });
       await expect(richDialog.locator('.blocksuite-resource-host .affine-page-viewport')).toBeVisible({ timeout: 15000 });
       const reopenedRichParagraphs = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
@@ -1499,6 +1570,41 @@ for (const viewport of activeViewports) {
         return store?.getBlocksByFlavour('affine:paragraph').map(({ model }) => model.props.text?.toString() ?? '') ?? [];
       });
       expect(reopenedRichParagraphs.join('\n'), 'wp5_rich_page_close_reopen_content').toContain(richText);
+      expect(reopenedRichParagraphs.join('\n'), 'wp5_rich_page_enter_persisted').toContain(secondRichLine);
+      const discardedMarker = `Discard guard ${randomUUID()}`;
+      const reopenedBody = richDialog.locator('affine-paragraph').filter({ hasText: secondRichLine }).last();
+      await reopenedBody.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${discardedMarker}`);
+      await richDialog.getByRole('button', { name: '返回笔记列表' }).click();
+      const exitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
+      await expect(exitPrompt).toBeVisible();
+      await exitPrompt.getByRole('button', { name: '取消' }).click();
+      await expect(richDialog.getByText(discardedMarker)).toBeVisible();
+      await richDialog.getByRole('button', { name: '返回笔记列表' }).click();
+      await exitPrompt.getByRole('button', { name: '放弃本次修改' }).click();
+      await expect(richDialog).toHaveCount(0);
+      await page.locator('.notes-sidebar li button').filter({ hasText: '新建笔记' }).last().click();
+      await expect(richDialog.getByText(secondRichLine, { exact: false })).toBeVisible();
+      await expect(richDialog.getByText(discardedMarker, { exact: false })).toHaveCount(0);
+      const desktopSize = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: 844 });
+      const mobileLayout = await page.locator('.notes-layout').evaluate(layout => {
+        const rect = layout.getBoundingClientRect();
+        const controls = [...layout.querySelectorAll<HTMLElement>('.document-controls button, .blocksuite-resource-toolbar button, .document-back-action')]
+          .map(control => { const box = control.getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, visible: box.width > 0 && box.height > 0 }; });
+        return { viewportWidth: window.innerWidth, scrollWidth: document.documentElement.scrollWidth,
+          layoutLeft: rect.left, layoutRight: rect.right, controls };
+      });
+      expect(mobileLayout.scrollWidth, 'wp5_notes_mobile_no_horizontal_overflow').toBeLessThanOrEqual(mobileLayout.viewportWidth);
+      expect(mobileLayout.controls.every(control => control.visible && control.left >= 0 && control.right <= mobileLayout.viewportWidth),
+        'wp5_notes_mobile_controls_inside_viewport').toBe(true);
+      await page.setViewportSize(desktopSize ?? { width: 1440, height: 1000 });
+      await page.reload();
+      await expect(richDialog).toBeVisible({ timeout: 30000 });
+      await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 30000 });
+      const warmReadyMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<{ durationMs: number; viewport: string }> }).__wp5ReadyEvents ?? []);
+      expect(warmReadyMetrics.length, 'wp5_notes_warm_open_measurement_present').toBeGreaterThan(0);
+      console.log(`WP5_NOTES_OPEN_TIMINGS ${JSON.stringify({ firstOpen: readyMetrics.at(-1), warmOpen: warmReadyMetrics.at(-1) })}`);
+      await expect(richDialog.getByText(richText, { exact: false })).toBeVisible();
       if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
 
       // Keep archive-only UI checks independent from the separate resource
@@ -1507,6 +1613,7 @@ for (const viewport of activeViewports) {
       // without paying for a nested canvas/blob round trip first.
       let nestedCanvasResourceId: string | null = null;
       if (!wp5ArchiveUxOnly) {
+      await richDialog.locator('.blocksuite-canvas-tools > summary').click();
       const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
       observed.setWp5Step('rich_page_nested_canvas_create');
       const nestedCanvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
@@ -1634,13 +1741,13 @@ for (const viewport of activeViewports) {
       await nestedCanvasClose.click();
       await expect(nestedCanvasCard.getByText(/自动裁剪预览 · 1 个对象/)).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
-      await expect(richDialog.getByRole('button', { name: '保存资源', exact: true })).toBeEnabled();
+      await expect(richDialog.getByRole('button', { name: '保存笔记', exact: true })).toBeEnabled();
       const richResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
       const richMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
       observed.setWp5Step('rich_page_parent_save');
-      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      await richDialog.getByRole('button', { name: '保存笔记', exact: true }).click();
       expect((await richResourceSave).status(), 'wp5_rich_page_native_save').toBe(200);
       expect((await richMarkdownSave).status(), 'wp5_rich_page_projection_save').toBe(200);
       await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
@@ -1762,6 +1869,9 @@ for (const viewport of activeViewports) {
         await expect(plus).toHaveAttribute('data-visible', 'true');
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_026');
         await expect(grip).toHaveAttribute('data-visible', 'true');
+        if (process.env.SB_WP5_NATIVE_SCREENSHOT_PATH) {
+          await page.locator('.notes-layout').screenshot({ path: process.env.SB_WP5_NATIVE_SCREENSHOT_PATH });
+        }
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_027');
         const controlGeometry = await Promise.all([grip, plus].map(locator => locator.evaluate(button => {
           const rect = button.getBoundingClientRect();
@@ -2113,6 +2223,7 @@ for (const viewport of activeViewports) {
         await expect(emojiParagraph, 'wp5_archive_emoji_insert').toContainText('😀', { timeout: 5000 });
         await expect(emojiDialog, 'wp5_archive_emoji_insert').toHaveCount(0);
 
+        await richDialog.locator('.blocksuite-canvas-tools > summary').click();
         const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
         observed.setDiagnosticAssertion('wp5_archive_canvas_reference_lifecycle');
         const canvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
@@ -2180,7 +2291,7 @@ for (const viewport of activeViewports) {
           && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
         const savedArchiveMarkdown = page.waitForResponse(response => response.request().method() === 'PUT'
           && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
-        await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+        await richDialog.getByRole('button', { name: '保存笔记', exact: true }).click();
         expect((await savedArchiveResource).status(), 'wp5_archive_ux_resource_save').toBe(200);
         expect((await savedArchiveMarkdown).status(), 'wp5_archive_ux_markdown_save').toBe(200);
         const archiveSaveState = await richDialog.locator('.document-status').evaluate(element => {
@@ -2208,7 +2319,7 @@ for (const viewport of activeViewports) {
           const probeWindow = window as Window & { __wp5PdfProbe?: { state: string } };
           probeWindow.__wp5PdfProbe = { state: 'waiting' };
           const observer = new MutationObserver(() => {
-            const frame = document.querySelector<HTMLIFrameElement>('iframe[title="富文档 PDF 打印"]');
+            const frame = document.querySelector<HTMLIFrameElement>('iframe[title="笔记 PDF 打印"]');
             if (!frame) return;
             observer.disconnect();
             frame.addEventListener('load', () => {
@@ -2236,12 +2347,10 @@ for (const viewport of activeViewports) {
               : pdfProbeState === 'missing_body' ? 'wp5_archive_pdf_body_missing_body' : 'wp5_archive_pdf_body_source_missing');
         expect(pdfProbeState, 'wp5_archive_pdf_print_preview_dom').toBe('body_contains_source');
         observed.setDiagnosticAssertion('wp5_archive_save_close');
-        await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
+        await richDialog.getByRole('button', { name: '返回笔记列表', exact: true }).click();
         await expect(richDialog).toHaveCount(0);
         observed.setDiagnosticAssertion('wp5_archive_saved_reopen');
-        const savedArchiveReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
-        await expect(savedArchiveReference).toBeVisible();
-        await savedArchiveReference.click();
+        await page.locator('.notes-sidebar li button').filter({ hasText: '新建笔记' }).last().click();
         await expect(richDialog).toBeVisible();
         await expect(richDialog).toHaveAttribute('aria-busy', 'false');
         await expect.poll(async () => (await readBlockOrder()).filter(block => block.text.includes('Archive reorder target')).length)
@@ -2263,6 +2372,7 @@ for (const viewport of activeViewports) {
         const reopenedTable = richHost.locator('affine-table').last();
         observed.setDiagnosticAssertion('wp5_archive_table_state_reopened');
         await expect(reopenedTable).toBeVisible();
+        await richDialog.locator('.blocksuite-canvas-tools > summary').click();
         const reopenedGallery = richDialog.getByRole('region', { name: '独立画布资源' });
         const reopenedCopiedCard = reopenedGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
         const reopenedSourceCard = reopenedGallery.locator('.canvas-b-card').filter({ hasText: sourceCanvas.resource_id });
@@ -2298,6 +2408,34 @@ for (const viewport of activeViewports) {
         expect(reopenedMergeTexts.join('\n'), 'wp5_archive_table_merge_source_reopened').toContain(mergeSourceText);
         expect(reopenedMergeTexts.join('\n'), 'wp5_archive_table_merge_covered_reopened').toContain(mergeCoveredText);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_034');
+        if (process.env.SB_WP5_NATIVE_DOM_EVIDENCE_PATH) {
+          await targetParagraph.hover();
+          const interactiveChrome = await Promise.all([grip, plus].map(locator => locator.evaluate(button => {
+            const rect = button.getBoundingClientRect();
+            const style = getComputedStyle(button);
+            return { kind: button.getAttribute('data-kind'), visible: button.dataset.visible === 'true'
+              && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none',
+              x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) };
+          })));
+          const titleAndBody = await page.locator('.notes-document-rich-page').evaluate(root => {
+            const visible = (node: Element) => { const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(node).display !== 'none'; };
+            const heading = [...root.querySelectorAll('.document-heading')].filter(visible).map(node => node.textContent?.trim() ?? '');
+            const hiddenTitle = root.querySelector('[data-sb-document-title-block="true"]');
+            const hiddenTitleDisplay = hiddenTitle ? getComputedStyle(hiddenTitle).display : null;
+            const host = root.querySelector<HTMLElement>('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
+            const blocks = (host?.__sbBlockSuiteStore?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => ({
+              text: model.props.text?.toString?.() ?? '', type: model.props.type,
+            }));
+            return { visibleTitleHeadings: heading, hiddenTitleDisplay, blocks,
+              inlineEditor: Boolean(root.querySelector('.blocksuite-resource-dialog.blocksuite-resource-inline')),
+              modalEditorCount: document.querySelectorAll('.blocksuite-resource-backdrop').length };
+          });
+          await writeFile(process.env.SB_WP5_NATIVE_DOM_EVIDENCE_PATH, JSON.stringify({
+            viewport: '1440x1000', enter: liveEnterEvidence, firstOpen: readyMetrics.at(-1), warmOpen: warmReadyMetrics.at(-1),
+            titleAndBody, blockControls: interactiveChrome,
+            journey: ['create', 'title', 'first line', 'Enter', 'multi paragraph', 'drag', 'insert', 'save', 'switch', 'reopen', 'reload'],
+          }, null, 2));
+        }
         return;
       }
       if (!nestedCanvasResourceId) throw new Error('Expected nested canvas resource identity for recovery verification');
@@ -2306,12 +2444,11 @@ for (const viewport of activeViewports) {
       await restoreParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${restoreMarker}`);
       const restoreResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
         && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
-      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      await richDialog.getByRole('button', { name: '保存笔记', exact: true }).click();
       expect((await restoreResourceSave).status(), 'wp5_rich_page_restore_probe_save').toBe(200);
       await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
-      await richDialog.locator('details.diagnostics > summary').click();
-      await richDialog.getByRole('button', { name: '备份正文与画布' }).click();
-      await expect(richDialog).toHaveCount(0, { timeout: 15000 });
+      await richDialog.locator('.blocksuite-more-tools > summary').click();
+      await richDialog.getByRole('button', { name: '查看版本与恢复' }).click();
       const backupSection = page.getByRole('region', { name: 'BlockSuite 快照恢复' });
       await expect(backupSection).toBeVisible({ timeout: 15000 });
       observed.setWp5Step('rich_page_backup_preview');
@@ -2341,11 +2478,7 @@ for (const viewport of activeViewports) {
 
       observed.setWp5Step('rich_page_post_restore_reopen');
       await page.reload();
-      await page.getByRole('button', { name: '富 Page', exact: true }).click();
-      await expect(page.locator('.blocksuite-notes-canvas').getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
-      const richReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
-      await richReference.click();
-      const reopenedRichDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      const reopenedRichDialog = page.locator('.blocksuite-resource-inline');
       await expect(reopenedRichDialog).toBeVisible({ timeout: 20000 });
       await expect(reopenedRichDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
       const reopenedEdgelessViewport = reopenedRichDialog.locator('.affine-edgeless-viewport');
@@ -2378,10 +2511,10 @@ for (const viewport of activeViewports) {
       }, { path: richCreated.path, content: latestRichNote.content, etag: latestRichNote.etag,
         artifactSetEtag: latestArtifactSetEtag, marker: externalRichMarker });
       expect(externalRichWrite, 'wp5_rich_page_external_markdown_write').toBe(200);
-      const conflictRichDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      const conflictRichDialog = page.locator('.blocksuite-resource-inline');
       const localRichMarker = `local rich-page ${randomUUID()}`;
       const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
-      const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
+      const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存笔记', exact: true });
       let conflictAction = 'paragraph-geometry';
       type NoteClickState = { selected: boolean; editing: boolean; gfxEditing: boolean; caretInParagraph: boolean; locked: boolean | null; rangeCount: number; anchorOffset: number | null };
       let firstClickState: NoteClickState | null = null;
