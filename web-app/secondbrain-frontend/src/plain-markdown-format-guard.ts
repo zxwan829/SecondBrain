@@ -53,7 +53,7 @@ export function findPlainMarkdownFormatViolations(snapshot: unknown): PlainMarkd
 
 export class PlainMarkdownFormatError extends Error {
   constructor(readonly violations: PlainMarkdownFormatViolation[]) {
-    super('当前格式无法无损保存为普通 Markdown；已停止正文写入并保留原始文档。请下载恢复副本，或显式创建富 Page 副本继续。');
+    super('当前格式无法无损保存为普通 Markdown；已停止正文写入并保留原始文档。请下载恢复副本，或创建完整格式笔记副本继续。');
     this.name = 'PlainMarkdownFormatError';
   }
 }

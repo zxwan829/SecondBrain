@@ -2085,6 +2085,25 @@ for (const viewport of activeViewports) {
         const dropY = dragPreflight === 'wp5_archive_drag_source_after'
           ? bodyBox!.y + 1 : bodyBox!.y + bodyBox!.height - 1;
         await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, dropY, { steps: 5 });
+        const dragDiagnostic = await archiveViewport.evaluate((root, point) => {
+          const widget = root.querySelector('sb-desktop-page-plus-widget') as (HTMLElement & {
+            anchor?: { id?: string } | null;
+            dragSource?: { id?: string } | null;
+            dropTarget?: { id?: string; before?: boolean } | null;
+          }) | null;
+          const hit = document.elementFromPoint(point.x, point.y)?.closest('[data-block-id]') as HTMLElement | null;
+          return {
+            point: { x: point.x, y: point.y },
+            hitBlockId: hit?.getAttribute('data-block-id') ?? null,
+            anchorId: widget?.anchor?.id ?? null,
+            dragSourceId: widget?.dragSource?.id ?? null,
+            dropTargetId: widget?.dropTarget?.id ?? null,
+            dropBefore: widget?.dropTarget?.before ?? null,
+            pointerCapture: widget?.shadowRoot?.querySelector('button[data-kind="grip"]')
+              ?.hasPointerCapture(1) ?? null,
+          };
+        }, { x: bodyBox!.x + bodyBox!.width / 3, y: dropY });
+        console.log('WP5_ARCHIVE_DRAG_DIAGNOSTIC', JSON.stringify(dragDiagnostic));
         await page.mouse.up();
         observed.setDiagnosticAssertion('wp5_archive_drag_result');
         await expect.poll(async () => {

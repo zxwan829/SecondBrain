@@ -174,7 +174,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
                 current.store.readonly = true;
                 formatViolationRef.current = true;
                 setFormatViolation(true);
-                setStatus('此格式无法安全写回普通 Markdown；原文与本地编辑均保留。请下载完整恢复副本后显式另存为富 Page。');
+                setStatus('此格式无法安全写回普通 Markdown；原文与本地编辑均保留。请下载完整恢复副本后另存为完整格式笔记。');
                 pendingCallback.current?.(true);
                 return;
               }
