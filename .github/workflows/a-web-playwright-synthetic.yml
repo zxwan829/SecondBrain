@@ -13,6 +13,16 @@ on:
         required: false
         type: boolean
         default: false
+      wp5_rich_page_mode_only:
+        description: Run only the desktop rich Page edit/save/reopen and Page/Edgeless mode round trip
+        required: false
+        type: boolean
+        default: false
+      wp5_archive_ux_only:
+        description: Run only the desktop synthetic Rich Page archived UX interaction journey
+        required: false
+        type: boolean
+        default: false
       wp5_conflict_only:
         description: Run only the desktop Notes conflict-autosave and recovery probe
         required: false
@@ -75,9 +85,11 @@ jobs:
         env:
           WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only || inputs.wp5_open_only }}
           WP5_CONFLICT_ONLY: ${{ inputs.wp5_conflict_only }}
+          WP5_RICH_PAGE_MODE_ONLY: ${{ inputs.wp5_rich_page_mode_only }}
+          WP5_ARCHIVE_UX_ONLY: ${{ inputs.wp5_archive_ux_only }}
         run: |
-          if [ "$WP5_ROUNDTRIP_ONLY" = "true" ] || [ "$WP5_CONFLICT_ONLY" = "true" ]; then
-            npm test -- --run src/NotesPage.test.tsx src/App.navigation.test.tsx src/blocksuite-markdown.test.ts src/zod-security.test.ts src/api/notes-blocksuite-blobs.test.ts
+          if [ "$WP5_ROUNDTRIP_ONLY" = "true" ] || [ "$WP5_CONFLICT_ONLY" = "true" ] || [ "$WP5_RICH_PAGE_MODE_ONLY" = "true" ] || [ "$WP5_ARCHIVE_UX_ONLY" = "true" ]; then
+            npm test -- --run src/NotesPage.test.tsx src/App.navigation.test.tsx src/blocksuite-markdown.test.ts src/zod-security.test.ts src/api/notes-blocksuite-blobs.test.ts src/rich-page-projection.test.ts src/plain-markdown-format-guard.test.ts
           else
             npm test
           fi
@@ -95,12 +107,18 @@ jobs:
         env:
           WP5_ROUNDTRIP_ONLY: ${{ inputs.wp5_roundtrip_only || inputs.wp5_open_only }}
           WP5_CONFLICT_ONLY: ${{ inputs.wp5_conflict_only }}
+          WP5_RICH_PAGE_MODE_ONLY: ${{ inputs.wp5_rich_page_mode_only }}
+          WP5_ARCHIVE_UX_ONLY: ${{ inputs.wp5_archive_ux_only }}
           SB_E2E_PRODUCTION_BUILD: "true"
           SB_E2E_WP5_OPEN_ONLY: ${{ inputs.wp5_open_only }}
           WP5_DESKTOP_ONLY: ${{ inputs.wp5_desktop_only }}
         run: |
           if [ "$WP5_CONFLICT_ONLY" = "true" ]; then
             python web-app/e2e/scripts/run_synthetic_ci.py --wp5-conflict-only
+          elif [ "$WP5_RICH_PAGE_MODE_ONLY" = "true" ]; then
+            python web-app/e2e/scripts/run_synthetic_ci.py --wp5-rich-page-mode-only
+          elif [ "$WP5_ARCHIVE_UX_ONLY" = "true" ]; then
+            python web-app/e2e/scripts/run_synthetic_ci.py --wp5-archive-ux-only
           elif [ "$WP5_ROUNDTRIP_ONLY" = "true" ]; then
             python web-app/e2e/scripts/run_synthetic_ci.py --wp5-roundtrip-only
           elif [ "$WP5_DESKTOP_ONLY" = "true" ]; then

@@ -1,0 +1,35 @@
+@scope (.sb-archive-surface) {
+.canvas-b-shell { min-height:100vh; padding:24px; box-sizing:border-box; background:#f5f7fb; color:#202631; font:14px/1.45 system-ui,sans-serif; }
+.canvas-b-shell [hidden] { display:none !important; }
+.canvas-b-header { position:sticky; top:0; z-index:20; display:grid; grid-template-columns:minmax(240px,1fr) auto; gap:10px 18px; align-items:center; padding:14px 18px; border:1px solid #d9e0eb; border-radius:12px; background:rgba(255,255,255,.96); box-shadow:0 4px 18px #14213d12; }
+.canvas-b-header strong,.canvas-b-header small { display:block; }
+.canvas-b-header strong { font-size:18px; }
+.canvas-b-header small { margin-top:4px; color:#626d7c; }
+.canvas-b-controls { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+.canvas-b-controls button,.canvas-b-card button { border:1px solid #cbd5e1; border-radius:7px; padding:7px 10px; background:#fff; color:#263244; cursor:pointer; }
+.canvas-b-controls button:hover,.canvas-b-card button:hover { background:#eff5ff; border-color:#93b4f5; }
+.canvas-b-controls button:disabled,.canvas-b-card button:disabled { opacity:.55; cursor:wait; }
+.canvas-b-status { grid-column:1/-1; min-height:20px; color:#2457a7; font-size:13px; overflow-wrap:anywhere; }
+.canvas-b-page { margin:18px auto; max-width:1120px; }
+.canvas-b-note { min-height:150px; padding:20px; border:1px solid #d9e0eb; border-radius:12px; background:#fff; }
+.canvas-b-note .affine-page-viewport { min-height:100px; }
+.canvas-b-page h2 { margin:24px 0 10px; font-size:17px; }
+.canvas-b-page>p { color:#596476; }
+.canvas-b-card-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+.canvas-b-card { display:flex; min-height:208px; flex-direction:column; align-items:flex-start; gap:8px; padding:12px; border:1px solid #d9e0eb; border-radius:12px; background:#fff; box-shadow:0 3px 12px #14213d0a; }
+.canvas-b-card-preview { position:relative; display:flex; width:100%; height:112px; align-items:center; justify-content:center; overflow:hidden; border:1px dashed #b9c7da; border-radius:8px; background:linear-gradient(135deg,#fff,#f1f5fa); color:#687589; font-size:12px; }
+.canvas-b-card-preview i { position:absolute; left:calc(22% + var(--x,0px)); top:calc(30% + var(--y,0px)); width:54px; height:34px; border:2px solid #526f99; border-radius:5px; background:#eaf1fb; }
+.canvas-b-card-preview svg { position:absolute; inset:8px; width:calc(100% - 16px); height:calc(100% - 16px); overflow:visible; }
+.canvas-b-card-preview svg rect,.canvas-b-card-preview svg ellipse { fill:#fde68a; fill-opacity:.42; stroke:#526f99; stroke-width:3; vector-effect:non-scaling-stroke; }
+.canvas-b-card code { max-width:100%; color:#5f6d7d; font-size:11px; overflow-wrap:anywhere; }
+.canvas-b-card small { color:#687589; font-size:11px; }
+.canvas-b-editor { position:fixed; inset:0; z-index:40; display:flex; flex-direction:column; background:#fff; }
+.canvas-b-active-label { padding:8px 16px; border-bottom:1px solid #dce3ed; background:#f8fafc; color:#374151; font-size:13px; }
+.canvas-b-edgeless-host { min-height:0; flex:1; }
+.canvas-b-edgeless-host>div { width:100%; height:100%; }
+.canvas-b-inspector { position:absolute; right:12px; bottom:12px; z-index:50; max-width:min(440px,50vw); max-height:35vh; overflow:auto; padding:8px 12px; border:1px solid #bfcbd9; border-radius:8px; background:#fffffff2; box-shadow:0 4px 16px #0002; }
+.canvas-b-inspector summary { cursor:pointer; color:#42536b; font-size:12px; }
+.canvas-b-inspector pre { max-height:26vh; overflow:auto; font-size:10px; }
+.canvas-b-footer { margin:20px auto 0; max-width:1120px; color:#667386; font-size:12px; }
+
+}

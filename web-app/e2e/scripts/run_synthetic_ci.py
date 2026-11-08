@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import os
 import re
 import secrets
@@ -128,8 +129,59 @@ FAILURE_DIAGNOSTIC_ASSERTIONS = {
     "notes_conflict_seed_status_422", "notes_conflict_seed_status_428",
     "notes_conflict_seed_status_other",
     "wp5_resource_focus", "wp5_resource_type", "wp5_resource_dirty", "wp5_resource_save", "wp5_resource_saved", "wp5_resource_close", "wp5_resource_reopen",
-    "wp5_resource_checkpoint_001", "wp5_resource_checkpoint_002", "wp5_resource_checkpoint_003", "wp5_resource_checkpoint_004", "wp5_resource_checkpoint_005", "wp5_resource_checkpoint_006", "wp5_resource_checkpoint_007", "wp5_resource_checkpoint_008", "wp5_resource_checkpoint_009", "wp5_resource_checkpoint_010", "wp5_resource_checkpoint_011", "wp5_resource_checkpoint_012", "wp5_resource_checkpoint_013", "wp5_resource_checkpoint_014", "wp5_resource_checkpoint_015", "wp5_resource_checkpoint_016", "wp5_resource_checkpoint_017", "wp5_resource_checkpoint_018", "wp5_resource_checkpoint_019", "wp5_resource_checkpoint_020", "wp5_resource_checkpoint_021", "wp5_resource_checkpoint_022", "wp5_resource_checkpoint_023", "wp5_resource_checkpoint_024", "wp5_resource_checkpoint_025", "wp5_resource_checkpoint_026", "wp5_resource_checkpoint_027", "wp5_resource_checkpoint_028", "wp5_resource_checkpoint_029", "wp5_resource_checkpoint_030", "wp5_resource_checkpoint_031", "wp5_resource_checkpoint_032", "wp5_resource_checkpoint_033", "wp5_resource_checkpoint_034", "wp5_resource_checkpoint_035", "wp5_resource_checkpoint_036", "wp5_resource_checkpoint_037", "wp5_resource_checkpoint_038", "wp5_resource_checkpoint_039", "wp5_resource_checkpoint_040", "wp5_resource_checkpoint_041", "wp5_resource_checkpoint_042", "wp5_resource_checkpoint_043", "wp5_resource_checkpoint_044", "wp5_resource_checkpoint_045", "wp5_resource_checkpoint_046", "wp5_resource_checkpoint_047", "wp5_resource_checkpoint_048", "wp5_resource_checkpoint_049", "wp5_resource_checkpoint_050", "wp5_resource_checkpoint_051", "wp5_resource_checkpoint_052", "wp5_resource_checkpoint_053", "wp5_resource_checkpoint_054", "wp5_resource_checkpoint_055", "wp5_resource_checkpoint_056", "wp5_resource_checkpoint_057", "wp5_resource_checkpoint_058", "wp5_resource_checkpoint_059", "wp5_resource_checkpoint_060", "wp5_resource_checkpoint_061", "wp5_resource_checkpoint_062", "wp5_resource_checkpoint_063", "wp5_resource_checkpoint_064", "wp5_resource_checkpoint_065",
-    "wp5_resource_dialog_open", "wp5_resource_content_visible", "wp5_resource_editable",
+    "wp5_resource_checkpoint_001", "wp5_resource_checkpoint_002", "wp5_resource_checkpoint_003", "wp5_resource_checkpoint_004", "wp5_resource_checkpoint_005", "wp5_resource_checkpoint_006", "wp5_resource_checkpoint_007", "wp5_resource_checkpoint_008", "wp5_resource_checkpoint_009", "wp5_resource_checkpoint_010", "wp5_resource_checkpoint_011", "wp5_resource_checkpoint_012", "wp5_resource_checkpoint_013", "wp5_resource_checkpoint_014", "wp5_resource_checkpoint_015", "wp5_resource_checkpoint_016", "wp5_resource_checkpoint_017", "wp5_resource_checkpoint_018", "wp5_resource_checkpoint_019", "wp5_resource_checkpoint_020", "wp5_resource_checkpoint_021", "wp5_resource_checkpoint_022", "wp5_resource_checkpoint_023", "wp5_resource_checkpoint_024", "wp5_resource_checkpoint_025", "wp5_resource_checkpoint_026", "wp5_resource_checkpoint_027", "wp5_resource_checkpoint_028", "wp5_resource_checkpoint_029", "wp5_resource_checkpoint_030", "wp5_resource_checkpoint_031", "wp5_resource_checkpoint_032", "wp5_resource_checkpoint_033", "wp5_resource_checkpoint_034", "wp5_resource_checkpoint_035", "wp5_resource_checkpoint_036", "wp5_resource_checkpoint_037", "wp5_resource_checkpoint_038", "wp5_resource_checkpoint_039", "wp5_resource_checkpoint_040", "wp5_resource_checkpoint_041", "wp5_resource_checkpoint_042", "wp5_resource_checkpoint_043", "wp5_resource_checkpoint_044", "wp5_resource_checkpoint_045", "wp5_resource_checkpoint_046", "wp5_resource_checkpoint_047", "wp5_resource_checkpoint_048", "wp5_resource_checkpoint_049", "wp5_resource_checkpoint_050", "wp5_resource_checkpoint_051", "wp5_resource_checkpoint_052", "wp5_resource_checkpoint_053", "wp5_resource_checkpoint_054", "wp5_resource_checkpoint_055", "wp5_resource_checkpoint_056", "wp5_resource_checkpoint_057", "wp5_resource_checkpoint_058", "wp5_resource_checkpoint_059", "wp5_resource_checkpoint_060", "wp5_resource_checkpoint_061", "wp5_resource_checkpoint_062", "wp5_resource_checkpoint_063", "wp5_resource_checkpoint_064", "wp5_resource_checkpoint_065", "wp5_resource_checkpoint_066", "wp5_resource_checkpoint_067", "wp5_resource_checkpoint_068", "wp5_resource_checkpoint_069", "wp5_resource_checkpoint_070", "wp5_resource_checkpoint_071", "wp5_resource_checkpoint_072", "wp5_resource_checkpoint_073", "wp5_resource_checkpoint_074", "wp5_resource_checkpoint_075",
+    "wp5_archive_align_no_selection", "wp5_archive_align_wrong_target", "wp5_archive_align_empty_selection",
+    "wp5_archive_align_cross_block", "wp5_archive_align_model_range_missing", "wp5_archive_align_native_range_missing",
+    "wp5_archive_align_native_conversion_missing", "wp5_archive_align_logical_selection_mismatch",
+    "wp5_archive_alignment_selection_ready", "wp5_archive_align_action_click",
+    "wp5_archive_table_vertical_menu_action",
+    "wp5_archive_database_kanban",
+    "wp5_archive_database_seed",
+    "wp5_archive_database_add_view",
+    "wp5_archive_database_menu",
+    "wp5_archive_database_group",
+    "wp5_archive_database_card",
+    "wp5_archive_database_reopen_group",
+    "wp5_archive_database_reopen_card",
+    "wp5_archive_database_refresh_group",
+    "wp5_archive_database_refresh_card",
+    "wp5_archive_canvas_reference_lifecycle",
+    "wp5_archive_emoji_command_visible",
+    "wp5_archive_emoji_picker_visible",
+    "wp5_archive_emoji_search_results",
+    "wp5_archive_emoji_dom_target_present",
+    "wp5_archive_emoji_dom_target_missing",
+    "wp5_archive_emoji_insert",
+    "wp5_archive_html_export",
+    "wp5_archive_pdf_preview",
+    "wp5_archive_pdf_frame_attached",
+    "wp5_archive_pdf_body_text",
+    "wp5_archive_pdf_export_error",
+    "wp5_archive_pdf_no_frame",
+    "wp5_archive_pdf_body_missing_body",
+    "wp5_archive_pdf_body_contains_source",
+    "wp5_archive_pdf_body_source_missing",
+    "wp5_archive_save_close",
+    "wp5_archive_saved_reopen",
+    "wp5_archive_table_state_reopened",
+    "wp5_archive_resource_save_status_saved",
+    "wp5_archive_resource_save_status_unsaved",
+    "wp5_archive_resource_save_status_pending",
+    "wp5_archive_resource_save_status_error",
+    "wp5_archive_resource_save_status_other",
+    "wp5_archive_resource_save_status_missing",
+    "wp5_archive_align_model_center", "wp5_archive_grip_visibility",
+    "wp5_archive_drag_geometry", "wp5_archive_drag_order", "wp5_archive_drag_result",
+    "wp5_archive_drag_source_not_unique", "wp5_archive_drag_target_not_unique",
+    "wp5_archive_drag_parent_missing", "wp5_archive_drag_different_parents",
+    "wp5_archive_drag_same_block", "wp5_archive_drag_source_missing_from_parent",
+    "wp5_archive_drag_target_missing_from_parent", "wp5_archive_drag_child_index_mismatch",
+    "wp5_archive_drag_source_after", "wp5_archive_drag_source_before",
+    "wp5_archive_fixture_split",
+    "wp5_archive_cell_rich_text_missing", "wp5_archive_cell_editor_missing", "wp5_archive_cell_click_complete",
+    "wp5_archive_fixture_click_complete", "wp5_archive_fixture_caret_ready",
+    "wp5_archive_cell_readonly", "wp5_archive_cell_caret_not_in_cell", "wp5_archive_cell_focus_ready",
+    "wp5_resource_dialog_open", "wp5_resource_content_visible", "wp5_resource_editable", "wp5_canvas_layout_stable",
     "wp5_focus_notes_navigation", "wp5_focus_note_seed", "wp5_focus_editor_open",
     "wp5_focus_body_target", "wp5_focus_put_received", "wp5_focus_put_request_content",
     "wp5_focus_put_status", "wp5_focus_put_response_content", "wp5_focus_api_readback",
@@ -324,12 +376,10 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
                          "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
                          "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
-                         "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
-        allowed_shapes = {
-            frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
-            for mask in range(1 << len(optional_keys))
-        }
-        if not isinstance(entry, dict) or frozenset(entry) not in allowed_shapes:
+                         "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events",
+                         "wp5_step", "blocksuite_request_statuses", "wp5_canvas_save")
+        allowed_keys = base_keys | set(optional_keys)
+        if not isinstance(entry, dict) or not base_keys.issubset(entry) or not set(entry).issubset(allowed_keys):
             raise RuntimeError("failure diagnostic fields rejected; upload withheld")
         viewport = entry["viewport"]
         stage = entry["stage"]
@@ -349,6 +399,9 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
         page_error_summaries = entry.get("page_error_summaries", [])
         brief_statuses = entry.get("daily_brief_get_statuses", [])
         autosave_events = entry.get("wp5_autosave_events", [])
+        wp5_step = entry.get("wp5_step")
+        blocksuite_requests = entry.get("blocksuite_request_statuses", [])
+        canvas_save = entry.get("wp5_canvas_save")
         if (not isinstance(viewport, str) or viewport not in FAILURE_SCREENSHOT_DIR_VIEWPORTS.values()
                 or not isinstance(stage, str) or stage not in FAILURE_DIAGNOSTIC_STAGES
                 or not isinstance(code, str) or code not in FAILURE_DIAGNOSTIC_CODES
@@ -410,6 +463,45 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
                 or not isinstance(brief_statuses, list) or len(brief_statuses) > 4
                 or any(status is not None and (type(status) is not int or not 100 <= status <= 599)
                        for status in brief_statuses)
+                or (wp5_step is not None and (not isinstance(wp5_step, str) or wp5_step not in {
+                    "not_started", "rich_page_create", "rich_page_open", "rich_page_seed_read", "rich_page_body_edit",
+                    "rich_page_first_save", "rich_page_first_readback", "rich_page_close", "rich_page_reopen",
+                    "rich_page_nested_canvas_create", "rich_page_nested_canvas_open", "rich_page_nested_blob_upload",
+                    "rich_page_nested_canvas_save", "rich_page_parent_save", "rich_page_mode_edgeless", "rich_page_mode_edgeless_ready",
+                    "rich_page_mode_page", "rich_page_backup_preview", "rich_page_snapshot_restore",
+                    "rich_page_post_restore_reopen", "rich_page_conflict", "rich_page_recovery_copy",
+                    "rich_page_explicit_fork", "archive_ux_style_check", "archive_ux_toolbar_select",
+                    "archive_ux_bold", "archive_ux_alignment", "archive_ux_table", "archive_ux_emoji",
+                }))
+                or not isinstance(blocksuite_requests, list) or len(blocksuite_requests) > 24
+                or any(not isinstance(request, dict) or set(request) != {"endpoint", "method", "status"}
+                       or request.get("endpoint") not in {"resource_collection", "resource", "blob", "snapshot", "snapshot_restore"}
+                       or request.get("method") not in {"GET", "POST", "PUT"}
+                       or (request.get("status") is not None and (type(request.get("status")) is not int or not 100 <= request["status"] <= 599))
+                       for request in blocksuite_requests)
+                or (canvas_save is not None and (
+                    not isinstance(canvas_save, dict)
+                    or set(canvas_save) != {"checkpoint", "status", "close_enabled", "readback_status",
+                                            "snapshot_matches_readback", "live_text_bounds", "saved_text_bounds", "layout_samples"}
+                    or canvas_save.get("checkpoint") not in {"layout_poll", "first_status", "second_save_response", "readback", "saved_status", "close_enabled"}
+                    or canvas_save.get("status") not in {"saved", "previous_dirty", "unsaved", "saving", "other"}
+                    or (canvas_save.get("close_enabled") is not None and type(canvas_save.get("close_enabled")) is not bool)
+                    or (canvas_save.get("readback_status") is not None and
+                        (type(canvas_save.get("readback_status")) is not int or not 100 <= canvas_save["readback_status"] <= 599))
+                    or (canvas_save.get("snapshot_matches_readback") is not None and
+                        type(canvas_save.get("snapshot_matches_readback")) is not bool)
+                    or any(not isinstance(canvas_save.get(key), list) or len(canvas_save[key]) > 3
+                           or any(not isinstance(bounds, list) or len(bounds) != 4
+                                  or any(type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 100000
+                                         for value in bounds)
+                                  for bounds in canvas_save[key])
+                           for key in ("live_text_bounds", "saved_text_bounds"))
+                    or not isinstance(canvas_save.get("layout_samples"), list) or len(canvas_save["layout_samples"]) > 2
+                    or any(not isinstance(sample, list) or len(sample) != 11
+                           or any(type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 100000
+                                  for value in sample)
+                           for sample in canvas_save["layout_samples"])
+                ))
                 or viewport in seen_viewports):
             raise RuntimeError("failure diagnostic value rejected; upload withheld")
         autosave_events = _validate_wp5_autosave_events(autosave_events)
@@ -442,6 +534,12 @@ def _validate_failure_diagnostics(value) -> list[dict[str, object]]:
             normalized["daily_brief_get_statuses"] = brief_statuses
         if "wp5_autosave_events" in entry:
             normalized["wp5_autosave_events"] = autosave_events
+        if "wp5_step" in entry:
+            normalized["wp5_step"] = wp5_step
+        if "blocksuite_request_statuses" in entry:
+            normalized["blocksuite_request_statuses"] = blocksuite_requests
+        if "wp5_canvas_save" in entry:
+            normalized["wp5_canvas_save"] = canvas_save
         validated.append(normalized)
     return validated
 
@@ -536,12 +634,10 @@ def _collect_failure_diagnostics(
             optional_keys = ("notes_collection_statuses", "daily_brief_get_statuses",
                              "notes_item_read_statuses", "notes_write_statuses", "notes_readback_failure", "notes_seed_status",
                              "notes_ui_state", "page_error_names", "page_error_categories", "page_error_sources",
-                             "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events")
-            allowed_shapes = {
-                frozenset(base_keys | {key for index, key in enumerate(optional_keys) if mask & (1 << index)})
-                for mask in range(1 << len(optional_keys))
-            }
-            if (not isinstance(raw, dict) or frozenset(raw) not in allowed_shapes
+                             "blocksuite_module_statuses", "page_error_summaries", "wp5_autosave_events",
+                             "wp5_step", "blocksuite_request_statuses", "wp5_canvas_save")
+            allowed_keys = base_keys | set(optional_keys)
+            if (not isinstance(raw, dict) or not base_keys.issubset(raw) or not set(raw).issubset(allowed_keys)
                     or type(raw.get("schema_version")) is not int or raw.get("schema_version") != 2
                     or raw.get("viewport") != viewport):
                 raise RuntimeError("failure diagnostic source schema rejected; upload withheld")
@@ -576,6 +672,12 @@ def _collect_failure_diagnostics(
                 diagnostics[-1]["daily_brief_get_statuses"] = raw["daily_brief_get_statuses"]
             if "wp5_autosave_events" in raw:
                 diagnostics[-1]["wp5_autosave_events"] = raw["wp5_autosave_events"]
+            if "wp5_step" in raw:
+                diagnostics[-1]["wp5_step"] = raw["wp5_step"]
+            if "blocksuite_request_statuses" in raw:
+                diagnostics[-1]["blocksuite_request_statuses"] = raw["blocksuite_request_statuses"]
+            if "wp5_canvas_save" in raw:
+                diagnostics[-1]["wp5_canvas_save"] = raw["wp5_canvas_save"]
 
     diagnostics = _validate_failure_diagnostics(diagnostics)
     diagnostic_viewports = {entry["viewport"] for entry in diagnostics}
@@ -1301,10 +1403,13 @@ def main() -> int:
     parser.add_argument("--http-smoke-only", action="store_true", help="run synthetic Core HTTP checks without launching a browser")
     parser.add_argument("--wp5-roundtrip-only", action="store_true", help="run only the desktop WP5 Notes save/reopen and conflict-autosave browser probes")
     parser.add_argument("--wp5-conflict-only", action="store_true", help="run only the desktop WP5 Notes conflict-autosave and recovery browser probe")
+    parser.add_argument("--wp5-rich-page-mode-only", action="store_true", help="run only the synthetic Rich Page edit/save/reopen and Page/Edgeless mode round trip")
+    parser.add_argument("--wp5-archive-ux-only", action="store_true", help="run only the desktop synthetic Rich Page archived UX interaction journey")
     parser.add_argument("--desktop-only", action="store_true", help="run the existing browser acceptance journey at desktop viewport only")
     options = parser.parse_args()
     wp5_open_only = os.environ.get("SB_E2E_WP5_OPEN_ONLY") == "true"
     wp5_probe_mode = options.wp5_roundtrip_only or options.wp5_conflict_only
+    wp5_focused_mode = wp5_probe_mode or options.wp5_rich_page_mode_only or options.wp5_archive_ux_only
     # The workflow uploads only this directory. It starts empty on every run;
     # raw Playwright output lives in the private temp root below and is never a
     # parent or sibling matched by the upload-artifact path.
@@ -1356,6 +1461,8 @@ def main() -> int:
             "SB_DAILY_BRIEF_STORE_ROOT": str(dirs["briefs"]),
             "SB_E2E_WP5_ROUNDTRIP_ONLY": "true" if wp5_probe_mode else "false",
             "SB_E2E_WP5_CONFLICT_ONLY": "true" if options.wp5_conflict_only else "false",
+            "SB_E2E_WP5_RICH_PAGE_MODE_ONLY": "true" if options.wp5_rich_page_mode_only else "false",
+            "SB_E2E_WP5_ARCHIVE_UX_ONLY": "true" if options.wp5_archive_ux_only else "false",
             "SB_E2E_WP5_AUTOSAVE_MARKER": "wp5-conflict-queue" if wp5_probe_mode else "",
             "SB_E2E_WP5_AUTOSAVE_LOG": str(wp5_autosave_core_log) if wp5_probe_mode else "",
             "SB_E2E_WP5_AUTOSAVE_BROWSER_LOG": str(wp5_autosave_browser_log) if wp5_probe_mode else "",
@@ -1492,17 +1599,19 @@ def main() -> int:
         today_brief_name = datetime.datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat() + ".json"
         brief_file_set_verified = False
         if test_returncode == 0:
-            expected_raw = 1 if options.http_smoke_only or options.desktop_only else (0 if wp5_probe_mode else 3)
+            expected_raw = 1 if options.http_smoke_only or options.desktop_only else (
+                0 if wp5_focused_mode else 3
+            )
             if len(raw_files) != expected_raw:
                 raise RuntimeError(f"expected one Raw record per viewport; found {len(raw_files)}")
             assert_no_business_files(dirs["knowledge"], "Knowledge root")
-            expected_journal_appends = 0 if options.http_smoke_only or wp5_probe_mode else (
+            expected_journal_appends = 0 if options.http_smoke_only or wp5_focused_mode else (
                 1 if options.desktop_only else len(FAILURE_SCREENSHOT_DIR_VIEWPORTS)
             )
             assert_journal_fixture_unchanged(
                 dirs["journal"], journal_fixture, expected_browser_appends=expected_journal_appends,
             )
-            if wp5_probe_mode:
+            if wp5_focused_mode:
                 if any(dirs["briefs"].iterdir()):
                     raise RuntimeError("focused WP5 probe unexpectedly wrote Daily Brief files")
             else:

@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { NotePropertiesPanel } from './NotePropertiesPanel';
 import { notesApi, type BlockSuiteResource, type BlockSuiteResourceKind, type BlockSuiteSnapshotDetail, type BlockSuiteSnapshotEntry, type BlockSuiteSnapshots, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
+import { bindRichPageSnapshot, richPageReadableMarkdown } from './rich-page-projection';
 import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
 
 const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module) => ({ default: module.VisualAssetDialog })));
@@ -333,9 +334,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     } catch { /* save() retains the unsaved Markdown and reports the failure. */ }
   };
 
-  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind) => {
-    const target = noteRef.current;
-    if (!target || target.read_only || projectionPending.current || state !== '已保存' || creatingBlockSuiteResource || blockSuiteResource) return;
+  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind, newDraft?: Note) => {
+    const target = newDraft ?? noteRef.current;
+    if (!target || target.read_only || projectionPending.current || (!newDraft && state !== '已保存') || creatingBlockSuiteResource || blockSuiteResource) return;
     const revision = viewRevision.current;
     pendingSaves.current += 1;
     setCreatingBlockSuiteResource(true);
@@ -350,7 +351,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       resource = { ...payload, resourceId: created.resource_id, etag: created.etag, note_etag: created.note_etag, artifact_set_etag: created.artifact_set_etag, filename: created.filename };
       setPendingBlockSuiteReference({ note: versionedTarget, resource });
       const current = contentRef.current;
-      const nextContent = `${current.trimEnd()}${current.trim() ? '\n\n' : ''}${created.reference}\n`;
+      const nextContent = kind === 'rich-page'
+        ? richPageReadableMarkdown(versionedTarget, resource, payload.snapshot)
+        : `${current.trimEnd()}${current.trim() ? '\n\n' : ''}${created.reference}\n`;
       window.clearTimeout(timer.current);
       contentRef.current = nextContent;
       setContent(nextContent);
@@ -361,6 +364,13 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(target)) {
         throw new Error('资源已创建，但引用保存结果未应用到当前笔记。');
       }
+      if (kind === 'rich-page') {
+        const bound = { ...payload, resourceId: resource.resourceId, snapshot: bindRichPageSnapshot(payload.snapshot, saved.etag) };
+        const receipt = await notesApi.saveBlockSuiteResource(saved, resource, bound);
+        resource = { ...resource, ...bound, etag: receipt.etag, note_etag: receipt.note_etag, artifact_set_etag: receipt.artifact_set_etag };
+        const currentNote = { ...saved, artifactSetEtag: receipt.artifact_set_etag };
+        noteRef.current = currentNote; setNote(currentNote);
+      }
       setPendingBlockSuiteReference(null);
       // The reference is now durably saved. Re-import this controlled parent
       // update so the editor shows its new attachment link immediately.
@@ -370,6 +380,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       setMessage('独立 BlockSuite 资源与稳定 Markdown 引用均已保存。');
     } catch (error) {
       if (viewRevision.current === revision) {
+        if (kind === 'rich-page') setState('保存失败');
         setMessage(resource
           ? `资源文件已创建，但 Markdown 引用未确认保存；引用仍保留在正文，可重试。${error instanceof Error ? error.message : ''}`
           : `BlockSuite 资源创建失败；笔记正文未更改。${error instanceof Error ? error.message : ''}`);
@@ -380,12 +391,35 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     }
   };
 
+  const createRichPageDraft = async () => {
+    if (!protectUnsaved()) return;
+    const revision = beginTransition();
+    setLoading(true); setMessage('');
+    try {
+      const created = await notesApi.create('# 富 Page\n\n');
+      if (viewRevision.current !== revision) return;
+      setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('blocksuite');
+      await attachBlockSuiteResource('rich-page', created);
+      void refresh('drafts');
+    } catch { if (viewRevision.current === revision) setMessage('新建富 Page 未完成；已有笔记未改变。'); }
+    finally { if (viewRevision.current === revision) setLoading(false); }
+  };
+
   const retryBlockSuiteReference = async () => {
     const pending = pendingBlockSuiteReference;
     if (!pending || !['保存失败', '版本冲突'].includes(state)
         || !noteRef.current || noteKey(noteRef.current) !== noteKey(pending.note)) return;
     const revision = viewRevision.current;
     try {
+      if (pending.resource.resourceKind === 'rich-page') {
+        const latest = await notesApi.readWithArtifactSet(pending.note.collection, pending.note.path);
+        const native = await notesApi.readBlockSuiteResource(latest, pending.resource.resourceId);
+        if (viewRevision.current !== revision) return;
+        setCurrent(latest, latest.content); setState('已保存'); setPendingBlockSuiteReference(null);
+        setBlockSuiteResource(native); blockSuiteResourceOpen.current = true;
+        setMessage('已保留未完成投影与原生资源；请在资源中显式另存副本处理，未覆盖远端。');
+        return;
+      }
       let target = noteRef.current;
       let content = contentRef.current;
       if (state === '版本冲突') {
@@ -774,7 +808,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     <header className="module-header"><div><p className="eyebrow">SECONDBRAIN / NOTES</p><h1>笔记</h1><p className="workspace-subtitle">以 Markdown 文件为正文来源；普通目录仅显示已显式授权的范围。</p></div>
       <div className="notes-header-actions">
         <button type="button" onClick={() => trashView ? closeTrash() : void openTrash()} disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
-        {!trashView && <button type="button" onClick={() => void createDraft()} disabled={loading}>新建 Draft</button>}
+        {!trashView && <><button type="button" onClick={() => void createDraft()} disabled={loading}>新建 Draft</button><button type="button" onClick={() => void createRichPageDraft()} disabled={loading || creatingBlockSuiteResource}>新建富 Page</button></>}
       </div></header>
     {trashView ? <section className="notes-trash" aria-label="回收站">
       <h2>回收站</h2>
@@ -890,6 +924,15 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     </div>}
     {blockSuiteResource && note && <Suspense fallback={<p role="status">正在加载 BlockSuite 资源编辑器…</p>}>
       <BlockSuiteResourceEditor key={`${noteKey(note)}:${blockSuiteResource.resourceId}`} note={note} resource={blockSuiteResource}
+        onOpenBackups={() => { blockSuiteResourceOpen.current = false; setBlockSuiteResource(null); void restore(); }}
+        onNoteSaved={(saved) => {
+          setCurrent(saved, saved.content); setState('已保存'); setEditorGeneration(value => value + 1); void refresh(saved.collection);
+        }}
+        onForked={(saved, resource) => {
+          setCollection(saved.collection); setCurrent(saved, saved.content); setState('已保存');
+          setEditorGeneration(value => value + 1); setBlockSuiteResource(resource); blockSuiteResourceOpen.current = true;
+          setMessage('已另存为新富 Page，原笔记与远端内容保持原状。'); void refresh(saved.collection);
+        }}
         onNoteVersionChange={(artifactSetEtag) => {
           if (!noteRef.current || noteKey(noteRef.current) !== noteKey(note)) return;
           const next = { ...noteRef.current, artifactSetEtag };

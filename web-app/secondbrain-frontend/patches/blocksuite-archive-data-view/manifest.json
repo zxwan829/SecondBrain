@@ -1,0 +1,181 @@
+{
+  "archiveRevision": "b25a75d9a3c474614c79f24ac5396c317e02bf8f",
+  "package": "@blocksuite/data-view",
+  "version": "0.22.4",
+  "files": [
+    {
+      "path": "src/core/filter/add-filter.ts",
+      "before": "a80df37fab5bc967290a4de8f15280ce2c538a5ef07faa78204f2dd602cbea2a",
+      "after": "ffa26ddc6a3218db5005ef608247a9a2688471e1a868c7b6ab18916642f0dc08",
+      "final": "ffa26ddc6a3218db5005ef608247a9a2688471e1a868c7b6ab18916642f0dc08"
+    },
+    {
+      "path": "src/core/group-by/renderer/number-group.ts",
+      "before": "25522e90fab6d09271ec3b5f5ffc8fd229f28e0aa236d8d6681a57d6298f7d38",
+      "after": "313a10e0dd439250c2fa9d4d93bd26330b3e96e779075228f4da8bd837b9e1b3",
+      "final": "313a10e0dd439250c2fa9d4d93bd26330b3e96e779075228f4da8bd837b9e1b3"
+    },
+    {
+      "path": "src/core/group-by/renderer/select-group.ts",
+      "before": "1894494eeaa5d288f8120b0633cd983adde8eca9acfa70a7554c9b4f8d486dde",
+      "after": "c765b9dc35d73d284b8c9f5ac7098b4bed774c8bfde6647c31d87abcd52be2ad",
+      "final": "c765b9dc35d73d284b8c9f5ac7098b4bed774c8bfde6647c31d87abcd52be2ad"
+    },
+    {
+      "path": "src/core/group-by/renderer/string-group.ts",
+      "before": "268bf91e549c31abcc6b02006e0bba54e0791e408b930df33b48c4fba3515406",
+      "after": "43f7e639273830b0addea52733c30daf7c32a119fae2f48ff91d7db1d603a923",
+      "final": "43f7e639273830b0addea52733c30daf7c32a119fae2f48ff91d7db1d603a923"
+    },
+    {
+      "path": "src/core/sort/add-sort.ts",
+      "before": "e996a13bb9e5f93c4d6122e669ac288d7f958d943ed1c5aa0eec623ab4a14ac2",
+      "after": "30484d67174a0417290051b4e48ff687404575c81689871564f27e70112b2941",
+      "final": "30484d67174a0417290051b4e48ff687404575c81689871564f27e70112b2941"
+    },
+    {
+      "path": "src/property-presets/multi-select/cell-renderer.ts",
+      "before": "d5c18a6de1f037067b43bdecc940137beb22721f9d191fe54eb08673183137c7",
+      "after": "612138d7357ae39a9c30cf0ee98c90308e14fc429a5194a4c31417858052909d",
+      "final": "612138d7357ae39a9c30cf0ee98c90308e14fc429a5194a4c31417858052909d"
+    },
+    {
+      "path": "src/property-presets/select/cell-renderer.ts",
+      "before": "68cec77c3770101967758b0b10fcfeec34cd0d3ecf63b7ed7f42204b2b176dad",
+      "after": "93b38c47eb6aba953e36d66c4d57a52c3d97ff3197f8de78ca330576c1d9f9a4",
+      "final": "93b38c47eb6aba953e36d66c4d57a52c3d97ff3197f8de78ca330576c1d9f9a4"
+    },
+    {
+      "path": "src/view-presets/kanban/define.ts",
+      "before": "08627daa8bbb58238ce3ea5ebefea0a700150a622170628d1005b4155a6aefd2",
+      "after": "808b843d214afc8ce40ae6d5086e9c26bb088580d2e86b731f455ad81a7f2b78",
+      "final": "808b843d214afc8ce40ae6d5086e9c26bb088580d2e86b731f455ad81a7f2b78"
+    },
+    {
+      "path": "src/view-presets/kanban/pc/group.ts",
+      "before": "1112c48f93e3985c9b0f35825af1ecb3423984479c737b4584b312f4b80136ce",
+      "after": "90f6e311aabe20d8ac191d42fdf326cf020650bedc7bdd2f1a57c4bca0bf504c",
+      "final": "90f6e311aabe20d8ac191d42fdf326cf020650bedc7bdd2f1a57c4bca0bf504c"
+    },
+    {
+      "path": "src/view-presets/kanban/pc/menu.ts",
+      "before": "b6591b0ff6ac8a7e2308f395218e9717750595f3ef6249e646278177599a0fd0",
+      "after": "51924b68d1be5b3d757219d648d379a2db753a42c25cdf1cae25d2311e3e37a9",
+      "final": "51924b68d1be5b3d757219d648d379a2db753a42c25cdf1cae25d2311e3e37a9"
+    },
+    {
+      "path": "src/view-presets/table/define.ts",
+      "before": "ef22f4332d130539bb2ca532a4255591a3aff47537ed86cc004613e49f23f381",
+      "after": "41518c52690c50b4381f922c7f5bb8cb4df16973e55478e30cb79c8d9f2d073e",
+      "final": "41518c52690c50b4381f922c7f5bb8cb4df16973e55478e30cb79c8d9f2d073e"
+    },
+    {
+      "path": "src/view-presets/table/mobile/group.ts",
+      "before": "3f99430354f0de7fbbdb47262bdf87911a0130e0e6a0a9b45db8db0fda7f5019",
+      "after": "29c2df63cebefb206fa09fa56643f788b0bc6bc9bdfe0bf11f92790f19fd7400",
+      "final": "29c2df63cebefb206fa09fa56643f788b0bc6bc9bdfe0bf11f92790f19fd7400"
+    },
+    {
+      "path": "src/view-presets/table/pc/group.ts",
+      "before": "aba08ffa944599aff37d63fc2cccaee2718f68764bd5cd5c670097a5e334418f",
+      "after": "033797d2e06506a015b29bf3b5c5b3dc0ddcf67a142ad7ba609d15f1eb3d7e29",
+      "final": "033797d2e06506a015b29bf3b5c5b3dc0ddcf67a142ad7ba609d15f1eb3d7e29"
+    },
+    {
+      "path": "src/view-presets/table/pc/header/database-header-column.ts",
+      "before": "835a9ca2c1fde9bd6c268e6735f2212f4bc014aa2ac1d9bf5f83e5b15e164743",
+      "after": "9b2edfa3c132c63b6a059c8cda3dc26bc4742b27cde85753b319a6a26d6e4af7",
+      "final": "9b2edfa3c132c63b6a059c8cda3dc26bc4742b27cde85753b319a6a26d6e4af7"
+    },
+    {
+      "path": "src/view-presets/table/pc/menu.ts",
+      "before": "1305f8bd0955fd9a1a162b8248995fcc9d1bbf33cedd6bf5ff6a9463f163af21",
+      "after": "8744f87c36c161dacb519feb727e3b20a28719d1a07e43a74ee47aa7ee4e5a19",
+      "final": "8744f87c36c161dacb519feb727e3b20a28719d1a07e43a74ee47aa7ee4e5a19"
+    },
+    {
+      "path": "src/view-presets/table/pc/row/row.ts",
+      "before": "e11af5b02a793feb778c520e215052f42e12c673e6c9f5f8f781ea4e432c07b6",
+      "after": "9a5e5c3ccf545bc5d32d9bf4003e89c698cdb5970d00f3ce1977f42ef0a7a0ee",
+      "final": "9a5e5c3ccf545bc5d32d9bf4003e89c698cdb5970d00f3ce1977f42ef0a7a0ee"
+    },
+    {
+      "path": "src/view-presets/table/pc-virtual/group/bottom/group-footer.ts",
+      "before": "a93fea4557961e5b93b61a35f428ead000c9e3a48612afc3f1ee2fa07c749b78",
+      "after": "bda1252626b99f0f2ece3343fbd6e9d5ab0c2e60b71d4370732c1aa7ae1aa907",
+      "final": "bda1252626b99f0f2ece3343fbd6e9d5ab0c2e60b71d4370732c1aa7ae1aa907"
+    },
+    {
+      "path": "src/view-presets/table/pc-virtual/group/bottom/stats/column-stats-column.ts",
+      "before": "134e75548159e07b75f58708c20f59f3c35cb33c2f54214544922d129adb20a6",
+      "after": "2ebb11a16ee696394f87d108b63d1322f41b686f19de8683ddef2dfe299fb796",
+      "final": "2ebb11a16ee696394f87d108b63d1322f41b686f19de8683ddef2dfe299fb796"
+    },
+    {
+      "path": "src/view-presets/table/stats/column-stats-column.ts",
+      "before": "d2cec609bd53084a8f6f9e5508aeddaf321007b0ae060a15c6e7278899bf8ad0",
+      "after": "e9703fe97765ea40054ba0f3e0abfc8cb507a5cf193276aa194853ed1f9d77b5",
+      "final": "e9703fe97765ea40054ba0f3e0abfc8cb507a5cf193276aa194853ed1f9d77b5"
+    },
+    {
+      "path": "src/widget-presets/quick-setting-bar/filter/condition-view.ts",
+      "before": "604def43ebbe33d0e69c723369ae3a9cd4e5b23c2754b7de6ac85f9d18c7da8f",
+      "after": "5a51b8f34e4126c5e139937a58465d42b70c85f6542d8133a646cb9ff59873f8",
+      "final": "5a51b8f34e4126c5e139937a58465d42b70c85f6542d8133a646cb9ff59873f8"
+    },
+    {
+      "path": "src/widget-presets/quick-setting-bar/filter/group-panel-view.ts",
+      "before": "fd84a36ee76ad7b01eca2afaa69858189331df7163d09fc40bb1295b279ecc69",
+      "after": "17a3958baf5b34552f12680d94ae51cd5d43c52606b3b44e16e76ea81005849a",
+      "final": "17a3958baf5b34552f12680d94ae51cd5d43c52606b3b44e16e76ea81005849a"
+    },
+    {
+      "path": "src/widget-presets/quick-setting-bar/filter/root-panel-view.ts",
+      "before": "39332a9913783ba96b121fcc7efc3d7945b532ad842ba17e41fd488596d144a6",
+      "after": "4289e3b93331ca42d7a6828d427feaf5e3d8607ddb11601d42c7e12cf222d5a5",
+      "final": "4289e3b93331ca42d7a6828d427feaf5e3d8607ddb11601d42c7e12cf222d5a5"
+    },
+    {
+      "path": "src/widget-presets/quick-setting-bar/sort/root-panel.ts",
+      "before": "97b69a7dc1e449b2f816936bb86aba96090d7bb1563486d228012b6d88da1114",
+      "after": "3da574a789aac05220013e01b088576efad9ddcf23de6ed895919aefbb78f849",
+      "final": "3da574a789aac05220013e01b088576efad9ddcf23de6ed895919aefbb78f849"
+    },
+    {
+      "path": "src/widget-presets/tools/presets/filter/filter.ts",
+      "before": "b91c6ae484a8c53cd83cfbdd6186e345e755605cabff510ef50f08904f61f4c3",
+      "after": "000d2e193bd16374d199f1c12d51fabfbc5b73cb55624fdff5cc7e66fbe61835",
+      "final": "000d2e193bd16374d199f1c12d51fabfbc5b73cb55624fdff5cc7e66fbe61835"
+    },
+    {
+      "path": "src/widget-presets/tools/presets/search/search.ts",
+      "before": "6c0da1c3fc40343ed9d587ab85ec4fbed90d85cc34e99b37156211d94bed7da3",
+      "after": "a8f44b26e447ea486dd57756d25aeca615d4749ac532752aec134f408151e286",
+      "final": "a8f44b26e447ea486dd57756d25aeca615d4749ac532752aec134f408151e286"
+    },
+    {
+      "path": "src/widget-presets/tools/presets/sort/sort.ts",
+      "before": "89470f5eee7ff1c9e2b4127bd5874346a5a92c7b3f92a4a234bd27eab709e213",
+      "after": "63ebc0ed4bab31b34dc0257868cf00a41f98ddffdae2cd1a3b9c1f2ebf279666",
+      "final": "63ebc0ed4bab31b34dc0257868cf00a41f98ddffdae2cd1a3b9c1f2ebf279666"
+    },
+    {
+      "path": "src/widget-presets/tools/presets/table-add-row/add-row.ts",
+      "before": "730898594111d98add0cabb01af9e1eda8afa03968f26868ed30d695899686bb",
+      "after": "db4e65aa786975dbffb2bec33357d6b0cc1c45fa153031c40363c6bfe7673846",
+      "final": "db4e65aa786975dbffb2bec33357d6b0cc1c45fa153031c40363c6bfe7673846"
+    },
+    {
+      "path": "src/widget-presets/tools/presets/view-options/view-options.ts",
+      "before": "9b623bd81144628de5e411335f71888bf0796541e2bd613bf7619c5f87b42492",
+      "after": "257895655759110388734ee3319f0c72ef91764c4f1264ef8324e3c702dd1157",
+      "final": "257895655759110388734ee3319f0c72ef91764c4f1264ef8324e3c702dd1157"
+    },
+    {
+      "path": "src/widget-presets/views-bar/views-view.ts",
+      "before": "7046510fcf4c4091be1695c57993df646508041fda8589dd58409cd260ce860e",
+      "after": "0ccf9783b907f46db9a20a0d343fce7d8428bcedd67406b2e330d74074ad6c1c",
+      "final": "0ccf9783b907f46db9a20a0d343fce7d8428bcedd67406b2e330d74074ad6c1c"
+    }
+  ]
+}

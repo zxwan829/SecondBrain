@@ -3,7 +3,7 @@ export type NoteCollection = { id: string; kind: 'drafts' | 'authorized' };
 export type NoteProperties = { type: string; tags: string[]; etag: string };
 export type VisualKind = 'mindmap' | 'excalidraw';
 export type VisualAsset = { filename: string; etag: string; content: string };
-export type BlockSuiteResourceKind = 'database' | 'edgeless-canvas';
+export type BlockSuiteResourceKind = 'database' | 'edgeless-canvas' | 'rich-page';
 export type BlockSuiteResource = {
   schemaVersion: 1; resourceId: string; resourceKind: BlockSuiteResourceKind; docId: string;
   updateB64: string; snapshot: Record<string, unknown>; etag: string; note_etag: string; artifact_set_etag?: string; filename: string;

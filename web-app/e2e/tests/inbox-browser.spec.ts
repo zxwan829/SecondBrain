@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request, type Response, type Route, type TestInfo } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Request, type Response, type Route, type TestInfo } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -38,11 +38,26 @@ const viewports = [
 ] as const;
 const wp5RoundtripOnly = process.env.SB_E2E_WP5_ROUNDTRIP_ONLY === 'true';
 const wp5ConflictOnly = process.env.SB_E2E_WP5_CONFLICT_ONLY === 'true';
+const wp5RichPageModeOnly = process.env.SB_E2E_WP5_RICH_PAGE_MODE_ONLY === 'true';
+const wp5ArchiveUxOnly = process.env.SB_E2E_WP5_ARCHIVE_UX_ONLY === 'true';
 const desktopOnly = process.env.SB_E2E_DESKTOP_ONLY === 'true';
 const activeViewports = desktopOnly ? [viewports[0]] : viewports;
 
 type RequestRecord = { leg: 'browser' | 'core-upstream'; method: string; path: string; status: number | null; elapsed_ms: number | null; exact_inbox_target?: boolean };
 type Wp5ProbeEvent = { marker: 'wp5-conflict-queue'; at_ms: number; event: string; status?: number };
+type Wp5DiagnosticStep = 'not_started' | 'rich_page_create' | 'rich_page_open' | 'rich_page_seed_read'
+  | 'rich_page_body_edit' | 'rich_page_first_save' | 'rich_page_first_readback' | 'rich_page_close'
+  | 'rich_page_reopen' | 'rich_page_nested_canvas_create' | 'rich_page_nested_canvas_open'
+  | 'rich_page_nested_blob_upload' | 'rich_page_nested_canvas_save' | 'rich_page_parent_save'
+  | 'rich_page_mode_edgeless' | 'rich_page_mode_edgeless_ready' | 'rich_page_mode_page' | 'rich_page_backup_preview'
+  | 'rich_page_snapshot_restore' | 'rich_page_post_restore_reopen' | 'rich_page_conflict'
+  | 'rich_page_recovery_copy' | 'rich_page_explicit_fork' | 'archive_ux_style_check'
+  | 'archive_ux_toolbar_select' | 'archive_ux_bold' | 'archive_ux_alignment' | 'archive_ux_table' | 'archive_ux_emoji';
+type BlockSuiteRequestDiagnostic = { endpoint: 'resource_collection' | 'resource' | 'blob' | 'snapshot' | 'snapshot_restore'; method: 'GET' | 'POST' | 'PUT'; status: number | null };
+type CanvasSaveDiagnostic = { checkpoint: 'layout_poll' | 'first_status' | 'second_save_response' | 'readback' | 'saved_status' | 'close_enabled';
+  status: 'saved' | 'previous_dirty' | 'unsaved' | 'saving' | 'other'; close_enabled: boolean | null;
+  readback_status: number | null; snapshot_matches_readback: boolean | null;
+  live_text_bounds: number[][]; saved_text_bounds: number[][]; layout_samples: number[][] };
 const WP5_PROBE_MARKER = 'wp5-conflict-queue' as const;
 function boundedWp5ProbeTimeline(events: Wp5ProbeEvent[]): Wp5ProbeEvent[] {
   const ordered = [...events].sort((left, right) => left.at_ms - right.at_ms);
@@ -94,12 +109,15 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_unsupported_projection_seed' | 'wp5_unsupported_projection_open'
   | 'wp5_unsupported_projection_rejected' | 'wp5_unsupported_projection_preserved'
   | 'wp5_unsupported_projection_no_core_put'
+  | 'wp5_canvas_layout_stable'
   | 'notes_conflict_seed_status_200' | 'notes_conflict_seed_status_401'
   | 'notes_conflict_seed_status_403' | 'notes_conflict_seed_status_404'
   | 'notes_conflict_seed_status_409' | 'notes_conflict_seed_status_412'
   | 'notes_conflict_seed_status_422' | 'notes_conflict_seed_status_428'
   | 'notes_conflict_seed_status_other'
   | 'wp5_focus_notes_navigation' | 'wp5_focus_note_seed'
+  | 'wp5_resource_checkpoint_066' | 'wp5_resource_checkpoint_067' | 'wp5_resource_checkpoint_068'
+  | 'wp5_resource_checkpoint_069' | 'wp5_resource_checkpoint_070' | 'wp5_resource_checkpoint_071' | 'wp5_resource_checkpoint_072' | 'wp5_resource_checkpoint_073' | 'wp5_resource_checkpoint_074' | 'wp5_resource_checkpoint_075'
   | 'wp5_resource_focus' | 'wp5_resource_type' | 'wp5_resource_dirty' | 'wp5_resource_save' | 'wp5_resource_saved' | 'wp5_resource_close' | 'wp5_resource_reopen' | 'wp5_resource_checkpoint_001' | 'wp5_resource_checkpoint_002' | 'wp5_resource_checkpoint_003' | 'wp5_resource_checkpoint_004' | 'wp5_resource_checkpoint_005' | 'wp5_resource_checkpoint_006' | 'wp5_resource_checkpoint_007' | 'wp5_resource_checkpoint_008' | 'wp5_resource_checkpoint_009' | 'wp5_resource_checkpoint_010' | 'wp5_resource_checkpoint_011' | 'wp5_resource_checkpoint_012' | 'wp5_resource_checkpoint_013' | 'wp5_resource_checkpoint_014' | 'wp5_resource_checkpoint_015' | 'wp5_resource_checkpoint_016' | 'wp5_resource_checkpoint_017' | 'wp5_resource_checkpoint_018' | 'wp5_resource_checkpoint_019' | 'wp5_resource_checkpoint_020' | 'wp5_resource_checkpoint_021' | 'wp5_resource_checkpoint_022' | 'wp5_resource_checkpoint_023' | 'wp5_resource_checkpoint_024' | 'wp5_resource_checkpoint_025' | 'wp5_resource_checkpoint_026' | 'wp5_resource_checkpoint_027' | 'wp5_resource_checkpoint_028' | 'wp5_resource_checkpoint_029' | 'wp5_resource_checkpoint_030' | 'wp5_resource_checkpoint_031' | 'wp5_resource_checkpoint_032' | 'wp5_resource_checkpoint_033' | 'wp5_resource_checkpoint_034' | 'wp5_resource_checkpoint_035' | 'wp5_resource_checkpoint_036' | 'wp5_resource_checkpoint_037' | 'wp5_resource_checkpoint_038' | 'wp5_resource_checkpoint_039' | 'wp5_resource_checkpoint_040' | 'wp5_resource_checkpoint_041' | 'wp5_resource_checkpoint_042' | 'wp5_resource_checkpoint_043' | 'wp5_resource_checkpoint_044' | 'wp5_resource_checkpoint_045' | 'wp5_resource_checkpoint_046' | 'wp5_resource_checkpoint_047' | 'wp5_resource_checkpoint_048' | 'wp5_resource_checkpoint_049' | 'wp5_resource_checkpoint_050' | 'wp5_resource_checkpoint_051' | 'wp5_resource_checkpoint_052' | 'wp5_resource_checkpoint_053' | 'wp5_resource_checkpoint_054' | 'wp5_resource_checkpoint_055' | 'wp5_resource_checkpoint_056' | 'wp5_resource_checkpoint_057' | 'wp5_resource_checkpoint_058' | 'wp5_resource_checkpoint_059' | 'wp5_resource_checkpoint_060' | 'wp5_resource_checkpoint_061' | 'wp5_resource_checkpoint_062' | 'wp5_resource_checkpoint_063' | 'wp5_resource_checkpoint_064' | 'wp5_resource_checkpoint_065' | 'wp5_resource_dialog_open' | 'wp5_resource_content_visible' | 'wp5_resource_editable' | 'wp5_focus_editor_open' | 'wp5_focus_body_target' | 'wp5_focus_put_received'
   | 'wp5_focus_put_request_content' | 'wp5_focus_put_status' | 'wp5_focus_put_response_content'
   | 'wp5_focus_api_readback' | 'wp5_focus_api_content_equal' | 'wp5_focus_reopen_api'
@@ -113,6 +131,37 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_conflict_probe_readback' | 'wp5_conflict_probe_reopen' | 'wp5_conflict_probe_recovery_status'
   | 'wp5_conflict_probe_reopen_canvas' | 'wp5_conflict_probe_reopen_ready'
   | 'wp5_conflict_probe_recovery_body' | 'wp5_conflict_probe_recovery_readback'
+  | 'wp5_archive_align_no_selection' | 'wp5_archive_align_wrong_target' | 'wp5_archive_align_empty_selection'
+  | 'wp5_archive_align_cross_block' | 'wp5_archive_align_model_range_missing' | 'wp5_archive_align_native_range_missing'
+  | 'wp5_archive_align_native_conversion_missing' | 'wp5_archive_align_logical_selection_mismatch'
+  | 'wp5_archive_alignment_selection_ready' | 'wp5_archive_align_action_click'
+  | 'wp5_archive_table_vertical_menu_action'
+  | 'wp5_archive_database_kanban' | 'wp5_archive_database_seed' | 'wp5_archive_database_add_view'
+  | 'wp5_archive_database_menu' | 'wp5_archive_database_group' | 'wp5_archive_database_card'
+  | 'wp5_archive_database_reopen_group' | 'wp5_archive_database_reopen_card'
+  | 'wp5_archive_database_refresh_group' | 'wp5_archive_database_refresh_card'
+  | 'wp5_archive_canvas_reference_lifecycle'
+  | 'wp5_archive_emoji_command_visible' | 'wp5_archive_emoji_picker_visible'
+  | 'wp5_archive_emoji_search_results' | 'wp5_archive_emoji_dom_target_present'
+  | 'wp5_archive_emoji_dom_target_missing' | 'wp5_archive_emoji_insert'
+  | 'wp5_archive_html_export' | 'wp5_archive_pdf_preview' | 'wp5_archive_pdf_frame_attached'
+  | 'wp5_archive_pdf_body_text' | 'wp5_archive_pdf_export_error' | 'wp5_archive_pdf_no_frame'
+  | 'wp5_archive_save_close'
+  | 'wp5_archive_saved_reopen' | 'wp5_archive_table_state_reopened'
+  | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
+  | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
+  | 'wp5_archive_resource_save_status_saved' | 'wp5_archive_resource_save_status_unsaved'
+  | 'wp5_archive_resource_save_status_pending' | 'wp5_archive_resource_save_status_error'
+  | 'wp5_archive_resource_save_status_other' | 'wp5_archive_resource_save_status_missing'
+  | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
+  | 'wp5_archive_drag_parent_missing' | 'wp5_archive_drag_different_parents'
+  | 'wp5_archive_drag_same_block' | 'wp5_archive_drag_source_missing_from_parent'
+  | 'wp5_archive_drag_target_missing_from_parent' | 'wp5_archive_drag_child_index_mismatch'
+  | 'wp5_archive_drag_source_after' | 'wp5_archive_drag_source_before'
+  | 'wp5_archive_fixture_split'
+  | 'wp5_archive_fixture_click_complete' | 'wp5_archive_fixture_caret_ready'
+  | 'wp5_archive_cell_rich_text_missing' | 'wp5_archive_cell_editor_missing' | 'wp5_archive_cell_click_complete'
+  | 'wp5_archive_cell_readonly' | 'wp5_archive_cell_caret_not_in_cell' | 'wp5_archive_cell_focus_ready'
   | 'notes_frontmatter_seed' | 'notes_frontmatter_reopen' | 'notes_blocksuite_button_click'
   | 'notes_blocksuite_canvas_visible' | 'notes_blocksuite_save_status'
   | 'notes_blocksuite_body_visible' | 'notes_blocksuite_enabled' | 'notes_blocksuite_contenteditable'
@@ -150,6 +199,50 @@ async function expectNoteSavedStatus(page: Page, observed: Awaited<ReturnType<ty
     observed.setDiagnosticAssertion(stateAssertion);
     throw error;
   }
+}
+
+async function expectEdgelessTextLayoutSettled(dialog: Locator, report: (samples: number[][]) => void) {
+  await expect.poll(async () => {
+    const result = await dialog.locator('affine-edgeless-text').evaluate(async (element) => {
+    const block = element as HTMLElement & { model?: { xywh?: string }; gfx?: { viewport?: { zoom?: number } } };
+    const container = block.querySelector('.edgeless-text-block-container');
+    const content = block.querySelector('.affine-block-children-container');
+    const sample = () => {
+      const zoom = block.gfx?.viewport?.zoom;
+      const xywh = block.model?.xywh;
+      if (!container || !content || typeof zoom !== 'number' || !Number.isFinite(zoom) || zoom <= 0 || typeof xywh !== 'string') return null;
+      let bounds: unknown;
+      try { bounds = JSON.parse(xywh); } catch { return null; }
+      if (!Array.isArray(bounds) || bounds.length !== 4 || !Number.isFinite(bounds[3])) return null;
+      const style = getComputedStyle(container);
+      const verticalInsets = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth)
+        + Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+      const paragraph = content.querySelector('affine-paragraph');
+      const richText = paragraph?.querySelector('rich-text') ?? null;
+      const inlineEditor = richText?.querySelector('.inline-editor') ?? null;
+      const height = (target: Element | null) => target ? target.getBoundingClientRect().height / zoom : -1;
+      return { measuredHeight: (content.getBoundingClientRect().height + verticalInsets) / zoom, modelHeight: bounds[3], zoom,
+        layout: [block.getBoundingClientRect().height / zoom, height(container), height(content),
+          height(paragraph), height(richText), height(inlineEditor), Number.parseFloat(style.borderTopWidth), Number.parseFloat(style.borderBottomWidth)] };
+    };
+    const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    await nextFrame();
+    const first = sample();
+    await nextFrame();
+    const second = sample();
+    if (!first || !second) return { settled: false, samples: [] as number[][] };
+    const stable = (left: number, right: number) => Math.abs(left - right) <= 0.25;
+    return { settled: stable(first.measuredHeight, first.modelHeight)
+      && stable(second.measuredHeight, second.modelHeight)
+      && stable(first.measuredHeight, second.measuredHeight)
+      && stable(first.modelHeight, second.modelHeight)
+      && stable(first.zoom, second.zoom),
+      samples: [[first.measuredHeight, first.modelHeight, first.zoom, ...first.layout],
+        [second.measuredHeight, second.modelHeight, second.zoom, ...second.layout]] };
+    });
+    report(result.samples);
+    return result.settled;
+  }).toBe(true);
 }
 
 function waitForGetResponse(page: Page, path: string, matchesQuery: (params: URLSearchParams) => boolean = () => true) {
@@ -373,9 +466,12 @@ async function configurePage(page: Page) {
   let dailyBriefPostCount = 0;
   let lastDailyBriefBody: Record<string, unknown> | null = null;
   let activityReadRevoked = false;
-  let wp5BlockSuiteNotePath: string | null = null;
+  const wp5BlockSuiteNotePaths = new Set<string>();
+  let wp5BlockSuiteForkCapturePending = false;
   let notesReadbackFailure: string | null = null;
   let notesSeedStatus: number | null = null;
+  let wp5Step: Wp5DiagnosticStep = 'not_started';
+  let wp5CanvasSaveDiagnostic: CanvasSaveDiagnostic | null = null;
   const pageErrorNames: string[] = [];
   const pageErrorCategories: string[] = [];
   const pageErrorSources: string[] = [];
@@ -519,9 +615,10 @@ async function configurePage(page: Page) {
         && /^\/api\/notes\/drafts\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(url.pathname))
     );
     const blocksuitePath = (() => {
-      if (!wp5BlockSuiteNotePath || params.size !== 0
-          || !url.pathname.startsWith(`${wp5BlockSuiteNotePath}/`)) return false;
-      const suffix = url.pathname.slice(wp5BlockSuiteNotePath.length);
+      if (params.size !== 0) return false;
+      const notePath = [...wp5BlockSuiteNotePaths].find(path => url.pathname.startsWith(`${path}/`));
+      if (!notePath) return false;
+      const suffix = url.pathname.slice(notePath.length);
       const method = route.request().method();
       if (suffix === '/blocksuite/resources') return method === 'POST';
       if (/^\/blocksuite\/resources\/[0-9a-f]{32}$/i.test(suffix)) return ['GET', 'PUT'].includes(method);
@@ -536,6 +633,20 @@ async function configurePage(page: Page) {
       && !activityPath && !calendarPath && !journalPath && !journalAppendPath && !taskListPath && !notesPath && !blocksuitePath) {
       blockedOrigins.add('<disallowed-business-api>');
       await route.abort('blockedbyclient');
+      return;
+    }
+    if (wp5BlockSuiteForkCapturePending && route.request().method() === 'POST'
+        && url.pathname === '/api/notes' && params.size === 0) {
+      wp5BlockSuiteForkCapturePending = false;
+      const response = await route.fetch();
+      const created = await response.json().catch(() => null) as null | { collection?: unknown; path?: unknown };
+      if (response.status() === 200 && created?.collection === 'drafts' && typeof created.path === 'string'
+          && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(created.path)) {
+        // Add only the synthetic fork returned by this one explicitly armed
+        // create, before the application can issue its first Blob request.
+        wp5BlockSuiteNotePaths.add(`/api/notes/drafts/${created.path}`);
+      }
+      await route.fulfill({ response });
       return;
     }
     if (activityReadRevoked && activityPath) {
@@ -573,12 +684,26 @@ async function configurePage(page: Page) {
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(path)) {
         throw new Error('WP5 BlockSuite allowlist requires the synthetic Note UUID');
       }
-      wp5BlockSuiteNotePath = `/api/notes/drafts/${path}`;
+      wp5BlockSuiteNotePaths.add(`/api/notes/drafts/${path}`);
     },
+    captureNextBlockSuiteFork() { wp5BlockSuiteForkCapturePending = true; },
     get lastInboxBody() { return lastInboxBody; },
     get dailyBriefPostCount() { return dailyBriefPostCount; },
     get lastDailyBriefBody() { return lastDailyBriefBody; },
     get diagnosticAssertion() { return diagnosticAssertion; },
+    get wp5Step() { return wp5Step; },
+    setWp5Step(step: Wp5DiagnosticStep) { wp5Step = step; },
+    get blockSuiteRequestStatuses(): BlockSuiteRequestDiagnostic[] {
+      return requestRecords.filter((request) => request.path.includes('/blocksuite/')).slice(-24).map((request) => ({
+        endpoint: request.path.endsWith('/blocksuite/resources') ? 'resource_collection'
+          : request.path.includes('/blocksuite/blobs/') ? 'blob'
+            : request.path.includes('/blocksuite/snapshots/')
+              ? request.path.endsWith('/restore') ? 'snapshot_restore' : 'snapshot'
+              : 'resource',
+        method: ['GET', 'POST', 'PUT'].includes(request.method) ? request.method as 'GET' | 'POST' | 'PUT' : 'GET',
+        status: request.status,
+      }));
+    },
     get activityReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
       && request.path === '/api/activity').map((request) => request.status).slice(-4); },
     get notesCollectionReadStatuses() { return requestRecords.filter((request) => request.method === 'GET'
@@ -598,6 +723,8 @@ async function configurePage(page: Page) {
       && request.path === '/api/daily-brief').map((request) => request.status).slice(-4); },
     get inboxId() { return createdInboxId; },
     setDiagnosticAssertion(assertion: DiagnosticAssertion) { diagnosticAssertion = assertion; },
+    setWp5CanvasSaveDiagnostic(value: CanvasSaveDiagnostic) { wp5CanvasSaveDiagnostic = value; },
+    get wp5CanvasSaveDiagnostic() { return wp5CanvasSaveDiagnostic; },
     setNotesReadbackFailure(detail: unknown) {
       const known: Record<string, string> = {
         'App session required': 'session_required',
@@ -764,8 +891,8 @@ for (const viewport of activeViewports) {
     // conflict/recovery, and an unsupported-Markdown preservation probe. Give
     // that composed journey enough total execution budget without extending
     // any individual product wait/assertion or weakening its conditions.
-    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5RoundtripOnly ? 120_000 : 60_000);
-    if ((wp5RoundtripOnly || wp5ConflictOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
+    if (viewport.name === 'desktop-1440x1000') test.setTimeout(wp5ArchiveUxOnly ? 360_000 : wp5RichPageModeOnly ? 120_000 : wp5RoundtripOnly ? 300_000 : 60_000);
+    if ((wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly || wp5ArchiveUxOnly) && viewport.name !== 'desktop-1440x1000') test.skip();
     const observed = await configurePage(page);
     observations.set(testInfo, observed);
     await page.addInitScript((marker) => {
@@ -818,13 +945,14 @@ for (const viewport of activeViewports) {
       }, WP5_PROBE_MARKER);
     const original = `记一下：合成浏览器验收 ${viewport.name} ${randomUUID()}`;
     await signInAndCreateBlankSession(page, viewport, observed);
-    if (wp5RoundtripOnly || wp5ConflictOnly) {
+    if (wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly || wp5ArchiveUxOnly) {
       observed.setFailureStage('notes_navigation');
       observed.setDiagnosticAssertion('wp5_focus_notes_navigation');
       await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
       await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
 
       if (!wp5ConflictOnly) {
+      if (!wp5RichPageModeOnly && !wp5ArchiveUxOnly) {
       const title = 'WP5 focused roundtrip';
       const originalBody = `Synthetic body ${randomUUID()}`;
       const markdown = `---\ntitle: ${title}\ntags:\n  - wp5-focused\ncustom: preserve-focused\n---\n\n# ${title}\n\n${originalBody}\n`;
@@ -859,8 +987,6 @@ for (const viewport of activeViewports) {
       const savedPayload = await readback.json() as { content?: string };
       expect(savedPayload.content, 'wp5_focus_api_content_equal').toContain(originalBody);
       expect(savedPayload.content, 'wp5_focus_frontmatter_preserved').toContain('custom: preserve-focused');
-
-      if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
 
       const roundtripResource = async (kind: 'database' | 'edgeless-canvas', buttonName: string, marker: string): Promise<string | undefined> => {
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_001');
@@ -972,6 +1098,41 @@ for (const viewport of activeViewports) {
         await page.keyboard.press('Enter');
         await page.keyboard.insertText(marker);
         observed.setDiagnosticAssertion('wp5_resource_dirty');
+        if (kind === 'database') {
+          observed.setDiagnosticAssertion('wp5_archive_database_seed');
+          const database = resourceHost.locator('affine-database').first();
+          const seededGroup = await database.evaluate(element => {
+            const component = element as HTMLElement & { dataSource?: { value?: {
+              propertyAdd?: (position: string, options: { type: string; name: string }) => string | undefined;
+              propertyDataSet?: (id: string, data: Record<string, unknown>) => void;
+              cellValueChange?: (rowId: string, propertyId: string, value: unknown) => void;
+            } }; model?: { children?: Array<{ id: string }> } };
+            const source = component.dataSource?.value;
+            const columnId = source?.propertyAdd?.('end', { type: 'select', name: '状态' });
+            // DatabaseBlockDataSource exposes cell/property APIs, while row
+            // models remain children of the affine:database block.
+            const rowId = component.model?.children?.[0]?.id;
+            if (!source || !columnId || !rowId) return false;
+            source.propertyDataSet?.(columnId, { options: [{ id: 'wp5-in-progress', value: '进行中', color: '#3b82f6' }] });
+            source.cellValueChange?.(rowId, columnId, 'wp5-in-progress');
+            return true;
+          });
+          expect(seededGroup, 'wp5_archive_database_seed').toBe(true);
+          const addView = resourceHost.getByTestId('database-add-view-button');
+          observed.setDiagnosticAssertion('wp5_archive_database_add_view');
+          await expect(addView, 'wp5_archive_database_add_view_button').toBeVisible();
+          await addView.click();
+          const kanbanMenuItem = page.getByText('看板视图', { exact: true }).last();
+          observed.setDiagnosticAssertion('wp5_archive_database_menu');
+          await expect(kanbanMenuItem, 'wp5_archive_database_menu').toBeVisible();
+          await kanbanMenuItem.click();
+          const kanban = resourceHost.locator('affine-data-view-kanban-group');
+          observed.setDiagnosticAssertion('wp5_archive_database_group');
+          await expect(kanban.first(), 'wp5_archive_database_group').toBeVisible({ timeout: 10000 });
+          observed.setDiagnosticAssertion('wp5_archive_database_card');
+          await expect(resourceHost.locator('affine-data-view-kanban-card').filter({ hasText: '测试记录' }).first(), 'wp5_archive_database_card')
+            .toContainText('测试记录');
+        }
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_009');
         await expect(resourceDialog.getByRole('button', { name: '保存资源' })).toBeEnabled();
         const resourcePut = page.waitForResponse((response) => response.request().method() === 'PUT'
@@ -1029,6 +1190,15 @@ for (const viewport of activeViewports) {
         await resourceLink.click();
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_020');
         await expect(page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' })).toBeVisible({ timeout: 15000 });
+        const sameResourceDialog = page.getByRole('dialog', { name: kind === 'database' ? 'BlockSuite 数据库资源' : 'BlockSuite Edgeless 资源' });
+        if (kind === 'database') {
+          observed.setDiagnosticAssertion('wp5_archive_database_reopen_group');
+          await expect(sameResourceDialog.locator('affine-data-view-kanban-group').first(), 'wp5_archive_database_reopen_group')
+            .toBeVisible({ timeout: 10000 });
+          observed.setDiagnosticAssertion('wp5_archive_database_reopen_card');
+          await expect(sameResourceDialog.locator('affine-data-view-kanban-card').filter({ hasText: '测试记录' }).first(), 'wp5_archive_database_reopen_card')
+            .toContainText('测试记录');
+        }
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_021');
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host').getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 15000 });
         await page.getByRole('dialog').getByRole('button', { name: '关闭' }).click();
@@ -1045,6 +1215,15 @@ for (const viewport of activeViewports) {
         await expect(refreshedLink).toHaveAttribute('href', new RegExp(resourceInfo.filename.replaceAll('.', '\\.')));
         await refreshedLink.click();
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_025');
+        if (kind === 'database') {
+          const refreshedDatabaseDialog = page.getByRole('dialog', { name: 'BlockSuite 数据库资源' });
+          observed.setDiagnosticAssertion('wp5_archive_database_refresh_group');
+          await expect(refreshedDatabaseDialog.locator('affine-data-view-kanban-group').first(), 'wp5_archive_database_refresh_group')
+            .toBeVisible({ timeout: 10000 });
+          observed.setDiagnosticAssertion('wp5_archive_database_refresh_card');
+          await expect(refreshedDatabaseDialog.locator('affine-data-view-kanban-card').filter({ hasText: '测试记录' }).first(), 'wp5_archive_database_refresh_card')
+            .toContainText('测试记录');
+        }
         await expect(page.getByRole('dialog').locator('.blocksuite-resource-host').getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 15000 });
         const reopenedDialog = page.getByRole('dialog');
         if (kind === 'edgeless-canvas' && uploadedBlobUrl) {
@@ -1177,6 +1356,7 @@ for (const viewport of activeViewports) {
         return uploadedBlobUrl;
       };
 
+      if (process.env.SB_E2E_WP5_OPEN_ONLY !== 'true') {
       observed.setFailureStage('notes_blocksuite_edit');
       await roundtripResource('database', '新建 BlockSuite Database', 'DB persistence marker');
       await page.reload();
@@ -1243,6 +1423,1338 @@ for (const viewport of activeViewports) {
       await expect(page.locator('.blocksuite-notes-canvas').getByText(originalBody, { exact: true })).toBeVisible({ timeout: 20000 });
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_065');
       await expect(page.locator('.blocksuite-notes-canvas a').filter({ hasText: 'BlockSuite resource' })).toHaveCount(2);
+      }
+      }
+
+      // Rich Page uses a dedicated synthetic Draft. This covers its controlled
+      // Yjs + snapshot + Markdown receipt path without changing the seed Note.
+      observed.setFailureStage('notes_blocksuite_open');
+      observed.setWp5Step('rich_page_create');
+      const richNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/notes', { timeout: 15000 });
+      await page.getByRole('button', { name: '新建富 Page', exact: true }).click();
+      const richCreatedResponse = await richNoteCreate;
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_001');
+      expect(richCreatedResponse.status(), 'wp5_rich_page_note_created').toBe(200);
+      const richCreated = await richCreatedResponse.json() as { collection: string; path: string; content: string };
+      expect(richCreated.collection, 'wp5_rich_page_synthetic_draft').toBe('drafts');
+      observed.allowBlockSuiteNote(richCreated.path);
+      observed.setWp5Step('rich_page_open');
+      const richResourceCreate = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+      const richDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      await expect(richDialog).toBeVisible({ timeout: 25000 });
+      observed.setDiagnosticAssertion('wp5_resource_dialog_open');
+      const richResourceResponse = await richResourceCreate;
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_002');
+      expect(richResourceResponse.status(), 'wp5_rich_page_resource_created').toBe(200);
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_003');
+      const richResourceInfo = await richResourceResponse.json() as { resource_id: string };
+      await expect(richDialog.locator('.blocksuite-resource-host.sb-archive-surface')).toBeVisible({ timeout: 15000 });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_004');
+      await expect(richDialog.getByRole('button', { name: '导出 HTML' })).toBeVisible();
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_005');
+      await expect(richDialog.locator('.blocksuite-resource-host .affine-page-viewport')).toBeVisible();
+      const richText = 'Synthetic rich page round trip';
+      observed.setWp5Step('rich_page_seed_read');
+      const richParagraphTexts = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
+        const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: { getBlocksByFlavour: (flavour: string) => Array<{ model: { props: { text?: { toString: () => string } } } }> } }).__sbBlockSuiteStore;
+        return store?.getBlocksByFlavour('affine:paragraph').map(({ model }) => model.props.text?.toString() ?? '') ?? [];
+      });
+      expect(richParagraphTexts).toEqual(['富 Page', '在这里开始编辑完整富格式内容。']);
+      const richBody = richDialog.locator('.affine-page-viewport affine-paragraph').nth(1);
+      await expect(richBody).toBeVisible({ timeout: 15000 });
+      observed.setDiagnosticAssertion('wp5_resource_content_visible');
+      observed.setWp5Step('rich_page_body_edit');
+      await richBody.click();
+      await page.keyboard.press('End');
+      await page.keyboard.insertText(` ${richText}`);
+      const firstRichResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
+      const firstRichMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
+      observed.setWp5Step('rich_page_first_save');
+      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      expect((await firstRichResourceSave).status(), 'wp5_rich_page_first_native_save').toBe(200);
+      expect((await firstRichMarkdownSave).status(), 'wp5_rich_page_first_projection_save').toBe(200);
+      await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
+      observed.setWp5Step('rich_page_first_readback');
+      const firstMarkdownRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect(firstMarkdownRead.status(), 'wp5_rich_page_first_markdown_readback').toBe(200);
+      expect((await firstMarkdownRead.json() as { content: string }).content, 'wp5_rich_page_first_projection_content').toContain(richText);
+      const firstNativeRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
+      expect(firstNativeRead.status(), 'wp5_rich_page_first_native_readback').toBe(200);
+      expect(JSON.stringify((await firstNativeRead.json() as { snapshot: unknown }).snapshot), 'wp5_rich_page_first_native_content').toContain(richText);
+      observed.setWp5Step('rich_page_close');
+      await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
+      await expect(richDialog).toHaveCount(0, { timeout: 15000 });
+      const firstRichReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
+      await expect(firstRichReference).toBeVisible({ timeout: 15000 });
+      observed.setWp5Step('rich_page_reopen');
+      await firstRichReference.click();
+      await expect(richDialog).toBeVisible({ timeout: 20000 });
+      await expect(richDialog.locator('.blocksuite-resource-host .affine-page-viewport')).toBeVisible({ timeout: 15000 });
+      const reopenedRichParagraphs = await richDialog.locator('.blocksuite-resource-host').evaluate(host => {
+        const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: { getBlocksByFlavour: (flavour: string) => Array<{ model: { props: { text?: { toString: () => string } } } }> } }).__sbBlockSuiteStore;
+        return store?.getBlocksByFlavour('affine:paragraph').map(({ model }) => model.props.text?.toString() ?? '') ?? [];
+      });
+      expect(reopenedRichParagraphs.join('\n'), 'wp5_rich_page_close_reopen_content').toContain(richText);
+      if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
+
+      // Keep archive-only UI checks independent from the separate resource
+      // lifecycle and Page/Edgeless mode journeys. The synthetic Rich Page is
+      // already saved and reopened above, so the controls can be exercised
+      // without paying for a nested canvas/blob round trip first.
+      let nestedCanvasResourceId: string | null = null;
+      if (!wp5ArchiveUxOnly) {
+      const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
+      observed.setWp5Step('rich_page_nested_canvas_create');
+      const nestedCanvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+      await canvasGallery.getByRole('button', { name: '新建独立画布' }).click();
+      const nestedCanvasResponse = await nestedCanvasCreate;
+      expect(nestedCanvasResponse.status(), 'wp5_rich_page_nested_canvas_create').toBe(200);
+      const nestedCanvasInfo = await nestedCanvasResponse.json() as { resource_id: string };
+      nestedCanvasResourceId = nestedCanvasInfo.resource_id;
+      const nestedCanvasCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: nestedCanvasInfo.resource_id });
+      await expect(nestedCanvasCard).toBeVisible({ timeout: 15000 });
+      observed.setWp5Step('rich_page_nested_canvas_open');
+      await nestedCanvasCard.getByRole('button', { name: '打开编辑' }).click();
+      const nestedCanvasDialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
+      await expect(nestedCanvasDialog).toBeVisible({ timeout: 15000 });
+      const nestedImageDataUrl = await page.evaluate(() => {
+        const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 2;
+        const context = canvas.getContext('2d'); if (!context) throw new Error('Canvas 2D context unavailable');
+        context.fillStyle = '#2f80ed'; context.fillRect(0, 0, 2, 2); return canvas.toDataURL('image/png');
+      });
+      const nestedBlobPut = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname.includes(`/api/notes/drafts/${richCreated.path}/blocksuite/blobs/`), { timeout: 20000 });
+      observed.setWp5Step('rich_page_nested_blob_upload');
+      await nestedCanvasDialog.getByLabel('选择 Edgeless 图片').setInputFiles({ name: 'nested-canvas.png', mimeType: 'image/png',
+        buffer: Buffer.from(nestedImageDataUrl.split(',')[1], 'base64') });
+      expect((await nestedBlobPut).status(), 'wp5_rich_page_nested_canvas_blob').toBe(201);
+      observed.setDiagnosticAssertion('wp5_canvas_layout_stable');
+      await expectEdgelessTextLayoutSettled(nestedCanvasDialog, (samples) => observed.setWp5CanvasSaveDiagnostic({
+        checkpoint: 'layout_poll', status: 'other', close_enabled: null, readback_status: null,
+        snapshot_matches_readback: null, live_text_bounds: [], saved_text_bounds: [], layout_samples: samples,
+      }));
+      const nestedCanvasSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
+      observed.setWp5Step('rich_page_nested_canvas_save');
+      await nestedCanvasDialog.getByRole('button', { name: '保存资源' }).click();
+      expect((await nestedCanvasSave).status(), 'wp5_rich_page_nested_canvas_save').toBe(200);
+      const nestedCanvasStatus = nestedCanvasDialog.getByRole('status');
+      const nestedCanvasClose = nestedCanvasDialog.getByRole('button', { name: '关闭', exact: true });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
+      const canvasStatusState = (value: string): CanvasSaveDiagnostic['status'] => value === 'BlockSuite 资源已保存' ? 'saved'
+        : value === '先前版本已保存；有未保存的资源修改' ? 'previous_dirty'
+          : value === '有未保存的资源修改' ? 'unsaved' : value === '保存中…' ? 'saving' : 'other';
+      const recordCanvasSave = (diagnostic: CanvasSaveDiagnostic) => observed.setWp5CanvasSaveDiagnostic(diagnostic);
+      recordCanvasSave({ checkpoint: 'first_status', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+        close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
+        live_text_bounds: [], saved_text_bounds: [], layout_samples: [] });
+      await expect(nestedCanvasStatus).toHaveText(/^(BlockSuite 资源已保存|先前版本已保存；有未保存的资源修改)$/);
+      if (await nestedCanvasStatus.innerText() !== 'BlockSuite 资源已保存') {
+        const nestedCanvasResave = page.waitForResponse(response => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`, { timeout: 20000 });
+        await nestedCanvasDialog.getByRole('button', { name: '保存资源' }).click();
+        expect((await nestedCanvasResave).status(), 'wp5_rich_page_nested_canvas_resave').toBe(200);
+        recordCanvasSave({ checkpoint: 'second_save_response', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+          close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
+          live_text_bounds: [], saved_text_bounds: [], layout_samples: [] });
+        const nestedCanvasReadback = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${nestedCanvasInfo.resource_id}`);
+        const nestedCanvasPersisted = nestedCanvasReadback.ok()
+          ? await nestedCanvasReadback.json() as { snapshot?: Record<string, unknown> } : null;
+        const nestedCanvasLive = await nestedCanvasDialog.locator('.blocksuite-resource-host').evaluate((element) => {
+          const store = (element as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+          if (!store) return null;
+          const snapshot = store.getTransformer().docToSnapshot(store) as Record<string, unknown>;
+          const textBounds: number[][] = [];
+          const visit = (value: unknown) => {
+            if (!value || typeof value !== 'object') return;
+            const record = value as Record<string, unknown>;
+            const props = record.props && typeof record.props === 'object' ? record.props as Record<string, unknown> : null;
+            if (record.flavour === 'affine:edgeless-text' && typeof props?.xywh === 'string') {
+              try {
+                const bounds = JSON.parse(props.xywh);
+                if (Array.isArray(bounds) && bounds.length === 4 && bounds.every(Number.isFinite)) textBounds.push(bounds as number[]);
+              } catch { /* bounded diagnostic omits invalid geometry */ }
+            }
+            for (const child of Object.values(record)) {
+              if (Array.isArray(child)) child.forEach(visit);
+              else if (child && typeof child === 'object') visit(child);
+            }
+          };
+          visit(snapshot);
+          return { snapshot, textBounds };
+        });
+        const readEdgelessTextBounds = (value: unknown): number[][] => {
+          const bounds: number[][] = [];
+          const visit = (item: unknown) => {
+            if (!item || typeof item !== 'object') return;
+            const record = item as Record<string, unknown>;
+            const props = record.props && typeof record.props === 'object' ? record.props as Record<string, unknown> : null;
+            if (record.flavour === 'affine:edgeless-text' && typeof props?.xywh === 'string') {
+              try {
+                const value = JSON.parse(props.xywh);
+                if (Array.isArray(value) && value.length === 4 && value.every(Number.isFinite)) bounds.push(value as number[]);
+              } catch { /* bounded diagnostic omits invalid geometry */ }
+            }
+            for (const child of Object.values(record)) {
+              if (Array.isArray(child)) child.forEach(visit);
+              else if (child && typeof child === 'object') visit(child);
+            }
+          };
+          visit(value);
+          return bounds;
+        };
+        const canonicalJson = (value: unknown): string => {
+          if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+          if (!value || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+          return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(',')}}`;
+        };
+        recordCanvasSave({ checkpoint: 'readback', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+          close_enabled: await nestedCanvasClose.isEnabled(), readback_status: nestedCanvasReadback.status(),
+          snapshot_matches_readback: null, live_text_bounds: [], saved_text_bounds: [], layout_samples: [] });
+        const readbackMatchesLive = !!nestedCanvasLive && !!nestedCanvasPersisted
+          && canonicalJson(nestedCanvasLive.snapshot) === canonicalJson(nestedCanvasPersisted.snapshot);
+        const liveTextBounds = nestedCanvasLive?.textBounds ?? [];
+        const savedTextBounds = nestedCanvasPersisted ? readEdgelessTextBounds(nestedCanvasPersisted.snapshot) : [];
+        recordCanvasSave({ checkpoint: 'saved_status', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+          close_enabled: await nestedCanvasClose.isEnabled(), readback_status: nestedCanvasReadback.status(),
+          snapshot_matches_readback: readbackMatchesLive, live_text_bounds: liveTextBounds,
+          saved_text_bounds: savedTextBounds, layout_samples: [] });
+        await expect(nestedCanvasStatus).toHaveText('BlockSuite 资源已保存');
+      }
+      recordCanvasSave({ checkpoint: 'close_enabled', status: canvasStatusState(await nestedCanvasStatus.innerText()),
+        close_enabled: await nestedCanvasClose.isEnabled(), readback_status: null, snapshot_matches_readback: null,
+        live_text_bounds: [], saved_text_bounds: [], layout_samples: [] });
+      await expect(nestedCanvasClose).toBeEnabled();
+      await nestedCanvasClose.click();
+      await expect(nestedCanvasCard.getByText(/自动裁剪预览 · 1 个对象/)).toBeVisible({ timeout: 15000 });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_010');
+      await expect(richDialog.getByRole('button', { name: '保存资源', exact: true })).toBeEnabled();
+      const richResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
+      const richMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
+      observed.setWp5Step('rich_page_parent_save');
+      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      expect((await richResourceSave).status(), 'wp5_rich_page_native_save').toBe(200);
+      expect((await richMarkdownSave).status(), 'wp5_rich_page_projection_save').toBe(200);
+      await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
+      const richNoteRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect(richNoteRead.status(), 'wp5_rich_page_markdown_readback').toBe(200);
+      const richNote = await richNoteRead.json() as { content: string; etag: string };
+      expect(richNote.content, 'wp5_rich_page_readable_projection').toContain(richText);
+      const richResourceRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
+      expect(richResourceRead.status(), 'wp5_rich_page_native_readback').toBe(200);
+      const richResource = await richResourceRead.json() as { updateB64: string; snapshot: Record<string, unknown>; note_etag: string };
+      expect(richResource.updateB64.length, 'wp5_rich_page_yjs_persisted').toBeGreaterThan(4);
+      expect(JSON.stringify(richResource.snapshot), 'wp5_rich_page_native_text').toContain(richText);
+      expect(richResource.note_etag, 'wp5_rich_page_receipt_bound').toBe(richNote.etag);
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_013');
+
+      // Page/Edgeless mode changes save first, then remount from the exact Yjs
+      // update. Switching back proves the text survives both view lifecycles.
+      observed.setWp5Step('rich_page_mode_edgeless');
+      await richDialog.getByText('属性', { exact: true }).click();
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_069');
+      await richDialog.getByRole('group', { name: '文档模式' }).getByRole('button', { name: '画布', exact: true }).click();
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_070');
+      await expect(richDialog.locator('.affine-edgeless-viewport')).toBeVisible({ timeout: 20000 });
+      observed.setWp5Step('rich_page_mode_edgeless_ready');
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_071');
+      observed.setWp5Step('rich_page_mode_page');
+      const propertiesPanel = richDialog.locator('details.sb-properties-info');
+      if (!await propertiesPanel.evaluate(details => (details as HTMLDetailsElement).open)) {
+        await propertiesPanel.locator('summary').click();
+      }
+      const modeGroup = richDialog.getByRole('group', { name: '文档模式' });
+      await expect(modeGroup).toBeVisible();
+      const pageModeButton = modeGroup.locator('button').filter({ hasText: /^页面$/ });
+      await expect(pageModeButton).toHaveCount(1);
+      await expect(pageModeButton).toBeVisible();
+      await expect(pageModeButton).toBeEnabled();
+      await expect(pageModeButton).toHaveAttribute('aria-pressed', 'false');
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_075');
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_066');
+      await pageModeButton.click({ timeout: 5000 });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_067');
+      await expect(richDialog.locator('.affine-page-viewport')).toBeVisible({ timeout: 20000 });
+      await expect(richDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_068');
+      await expect(richDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 15000 });
+      observed.setDiagnosticAssertion('wp5_resource_checkpoint_018');
+      if (wp5RichPageModeOnly) return;
+      }
+      if (wp5ArchiveUxOnly) {
+        observed.setFailureStage('notes_blocksuite_open');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_019');
+        const richHost = richDialog.locator('.blocksuite-resource-host.sb-archive-surface');
+        const archiveViewport = richHost.locator('.sb-archive-viewport');
+        await expect(archiveViewport).toBeVisible();
+        await expect(archiveViewport).toHaveClass(/affine-page-viewport/);
+        observed.setWp5Step('archive_ux_style_check');
+        const archivedPageStyle = await richHost.evaluate(host => {
+          const style = getComputedStyle(host);
+          return { fontFamily: style.fontFamily, fontSize: style.fontSize, lineHeight: style.lineHeight };
+        });
+        expect(archivedPageStyle.fontFamily, 'wp5_archive_page_font_family').toMatch(/Inter|ui-sans-serif|system-ui/i);
+        expect(archivedPageStyle.fontSize, 'wp5_archive_page_font_size').toBe('15px');
+        expect(Number.parseFloat(archivedPageStyle.lineHeight), 'wp5_archive_page_line_height').toBeCloseTo(24.75, 1);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_020');
+        // Keep the paragraph locator rooted at the active Rich Page host;
+        // its content is rendered through BlockSuite's nested Shadow DOM.
+        const bodyParagraph = richHost.locator('affine-paragraph').filter({ hasText: richText });
+        await expect(bodyParagraph).toHaveCount(1);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_021');
+        await expect(bodyParagraph).toBeVisible();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_022');
+        const readBlockOrder = () => archiveViewport.evaluate(root => {
+          const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | null;
+          const store = host?.__sbBlockSuiteStore;
+          return (store?.getBlocksByFlavour('affine:paragraph') ?? []).map(({ model }: any) => {
+            const parent = store.getParent(model);
+            return { id: model.id, text: model.props.text?.toString?.() ?? '', type: model.props.type,
+              textAlign: model.props.textAlign ?? null, textDelta: model.props.text?.toDelta?.() ?? [],
+              parent: parent?.id ?? null, order: parent?.children?.findIndex((child: any) => child.id === model.id) ?? -1,
+              childMapOrder: parent?.childMap?.value?.get(model.id) ?? -1 };
+          });
+        });
+        const originalBlockId = await bodyParagraph.getAttribute('data-block-id');
+        expect(originalBlockId, 'wp5_archive_fixture_original_block').toBeTruthy();
+        const inlineEditor = bodyParagraph.locator('rich-text .inline-editor');
+        await expect(inlineEditor, 'wp5_archive_fixture_inline_editor').toHaveAttribute('contenteditable', 'true');
+        const orderBeforeSplit = await readBlockOrder();
+        await inlineEditor.click();
+        observed.setDiagnosticAssertion('wp5_archive_fixture_click_complete');
+        // BlockSuite keeps the page root as document.activeElement while the
+        // caret lives in the contenteditable's Yjs-backed inline selection.
+        await expect.poll(() => inlineEditor.evaluate(editor => {
+          const selection = window.getSelection();
+          return Boolean(selection?.anchorNode && editor.contains(selection.anchorNode));
+        }), { timeout: 5000, message: 'wp5_archive_fixture_caret_in_editor' }).toBe(true);
+        observed.setDiagnosticAssertion('wp5_archive_fixture_caret_ready');
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        observed.setDiagnosticAssertion('wp5_archive_fixture_split');
+        await expect.poll(async () => {
+          const previousIds = new Set(orderBeforeSplit.map(block => block.id));
+          return (await readBlockOrder()).some(block => !previousIds.has(block.id)
+            && block.parent === orderBeforeSplit.find(item => item.id === originalBlockId)?.parent
+            && block.text.trim().length === 0);
+        }, { timeout: 5000, message: 'wp5_archive_fixture_new_empty_block' }).toBe(true);
+        await page.keyboard.insertText('Archive reorder target');
+        const targetParagraph = richHost.locator('affine-paragraph').filter({ hasText: 'Archive reorder target' });
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_023');
+        await expect(targetParagraph).toHaveCount(1);
+        await expect(targetParagraph).toBeVisible();
+        await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.id)
+          .not.toBe(originalBlockId);
+
+        const plus = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="plus"]');
+        const grip = richDialog.locator('sb-desktop-page-plus-widget button[data-kind="grip"]');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_024');
+        await targetParagraph.hover();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_025');
+        await expect(plus).toHaveAttribute('data-visible', 'true');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_026');
+        await expect(grip).toHaveAttribute('data-visible', 'true');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_027');
+        const controlGeometry = await Promise.all([grip, plus].map(locator => locator.evaluate(button => {
+          const rect = button.getBoundingClientRect();
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        })));
+        expect(Math.abs((controlGeometry[0].y + controlGeometry[0].height / 2)
+          - (controlGeometry[1].y + controlGeometry[1].height / 2)), 'wp5_desktop_page_plus_center_alignment').toBeLessThan(2);
+        expect(Math.abs(controlGeometry[0].x - controlGeometry[1].x), 'wp5_desktop_page_plus_direction_gap').toBeGreaterThanOrEqual(22);
+        expect(Math.abs(controlGeometry[0].x - controlGeometry[1].x), 'wp5_desktop_page_plus_direction_gap').toBeLessThanOrEqual(26);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_028');
+        await plus.click();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_029');
+        const headingMenuItem = page.getByTestId('一级标题');
+        await expect(headingMenuItem).toHaveCount(1);
+        await expect(headingMenuItem).toBeVisible();
+        await headingMenuItem.click({ timeout: 5000 });
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_030');
+        await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.type)
+          .toBe('h1');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_031');
+        const headingTextStyle = await targetParagraph.locator('.affine-paragraph-rich-text-wrapper').evaluate(element => {
+          const style = getComputedStyle(element);
+          return { fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight, lineHeight: style.lineHeight };
+        });
+        expect(headingTextStyle.fontFamily, 'wp5_archive_heading_font_family').toMatch(/Inter|ui-sans-serif|system-ui/i);
+        expect(Number.parseFloat(headingTextStyle.fontSize), 'wp5_archive_heading_font_size').toBeGreaterThan(15);
+        expect(headingTextStyle.fontWeight, 'wp5_archive_heading_weight').toBe('700');
+        expect(headingTextStyle.lineHeight, 'wp5_archive_heading_line_height').toMatch(/^\d+(?:\.\d+)?px$/);
+
+        // Exercise the archived inline and paragraph toolbars with a real
+        // keyboard selection, then verify the Yjs-backed block model changed.
+        observed.setWp5Step('archive_ux_toolbar_select');
+        await targetParagraph.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Shift+Home');
+        const boldAction = richDialog.getByRole('button', { name: '加粗', exact: true });
+        await expect(boldAction, 'wp5_archive_inline_toolbar_localized').toBeVisible({ timeout: 5000 });
+        observed.setWp5Step('archive_ux_bold');
+        await boldAction.click();
+        await expect.poll(async () => {
+          const block = (await readBlockOrder()).find(item => item.text.includes('Archive reorder target'));
+          return block?.textDelta.some((part: any) => part.attributes?.bold === true) ?? false;
+        }, { timeout: 5000 }).toBe(true);
+
+        observed.setWp5Step('archive_ux_alignment');
+        await targetParagraph.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Shift+Home');
+        const centerAction = richDialog.getByRole('button', { name: '居中对齐', exact: true });
+        await expect(centerAction, 'wp5_archive_alignment_toolbar_localized').toBeVisible({ timeout: 5000 });
+        const alignmentTargetId = await targetParagraph.getAttribute('data-block-id');
+        expect(alignmentTargetId, 'wp5_archive_alignment_target_present').toBeTruthy();
+        await expect.poll(async () => archiveViewport.evaluate((root, targetId) => {
+          const host = root.closest('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStd?: any }) | null;
+          const std = host?.__sbBlockSuiteStd;
+          const selection = std?.selection?.value?.find((item: any) => item.type === 'text');
+          const textSelectionCtor = selection ? {
+            fromTarget: Boolean(targetId && selection.from?.blockId === targetId),
+            nonempty: Number.isInteger(selection.from?.length) && selection.from.length > 0,
+            toTarget: !selection.to || selection.to.blockId === targetId,
+          } : null;
+          if (!selection) return 'wp5_archive_align_no_selection';
+          if (!textSelectionCtor?.fromTarget) return 'wp5_archive_align_wrong_target';
+          if (!textSelectionCtor.nonempty) return 'wp5_archive_align_empty_selection';
+          if (!textSelectionCtor.toTarget) return 'wp5_archive_align_cross_block';
+          const modelRange = std?.range?.textSelectionToRange(selection);
+          if (!modelRange) return 'wp5_archive_align_model_range_missing';
+          const nativeSelection = window.getSelection();
+          if (!nativeSelection || nativeSelection.isCollapsed || nativeSelection.rangeCount === 0) return 'wp5_archive_align_native_range_missing';
+          const nativeRange = nativeSelection.getRangeAt(0);
+          const reverse = Boolean(nativeSelection.anchorNode && nativeSelection.focusNode
+            && (nativeSelection.anchorNode === nativeSelection.focusNode
+              ? nativeSelection.anchorOffset > nativeSelection.focusOffset
+              : Boolean(nativeSelection.anchorNode.compareDocumentPosition(nativeSelection.focusNode)
+                & Node.DOCUMENT_POSITION_PRECEDING)));
+          const nativeTextSelection = std.range.rangeToTextSelection(nativeRange, reverse);
+          if (!nativeTextSelection) return 'wp5_archive_align_native_conversion_missing';
+          const samePoint = (left: any, right: any) => left?.blockId === right?.blockId
+            && left?.index === right?.index && left?.length === right?.length;
+          const logicalMatch = samePoint(selection.from, nativeTextSelection.from)
+            && (selection.to === null ? nativeTextSelection.to === null : samePoint(selection.to, nativeTextSelection.to));
+          return logicalMatch ? 'ready' : 'wp5_archive_align_logical_selection_mismatch';
+        }, alignmentTargetId).then(status => {
+          const failureAssertion = status === 'ready' ? 'wp5_archive_alignment_selection_ready' : status;
+          observed.setDiagnosticAssertion(failureAssertion as DiagnosticAssertion);
+          return status;
+        }), { timeout: 5000, message: 'wp5_archive_text_selection_ready' }).toBe('ready');
+        observed.setDiagnosticAssertion('wp5_archive_align_action_click');
+        await centerAction.click();
+        observed.setDiagnosticAssertion('wp5_archive_align_model_center');
+        await expect.poll(async () => (await readBlockOrder()).find(block => block.text.includes('Archive reorder target'))?.textAlign)
+          .toBe('center');
+
+        observed.setDiagnosticAssertion('wp5_archive_grip_visibility');
+        await targetParagraph.hover();
+        await expect(grip).toHaveAttribute('data-visible', 'true');
+        const gripBox = await grip.boundingBox();
+        const bodyBox = await bodyParagraph.boundingBox();
+        observed.setDiagnosticAssertion('wp5_archive_drag_geometry');
+        expect(gripBox, 'wp5_desktop_page_plus_grip_geometry').not.toBeNull();
+        expect(bodyBox, 'wp5_desktop_page_plus_drop_geometry').not.toBeNull();
+        const orderBeforeDrag = await readBlockOrder();
+        const dragPreflight = (() => {
+          const sources = orderBeforeDrag.filter(block => block.text.includes('Archive reorder target'));
+          const targets = orderBeforeDrag.filter(block => block.text.includes(richText));
+          if (sources.length !== 1) return 'wp5_archive_drag_source_not_unique';
+          if (targets.length !== 1) return 'wp5_archive_drag_target_not_unique';
+          const source = sources[0]!;
+          const target = targets[0]!;
+          if (source.id === target.id) return 'wp5_archive_drag_same_block';
+          if (!source.parent || !target.parent) return 'wp5_archive_drag_parent_missing';
+          if (source.parent !== target.parent) return 'wp5_archive_drag_different_parents';
+          if (source.order < 0) return 'wp5_archive_drag_source_missing_from_parent';
+          if (target.order < 0) return 'wp5_archive_drag_target_missing_from_parent';
+          if (source.order !== source.childMapOrder || target.order !== target.childMapOrder) return 'wp5_archive_drag_child_index_mismatch';
+          return source.order > target.order ? 'wp5_archive_drag_source_after' : 'wp5_archive_drag_source_before';
+        })();
+        observed.setDiagnosticAssertion(dragPreflight as DiagnosticAssertion);
+        expect(['wp5_archive_drag_source_after', 'wp5_archive_drag_source_before'], 'wp5_archive_drag_preflight').toContain(dragPreflight);
+        const expectedSourceBeforeTarget = dragPreflight === 'wp5_archive_drag_source_after';
+        const beforeDrag = orderBeforeDrag.find(block => block.text.includes('Archive reorder target'))!;
+        const beforeDragTarget = orderBeforeDrag.find(block => block.text.includes(richText))!;
+        await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
+        await page.mouse.down();
+        const dropY = dragPreflight === 'wp5_archive_drag_source_after'
+          ? bodyBox!.y + 1 : bodyBox!.y + bodyBox!.height - 1;
+        await page.mouse.move(bodyBox!.x + bodyBox!.width / 3, dropY, { steps: 5 });
+        await page.mouse.up();
+        observed.setDiagnosticAssertion('wp5_archive_drag_result');
+        await expect.poll(async () => {
+          const order = await readBlockOrder();
+          const source = order.find(block => block.text.includes('Archive reorder target'));
+          const target = order.find(block => block.text.includes(richText));
+          const sourceBeforeTarget = source && target ? source.order < target.order : null;
+          return Boolean(source && target && source.parent === target.parent && sourceBeforeTarget === expectedSourceBeforeTarget);
+        }).toBe(true);
+        const orderAfterDrag = await readBlockOrder();
+        const afterDrag = orderAfterDrag.find(block => block.text.includes('Archive reorder target'))!;
+        const afterDragTarget = orderAfterDrag.find(block => block.text.includes(richText))!;
+        expect(afterDrag.parent, 'wp5_desktop_page_plus_reorder_same_parent_after').toBe(afterDragTarget.parent);
+        expect(afterDrag.order, 'wp5_desktop_page_plus_reorder_source_index_valid').toBeGreaterThanOrEqual(0);
+        expect(afterDragTarget.order, 'wp5_desktop_page_plus_reorder_target_index_valid').toBeGreaterThanOrEqual(0);
+        expect(afterDrag.order < afterDragTarget.order, 'wp5_desktop_page_plus_reorder_changed_order')
+          .toBe(expectedSourceBeforeTarget);
+        expect(afterDrag.order < afterDragTarget.order, 'wp5_desktop_page_plus_reorder_relationship_reversed')
+          .not.toBe(beforeDrag.order < beforeDragTarget.order);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_032');
+
+        // Inherit the archived table path through the real Slash menu and
+        // pointer selection. The store is read only to confirm that UI edits
+        // reached the Yjs model before the resource is saved and reopened.
+        observed.setWp5Step('archive_ux_table');
+        await targetParagraph.hover();
+        await expect(plus).toHaveAttribute('data-visible', 'true');
+        await plus.click();
+        const tableMenuItem = page.getByTestId('普通表格');
+        await expect(tableMenuItem).toBeVisible();
+        await tableMenuItem.click();
+        const archiveTable = richHost.locator('affine-table').last();
+        await expect(archiveTable).toBeVisible();
+        const archiveTableCells = archiveTable.locator('td[data-row-id][data-column-id]');
+        await expect.poll(() => archiveTableCells.count()).toBeGreaterThan(3);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_035');
+        const firstCell = archiveTableCells.nth(0);
+        const secondCell = archiveTableCells.nth(1);
+        const firstCellEditor = firstCell.locator('rich-text .inline-editor');
+        const secondCellEditor = secondCell.locator('rich-text .inline-editor');
+        const mergeSourceText = `WP5 merge source ${randomUUID()}`;
+        const mergeCoveredText = `WP5 merge covered ${randomUUID()}`;
+        const firstRowId = await firstCell.getAttribute('data-row-id');
+        const firstColumnId = await firstCell.getAttribute('data-column-id');
+        const secondRowId = await secondCell.getAttribute('data-row-id');
+        const secondColumnId = await secondCell.getAttribute('data-column-id');
+        console.log('WP5_TABLE_DOM_DIAG', JSON.stringify(await archiveTable.evaluate((element, ids) => {
+          const table = element as HTMLElement & { dataManager?: { getCell?: (r: string, c: string) => { text?: { toString?: () => string; length?: number } } | undefined } };
+          const cells = [ids.first, ids.second].map(({ row, column }) => {
+            const td = element.querySelector<HTMLTableCellElement>(`td[data-row-id="${row}"][data-column-id="${column}"]`);
+            const rich = td?.querySelector('rich-text') as (HTMLElement & { inlineEditor?: { getInlineRange?: () => unknown } }) | null;
+            const editor = rich?.querySelector<HTMLElement>('.inline-editor') ?? null;
+            const cell = table.dataManager?.getCell?.(row, column);
+            const selection = window.getSelection();
+            return { tdPresent: Boolean(td), tdHtml: td?.innerHTML ?? null, richText: Boolean(rich), contenteditable: editor?.getAttribute('contenteditable') ?? null,
+              activeInside: Boolean(editor && editor.contains(document.activeElement)), activeTag: document.activeElement?.tagName ?? null,
+              selectionCollapsed: selection?.isCollapsed ?? null, selectionNodeInCell: Boolean(selection?.anchorNode && td?.contains(selection.anchorNode)),
+              inlineRange: rich?.inlineEditor?.getInlineRange?.() ?? null, yText: cell?.text?.toString?.() ?? null, yLength: cell?.text?.length ?? null };
+          });
+          return cells;
+        }, { first: { row: firstRowId!, column: firstColumnId! }, second: { row: secondRowId!, column: secondColumnId! } })));
+        expect(firstRowId && firstColumnId && secondRowId && secondColumnId, 'wp5_archive_table_cell_addresses_present').toBeTruthy();
+        const waitForTableCellText = async (targetRowId: string, targetColumnId: string, text: string) => {
+          const tableId = await archiveTable.getAttribute('data-block-id');
+          expect(tableId, 'wp5_archive_table_block_id_present').toBeTruthy();
+          await page.waitForFunction(({ tableId, rowId, columnId, text }) => {
+            const table = document.querySelector<HTMLElement & { dataManager?: { getCell?: (row: string, column: string) => { text?: { toString?: () => string } } | undefined } }>(`affine-table[data-block-id="${tableId}"]`);
+            return (table?.dataManager?.getCell?.(rowId, columnId)?.text?.toString?.() ?? '').includes(text);
+          }, { tableId, rowId: targetRowId, columnId: targetColumnId, text }, { timeout: 5_000 });
+        };
+        const assertTableCellEditable = async (cell: Locator) => cell.evaluate((targetCell): boolean => {
+          const richText = targetCell.querySelector('rich-text');
+          if (!richText) return false;
+          const editor = richText.querySelector<HTMLElement>('.inline-editor');
+          return Boolean(editor && editor.getAttribute('contenteditable') === 'true');
+        });
+        const focusTableCellEditor = async (editor: Locator, rowId: string, columnId: string) => {
+          await editor.click();
+          observed.setDiagnosticAssertion('wp5_archive_cell_click_complete');
+          await page.waitForFunction(({ rowId, columnId }) => {
+            const cell = document.querySelector<HTMLTableCellElement>(`td[data-row-id="${rowId}"][data-column-id="${columnId}"]`);
+            const activeEditor = cell?.querySelector<HTMLElement>('rich-text .inline-editor[contenteditable="true"]');
+            return Boolean(activeEditor && document.activeElement === activeEditor);
+          }, { rowId, columnId }, { timeout: 5_000 });
+        };
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_038');
+        expect(await assertTableCellEditable(firstCell), 'wp5_archive_table_first_cell_editable').toBe(true);
+        await focusTableCellEditor(firstCellEditor, firstRowId!, firstColumnId!);
+        observed.setDiagnosticAssertion('wp5_archive_cell_focus_ready');
+        await page.keyboard.insertText(mergeSourceText);
+        await waitForTableCellText(firstRowId!, firstColumnId!, mergeSourceText);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_039');
+        expect(await assertTableCellEditable(secondCell), 'wp5_archive_table_second_cell_editable').toBe(true);
+        await focusTableCellEditor(secondCellEditor, secondRowId!, secondColumnId!);
+        observed.setDiagnosticAssertion('wp5_archive_cell_focus_ready');
+        await page.keyboard.insertText(mergeCoveredText);
+        await waitForTableCellText(secondRowId!, secondColumnId!, mergeCoveredText);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_040');
+        const firstCellBox = await firstCell.boundingBox();
+        const secondCellBox = await secondCell.boundingBox();
+        expect(firstCellBox, 'wp5_archive_table_first_cell_geometry').not.toBeNull();
+        expect(secondCellBox, 'wp5_archive_table_second_cell_geometry').not.toBeNull();
+        await page.mouse.move(firstCellBox!.x + firstCellBox!.width / 2, firstCellBox!.y + firstCellBox!.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(secondCellBox!.x + secondCellBox!.width / 2, secondCellBox!.y + secondCellBox!.height / 2, { steps: 4 });
+        await page.mouse.up();
+        await secondCell.click({ button: 'right' });
+        const mergeCellsAction = page.getByText('合并单元格', { exact: true });
+        await expect(mergeCellsAction).toBeVisible();
+        await mergeCellsAction.click();
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_041');
+        const tableMergeCount = await archiveTable.evaluate(element => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown> } } } };
+          return Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length;
+        });
+        expect(tableMergeCount, 'wp5_archive_table_merge_model').toBe(1);
+        await expect(archiveTable.locator('td[data-row-id][data-column-id]').first()).toHaveAttribute('colspan', '2');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_042');
+        const mergedCellTexts = await archiveTable.evaluate((element, expectedRowTexts) => {
+          const table = element as HTMLElement & { dataManager?: { rows$?: { value: Array<{ rowId: string }> }; columns$?: { value: Array<{ columnId: string }> }; getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
+          const row = table.dataManager?.rows$?.value[0];
+          const columns = table.dataManager?.columns$?.value ?? [];
+          if (!row || !table.dataManager?.getCell) return [];
+          return columns.slice(0, 2).map(column => table.dataManager!.getCell!(row.rowId, column.columnId)?.text?.toString?.() ?? '')
+            .filter(value => expectedRowTexts.some(text => value.includes(text)));
+        }, [mergeSourceText, mergeCoveredText]);
+        expect(mergedCellTexts.join('\n'), 'wp5_archive_table_merge_retains_cell_text').toContain(mergeSourceText);
+        expect(mergedCellTexts.join('\n'), 'wp5_archive_table_merge_retains_covered_text').toContain(mergeCoveredText);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_036');
+
+        const mergedCell = archiveTable.locator('td[data-row-id][data-column-id][colspan="2"]').first();
+        await mergedCell.click({ button: 'right' });
+        observed.setDiagnosticAssertion('wp5_archive_table_vertical_menu_action');
+        const verticalMiddleAction = page.getByRole('button', { name: '垂直居中', exact: true });
+        await expect(verticalMiddleAction, 'wp5_archive_table_vertical_menu_action').toBeVisible();
+        await verticalMiddleAction.click();
+        const verticalAlignment = await archiveTable.evaluate((element, address) => {
+          const table = element as HTMLElement & { dataManager?: { getCell?: (row: string, column: string) => { verticalAlign?: string } | undefined } };
+          return table.dataManager?.getCell?.(address.row, address.column)?.verticalAlign ?? 'top';
+        }, { row: firstRowId!, column: firstColumnId! });
+        expect(verticalAlignment, 'wp5_archive_table_vertical_alignment_model').toBe('middle');
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_043');
+        await mergedCell.click({ button: 'right' });
+        const splitCellAction = page.getByText('拆分单元格', { exact: true });
+        await expect(splitCellAction, 'wp5_archive_table_split_menu_action').toBeVisible();
+        await splitCellAction.click();
+        const mergeCountAfterSplit = await archiveTable.evaluate(element => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown> } } } };
+          return Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length;
+        });
+        expect(mergeCountAfterSplit, 'wp5_archive_table_split_model').toBe(0);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_044');
+        const splitFirstBox = await firstCell.boundingBox();
+        const splitSecondBox = await secondCell.boundingBox();
+        expect(splitFirstBox, 'wp5_archive_table_split_first_cell_geometry').not.toBeNull();
+        expect(splitSecondBox, 'wp5_archive_table_split_second_cell_geometry').not.toBeNull();
+        await page.mouse.move(splitFirstBox!.x + splitFirstBox!.width / 2, splitFirstBox!.y + splitFirstBox!.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(splitSecondBox!.x + splitSecondBox!.width / 2, splitSecondBox!.y + splitSecondBox!.height / 2, { steps: 4 });
+        await page.mouse.up();
+        await secondCell.click({ button: 'right' });
+        const remergeAction = page.getByText('合并单元格', { exact: true });
+        await expect(remergeAction, 'wp5_archive_table_remerge_menu_action').toBeVisible();
+        await remergeAction.click();
+        const mergeCountAfterRemerge = await archiveTable.evaluate(element => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown> } } } };
+          return Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length;
+        });
+        expect(mergeCountAfterRemerge, 'wp5_archive_table_remerge_model').toBe(1);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_045');
+
+        const firstTableRow = archiveTable.locator('tr[data-row-id]').first();
+        const rowBox = await firstTableRow.boundingBox();
+        const rowId = await firstTableRow.getAttribute('data-row-id');
+        expect(rowBox, 'wp5_archive_table_row_geometry').not.toBeNull();
+        expect(rowId, 'wp5_archive_table_row_id_present').toBeTruthy();
+        await page.mouse.move(rowBox!.x + Math.min(rowBox!.width / 2, 80), rowBox!.y + rowBox!.height - 1);
+        await page.mouse.down();
+        await page.mouse.move(rowBox!.x + Math.min(rowBox!.width / 2, 80), rowBox!.y + rowBox!.height + 20, { steps: 3 });
+        await page.mouse.up();
+        const persistedRowHeight = await archiveTable.evaluate((element, targetRowId) => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { rows?: Record<string, { minHeight?: number }> } } } };
+          return table.dataManager?.model?.props?.rows?.[targetRowId ?? '']?.minHeight ?? null;
+        }, rowId);
+        expect(persistedRowHeight, 'wp5_archive_table_row_resize_model').toBeGreaterThan(38);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_037');
+
+        observed.setWp5Step('archive_ux_emoji');
+        observed.setDiagnosticAssertion('wp5_archive_emoji_command_visible');
+        const emojiParagraph = richHost.locator('affine-paragraph').filter({ hasText: richText }).first();
+        const emojiTarget = emojiParagraph.locator('rich-text .inline-editor');
+        await emojiTarget.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('/');
+        const emojiSlashItem = page.getByText('插入表情图标', { exact: true });
+        // The native slash menu is a scrollable list; this command is below
+        // its initial viewport, so bring the actual menu item into view before
+        // asserting visibility and exercising its picker action.
+        await emojiSlashItem.scrollIntoViewIfNeeded();
+        await expect(emojiSlashItem, 'wp5_archive_emoji_command_visible').toBeVisible({ timeout: 10000 });
+        await emojiSlashItem.click();
+        const emojiDialog = page.getByRole('dialog', { name: '选择表情' });
+        observed.setDiagnosticAssertion('wp5_archive_emoji_picker_visible');
+        await expect(emojiDialog, 'wp5_archive_emoji_picker_visible').toBeVisible();
+        const emojiPicker = emojiDialog.locator('em-emoji-picker');
+        const emojiSearch = emojiPicker.locator('input[type="search"]');
+        await expect(emojiSearch, 'wp5_archive_emoji_picker_visible').toHaveAttribute('placeholder', '搜索');
+        await emojiSearch.fill('笑脸');
+        observed.setDiagnosticAssertion('wp5_archive_emoji_search_results');
+        // Read the actual picker shadow DOM and select the requested native
+        // emoji by its accessible label; search ranking can reorder results.
+        const hasGrinningEmoji = await emojiPicker.evaluate(picker =>
+          [...(picker.shadowRoot?.querySelectorAll('button[aria-posinset]') ?? [])]
+            .some(button => button.getAttribute('aria-label') === '😀'));
+        observed.setDiagnosticAssertion(hasGrinningEmoji
+          ? 'wp5_archive_emoji_dom_target_present' : 'wp5_archive_emoji_dom_target_missing');
+        expect(hasGrinningEmoji, 'wp5_archive_emoji_search_dom_target').toBe(true);
+        const grinningEmoji = emojiPicker.locator('button[aria-label="😀"]');
+        await expect(grinningEmoji, 'wp5_archive_emoji_search_results').toBeVisible({ timeout: 10000 });
+        await grinningEmoji.click();
+        observed.setDiagnosticAssertion('wp5_archive_emoji_insert');
+        await expect(emojiParagraph, 'wp5_archive_emoji_insert').toContainText('😀', { timeout: 5000 });
+        await expect(emojiDialog, 'wp5_archive_emoji_insert').toHaveCount(0);
+
+        const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
+        observed.setDiagnosticAssertion('wp5_archive_canvas_reference_lifecycle');
+        const canvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+        await canvasGallery.getByRole('button', { name: '新建独立画布' }).click();
+        const canvasCreated = await canvasCreate;
+        expect(canvasCreated.status(), 'wp5_archive_canvas_reference_lifecycle').toBe(200);
+        const sourceCanvas = await canvasCreated.json() as { resource_id: string };
+        const sourceCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: sourceCanvas.resource_id });
+        await expect(sourceCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        const removableCanvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+        await canvasGallery.getByRole('button', { name: '新建独立画布' }).click();
+        const removableCanvasResponse = await removableCanvasCreate;
+        expect(removableCanvasResponse.status(), 'wp5_archive_canvas_reference_lifecycle').toBe(200);
+        const removableCanvas = await removableCanvasResponse.json() as { resource_id: string };
+        const removableCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: removableCanvas.resource_id });
+        await expect(removableCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        await sourceCard.getByRole('button', { name: '打开编辑' }).click();
+        const sourceCanvasDialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
+        const sourceCanvasText = sourceCanvasDialog.locator('.blocksuite-resource-host').getByText('独立 Edgeless 便签', { exact: true }).first();
+        await expect(sourceCanvasText, 'wp5_archive_canvas_reference_lifecycle').toBeVisible({ timeout: 15000 });
+        const sourceCanvasTextBox = await sourceCanvasText.boundingBox();
+        expect(sourceCanvasTextBox, 'wp5_archive_canvas_reference_lifecycle').not.toBeNull();
+        await page.mouse.dblclick(sourceCanvasTextBox!.x + sourceCanvasTextBox!.width / 2, sourceCanvasTextBox!.y + sourceCanvasTextBox!.height / 2);
+        await page.keyboard.press('End');
+        const canvasReferenceMarker = `Canvas gallery ${randomUUID()}`;
+        await page.keyboard.insertText(` ${canvasReferenceMarker}`);
+        const sourceCanvasSave = page.waitForResponse(response => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`, { timeout: 20000 });
+        await sourceCanvasDialog.getByRole('button', { name: '保存资源' }).click();
+        expect((await sourceCanvasSave).status(), 'wp5_archive_canvas_reference_lifecycle').toBe(200);
+        await expect(sourceCanvasDialog.getByRole('status')).toHaveText('BlockSuite 资源已保存', { timeout: 15000 });
+        await sourceCanvasDialog.getByRole('button', { name: '关闭', exact: true }).click();
+        await expect(sourceCard.locator('.canvas-b-card-preview'), 'wp5_archive_canvas_reference_lifecycle')
+          .toContainText('自动裁剪预览', { timeout: 10000 });
+
+        const canvasCopy = page.waitForResponse(response => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+        await sourceCard.getByRole('button', { name: '深拷贝画布' }).click();
+        const copiedCanvasResponse = await canvasCopy;
+        expect(copiedCanvasResponse.status(), 'wp5_archive_canvas_reference_lifecycle').toBe(200);
+        const copiedCanvas = await copiedCanvasResponse.json() as { resource_id: string };
+        expect(copiedCanvas.resource_id, 'wp5_archive_canvas_reference_lifecycle').not.toBe(sourceCanvas.resource_id);
+        const copiedCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
+        await expect(copiedCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        await expect(copiedCard.locator('.canvas-b-card-preview'), 'wp5_archive_canvas_copy_preview').toContainText('自动裁剪预览');
+        await expect(sourceCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        await expect(canvasGallery.locator('.canvas-b-card'), 'wp5_archive_canvas_reference_lifecycle').toHaveCount(3);
+        const sourceCanvasRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`);
+        const copiedCanvasRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${copiedCanvas.resource_id}`);
+        expect(sourceCanvasRead.status(), 'wp5_archive_canvas_source_preserved').toBe(200);
+        expect(copiedCanvasRead.status(), 'wp5_archive_canvas_copy_readback').toBe(200);
+        const copiedCanvasBody = await copiedCanvasRead.json() as { snapshot: Record<string, unknown> };
+        expect(JSON.stringify(copiedCanvasBody.snapshot), 'wp5_archive_canvas_copy_content').toContain(canvasReferenceMarker);
+        await removableCard.getByRole('button', { name: '移除引用' }).click();
+        await expect(removableCard, 'wp5_archive_canvas_reference_lifecycle').toHaveCount(0);
+        expect((await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`)).status(),
+          'wp5_archive_canvas_original_not_deleted').toBe(200);
+        expect((await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${removableCanvas.resource_id}`)).status(),
+          'wp5_archive_canvas_removed_reference_resource_preserved').toBe(200);
+        observed.setDiagnosticAssertion('wp5_archive_canvas_reference_lifecycle');
+
+        const savedArchiveResource = page.waitForResponse(response => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
+        const savedArchiveMarkdown = page.waitForResponse(response => response.request().method() === 'PUT'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}`, { timeout: 20000 });
+        await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+        expect((await savedArchiveResource).status(), 'wp5_archive_ux_resource_save').toBe(200);
+        expect((await savedArchiveMarkdown).status(), 'wp5_archive_ux_markdown_save').toBe(200);
+        const archiveSaveState = await richDialog.locator('.document-status').evaluate(element => {
+          const status = (element.textContent ?? '').trim();
+          if (status === 'BlockSuite 资源已保存') return 'saved';
+          if (/失败|冲突|412|409|缺失|未能|ERROR/.test(status)) return 'error';
+          if (/正在保存|保存中/.test(status)) return 'pending';
+          if (/未保存/.test(status)) return 'unsaved';
+          return 'other';
+        }).catch(() => 'missing');
+        observed.setDiagnosticAssertion(`wp5_archive_resource_save_status_${archiveSaveState}` as DiagnosticAssertion);
+        expect(archiveSaveState, 'wp5_archive_ux_resource_save_status').toBe('saved');
+        observed.setDiagnosticAssertion('wp5_archive_html_export');
+        const htmlExport = page.waitForEvent('download');
+        await richDialog.getByRole('button', { name: '导出 HTML' }).click();
+        const htmlDownload = await htmlExport;
+        expect(htmlDownload.suggestedFilename(), 'wp5_archive_html_download_name').toMatch(/\.html$/i);
+        const htmlExportPath = await htmlDownload.path();
+        expect(htmlExportPath, 'wp5_archive_html_download_path').toBeTruthy();
+        const htmlExportContent = await readFile(htmlExportPath!, 'utf8');
+        expect(htmlExportContent, 'wp5_archive_html_download_content').toContain(mergeSourceText);
+        expect(htmlExportContent, 'wp5_archive_html_export_script_free').not.toMatch(/<script\b/i);
+        observed.setDiagnosticAssertion('wp5_archive_pdf_preview');
+        await page.evaluate((marker) => {
+          const probeWindow = window as Window & { __wp5PdfProbe?: { state: string } };
+          probeWindow.__wp5PdfProbe = { state: 'waiting' };
+          const observer = new MutationObserver(() => {
+            const frame = document.querySelector<HTMLIFrameElement>('iframe[title="富文档 PDF 打印"]');
+            if (!frame) return;
+            observer.disconnect();
+            frame.addEventListener('load', () => {
+              const body = frame.contentDocument?.body;
+              probeWindow.__wp5PdfProbe = { state: !body ? 'missing_body'
+                : body.innerText.includes(marker) ? 'body_contains_source' : 'body_source_missing' };
+            }, { once: true });
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+        }, mergeSourceText);
+        await richDialog.getByRole('button', { name: '导出 PDF' }).click();
+        await expect.poll(async () => {
+          const state = await page.evaluate(() => (window as Window & { __wp5PdfProbe?: { state: string } }).__wp5PdfProbe?.state ?? 'waiting');
+          const status = await richDialog.locator('.document-status').textContent().catch(() => '');
+          return state !== 'waiting' ? state : status?.includes('PDF 导出失败') ? 'export_error' : 'waiting';
+        }, { timeout: 10000 }).not.toBe('waiting');
+        const pdfProbeState = await page.evaluate(() => {
+          const state = (window as Window & { __wp5PdfProbe?: { state: string } }).__wp5PdfProbe?.state ?? 'waiting';
+          const status = document.querySelector('.document-status')?.textContent ?? '';
+          return state !== 'waiting' ? state : status.includes('PDF 导出失败') ? 'export_error' : 'no_frame';
+        });
+        observed.setDiagnosticAssertion(pdfProbeState === 'body_contains_source' ? 'wp5_archive_pdf_body_contains_source'
+          : pdfProbeState === 'export_error' ? 'wp5_archive_pdf_export_error'
+            : pdfProbeState === 'no_frame' ? 'wp5_archive_pdf_no_frame'
+              : pdfProbeState === 'missing_body' ? 'wp5_archive_pdf_body_missing_body' : 'wp5_archive_pdf_body_source_missing');
+        expect(pdfProbeState, 'wp5_archive_pdf_print_preview_dom').toBe('body_contains_source');
+        observed.setDiagnosticAssertion('wp5_archive_save_close');
+        await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
+        await expect(richDialog).toHaveCount(0);
+        observed.setDiagnosticAssertion('wp5_archive_saved_reopen');
+        const savedArchiveReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
+        await expect(savedArchiveReference).toBeVisible();
+        await savedArchiveReference.click();
+        await expect(richDialog).toBeVisible();
+        await expect(richDialog).toHaveAttribute('aria-busy', 'false');
+        await expect.poll(async () => (await readBlockOrder()).filter(block => block.text.includes('Archive reorder target')).length)
+          .toBe(1);
+        const orderAfterReopen = await readBlockOrder();
+        expect(orderAfterReopen.filter(block => block.text.includes('Archive reorder target')), 'wp5_desktop_page_plus_reorder_source_after_reopen').toHaveLength(1);
+        expect(orderAfterReopen.filter(block => block.text.includes(richText)), 'wp5_desktop_page_plus_reorder_target_after_reopen').toHaveLength(1);
+        const reopenedSource = orderAfterReopen.find(block => block.text.includes('Archive reorder target'))!;
+        const reopenedTarget = orderAfterReopen.find(block => block.text.includes(richText))!;
+        expect(reopenedSource.type, 'wp5_desktop_page_plus_heading_persisted').toBe('h1');
+        expect(reopenedSource.textAlign, 'wp5_archive_alignment_persisted').toBe('center');
+        expect(reopenedSource.textDelta.some((part: any) => part.attributes?.bold === true), 'wp5_archive_inline_style_persisted').toBe(true);
+        expect(reopenedSource.parent, 'wp5_desktop_page_plus_reorder_parent_persisted').toBe(reopenedTarget.parent);
+        expect(reopenedSource.order, 'wp5_desktop_page_plus_reorder_source_index_reopened').toBeGreaterThanOrEqual(0);
+        expect(reopenedTarget.order, 'wp5_desktop_page_plus_reorder_target_index_reopened').toBeGreaterThanOrEqual(0);
+        expect(reopenedSource.order < reopenedTarget.order, 'wp5_desktop_page_plus_reorder_persisted').toBe(expectedSourceBeforeTarget);
+        expect(reopenedSource.order < reopenedTarget.order, 'wp5_desktop_page_plus_reorder_reversal_persisted')
+          .not.toBe(beforeDrag.order < beforeDragTarget.order);
+        const reopenedTable = richHost.locator('affine-table').last();
+        observed.setDiagnosticAssertion('wp5_archive_table_state_reopened');
+        await expect(reopenedTable).toBeVisible();
+        const reopenedGallery = richDialog.getByRole('region', { name: '独立画布资源' });
+        const reopenedCopiedCard = reopenedGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
+        const reopenedSourceCard = reopenedGallery.locator('.canvas-b-card').filter({ hasText: sourceCanvas.resource_id });
+        await expect(reopenedGallery.locator('.canvas-b-card'), 'wp5_archive_canvas_reference_reopen').toHaveCount(2);
+        await expect(reopenedSourceCard, 'wp5_archive_canvas_reference_reopen').toBeVisible();
+        await expect(reopenedCopiedCard, 'wp5_archive_canvas_reference_reopen').toBeVisible();
+        await expect(reopenedCopiedCard.locator('.canvas-b-card-preview'), 'wp5_archive_canvas_preview_reopen')
+          .toContainText('自动裁剪预览');
+        const reopenedCopiedResource = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${copiedCanvas.resource_id}`);
+        expect(reopenedCopiedResource.status(), 'wp5_archive_canvas_reference_reopen').toBe(200);
+        expect(JSON.stringify((await reopenedCopiedResource.json() as { snapshot: Record<string, unknown> }).snapshot),
+          'wp5_archive_canvas_reference_reopen').toContain(canvasReferenceMarker);
+        const reopenedTableState = await reopenedTable.evaluate((element, targetRowId) => {
+          const table = element as HTMLElement & { dataManager?: { model?: { props?: { mergeRegions?: Record<string, unknown>; rows?: Record<string, { minHeight?: number }> } } } };
+          return { mergeCount: Object.keys(table.dataManager?.model?.props?.mergeRegions ?? {}).length,
+            rowHeight: table.dataManager?.model?.props?.rows?.[targetRowId ?? '']?.minHeight ?? 38 };
+        }, rowId);
+        expect(reopenedTableState.mergeCount, 'wp5_archive_table_merge_reopened').toBe(1);
+        expect(reopenedTableState.rowHeight, 'wp5_archive_table_row_resize_reopened').toBeGreaterThan(38);
+        const reopenedVerticalAlignment = await reopenedTable.evaluate((element, address) => {
+          const table = element as HTMLElement & { dataManager?: { getCell?: (row: string, column: string) => { verticalAlign?: string } | undefined } };
+          return table.dataManager?.getCell?.(address.row, address.column)?.verticalAlign ?? 'top';
+        }, { row: firstRowId!, column: firstColumnId! });
+        expect(reopenedVerticalAlignment, 'wp5_archive_table_vertical_menu_action').toBe('middle');
+        const reopenedMergeTexts = await reopenedTable.evaluate((element, expectedRowTexts) => {
+          const table = element as HTMLElement & { dataManager?: { rows$?: { value: Array<{ rowId: string }> }; columns$?: { value: Array<{ columnId: string }> }; getCell?: (rowId: string, columnId: string) => { text?: { toString?: () => string } } | undefined } };
+          const row = table.dataManager?.rows$?.value[0];
+          const columns = table.dataManager?.columns$?.value ?? [];
+          if (!row || !table.dataManager?.getCell) return [];
+          return columns.slice(0, 2).map(column => table.dataManager!.getCell!(row.rowId, column.columnId)?.text?.toString?.() ?? '')
+            .filter(value => expectedRowTexts.some(text => value.includes(text)));
+        }, [mergeSourceText, mergeCoveredText]);
+        expect(reopenedMergeTexts.join('\n'), 'wp5_archive_table_merge_source_reopened').toContain(mergeSourceText);
+        expect(reopenedMergeTexts.join('\n'), 'wp5_archive_table_merge_covered_reopened').toContain(mergeCoveredText);
+        observed.setDiagnosticAssertion('wp5_resource_checkpoint_034');
+        return;
+      }
+      if (!nestedCanvasResourceId) throw new Error('Expected nested canvas resource identity for recovery verification');
+      const restoreMarker = `restore probe ${randomUUID()}`;
+      const restoreParagraph = richDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
+      await restoreParagraph.click(); await page.keyboard.press('End'); await page.keyboard.insertText(` ${restoreMarker}`);
+      const restoreResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`, { timeout: 20000 });
+      await richDialog.getByRole('button', { name: '保存资源', exact: true }).click();
+      expect((await restoreResourceSave).status(), 'wp5_rich_page_restore_probe_save').toBe(200);
+      await expect(richDialog.getByRole('status').first()).toContainText('已保存', { timeout: 15000 });
+      await richDialog.locator('details.diagnostics > summary').click();
+      await richDialog.getByRole('button', { name: '备份正文与画布' }).click();
+      await expect(richDialog).toHaveCount(0, { timeout: 15000 });
+      const backupSection = page.getByRole('region', { name: 'BlockSuite 快照恢复' });
+      await expect(backupSection).toBeVisible({ timeout: 15000 });
+      observed.setWp5Step('rich_page_backup_preview');
+      const snapshotChoice = backupSection.getByRole('button', { name: '选择并预览' }).first();
+      await expect(snapshotChoice).toBeVisible();
+      await snapshotChoice.click();
+      const snapshotPreview = backupSection.getByLabel('BlockSuite 快照预览');
+      await expect(snapshotPreview).toBeVisible();
+      await expect(snapshotPreview.locator('pre').first()).toContainText(richText);
+      await expect(snapshotPreview.locator('pre').first()).not.toContainText(restoreMarker);
+      page.once('dialog', dialog => dialog.accept());
+      const blockSuiteRestoreResponse = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname.includes('/blocksuite/snapshots/')
+        && new URL(response.url()).pathname.endsWith('/restore'), { timeout: 30000 });
+      observed.setWp5Step('rich_page_snapshot_restore');
+      await snapshotPreview.getByRole('button', { name: '确认恢复此 BlockSuite 快照' }).click();
+      expect((await blockSuiteRestoreResponse).status(), 'wp5_rich_page_snapshot_restore').toBe(200);
+      await expect(page.getByRole('alert')).toContainText('BlockSuite 快照已恢复', { timeout: 15000 });
+      const restoredMarkdown = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect(restoredMarkdown.status(), 'wp5_rich_page_snapshot_markdown_read').toBe(200);
+      expect((await restoredMarkdown.json() as { content: string }).content, 'wp5_rich_page_snapshot_markdown_content').toContain(richText);
+      expect((await restoredMarkdown.json() as { content: string }).content, 'wp5_rich_page_snapshot_markdown_removed_probe').not.toContain(restoreMarker);
+      const restoredNativeResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
+      expect(restoredNativeResponse.status(), 'wp5_rich_page_snapshot_resource_read').toBe(200);
+      expect(JSON.stringify((await restoredNativeResponse.json() as { snapshot: unknown }).snapshot), 'wp5_rich_page_snapshot_resource_content').toContain(richText);
+      observed.setDiagnosticAssertion('wp5_resource_close');
+
+      observed.setWp5Step('rich_page_post_restore_reopen');
+      await page.reload();
+      await page.getByRole('button', { name: '富 Page', exact: true }).click();
+      await expect(page.locator('.blocksuite-notes-canvas').getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
+      const richReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
+      await richReference.click();
+      const reopenedRichDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      await expect(reopenedRichDialog).toBeVisible({ timeout: 20000 });
+      await expect(reopenedRichDialog).toHaveAttribute('aria-busy', 'false', { timeout: 20000 });
+      const reopenedEdgelessViewport = reopenedRichDialog.locator('.affine-edgeless-viewport');
+      if (await reopenedEdgelessViewport.count()) {
+        // A restored Edgeless document can retain a camera that leaves the
+        // Note outside the bounded viewport. Use the editor's visible control
+        // so the reopen assertion checks readable, actually reachable content.
+        const fitToScreen = reopenedRichDialog.locator('.affine-edgeless-viewport edgeless-zoom-toolbar edgeless-tool-icon-button').first();
+        await expect(fitToScreen, 'wp5_rich_page_reopen_fit_control_visible').toBeVisible({ timeout: 5000 });
+        await fitToScreen.click({ timeout: 5000 });
+      }
+      await expect(reopenedRichDialog.getByText(richText, { exact: false })).toBeVisible({ timeout: 20000 });
+      observed.setDiagnosticAssertion('wp5_resource_reopen');
+
+      // Simulate an external Markdown edit while the local native document is
+      // open. Its CAS must reject automatic projection; both sides and recovery
+      // JSON must remain readable for explicit resolution.
+      const beforeExternalWrite = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      const latestRichNote = await beforeExternalWrite.json() as { content: string; etag: string };
+      const latestArtifactSetEtag = beforeExternalWrite.headers()['x-artifact-set-etag'];
+      expect(latestArtifactSetEtag, 'wp5_rich_page_conflict_artifact_set_etag').toMatch(/^"[a-f0-9]{64}"$/);
+      if (!latestArtifactSetEtag) throw new Error('BlockSuite artifact set version is missing from the note read.');
+      const externalRichMarker = `external rich-page ${randomUUID()}`;
+      observed.setWp5Step('rich_page_conflict');
+      const externalRichWrite = await page.evaluate(async ({ path, content, etag, artifactSetEtag, marker }) => {
+        const response = await fetch(`/api/notes/drafts/${path}`, { method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'If-Match': `"${etag}"`, 'If-Artifact-Set-Match': artifactSetEtag },
+          body: JSON.stringify({ content: `${content}\n${marker}\n` }) });
+        return response.status;
+      }, { path: richCreated.path, content: latestRichNote.content, etag: latestRichNote.etag,
+        artifactSetEtag: latestArtifactSetEtag, marker: externalRichMarker });
+      expect(externalRichWrite, 'wp5_rich_page_external_markdown_write').toBe(200);
+      const conflictRichDialog = page.getByRole('dialog', { name: 'BlockSuite 富 Page 资源' });
+      const localRichMarker = `local rich-page ${randomUUID()}`;
+      const localRichParagraph = conflictRichDialog.locator('affine-paragraph').filter({ hasText: richText }).first();
+      const conflictSaveButton = conflictRichDialog.getByRole('button', { name: '保存资源', exact: true });
+      let conflictAction = 'paragraph-geometry';
+      type NoteClickState = { selected: boolean; editing: boolean; gfxEditing: boolean; caretInParagraph: boolean; locked: boolean | null; rangeCount: number; anchorOffset: number | null };
+      let firstClickState: NoteClickState | null = null;
+      let secondClickState: NoteClickState | null = null;
+      let structureSummary: { hostKind: string | null; paragraphCount: number; paragraphPath: string[]; paragraphRect: number[]; dialogRect: number[]; viewportRect: number[]; windowSize: number[]; notes: Array<[string, number[], number, boolean]>; hitPath: string[]; hitTargets: [boolean, boolean, number] } | null = null;
+      let lastPointerProbe: { hitParagraph: boolean; hitNote: boolean; depth: number; hitTag: string; stableSamples: number; geometryUnchanged: boolean } | null = null;
+      try {
+        let bounds: Awaited<ReturnType<typeof localRichParagraph.boundingBox>> = null;
+        let viewportBounds: typeof bounds = null;
+        let clickPoint: { x: number; y: number } | null = null;
+        let previousHitGeometry = '';
+        let stableTargetSamples = 0;
+        conflictAction = 'stable-pointer-target';
+        await expect.poll(async () => {
+          bounds = await localRichParagraph.boundingBox();
+          viewportBounds = await conflictRichDialog.locator('.affine-edgeless-viewport').boundingBox();
+          if (!bounds || !viewportBounds) { stableTargetSamples = 0; return false; }
+          const visibleLeft = Math.max(bounds.x, viewportBounds.x);
+          const visibleTop = Math.max(bounds.y, viewportBounds.y);
+          const visibleRight = Math.min(bounds.x + bounds.width, viewportBounds.x + viewportBounds.width);
+          const visibleBottom = Math.min(bounds.y + bounds.height, viewportBounds.y + viewportBounds.height);
+          if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) { stableTargetSamples = 0; return false; }
+          clickPoint = { x: (visibleLeft + visibleRight) / 2, y: (visibleTop + visibleBottom) / 2 };
+          const hitPath = await localRichParagraph.evaluate((targetParagraph, { x, y }) => {
+            let hit: Element | null = document.elementFromPoint(x, y);
+            while (hit?.shadowRoot) {
+              const inner = hit.shadowRoot.elementFromPoint(x, y);
+              if (!inner || inner === hit) break;
+              hit = inner;
+            }
+            let targetNote: Element | null = null;
+            let targetNode: Node | null = targetParagraph;
+            while (targetNode) {
+              if (targetNode instanceof Element && targetNode.localName === 'affine-edgeless-note') {
+                targetNote = targetNode;
+                break;
+              }
+              if (targetNode.parentNode) targetNode = targetNode.parentNode;
+              else {
+                const root = targetNode.getRootNode();
+                targetNode = root instanceof ShadowRoot ? root.host : null;
+              }
+            }
+            let hitParagraph = false;
+            let hitNote = false;
+            let depth = 0;
+            let node: Node | null = hit;
+            while (node && depth < 64) {
+              if (node === targetParagraph) hitParagraph = true;
+              if (node === targetNote) hitNote = true;
+              depth += 1;
+              if (node.parentNode) node = node.parentNode;
+              else {
+                const root = node.getRootNode();
+                node = root instanceof ShadowRoot ? root.host : null;
+              }
+            }
+            return { hitParagraph, hitNote, depth, hitTag: hit?.localName ?? 'none' };
+          }, clickPoint);
+          lastPointerProbe = {
+            ...hitPath,
+            stableSamples: 0,
+            geometryUnchanged: false,
+          };
+          // Before editing, BlockSuite's Edgeless Note mask intentionally
+          // receives pointer input. The first real click selects the Note;
+          // only after the second click is paragraph editing/caret asserted.
+          const targetHit = hitPath.hitNote;
+          const geometry = JSON.stringify([bounds.x, bounds.y, bounds.width, bounds.height,
+            viewportBounds.x, viewportBounds.y, viewportBounds.width, viewportBounds.height, hitPath]);
+          const geometryUnchanged = geometry === previousHitGeometry;
+          stableTargetSamples = targetHit && geometryUnchanged ? stableTargetSamples + 1 : targetHit ? 1 : 0;
+          lastPointerProbe.stableSamples = stableTargetSamples;
+          lastPointerProbe.geometryUnchanged = geometryUnchanged;
+          previousHitGeometry = geometry;
+          return stableTargetSamples >= 2;
+        }, { timeout: 5000, message: 'wp5_rich_page_conflict_target_hit_stable_after_fit' }).toBe(true);
+        expect(bounds, 'wp5_rich_page_conflict_paragraph_visible').not.toBeNull();
+        expect(viewportBounds, 'wp5_rich_page_conflict_edgeless_viewport_visible').not.toBeNull();
+        const visibleLeft = Math.max(bounds!.x, viewportBounds!.x);
+        const visibleTop = Math.max(bounds!.y, viewportBounds!.y);
+        const visibleRight = Math.min(bounds!.x + bounds!.width, viewportBounds!.x + viewportBounds!.width);
+        const visibleBottom = Math.min(bounds!.y + bounds!.height, viewportBounds!.y + viewportBounds!.height);
+        expect(visibleRight).toBeGreaterThan(visibleLeft);
+        expect(visibleBottom).toBeGreaterThan(visibleTop);
+        expect(clickPoint).not.toBeNull();
+        const confirmedClickPoint = clickPoint!;
+        conflictAction = 'readonly-dom-structure';
+        structureSummary = await page.evaluate(({ x, y, text }) => {
+          const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog');
+          if (!dialog) return { hostKind: null, paragraphCount: 0, paragraphPath: [], paragraphRect: [], dialogRect: [], viewportRect: [], windowSize: [], notes: [], hitPath: [], hitTargets: [false, false, 0] as [boolean, boolean, number] };
+          const roots: Array<Document | ShadowRoot | HTMLElement> = [dialog];
+          const elements: Element[] = [];
+          for (let index = 0; index < roots.length; index += 1) {
+            const root = roots[index];
+            for (const element of root.querySelectorAll('*')) {
+              elements.push(element);
+              if (element.shadowRoot) roots.push(element.shadowRoot);
+            }
+          }
+          const pathOf = (start: Node | null) => {
+            const path: string[] = [];
+            let node = start;
+            while (node && path.length < 64) {
+              if (node instanceof Element) path.push(node.localName);
+              if (node.parentNode) node = node.parentNode;
+              else {
+                const root = node.getRootNode();
+                node = root instanceof ShadowRoot ? root.host : null;
+              }
+            }
+            return path;
+          };
+          const paragraphs = elements.filter(element => element.localName === 'affine-paragraph'
+            && element.textContent?.includes(text));
+          const notes: Array<[string, number[], number, boolean]> = elements.filter(element => element.localName === 'affine-edgeless-note').slice(0, 3).map(element => {
+            const note = element as HTMLElement & { model?: { id?: string } };
+            const rect = note.getBoundingClientRect();
+            const bodyParagraphs = [...new Set([
+              ...note.querySelectorAll('affine-paragraph'),
+              ...(note.shadowRoot?.querySelectorAll('affine-paragraph') ?? []),
+            ])];
+            const includesTarget = paragraphs.some(paragraph => bodyParagraphs.includes(paragraph));
+            return [note.model?.id?.slice(-6) ?? '',
+              [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)],
+              bodyParagraphs.length, includesTarget] as [string, number[], number, boolean];
+          });
+          const host = dialog.querySelector<HTMLElement>('.blocksuite-resource-host');
+          const dialogRect = dialog.getBoundingClientRect();
+          const viewportRect = dialog.querySelector<HTMLElement>('.affine-edgeless-viewport')?.getBoundingClientRect();
+          const paragraphRect = paragraphs[0]?.getBoundingClientRect();
+          const rectValues = (rect?: DOMRect) => rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] : [];
+          let hit: Element | null = document.elementFromPoint(x, y);
+          while (hit?.shadowRoot) {
+            const inner = hit.shadowRoot.elementFromPoint(x, y);
+            if (!inner || inner === hit) break;
+            hit = inner;
+          }
+          const targetParagraph = paragraphs[0];
+          const targetNote = targetParagraph && elements.find(element => element.localName === 'affine-edgeless-note'
+            && [...element.querySelectorAll('affine-paragraph'), ...(element.shadowRoot?.querySelectorAll('affine-paragraph') ?? [])]
+              .includes(targetParagraph));
+          let hitParagraph = false;
+          let hitNote = false;
+          let hitDepth = 0;
+          let hitNode: Node | null = hit;
+          while (hitNode && hitDepth < 64) {
+            if (hitNode === targetParagraph) hitParagraph = true;
+            if (hitNode === targetNote) hitNote = true;
+            hitDepth += 1;
+            if (hitNode.parentNode) hitNode = hitNode.parentNode;
+            else {
+              const root = hitNode.getRootNode();
+              hitNode = root instanceof ShadowRoot ? root.host : null;
+            }
+          }
+          return { hostKind: host?.dataset.kind ?? null, paragraphCount: paragraphs.length,
+            paragraphPath: pathOf(paragraphs[0] ?? null), paragraphRect: rectValues(paragraphRect),
+            dialogRect: rectValues(dialogRect), viewportRect: rectValues(viewportRect), windowSize: [innerWidth, innerHeight],
+            notes, hitPath: pathOf(hit), hitTargets: [hitParagraph, hitNote, hitDepth] as [boolean, boolean, number] };
+        }, { x: confirmedClickPoint.x, y: confirmedClickPoint.y, text: richText });
+        expect(structureSummary.notes.some(note => note[3]), 'wp5_rich_page_conflict_paragraph_belongs_to_active_note').toBe(true);
+        expect(structureSummary.hitTargets[1], 'wp5_rich_page_conflict_hit_target_note').toBe(true);
+        await page.evaluate(() => {
+          const target = window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> };
+          target.__wp5NotePointerHits = [];
+          const recordPointer = (event: PointerEvent) => {
+            const path = event.composedPath().filter((item): item is Element => item instanceof Element);
+            target.__wp5NotePointerHits?.push({
+              note: path.some(element => element.localName === 'affine-edgeless-note'),
+              paragraph: path.some(element => element.localName === 'affine-paragraph'),
+              editable: path.some(element => (element as HTMLElement).isContentEditable),
+            });
+            if (target.__wp5NotePointerHits!.length >= 2) window.removeEventListener('pointerdown', recordPointer, true);
+          };
+          window.addEventListener('pointerdown', recordPointer, true);
+        });
+        const readRichNoteState = () => localRichParagraph.evaluate(paragraph => {
+          let node: Node | null = paragraph;
+          while (node) {
+            if (node instanceof Element && node.localName === 'affine-edgeless-note') {
+              const note = node as HTMLElement & { model?: { id?: string; isLocked?: () => boolean }; gfx?: { selection?: { has?: (id: string) => boolean; editing?: boolean } } };
+              const selected = Boolean(note.model?.id && note.gfx?.selection?.has?.(note.model.id));
+              const editing = note.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]')?.dataset.editing === 'true';
+              const gfxEditing = note.gfx?.selection?.editing === true;
+              const nativeSelection = window.getSelection();
+              let anchor: Node | null = nativeSelection?.anchorNode ?? null;
+              const anchorOffset = nativeSelection?.anchorOffset ?? null;
+              let caretInParagraph = false;
+              while (anchor) {
+                if (anchor === paragraph) { caretInParagraph = true; break; }
+                if (anchor.parentNode) anchor = anchor.parentNode;
+                else {
+                  const root = anchor.getRootNode();
+                  anchor = root instanceof ShadowRoot ? root.host : null;
+                }
+              }
+              return { selected, editing, gfxEditing, caretInParagraph, locked: note.model?.isLocked?.() ?? null,
+                rangeCount: nativeSelection?.rangeCount ?? 0, anchorOffset };
+            }
+            if (node.parentNode) node = node.parentNode;
+            else {
+              const root = node.getRootNode();
+              node = root instanceof ShadowRoot ? root.host : null;
+            }
+          }
+          return null;
+        });
+        conflictAction = 'note-click-1';
+        await page.mouse.click(confirmedClickPoint.x, confirmedClickPoint.y);
+        conflictAction = 'note-wait-selection';
+        await expect.poll(async () => {
+          firstClickState = await readRichNoteState();
+          return firstClickState?.selected;
+        }, { timeout: 5000 })
+          .toBe(true);
+        conflictAction = 'note-click-2';
+        await page.mouse.click(confirmedClickPoint.x, confirmedClickPoint.y);
+        conflictAction = 'note-wait-editing';
+        await expect.poll(async () => {
+          secondClickState = await readRichNoteState();
+          return secondClickState?.editing === true && secondClickState.gfxEditing && secondClickState.caretInParagraph;
+        }, { timeout: 5000 })
+          .toBe(true);
+        const pointerHits = await page.evaluate(() =>
+          (window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> }).__wp5NotePointerHits ?? []);
+        expect(pointerHits, 'wp5_rich_page_conflict_real_pointer_clicks').toHaveLength(2);
+        expect(pointerHits.every(hit => hit.note), 'wp5_rich_page_conflict_pointer_stayed_in_target_note').toBe(true);
+        conflictAction = 'keyboard-edit';
+        await page.keyboard.press('End'); await page.keyboard.insertText(` ${localRichMarker}`);
+        await expect(localRichParagraph, 'wp5_rich_page_conflict_local_edit_visible').toContainText(localRichMarker, { timeout: 5000 });
+        const richResourceHost = conflictRichDialog.locator('.blocksuite-resource-host');
+        await expect.poll(async () => richResourceHost.evaluate((host, marker) => {
+          const store = (host as HTMLElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+          return Boolean(store?.getBlocksByFlavour('affine:paragraph')?.some(({ model }: any) =>
+            model.props.text?.toString().includes(marker)));
+        }, localRichMarker), { timeout: 5000, message: 'wp5_rich_page_conflict_local_marker_in_store' }).toBe(true);
+        conflictAction = 'wait-save-enabled';
+        await expect(conflictSaveButton).toBeEnabled({ timeout: 5000 });
+        conflictAction = 'save-click';
+        await conflictSaveButton.click({ timeout: 5000 });
+        conflictAction = 'wait-conflict-status';
+        await expect(conflictRichDialog.getByRole('alert').filter({ hasText: '版本冲突' }))
+          .toContainText('版本冲突', { timeout: 15000 });
+      } catch (error) {
+        const interactionState = await Promise.race([
+          page.evaluate(({ marker }) => {
+            const dialog = document.querySelector<HTMLElement>('.blocksuite-resource-dialog');
+            if (!dialog) return null;
+            const roots: Array<ShadowRoot | HTMLElement> = [dialog];
+            const allElements: Element[] = [];
+            for (let index = 0; index < roots.length; index += 1) {
+              const root = roots[index];
+              for (const element of root.querySelectorAll('*')) {
+                allElements.push(element);
+                if (element.shadowRoot) roots.push(element.shadowRoot);
+              }
+            }
+            const find = (selector: string) => roots.map(root => root.querySelector(selector)).find(Boolean) as HTMLElement | undefined;
+            const pageViewport = find('.affine-page-viewport');
+            const edgelessViewport = find('.affine-edgeless-viewport');
+            const viewport = pageViewport ?? edgelessViewport;
+            const paragraphs = allElements.filter(element => element.localName === 'affine-paragraph'
+              && element.textContent?.includes('Synthetic rich page round trip')) as HTMLElement[];
+            const paragraph = paragraphs[0];
+            const paragraphRect = paragraph?.getBoundingClientRect();
+            const viewportRect = viewport?.getBoundingClientRect();
+            const host = find('.blocksuite-resource-host') as (HTMLElement & { __sbBlockSuiteStore?: any }) | undefined;
+            const hostRect = host?.getBoundingClientRect();
+            const store = host?.__sbBlockSuiteStore;
+            const docMode = store?.spaceDoc?.getMap?.('secondbrain-rich-page-properties')?.get?.('docMode') ?? null;
+            let active: Element | null = document.activeElement;
+            while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+            const note = allElements.find(element => element.localName === 'affine-edgeless-note'
+              && element.querySelector('affine-paragraph')?.textContent?.includes('Synthetic rich page round trip')) as (HTMLElement & { model?: any; gfx?: any }) | undefined;
+            const noteContainer = note?.querySelector<HTMLElement>('[data-testid="edgeless-note-container"]');
+            const noteSelection = note?.gfx?.selection;
+            const noteModelId = note?.model?.id;
+            const nativeSelection = window.getSelection();
+            let anchor: Node | null = nativeSelection?.anchorNode ?? null;
+            let selectionInParagraph = false;
+            while (anchor) {
+              if (anchor === paragraph) { selectionInParagraph = true; break; }
+              if (anchor.parentNode) anchor = anchor.parentNode;
+              else {
+                const root = anchor.getRootNode();
+                anchor = root instanceof ShadowRoot ? root.host : null;
+              }
+            }
+            const pointerTarget = (window as Window & { __wp5NotePointerHits?: Array<{ note: boolean; paragraph: boolean; editable: boolean }> }).__wp5NotePointerHits ?? [];
+            const markerInStore = Boolean(store?.getBlocksByFlavour('affine:paragraph')?.some(({ model }: any) =>
+              model.props.text?.toString().includes(marker)));
+            const saveButton = allElements.find(element => element.localName === 'button'
+              && element.textContent?.trim() === '保存资源') as HTMLButtonElement | undefined;
+            const rectValues = (rect?: DOMRect) => rect ? [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] : [];
+            return { view: pageViewport ? 'page' : edgelessViewport ? 'edgeless' : 'none', docMode,
+              paragraphCount: paragraphs.length, paragraphRect: rectValues(paragraphRect), hostRect: rectValues(hostRect),
+              viewportRect: rectValues(viewportRect),
+              paragraphIntersectsViewport: Boolean(paragraphRect && viewportRect && paragraphRect.bottom > viewportRect.top
+                && paragraphRect.top < viewportRect.bottom && paragraphRect.right > viewportRect.left
+                && paragraphRect.left < viewportRect.right),
+              focusedContenteditable: Boolean(active && (active as HTMLElement).isContentEditable), markerInStore,
+              saveEnabled: Boolean(saveButton && !saveButton.disabled), pointerTarget,
+              noteEditing: noteContainer?.dataset.editing ?? null,
+              noteSelected: Boolean(noteModelId && noteSelection?.has?.(noteModelId)),
+              selectionEditing: Boolean(noteSelection?.editing), selectionInParagraph,
+              editableCount: note?.querySelectorAll('[contenteditable="true"]').length ?? 0 };
+          }, { marker: localRichMarker }).catch(() => null),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
+        ]);
+        const compactClickState = (state: NoteClickState | null) => state && [Number(state.selected), Number(state.editing), Number(state.gfxEditing),
+          Number(state.caretInParagraph), state.locked === null ? null : Number(state.locked), state.rangeCount, state.anchorOffset];
+        console.log('WP5_RESOURCE_CREATE_ERROR', JSON.stringify({ a: conflictAction,
+          view: interactionState?.view, mode: interactionState?.docMode,
+          hit: structureSummary ? Number(structureSummary.hitTargets[0]) + Number(structureSummary.hitTargets[1]) : 0,
+          depth: structureSummary?.hitTargets[2] ?? 0,
+          probe: lastPointerProbe && [Number(lastPointerProbe.hitParagraph), Number(lastPointerProbe.hitNote),
+            lastPointerProbe.depth, lastPointerProbe.stableSamples, Number(lastPointerProbe.geometryUnchanged), lastPointerProbe.hitTag],
+          pointer: interactionState?.pointerTarget.map((hit: { note: boolean; paragraph: boolean; editable: boolean }) => [Number(hit.note), Number(hit.paragraph), Number(hit.editable)]),
+          clicks: [compactClickState(firstClickState), compactClickState(secondClickState)],
+          state: [Number(Boolean(interactionState?.noteSelected)), Number(Boolean(interactionState?.selectionEditing)),
+            Number(interactionState?.selectionInParagraph), interactionState?.editableCount ?? 0] }));
+        throw error;
+      }
+      await expect(conflictRichDialog.getByRole('alert').filter({ hasText: '未自动合并或覆盖' }))
+        .toContainText('未自动合并或覆盖');
+      const preservedRemote = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect(preservedRemote.status(), 'wp5_rich_page_conflict_remote_read').toBe(200);
+      const preservedRemoteNote = await preservedRemote.json() as { content: string; etag: string };
+      expect(preservedRemoteNote.content, 'wp5_rich_page_conflict_remote_marker').toContain(externalRichMarker);
+      expect(preservedRemoteNote.content, 'wp5_rich_page_conflict_remote_not_overwritten').not.toContain(localRichMarker);
+      const preservedNativeResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${richResourceInfo.resource_id}`);
+      expect(preservedNativeResponse.status(), 'wp5_rich_page_conflict_native_read').toBe(200);
+      const preservedNative = await preservedNativeResponse.json() as { snapshot: Record<string, unknown> };
+      expect(JSON.stringify(preservedNative.snapshot), 'wp5_rich_page_conflict_saved_native_preserved').toContain(richText);
+      expect(JSON.stringify(preservedNative.snapshot), 'wp5_rich_page_conflict_no_implicit_write').not.toContain(localRichMarker);
+      observed.setWp5Step('rich_page_recovery_copy');
+      const recoveryDownloadPromise = page.waitForEvent('download');
+      await conflictRichDialog.getByRole('button', { name: '下载资源恢复副本' }).click();
+      const recoveryDownload = await recoveryDownloadPromise;
+      const recoveryJson = JSON.parse(await readFile(await recoveryDownload.path(), 'utf8')) as { complete: boolean; remoteMarkdown: { content: string } | null; snapshot: unknown; resources: Array<{ resourceId: string; snapshot: unknown }>; blobs: Array<{ id: string; base64: string }> };
+      expect(recoveryJson.complete, 'wp5_rich_page_recovery_complete').toBe(true);
+      expect(recoveryJson.remoteMarkdown?.content, 'wp5_rich_page_recovery_has_remote').toContain(externalRichMarker);
+      expect(JSON.stringify(recoveryJson.snapshot), 'wp5_rich_page_recovery_has_local').toContain(localRichMarker);
+      expect(recoveryJson.resources.map(resource => resource.resourceId), 'wp5_rich_page_recovery_nested_resource_closure').toContain(nestedCanvasResourceId);
+      expect(recoveryJson.blobs.length, 'wp5_rich_page_recovery_nested_blob_closure').toBeGreaterThan(0);
+      expect(recoveryJson.blobs.every(blob => blob.base64.length > 0), 'wp5_rich_page_recovery_blob_bytes').toBe(true);
+
+      observed.setWp5Step('rich_page_explicit_fork');
+      const forkNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/notes', { timeout: 20000 });
+      const forkResourceCreates = [0, 1].map(() => page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname.endsWith('/blocksuite/resources'), { timeout: 30000 }));
+      const forkResourceUpdates = [0, 1, 2].map(() => page.waitForResponse(response => response.request().method() === 'PUT'
+        && new URL(response.url()).pathname.includes('/blocksuite/resources/'), { timeout: 30000 }));
+      const forkMarkdownProjection = page.waitForResponse(response => response.request().method() === 'PUT'
+        && /^\/api\/notes\/drafts\/[^/]+$/.test(new URL(response.url()).pathname), { timeout: 30000 });
+      observed.captureNextBlockSuiteFork();
+      await conflictRichDialog.getByRole('button', { name: '另存为新富 Page（保留原件）' }).click();
+      const forkedNoteResponse = await forkNoteCreate;
+      expect(forkedNoteResponse.status(), 'wp5_rich_page_explicit_fork_note').toBe(200);
+      const forkedNote = await forkedNoteResponse.json() as { path: string; content: string };
+      expect(forkedNote.path, 'wp5_rich_page_explicit_fork_new_path').not.toBe(richCreated.path);
+      for (const response of await Promise.all(forkResourceCreates)) expect(response.status(), 'wp5_rich_page_explicit_fork_resource').toBe(200);
+      for (const response of await Promise.all(forkResourceUpdates)) expect(response.status(), 'wp5_rich_page_explicit_fork_resource_remap').toBe(200);
+      expect((await forkMarkdownProjection).status(), 'wp5_rich_page_explicit_fork_projection').toBe(200);
+      const originalAfterFork = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}`);
+      expect((await originalAfterFork.json() as { content: string }).content, 'wp5_rich_page_original_remains').toContain(externalRichMarker);
+      const forkedNoteRead = await page.request.get(`${baseUrl}/api/notes/drafts/${forkedNote.path}`);
+      expect(forkedNoteRead.status(), 'wp5_rich_page_fork_readback').toBe(200);
+      const forkedMarkdown = (await forkedNoteRead.json() as { content: string }).content;
+      expect(forkedMarkdown, 'wp5_rich_page_fork_preserves_local_edit').toContain(localRichMarker);
+      expect(forkedMarkdown, 'wp5_rich_page_fork_preserves_external_markdown').toContain(externalRichMarker);
       }
 
       // Focused concurrency probe: only synthetic Notes, real Core PUT/If-Match,
@@ -2400,6 +3912,9 @@ test.afterEach(async ({ page }, testInfo) => {
       page_error_summaries: observed?.pageErrorSummaries ?? [],
       blocksuite_module_statuses: observed?.requestRecords.filter((record) => record.method === 'GET'
         && /blocksuite|node_modules\/\.vite/i.test(record.path)).map((record) => record.status).slice(-8) ?? [],
+      wp5_step: observed?.wp5Step ?? 'not_started',
+      blocksuite_request_statuses: observed?.blockSuiteRequestStatuses ?? [],
+      ...(observed?.wp5CanvasSaveDiagnostic ? { wp5_canvas_save: observed.wp5CanvasSaveDiagnostic } : {}),
       daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? [],
       ...(observed?.wp5AutosaveProbeEvents.length ? {
         wp5_autosave_events: await page.evaluate(() => {

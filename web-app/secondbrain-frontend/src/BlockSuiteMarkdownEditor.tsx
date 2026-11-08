@@ -37,6 +37,8 @@ import { blockSuiteMarkdownMatches, blockSuiteMarkdownSupportsEditing, preserveS
 import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import './blocksuite-notes.css';
 import '@toeverything/theme/style.css';
+import { assertPlainSnapshotMarkdownCompatible, PlainMarkdownFormatError } from './plain-markdown-format-guard';
+import * as Y from 'yjs';
 
 type FallbackReason = 'invalid_frontmatter' | 'unsupported_syntax' | 'markdown_conversion_error'
   | 'unsafe_roundtrip' | 'content_mismatch' | 'view_initialization_error';
@@ -86,6 +88,8 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
   const timer = useRef<number | undefined>(undefined);
   const [status, setStatus] = useState('正在载入 BlockSuite Page…');
   const [ready, setReady] = useState(false);
+  const [formatViolation, setFormatViolation] = useState(false);
+  const formatViolationRef = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -163,6 +167,17 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
               if (disposed || sequence !== projectionSequence.current || editorRef.current !== current) return;
               const exported = result?.file ?? '';
               const next = `${current.split.prefix}${preserveSourceTerminalNewlines(current.split.body, exported)}`;
+              try {
+                assertPlainSnapshotMarkdownCompatible(current.store.getTransformer().docToSnapshot(current.store));
+              } catch (error) {
+                if (!(error instanceof PlainMarkdownFormatError)) throw error;
+                current.store.readonly = true;
+                formatViolationRef.current = true;
+                setFormatViolation(true);
+                setStatus('此格式无法安全写回普通 Markdown；原文与本地编辑均保留。请下载完整恢复副本后显式另存为富 Page。');
+                pendingCallback.current?.(true);
+                return;
+              }
               if (next === emittedRef.current) return;
               emittedRef.current = next;
               valueRef.current = next;
@@ -174,7 +189,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
                 return;
               }
               onChangeRef.current(next);
-            }).then(() => { if (!disposed && editorRef.current === current && sequence === projectionSequence.current) pendingCallback.current?.(false); }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
+            }).then(() => { if (!disposed && !formatViolationRef.current && editorRef.current === current && sequence === projectionSequence.current) pendingCallback.current?.(false); }).catch(() => setStatus('导出失败，当前 Markdown 未发送保存。'));
           }, 250);
         };
         // BlockSuite text content is stored in nested Y.Text values. The
@@ -218,7 +233,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
     };
   }, []);
 
-  useEffect(() => { if (editorRef.current) editorRef.current.store.readonly = disabled; }, [disabled]);
+  useEffect(() => { if (editorRef.current) editorRef.current.store.readonly = disabled || formatViolation; }, [disabled, formatViolation]);
 
   useEffect(() => {
     const root = host.current;
@@ -264,6 +279,7 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
   }, [value]);
 
   const fallback = async () => {
+    if (formatViolation) { setStatus('当前格式不支持无损 Markdown 回退；请先下载完整恢复副本。'); return; }
     const current = editorRef.current;
     if (current) {
       try {
@@ -279,8 +295,27 @@ export function BlockSuiteMarkdownEditor({ value, disabled, onChange, onFallback
     onFallbackRef.current();
   };
 
+  const downloadFormatRecovery = () => {
+    const current = editorRef.current;
+    if (!current) return;
+    try {
+      const snapshot = current.store.getTransformer().docToSnapshot(current.store);
+      const bytes = Y.encodeStateAsUpdate(current.store.spaceDoc as Y.Doc);
+      const binary = Array.from(bytes, value => String.fromCharCode(value)).join('');
+      const body = { schemaVersion: 1, resourceKind: 'plain-markdown-format-recovery', originalMarkdown: valueRef.current,
+        snapshot, updateB64: btoa(binary), complete: true };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' }));
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'blocksuite-markdown-format-recovery.json'; anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      pendingCallback.current?.(false);
+      setStatus('完整本地恢复副本已下载；普通 Markdown 原文未被覆盖。');
+    } catch (error) { setStatus(`恢复副本生成失败；本地编辑仍保留。${error instanceof Error ? error.message : ''}`); }
+  };
+
   return <section className="blocksuite-notes" aria-label="BlockSuite Markdown 编辑器">
-    <div className="blocksuite-notes-bar"><span role="status">{status}</span><button type="button" onClick={() => void fallback()}>查看 Markdown 原文</button></div>
-    <div className="blocksuite-notes-canvas" ref={host} aria-busy={!ready} data-disabled={disabled ? 'true' : 'false'} />
+    <div className="blocksuite-notes-bar"><span role="status">{status}</span>{formatViolation
+      ? <button type="button" onClick={downloadFormatRecovery}>下载完整恢复副本</button>
+      : <button type="button" onClick={() => void fallback()}>查看 Markdown 原文</button>}</div>
+    <div className="blocksuite-notes-canvas" ref={host} aria-busy={!ready} data-disabled={disabled || formatViolation ? 'true' : 'false'} />
   </section>;
 }

@@ -1,5 +1,12 @@
 # Progress Log
 
+## 2026-11-08 — WP5 / PR #309 Database Kanban DOM 根因与修复
+
+- **真实 Chromium 诊断：** 独立 Linux Chromium DOM 探针 [Actions #42455661925](https://github.com/zxwan829/SecondBrain/actions/runs/42455661925) 在产品修复候选 `033cd86e440294a6b4d0a7ac3785394093826978` 上，不通过正式 Playwright runner 直接读取 synthetic Database：新增看板后 `currentViewId` 与 sessionStorage `blocksuite:databaseBlock:view:currentViewList` 的 viewId 一致；DOM 有 2 个 Kanban group、3 个 card 节点，实际“测试记录”卡片含“仅供体验”和“进行中”；关闭重开及整页刷新后上述视图、分组、卡片、Yjs 数据仍在。该探针只输出诊断日志，不生成/伪造正式验收产物。
+- **根因与定向修复：** 归档 `views-view.ts` 的 `addView()` 原先 `viewAdd()` 后调用 `setCurrentView()`，却遗漏现有 `onChangeView(id)` 持久化回调；创建视图后只在当前内存显示，资源重新挂载会回到表格。现新增该回调，并更新 overlay SHA manifest。随后正式 gate 在 `bec587d` 失败于卡片文字断言；失败诊断和截图显示看板确实渲染。独立探针枚举 DOM 发现卡片列表前两个是空占位节点，含“测试记录”的节点不在首位；将初始、资源重开、整页刷新三处 locator 改为按实际卡片标题过滤，保留原有文本断言。
+- **验证：** 最终代码候选 `b860c6eb5ebd5516a1bd43e5d27081bdad7e07ca` 上，正式 Linux Chromium [Database roundtrip #42456639973](https://github.com/zxwan829/SecondBrain/actions/runs/42456639973)、[归档 UX #42456782309](https://github.com/zxwan829/SecondBrain/actions/runs/42456782309)、[Rich Page/Edgeless 模式 #42456784526](https://github.com/zxwan829/SecondBrain/actions/runs/42456784526) 均 PASS；每次均执行 frontend regression/typecheck、build、原有产物脱敏门禁和 Chromium journey。独立 probe #42455661925 PASS。本地归档准备、typecheck、32 项 `rich-page-projection` / `NotesPage` 测试、production build、Playwright test discovery、`git diff --check` 均 PASS。
+- **交付边界：** 修复和测试选择调整已推送到 PR #309；独立 Review 尚未完成，PR 未合并。没有修改 NAS/生产、真实 Vault、数据/权限或正式 CI 诊断产物门禁；生产部署与用户 UAT 均未执行。
+
 ## 2026-11-06 — WP5 / PR #294 Markdown 集成工程验收
 
 - **合并与范围：** PR [#294](https://github.com/zxwan829/SecondBrain/pull/294) 已合并，merge commit `e9f323b3f90d53473964fe991a968fcd046d85bf`；固定候选 HEAD `8ce5a5e7559f8cfea5345ccf21ed0bb1a1a31f2a`。未修改 NAS、生产容器/配置/权限、真实 Vault 或业务数据；未调用付费模型；工作包 6 未启动。
