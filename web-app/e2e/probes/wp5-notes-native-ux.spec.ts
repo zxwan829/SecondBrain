@@ -541,8 +541,9 @@ test('WP5 independent nested canvas open minimal reproduction', async ({ page })
       noOverlap: Boolean(viewport && gallery && paragraphs.length >= 12 && galleryTop >= hostBottom - 1
         && galleryTop >= lastParagraphBottom - 1) };
   });
+  console.log(`WP5_NATIVE_CANVAS_LAYOUT ${JSON.stringify(canvasLayout)}`);
   expect(canvasLayout.paragraphCount).toBe(13);
-  expect(canvasLayout.noOverlap).toBe(true);
+  expect(canvasLayout.noOverlap, `canvas gallery must follow the full document body: ${JSON.stringify(canvasLayout)}`).toBe(true);
   const canvasRead = page.waitForResponse(response => response.request().method() === 'GET'
     && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${canvas.resource_id}`), { timeout: 15_000 });
   const openButton = card.getByRole('button', { name: '打开编辑', exact: true });
