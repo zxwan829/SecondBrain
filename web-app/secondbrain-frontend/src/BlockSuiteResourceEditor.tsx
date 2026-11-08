@@ -482,6 +482,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         setNestedResource(resource);
       },
       onCanvasCopy: async detail => {
+        const sourceReference = store.getBlock(detail.blockId)?.model;
         const sourceNote = await notesApi.readWithArtifactSet(noteRef.current.collection, noteRef.current.path);
         const source = await notesApi.readBlockSuiteResource(sourceNote, detail.resourceId || '');
         if (source.resourceKind !== 'edgeless-canvas') throw new Error('只允许复制已保存的 Edgeless 画布');
@@ -509,7 +510,8 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         noteRef.current = { ...noteRef.current, artifactSetEtag: created.artifact_set_etag };
         resourceRef.current = { ...resourceRef.current, artifact_set_etag: created.artifact_set_etag };
         onNoteVersionChange(created.artifact_set_etag);
-        setReference(detail.blockId, { resourceId: created.resource_id, docId: created.doc_id, revision: created.etag, previewJson: '[]', state: 'ready' });
+        setReference(detail.blockId, { resourceId: created.resource_id, docId: created.doc_id, revision: created.etag,
+          previewJson: typeof sourceReference?.props.previewJson === 'string' ? sourceReference.props.previewJson : '[]', state: 'ready' });
         setStatus('画布已深拷贝为新资源；源画布仍保留。');
       },
       onCanvasRemoveReference: detail => {

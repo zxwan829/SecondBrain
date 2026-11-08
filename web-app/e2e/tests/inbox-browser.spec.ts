@@ -138,7 +138,7 @@ type DiagnosticAssertion = 'test_setup' | 'home_to_projects' | 'projects_heading
   | 'wp5_archive_table_vertical_menu_action'
   | 'wp5_archive_database_kanban'
   | 'wp5_archive_canvas_reference_lifecycle'
-  | 'wp5_archive_canvas_reference_lifecycle'
+  | 'wp5_archive_emoji_search'
   | 'wp5_archive_align_model_center' | 'wp5_archive_grip_visibility'
   | 'wp5_archive_drag_geometry' | 'wp5_archive_drag_order' | 'wp5_archive_drag_result'
   | 'wp5_archive_drag_source_not_unique' | 'wp5_archive_drag_target_not_unique'
@@ -2054,7 +2054,27 @@ for (const viewport of activeViewports) {
         expect(persistedRowHeight, 'wp5_archive_table_row_resize_model').toBeGreaterThan(38);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_037');
 
+        observed.setDiagnosticAssertion('wp5_archive_emoji_search');
+        const emojiTarget = targetParagraph.locator('rich-text .inline-editor');
+        await emojiTarget.click();
+        await page.keyboard.press('End');
+        await page.keyboard.press('/');
+        const emojiSlashItem = page.getByText('插入表情图标', { exact: true });
+        await expect(emojiSlashItem, 'wp5_archive_emoji_search').toBeVisible({ timeout: 10000 });
+        await emojiSlashItem.click();
+        const emojiDialog = page.getByRole('dialog', { name: '选择表情' });
+        await expect(emojiDialog, 'wp5_archive_emoji_search').toBeVisible();
+        const emojiPicker = emojiDialog.locator('em-emoji-picker');
+        const emojiSearch = emojiPicker.locator('input[type="search"]');
+        await expect(emojiSearch, 'wp5_archive_emoji_search').toHaveAttribute('placeholder', '搜索');
+        await emojiSearch.fill('笑脸');
+        await expect.poll(() => emojiPicker.locator('.emoji-mart-emoji').count(), { timeout: 10000 })
+          .toBeGreaterThan(0);
+        await page.keyboard.press('Escape');
+        await expect(emojiDialog, 'wp5_archive_emoji_search_close').toHaveCount(0);
+
         const canvasGallery = richDialog.getByRole('region', { name: '独立画布资源' });
+        observed.setDiagnosticAssertion('wp5_archive_canvas_reference_lifecycle');
         const canvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
           && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
         await canvasGallery.getByRole('button', { name: '新建独立画布' }).click();
@@ -2063,6 +2083,14 @@ for (const viewport of activeViewports) {
         const sourceCanvas = await canvasCreated.json() as { resource_id: string };
         const sourceCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: sourceCanvas.resource_id });
         await expect(sourceCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        const removableCanvasCreate = page.waitForResponse(response => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/notes/drafts/${richCreated.path}/blocksuite/resources`, { timeout: 20000 });
+        await canvasGallery.getByRole('button', { name: '新建独立画布' }).click();
+        const removableCanvasResponse = await removableCanvasCreate;
+        expect(removableCanvasResponse.status(), 'wp5_archive_canvas_reference_lifecycle').toBe(200);
+        const removableCanvas = await removableCanvasResponse.json() as { resource_id: string };
+        const removableCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: removableCanvas.resource_id });
+        await expect(removableCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
         await sourceCard.getByRole('button', { name: '打开编辑' }).click();
         const sourceCanvasDialog = page.getByRole('dialog', { name: 'BlockSuite Edgeless 资源' });
         const sourceCanvasText = sourceCanvasDialog.locator('.blocksuite-resource-host').getByText('独立 Edgeless 便签', { exact: true }).first();
@@ -2091,16 +2119,20 @@ for (const viewport of activeViewports) {
         expect(copiedCanvas.resource_id, 'wp5_archive_canvas_reference_lifecycle').not.toBe(sourceCanvas.resource_id);
         const copiedCard = canvasGallery.locator('.canvas-b-card').filter({ hasText: copiedCanvas.resource_id });
         await expect(copiedCard, 'wp5_archive_canvas_reference_lifecycle').toBeVisible();
+        await expect(copiedCard.locator('.canvas-b-card-preview'), 'wp5_archive_canvas_copy_preview').toContainText('自动裁剪预览');
+        await expect(canvasGallery.locator('.canvas-b-card'), 'wp5_archive_canvas_copy_retargets_reference').toHaveCount(2);
         const sourceCanvasRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`);
         const copiedCanvasRead = await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${copiedCanvas.resource_id}`);
         expect(sourceCanvasRead.status(), 'wp5_archive_canvas_source_preserved').toBe(200);
         expect(copiedCanvasRead.status(), 'wp5_archive_canvas_copy_readback').toBe(200);
         const copiedCanvasBody = await copiedCanvasRead.json() as { snapshot: Record<string, unknown> };
         expect(JSON.stringify(copiedCanvasBody.snapshot), 'wp5_archive_canvas_copy_content').toContain(canvasReferenceMarker);
-        await sourceCard.getByRole('button', { name: '移除引用' }).click();
-        await expect(sourceCard, 'wp5_archive_canvas_reference_lifecycle').toHaveCount(0);
+        await removableCard.getByRole('button', { name: '移除引用' }).click();
+        await expect(removableCard, 'wp5_archive_canvas_reference_lifecycle').toHaveCount(0);
         expect((await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${sourceCanvas.resource_id}`)).status(),
           'wp5_archive_canvas_original_not_deleted').toBe(200);
+        expect((await page.request.get(`${baseUrl}/api/notes/drafts/${richCreated.path}/blocksuite/resources/${removableCanvas.resource_id}`)).status(),
+          'wp5_archive_canvas_removed_reference_resource_preserved').toBe(200);
         observed.setDiagnosticAssertion('wp5_archive_canvas_reference_lifecycle');
 
         const savedArchiveResource = page.waitForResponse(response => response.request().method() === 'PUT'
@@ -2112,6 +2144,20 @@ for (const viewport of activeViewports) {
         expect((await savedArchiveMarkdown).status(), 'wp5_archive_ux_markdown_save').toBe(200);
         observed.setDiagnosticAssertion('wp5_resource_checkpoint_033');
         await expect(richDialog.getByRole('status').first()).toContainText('已保存');
+        const htmlExport = page.waitForEvent('download');
+        await richDialog.getByRole('button', { name: '导出 HTML' }).click();
+        const htmlDownload = await htmlExport;
+        expect(htmlDownload.suggestedFilename(), 'wp5_archive_html_download_name').toMatch(/\.html$/i);
+        const htmlExportPath = await htmlDownload.path();
+        expect(htmlExportPath, 'wp5_archive_html_download_path').toBeTruthy();
+        const htmlExportContent = await readFile(htmlExportPath!, 'utf8');
+        expect(htmlExportContent, 'wp5_archive_html_download_content').toContain(mergeSourceText);
+        expect(htmlExportContent, 'wp5_archive_html_export_script_free').not.toMatch(/<script\b/i);
+        await richDialog.getByRole('button', { name: '导出 PDF' }).click();
+        const printPreview = page.locator('iframe[title="富文档 PDF 打印"]');
+        await expect(printPreview, 'wp5_archive_pdf_print_preview').toBeAttached({ timeout: 10000 });
+        await expect(page.frameLocator('iframe[title="富文档 PDF 打印"]').locator('body'), 'wp5_archive_pdf_print_preview')
+          .toContainText(mergeSourceText, { timeout: 10000 });
         await richDialog.getByRole('button', { name: '关闭富 Page', exact: true }).click();
         await expect(richDialog).toHaveCount(0);
         const savedArchiveReference = page.locator('.blocksuite-notes-canvas a').filter({ hasText: '富 Page 原生资源' }).last();
