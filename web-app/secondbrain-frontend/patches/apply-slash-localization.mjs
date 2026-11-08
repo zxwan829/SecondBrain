@@ -14,5 +14,32 @@ if (source.includes(identity)) {
 } else if (!source.includes('= localizeSlashMenuItem;')) {
   throw new Error('Slash widget transform anchor missing');
 }
+
+const rangeMarker = '// wp5-native-slash-sync-range-v1';
+const rangeAnchor = `      const inlineRange = inlineEditor.getInlineRange();
+      if (!inlineRange) return;`;
+if (!source.includes(rangeMarker)) {
+  if (!source.includes(rangeAnchor)) throw new Error('Slash widget inline range anchor missing');
+  source = source.replace(rangeAnchor, `${rangeAnchor}
+      ${rangeMarker}
+      inlineEditor.syncInlineRange(inlineRange);`);
+}
+
+const layerMarker = '// wp5-native-slash-modal-layer-v1';
+const portalAnchor = '    container.append(slashMenu);';
+if (!source.includes(layerMarker)) {
+  if (!source.includes(portalAnchor)) throw new Error('Slash widget portal anchor missing');
+  source = source.replace(portalAnchor, `    ${layerMarker}
+    let layerSearch: Node | null = context.std.host;
+    while (layerSearch) {
+      if (layerSearch instanceof HTMLElement && layerSearch.matches('.blocksuite-resource-backdrop')) {
+        const backdropLayer = Number.parseInt(getComputedStyle(layerSearch).zIndex, 10);
+        if (Number.isFinite(backdropLayer)) slashMenu.style.setProperty('--affine-z-index-popover', String(backdropLayer + 1));
+        break;
+      }
+      layerSearch = layerSearch.parentNode ?? (layerSearch instanceof ShadowRoot ? layerSearch.host : null);
+    }
+    container.append(slashMenu);`);
+}
 await fs.writeFile(file, source);
-console.log('PATCHED · BlockSuite Slash menu localization hook');
+console.log('PATCHED · BlockSuite Slash menu localization, native range and modal layer');
