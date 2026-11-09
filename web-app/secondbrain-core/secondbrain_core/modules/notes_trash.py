@@ -663,10 +663,15 @@ class NotesTrashStore:
         self._mark_recovery_required(item_fd, manifest, "source_name_conflict", observed)
         raise HTTPException(status_code=503, detail="Trash action requires manual recovery")
 
-    def trash(self, collection, relative, expected_sha256, idempotency_key):
+    def trash(self, collection, relative, expected_sha256, idempotency_key,
+              expected_artifact_set_etag=None):
         self._require_configured()
         if not isinstance(expected_sha256, str) or not _SHA256.fullmatch(expected_sha256):
             raise HTTPException(status_code=428, detail="If-Match with the current note SHA-256 is required")
+        if (expected_artifact_set_etag is not None
+                and (not isinstance(expected_artifact_set_etag, str)
+                     or not _SHA256.fullmatch(expected_artifact_set_etag))):
+            raise HTTPException(status_code=428, detail="If-Artifact-Set-Match must be a SHA-256 ETag")
         if not isinstance(idempotency_key, str) or not _IDEMPOTENCY_KEY.fullmatch(idempotency_key):
             raise HTTPException(status_code=400, detail="A valid Idempotency-Key is required")
         trash_id = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()[:32]
@@ -747,6 +752,9 @@ class NotesTrashStore:
                     != (manifest["device"], manifest["inode"])):
                 self._mark_recovery_required(item_fd, manifest, "source_name_conflict", digest)
                 raise HTTPException(status_code=503, detail="Trash action requires manual recovery")
+            if expected_artifact_set_etag is not None:
+                artifacts = self.notes_store._blocksuite_artifacts_at(parent_fd)
+                self.notes_store._check_artifact_set_etag(artifacts, expected_artifact_set_etag)
             if root_fd is None:
                 root_fd = self._root_fd(create=True)
             if os.fstat(parent_fd).st_dev != os.fstat(root_fd).st_dev:
@@ -1035,8 +1043,14 @@ def create_notes_trash_router(auth, notes_store, trash_store):
         raw_match = request.headers.get("if-match", "")
         if len(raw_match) != 66 or raw_match[0] != '"' or raw_match[-1] != '"':
             raise HTTPException(status_code=428, detail="If-Match with the current note SHA-256 is required")
+        raw_artifact_match = request.headers.get("if-artifact-set-match")
+        if raw_artifact_match is not None and (
+                len(raw_artifact_match) != 66 or raw_artifact_match[0] != '"'
+                or raw_artifact_match[-1] != '"'):
+            raise HTTPException(status_code=428, detail="If-Artifact-Set-Match with the current artifact set is required")
         result = trash_store.trash(collection, relative, raw_match[1:-1],
-                                   request.headers.get("idempotency-key", ""))
+                                   request.headers.get("idempotency-key", ""),
+                                   raw_artifact_match[1:-1] if raw_artifact_match is not None else None)
         response.headers["Cache-Control"] = "private, no-store"
         response.status_code = 200 if result.get("duplicate") else 201
         return result

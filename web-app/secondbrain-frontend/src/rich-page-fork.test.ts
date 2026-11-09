@@ -8,7 +8,7 @@ import * as Y from 'yjs';
 
 vi.mock('./api/notes', () => ({ notesApi: {
   readWithArtifactSet: vi.fn(), readBlockSuiteResource: vi.fn(), create: vi.fn(),
-  createBlockSuiteResource: vi.fn(), saveBlockSuiteResource: vi.fn(), save: vi.fn(),
+  createBlockSuiteResource: vi.fn(), saveBlockSuiteResource: vi.fn(), save: vi.fn(), trash: vi.fn(),
 } }));
 
 describe('forkRichPageNote', () => {
@@ -70,7 +70,8 @@ describe('forkRichPageNote', () => {
     let resourceSequence = 0;
     let writeSequence = 0;
 
-    vi.mocked(notesApi.readWithArtifactSet).mockResolvedValue(source as any);
+    vi.mocked(notesApi.readWithArtifactSet).mockImplementation(async (_collection, path) => path === 'source-note'
+      ? source as any : { ...destinationNote, artifactSetEtag: artifactSet } as any);
     vi.mocked(notesApi.readBlockSuiteResource).mockImplementation(async (note, id) => {
       if (note.path === 'source-note' && id === canvasId) return {
         schemaVersion: 1, resourceId: canvasId, resourceKind: 'edgeless-canvas', docId: 'canvas-doc',
@@ -135,12 +136,15 @@ describe('forkRichPageNote', () => {
     });
     vi.stubGlobal('fetch', fetcher);
 
-    const remap = (payload: any, mapping: Map<string, string>) => {
+    const remap = (payload: any, mapping: Map<string, { resourceId: string; docId: string; revision: string }>) => {
       const visit = (value: any): any => {
         if (Array.isArray(value)) return value.map(visit);
         if (!value || typeof value !== 'object') return value;
+        const binding = typeof value.resourceId === 'string' ? mapping.get(value.resourceId) : undefined;
         return Object.fromEntries(Object.entries(value).map(([key, child]) => [key,
-          key === 'resourceId' && typeof child === 'string' ? mapping.get(child) ?? child : visit(child)]));
+          key === 'resourceId' && binding ? binding.resourceId
+            : key === 'docId' && binding ? binding.docId
+              : key === 'revision' && binding ? binding.revision : visit(child)]));
       };
       return { ...payload, snapshot: visit(payload.snapshot) };
     };
@@ -149,7 +153,7 @@ describe('forkRichPageNote', () => {
     const { note, resource } = await forkRichPageNote(sourceNote as any, payload, new Map(), remap);
 
     expect(notesApi.create).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(fetcher.mock.calls.some(([url, init]) => init?.method === 'PUT' && String(url).includes(encodeURIComponent(blobKey)))).toBe(true);
     expect(resource.resourceId).toBe(copiedRootId);
     expect(resource.resourceKind).toBe('rich-page');
@@ -174,8 +178,53 @@ describe('forkRichPageNote', () => {
     const originalBlob = await new NoteBoundBlockSuiteBlobSource(() => source as any, fetcher as any).get(blobKey);
     expect(originalBlob).not.toBeNull();
     expect(new Uint8Array(await originalBlob!.arrayBuffer())).toEqual(blobBytes);
-    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher).toHaveBeenCalledTimes(5);
     expect(source.content).toContain(`[笔记数据](attachments/${rootId}.blocksuite.json)`);
+    expect(source.etag).toBe('remote-note-etag');
+  });
+
+  it('trashes a newly-created partial fork when a persisted resource fails readback', async () => {
+    const source = { collection: 'drafts', path: 'negative-source', content: '# Remote winner\n',
+      etag: 'remote-note-etag', artifactSetEtag: 'source-set', read_only: false, safety_reasons: [] };
+    const sourceNote = { ...source, etag: 'stale-local-etag' };
+    const resourceId = '3'.repeat(32);
+    const payload = { schemaVersion: 1 as const, resourceId: '4'.repeat(32), resourceKind: 'rich-page' as const,
+      docId: 'source-doc', updateB64: encodedYjsText('page', 'local recovery'), snapshot: { blocks: { children: [] } } };
+    let destinationNote: any;
+    let artifactSet = 'empty-destination-set';
+    vi.mocked(notesApi.readWithArtifactSet).mockImplementation(async (_collection, path) => path === source.path
+      ? source as any : { ...destinationNote, artifactSetEtag: artifactSet } as any);
+    vi.mocked(notesApi.create).mockImplementation(async content => {
+      destinationNote = { collection: 'drafts', path: 'negative-fork', content, etag: 'empty-note-etag',
+        artifactSetEtag: artifactSet, read_only: false, safety_reasons: [] };
+      return destinationNote;
+    });
+    vi.mocked(notesApi.createBlockSuiteResource).mockImplementation(async (_note, body) => ({
+      resource_id: resourceId, resource_kind: body.resourceKind, doc_id: body.docId,
+      filename: `${resourceId}.blocksuite.json`, reference: '', etag: 'created-resource-etag',
+      note_etag: destinationNote.etag, artifact_set_etag: artifactSet,
+    }));
+    vi.mocked(notesApi.saveBlockSuiteResource).mockImplementation(async (_note, resource, body) => {
+      artifactSet = 'saved-artifact-set';
+      return { resource_id: resource.resourceId, resource_kind: body.resourceKind, doc_id: body.docId,
+        filename: `${resource.resourceId}.blocksuite.json`, etag: 'saved-resource-etag',
+        note_etag: destinationNote.etag, artifact_set_etag: artifactSet };
+    });
+    vi.mocked(notesApi.save).mockImplementation(async (_note, content) => {
+      destinationNote = { ...destinationNote, content, etag: await markdownSha256(content), artifactSetEtag: artifactSet };
+      return destinationNote;
+    });
+    vi.mocked(notesApi.readBlockSuiteResource).mockImplementation(async (_note, id) => ({
+      ...payload, resourceId: id, docId: 'unexpected-doc', etag: 'saved-resource-etag',
+      note_etag: destinationNote.etag, artifact_set_etag: artifactSet, filename: `${id}.blocksuite.json`,
+    } as any));
+    vi.mocked(notesApi.trash).mockResolvedValue({ status: 'trashed' } as any);
+
+    await expect(forkRichPageNote(sourceNote as any, payload, new Map()))
+      .rejects.toThrow('BlockSuite/Yjs 资源回读校验失败；原件未改变，未确认副本成功；未完成的新副本已移入回收站');
+    expect(notesApi.create).toHaveBeenCalledTimes(1);
+    expect(notesApi.trash).toHaveBeenCalledWith(destinationNote, expect.any(String), destinationNote.artifactSetEtag);
+    expect(source.content).toBe('# Remote winner\n');
     expect(source.etag).toBe('remote-note-etag');
   });
 });

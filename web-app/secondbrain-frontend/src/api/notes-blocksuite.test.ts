@@ -51,4 +51,16 @@ describe('Core note-bound BlockSuite resource API contract', () => {
     expect(new Headers(calls[1].init?.headers).get('If-Match')).toBe(`"${note.etag}"`);
     expect(new Headers(calls[1].init?.headers).get('If-Artifact-Set-Match')).toBe(`"${note.artifactSetEtag}"`);
   });
+
+  it('sends the pinned artifact set ETag when moving a fork draft to Trash', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ status: 'trashed' }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+    }));
+    await notesApi.trash(note, 'synthetic-trash-key', note.artifactSetEtag);
+    expect(calls[0].init?.method).toBe('DELETE');
+    expect(new Headers(calls[0].init?.headers).get('If-Match')).toBe(`"${note.etag}"`);
+    expect(new Headers(calls[0].init?.headers).get('If-Artifact-Set-Match')).toBe(`"${note.artifactSetEtag}"`);
+  });
 });
