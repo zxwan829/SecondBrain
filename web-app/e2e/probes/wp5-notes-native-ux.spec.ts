@@ -294,7 +294,11 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const unsavedExitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
   await expect(unsavedExitPrompt).toBeVisible();
   await unsavedExitPrompt.getByRole('button', { name: '取消' }).click();
-  await expect(segmentedParagraph).toContainText('Second paragraph after Enter 中文输入法内容');
+  const retainedAfterCancel = await editor.locator('.blocksuite-resource-host').evaluate((host, blockId) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    return store?.getBlock(blockId)?.model.props.text?.toString?.() ?? '';
+  }, secondEnteredBlock!.id);
+  expect(retainedAfterCancel).toContain('Second paragraph after Enter 中文输入法内容');
   await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
   expect((await resourceSave).status()).toBe(200);
   expect((await markdownSave).status()).toBe(200);
