@@ -38,7 +38,7 @@ describe('real BlockSuite 412 recovery fork', () => {
         'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAARElEQVR42mP4tVT3Pz6sW3sJL6ZUP8OoA0YdMOqAAXcArS0gpH/UAaMOGHXAwDtgtCQcdcCoA0YdMFoSjjpg1AEj3gEAacWMlzUh49MAAAAASUVORK5CYII=', 'base64'));
       const blob = new Blob([pngBytes], { type: 'image/png' });
       const sourceId = await store.blobSync.set(blob);
-      store.addBlock('affine:image', { sourceId, width: 32, height: 32, size: pngBytes.byteLength, rotate: 0, xywh: '[0,0,32,32]' }, surface.id);
+      store.addBlock('affine:image', { sourceId, width: 32, height: 32, size: pngBytes.byteLength, rotate: 0, xywh: '[440,100,32,32]' }, surface.id);
       const page = { schemaVersion: 1 as const, resourceKind: 'rich-page' as const, docId: pageWrite.docId,
         updateB64: nativeResourceBase64(Y.encodeStateAsUpdate(pageDoc.spaceDoc)), snapshot: nativeResourceSnapshot(store) };
       const restoredPage = restoreBlockSuiteResourceSnapshot(page);
