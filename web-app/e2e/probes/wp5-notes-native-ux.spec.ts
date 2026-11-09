@@ -598,7 +598,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
       modalEditorCount: document.querySelectorAll('.blocksuite-resource-backdrop').length };
   });
   const evidence: Record<string, unknown> = { viewport: '1440x1000', enter, titleBoundary, firstOpen, warmOpen, refreshOpen,
-    firstOpenSetup, titleAndBody, blockControls, formattedHeadingDrag,
+    firstOpenSetup, creationTimings: createTimings, titleAndBody, blockControls, formattedHeadingDrag,
     journey: ['new note', 'title', 'first line', 'Enter', 'multi paragraph', 'Chromium IME composition', 'Backspace',
       'undo/redo', 'save', 'switch note', 'reopen', 'reload', 'six-dot hover and drag reorder', 'save and reload reorder', 'plus insert'] };
   expect(titleAndBody.visibleTitleHeadings).toHaveLength(1);
