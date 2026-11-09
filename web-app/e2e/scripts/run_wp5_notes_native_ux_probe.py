@@ -109,20 +109,26 @@ def verify_evidence(source: Path, target: Path) -> dict:
     if (not isinstance(creation, dict) or creation.get("viewport") != "1440x1000"
             or not isinstance(creation.get("coldNotesNavigationMs"), (int, float))
             or not isinstance(first_create.get("clickToFirstFeedbackMs"), (int, float))
+            or not isinstance(first_create.get("clickToProgressMs"), (int, float))
             or not isinstance(first_create.get("clickToEditableMs"), (int, float))
             or not isinstance(first_create.get("clickToCaretMs"), (int, float))
             or type(first_create.get("temporaryMarkdownEditorMounts")) is not int
+            or first_create.get("temporaryMarkdownEditorMounts") != 0
             or not isinstance(stages, dict) or set(stages) != required_stages
             or any(not isinstance(stages.get(stage), (int, float)) for stage in required_stages)
             or any(status != 200 for status in first_create.get("apiStatuses", []))
             or not isinstance(refresh_state.get("cleanExitPrompt"), bool)
+            or refresh_state.get("cleanExitPrompt") is not False
+            or refresh_state.get("status") == "有未保存的资源修改"
             or not isinstance(refresh_state.get("openMs"), (int, float))
             or not isinstance(edgeless_state.get("cleanExitPrompt"), bool)
             or not isinstance(edgeless_state.get("status"), str)
+            or edgeless_state.get("cleanExitPrompt") is not False
+            or edgeless_state.get("status") == "有未保存的资源修改"
             or not isinstance(repeated, dict) or repeated.get("warmSampleCount") != 9
             or len(repeated.get("samples", [])) != 10
             or any(not isinstance(repeated.get(key), (int, float)) for key in
-                   ("clickToFirstFeedbackP95Ms", "clickToEditableP95Ms", "clickToCaretP95Ms"))
+                   ("clickToFirstFeedbackP95Ms", "clickToProgressP95Ms", "clickToEditableP95Ms", "clickToCaretP95Ms"))
             or type(repeated.get("cleanExitPromptCount")) is not int):
         raise RuntimeError("browser evidence Notes creation/refresh timing measurement missing or invalid")
     boundary = evidence.get("titleBoundary", {})
@@ -172,6 +178,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
         "creationTimings": {
             "coldNotesNavigationMs": round(creation["coldNotesNavigationMs"], 1),
             "firstCreate": {"clickToFirstFeedbackMs": round(first_create["clickToFirstFeedbackMs"], 1),
+                            "clickToProgressMs": round(first_create["clickToProgressMs"], 1),
                             "apiStagesMs": {stage: round(stages[stage], 1) for stage in sorted(required_stages)},
                             "apiStatuses": first_create["apiStatuses"],
                             "clickToEditableMs": round(first_create["clickToEditableMs"], 1),
@@ -187,6 +194,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
         },
         "repeatedCreation": {"warmSampleCount": repeated["warmSampleCount"],
                              "clickToFirstFeedbackP95Ms": round(repeated["clickToFirstFeedbackP95Ms"], 1),
+                             "clickToProgressP95Ms": round(repeated["clickToProgressP95Ms"], 1),
                              "clickToEditableP95Ms": round(repeated["clickToEditableP95Ms"], 1),
                              "clickToCaretP95Ms": round(repeated["clickToCaretP95Ms"], 1),
                              "cleanExitPromptCount": repeated["cleanExitPromptCount"]},

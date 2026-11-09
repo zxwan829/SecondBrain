@@ -302,9 +302,11 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         }
         const onUpdate = () => {
           editSequence.current += 1;
-          if (initialResource.resourceKind === 'edgeless-canvas') {
+          if (native) {
             try {
-              const currentSnapshot = store.getTransformer().docToSnapshot(store);
+              const currentSnapshot = initialResource.resourceKind === 'rich-page'
+                ? nativeResourceSnapshot(store)
+                : store.getTransformer().docToSnapshot(store);
               if (currentSnapshot && sameBlockSuiteSnapshot(currentSnapshot, resourceRef.current.snapshot)) {
                 dirtyRef.current = false;
                 setDirty(false);

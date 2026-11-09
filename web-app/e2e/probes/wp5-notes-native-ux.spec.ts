@@ -110,6 +110,9 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
   await expect(createButton).toBeDisabled();
   const clickToFirstFeedbackMs = Date.now() - createStartedAt;
+  const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
+  await expect(progressStatus).toBeVisible();
+  const clickToProgressMs = await page.evaluate(start => Date.now() - start, firstOpenStarted);
   const resourceResponse = await richRefCreate;
   expect(resourceResponse.status()).toBe(200);
   const created = await resourceResponse.json() as { resource_id: string };
@@ -361,6 +364,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     coldNotesNavigationMs,
     firstCreate: {
       clickToFirstFeedbackMs,
+      clickToProgressMs,
       apiStages: Object.fromEntries(['draftPost', 'resourcePost', 'markdownReferencePut', 'resourceReceiptPut'].map(stage => [stage,
         createStageEvents.find(event => event.stage === stage)?.elapsedMs ?? null])),
       apiStatuses: createStageEvents.map(event => event.status),
@@ -686,9 +690,11 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await expect(editor).toBeVisible({ timeout: 30_000 });
   await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
   cleanEdgelessRefresh.status = (await editor.locator('[role="status"]').first().textContent())?.trim() ?? '';
+  expect(cleanEdgelessRefresh.status).not.toBe('有未保存的资源修改');
   await editor.getByRole('button', { name: '返回笔记列表' }).click();
   const edgelessExitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
   cleanEdgelessRefresh.cleanExitPrompt = await edgelessExitPrompt.isVisible().catch(() => false);
+  expect(cleanEdgelessRefresh.cleanExitPrompt).toBe(false);
   if (cleanEdgelessRefresh.cleanExitPrompt) await edgelessExitPrompt.getByRole('button', { name: '取消' }).click();
   createTimings.edgelessRefresh = cleanEdgelessRefresh;
   console.log(`WP5_NOTES_DIRTY_RESTORE ${JSON.stringify(cleanEdgelessRefresh)}`);
@@ -712,7 +718,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   await expect(page.locator('.notes-primary-create')).toBeVisible();
 
   const measurements: { clickToFirstFeedbackMs: number; clickToEditableMs: number; clickToCaretMs: number;
-    cleanExitPrompt: boolean }[] = [];
+    clickToProgressMs: number; cleanExitPrompt: boolean }[] = [];
   const editor = page.locator('.blocksuite-resource-inline');
   for (let index = 0; index < 10; index += 1) {
     const startedAt = Date.now();
@@ -725,6 +731,9 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
     await createButton.click();
     await expect(createButton).toBeDisabled();
     const clickToFirstFeedbackMs = Date.now() - startedAt;
+    const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
+    await expect(progressStatus).toBeVisible();
+    const clickToProgressMs = Date.now() - startedAt;
     const draftResponse = await draftResponsePromise;
     expect(draftResponse.status()).toBe(200);
     const draft = await draftResponse.json() as { collection: string; path: string };
@@ -751,7 +760,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
     const cleanExitPrompt = await exitPrompt.isVisible().catch(() => false);
     if (cleanExitPrompt) await exitPrompt.getByRole('button', { name: '放弃本次修改' }).click();
     await expect(editor).toHaveCount(0);
-    measurements.push({ clickToFirstFeedbackMs, clickToEditableMs: ready!.durationMs, clickToCaretMs, cleanExitPrompt });
+    measurements.push({ clickToFirstFeedbackMs, clickToProgressMs, clickToEditableMs: ready!.durationMs, clickToCaretMs, cleanExitPrompt });
     await expect(page.locator('.notes-primary-create')).toBeEnabled();
   }
 
@@ -759,6 +768,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   const p95 = (values: number[]) => [...values].sort((left, right) => left - right)[Math.ceil(values.length * 0.95) - 1]!;
   const repeated = { warmSampleCount: warm.length,
     clickToFirstFeedbackP95Ms: p95(warm.map(item => item.clickToFirstFeedbackMs)),
+    clickToProgressP95Ms: p95(warm.map(item => item.clickToProgressMs)),
     clickToEditableP95Ms: p95(warm.map(item => item.clickToEditableMs)),
     clickToCaretP95Ms: p95(warm.map(item => item.clickToCaretMs)),
     cleanExitPromptCount: warm.filter(item => item.cleanExitPrompt).length,

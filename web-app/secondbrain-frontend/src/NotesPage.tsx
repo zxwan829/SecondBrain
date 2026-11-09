@@ -7,6 +7,17 @@ import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink }
 const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module) => ({ default: module.VisualAssetDialog })));
 const BlockSuiteMarkdownEditor = lazy(() => import('./BlockSuiteMarkdownEditor').then((module) => ({ default: module.BlockSuiteMarkdownEditor })));
 const BlockSuiteResourceEditor = lazy(() => import('./BlockSuiteResourceEditor').then((module) => ({ default: module.BlockSuiteResourceEditor })));
+type BlockSuiteResourceEditorModule = typeof import('./BlockSuiteResourceEditor');
+let blockSuiteResourceEditorModulePromise: Promise<BlockSuiteResourceEditorModule> | null = null;
+const loadBlockSuiteResourceEditorModule = () => {
+  if (!blockSuiteResourceEditorModulePromise) {
+    blockSuiteResourceEditorModulePromise = import('./BlockSuiteResourceEditor').catch(error => {
+      blockSuiteResourceEditorModulePromise = null;
+      throw error;
+    });
+  }
+  return blockSuiteResourceEditorModulePromise;
+};
 
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
@@ -82,6 +93,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [unpersistedVisual, setUnpersistedVisual] = useState<{ note: Note; asset: VisualAsset } | null>(null);
   const [creatingVisual, setCreatingVisual] = useState(false);
   const [creatingBlockSuiteResource, setCreatingBlockSuiteResource] = useState(false);
+  const [creatingRichPageDraft, setCreatingRichPageDraft] = useState(false);
   const [pendingBlockSuiteReference, setPendingBlockSuiteReference] = useState<{ note: Note; resource: BlockSuiteResource } | null>(null);
   const [blockSuiteResource, setBlockSuiteResource] = useState<BlockSuiteResource | null>(null);
   const [resourceDirty, setResourceDirty] = useState(false);
@@ -194,6 +206,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     visualOpenSequence.current += 1;
     setCreatingVisual(false);
     setCreatingBlockSuiteResource(false);
+    setCreatingRichPageDraft(false);
     setBlockSuiteResource(null);
     blockSuiteResourceOpen.current = false;
     setRestorePreview(null);
@@ -457,7 +470,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setMessage(`正在创建独立 BlockSuite ${kind === 'database' ? 'Database' : 'Edgeless'} 资源…`);
     let resource: BlockSuiteResource | null = null;
     try {
-      const { createBlockSuiteResourcePayload } = await import('./BlockSuiteResourceEditor');
+      const { createBlockSuiteResourcePayload } = await loadBlockSuiteResourceEditorModule();
       const payload = createBlockSuiteResourcePayload(kind);
       const created = await notesApi.createBlockSuiteResource(target, payload);
       const versionedTarget = { ...target, artifactSetEtag: created.artifact_set_etag };
@@ -510,6 +523,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     const openedAt = performance.now();
     setResourceOpenedAt(openedAt);
     const revision = beginTransition();
+    setCreatingRichPageDraft(true);
     setLoading(true); setMessage('');
     try {
       const created = await notesApi.create('# 新建笔记\n\n');
@@ -519,7 +533,12 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       await attachBlockSuiteResource('rich-page', created);
       void refresh('drafts');
     } catch { if (viewRevision.current === revision) setMessage('新建笔记未完成；已有笔记未改变。'); }
-    finally { if (viewRevision.current === revision) setLoading(false); }
+    finally {
+      if (viewRevision.current === revision) {
+        setLoading(false);
+        setCreatingRichPageDraft(false);
+      }
+    }
   };
 
   const retryBlockSuiteReference = async () => {
@@ -944,7 +963,11 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       <button type="button" onClick={() => trashView ? closeTrash()
         : blockSuiteResourceOpen.current ? requestResourceExit(() => { void openTrash(); }) : void openTrash()}
         disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
-        {!trashView && <><button type="button" className="notes-primary-create" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createRichPageDraft(); }) : void createRichPageDraft()} disabled={loading || creatingBlockSuiteResource}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
+        {!trashView && <><button type="button" className="notes-primary-create"
+          onPointerEnter={() => { void loadBlockSuiteResourceEditorModule().catch(() => undefined); }}
+          onFocus={() => { void loadBlockSuiteResourceEditorModule().catch(() => undefined); }}
+          onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createRichPageDraft(); }) : void createRichPageDraft()}
+          disabled={loading || creatingBlockSuiteResource}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
       </div></header>
     {trashView ? <section className="notes-trash" aria-label="回收站">
       <h2>回收站</h2>
@@ -993,6 +1016,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
           {note && <button type="button" onClick={() => void restore()}>查看可恢复版本</button>}
           {note && <button type="button" onClick={() => void trashSelectedNote()} disabled={state !== '已保存' || loading || creatingVisual || savingVisual || visualAsset !== null || unpersistedVisual !== null}>移到回收站</button>}
         </div>}
+        {creatingRichPageDraft && !blockSuiteResource && <p role="status">正在创建笔记并准备富文本编辑器…</p>}
         {blockSuiteResource?.resourceKind === 'rich-page' && note && <Suspense fallback={<p role="status">正在加载笔记编辑器…</p>}><BlockSuiteResourceEditor key={`${noteKey(note)}:${blockSuiteResource.resourceId}:${editorGeneration}`} note={note} resource={blockSuiteResource} inline openedAt={resourceOpenedAt}
           onDirtyChange={value => { resourceDirtyRef.current = value; setResourceDirty(value); }}
           onSavingChange={value => { resourceSavingRef.current = value; setResourceSaving(value); }}
@@ -1067,7 +1091,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         {note && state === '已保存' && !loading && blockSuiteResource?.resourceKind !== 'rich-page' && <NotePropertiesPanel key={noteKey(note)} note={note} onSaved={(saved) => {
           setCurrent(saved, saved.content); setState('已保存'); setMessage(''); void refresh(saved.collection);
         }} />}
-        {blockSuiteResource?.resourceKind === 'rich-page' ? null : note ? note.read_only || editorMode === 'source' ? <>
+        {creatingRichPageDraft ? null : blockSuiteResource?.resourceKind === 'rich-page' ? null : note ? note.read_only || editorMode === 'source' ? <>
           <div className="notes-safety" role="status">{note.read_only
             ? `此文件含有当前 BlockSuite 编辑器不能安全往返的语法（${note.safety_reasons.join('、')}），原始 Markdown 保留只读。`
             : (editorMode === 'source'
