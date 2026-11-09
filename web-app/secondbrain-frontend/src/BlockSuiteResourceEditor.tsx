@@ -281,6 +281,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         const root = std.render();
         if (disposed || !host.current) { workspace.dispose(); return; }
         host.current.inert = scope === 'edgeless';
+        if (native) host.current.classList.add('sb-archive-surface');
         const viewport = document.createElement('div');
         viewport.className = `${scope === 'edgeless' ? 'affine-edgeless-viewport' : 'affine-page-viewport'}${native ? ' sb-archive-viewport' : ''}`;
         host.current.replaceChildren(viewport);
