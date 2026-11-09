@@ -302,7 +302,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         }
         const onUpdate = () => {
           editSequence.current += 1;
-          if (native) {
+          if (native || initialResource.resourceKind === 'edgeless-canvas') {
             try {
               const currentSnapshot = initialResource.resourceKind === 'rich-page'
                 ? nativeResourceSnapshot(store)
