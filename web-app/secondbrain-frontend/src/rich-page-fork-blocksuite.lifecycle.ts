@@ -32,13 +32,13 @@ describe('real BlockSuite 412 recovery fork', () => {
       const store = pageDoc.getStore();
       const surface = store.getBlocksByFlavour('affine:surface')[0]?.model;
       if (!surface) throw new Error('Fixture Page surface is missing');
+      // Use a visible 32x32 checkerboard with valid PNG chunk checksums. The
+      // old one-pixel fixture was too small to verify in the Edgeless renderer.
       const pngBytes = Uint8Array.from(Buffer.from(
-        // Keep every PNG chunk checksum valid; BlockSuite's in-memory BlobSource
-        // did not validate the IDAT CRC in the previous fixture.
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'));
+        'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAARElEQVR42mP4tVT3Pz6sW3sJL6ZUP8OoA0YdMOqAAXcArS0gpH/UAaMOGHXAwDtgtCQcdcCoA0YdMFoSjjpg1AEj3gEAacWMlzUh49MAAAAASUVORK5CYII=', 'base64'));
       const blob = new Blob([pngBytes], { type: 'image/png' });
       const sourceId = await store.blobSync.set(blob);
-      store.addBlock('affine:image', { sourceId, width: 1, height: 1, size: pngBytes.byteLength, rotate: 0, xywh: '[0,0,1,1]' }, surface.id);
+      store.addBlock('affine:image', { sourceId, width: 32, height: 32, size: pngBytes.byteLength, rotate: 0, xywh: '[0,0,32,32]' }, surface.id);
       const page = { schemaVersion: 1 as const, resourceKind: 'rich-page' as const, docId: pageWrite.docId,
         updateB64: nativeResourceBase64(Y.encodeStateAsUpdate(pageDoc.spaceDoc)), snapshot: nativeResourceSnapshot(store) };
       const restoredPage = restoreBlockSuiteResourceSnapshot(page);
