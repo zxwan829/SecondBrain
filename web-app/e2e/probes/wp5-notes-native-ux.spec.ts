@@ -591,6 +591,113 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await writeFile(process.env.SB_WP5_NATIVE_DOM_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
 });
 
+test('WP5 412 recovery fork preserves literal remote resource links and reopens the copied Yjs resource', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/chat/blank');
+  const password = (await readFile(process.env.SB_E2E_PASSWORD_FILE!, 'utf8')).trim();
+  await page.getByLabel('SecondBrain 登录口令').fill(password);
+  await page.getByRole('button', { name: '登录' }).click();
+  await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
+  await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
+  await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+
+  const resourceCreated = page.waitForResponse(response => response.request().method() === 'POST'
+    && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname));
+  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  const createdResponse = await resourceCreated;
+  expect(createdResponse.status()).toBe(200);
+  const originalResource = await createdResponse.json() as { resource_id: string };
+  const sourcePath = new URL(createdResponse.url()).pathname.replace(/\/blocksuite\/resources$/, '');
+  const sourceNote = await page.evaluate(async path => {
+    const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error(`Synthetic source note read returned ${response.status}`);
+    return await response.json() as { etag: string; artifact_set_etag: string };
+  }, sourcePath);
+
+  const editor = page.locator('.blocksuite-resource-inline');
+  await expect(editor).toBeVisible({ timeout: 30_000 });
+  await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+  const title = `WP5 Recovery Fork ${Date.now()}`;
+  await editor.getByRole('button', { name: '重命名文档' }).click();
+  const titleInput = editor.getByRole('textbox', { name: '重命名文档' });
+  await titleInput.fill(title);
+  await titleInput.press('Enter');
+
+  // Simulate the concurrent remote Markdown winner while this editor remains
+  // pinned to its older note ETag. The live source resource link must survive
+  // in the copied code sample without becoming a destination resource edge.
+  const remoteMarkdown = `# Remote winner\n\n[远端笔记数据](attachments/${originalResource.resource_id}.blocksuite.json)\n`;
+  const remoteSave = await page.evaluate(async ({ path, etag, artifactSetEtag, content }) => {
+    const response = await fetch(path, { method: 'PUT', credentials: 'same-origin', headers: {
+      'Content-Type': 'application/json', 'If-Match': `"${etag}"`,
+      'If-Artifact-Set-Match': `"${artifactSetEtag}"`,
+    }, body: JSON.stringify({ content }) });
+    return { status: response.status, body: await response.json() };
+  }, { path: sourcePath, etag: sourceNote.etag, artifactSetEtag: sourceNote.artifact_set_etag, content: remoteMarkdown });
+  expect(remoteSave.status).toBe(200);
+
+  const localMarker = `LOCAL-FORK-MARKER-${Date.now()}`;
+  await editor.locator('.blocksuite-resource-host affine-paragraph').last().click();
+  await page.keyboard.insertText(localMarker);
+  await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
+  await expect(editor.getByRole('status').first()).toContainText('版本冲突（412）', { timeout: 15_000 });
+
+  const forkCreate = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/notes');
+  const forkResourceResponse = page.waitForResponse(response => response.request().method() === 'POST'
+    && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname));
+  await editor.getByRole('button', { name: '另存为新笔记（保留原件）' }).click();
+  const forkResponse = await forkCreate;
+  expect(forkResponse.status()).toBe(200);
+  expect((await forkResourceResponse).status()).toBe(200);
+  await expect(page.locator('.notes-sidebar li').filter({ hasText: title })).toBeVisible({ timeout: 15_000 });
+  const noteList = await page.evaluate(async () => {
+    const response = await fetch('/api/notes/drafts', { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error(`Synthetic Draft list returned ${response.status}`);
+    return await response.json() as { items: Array<{ path: string; title: string }> };
+  });
+  const fork = noteList.items.find(item => item.title === title);
+  expect(fork).toBeDefined();
+  expect(fork!.path).not.toBe(sourcePath.split('/').at(-1));
+  const forkPath = `/api/notes/drafts/${encodeURIComponent(fork!.path)}`;
+  const forkState = await page.evaluate(async path => {
+    const noteResponse = await fetch(path, { credentials: 'same-origin', cache: 'no-store' });
+    if (!noteResponse.ok) throw new Error(`Synthetic fork read returned ${noteResponse.status}`);
+    const note = await noteResponse.json() as { content: string; etag: string; artifact_set_etag: string };
+    const closureResponse = await fetch(`${path}/blocksuite/snapshots`, { credentials: 'same-origin', cache: 'no-store' });
+    if (!closureResponse.ok) throw new Error(`Synthetic fork closure read returned ${closureResponse.status}`);
+    const closure = await closureResponse.json() as { artifact_set_etag: string; snapshots: Array<{ note_sha256: string; artifact_count: number }> };
+    const match = note.content.match(/\[笔记数据\]\(attachments\/([0-9a-f]{32}\.blocksuite\.json)\)/);
+    if (!match) throw new Error('Fork Markdown did not link its copied native resource');
+    const resourceId = match[1]!.slice(0, 32);
+    const resourceResponse = await fetch(`${path}/blocksuite/resources/${resourceId}`, { credentials: 'same-origin', cache: 'no-store' });
+    if (!resourceResponse.ok) throw new Error(`Copied resource read returned ${resourceResponse.status}`);
+    const resource = await resourceResponse.json() as { updateB64: string; snapshot: unknown; note_etag: string };
+    return { note, closure, resource, resourceId };
+  }, forkPath);
+  expect(forkState.closure.snapshots.find(snapshot => snapshot.note_sha256 === forkState.note.etag)?.artifact_count).toBe(1);
+  expect(forkState.resource.note_etag).toBe(forkState.note.etag);
+  expect(forkState.resource.updateB64.length).toBeGreaterThan(0);
+  expect(JSON.stringify(forkState.resource.snapshot)).toContain(localMarker);
+  expect(forkState.note.content).toContain(`[笔记数据](attachments/${forkState.resourceId}.blocksuite.json)`);
+  expect(forkState.note.content).toContain(`\n\n## 冲突时的外部 Markdown 原文\n`);
+  expect(forkState.note.content).toContain(remoteMarkdown.trim());
+  expect(forkState.resourceId).not.toBe(originalResource.resource_id);
+
+  const originalAfterFork = await page.evaluate(async path => {
+    const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error(`Original note read returned ${response.status}`);
+    return await response.json() as { content: string };
+  }, sourcePath);
+  expect(originalAfterFork.content).toBe(remoteMarkdown);
+
+  await page.reload();
+  await expect(page.locator('.blocksuite-resource-inline')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.blocksuite-resource-inline .document-heading')).toContainText(title);
+  await expect(page.locator('.blocksuite-resource-inline')).toContainText(localMarker);
+});
+
 test('WP5 independent nested canvas open minimal reproduction', async ({ page }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 1000 });

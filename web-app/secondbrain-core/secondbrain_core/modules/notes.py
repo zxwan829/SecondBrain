@@ -41,6 +41,57 @@ _BLOCKSUITE_BLOB_FILENAME = re.compile(r"^[A-Za-z0-9_-]{43}=$")
 _BLOCKSUITE_BLOB_DISK_FILENAME = re.compile(r"^[0-9a-f]{64}\.blocksuite-blob$")
 _BLOCKSUITE_BLOB_TYPES = {"PNG": "image/png", "JPEG": "image/jpeg", "GIF": "image/gif", "WEBP": "image/webp"}
 _BLOCKSUITE_RESOURCE_REFERENCE = re.compile(r"\]\(attachments/([0-9a-f]{32}\.blocksuite\.json)\)")
+_MARKDOWN_FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _blocksuite_resource_references(markdown):
+    """Return active Markdown resource links, excluding literal code examples."""
+    lines = []
+    fence_char = None
+    fence_size = 0
+    for line in markdown.splitlines():
+        if fence_char is not None:
+            if re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_size},}}\s*$", line):
+                fence_char = None
+                fence_size = 0
+            continue
+        opening = _MARKDOWN_FENCE_OPEN.match(line)
+        if opening:
+            fence = opening.group(1)
+            fence_char, fence_size = fence[0], len(fence)
+            continue
+        lines.append(line)
+    text = "\n".join(lines)
+    visible = []
+    index = 0
+    while index < len(text):
+        if text[index] != "`":
+            visible.append(text[index])
+            index += 1
+            continue
+        end = index + 1
+        while end < len(text) and text[end] == "`":
+            end += 1
+        delimiter_size = end - index
+        search = end
+        closing = None
+        while search < len(text):
+            candidate = text.find("`", search)
+            if candidate < 0:
+                break
+            run_end = candidate + 1
+            while run_end < len(text) and text[run_end] == "`":
+                run_end += 1
+            if run_end - candidate == delimiter_size:
+                closing = run_end
+                break
+            search = run_end
+        if closing is None:
+            visible.append(text[index:end])
+            index = end
+        else:
+            index = closing
+    return set(_BLOCKSUITE_RESOURCE_REFERENCE.findall("".join(visible)))
 
 
 async def _read_bounded_json_request(request: Request, max_bytes: int):
@@ -307,12 +358,15 @@ class NotesStore:
 
     def _snapshot_current_locked(self, collection, relative, directory_fd, note_content, artifacts=None):
         artifacts = artifacts if artifacts is not None else self._blocksuite_artifacts_at(directory_fd)
-        expected = {item["id"] + ".blocksuite.json" for item in artifacts if item["kind"] == "resource"}
-        referenced = set(_BLOCKSUITE_RESOURCE_REFERENCE.findall(note_content))
-        if not referenced.issubset(expected):
-            raise HTTPException(status_code=409, detail="Note references a missing BlockSuite resource")
+        self._validate_blocksuite_reference_closure(note_content, artifacts)
         summary = self._history_store().snapshot_locked(collection, relative, directory_fd, note_content, artifacts)
         return summary, artifacts
+
+    @staticmethod
+    def _validate_blocksuite_reference_closure(note_content, artifacts):
+        expected = {item["id"] + ".blocksuite.json" for item in artifacts if item["kind"] == "resource"}
+        if not _blocksuite_resource_references(note_content).issubset(expected):
+            raise HTTPException(status_code=409, detail="Note references a missing BlockSuite resource")
 
     def list_blocksuite_snapshots(self, collection, relative):
         path, directory = self._path(collection, relative)
@@ -369,7 +423,7 @@ class NotesStore:
                                           "data_base64": base64.b64encode(raw).decode("ascii")})
             expected = {item["id"] + ".blocksuite.json" for item in artifact_rows
                         if item["kind"] == "resource"}
-            if not set(_BLOCKSUITE_RESOURCE_REFERENCE.findall(note_content)).issubset(expected):
+            if not _blocksuite_resource_references(note_content).issubset(expected):
                 raise HTTPException(status_code=503, detail="BlockSuite snapshot Markdown has a broken resource reference")
             return {"snapshot_id": snapshot_id, "note": {"content": note_content,
                     "etag": manifest["note_sha256"]}, "artifact_set_etag": manifest["artifact_set_etag"],
@@ -934,6 +988,7 @@ class NotesStore:
             artifacts = self._blocksuite_artifacts_at(directory_fd)
             if not metadata_only:
                 self._check_artifact_set_etag(artifacts, expected_artifacts)
+                self._validate_blocksuite_reference_closure(content, artifacts)
             new_note_etag = self._digest(content)
             rebound_resources = []
             if metadata_only:
