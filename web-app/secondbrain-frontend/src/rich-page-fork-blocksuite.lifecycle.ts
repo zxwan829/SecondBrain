@@ -7,6 +7,10 @@ import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import { archiveManagers } from './archive-rich-page-runtime';
 import { CANVAS_REF_FLAVOUR } from './canvas-ref-block';
 import { nativeResourceBase64, nativeResourceSnapshot, remapNativeResourceReferences } from './native-resource-state';
+import { MemoryBlobSource } from '@blocksuite/sync';
+import { sha } from '@blocksuite/global/utils';
+import { writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import * as Y from 'yjs';
 
 vi.mock('./api/notes', () => ({ notesApi: {
@@ -15,6 +19,50 @@ vi.mock('./api/notes', () => ({ notesApi: {
 } }));
 
 describe('real BlockSuite 412 recovery fork', () => {
+  it('exports a verified synthetic PNG, native Page Yjs, and Canvas fixture for production API setup', async () => {
+    const blobSource = new MemoryBlobSource();
+    const workspace = new TransientMarkdownWorkspace(blobSource);
+    try {
+      workspace.storeExtensions = archiveManagers().stores.get('store');
+      workspace.meta.initialize();
+      const pageWrite = createBlockSuiteResourcePayload('rich-page');
+      const pageDoc = workspace.createDoc(pageWrite.docId);
+      Y.applyUpdate(pageDoc.spaceDoc, Uint8Array.from(atob(pageWrite.updateB64), char => char.charCodeAt(0)));
+      pageDoc.load();
+      const store = pageDoc.getStore();
+      const surface = store.getBlocksByFlavour('affine:surface')[0]?.model;
+      if (!surface) throw new Error('Fixture Page surface is missing');
+      const pngBytes = Uint8Array.from(Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxioAAAAASUVORK5CYII=', 'base64'));
+      const blob = new Blob([pngBytes], { type: 'image/png' });
+      const sourceId = await store.blobSync.set(blob);
+      store.addBlock('affine:image', { sourceId, width: 1, height: 1, size: pngBytes.byteLength, rotate: 0, xywh: '[0,0,1,1]' }, surface.id);
+      const page = { schemaVersion: 1 as const, resourceKind: 'rich-page' as const, docId: pageWrite.docId,
+        updateB64: nativeResourceBase64(Y.encodeStateAsUpdate(pageDoc.spaceDoc)), snapshot: nativeResourceSnapshot(store) };
+      const restoredPage = restoreBlockSuiteResourceSnapshot(page);
+      expect(JSON.stringify(page.snapshot)).toContain(sourceId);
+      expect(JSON.stringify(restoredPage)).toContain(sourceId);
+      const persistedBlob = await blobSource.get(sourceId);
+      expect(persistedBlob).not.toBeNull();
+      const persistedBytes = new Uint8Array(await persistedBlob!.arrayBuffer());
+      expect(persistedBytes).toEqual(pngBytes);
+      expect(await sha(persistedBytes.slice().buffer as ArrayBuffer)).toBe(sourceId);
+
+      const canvasWrite = createBlockSuiteResourcePayload('edgeless-canvas');
+      const restoredCanvas = restoreBlockSuiteResourceSnapshot({ ...canvasWrite, resourceKind: 'edgeless-canvas' } as any);
+      expect(JSON.stringify(restoredCanvas)).toContain('可编辑测试画布');
+      expect(JSON.stringify(restoredCanvas)).toContain('独立 Edgeless 便签');
+      const output = { schemaVersion: 1, fixtureType: 'wp5-rich-page-blob', page, sourceId,
+        png: { contentType: 'image/png', sizeBytes: persistedBytes.byteLength,
+          sha256: createHash('sha256').update(persistedBytes).digest('hex'), base64: Buffer.from(persistedBytes).toString('base64') },
+        canvas: { schemaVersion: 1, resourceKind: canvasWrite.resourceKind, docId: canvasWrite.docId,
+          updateB64: canvasWrite.updateB64, snapshot: canvasWrite.snapshot } };
+      const fixturePath = process.env.SB_WP5_BLOB_FIXTURE_PATH;
+      if (!fixturePath) throw new Error('SB_WP5_BLOB_FIXTURE_PATH is required to export the synthetic fixture');
+      await writeFile(fixturePath, JSON.stringify(output));
+    } finally { workspace.dispose(); }
+  });
+
   it('round trips real BlockSuite Yjs resources and rebinds the embedded Canvas preview', async () => {
     const sourceRootId = 'e'.repeat(32);
     const sourceCanvasId = 'f'.repeat(32);

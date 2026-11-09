@@ -65,6 +65,8 @@ jobs:
         run: npm test -- src/rich-page-fork.test.ts
       - name: Run real BlockSuite recovery-fork round trip
         working-directory: web-app/secondbrain-frontend
+        env:
+          SB_WP5_BLOB_FIXTURE_PATH: ${{ runner.temp }}/wp5-blob-fixture.json
         run: npm run test:blocksuite-lifecycle
       - name: Build SecondBrain frontend
         working-directory: web-app/secondbrain-frontend
@@ -92,6 +94,7 @@ jobs:
         with:
           name: wp5-notes-native-ux-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/wp5-blob-fixture.json
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-1440x1000.png
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-390x844.png
             ${{ runner.temp }}/wp5-notes-native-ux/wp5-notes-native-evidence.json
