@@ -13,6 +13,7 @@ on:
     paths:
       - .github/workflows/wp5-notes-native-ux-probe.yml
       - web-app/e2e/**
+      - web-app/secondbrain-core/**
       - web-app/secondbrain-frontend/src/**
 
 permissions:
@@ -49,10 +50,16 @@ jobs:
       - name: Install isolated Core dependencies
         working-directory: web-app/secondbrain-core
         run: python -m pip install -e ".[test]"
+      - name: Run targeted WP5 BlockSuite reference-closure regression
+        working-directory: web-app/secondbrain-core
+        run: python -m unittest tests.test_notes.NotesStoreTests.test_blocksuite_reference_validation_ignores_fenced_external_markdown_but_rejects_missing_live_refs
       - name: Install frontend and Playwright packages
         run: |
           npm ci --prefix web-app/secondbrain-frontend
           npm ci --prefix web-app/e2e
+      - name: Run targeted WP5 recovery-fork unit test
+        working-directory: web-app/secondbrain-frontend
+        run: npm test -- src/rich-page-fork.test.ts
       - name: Build SecondBrain frontend
         working-directory: web-app/secondbrain-frontend
         env:
