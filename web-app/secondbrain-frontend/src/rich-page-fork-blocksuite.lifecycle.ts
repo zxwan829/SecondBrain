@@ -33,7 +33,9 @@ describe('real BlockSuite 412 recovery fork', () => {
       const surface = store.getBlocksByFlavour('affine:surface')[0]?.model;
       if (!surface) throw new Error('Fixture Page surface is missing');
       const pngBytes = Uint8Array.from(Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxioAAAAASUVORK5CYII=', 'base64'));
+        // Keep every PNG chunk checksum valid; BlockSuite's in-memory BlobSource
+        // did not validate the IDAT CRC in the previous fixture.
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64'));
       const blob = new Blob([pngBytes], { type: 'image/png' });
       const sourceId = await store.blobSync.set(blob);
       store.addBlock('affine:image', { sourceId, width: 1, height: 1, size: pngBytes.byteLength, rotate: 0, xywh: '[0,0,1,1]' }, surface.id);
