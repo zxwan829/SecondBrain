@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-09 — WP5 412 缺失资源修复部署与生产复验待登录
+
+- **根因与修复：** 复核生产错误 `Note references a missing BlockSuite resource` 后，发现恢复副本生成的 fenced/inline Markdown code 中保留源笔记旧资源链接；Core 将 code literal 误判为新笔记的活动 BlockSuite 引用。PR #316 的 NotesStore 共用引用扫描现在忽略 fenced/inline code 中的引用；真实正文里的活动缺失资源仍在写入前以 409 拒绝。加入 Core 正/负例及前端恢复 fork 负例（缺 Blob 时不创建伪新笔记）和合成资源/yjs 正例。
+- **工程门禁：** PR #316 head `726673185d29d6686408455d35bbb3f331200a3b1` 独立 Review PASS、无 P1/P2；固定 SHA Linux Chromium Gate [Actions #42558941565](https://github.com/zxwan829/SecondBrain/actions/runs/42558941565) PASS，覆盖 Core 回归、前端 fork 测试、typecheck、production build、artifact 脱敏和 Notes Chromium probe。修复合并为 `3d2a4e9735ebac9878337ebd810aab5c09c4c795`；当前 main tree `74b6c2f65c782a9322ac48d5a3bed2fcf66a8346`。相对 PR #313 候选，应用源码只增加本修复及其测试；没有启动 WP6。
+- **App-only 构建/部署：** NAS 以 main SHA 生成 `web-app` archive，SHA-256 `b47634568dfa0503f4dd2cf903dd3389d2553c83801279182f6f074aa2dc58fd`。候选 tag `secondbrain-app:candidate-3d2a4e9735ebac9878337ebd810aab5c09c4c795` 的 revision label 匹配 main SHA，Image ID `sha256:2dc7793d36a4397a4c7f53cf22ad058a5f6c7afcd32076757e42f542965cc6e0`、平台 `linux/amd64`。镜像构建内 typecheck/build PASS；隔离无网络、只读 rootfs smoke 的 `/health` 和 `/notes` 均 200。
+- **回滚与生产：** 切换前快照 `/volume1/docker/secondbrain/rollback/wp5-412-fork-predeploy-20261109T040038Z/`（`0700 root:root`，内部文件 `0600 root:root`，校验通过），旧 App 镜像 ID `sha256:6e2f2c14d5c434d6217626b254a874a98e07cef975ba5d6e76cf11646d377bc9`，旧 Compose SHA-256 `2cc49e2b16c3a9322398b7021d39d7da948f3d56c9f42a010d31ef21500179e3`。部署时 Compose 只修改 SecondBrain App image 行；App-only `--no-deps --no-build --force-recreate` 后新容器 healthy、RestartCount 0，HTTPS `/health`、`/`、`/login`、`/notes` 均 200。Live Compose SHA-256 `f25599072f15c2c989029aa2ff7728a9bcef6b307bc168cf0eceeffbcd4b5130`。Promote=false、Weixin 未启用、Knowledge RO、Private 未挂载、Secrets RO、Hermes identity/image/start/restart 未变化。
+- **生产交互状态：** 修复后浏览器刷新导致登录态过期并显示登录页，Edge 密码管理器扩展弹层阻止继续自动化；因此修复后的真实生产编辑/恢复旅程尚未运行。旧镜像下的 412 fork 失败是问题来源，不代表新镜像失败或通过。没有触碰真实笔记/Vault/Obsidian，也没有调用模型。当前 `ENGINEERING_PASS / DEPLOYED / PRODUCTION_TEST_PENDING_LOGIN / USER_UAT_PENDING`；等待重新登录后完成生产合成 Notes 与 412 正/负例，再等待用户最终体验确认。
+
 ## 2026-11-09 — WP5 最终 Notes UX App-only 部署与生产合成交互验收
 
 - **部署源码：** PR #313 候选 `b68c1cfe61bc92a3aa966821cc02aaa7ca35ffda` 已通过独立 Review、四条 Linux Chromium Gate、typecheck、production build、trace 脱敏与 Native Notes 独立 build；候选 tree `18863acd770457255b12e2fa4c7c00062dbd35bc` 与 merge commit `c76b06f725a5eab02b88866515d6d9943d5df163` 一致。PR #312 部署记录文档合并为 main `3ac9c8c73d32cd090027f12457491721ab2c03e4`；相对 #313 合并 tree 只有 `00-CURRENT.md`、`Environment-Baseline.md`、`Progress-Log.md` 差异，`web-app/` 与 `.github/` 无差异。
