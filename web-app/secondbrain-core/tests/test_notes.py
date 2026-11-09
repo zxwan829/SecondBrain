@@ -198,6 +198,54 @@ class NotesStoreTests(unittest.TestCase):
             self.store.create_visual_asset("drafts", note["path"], "mindmap", mindmap, "wrong")
         self.assertEqual(missing_etag.exception.status_code, 412)
 
+    def test_blocksuite_reference_validation_ignores_fenced_external_markdown_but_rejects_missing_live_refs(self):
+        note = self.store.create("# Recovery fork\n")
+        resource = self.store.create_blocksuite_resource("drafts", note["path"], {
+            "schemaVersion": 1, "resourceKind": "rich-page", "docId": "synthetic-doc",
+            "updateB64": base64.b64encode(b"synthetic-yjs").decode("ascii"),
+            "snapshot": {"type": "page", "blocks": {"children": []}},
+        }, note["etag"], note["artifact_set_etag"])
+        live_markdown = f"# Recovery fork\n\n[笔记数据](attachments/{resource['filename']})\n"
+        note = self.store.update("drafts", note["path"], live_markdown, note["etag"],
+                                 expected_artifacts=resource["artifact_set_etag"])
+        before_resource = self.store.read_blocksuite_resource("drafts", note["path"], resource["resource_id"])
+
+        # This reproduces forkRichPageNote's preserved remote Markdown: the old
+        # resource path is literal fenced source, not a destination attachment.
+        external_source = (f"{live_markdown}\n## 外部 Markdown 原文\n\n```markdown\n"
+                           "[旧笔记数据](attachments/0123456789abcdef0123456789abcdef.blocksuite.json)\n"
+                           "```\n示例：`[旧链接](attachments/abcdef0123456789abcdef0123456789.blocksuite.json)`。\n")
+        recovered = self.store.update("drafts", note["path"], external_source, note["etag"],
+                                      expected_artifacts=note["artifact_set_etag"])
+        self.assertIn("0123456789abcdef0123456789abcdef.blocksuite.json", recovered["content"])
+        rebound_body = {"schemaVersion": 1, "resourceId": resource["resource_id"],
+                        "resourceKind": "rich-page", "docId": "synthetic-doc",
+                        "updateB64": before_resource["updateB64"],
+                        "snapshot": {**before_resource["snapshot"], "secondbrainRichPage": {
+                            "schemaVersion": 1, "markdownSha256": recovered["etag"]}}}
+        rebound = self.store.update_blocksuite_resource("drafts", note["path"], resource["resource_id"],
+                                                        rebound_body, recovered["etag"], before_resource["etag"],
+                                                        recovered["artifact_set_etag"])
+        self.assertEqual(rebound["note_etag"], recovered["etag"])
+        after_resource = self.store.read_blocksuite_resource("drafts", note["path"], resource["resource_id"])
+        self.assertEqual(after_resource["updateB64"], before_resource["updateB64"])
+        snapshots = self.store.list_blocksuite_snapshots("drafts", note["path"])["snapshots"]
+        recovered_snapshot = next(item for item in snapshots if item["note_sha256"] == recovered["etag"])
+        reopened = self.store.read_blocksuite_snapshot("drafts", note["path"], recovered_snapshot["snapshot_id"])
+        self.assertEqual(reopened["note"]["content"], recovered["content"])
+        self.assertEqual([item["id"] for item in reopened["artifacts"] if item["kind"] == "resource"],
+                         [resource["resource_id"]])
+
+        invalid = recovered["content"] + "\n[missing](attachments/ffffffffffffffffffffffffffffffff.blocksuite.json)\n"
+        with self.assertRaises(HTTPException) as missing:
+            self.store.update("drafts", note["path"], invalid, recovered["etag"],
+                              expected_artifacts=rebound["artifact_set_etag"])
+        self.assertEqual(missing.exception.status_code, 409)
+        unchanged = self.store.read("drafts", note["path"])
+        self.assertEqual(unchanged["content"], recovered["content"])
+        self.assertEqual(self.store.read_blocksuite_resource("drafts", note["path"], resource["resource_id"])["updateB64"],
+                         before_resource["updateB64"])
+
     def test_blocksuite_resources_are_note_bound_versioned_and_dual_etag_protected(self):
         note = self.store.create("# Page with a separate BlockSuite resource\n")
         update = b"synthetic-yjs-update"
