@@ -52,8 +52,8 @@ type: agent-rules
 ## SecondBrain 数据与安全边界
 
 - Private (`/volume1/SecBR/Private`) 默认不挂载、不扫描、不读取、不索引、不摘要、不记录日志。
-- Universal Capture 保留 Raw 原件并按 Raw → Processing → Review 工作；成功状态须由实际文件、哈希和元数据核验，失败保留原件。Capture/Organizer 不自动 Promote。
-- 正式 Knowledge 只能由受控 Core Promote Worker 在用户明确批准后写入；普通 Hermes Agent、通用文件工具、模型输出和前端自报身份均无权授权写入。
+- Universal Capture 保留 Raw 原件并按 Raw → Processing → Review 服务 Agent/自动候选；成功状态核对文件、哈希及元数据，失败保留原件。Capture/Organizer 不自动 Promote。D093 对**可信用户本人明确指定正式 Knowledge 目标**批准未来独立的 Core 受限直达通道，不把 Agent 候选伪装成用户动作。
+- **当前已部署生产：**正式 Knowledge 仍是 RO、Promote=false，现有 API 不得绕过。**D093 已批准的目标规则：**AI/Agent 自主入库只经受控 Core Review/Promote + 精确用户批准；用户亲自在可信 App/渠道明确选择目标和操作后，可经受限 Core 专用用户写接口免重复 Review。新增通道必须区分服务端真实身份/动作，校验版本、路径、冲突、审计及 OS 隔离；不得因产品批准扩大 Hermes 通用文件工具、Notes API 或 Vault 的 RW，生产 Writer/ACL 仍需专项审查和授权。
 - 以最近 Environment 快照为准：Hermes 对 Knowledge 只读，`HERMES_WRITE_SAFE_ROOT` 限于三个捕获目录；App Core Knowledge 为只读、`SB_PROMOTE_ENABLED=false`，Private 未挂载。上述是最后记录的已核验状态，不是本轮实时复测结论；生产变更前必须重新验证。
 - 普通 Capture/Organizer 写入不得扩展到 SecondBrain 根目录、Knowledge 或 Private。Journal 只可按正式规格以专用新增/追加边界开放，不授予普通 Agent 通用写权。
 - 对话中的明确收录和日记碎片按 `业务规范.md`、D086 先由 Core 保存原文至统一 Inbox；转成 Journal、正式 Knowledge 或回写文件分别遵守专用审批边界。既有直写代码或历史决策不构成新流程已上线的证据。

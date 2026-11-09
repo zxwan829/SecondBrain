@@ -43,6 +43,6 @@ GitHub 议题是任务、执行证据和验收结论的主要记录；合并请�
 - **NAS**：承载容器服务和业务数据，不作为开发代码及正式文档的权威来源。部署由获授权的开发设备通过安全连接完成，并核验实际运行状态。GitHub 提交不会自动部署到 NAS。
 - **生产目录**：容器项目位于 `/volume1/docker/secondbrain/`，核心源码构建目录位于 `/volume1/docker/secondbrain/core-source/`；业务数据位于 `/volume1/SecBR/SecondBrain/` 和 `/volume1/SecBR/KnowledgeAssets/`。路径是稳定边界描述，实际状态仍须核验。
 - **Obsidian**：作为个人知识、笔记及资料库，通过群晖同步工具在 Mac 与 NAS 之间同步；不承载开发源码或正式治理文档。同步是否有效以实际验证为准。
-- **数据和权限**：Private 默认排除，不允许绕过授权读取或挂载；Knowledge 写入必须遵循受控审核链路。不得因为开发或调试需要擅自扩大普通智能体的文件权限。保留个人记忆的受控数据权威来源，具体设计及现状以正式架构、状态与环境文档为准。
+- **数据和权限**：Private 默认排除，禁止绕过授权访问或挂载。正式 Knowledge 当前生产仍只读，AI/Agent 写入遵循既有 Core Review/Promote 审批；D093 已批准未来为可信用户本人明确指定目标的操作增加独立受限 Core 直达写入通道，绝不等于开放 Notes/Hermes/Vault 通用 RW。产品规划不授权真实 Writer/ACL/数据变更。架构、业务规则及实施状态以 Decision-Log D093、Architecture、Universal-Capture 业务规格、业务规范和 CURRENT 为准。
 
 任何涉及生产容器、挂载、网络、权限、秘密或业务数据的操作，都必须先获得对应授权并确认影响和恢复方案。治理文件不构成任何一次具体部署、测试或调用的授权。
