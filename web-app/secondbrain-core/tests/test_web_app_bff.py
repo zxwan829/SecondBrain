@@ -138,6 +138,18 @@ class WebAppBffTests(unittest.TestCase):
         self.transport.close()
         self.temp.cleanup()
 
+    def test_csp_allows_blocksuite_blob_images_only_in_img_src(self):
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        directives = {
+            part.strip().split()[0]: part.strip().split()[1:]
+            for part in response.headers["content-security-policy"].split(";")
+            if part.strip()
+        }
+        self.assertIn("blob:", directives["img-src"])
+        self.assertNotIn("blob:", directives["script-src"])
+        self.assertNotIn("blob:", directives["connect-src"])
+
     def login(self):
         return self.client.post("/api/auth/login", json={"password": "one-owner-test-password"},
                                 headers={"Origin": "https://testserver"})
