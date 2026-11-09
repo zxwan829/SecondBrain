@@ -307,7 +307,13 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
               const currentSnapshot = initialResource.resourceKind === 'rich-page'
                 ? nativeResourceSnapshot(store)
                 : store.getTransformer().docToSnapshot(store);
-              if (currentSnapshot && sameBlockSuiteSnapshot(currentSnapshot, resourceRef.current.snapshot)) {
+              const currentForComparison = currentSnapshot && initialResource.resourceKind === 'rich-page'
+                ? (() => {
+                  const binding = richPageMarkdownBinding(resourceRef.current.snapshot);
+                  return binding ? bindRichPageSnapshot(currentSnapshot, binding) : currentSnapshot;
+                })()
+                : currentSnapshot;
+              if (currentForComparison && sameBlockSuiteSnapshot(currentForComparison, resourceRef.current.snapshot)) {
                 dirtyRef.current = false;
                 setDirty(false);
                 setRecoveryCopyReady(false);

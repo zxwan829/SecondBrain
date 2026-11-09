@@ -719,7 +719,9 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     equalToPersisted: Boolean(liveEdgelessSnapshot && persistedEdgeless?.snapshot
       && snapshotDiffPaths(liveEdgelessSnapshot, persistedEdgeless.snapshot).length === 0),
     diffPaths: liveEdgelessSnapshot && persistedEdgeless?.snapshot
-      ? snapshotDiffPaths(liveEdgelessSnapshot, persistedEdgeless.snapshot) : ['snapshot_unavailable'] })}`);
+      ? snapshotDiffPaths(liveEdgelessSnapshot, persistedEdgeless.snapshot) : ['snapshot_unavailable'],
+    blocks: { live: JSON.stringify(liveEdgelessSnapshot && (liveEdgelessSnapshot as any).blocks?.children).slice(0, 1200),
+      persisted: JSON.stringify(persistedEdgeless?.snapshot?.blocks && (persistedEdgeless.snapshot.blocks as any).children).slice(0, 1200) } })}`);
   cleanEdgelessRefresh.status = (await editor.locator('[role="status"]').first().textContent())?.trim() ?? '';
   expect(cleanEdgelessRefresh.status).not.toBe('有未保存的资源修改');
   await editor.getByRole('button', { name: '返回笔记列表' }).click();
