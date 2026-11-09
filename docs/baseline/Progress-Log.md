@@ -5,7 +5,7 @@
 - **部署来源不变：** PR #319 固定候选 `de747925b873bf901fb3e69f5c7fe7cdedd4bfa5` 已独立 Review 与精确 Gate [#42568533427](https://github.com/zxwan829/SecondBrain/actions/runs/42568533427) 通过并合入；部署 main `19e1273f5b02a75ab884bcc0c78fc45888735b64`、App Image ID `sha256:8b106c10189d5788163e02023ec4aa9f85fd2fe28206fa604827f60d44d9c377`、容器 healthy。NAS 部署/回滚事实见本文件下一条及 Environment Baseline；本轮没有再次部署或修改安全开关。
 - **生产合成旅程：** 两标签页对同一个合成 Draft 制造冲突：远端 marker 保存并刷新仍在，旧标签本地 marker 保存得到 412，界面明确远端和本地均保留、Core 未覆盖。执行“另存为新笔记（保留原件）”后，新 Draft 出现在列表中；正文保留基础、远端、本地标记，BlockSuite 资源保存成功，刷新后正文仍在。Canvas 预览正常；双击后真实独立 Edgeless 子文档显示 ready 与合成画布内容，刷新重开仍 ready。原件保留远端内容，无本地标记，Canvas 预览内容未被覆盖。
 - **未覆盖项：** 本合成资源闭包不含 Blob 附件，因此没有证明生产 Blob/附件复制及引用版本。为避免破坏运行态数据，没有在生产人为制造缺失资源/强制保存失败负例；PR #319 隔离 Gate 已覆盖 artifact-set 缺失失败负例和 BlockSuite/Yjs fork→回读→实际恢复。未访问真实笔记、Vault/Obsidian 或模型。
-- **状态：** `ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PARTIAL_BLOB_UNVERIFIED / USER_UAT_PENDING`。新版主要 412 fork、Canvas 子文档 restore、正文刷新持久性与原件保护通过；Blob 和生产失败负例仍未验证，不标 `PRODUCTION_TEST_PASS`。用户体验最终确认前不标 `USER_UAT_PASS`。WP6 继续 NOT STARTED / HOLD。
+- **状态：** `ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PARTIAL / USER_UAT_PENDING`。新版主要 412 fork、Canvas 子文档 restore、正文刷新持久性与原件保护通过；Blob 和生产失败负例仍未验证，不标 `PRODUCTION_TEST_PASS`。用户体验最终确认前不标 `USER_UAT_PASS`。WP6 继续 NOT STARTED / HOLD。
 
 ## 2026-11-09 — WP5 PR #319 App-only 部署完成，登录态生产验收待继续
 

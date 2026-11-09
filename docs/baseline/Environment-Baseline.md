@@ -14,7 +14,7 @@ type: environment-baseline
 - **健康与隔离：** /health、/、/login、/notes 均 200；health status=ok、promote_enabled=false、hermes_configured=true。App UID/GID 1026:100、rootfs RO、no-new-privileges，端口仍 127.0.0.1:9120→8000；Knowledge RO、Private 未挂载、两项 Secret RO。Hermes ID a1f6740847641df8b04567ebe2f65a307e4728395570d42b2b3baeba7d45072d、镜像 sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821、StartedAt 与 RestartCount 均未变。未改其他容器、秘密、ACL、挂载、网络或业务数据。
 - **生产 412 旅程（2026-11-09）：** 用户手动登录后，仅操作合成 `SB-WP5-RICH-FORK-20261109` Draft。第二标签页先加入并保存远端标记，刷新后该远端标记仍存在；旧标签页基于旧版本加入本地标记并保存，服务返回 412，界面明确表示 Core 未覆盖、远端与本地均保留。点击“另存为新笔记（保留原件）”后 Draft 列表新增独立副本。副本正文包含基础、远端及本地合成标记；保存显示“BlockSuite 资源已保存”，整页刷新后正文仍在。嵌入 Canvas 预览显示“可编辑测试画布”；双击进入独立 Edgeless 资源，画布显示“画布已就绪”，能读出画布便签对象和测试文字。再次刷新后重开同一 Canvas 子文档仍显示 ready。原件在另一个标签页回读时保留远端标记且没有本地冲突标记；正文/Canvas 原内容未被本地修改覆盖。
 - **Blob 与负例边界：** 本次所用合成夹具含 Page 和 Edgeless Yjs 子文档，不含 Blob 图片/附件，因此没有声称生产 Blob 复制、引用版本或附件回读 PASS。生产缺失资源/强制失败负例未触发，以免人为损坏生产资源；固定候选工程 Gate [#42568533427](https://github.com/zxwan829/SecondBrain/actions/runs/42568533427) 的隔离 Core artifact-set 缺失负例与恢复链路测试 PASS。没有打开真实笔记、访问 Vault/Obsidian 或调用模型。
-- **状态与下一步：** `ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PARTIAL_BLOB_UNVERIFIED / USER_UAT_PENDING`。生产 412、正文重开刷新、实际 Canvas 子文档恢复及原件保护通过；Blob 附件闭包和生产失败负例仍未验证。下一步在有 Blob 的合成 Draft 上补验证；若安全夹具不可得，保留部分状态。访问入口 `https://zxwan520.com:63013/notes`。用户最终体验未确认前不标记 `USER_UAT_PASS`。
+- **状态与下一步：** `ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PARTIAL / USER_UAT_PENDING`。生产 412、正文重开刷新、实际 Canvas 子文档恢复及原件保护通过；Blob 附件闭包和生产失败负例仍未验证。下一步在有 Blob 的合成 Draft 上补验证；若安全夹具不可得，保留部分状态。访问入口 `https://zxwan520.com:63013/notes`。用户最终体验未确认前不标记 `USER_UAT_PASS`。
 
 ## 2026-11-09 PR #319 合并、Canvas 预览生产异常与部署权限阻断
 
