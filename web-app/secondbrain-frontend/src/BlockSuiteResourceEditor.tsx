@@ -389,11 +389,6 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
             && sameBlockSuiteSnapshot(hydratedComparable, restoredComparable);
           const hydrationOnlyChangesNoteFrames = !!restoredComparable
             && sameBlockSuiteSnapshotExceptEdgelessNoteFrames(hydratedComparable, restoredComparable);
-          if (host.current) Object.assign(host.current, { __sbHydrationEvidence: {
-            restoredMatchesPersisted, hydratedMatchesRestored, hydrationOnlyChangesNoteFrames, stableFrameCount, frameWaitTimedOut,
-            restoredFrame: restoredRichPageSnapshot?.blocks && (restoredRichPageSnapshot.blocks as any).children?.find((block: any) => block.flavour === 'affine:note')?.props?.xywh,
-            hydratedFrame: snapshot.blocks && (snapshot.blocks as any).children?.find((block: any) => block.flavour === 'affine:note')?.props?.xywh,
-          } });
           if (!restoredMatchesPersisted) {
             hydrationMismatch = true;
           } else if (stableFrameCount < 2 || frameWaitTimedOut) {

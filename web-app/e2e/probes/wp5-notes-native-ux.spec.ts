@@ -695,36 +695,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await expect(editor).toBeVisible({ timeout: 30_000 });
   await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
   const persistedEdgelessResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${createdNote.path}/blocksuite/resources/${created.resource_id}`);
-  const persistedEdgeless = persistedEdgelessResponse.ok()
-    ? await persistedEdgelessResponse.json() as { snapshot?: Record<string, unknown> } : null;
-  const hydrationEvidence = await editor.locator('.blocksuite-resource-host').evaluate(host =>
-    (host as HTMLDivElement & { __sbHydrationEvidence?: unknown }).__sbHydrationEvidence ?? null);
-  console.log(`WP5_NOTES_EDGLESS_HYDRATION ${JSON.stringify(hydrationEvidence)}`);
-  const liveEdgelessSnapshot = await editor.locator('.blocksuite-resource-host').evaluate(host => {
-    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
-    if (!store) return null;
-    const snapshot = JSON.parse(JSON.stringify(store.getTransformer().docToSnapshot(store)));
-    const properties = store.spaceDoc.getMap('secondbrain-rich-page-properties').toJSON();
-    if (Object.keys(properties).length) snapshot.secondbrainRichPage = { properties };
-    return snapshot;
-  });
-  const snapshotDiffPaths = (left: unknown, right: unknown, path = ''): string[] => {
-    if (JSON.stringify(left) === JSON.stringify(right)) return [];
-    if (left && right && typeof left === 'object' && typeof right === 'object'
-        && !Array.isArray(left) && !Array.isArray(right)) {
-      const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-      return [...keys].flatMap(key => snapshotDiffPaths((left as Record<string, unknown>)[key],
-        (right as Record<string, unknown>)[key], path ? `${path}.${key}` : key)).slice(0, 24);
-    }
-    return [path || '$'];
-  };
-  console.log(`WP5_NOTES_EDGLESS_SNAPSHOT_DIFF ${JSON.stringify({ readStatus: persistedEdgelessResponse.status(),
-    equalToPersisted: Boolean(liveEdgelessSnapshot && persistedEdgeless?.snapshot
-      && snapshotDiffPaths(liveEdgelessSnapshot, persistedEdgeless.snapshot).length === 0),
-    diffPaths: liveEdgelessSnapshot && persistedEdgeless?.snapshot
-      ? snapshotDiffPaths(liveEdgelessSnapshot, persistedEdgeless.snapshot) : ['snapshot_unavailable'],
-    blocks: { live: JSON.stringify(liveEdgelessSnapshot && (liveEdgelessSnapshot as any).blocks?.children).slice(0, 1200),
-      persisted: JSON.stringify(persistedEdgeless?.snapshot?.blocks && (persistedEdgeless.snapshot.blocks as any).children).slice(0, 1200) } })}`);
+  expect(persistedEdgelessResponse.status()).toBe(200);
   cleanEdgelessRefresh.status = (await editor.locator('[role="status"]').first().textContent())?.trim() ?? '';
   expect(cleanEdgelessRefresh.status).not.toBe('有未保存的资源修改');
   await editor.getByRole('button', { name: '返回笔记列表' }).click();
