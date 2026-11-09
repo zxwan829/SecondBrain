@@ -10,7 +10,7 @@ import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import { assertRichPageMarkdownBinding, bindRichPageSnapshot, markdownSha256, richPageMarkdownBinding, richPageReadableMarkdown } from './rich-page-projection';
 import { forkRichPageNote, snapshotBlobIds, snapshotCanvasIds } from './rich-page-fork';
 import { nativeResourceSnapshot, remapNativeResourceReferences } from './native-resource-state';
-import { sameBlockSuiteSnapshot } from './resource-snapshot-equality';
+import { sameBlockSuiteSnapshot, sameBlockSuiteSnapshotExceptEdgelessNoteFrames } from './resource-snapshot-equality';
 import { ArchiveDocumentHeader, ArchiveEmojiPicker, archiveExportHtml, archiveExportMarkdown, archivePrintPdf, archiveFocusFrame } from './archive-rich-page-tools';
 import type { ArchiveProperties } from './archive-rich-page-tools';
 import { archiveManagers, archiveViewExtensions, bindArchiveSurface } from './archive-rich-page-runtime';
@@ -340,6 +340,27 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           // Layout updates must not overwrite upload/save failure diagnostics.
           if (!wasDirty) setStatus('有未保存的资源修改');
         };
+        let hydrationMismatch = false;
+        if (native && scope === 'edgeless') {
+          // Edgeless measures note frames after its first layout. Keep the
+          // editor read-only/busy through two frames, then accept only that
+          // known geometry normalization as the hydrated baseline.
+          await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+          if (disposed) return;
+          const snapshot = nativeResourceSnapshot(store);
+          const binding = richPageMarkdownBinding(resourceRef.current.snapshot);
+          const comparable = binding ? bindRichPageSnapshot(snapshot, binding) : snapshot;
+          if (sameBlockSuiteSnapshot(comparable, resourceRef.current.snapshot)) {
+            // No hydration normalization was needed.
+          } else if (binding && sameBlockSuiteSnapshotExceptEdgelessNoteFrames(comparable, resourceRef.current.snapshot)) {
+            resourceRef.current = { ...resourceRef.current, snapshot: comparable };
+          } else {
+            hydrationMismatch = true;
+            dirtyRef.current = true;
+            setDirty(true);
+            setRecoveryCopyReady(false);
+          }
+        }
         doc.spaceDoc.on('update', onUpdate);
         offUpdate = () => doc.spaceDoc.off('update', onUpdate);
         Object.assign(host.current, { __sbBlockSuiteStore: store, __sbBlockSuiteStd: std });
@@ -349,6 +370,8 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           setProjectionConflict(true);
           onConflictChange?.(true);
           setStatus('笔记正文与 Markdown 版本冲突；本地修改仍保留。请下载双方副本或另存为新笔记。');
+        } else if (hydrationMismatch) {
+          setStatus('有未保存的资源修改');
         } else {
           setStatus(native ? '笔记已就绪' : initialResource.resourceKind === 'database' ? '数据库已就绪' : '画布已就绪');
         }
