@@ -671,7 +671,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   expect((await finalResourceSave).status()).toBe(200);
   expect((await finalMarkdownSave).status()).toBe(200);
   const modeDetails = editor.locator('details.sb-properties-info');
-  if (!await modeDetails.evaluate(details => (details as HTMLDetailsElement).open)) await modeDetails.locator('summary').click();
+  if (!await modeDetails.evaluate(details => (details as HTMLDetailsElement).open)) await editor.getByLabel('展开或折叠属性').click();
   const modeGroup = editor.getByRole('group', { name: '文档模式' });
   const saveModeResource = page.waitForResponse(response => response.request().method() === 'PUT'
     && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${created.resource_id}`));
