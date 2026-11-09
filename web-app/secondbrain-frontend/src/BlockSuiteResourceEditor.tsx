@@ -344,12 +344,31 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         };
         let hydrationMismatch = false;
         if (native && scope === 'edgeless') {
-          // Edgeless measures note frames after its first layout. Compare the
-          // Yjs restore before and after render, while the host is inert, so
-          // only an observed frame-only hydration delta can become the baseline.
-          await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-          if (disposed) return;
-          const snapshot = nativeResourceSnapshot(store);
+          // Edgeless measures note frames over several layouts. Keep the host
+          // inert until the frame geometry is stable, then accept only an
+          // observed frame-only delta from an exact restored snapshot.
+          let snapshot = nativeResourceSnapshot(store);
+          const noteFrames = (value: unknown, result: string[] = []): string[] => {
+            if (Array.isArray(value)) value.forEach(item => noteFrames(item, result));
+            else if (value && typeof value === 'object') {
+              const record = value as Record<string, unknown>;
+              if (record.flavour === 'affine:note' && record.props && typeof record.props === 'object') {
+                result.push(`${String(record.id)}:${String((record.props as Record<string, unknown>).xywh)}`);
+              }
+              Object.values(record).forEach(item => noteFrames(item, result));
+            }
+            return result;
+          };
+          let previousFrameSignature = JSON.stringify(noteFrames(snapshot.blocks));
+          let stableFrameCount = 0;
+          for (let frame = 0; frame < 12 && stableFrameCount < 2; frame += 1) {
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            if (disposed) return;
+            snapshot = nativeResourceSnapshot(store);
+            const signature = JSON.stringify(noteFrames(snapshot.blocks));
+            if (signature === previousFrameSignature) stableFrameCount += 1;
+            else { previousFrameSignature = signature; stableFrameCount = 0; }
+          }
           const binding = richPageMarkdownBinding(resourceRef.current.snapshot);
           const restoredComparable = binding && restoredRichPageSnapshot
             ? bindRichPageSnapshot(restoredRichPageSnapshot, binding) : null;
@@ -361,11 +380,13 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           const hydrationOnlyChangesNoteFrames = !!restoredComparable
             && sameBlockSuiteSnapshotExceptEdgelessNoteFrames(hydratedComparable, restoredComparable);
           if (host.current) Object.assign(host.current, { __sbHydrationEvidence: {
-            restoredMatchesPersisted, hydratedMatchesRestored, hydrationOnlyChangesNoteFrames,
+            restoredMatchesPersisted, hydratedMatchesRestored, hydrationOnlyChangesNoteFrames, stableFrameCount,
             restoredFrame: restoredRichPageSnapshot?.blocks && (restoredRichPageSnapshot.blocks as any).children?.find((block: any) => block.flavour === 'affine:note')?.props?.xywh,
             hydratedFrame: snapshot.blocks && (snapshot.blocks as any).children?.find((block: any) => block.flavour === 'affine:note')?.props?.xywh,
           } });
           if (!restoredMatchesPersisted) {
+            hydrationMismatch = true;
+          } else if (stableFrameCount < 2) {
             hydrationMismatch = true;
           } else if (hydratedMatchesRestored) {
             // The restored document already matches the persisted snapshot.
