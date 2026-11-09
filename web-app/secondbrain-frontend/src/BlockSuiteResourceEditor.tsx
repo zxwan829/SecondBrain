@@ -262,6 +262,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         Y.applyUpdate(doc.spaceDoc, unbase64(editingResource.updateB64));
         doc.load();
         const store = doc.getStore();
+        const restoredRichPageSnapshot = native ? nativeResourceSnapshot(store) : null;
         if (native) {
           const titleBlock = store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1');
           setArchiveTitle((titleBlock?.model as any)?.props.text?.toString?.() || markdownTitle(noteRef.current.content) || '新建笔记');
@@ -279,6 +280,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         std = new BlockStdScope({ store: store as any, extensions: extensionSet });
         const root = std.render();
         if (disposed || !host.current) { workspace.dispose(); return; }
+        host.current.inert = scope === 'edgeless';
         const viewport = document.createElement('div');
         viewport.className = `${scope === 'edgeless' ? 'affine-edgeless-viewport' : 'affine-page-viewport'}${native ? ' sb-archive-viewport' : ''}`;
         host.current.replaceChildren(viewport);
@@ -342,20 +344,26 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         };
         let hydrationMismatch = false;
         if (native && scope === 'edgeless') {
-          // Edgeless measures note frames after its first layout. Keep the
-          // editor read-only/busy through two frames, then accept only that
-          // known geometry normalization as the hydrated baseline.
+          // Edgeless measures note frames after its first layout. Compare the
+          // Yjs restore before and after render, while the host is inert, so
+          // only an observed frame-only hydration delta can become the baseline.
           await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
           if (disposed) return;
           const snapshot = nativeResourceSnapshot(store);
           const binding = richPageMarkdownBinding(resourceRef.current.snapshot);
-          const comparable = binding ? bindRichPageSnapshot(snapshot, binding) : snapshot;
-          if (sameBlockSuiteSnapshot(comparable, resourceRef.current.snapshot)) {
-            // No hydration normalization was needed.
-          } else if (binding && sameBlockSuiteSnapshotExceptEdgelessNoteFrames(comparable, resourceRef.current.snapshot)) {
-            resourceRef.current = { ...resourceRef.current, snapshot: comparable };
+          const restoredComparable = binding && restoredRichPageSnapshot
+            ? bindRichPageSnapshot(restoredRichPageSnapshot, binding) : null;
+          const hydratedComparable = binding ? bindRichPageSnapshot(snapshot, binding) : snapshot;
+          if (!restoredComparable || !sameBlockSuiteSnapshot(restoredComparable, resourceRef.current.snapshot)) {
+            hydrationMismatch = true;
+          } else if (sameBlockSuiteSnapshot(hydratedComparable, restoredComparable)) {
+            // The restored document already matches the persisted snapshot.
+          } else if (sameBlockSuiteSnapshotExceptEdgelessNoteFrames(hydratedComparable, restoredComparable)) {
+            resourceRef.current = { ...resourceRef.current, snapshot: hydratedComparable };
           } else {
             hydrationMismatch = true;
+          }
+          if (hydrationMismatch) {
             dirtyRef.current = true;
             setDirty(true);
             setRecoveryCopyReady(false);
@@ -375,6 +383,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         } else {
           setStatus(native ? '笔记已就绪' : initialResource.resourceKind === 'database' ? '数据库已就绪' : '画布已就绪');
         }
+        if (host.current) host.current.inert = false;
         setStoreReady(true);
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
         if (!disposed && typeof performance !== 'undefined') {
