@@ -71,20 +71,66 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await page.getByLabel('SecondBrain 登录口令').fill(password);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
+  const notesNavigationStarted = Date.now();
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+  await expect(page.getByRole('button', { name: '新建笔记', exact: true })).toBeVisible();
+  const coldNotesNavigationMs = Date.now() - notesNavigationStarted;
 
+  const createStageEvents: { stage: string; elapsedMs: number; status: number }[] = [];
+  const createStartedAt = Date.now();
+  const recordCreateResponse = (response: import('@playwright/test').Response) => {
+    const request = response.request();
+    const path = new URL(response.url()).pathname;
+    let stage = '';
+    if (request.method() === 'POST' && path === '/api/notes') stage = 'draftPost';
+    else if (request.method() === 'POST' && /\/blocksuite\/resources$/.test(path)) stage = 'resourcePost';
+    else if (request.method() === 'PUT' && /\/blocksuite\/resources\/[0-9a-f]{32}$/.test(path)) stage = 'resourceReceiptPut';
+    else if (request.method() === 'PUT' && /\/api\/notes\/drafts\/[^/]+$/.test(path)) stage = 'markdownReferencePut';
+    if (stage) createStageEvents.push({ stage, elapsedMs: Date.now() - createStartedAt, status: response.status() });
+  };
+  page.on('response', recordCreateResponse);
+  const richNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/api/notes');
   const richRefCreate = page.waitForResponse(response => response.request().method() === 'POST'
     && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname));
+  await page.evaluate(() => {
+    const scope = window as Window & { __wp5CreateMountProbe?: { markdownMounts: number }; __wp5CreateMountObserver?: MutationObserver };
+    scope.__wp5CreateMountProbe = { markdownMounts: 0 };
+    const observer = new MutationObserver(records => {
+      for (const node of records.flatMap(record => [...record.addedNodes])) {
+        if (!(node instanceof Element)) continue;
+        if (node.matches('.blocksuite-notes-canvas')) scope.__wp5CreateMountProbe!.markdownMounts += 1;
+        scope.__wp5CreateMountProbe!.markdownMounts += node.querySelectorAll('.blocksuite-notes-canvas').length;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    scope.__wp5CreateMountObserver = observer;
+  });
   const firstOpenStarted = await page.evaluate(() => Date.now());
   await page.getByRole('button', { name: '新建笔记', exact: true }).click();
-  const resourceResponse = await richRefCreate;
+  const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+  await expect(createButton).toBeDisabled();
+  const clickToFirstFeedbackMs = Date.now() - createStartedAt;
+  const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
+  await expect(progressStatus).toBeVisible();
+  const clickToProgressMs = await page.evaluate(start => Date.now() - start, firstOpenStarted);
+  const [richNoteResponse, resourceResponse] = await Promise.all([richNoteCreate, richRefCreate]);
+  expect(richNoteResponse.status()).toBe(200);
+  const createdNote = await richNoteResponse.json() as { collection: string; path: string };
+  expect(createdNote.collection).toBe('drafts');
   expect(resourceResponse.status()).toBe(200);
   const created = await resourceResponse.json() as { resource_id: string };
   const editor = page.locator('.blocksuite-resource-inline');
   await expect(editor).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('dialog', { name: '笔记编辑器' })).toHaveCount(0);
   await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  const temporaryMarkdownEditorMounts = await page.evaluate(() => {
+    const scope = window as Window & { __wp5CreateMountProbe?: { markdownMounts: number }; __wp5CreateMountObserver?: MutationObserver };
+    scope.__wp5CreateMountObserver?.disconnect();
+    return scope.__wp5CreateMountProbe?.markdownMounts ?? 0;
+  });
   const openMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<Record<string, unknown>> }).__wp5ReadyEvents ?? []);
   expect(openMetrics.length).toBeGreaterThan(0);
   const firstOpenSetup = openMetrics.at(-1);
@@ -252,6 +298,15 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${created.resource_id}`));
   const markdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
     && /\/api\/notes\/drafts\/[^/]+$/.test(new URL(response.url()).pathname));
+  await editor.getByRole('button', { name: '返回笔记列表' }).click();
+  const unsavedExitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
+  await expect(unsavedExitPrompt).toBeVisible();
+  await unsavedExitPrompt.getByRole('button', { name: '取消' }).click();
+  const retainedAfterCancel = await editor.locator('.blocksuite-resource-host').evaluate((host, blockId) => {
+    const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
+    return store?.getBlock(blockId)?.model.props.text?.toString?.() ?? '';
+  }, secondEnteredBlock!.id);
+  expect(retainedAfterCancel).toContain('Second paragraph after Enter 中文输入法内容');
   await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
   expect((await resourceSave).status()).toBe(200);
   expect((await markdownSave).status()).toBe(200);
@@ -299,6 +354,33 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   })).toBe(true);
   const refreshOpen = await page.evaluate(start => ({ durationMs: Date.now() - start,
     viewport: `${window.innerWidth}x${window.innerHeight}` }), refreshStarted);
+  const refreshStatus = (await editor.locator('[role="status"]').first().textContent())?.trim() ?? '';
+  await editor.getByRole('button', { name: '返回笔记列表' }).click();
+  const cleanRefreshPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
+  const promptedAfterCleanRefresh = await cleanRefreshPrompt.isVisible().catch(() => false);
+  if (promptedAfterCleanRefresh) {
+    await cleanRefreshPrompt.getByRole('button', { name: '取消' }).click();
+  } else {
+    await page.locator('.notes-sidebar li button').filter({ hasText: 'WP5 Native Probe' }).last().click();
+    await expect(editor).toBeVisible({ timeout: 30_000 });
+  }
+  page.off('response', recordCreateResponse);
+  const createTimings = {
+    coldNotesNavigationMs,
+    firstCreate: {
+      clickToFirstFeedbackMs,
+      clickToProgressMs,
+      apiStages: Object.fromEntries(['draftPost', 'resourcePost', 'markdownReferencePut', 'resourceReceiptPut'].map(stage => [stage,
+        createStageEvents.find(event => event.stage === stage)?.elapsedMs ?? null])),
+      apiStatuses: createStageEvents.map(event => event.status),
+      clickToEditableMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
+      clickToCaretMs: firstOpen.durationMs,
+      temporaryMarkdownEditorMounts,
+    },
+    refresh: { openMs: refreshOpen.durationMs, status: refreshStatus, cleanExitPrompt: promptedAfterCleanRefresh },
+    viewport: '1440x1000',
+  };
+  console.log(`WP5_NOTES_CREATE_TIMINGS ${JSON.stringify(createTimings)}`);
 
   // Remove temporary interaction markers before capturing a user-facing
   // screenshot, then verify the cleaned synthetic paragraph survives a save
@@ -534,7 +616,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
       modalEditorCount: document.querySelectorAll('.blocksuite-resource-backdrop').length };
   });
   const evidence: Record<string, unknown> = { viewport: '1440x1000', enter, titleBoundary, firstOpen, warmOpen, refreshOpen,
-    firstOpenSetup, titleAndBody, blockControls, formattedHeadingDrag,
+    firstOpenSetup, creationTimings: createTimings, titleAndBody, blockControls, formattedHeadingDrag,
     journey: ['new note', 'title', 'first line', 'Enter', 'multi paragraph', 'Chromium IME composition', 'Backspace',
       'undo/redo', 'save', 'switch note', 'reopen', 'reload', 'six-dot hover and drag reorder', 'save and reload reorder', 'plus insert'] };
   expect(titleAndBody.visibleTitleHeadings).toHaveLength(1);
@@ -588,6 +670,119 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     && mobilePlus.y < mobileGrip.y + mobileGrip.height && mobileGrip.y < mobilePlus.y + mobilePlus.height).toBe(false);
   await page.locator('.notes-layout').screenshot({ path: process.env.SB_WP5_NATIVE_MOBILE_SCREENSHOT_PATH! });
   evidence.mobileLayout = mobileLayout;
+  const cleanEdgelessRefresh: { status: string; cleanExitPrompt: boolean } = { status: '', cleanExitPrompt: false };
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const finalResourceSave = page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${created.resource_id}`));
+  const finalMarkdownSave = page.waitForResponse(response => response.request().method() === 'PUT'
+    && /\/api\/notes\/drafts\/[^/]+$/.test(new URL(response.url()).pathname));
+  await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
+  expect((await finalResourceSave).status()).toBe(200);
+  expect((await finalMarkdownSave).status()).toBe(200);
+  const modeDetails = editor.locator('details.sb-properties-info');
+  if (!await modeDetails.evaluate(details => (details as HTMLDetailsElement).open)) await editor.getByLabel('展开或折叠属性').click();
+  const modeGroup = editor.getByRole('group', { name: '文档模式' });
+  const saveModeResource = page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname.endsWith(`/blocksuite/resources/${created.resource_id}`));
+  const saveModeMarkdown = page.waitForResponse(response => response.request().method() === 'PUT'
+    && /\/api\/notes\/drafts\/[^/]+$/.test(new URL(response.url()).pathname));
+  await modeGroup.getByRole('button', { name: '画布', exact: true }).click();
+  expect((await saveModeResource).status()).toBe(200);
+  expect((await saveModeMarkdown).status()).toBe(200);
+  await expect(editor.locator('.affine-edgeless-viewport')).toBeVisible({ timeout: 20_000 });
+  await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 20_000 });
+  await page.reload();
+  await expect(editor).toBeVisible({ timeout: 30_000 });
+  await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+  const persistedEdgelessResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${createdNote.path}/blocksuite/resources/${created.resource_id}`);
+  expect(persistedEdgelessResponse.status()).toBe(200);
+  cleanEdgelessRefresh.status = (await editor.locator('[role="status"]').first().textContent())?.trim() ?? '';
+  expect(cleanEdgelessRefresh.status).not.toBe('有未保存的资源修改');
+  await editor.getByRole('button', { name: '返回笔记列表' }).click();
+  const edgelessExitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
+  cleanEdgelessRefresh.cleanExitPrompt = await edgelessExitPrompt.isVisible().catch(() => false);
+  expect(cleanEdgelessRefresh.cleanExitPrompt).toBe(false);
+  if (cleanEdgelessRefresh.cleanExitPrompt) await edgelessExitPrompt.getByRole('button', { name: '取消' }).click();
+  createTimings.edgelessRefresh = cleanEdgelessRefresh;
+  console.log(`WP5_NOTES_DIRTY_RESTORE ${JSON.stringify(cleanEdgelessRefresh)}`);
+  await writeFile(process.env.SB_WP5_NATIVE_DOM_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
+});
+
+test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => {
+    (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
+    window.addEventListener('sb:blocksuite-editor-ready', event =>
+      (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail));
+  });
+  await page.goto('/chat/blank');
+  const password = (await readFile(process.env.SB_E2E_PASSWORD_FILE!, 'utf8')).trim();
+  await page.getByLabel('SecondBrain 登录口令').fill(password);
+  await page.getByRole('button', { name: '登录' }).click();
+  await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
+  await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
+  await expect(page.locator('.notes-primary-create')).toBeVisible();
+
+  const measurements: { clickToFirstFeedbackMs: number; clickToEditableMs: number; clickToCaretMs: number;
+    clickToProgressMs: number; cleanExitPrompt: boolean }[] = [];
+  const editor = page.locator('.blocksuite-resource-inline');
+  for (let index = 0; index < 10; index += 1) {
+    const startedAt = Date.now();
+    const readyCount = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.length ?? 0);
+    const draftResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/notes', { timeout: 20_000 });
+    const resourceResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
+      && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname), { timeout: 20_000 });
+    const createButton = page.locator('.notes-primary-create');
+    await createButton.click();
+    await expect(createButton).toBeDisabled();
+    const clickToFirstFeedbackMs = Date.now() - startedAt;
+    const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
+    await expect(progressStatus).toBeVisible();
+    const clickToProgressMs = Date.now() - startedAt;
+    const draftResponse = await draftResponsePromise;
+    expect(draftResponse.status()).toBe(200);
+    const draft = await draftResponse.json() as { collection: string; path: string };
+    expect(draft.collection).toBe('drafts');
+    const resourceResponse = await resourceResponsePromise;
+    expect(resourceResponse.status()).toBe(200);
+    await expect(editor).toBeVisible({ timeout: 30_000 });
+    await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+    await expect.poll(() => page.evaluate(previous =>
+      ((window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.length ?? 0) > previous, readyCount)).toBe(true);
+    const ready = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<{ durationMs: number }> }).__wp5ReadyEvents?.at(-1) ?? null);
+    expect(ready && Number.isFinite(ready.durationMs)).toBe(true);
+    const body = editor.locator('.affine-page-viewport affine-paragraph').nth(1);
+    await body.click();
+    const inline = body.locator('rich-text .inline-editor');
+    await expect(inline).toHaveAttribute('contenteditable', 'true');
+    await expect.poll(() => inline.evaluate(node => {
+      const selection = window.getSelection();
+      return Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
+    })).toBe(true);
+    const clickToCaretMs = Date.now() - startedAt;
+    const exitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
+    await editor.getByRole('button', { name: '返回笔记列表' }).click();
+    const cleanExitPrompt = await exitPrompt.isVisible().catch(() => false);
+    if (cleanExitPrompt) await exitPrompt.getByRole('button', { name: '放弃本次修改' }).click();
+    await expect(editor).toHaveCount(0);
+    measurements.push({ clickToFirstFeedbackMs, clickToProgressMs, clickToEditableMs: ready!.durationMs, clickToCaretMs, cleanExitPrompt });
+    await expect(page.locator('.notes-primary-create')).toBeEnabled();
+  }
+
+  const warm = measurements.slice(1);
+  const p95 = (values: number[]) => [...values].sort((left, right) => left - right)[Math.ceil(values.length * 0.95) - 1]!;
+  const repeated = { warmSampleCount: warm.length,
+    clickToFirstFeedbackP95Ms: p95(warm.map(item => item.clickToFirstFeedbackMs)),
+    clickToProgressP95Ms: p95(warm.map(item => item.clickToProgressMs)),
+    clickToEditableP95Ms: p95(warm.map(item => item.clickToEditableMs)),
+    clickToCaretP95Ms: p95(warm.map(item => item.clickToCaretMs)),
+    cleanExitPromptCount: warm.filter(item => item.cleanExitPrompt).length,
+    samples: measurements };
+  console.log(`WP5_NOTES_REPEATED_CREATE_TIMINGS ${JSON.stringify(repeated)}`);
+  const evidence = JSON.parse(await readFile(process.env.SB_WP5_NATIVE_DOM_EVIDENCE_PATH!, 'utf8')) as Record<string, unknown>;
+  evidence.repeatedCreation = repeated;
   await writeFile(process.env.SB_WP5_NATIVE_DOM_EVIDENCE_PATH!, JSON.stringify(evidence, null, 2));
 });
 

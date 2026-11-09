@@ -966,8 +966,11 @@ for (const viewport of activeViewports) {
     if (wp5RoundtripOnly || wp5ConflictOnly || wp5RichPageModeOnly || wp5ArchiveUxOnly) {
       observed.setFailureStage('notes_navigation');
       observed.setDiagnosticAssertion('wp5_focus_notes_navigation');
+      const notesNavigationStartedAt = Date.now();
       await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
       await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+      await expect(page.getByRole('button', { name: '新建笔记', exact: true })).toBeVisible();
+      const coldNotesNavigationMs = Date.now() - notesNavigationStartedAt;
 
       if (!wp5ConflictOnly) {
       if (!wp5RichPageModeOnly && !wp5ArchiveUxOnly) {
@@ -1448,13 +1451,30 @@ for (const viewport of activeViewports) {
       // Yjs + snapshot + Markdown receipt path without changing the seed Note.
       observed.setFailureStage('notes_blocksuite_open');
       observed.setWp5Step('rich_page_create');
+      const richCreateStageEvents: { stage: string; elapsedMs: number; status: number }[] = [];
+      let richCreateStartedAt = 0;
+      const recordRichCreateResponse = (response: import('@playwright/test').Response) => {
+        const request = response.request();
+        const path = new URL(response.url()).pathname;
+        let stage = '';
+        if (request.method() === 'POST' && path === '/api/notes') stage = 'draftPost';
+        else if (request.method() === 'POST' && /\/blocksuite\/resources$/.test(path)) stage = 'resourcePost';
+        else if (request.method() === 'PUT' && /\/blocksuite\/resources\/[0-9a-f]{32}$/.test(path)) stage = 'resourceReceiptPut';
+        else if (request.method() === 'PUT' && /\/api\/notes\/drafts\/[0-9a-f-]{36}$/i.test(path)) stage = 'markdownReferencePut';
+        if (stage) richCreateStageEvents.push({ stage, elapsedMs: Date.now() - richCreateStartedAt, status: response.status() });
+      };
+      page.on('response', recordRichCreateResponse);
       const richNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
         && new URL(response.url()).pathname === '/api/notes', { timeout: 15000 });
       await page.addInitScript(() => { (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
         window.addEventListener('sb:blocksuite-editor-ready', event => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail)); });
       await page.evaluate(() => { (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
         window.addEventListener('sb:blocksuite-editor-ready', event => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail)); });
+      richCreateStartedAt = Date.now();
       await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+      const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+      await expect(createButton).toBeDisabled();
+      const clickToFirstFeedbackMs = Date.now() - richCreateStartedAt;
       const richCreatedResponse = await richNoteCreate;
       observed.setDiagnosticAssertion('wp5_resource_checkpoint_001');
       expect(richCreatedResponse.status(), 'wp5_rich_page_note_created').toBe(200);
@@ -1491,11 +1511,14 @@ for (const viewport of activeViewports) {
       await expect(richBody).toBeVisible({ timeout: 15000 });
       observed.setDiagnosticAssertion('wp5_resource_content_visible');
       observed.setWp5Step('rich_page_body_edit');
+      const firstCaretStartedAt = Date.now();
       await richBody.click();
       await expect.poll(() => richBody.locator('rich-text .inline-editor').evaluate(editor => {
         const selection = window.getSelection();
         return editor.getAttribute('contenteditable') === 'true' && Boolean(selection?.anchorNode && editor.contains(selection.anchorNode));
       })).toBe(true);
+      const clickToCaretMs = Date.now() - richCreateStartedAt;
+      const clickToCaretAfterRenderMs = Date.now() - firstCaretStartedAt;
       await page.keyboard.insertText(richText);
       observed.setWp5Step('rich_page_enter');
       await page.keyboard.press('Enter');
@@ -1680,6 +1703,25 @@ for (const viewport of activeViewports) {
       expect(warmReadyMetrics.length, 'wp5_notes_warm_open_measurement_present').toBeGreaterThan(0);
       console.log(`WP5_NOTES_OPEN_TIMINGS ${JSON.stringify({ firstOpen: readyMetrics.at(-1), warmOpen: warmReadyMetrics.at(-1) })}`);
       await expect(richDialog.getByText(richText, { exact: false })).toBeVisible();
+      const refreshStatus = (await richDialog.locator('[role="status"]').first().textContent())?.trim() ?? '';
+      await richDialog.getByRole('button', { name: '返回笔记列表' }).click();
+      const refreshExitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
+      const promptedAfterCleanRefresh = await refreshExitPrompt.isVisible().catch(() => false);
+      if (promptedAfterCleanRefresh) {
+        await refreshExitPrompt.getByRole('button', { name: '取消' }).click();
+      } else {
+        await page.locator('.notes-sidebar li button').filter({ hasText: '新建笔记' }).last().click();
+        await expect(richDialog).toBeVisible({ timeout: 20000 });
+      }
+      page.off('response', recordRichCreateResponse);
+      console.log(`WP5_NOTES_CREATE_TIMINGS ${JSON.stringify({ coldNotesNavigationMs,
+        firstCreate: { clickToFirstFeedbackMs, clickToDraftPostMs: richCreateStageEvents.find(item => item.stage === 'draftPost')?.elapsedMs ?? null,
+          clickToResourcePostMs: richCreateStageEvents.find(item => item.stage === 'resourcePost')?.elapsedMs ?? null,
+          clickToMarkdownReferenceMs: richCreateStageEvents.find(item => item.stage === 'markdownReferencePut')?.elapsedMs ?? null,
+          clickToResourceReceiptMs: richCreateStageEvents.find(item => item.stage === 'resourceReceiptPut')?.elapsedMs ?? null,
+          clickToEditableMs: readyMetrics.at(-1)?.durationMs ?? null, clickToCaretMs, caretInteractionMs: clickToCaretAfterRenderMs },
+        refresh: { openMs: warmReadyMetrics.at(-1)?.durationMs ?? null, status: refreshStatus,
+          cleanExitPrompt: promptedAfterCleanRefresh }, viewport: '1440x1000' })}`);
       if (process.env.SB_E2E_WP5_OPEN_ONLY === 'true') return;
 
       // Keep archive-only UI checks independent from the separate resource

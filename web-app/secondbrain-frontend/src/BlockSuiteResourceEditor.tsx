@@ -10,7 +10,7 @@ import { TransientMarkdownWorkspace } from './transient-blocksuite-workspace';
 import { assertRichPageMarkdownBinding, bindRichPageSnapshot, markdownSha256, richPageMarkdownBinding, richPageReadableMarkdown } from './rich-page-projection';
 import { forkRichPageNote, snapshotBlobIds, snapshotCanvasIds } from './rich-page-fork';
 import { nativeResourceSnapshot, remapNativeResourceReferences } from './native-resource-state';
-import { sameBlockSuiteSnapshot } from './resource-snapshot-equality';
+import { sameBlockSuiteSnapshot, sameBlockSuiteSnapshotExceptEdgelessNoteFrames } from './resource-snapshot-equality';
 import { ArchiveDocumentHeader, ArchiveEmojiPicker, archiveExportHtml, archiveExportMarkdown, archivePrintPdf, archiveFocusFrame } from './archive-rich-page-tools';
 import type { ArchiveProperties } from './archive-rich-page-tools';
 import { archiveManagers, archiveViewExtensions, bindArchiveSurface } from './archive-rich-page-runtime';
@@ -262,6 +262,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         Y.applyUpdate(doc.spaceDoc, unbase64(editingResource.updateB64));
         doc.load();
         const store = doc.getStore();
+        const restoredRichPageSnapshot = native ? nativeResourceSnapshot(store) : null;
         if (native) {
           const titleBlock = store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1');
           setArchiveTitle((titleBlock?.model as any)?.props.text?.toString?.() || markdownTitle(noteRef.current.content) || '新建笔记');
@@ -279,6 +280,8 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         std = new BlockStdScope({ store: store as any, extensions: extensionSet });
         const root = std.render();
         if (disposed || !host.current) { workspace.dispose(); return; }
+        host.current.inert = scope === 'edgeless';
+        if (native) host.current.classList.add('sb-archive-surface');
         const viewport = document.createElement('div');
         viewport.className = `${scope === 'edgeless' ? 'affine-edgeless-viewport' : 'affine-page-viewport'}${native ? ' sb-archive-viewport' : ''}`;
         host.current.replaceChildren(viewport);
@@ -302,10 +305,18 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         }
         const onUpdate = () => {
           editSequence.current += 1;
-          if (initialResource.resourceKind === 'edgeless-canvas') {
+          if (native || initialResource.resourceKind === 'edgeless-canvas') {
             try {
-              const currentSnapshot = store.getTransformer().docToSnapshot(store);
-              if (currentSnapshot && sameBlockSuiteSnapshot(currentSnapshot, resourceRef.current.snapshot)) {
+              const currentSnapshot = initialResource.resourceKind === 'rich-page'
+                ? nativeResourceSnapshot(store)
+                : store.getTransformer().docToSnapshot(store);
+              const currentForComparison = currentSnapshot && initialResource.resourceKind === 'rich-page'
+                ? (() => {
+                  const binding = richPageMarkdownBinding(resourceRef.current.snapshot);
+                  return binding ? bindRichPageSnapshot(currentSnapshot, binding) : currentSnapshot;
+                })()
+                : currentSnapshot;
+              if (currentForComparison && sameBlockSuiteSnapshot(currentForComparison, resourceRef.current.snapshot)) {
                 dirtyRef.current = false;
                 setDirty(false);
                 setRecoveryCopyReady(false);
@@ -332,6 +343,69 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           // Layout updates must not overwrite upload/save failure diagnostics.
           if (!wasDirty) setStatus('有未保存的资源修改');
         };
+        let hydrationMismatch = false;
+        if (native && scope === 'edgeless') {
+          // Edgeless measures note frames over several layouts. Keep the host
+          // inert until the frame geometry is stable, then accept only an
+          // observed frame-only delta from an exact restored snapshot.
+          let snapshot = nativeResourceSnapshot(store);
+          const noteFrames = (value: unknown, result: string[] = []): string[] => {
+            if (Array.isArray(value)) value.forEach(item => noteFrames(item, result));
+            else if (value && typeof value === 'object') {
+              const record = value as Record<string, unknown>;
+              if (record.flavour === 'affine:note' && record.props && typeof record.props === 'object') {
+                result.push(`${String(record.id)}:${String((record.props as Record<string, unknown>).xywh)}`);
+              }
+              Object.values(record).forEach(item => noteFrames(item, result));
+            }
+            return result;
+          };
+          let previousFrameSignature = JSON.stringify(noteFrames(snapshot.blocks));
+          let stableFrameCount = 0;
+          const frameDeadline = performance.now() + 1_000;
+          let frameWaitTimedOut = false;
+          for (let frame = 0; frame < 12 && stableFrameCount < 2; frame += 1) {
+            const frameArrived = await new Promise<boolean>(resolve => {
+              let settled = false;
+              const timeout = window.setTimeout(() => { settled = true; resolve(false); }, Math.max(1, frameDeadline - performance.now()));
+              requestAnimationFrame(() => {
+                if (!settled) { window.clearTimeout(timeout); settled = true; resolve(true); }
+              });
+            });
+            if (!frameArrived) { frameWaitTimedOut = true; break; }
+            if (disposed) return;
+            snapshot = nativeResourceSnapshot(store);
+            const signature = JSON.stringify(noteFrames(snapshot.blocks));
+            if (signature === previousFrameSignature) stableFrameCount += 1;
+            else { previousFrameSignature = signature; stableFrameCount = 0; }
+          }
+          const binding = richPageMarkdownBinding(resourceRef.current.snapshot);
+          const restoredComparable = binding && restoredRichPageSnapshot
+            ? bindRichPageSnapshot(restoredRichPageSnapshot, binding) : null;
+          const hydratedComparable = binding ? bindRichPageSnapshot(snapshot, binding) : snapshot;
+          const restoredMatchesPersisted = !!restoredComparable
+            && sameBlockSuiteSnapshot(restoredComparable, resourceRef.current.snapshot);
+          const hydratedMatchesRestored = !!restoredComparable
+            && sameBlockSuiteSnapshot(hydratedComparable, restoredComparable);
+          const hydrationOnlyChangesNoteFrames = !!restoredComparable
+            && sameBlockSuiteSnapshotExceptEdgelessNoteFrames(hydratedComparable, restoredComparable);
+          if (!restoredMatchesPersisted) {
+            hydrationMismatch = true;
+          } else if (stableFrameCount < 2 || frameWaitTimedOut) {
+            hydrationMismatch = true;
+          } else if (hydratedMatchesRestored) {
+            // The restored document already matches the persisted snapshot.
+          } else if (hydrationOnlyChangesNoteFrames) {
+            resourceRef.current = { ...resourceRef.current, snapshot: hydratedComparable };
+          } else {
+            hydrationMismatch = true;
+          }
+          if (hydrationMismatch) {
+            dirtyRef.current = true;
+            setDirty(true);
+            setRecoveryCopyReady(false);
+          }
+        }
         doc.spaceDoc.on('update', onUpdate);
         offUpdate = () => doc.spaceDoc.off('update', onUpdate);
         Object.assign(host.current, { __sbBlockSuiteStore: store, __sbBlockSuiteStd: std });
@@ -341,9 +415,12 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           setProjectionConflict(true);
           onConflictChange?.(true);
           setStatus('笔记正文与 Markdown 版本冲突；本地修改仍保留。请下载双方副本或另存为新笔记。');
+        } else if (hydrationMismatch) {
+          setStatus('有未保存的资源修改');
         } else {
           setStatus(native ? '笔记已就绪' : initialResource.resourceKind === 'database' ? '数据库已就绪' : '画布已就绪');
         }
+        if (host.current) host.current.inert = false;
         setStoreReady(true);
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
         if (!disposed && typeof performance !== 'undefined') {
