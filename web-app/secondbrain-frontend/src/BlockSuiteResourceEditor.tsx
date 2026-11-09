@@ -354,11 +354,22 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           const restoredComparable = binding && restoredRichPageSnapshot
             ? bindRichPageSnapshot(restoredRichPageSnapshot, binding) : null;
           const hydratedComparable = binding ? bindRichPageSnapshot(snapshot, binding) : snapshot;
-          if (!restoredComparable || !sameBlockSuiteSnapshot(restoredComparable, resourceRef.current.snapshot)) {
+          const restoredMatchesPersisted = !!restoredComparable
+            && sameBlockSuiteSnapshot(restoredComparable, resourceRef.current.snapshot);
+          const hydratedMatchesRestored = !!restoredComparable
+            && sameBlockSuiteSnapshot(hydratedComparable, restoredComparable);
+          const hydrationOnlyChangesNoteFrames = !!restoredComparable
+            && sameBlockSuiteSnapshotExceptEdgelessNoteFrames(hydratedComparable, restoredComparable);
+          if (host.current) Object.assign(host.current, { __sbHydrationEvidence: {
+            restoredMatchesPersisted, hydratedMatchesRestored, hydrationOnlyChangesNoteFrames,
+            restoredFrame: restoredRichPageSnapshot?.blocks && (restoredRichPageSnapshot.blocks as any).children?.find((block: any) => block.flavour === 'affine:note')?.props?.xywh,
+            hydratedFrame: snapshot.blocks && (snapshot.blocks as any).children?.find((block: any) => block.flavour === 'affine:note')?.props?.xywh,
+          } });
+          if (!restoredMatchesPersisted) {
             hydrationMismatch = true;
-          } else if (sameBlockSuiteSnapshot(hydratedComparable, restoredComparable)) {
+          } else if (hydratedMatchesRestored) {
             // The restored document already matches the persisted snapshot.
-          } else if (sameBlockSuiteSnapshotExceptEdgelessNoteFrames(hydratedComparable, restoredComparable)) {
+          } else if (hydrationOnlyChangesNoteFrames) {
             resourceRef.current = { ...resourceRef.current, snapshot: hydratedComparable };
           } else {
             hydrationMismatch = true;

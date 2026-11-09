@@ -697,6 +697,9 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const persistedEdgelessResponse = await page.request.get(`${baseUrl}/api/notes/drafts/${createdNote.path}/blocksuite/resources/${created.resource_id}`);
   const persistedEdgeless = persistedEdgelessResponse.ok()
     ? await persistedEdgelessResponse.json() as { snapshot?: Record<string, unknown> } : null;
+  const hydrationEvidence = await editor.locator('.blocksuite-resource-host').evaluate(host =>
+    (host as HTMLDivElement & { __sbHydrationEvidence?: unknown }).__sbHydrationEvidence ?? null);
+  console.log(`WP5_NOTES_EDGLESS_HYDRATION ${JSON.stringify(hydrationEvidence)}`);
   const liveEdgelessSnapshot = await editor.locator('.blocksuite-resource-host').evaluate(host => {
     const store = (host as HTMLDivElement & { __sbBlockSuiteStore?: any }).__sbBlockSuiteStore;
     if (!store) return null;
