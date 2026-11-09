@@ -294,7 +294,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const unsavedExitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
   await expect(unsavedExitPrompt).toBeVisible();
   await unsavedExitPrompt.getByRole('button', { name: '取消' }).click();
-  await expect(editor.getByText('Second paragraph after Enter 中文输入法内容', { exact: true })).toBeVisible();
+  await expect(segmentedParagraph).toContainText('Second paragraph after Enter 中文输入法内容');
   await editor.getByRole('button', { name: '保存笔记', exact: true }).click();
   expect((await resourceSave).status()).toBe(200);
   expect((await markdownSave).status()).toBe(200);
@@ -705,7 +705,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
-  await expect(page.getByRole('button', { name: '新建笔记', exact: true })).toBeVisible();
+  await expect(page.locator('.notes-primary-create')).toBeVisible();
 
   const measurements: { clickToFirstFeedbackMs: number; clickToEditableMs: number; clickToCaretMs: number;
     cleanExitPrompt: boolean }[] = [];
@@ -717,7 +717,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
       && new URL(response.url()).pathname === '/api/notes', { timeout: 20_000 });
     const resourceResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
       && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname), { timeout: 20_000 });
-    const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+    const createButton = page.locator('.notes-primary-create');
     await createButton.click();
     await expect(createButton).toBeDisabled();
     const clickToFirstFeedbackMs = Date.now() - startedAt;
@@ -748,7 +748,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
     if (cleanExitPrompt) await exitPrompt.getByRole('button', { name: '放弃本次修改' }).click();
     await expect(editor).toHaveCount(0);
     measurements.push({ clickToFirstFeedbackMs, clickToEditableMs: ready!.durationMs, clickToCaretMs, cleanExitPrompt });
-    await expect(page.getByRole('button', { name: '新建笔记', exact: true })).toBeEnabled();
+    await expect(page.locator('.notes-primary-create')).toBeEnabled();
   }
 
   const warm = measurements.slice(1);
