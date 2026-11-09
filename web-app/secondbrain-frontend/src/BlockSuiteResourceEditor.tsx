@@ -361,8 +361,17 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           };
           let previousFrameSignature = JSON.stringify(noteFrames(snapshot.blocks));
           let stableFrameCount = 0;
+          const frameDeadline = performance.now() + 1_000;
+          let frameWaitTimedOut = false;
           for (let frame = 0; frame < 12 && stableFrameCount < 2; frame += 1) {
-            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            const frameArrived = await new Promise<boolean>(resolve => {
+              let settled = false;
+              const timeout = window.setTimeout(() => { settled = true; resolve(false); }, Math.max(1, frameDeadline - performance.now()));
+              requestAnimationFrame(() => {
+                if (!settled) { window.clearTimeout(timeout); settled = true; resolve(true); }
+              });
+            });
+            if (!frameArrived) { frameWaitTimedOut = true; break; }
             if (disposed) return;
             snapshot = nativeResourceSnapshot(store);
             const signature = JSON.stringify(noteFrames(snapshot.blocks));
@@ -380,13 +389,13 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
           const hydrationOnlyChangesNoteFrames = !!restoredComparable
             && sameBlockSuiteSnapshotExceptEdgelessNoteFrames(hydratedComparable, restoredComparable);
           if (host.current) Object.assign(host.current, { __sbHydrationEvidence: {
-            restoredMatchesPersisted, hydratedMatchesRestored, hydrationOnlyChangesNoteFrames, stableFrameCount,
+            restoredMatchesPersisted, hydratedMatchesRestored, hydrationOnlyChangesNoteFrames, stableFrameCount, frameWaitTimedOut,
             restoredFrame: restoredRichPageSnapshot?.blocks && (restoredRichPageSnapshot.blocks as any).children?.find((block: any) => block.flavour === 'affine:note')?.props?.xywh,
             hydratedFrame: snapshot.blocks && (snapshot.blocks as any).children?.find((block: any) => block.flavour === 'affine:note')?.props?.xywh,
           } });
           if (!restoredMatchesPersisted) {
             hydrationMismatch = true;
-          } else if (stableFrameCount < 2) {
+          } else if (stableFrameCount < 2 || frameWaitTimedOut) {
             hydrationMismatch = true;
           } else if (hydratedMatchesRestored) {
             // The restored document already matches the persisted snapshot.
