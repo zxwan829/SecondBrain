@@ -6,6 +6,15 @@ type: environment-baseline
 ---
 # Environment Baseline
 
+## 2026-11-09 PR #319 App-only 部署完成；生产合成验收待登录
+
+- **工程与镜像：** PR #319 已合并，main SHA 19e1273f5b02a75ab884bcc0c78fc45888735b64；main 的 web-app 与已验证候选应用源码相同。release-candidate workflow [Actions #42571565571](https://github.com/zxwan829/SecondBrain/actions/runs/42571565571) 固定 main 构建成功；App startup、/health、/notes 隔离 smoke PASS。artifact manifest 的 source revision 与 main 一致，linux/amd64。仅筛选并导入 App-only archive，NAS 未加载/使用 Hermes 候选。App image ID sha256:8b106c10189d5788163e02023ec4aa9f85fd2fe28206fa604827f60d44d9c377，标签 secondbrain-app:candidate-19e1273f5b02a75ab884bcc0c78fc45888735b64。
+- **回滚准备：** 即时快照 /volume1/docker/secondbrain/rollback/wp5-319-predeploy-20261109T060939Z/，目录 0700 root:root；原 Compose、旧 App image tar、metadata、候选 Compose、SHA256SUMS 均 0600 root:root，校验全部通过。旧 Compose SHA-256 f25599072f15c2c989029aa2ff7728a9bcef6b307bc168cf0eceeffbcd4b5130，旧镜像 ID sha256:2dc7793d36a4397a4c7f53cf22ad058a5f6c7afcd32076757e42f542965cc6e0。未触发回滚。
+- **部署与运行：** 使用已存在的 sudo -n NOPASSWD 策略；未使用 helper、未修改权限。Compose 中只将 secondbrain-app image 从 PR #316 候选切至 main 19e1273 候选；差异核实只有该一行。Live Compose SHA-256 2e1f4578e8512ab9909b9b3ae97ec8ed70b255e7ec7e1995abb7b459a80fe211。新容器 ID 428abe4df424bd6e9991cb8c5ae8c1ff394bcb858a8d1720477bb45ceb6fe522，App healthy、RestartCount 0、revision label 19e1273。
+- **健康与隔离：** /health、/、/login、/notes 均 200；health status=ok、promote_enabled=false、hermes_configured=true。App UID/GID 1026:100、rootfs RO、no-new-privileges，端口仍 127.0.0.1:9120→8000；Knowledge RO、Private 未挂载、两项 Secret RO。Hermes ID a1f6740847641df8b04567ebe2f65a307e4728395570d42b2b3baeba7d45072d、镜像 sha256:73f4f332f36584a4f99c7ee0bc7f13c23b3f722e3960cab9095f7d511cce9821、StartedAt 与 RestartCount 均未变。未改其他容器、秘密、ACL、挂载、网络或业务数据。
+- **生产测试：** 新版本部署后，已打开的 Edge 标签刷新回到登录页。未向页面输入或读取口令，未访问真实笔记；部署后 412 fork/Canvas/Yjs/Blob 合成验收尚未运行。旧版已确认的合成 fork 正文保存及原件保持不变是历史证据，不覆盖新版本验收。
+- **状态与下一步：** ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PENDING_LOGIN / USER_UAT_PENDING。Edge 中手动登录后继续复用合成 Draft，验证 Canvas 预览、实际子 Yjs restore、Blob/资源引用与版本、保存/重开/刷新、原件保护和失败负例。通过后才标 PRODUCTION_TEST_PASS；USER_UAT_PASS 只由用户本人确认。
+
 ## 2026-11-09 PR #319 合并、Canvas 预览生产异常与部署权限阻断
 
 - **工程版本：** PR #319 候选 de747925b873bf901fb3e69f5c7fe7cdedd4bfa5 通过独立 Review（无 P1/P2）；精确 GitHub Gate [#42568533427](https://github.com/zxwan829/SecondBrain/actions/runs/42568533427) PASS，覆盖 Core stale artifact-set 412 负例、前端 fork 测试、真实 BlockSuite Yjs fork→存储回读→实际 restore、构建和 Linux Chromium 合成旅程。合并 SHA / main 为 8b3a299fc39d9ac5ec8c89b3f7de87230cd2459f，源码变更与已验证候选一致。

@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-09 — WP5 PR #319 App-only 部署完成，登录态生产验收待继续
+
+- **镜像来源：** main 19e1273f5b02a75ab884bcc0c78fc45888735b64 与 PR #319 已验证应用源码一致。release-candidate workflow [#42571565571](https://github.com/zxwan829/SecondBrain/actions/runs/42571565571) 对固定 SHA 构建成功，App/Core build、隔离 startup、health/Notes smoke 均 PASS。artifact source manifest revision 一致；只提取和导入 App-only 归档，未将 Hermes 候选加载到 NAS。App image ID sha256:8b106c10189d5788163e02023ec4aa9f85fd2fe28206fa604827f60d44d9c377。
+- **回滚与切换：** 既有 sudo -n NOPASSWD 策略可用；未使用 helper/未新增权限。即时快照 /volume1/docker/secondbrain/rollback/wp5-319-predeploy-20261109T060939Z/ 的 Compose、旧 App image tar、候选 Compose 与元数据校验通过，目录 0700 root:root、文件 0600 root:root。切换仅修改 Compose 的 SecondBrain App image 行。新 Compose SHA-256 2e1f4578e8512ab9909b9b3ae97ec8ed70b255e7ec7e1995abb7b459a80fe211。新容器 428abe4df424bd6e9991cb8c5ae8c1ff394bcb858a8d1720477bb45ceb6fe522 healthy、RestartCount 0、revision 19e1273。无回滚。
+- **部署后边界：** /health、/、/login、/notes 全部 200；Promote=false、Weixin 未设置，Knowledge RO、Private 未挂载、Secrets RO，App UID/rootfs/no-new-privileges/端口不变；Hermes 容器、镜像、StartedAt、RestartCount 未变化。
+- **生产合成验收：** 新版首次重载回到登录页，尚未运行新版 412 fork/Canvas/Yjs/Blob 操作。此前 PR #316 版本的 fork 正文持久化、原笔记不变为旧版本证据，不当作 PR #319 生产通过。没有输入/读取口令或打开真实笔记。
+- **交付状态：** ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PENDING_LOGIN / USER_UAT_PENDING。Edge 用户手动登录后继续既有合成数据验收；未通过完整生产场景前不标 PRODUCTION_TEST_PASS，更不标 USER_UAT_PASS。WP6 未启动。
+
 ## 2026-11-09 — WP5 PR #319 合并与 NAS 发布安全停止
 
 - **范围评估：** 一次性 GPT-6 Sol 轻度评估认为资源 ID/docId 重绑定、Canvas 预览保留、Yjs/Blob 资源复制与回读、条件失败补偿直接对应 WP5 验收；当前候选应冻结功能范围。POST 已提交但响应丢失的未知路径为 P3，不扩展实现幂等创建。评估智能体已结束；未启动 WP6。
