@@ -1,5 +1,13 @@
 # Progress Log
 
+## 2026-11-09 — WP5 PR #319 合并与 NAS 发布安全停止
+
+- **范围评估：** 一次性 GPT-6 Sol 轻度评估认为资源 ID/docId 重绑定、Canvas 预览保留、Yjs/Blob 资源复制与回读、条件失败补偿直接对应 WP5 验收；当前候选应冻结功能范围。POST 已提交但响应丢失的未知路径为 P3，不扩展实现幂等创建。评估智能体已结束；未启动 WP6。
+- **合并与工程门禁：** PR #319 候选 de747925b873bf901fb3e69f5c7fe7cdedd4bfa5 独立 Review PASS；精确 GitHub Gate [#42568533427](https://github.com/zxwan829/SecondBrain/actions/runs/42568533427) PASS，包含 Core artifact-set stale 412 负例、前端 fork/API 测试、真实 BlockSuite Yjs fork→readback→restore、build 和 Linux Chromium。合并 main 为 8b3a299fc39d9ac5ec8c89b3f7de87230cd2459f，代码差异与候选一致。
+- **生产现状：** 最近已知运行 PR #316 镜像。合成 fork 的正文刷新后保留，原笔记内容及原 Canvas 未变；克隆的嵌入 Canvas 预览为空。previewJson 在资源重绑定路径被清空解释了预览异常，但子 Yjs 数据是否丢失仍 UNKNOWN。
+- **部署停止：** SSH 用户 UID 1026 无 Docker socket 权限，无法实时核对 App/Hermes、镜像、健康与开关；即时回滚目录 root:root 0700，不能验证旧资产或安全创建快照。本轮仅读 Compose 哈希 f25599072f15c2c989029aa2ff7728a9bcef6b307bc168cf0eceeffbcd4b5130；未用 sudo/helper、未修改 NAS、未部署，新镜像 ID 未生成。
+- **交付状态：** ENGINEERING_PASS / PR319_MERGED / NOT_DEPLOYED / PRODUCTION_TEST_PARTIAL_CANVAS_PREVIEW / USER_UAT_PENDING。Issue #46 已记录；下一步是在有受支持的最小权限实时检查与即时回滚路径时按既有授权继续 App-only 发布。未经用户确认不标 USER_UAT_PASS。
+
 ## 2026-11-09 — WP5 412 缺失资源修复部署与生产复验待登录
 
 - **根因与修复：** 复核生产错误 `Note references a missing BlockSuite resource` 后，发现恢复副本生成的 fenced/inline Markdown code 中保留源笔记旧资源链接；Core 将 code literal 误判为新笔记的活动 BlockSuite 引用。PR #316 的 NotesStore 共用引用扫描现在忽略 fenced/inline code 中的引用；真实正文里的活动缺失资源仍在写入前以 409 拒绝。加入 Core 正/负例及前端恢复 fork 负例（缺 Blob 时不创建伪新笔记）和合成资源/yjs 正例。

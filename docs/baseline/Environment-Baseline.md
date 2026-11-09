@@ -6,6 +6,14 @@ type: environment-baseline
 ---
 # Environment Baseline
 
+## 2026-11-09 PR #319 合并、Canvas 预览生产异常与部署权限阻断
+
+- **工程版本：** PR #319 候选 de747925b873bf901fb3e69f5c7fe7cdedd4bfa5 通过独立 Review（无 P1/P2）；精确 GitHub Gate [#42568533427](https://github.com/zxwan829/SecondBrain/actions/runs/42568533427) PASS，覆盖 Core stale artifact-set 412 负例、前端 fork 测试、真实 BlockSuite Yjs fork→存储回读→实际 restore、构建和 Linux Chromium 合成旅程。合并 SHA / main 为 8b3a299fc39d9ac5ec8c89b3f7de87230cd2459f，源码变更与已验证候选一致。
+- **生产合成观察：** 当前最近已知部署 PR #316。合成 fork 后正文刷新持久化，远端原件仍为 REMOTE 内容且原 Canvas 内容未变；克隆笔记的嵌入 Canvas 预览为空。重绑定路径清空 CanvasRef.previewJson 可解释预览空白，但不能证明子 Yjs 状态丢失。生产尚未验证子画布恢复与 Blob 闭包，故为 PRODUCTION_TEST_PARTIAL_CANVAS_PREVIEW。
+- **NAS 发布前置与停止：** SSH 到达 secondbrain-nas，登录 UID 1026；Compose 可读，SHA-256 f25599072f15c2c989029aa2ff7728a9bcef6b307bc168cf0eceeffbcd4b5130。Docker CLI 被 /var/run/docker.sock 权限拒绝，不能列出 App/Hermes 或核验镜像/健康/安全开关。即时回滚目录 /volume1/docker/secondbrain/rollback/wp5-412-fork-predeploy-20261109T040038Z/ 为 root:root 0700，当前身份不能读其资产或安全创建并验证快照。本轮未使用 sudo/helper，未更改 NAS 文件、容器、权限或配置，未部署 PR #319。当前容器健康与安全开关标 UNKNOWN。
+- **已知部署与回滚：** 最近已知生产 App 源码仍为 PR #316 merge 3d2a4e9735ebac9878337ebd810aab5c09c4c795，镜像 ID sha256:2dc7793d36a4397a4c7f53cf22ad058a5f6c7afcd32076757e42f542965cc6e0。上一轮记录的快照可能存在，但本轮无法实时验证可用性；PR #319 镜像 ID 尚未生成。
+- **状态与下一步：** ENGINEERING_PASS / PR319_MERGED / NOT_DEPLOYED / PRODUCTION_TEST_PARTIAL_CANVAS_PREVIEW / USER_UAT_PENDING。取得受支持的最小权限容器检查和即时回滚快照路径后，沿用既有 App-only 授权继续；不需要重复申请同一授权。WP6 未启动。
+
 ## 2026-11-09 WP5 412 resource-reference fix deployment and production recheck
 
 - **工程版本：** PR #313 候选 `b68c1cfe61bc92a3aa966821cc02aaa7ca35ffda` 已按预期合入（merge `c76b06f725a5eab02b88866515d6d9943d5df163`）；原始四条 Linux Chromium Gate [#42497477160](https://github.com/zxwan829/SecondBrain/actions/runs/42497477160)、[#42497475747](https://github.com/zxwan829/SecondBrain/actions/runs/42497475747)、[#42497731848](https://github.com/zxwan829/SecondBrain/actions/runs/42497731848) 和 [#42497920166](https://github.com/zxwan829/SecondBrain/actions/runs/42497920166) 均 SUCCESS，含 typecheck/build、脱敏检查及 Native Notes build；固定候选独立 Review PASS、无 P1/P2。此前 PR #313 镜像的 412“另存为新笔记”确实失败。PR #316 修复 fenced/inline code 中旧资源链接被误判为活动引用，并在写入前拒绝真正缺失的活动资源链接；合并 SHA `3d2a4e9735ebac9878337ebd810aab5c09c4c795` 的独立 Review 与精确 Linux Chromium Gate [#42558941565](https://github.com/zxwan829/SecondBrain/actions/runs/42558941565) PASS。定向 Core 回归、前端 fork 负例/正例、typecheck/build PASS。
