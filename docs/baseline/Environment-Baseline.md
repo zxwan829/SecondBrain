@@ -6,6 +6,16 @@ type: environment-baseline
 ---
 # Environment Baseline
 
+## 2026-11-09 PR #324 App-only 部署与生产 Blob 412 fork 验证
+
+- **修复/部署：** PR #324 将生产 CSP 的 `blob:` 限定加入 `img-src`，不改变 `script-src` / `connect-src`。PR head `2aa17f53de62645eb638fa7d1666441418944c99`，main merge `9e5285d5fa9aff49b511de8979dc1df82fc37d67`；候选 release workflow [Actions #42598125465](https://github.com/zxwan829/SecondBrain/actions/runs/42598125465) PASS。App-only 部署后 Image ID `sha256:7fcd46c959e061d2c775db634fca135bc12b5fe783c0d6d42c0bcd93c10ae181`，revision label `2aa17f53de62645eb638fa7d1666441418944c99`，running/healthy。Compose SHA-256 `ab7d2d309553f108b1b406d67ca91af9851f01329d0c7d902342a8d687a8b632`，仅 App image 行变化；Hermes 未重建/切换，Secrets、ACL、挂载及业务数据未改。回滚快照：`/volume1/docker/secondbrain/rollback/wp5-csp-predeploy-20261109T104841Z`，旧 Compose 与 App image tar 校验通过。
+- **生产 Blob 夹具：** 仅操作合成 Draft `drafts/5c96cddb-2ba7-46d9-99ca-d20c2db710f8`。根 `rich-page` Yjs snapshot 中 `affine:image.sourceId` 为 `gUDVvD0Q7Hg6aTWUrRhNsO4UKxRMO8j68mK83-_9y3o=`，并含 Canvas 子资源引用；对应 PNG Blob GET 125 bytes，SHA-256 `8140d5bc3d10ec783a693594ad184db0ee142b144c3bc8faf262bcdfeffdcb7a`。UI 图片 32×32，BlockSuite store Blob 存在。根、子、Blob 响应 Note ETag 与 artifact-set ETag 在源版本内闭合。
+- **真实 412 fork：** 对 AX03 只写入合成远端正文版本，再在旧 UI 上修改合成标题并执行“保存笔记”；UI 显示真实 `版本冲突（412）`。经正式按钮“另存为新笔记（保留原件）”只执行一次，副本 path `8920920c-2747-42bc-8ef0-ca1b44961c82`，新根 `520ab32e85cc4f69acf8b6c0168a0520`、Canvas 子资源 `f60da28722164a06bd7bb21b88bcf138`。新根 Yjs 图片 `sourceId` 继续匹配 Blob，CanvasRef revision 匹配子资源 ETag；副本 Blob GET SHA/长度与源一致。副本 Note/根/子/Blob 响应的 Note ETag 与 artifact-set ETag 回读闭合。
+- **保存与刷新：** 使用产品 UI 保存副本，随后整页刷新并重新打开同一路径。Notes API 重新读取正文、根/子资源与 Blob；副本 image naturalWidth/Height 均 32，BlockSuite store Blob 存在，Canvas 引用 ready，子 Yjs 含测试便签文字。原件再次回读保留 `REMOTE-WINNER-AX03`，Note/根/Canvas 版本和原 Blob 字节未变。详细 ETag、响应版本与正文标记见 [Issue #46 评论](https://github.com/zxwan829/SecondBrain/issues/46#issuecomment-6739149210)。
+- **观察与边界：** 刷新后 Edgeless 编辑器显示“有未保存的资源修改”，但 Notes API 的已保存正文及资源/Blob 版本闭合且重复读稳定；未见资源丢失或混合版本，作为最终人工 UAT 时的界面观察保留。生产缺失资源负例 `NOT RUN`，不破坏生产资源制造错误；隔离 Gate [Actions #42568533427](https://github.com/zxwan829/SecondBrain/actions/runs/42568533427) 保留有效负例证据。没有打开/修改真实笔记、Vault 或 Knowledge。
+- **状态：** `ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PASS / USER_UAT_PENDING`（仅本次生产正向恢复路径）；不代表用户最终体验通过。WP6 继续 `NOT STARTED / HOLD`，VNext `FROZEN`。
+
+
 ## 2026-11-09 PR #319 App-only 部署；生产 412/Canvas 恢复部分通过
 
 - **工程与镜像：** PR #319 已合并，main SHA 19e1273f5b02a75ab884bcc0c78fc45888735b64；main 的 web-app 与已验证候选应用源码相同。release-candidate workflow [Actions #42571565571](https://github.com/zxwan829/SecondBrain/actions/runs/42571565571) 固定 main 构建成功；App startup、/health、/notes 隔离 smoke PASS。artifact manifest 的 source revision 与 main 一致，linux/amd64。仅筛选并导入 App-only archive，NAS 未加载/使用 Hermes 候选。App image ID sha256:8b106c10189d5788163e02023ec4aa9f85fd2fe28206fa604827f60d44d9c377，标签 secondbrain-app:candidate-19e1273f5b02a75ab884bcc0c78fc45888735b64。
