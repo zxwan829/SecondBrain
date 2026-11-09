@@ -71,13 +71,45 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await page.getByLabel('SecondBrain 登录口令').fill(password);
   await page.getByRole('button', { name: '登录' }).click();
   await expect(page.getByRole('heading', { name: '空白验收' })).toBeVisible();
+  const notesNavigationStarted = Date.now();
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
+  await expect(page.getByRole('button', { name: '新建笔记', exact: true })).toBeVisible();
+  const coldNotesNavigationMs = Date.now() - notesNavigationStarted;
 
+  const createStageEvents: { stage: string; elapsedMs: number; status: number }[] = [];
+  const createStartedAt = Date.now();
+  const recordCreateResponse = (response: import('@playwright/test').Response) => {
+    const request = response.request();
+    const path = new URL(response.url()).pathname;
+    let stage = '';
+    if (request.method() === 'POST' && path === '/api/notes') stage = 'draftPost';
+    else if (request.method() === 'POST' && /\/blocksuite\/resources$/.test(path)) stage = 'resourcePost';
+    else if (request.method() === 'PUT' && /\/blocksuite\/resources\/[0-9a-f]{32}$/.test(path)) stage = 'resourceReceiptPut';
+    else if (request.method() === 'PUT' && /\/api\/notes\/drafts\/[^/]+$/.test(path)) stage = 'markdownReferencePut';
+    if (stage) createStageEvents.push({ stage, elapsedMs: Date.now() - createStartedAt, status: response.status() });
+  };
+  page.on('response', recordCreateResponse);
   const richRefCreate = page.waitForResponse(response => response.request().method() === 'POST'
     && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname));
+  await page.evaluate(() => {
+    const scope = window as Window & { __wp5CreateMountProbe?: { markdownMounts: number }; __wp5CreateMountObserver?: MutationObserver };
+    scope.__wp5CreateMountProbe = { markdownMounts: 0 };
+    const observer = new MutationObserver(records => {
+      for (const node of records.flatMap(record => [...record.addedNodes])) {
+        if (!(node instanceof Element)) continue;
+        if (node.matches('.blocksuite-notes-canvas')) scope.__wp5CreateMountProbe!.markdownMounts += 1;
+        scope.__wp5CreateMountProbe!.markdownMounts += node.querySelectorAll('.blocksuite-notes-canvas').length;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    scope.__wp5CreateMountObserver = observer;
+  });
   const firstOpenStarted = await page.evaluate(() => Date.now());
   await page.getByRole('button', { name: '新建笔记', exact: true }).click();
+  const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+  await expect(createButton).toBeDisabled();
+  const clickToFirstFeedbackMs = Date.now() - createStartedAt;
   const resourceResponse = await richRefCreate;
   expect(resourceResponse.status()).toBe(200);
   const created = await resourceResponse.json() as { resource_id: string };
@@ -85,6 +117,12 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await expect(editor).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('dialog', { name: '笔记编辑器' })).toHaveCount(0);
   await expect(editor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  const temporaryMarkdownEditorMounts = await page.evaluate(() => {
+    const scope = window as Window & { __wp5CreateMountProbe?: { markdownMounts: number }; __wp5CreateMountObserver?: MutationObserver };
+    scope.__wp5CreateMountObserver?.disconnect();
+    return scope.__wp5CreateMountProbe?.markdownMounts ?? 0;
+  });
   const openMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<Record<string, unknown>> }).__wp5ReadyEvents ?? []);
   expect(openMetrics.length).toBeGreaterThan(0);
   const firstOpenSetup = openMetrics.at(-1);
@@ -299,6 +337,32 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   })).toBe(true);
   const refreshOpen = await page.evaluate(start => ({ durationMs: Date.now() - start,
     viewport: `${window.innerWidth}x${window.innerHeight}` }), refreshStarted);
+  const refreshStatus = (await editor.locator('[role="status"]').first().textContent())?.trim() ?? '';
+  await editor.getByRole('button', { name: '返回笔记列表' }).click();
+  const cleanRefreshPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
+  const promptedAfterCleanRefresh = await cleanRefreshPrompt.isVisible().catch(() => false);
+  if (promptedAfterCleanRefresh) {
+    await cleanRefreshPrompt.getByRole('button', { name: '取消' }).click();
+  } else {
+    await page.locator('.notes-sidebar li button').filter({ hasText: 'WP5 Native Probe' }).last().click();
+    await expect(editor).toBeVisible({ timeout: 30_000 });
+  }
+  page.off('response', recordCreateResponse);
+  const createTimings = {
+    coldNotesNavigationMs,
+    firstCreate: {
+      clickToFirstFeedbackMs,
+      apiStages: Object.fromEntries(['draftPost', 'resourcePost', 'markdownReferencePut', 'resourceReceiptPut'].map(stage => [stage,
+        createStageEvents.find(event => event.stage === stage)?.elapsedMs ?? null])),
+      apiStatuses: createStageEvents.map(event => event.status),
+      clickToEditableMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
+      clickToCaretMs: firstOpen.durationMs,
+      temporaryMarkdownEditorMounts,
+    },
+    refresh: { openMs: refreshOpen.durationMs, status: refreshStatus, cleanExitPrompt: promptedAfterCleanRefresh },
+    viewport: '1440x1000',
+  };
+  console.log(`WP5_NOTES_CREATE_TIMINGS ${JSON.stringify(createTimings)}`);
 
   // Remove temporary interaction markers before capturing a user-facing
   // screenshot, then verify the cleaned synthetic paragraph survives a save

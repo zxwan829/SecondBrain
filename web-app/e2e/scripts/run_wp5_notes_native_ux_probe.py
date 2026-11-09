@@ -99,6 +99,23 @@ def verify_evidence(source: Path, target: Path) -> dict:
         raise RuntimeError("browser evidence performance viewport mismatch")
     if not all(isinstance(item.get("durationMs"), (int, float)) for item in (first, warm, refresh)):
         raise RuntimeError("browser evidence click-to-editable performance measurement missing")
+    creation = evidence.get("creationTimings", {})
+    first_create = creation.get("firstCreate", {}) if isinstance(creation, dict) else {}
+    refresh_state = creation.get("refresh", {}) if isinstance(creation, dict) else {}
+    required_stages = {"draftPost", "resourcePost", "markdownReferencePut", "resourceReceiptPut"}
+    stages = first_create.get("apiStages", {}) if isinstance(first_create, dict) else {}
+    if (not isinstance(creation, dict) or creation.get("viewport") != "1440x1000"
+            or not isinstance(creation.get("coldNotesNavigationMs"), (int, float))
+            or not isinstance(first_create.get("clickToFirstFeedbackMs"), (int, float))
+            or not isinstance(first_create.get("clickToEditableMs"), (int, float))
+            or not isinstance(first_create.get("clickToCaretMs"), (int, float))
+            or type(first_create.get("temporaryMarkdownEditorMounts")) is not int
+            or not isinstance(stages, dict) or set(stages) != required_stages
+            or any(not isinstance(stages.get(stage), (int, float)) for stage in required_stages)
+            or any(status != 200 for status in first_create.get("apiStatuses", []))
+            or not isinstance(refresh_state.get("cleanExitPrompt"), bool)
+            or not isinstance(refresh_state.get("openMs"), (int, float))):
+        raise RuntimeError("browser evidence Notes creation/refresh timing measurement missing or invalid")
     boundary = evidence.get("titleBoundary", {})
     if boundary.get("title") != "WP5 Native Probe" or boundary.get("firstBody", {}).get("text") != "First line after title":
         raise RuntimeError("browser evidence title/backspace boundary check failed")
@@ -143,6 +160,19 @@ def verify_evidence(source: Path, target: Path) -> dict:
         "clickToEditableMs": {"firstCreate": round(first["durationMs"], 1),
                                "samePageReopen": round(warm["durationMs"], 1),
                                "refreshRestore": round(refresh["durationMs"], 1)},
+        "creationTimings": {
+            "coldNotesNavigationMs": round(creation["coldNotesNavigationMs"], 1),
+            "firstCreate": {"clickToFirstFeedbackMs": round(first_create["clickToFirstFeedbackMs"], 1),
+                            "apiStagesMs": {stage: round(stages[stage], 1) for stage in sorted(required_stages)},
+                            "apiStatuses": first_create["apiStatuses"],
+                            "clickToEditableMs": round(first_create["clickToEditableMs"], 1),
+                            "clickToCaretMs": round(first_create["clickToCaretMs"], 1),
+                            "temporaryMarkdownEditorMounts": first_create["temporaryMarkdownEditorMounts"]},
+            "refresh": {"openMs": round(refresh_state["openMs"], 1),
+                        "status": refresh_state.get("status") if refresh_state.get("status") in {
+                            "笔记已就绪", "BlockSuite 资源已保存", "有未保存的资源修改"} else "other",
+                        "cleanExitPrompt": refresh_state["cleanExitPrompt"]},
+        },
         "focus": {"contenteditable": enter["contenteditable"], "selectionInsideEditor": enter["selectionInsideEditor"],
                   "selectionOffset": enter.get("anchorOffset")},
         "yjsParagraphTexts": [safe_text(value) for value in texts if value.strip()],
