@@ -593,6 +593,70 @@ def test_trash_source_replacement_after_atomic_move_is_restored_or_recovery_requ
         assert not thread.is_alive()
 
 
+def test_trash_rejects_stale_artifact_set_without_moving_note_or_resources(tmp_path, monkeypatch):
+    app, listener, host, port, origin, projects, vault = _run_core(tmp_path, monkeypatch)
+    note = projects / "artifact-race.md"
+    original = b"# Synthetic fork draft\n\nResource closure stays together.\n"
+    note.write_bytes(original)
+    os.chmod(note, 0o600)
+    store = NotesStore(tmp_path / "drafts", {"projects": projects})
+    note_etag = hashlib.sha256(original).hexdigest()
+    resource_body = {"schemaVersion": 1, "resourceKind": "edgeless-canvas", "docId": "artifact_race_doc",
+                     "updateB64": "AQ==", "snapshot": {"blocks": ["before"]}}
+    created = store.create_blocksuite_resource("projects", note.name, resource_body, note_etag)
+    content = original.decode() + "\n" + created["reference"] + "\n"
+    store.update("projects", note.name, content, note_etag,
+                 expected_artifacts=created["artifact_set_etag"])
+    note_etag = hashlib.sha256(content.encode()).hexdigest()
+
+    image_buffer = BytesIO()
+    Image.new("RGB", (2, 2), "green").save(image_buffer, format="PNG")
+    blob_bytes = image_buffer.getvalue()
+    blob_id = base64.urlsafe_b64encode(hashlib.sha256(blob_bytes).digest()).decode("ascii")
+    created_blob = store.put_blocksuite_blob("projects", note.name, blob_id, blob_bytes, "image/png",
+                                              note_etag, created["artifact_set_etag"])
+    stale_artifact_set = created_blob["artifact_set_etag"]
+    current_resource = store.read_blocksuite_resource("projects", note.name, created["resource_id"])
+    changed_resource = {"schemaVersion": 1, "resourceId": current_resource["resourceId"],
+                        "resourceKind": current_resource["resourceKind"], "docId": current_resource["docId"],
+                        "updateB64": "Ag==", "snapshot": {"blocks": ["after"]}}
+    store.update_blocksuite_resource("projects", note.name, created["resource_id"], changed_resource,
+                                      note_etag, current_resource["etag"], stale_artifact_set)
+
+    resource_path = projects / "attachments" / created["filename"]
+    blob_path = projects / "attachments" / f"{hashlib.sha256(blob_bytes).hexdigest()}.blocksuite-blob"
+    sha = hashlib.sha256(content.encode()).hexdigest()
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="error",
+                                           lifespan="off", access_log=False, proxy_headers=False))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert server.started
+        with httpx.Client(base_url=origin, timeout=5, trust_env=False) as client:
+            login = client.post("/api/auth/login", headers={"Origin": origin},
+                                json={"password": "synthetic-notes-trash-password"})
+            assert login.status_code == 200
+            result = client.delete("/api/notes/trash/projects/artifact-race.md", headers={
+                "Origin": origin, "If-Match": f'"{sha}"',
+                "If-Artifact-Set-Match": f'"{stale_artifact_set}"',
+                "Idempotency-Key": "synthetic-trash-artifact-race",
+            })
+            assert result.status_code == 412
+            assert note.read_bytes() == content.encode()
+            assert resource_path.exists()
+            assert json.loads(resource_path.read_text(encoding="utf-8"))["updateB64"] == "Ag=="
+            assert blob_path.exists() and blob_path.read_bytes() == blob_bytes
+            assert not (vault / ".trash" / "secondbrain").exists()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        listener.close()
+        assert not thread.is_alive()
+
+
 def test_trash_pending_record_recovers_after_move_before_manifest_commit(tmp_path, monkeypatch):
     app, listener, host, port, origin, projects, vault = _run_core(tmp_path, monkeypatch)
     note = projects / "crash.md"

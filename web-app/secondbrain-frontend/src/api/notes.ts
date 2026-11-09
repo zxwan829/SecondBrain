@@ -132,9 +132,12 @@ export const notesApi = {
   listTrash: (offset = 0, signal?: AbortSignal) => json<{ status: string; items: NotesTrashItem[]; pagination: { limit: number; offset: number; has_more: boolean } }>(
     `/api/notes/trash?limit=50&offset=${encodeURIComponent(String(offset))}`, signal ? { signal } : undefined,
   ),
-  trash: (note: Note, idempotencyKey: string) => json<NotesTrashItem>(
+  trash: (note: Note, idempotencyKey: string, artifactSetEtag = note.artifactSetEtag) => json<NotesTrashItem>(
     `/api/notes/trash/${encodeURIComponent(note.collection)}/${note.path.split('/').map(encodeURIComponent).join('/')}`,
-    { method: 'DELETE', headers: { 'If-Match': `"${note.etag}"`, 'Idempotency-Key': idempotencyKey } },
+    { method: 'DELETE', headers: {
+      'If-Match': `"${note.etag}"`, 'Idempotency-Key': idempotencyKey,
+      ...(artifactSetEtag ? { 'If-Artifact-Set-Match': etagHeader(artifactSetEtag)! } : {}),
+    } },
   ),
   restoreTrash: (trashId: string) => json<NotesTrashItem>(
     `/api/notes/trash/${encodeURIComponent(trashId)}/restore`, { method: 'POST' },
