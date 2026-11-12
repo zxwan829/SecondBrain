@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { NotePropertiesPanel } from './NotePropertiesPanel';
-import { notesApi, type BlockSuiteResource, type BlockSuiteResourceKind, type BlockSuiteSnapshotDetail, type BlockSuiteSnapshotEntry, type BlockSuiteSnapshots, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
+import { notesApi, type BlockSuiteResource, type BlockSuiteResourceKind, type BlockSuiteResourceWrite, type BlockSuiteSnapshotDetail, type BlockSuiteSnapshotEntry, type BlockSuiteSnapshots, type Note, type NoteCollection, type NotesTrashItem, type VisualAsset, type VisualKind } from './api/notes';
 import { bindRichPageSnapshot, richPageReadableMarkdown } from './rich-page-projection';
 import { defaultExcalidraw, defaultMindMap, visualKindFromFilename, visualLink } from './visualAssets';
 
@@ -8,6 +8,8 @@ const VisualAssetDialog = lazy(() => import('./VisualAssetDialog').then((module)
 const BlockSuiteMarkdownEditor = lazy(() => import('./BlockSuiteMarkdownEditor').then((module) => ({ default: module.BlockSuiteMarkdownEditor })));
 const BlockSuiteResourceEditor = lazy(() => import('./BlockSuiteResourceEditor').then((module) => ({ default: module.BlockSuiteResourceEditor })));
 type BlockSuiteResourceEditorModule = typeof import('./BlockSuiteResourceEditor');
+type RichPageResourcePayload = Omit<BlockSuiteResourceWrite, 'resourceId'>;
+type RichPagePayloadResult = { payload: RichPageResourcePayload } | { error: unknown };
 let blockSuiteResourceEditorModulePromise: Promise<BlockSuiteResourceEditorModule> | null = null;
 const loadBlockSuiteResourceEditorModule = () => {
   if (!blockSuiteResourceEditorModulePromise) {
@@ -18,6 +20,35 @@ const loadBlockSuiteResourceEditorModule = () => {
   }
   return blockSuiteResourceEditorModulePromise;
 };
+
+function reportRichPageCreateStage(stage: string, startedAt: number, durationMs: number) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('sb:notes-create-stage', { detail: {
+    stage, elapsedMs: performance.now() - startedAt, durationMs,
+  } }));
+}
+
+function waitForRichPageFeedbackPaint() {
+  return new Promise<void>((resolve) => {
+    if (document.visibilityState !== 'visible') { resolve(); return; }
+    let finished = false;
+    let frameId = 0;
+    let frameTask = 0;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(fallback);
+      window.clearTimeout(frameTask);
+      window.cancelAnimationFrame(frameId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      resolve();
+    };
+    const onVisibilityChange = () => { if (document.visibilityState !== 'visible') finish(); };
+    const fallback = window.setTimeout(finish, 100);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    frameId = requestAnimationFrame(() => { frameTask = window.setTimeout(finish, 0); });
+  });
+}
 
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
@@ -303,7 +334,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     void open(saved.path, notesMountedAt.current);
   }, [collections, collection]);
 
-  const save = useCallback((target: Note, body: string, revision: number, sequence: number): Promise<Note | null> => {
+  const save = useCallback((target: Note, body: string, revision: number, sequence: number, createMetric?: { startedAt: number }): Promise<Note | null> => {
     const key = noteKey(target);
     pendingSaves.current += 1;
     setState('保存中…');
@@ -317,7 +348,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       // always advances that ETag before a later queued body is sent.
       const current = noteRef.current;
       const basis = current && noteKey(current) === key ? current : target;
+      const saveStartedAt = performance.now();
       const saved = await notesApi.save(basis, body);
+      if (createMetric) reportRichPageCreateStage('markdown-save', createMetric.startedAt, performance.now() - saveStartedAt);
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== key) return null;
       noteRef.current = saved;
       savedContent.current = saved.content;
@@ -461,44 +494,83 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     } catch { /* save() retains the unsaved Markdown and reports the failure. */ }
   };
 
-  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind, newDraft?: Note) => {
+  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind, newDraft?: Note, createPreparation?: {
+    startedAt: number; editorModulePromise: Promise<{ module: BlockSuiteResourceEditorModule } | { error: unknown }>;
+    resourcePayloadPromise?: Promise<RichPagePayloadResult>;
+  }) => {
     const target = newDraft ?? noteRef.current;
     if (!target || target.read_only || projectionPending.current || (!newDraft && state !== '已保存') || creatingBlockSuiteResource || blockSuiteResource) return;
     const revision = viewRevision.current;
     pendingSaves.current += 1;
     setCreatingBlockSuiteResource(true);
-    setMessage(`正在创建独立 BlockSuite ${kind === 'database' ? 'Database' : 'Edgeless'} 资源…`);
+    setMessage(kind === 'rich-page' ? '正在准备富文本资源…'
+      : `正在创建独立 BlockSuite ${kind === 'database' ? 'Database' : 'Edgeless'} 资源…`);
     let resource: BlockSuiteResource | null = null;
     try {
-      const { createBlockSuiteResourcePayload } = await loadBlockSuiteResourceEditorModule();
-      const payload = createBlockSuiteResourcePayload(kind);
-      const created = await notesApi.createBlockSuiteResource(target, payload);
+      const createStartedAt = createPreparation?.startedAt;
+      const payloadResult = createPreparation?.resourcePayloadPromise
+        ? await createPreparation.resourcePayloadPromise
+        : null;
+      if (payloadResult && 'error' in payloadResult) throw payloadResult.error;
+      const payload = payloadResult?.payload ?? null;
+      let editorModule: BlockSuiteResourceEditorModule | null = null;
+      if (!payload) editorModule = await loadBlockSuiteResourceEditorModule();
+      const payloadStartedAt = performance.now();
+      const resourcePayload = payload ?? editorModule!.createBlockSuiteResourcePayload(kind);
+      if (!payload && createStartedAt !== undefined) reportRichPageCreateStage('resource-payload-init', createStartedAt, performance.now() - payloadStartedAt);
+      const resourceCreateRequestStartedAt = performance.now();
+      const resourceCreatePromise = notesApi.createBlockSuiteResource(target, resourcePayload)
+        .then(created => ({ created, durationMs: performance.now() - resourceCreateRequestStartedAt }),
+          error => ({ error, durationMs: performance.now() - resourceCreateRequestStartedAt }));
+      let editorModuleError: unknown;
+      const [resourceResult, editorResult] = await Promise.all([
+        resourceCreatePromise,
+        createPreparation ? createPreparation.editorModulePromise : Promise.resolve(null),
+      ]);
+      if (createStartedAt !== undefined) reportRichPageCreateStage('resource-create', createStartedAt, resourceResult.durationMs);
+      if ('error' in resourceResult) throw resourceResult.error;
+      if (editorResult) {
+        if ('error' in editorResult) editorModuleError = editorResult.error;
+        else editorModule = editorResult.module;
+      }
+      const created = resourceResult.created;
       const versionedTarget = { ...target, artifactSetEtag: created.artifact_set_etag };
       if (noteRef.current && noteKey(noteRef.current) === noteKey(target)) { noteRef.current = versionedTarget; setNote(versionedTarget); }
-      resource = { ...payload, resourceId: created.resource_id, etag: created.etag, note_etag: created.note_etag, artifact_set_etag: created.artifact_set_etag, filename: created.filename };
+      resource = { ...resourcePayload, resourceId: created.resource_id, etag: created.etag, note_etag: created.note_etag, artifact_set_etag: created.artifact_set_etag, filename: created.filename };
       setPendingBlockSuiteReference({ note: versionedTarget, resource });
       const current = contentRef.current;
       const nextContent = kind === 'rich-page'
-        ? richPageReadableMarkdown(versionedTarget, resource, payload.snapshot)
+        ? richPageReadableMarkdown(versionedTarget, resource, resourcePayload.snapshot)
         : `${current.trimEnd()}${current.trim() ? '\n\n' : ''}${created.reference}\n`;
       window.clearTimeout(timer.current);
       contentRef.current = nextContent;
       setContent(nextContent);
       setState('未保存');
       const sequence = ++editSequence.current;
-      const saved = await save(versionedTarget, nextContent, revision, sequence);
+      const saved = await save(versionedTarget, nextContent, revision, sequence,
+        createStartedAt === undefined ? undefined : { startedAt: createStartedAt });
       if (!saved) throw new Error('笔记已切换，资源已创建但 Markdown 引用尚未保存；请返回原笔记重试。');
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(target)) {
         throw new Error('资源已创建，但引用保存结果未应用到当前笔记。');
       }
       if (kind === 'rich-page') {
-        const bound = { ...payload, resourceId: resource.resourceId, snapshot: bindRichPageSnapshot(payload.snapshot, saved.etag) };
+        const bound = { ...resourcePayload, resourceId: resource.resourceId, snapshot: bindRichPageSnapshot(resourcePayload.snapshot, saved.etag) };
+        const receiptStartedAt = performance.now();
         const receipt = await notesApi.saveBlockSuiteResource(saved, resource, bound);
+        if (createStartedAt !== undefined) reportRichPageCreateStage('resource-receipt-save', createStartedAt, performance.now() - receiptStartedAt);
         resource = { ...resource, ...bound, etag: receipt.etag, note_etag: receipt.note_etag, artifact_set_etag: receipt.artifact_set_etag };
         const currentNote = { ...saved, artifactSetEtag: receipt.artifact_set_etag };
         noteRef.current = currentNote; setNote(currentNote);
       }
       setPendingBlockSuiteReference(null);
+      if (editorModuleError) {
+        // Core now owns a complete, referenced resource. Leave it reopenable
+        // from Markdown instead of presenting a broken editor when the view
+        // chunk failed to load.
+        setEditorMode('markdown');
+        setMessage('富文本资源与正文引用已保存；编辑器加载失败，请刷新后重新打开。');
+        return;
+      }
       // The reference is now durably saved. Re-import this controlled parent
       // update so the editor shows its new attachment link immediately.
       setEditorGeneration(value => value + 1);
@@ -526,11 +598,44 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setCreatingRichPageDraft(true);
     setLoading(true); setMessage('');
     try {
-      const created = await notesApi.create('# 新建笔记\n\n');
-      if (viewRevision.current !== revision) return;
+      const draftCreateStartedAt = performance.now();
+      const draftPromise = notesApi.create('# 新建笔记\n\n').then(note => ({ note })).catch(error => ({ error }));
+      let draftCreateAborted = false;
+      const editorModulePromise = (async () => {
+        // Let React paint the pending state before evaluating the large
+        // code-split editor module, which can occupy the main thread on cold load.
+        await waitForRichPageFeedbackPaint();
+        if (draftCreateAborted || viewRevision.current !== revision) return { error: new Error('Draft creation was superseded.') };
+        const moduleLoadStartedAt = performance.now();
+        try {
+          const module = await loadBlockSuiteResourceEditorModule();
+          reportRichPageCreateStage('blocksuite-module-load', openedAt, performance.now() - moduleLoadStartedAt);
+          return { module };
+        } catch (error) { return { error }; }
+      })();
+      const resourcePayloadPromise: Promise<RichPagePayloadResult> = (async () => {
+        try {
+          await waitForRichPageFeedbackPaint();
+          if (draftCreateAborted || viewRevision.current !== revision) throw new Error('Draft creation was superseded.');
+          const payloadModuleStartedAt = performance.now();
+          const payloadModule = await import('./rich-page-resource-payload');
+          reportRichPageCreateStage('blocksuite-payload-module-load', openedAt, performance.now() - payloadModuleStartedAt);
+          const payloadStartedAt = performance.now();
+          const payload = payloadModule.createRichPageResourcePayload();
+          reportRichPageCreateStage('resource-payload-init', openedAt, performance.now() - payloadStartedAt);
+          return { payload };
+        } catch (error) {
+          return { error };
+        }
+      })();
+      const draftResult = await draftPromise;
+      if ('error' in draftResult) { draftCreateAborted = true; throw draftResult.error; }
+      const created = draftResult.note;
+      reportRichPageCreateStage('notes-create', openedAt, performance.now() - draftCreateStartedAt);
+      if (viewRevision.current !== revision) { draftCreateAborted = true; return; }
       setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('blocksuite');
       try { sessionStorage.setItem('sb-notes-selection', JSON.stringify({ collection: created.collection, path: created.path })); } catch { /* selection persistence is best-effort */ }
-      await attachBlockSuiteResource('rich-page', created);
+      await attachBlockSuiteResource('rich-page', created, { startedAt: openedAt, editorModulePromise, resourcePayloadPromise });
       void refresh('drafts');
     } catch { if (viewRevision.current === revision) setMessage('新建笔记未完成；已有笔记未改变。'); }
     finally {
@@ -964,8 +1069,6 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         : blockSuiteResourceOpen.current ? requestResourceExit(() => { void openTrash(); }) : void openTrash()}
         disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
         {!trashView && <><button type="button" className="notes-primary-create"
-          onPointerEnter={() => { void loadBlockSuiteResourceEditorModule().catch(() => undefined); }}
-          onFocus={() => { void loadBlockSuiteResourceEditorModule().catch(() => undefined); }}
           onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createRichPageDraft(); }) : void createRichPageDraft()}
           disabled={loading || creatingBlockSuiteResource}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
       </div></header>

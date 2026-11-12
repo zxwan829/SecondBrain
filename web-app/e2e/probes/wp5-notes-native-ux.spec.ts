@@ -1,8 +1,37 @@
 import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 
 const enabled = process.env.SB_WP5_NATIVE_UX_PROBE_ONLY === 'true';
 const baseUrl = process.env.SB_E2E_BASE_URL ?? 'http://127.0.0.1:4173';
+
+async function armCreateFeedbackProbe(page: Page) {
+  await page.locator('.notes-primary-create').evaluate(button => {
+    const scope = window as Window & { __wp5FeedbackAt?: number | null; __wp5FeedbackClickAt?: number | null };
+    scope.__wp5FeedbackAt = null;
+    scope.__wp5FeedbackClickAt = null;
+    button.addEventListener('click', () => {
+      scope.__wp5FeedbackClickAt = performance.now();
+      const observer = new MutationObserver(() => {
+        if ((button as HTMLButtonElement).disabled || document.querySelector('[role="status"]')?.textContent?.includes('正在创建笔记')) {
+          observer.disconnect();
+          requestAnimationFrame(() => requestAnimationFrame(() => { scope.__wp5FeedbackAt = performance.now(); }));
+        }
+      });
+      observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled'] });
+    }, { once: true });
+  });
+}
+
+async function readCreateFeedbackMs(page: Page) {
+  const read = () => page.evaluate(() => {
+    const scope = window as Window & { __wp5FeedbackAt?: number | null; __wp5FeedbackClickAt?: number | null };
+    return scope.__wp5FeedbackAt !== null && scope.__wp5FeedbackClickAt !== null
+      ? scope.__wp5FeedbackAt - scope.__wp5FeedbackClickAt : null;
+  });
+  await expect.poll(read).not.toBeNull();
+  return await read() as number;
+}
 
 test.skip(!enabled, 'Run only from the independent WP5 Linux Chromium probe entry point.');
 
@@ -62,9 +91,21 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.addInitScript(() => {
-    (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
+    const scope = window as Window & {
+      __wp5ReadyEvents?: unknown[]; __wp5CreateStages?: unknown[]; __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }>;
+    };
+    scope.__wp5ReadyEvents = [];
+    scope.__wp5CreateStages = [];
+    scope.__wp5CreateLongTasks = [];
     window.addEventListener('sb:blocksuite-editor-ready', event =>
-      (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail));
+      scope.__wp5ReadyEvents?.push((event as CustomEvent).detail));
+    window.addEventListener('sb:notes-create-stage', event => scope.__wp5CreateStages?.push((event as CustomEvent).detail));
+    window.addEventListener('sb:blocksuite-editor-stage', event => scope.__wp5CreateStages?.push((event as CustomEvent).detail));
+    if (PerformanceObserver.supportedEntryTypes.includes('longtask')) {
+      const observer = new PerformanceObserver(records => scope.__wp5CreateLongTasks?.push(...records.getEntries()
+        .map(entry => ({ startTime: entry.startTime, duration: entry.duration }))));
+      observer.observe({ type: 'longtask' });
+    }
   });
   await page.goto('/chat/blank');
   const password = (await readFile(process.env.SB_E2E_PASSWORD_FILE!, 'utf8')).trim();
@@ -74,11 +115,18 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const notesNavigationStarted = Date.now();
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
-  await expect(page.getByRole('button', { name: '新建笔记', exact: true })).toBeVisible();
+  const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+  await expect(createButton).toBeVisible();
+  await expect(createButton).toBeEnabled({ timeout: 30_000 });
   const coldNotesNavigationMs = Date.now() - notesNavigationStarted;
 
-  const createStageEvents: { stage: string; elapsedMs: number; status: number }[] = [];
-  const createStartedAt = Date.now();
+  const createStageEvents: { stage: string; elapsedMs: number; durationMs: number | null; status: number }[] = [];
+  const createApiWaterfall: { stage: string; requestElapsedMs: number; durationMs: number | null; status: number }[] = [];
+  const apiRequestStartedAt = new Map<import('@playwright/test').Request, number>();
+  let createStartedAt = 0;
+  const recordNotesRequestStart = (request: import('@playwright/test').Request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/notes')) apiRequestStartedAt.set(request, Date.now());
+  };
   const recordCreateResponse = (response: import('@playwright/test').Response) => {
     const request = response.request();
     const path = new URL(response.url()).pathname;
@@ -87,8 +135,16 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     else if (request.method() === 'POST' && /\/blocksuite\/resources$/.test(path)) stage = 'resourcePost';
     else if (request.method() === 'PUT' && /\/blocksuite\/resources\/[0-9a-f]{32}$/.test(path)) stage = 'resourceReceiptPut';
     else if (request.method() === 'PUT' && /\/api\/notes\/drafts\/[^/]+$/.test(path)) stage = 'markdownReferencePut';
-    if (stage) createStageEvents.push({ stage, elapsedMs: Date.now() - createStartedAt, status: response.status() });
+    if (stage) {
+      const requestStartedAt = apiRequestStartedAt.get(request);
+      const requestElapsedMs = requestStartedAt === undefined ? null : requestStartedAt - createStartedAt;
+      const durationMs = requestStartedAt === undefined ? null : Date.now() - requestStartedAt;
+      const elapsedMs = Date.now() - createStartedAt;
+      createStageEvents.push({ stage, elapsedMs, durationMs, status: response.status() });
+      createApiWaterfall.push({ stage, requestElapsedMs: Math.max(0, requestElapsedMs ?? 0), durationMs, status: response.status() });
+    }
   };
+  page.on('request', recordNotesRequestStart);
   page.on('response', recordCreateResponse);
   const richNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === '/api/notes');
@@ -107,14 +163,14 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     observer.observe(document.body, { childList: true, subtree: true });
     scope.__wp5CreateMountObserver = observer;
   });
-  const firstOpenStarted = await page.evaluate(() => Date.now());
-  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
-  const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+  await armCreateFeedbackProbe(page);
+  const createPerfStartedAt = await page.evaluate(() => performance.now());
+  createStartedAt = Date.now();
+  await createButton.click();
   await expect(createButton).toBeDisabled();
-  const clickToFirstFeedbackMs = Date.now() - createStartedAt;
+  const clickToVisibleFeedbackMs = await readCreateFeedbackMs(page);
   const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
   await expect(progressStatus).toBeVisible();
-  const clickToProgressMs = await page.evaluate(start => Date.now() - start, firstOpenStarted);
   const [richNoteResponse, resourceResponse] = await Promise.all([richNoteCreate, richRefCreate]);
   expect(richNoteResponse.status()).toBe(200);
   const createdNote = await richNoteResponse.json() as { collection: string; path: string };
@@ -134,6 +190,32 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const openMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<Record<string, unknown>> }).__wp5ReadyEvents ?? []);
   expect(openMetrics.length).toBeGreaterThan(0);
   const firstOpenSetup = openMetrics.at(-1);
+  page.off('request', recordNotesRequestStart);
+  page.off('response', recordCreateResponse);
+  const firstCreateInternalStages = await page.evaluate(() => (window as Window & { __wp5CreateStages?: Array<Record<string, unknown>> }).__wp5CreateStages ?? []);
+  const firstCreateScriptResources = await page.evaluate(start => {
+    const entries = performance.getEntriesByType('resource').filter(entry => entry.name.endsWith('.js'));
+    const initiatedBeforeCreate = entries.filter(entry => entry.startTime < start);
+    const duringCreate = entries.filter(entry => entry.startTime >= start && entry.startTime <= performance.now());
+    const allCreateWindowResources = [...initiatedBeforeCreate, ...duringCreate];
+    return { initiatedBeforeCreateCount: initiatedBeforeCreate.length,
+      completedBeforeCreateCount: initiatedBeforeCreate.filter(entry => entry.responseEnd <= start).length,
+      inFlightAtCreateStartCount: initiatedBeforeCreate.filter(entry => entry.responseEnd > start).length,
+      initiatedBeforeCreate: initiatedBeforeCreate.map(entry => ({ name: new URL(entry.name).pathname.split('/').pop(),
+        startTimeMs: Math.round(entry.startTime), responseEndMs: Math.round(entry.responseEnd), durationMs: Math.round(entry.duration),
+        transferSize: entry.transferSize, decodedBodySize: entry.decodedBodySize })),
+      requestCount: duringCreate.length,
+      duplicateUrlCount: allCreateWindowResources.length - new Set(allCreateWindowResources.map(entry => entry.name)).size,
+      requests: duringCreate.map(entry => ({
+        name: new URL(entry.name).pathname.split('/').pop(), durationMs: Math.round(entry.duration),
+        transferSize: entry.transferSize, decodedBodySize: entry.decodedBodySize,
+      })) };
+  }, createPerfStartedAt);
+  const createLongTaskTimings = await page.evaluate(start => {
+    const events = (window as Window & { __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }> }).__wp5CreateLongTasks ?? [];
+    return { initiatedBeforeCreate: events.filter(entry => entry.startTime < start),
+      initiatedDuringCreate: events.filter(entry => entry.startTime >= start) };
+  }, createPerfStartedAt);
   await expect(page.locator('.notes-properties')).toHaveCount(0);
 
   const paragraphs = editor.locator('.blocksuite-resource-host .affine-page-viewport affine-paragraph');
@@ -146,8 +228,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     const selection = window.getSelection();
     return Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
   })).toBe(true);
-  const firstOpen = await page.evaluate(start => ({ durationMs: Date.now() - start,
-    viewport: `${window.innerWidth}x${window.innerHeight}` }), firstOpenStarted);
+  const firstOpen = { durationMs: firstOpenSetup?.durationMs,
+    viewport: `${firstOpenSetup?.viewport ?? ''}` };
   await editor.getByRole('button', { name: '重命名文档' }).click();
   const titleInput = editor.getByRole('textbox', { name: '重命名文档' });
   await titleInput.fill('WP5 Native Probe');
@@ -364,23 +446,32 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     await page.locator('.notes-sidebar li button').filter({ hasText: 'WP5 Native Probe' }).last().click();
     await expect(editor).toBeVisible({ timeout: 30_000 });
   }
-  page.off('response', recordCreateResponse);
   const createTimings = {
     coldNotesNavigationMs,
     firstCreate: {
-      clickToFirstFeedbackMs,
-      clickToProgressMs,
+      clickToVisibleFeedbackMs,
       apiStages: Object.fromEntries(['draftPost', 'resourcePost', 'markdownReferencePut', 'resourceReceiptPut'].map(stage => [stage,
         createStageEvents.find(event => event.stage === stage)?.elapsedMs ?? null])),
       apiStatuses: createStageEvents.map(event => event.status),
-      clickToEditableMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
-      clickToCaretMs: firstOpen.durationMs,
+      apiWaterfall: createApiWaterfall,
+      internalStages: firstCreateInternalStages,
+      scriptResources: firstCreateScriptResources,
+      longTasksStartedBeforeCreate: createLongTaskTimings.initiatedBeforeCreate,
+      longTasksStartedDuringCreate: createLongTaskTimings.initiatedDuringCreate,
+      clickToInputReadyMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
+      realCaretInputVerified: true,
       temporaryMarkdownEditorMounts,
     },
     refresh: { openMs: refreshOpen.durationMs, status: refreshStatus, cleanExitPrompt: promptedAfterCleanRefresh },
     viewport: '1440x1000',
   };
   console.log(`WP5_NOTES_CREATE_TIMINGS ${JSON.stringify(createTimings)}`);
+  const measuredStages = (createTimings.firstCreate.internalStages as Array<{ stage?: string }>).map(stage => stage.stage);
+  for (const stage of ['notes-create', 'blocksuite-module-load', 'resource-payload-init', 'resource-create',
+    'markdown-save', 'resource-receipt-save', 'yjs-hydration', 'editor-mount']) {
+    expect(measuredStages, `missing Notes creation stage timing: ${stage}`).toContain(stage);
+  }
+  expect(createTimings.firstCreate.apiWaterfall).toHaveLength(4);
 
   // Remove temporary interaction markers before capturing a user-facing
   // screenshot, then verify the cleaned synthetic paragraph survives a save
@@ -713,8 +804,44 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.addInitScript(() => {
     (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
+    (window as Window & { __wp5StageEvents?: Array<Record<string, number | string>> }).__wp5StageEvents = [];
+    (window as Window & { __wp5LongTasks?: Array<{ startTime: number; duration: number }> }).__wp5LongTasks = [];
+    (window as Window & { __wp5ApiCalls?: Array<{ method: string; stage: string; atMs: number; durationMs: number; status: number }> }).__wp5ApiCalls = [];
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      const rawUrl = input instanceof Request ? input.url : String(input);
+      const path = new URL(rawUrl, location.href).pathname;
+      const stage = method === 'POST' && path === '/api/notes' ? 'draftPost'
+        : method === 'POST' && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(path) ? 'resourcePost'
+        : method === 'PUT' && /\/api\/notes\/drafts\/[^/]+$/.test(path) ? 'markdownReferencePut'
+        : method === 'PUT' && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources\/[^/]+$/.test(path) ? 'resourceReceiptPut'
+        : '';
+      const atMs = performance.now();
+      try {
+        const response = await originalFetch(input, init);
+        if (stage) (window as Window & { __wp5ApiCalls?: Array<{ method: string; stage: string; atMs: number; durationMs: number; status: number }> }).__wp5ApiCalls?.push(
+          { method, stage, atMs, durationMs: performance.now() - atMs, status: response.status });
+        return response;
+      } catch (error) {
+        if (stage) (window as Window & { __wp5ApiCalls?: Array<{ method: string; stage: string; atMs: number; durationMs: number; status: number }> }).__wp5ApiCalls?.push(
+          { method, stage, atMs, durationMs: performance.now() - atMs, status: 0 });
+        throw error;
+      }
+    };
     window.addEventListener('sb:blocksuite-editor-ready', event =>
       (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail));
+    window.addEventListener('sb:notes-create-stage', event => {
+      const detail = (event as CustomEvent).detail as Record<string, number | string>;
+      (window as Window & { __wp5StageEvents?: Array<Record<string, number | string>> }).__wp5StageEvents?.push({ ...detail, atMs: performance.now() });
+    });
+    if ('PerformanceObserver' in window) {
+      try {
+        new PerformanceObserver(list => (window as Window & { __wp5LongTasks?: Array<{ startTime: number; duration: number }> }).__wp5LongTasks?.push(
+          ...list.getEntries().map(entry => ({ startTime: entry.startTime, duration: entry.duration }))))
+          .observe({ type: 'longtask', buffered: true });
+      } catch { /* Long Task API is optional; Chromium supports it in this probe. */ }
+    }
   });
   await page.goto('/chat/blank');
   const password = (await readFile(process.env.SB_E2E_PASSWORD_FILE!, 'utf8')).trim();
@@ -724,23 +851,24 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page.locator('.notes-primary-create')).toBeVisible();
 
-  const measurements: { clickToFirstFeedbackMs: number; clickToEditableMs: number; clickToCaretMs: number;
-    clickToProgressMs: number; cleanExitPrompt: boolean }[] = [];
+  const measurements: { clickToVisibleFeedbackMs: number; clickToInputReadyMs: number; cleanExitPrompt: boolean;
+    stages: Array<Record<string, number | string>>; api: Array<{ stage: string; startTimeMs: number; durationMs: number }>;
+    longTasks: Array<{ startTime: number; duration: number }> }[] = [];
   const editor = page.locator('.blocksuite-resource-inline');
-  for (let index = 0; index < 10; index += 1) {
-    const startedAt = Date.now();
+  for (let index = 0; index < 21; index += 1) {
     const readyCount = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.length ?? 0);
+    const timingStart = await page.evaluate(() => ({ at: performance.now(), stageCount: (window as Window & { __wp5StageEvents?: unknown[] }).__wp5StageEvents?.length ?? 0,
+      longTaskCount: (window as Window & { __wp5LongTasks?: unknown[] }).__wp5LongTasks?.length ?? 0,
+      apiCount: (window as Window & { __wp5ApiCalls?: unknown[] }).__wp5ApiCalls?.length ?? 0 }));
     const draftResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/notes', { timeout: 20_000 });
     const resourceResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
       && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname), { timeout: 20_000 });
     const createButton = page.locator('.notes-primary-create');
+    await armCreateFeedbackProbe(page);
     await createButton.click();
     await expect(createButton).toBeDisabled();
-    const clickToFirstFeedbackMs = Date.now() - startedAt;
-    const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
-    await expect(progressStatus).toBeVisible();
-    const clickToProgressMs = Date.now() - startedAt;
+    const clickToVisibleFeedbackMs = await readCreateFeedbackMs(page);
     const draftResponse = await draftResponsePromise;
     expect(draftResponse.status()).toBe(200);
     const draft = await draftResponse.json() as { collection: string; path: string };
@@ -761,23 +889,27 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
       const selection = window.getSelection();
       return Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
     })).toBe(true);
-    const clickToCaretMs = Date.now() - startedAt;
     const exitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
     await editor.getByRole('button', { name: '返回笔记列表' }).click();
     const cleanExitPrompt = await exitPrompt.isVisible().catch(() => false);
     if (cleanExitPrompt) await exitPrompt.getByRole('button', { name: '放弃本次修改' }).click();
     await expect(editor).toHaveCount(0);
-    measurements.push({ clickToFirstFeedbackMs, clickToProgressMs, clickToEditableMs: ready!.durationMs, clickToCaretMs, cleanExitPrompt });
+    const diagnostics = await page.evaluate(start => {
+      const stages = (window as Window & { __wp5StageEvents?: Array<Record<string, number | string>> }).__wp5StageEvents?.slice(start.stageCount) ?? [];
+      const longTasks = (window as Window & { __wp5LongTasks?: Array<{ startTime: number; duration: number }> }).__wp5LongTasks?.slice(start.longTaskCount) ?? [];
+      const api = (window as Window & { __wp5ApiCalls?: Array<{ method: string; stage: string; atMs: number; durationMs: number; status: number }> }).__wp5ApiCalls?.slice(start.apiCount)
+        .map(({ method, stage, atMs, durationMs, status }) => ({ method, stage, startTimeMs: atMs - start.at, durationMs, status })) ?? [];
+      return { stages, api, longTasks };
+    }, timingStart);
+    measurements.push({ clickToVisibleFeedbackMs, clickToInputReadyMs: ready!.durationMs, cleanExitPrompt, ...diagnostics });
     await expect(page.locator('.notes-primary-create')).toBeEnabled();
   }
 
   const warm = measurements.slice(1);
   const p95 = (values: number[]) => [...values].sort((left, right) => left - right)[Math.ceil(values.length * 0.95) - 1]!;
   const repeated = { warmSampleCount: warm.length,
-    clickToFirstFeedbackP95Ms: p95(warm.map(item => item.clickToFirstFeedbackMs)),
-    clickToProgressP95Ms: p95(warm.map(item => item.clickToProgressMs)),
-    clickToEditableP95Ms: p95(warm.map(item => item.clickToEditableMs)),
-    clickToCaretP95Ms: p95(warm.map(item => item.clickToCaretMs)),
+    clickToVisibleFeedbackP95Ms: p95(warm.map(item => item.clickToVisibleFeedbackMs)),
+    clickToInputReadyP95Ms: p95(warm.map(item => item.clickToInputReadyMs)),
     cleanExitPromptCount: warm.filter(item => item.cleanExitPrompt).length,
     samples: measurements };
   console.log(`WP5_NOTES_REPEATED_CREATE_TIMINGS ${JSON.stringify(repeated)}`);

@@ -19,6 +19,7 @@ import { toCanvasPreviewShape } from './canvas-preview';
 import { CANVAS_REF_FLAVOUR, CANVAS_REF_COPY_EVENT } from './canvas-ref-block';
 import { DEFAULT_ARCHIVE_PROPERTIES } from './archive-rich-page-tools';
 import { readKnownFrontmatter } from './markdown-frontmatter';
+import { createRichPageResourcePayload } from './rich-page-resource-payload';
 import './blocksuite-resource.css';
 import '@toeverything/theme/style.css';
 
@@ -135,6 +136,7 @@ function seedResource(store: any, kind: BlockSuiteResourceKind) {
 }
 
 export function createBlockSuiteResourcePayload(kind: BlockSuiteResourceKind): Omit<BlockSuiteResourceWrite, 'resourceId'> {
+  if (kind === 'rich-page') return createRichPageResourcePayload();
   const workspace = new TransientMarkdownWorkspace();
   try {
     const { stores } = selectedManagers(kind);
@@ -144,7 +146,7 @@ export function createBlockSuiteResourcePayload(kind: BlockSuiteResourceKind): O
     const doc = workspace.createDoc(docId).load();
     const store = doc.getStore();
     seedResource(store, kind);
-    const snapshot = kind === 'rich-page' ? nativeResourceSnapshot(store) : store.getTransformer().docToSnapshot(store);
+    const snapshot = store.getTransformer().docToSnapshot(store);
     if (!snapshot || typeof snapshot !== 'object') throw new Error('BlockSuite 未能导出初始快照');
     return { schemaVersion: 1, resourceKind: kind, docId,
       updateB64: base64(Y.encodeStateAsUpdate(doc.spaceDoc)), snapshot: snapshot as Record<string, unknown> };
@@ -246,6 +248,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
     let offHistoryShortcuts: (() => void) | undefined;
     const setup = async () => {
       try {
+        const yjsHydrationStartedAt = performance.now();
         const editingResource = resourceRef.current;
         const native = editingResource.resourceKind === 'rich-page';
         const { stores, views } = selectedManagers(editingResource.resourceKind);
@@ -261,6 +264,9 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         const doc = workspace.createDoc(editingResource.docId);
         Y.applyUpdate(doc.spaceDoc, unbase64(editingResource.updateB64));
         doc.load();
+        window.dispatchEvent(new CustomEvent('sb:blocksuite-editor-stage', { detail: {
+          stage: 'yjs-hydration', durationMs: performance.now() - yjsHydrationStartedAt,
+        } }));
         const store = doc.getStore();
         const restoredRichPageSnapshot = native ? nativeResourceSnapshot(store) : null;
         if (native) {
@@ -278,6 +284,7 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         const scope = initialResource.resourceKind === 'edgeless-canvas' ? 'edgeless' : native ? viewMode : 'page';
         const extensionSet = native ? archiveViewExtensions(scope) : views.get(scope);
         std = new BlockStdScope({ store: store as any, extensions: extensionSet });
+        const mountStartedAt = performance.now();
         const root = std.render();
         if (disposed || !host.current) { workspace.dispose(); return; }
         host.current.inert = scope === 'edgeless';
@@ -287,6 +294,9 @@ export function BlockSuiteResourceEditor({ note, resource: initialResource, onCl
         host.current.replaceChildren(viewport);
         viewport.append(root);
         await root.getUpdateComplete();
+        window.dispatchEvent(new CustomEvent('sb:blocksuite-editor-stage', { detail: {
+          stage: 'editor-mount', durationMs: performance.now() - mountStartedAt,
+        } }));
         if (disposed) return;
         if (native) {
           const titleBlock = store.getBlocksByFlavour('affine:paragraph').find((item: any) => item.model.props.type === 'h1');
