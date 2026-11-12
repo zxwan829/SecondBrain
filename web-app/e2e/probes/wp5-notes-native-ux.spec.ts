@@ -179,6 +179,18 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const openMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<Record<string, unknown>> }).__wp5ReadyEvents ?? []);
   expect(openMetrics.length).toBeGreaterThan(0);
   const firstOpenSetup = openMetrics.at(-1);
+  const firstCreateInternalStages = await page.evaluate(() => (window as Window & { __wp5CreateStages?: Array<Record<string, unknown>> }).__wp5CreateStages ?? []);
+  const firstCreateScriptResources = await page.evaluate(() => {
+    const start = new Set((window as Window & { __wp5ScriptResourceStart?: string[] }).__wp5ScriptResourceStart ?? []);
+    const entries = performance.getEntriesByType('resource').filter(entry => entry.name.endsWith('.js'));
+    return { requestCount: entries.length, duplicateUrlCount: entries.length - new Set(entries.map(entry => entry.name)).size,
+      newlyLoaded: entries.filter(entry => !start.has(entry.name)).map(entry => ({
+        name: new URL(entry.name).pathname.split('/').pop(), durationMs: Math.round(entry.duration),
+        transferSize: entry.transferSize, decodedBodySize: entry.decodedBodySize,
+      })) };
+  });
+  const firstCreateLongTasks = await page.evaluate(start => (window as Window & { __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }> }).__wp5CreateLongTasks
+    ?.filter(entry => entry.startTime >= start) ?? [], createPerfStartedAt);
   await expect(page.locator('.notes-properties')).toHaveCount(0);
 
   const paragraphs = editor.locator('.blocksuite-resource-host .affine-page-viewport affine-paragraph');
@@ -420,18 +432,9 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
         createStageEvents.find(event => event.stage === stage)?.elapsedMs ?? null])),
       apiStatuses: createStageEvents.map(event => event.status),
       apiWaterfall: createApiWaterfall,
-      internalStages: await page.evaluate(() => (window as Window & { __wp5CreateStages?: Array<Record<string, unknown>> }).__wp5CreateStages ?? []),
-      scriptResources: await page.evaluate(() => {
-        const start = new Set((window as Window & { __wp5ScriptResourceStart?: string[] }).__wp5ScriptResourceStart ?? []);
-        const entries = performance.getEntriesByType('resource').filter(entry => entry.name.endsWith('.js'));
-        return { requestCount: entries.length, duplicateUrlCount: entries.length - new Set(entries.map(entry => entry.name)).size,
-          newlyLoaded: entries.filter(entry => !start.has(entry.name)).map(entry => ({
-            name: new URL(entry.name).pathname.split('/').pop(), durationMs: Math.round(entry.duration),
-            transferSize: entry.transferSize, decodedBodySize: entry.decodedBodySize,
-          })) };
-      }),
-      longTasks: await page.evaluate(start => (window as Window & { __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }> }).__wp5CreateLongTasks
-        ?.filter(entry => entry.startTime >= start) ?? [], createPerfStartedAt),
+      internalStages: firstCreateInternalStages,
+      scriptResources: firstCreateScriptResources,
+      longTasks: firstCreateLongTasks,
       clickToEditableMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
       clickToCaretMs: firstOpen.durationMs,
       temporaryMarkdownEditorMounts,
