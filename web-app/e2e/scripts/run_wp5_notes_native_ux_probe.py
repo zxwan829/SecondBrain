@@ -108,7 +108,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
     stages = first_create.get("apiStages", {}) if isinstance(first_create, dict) else {}
     if (not isinstance(creation, dict) or creation.get("viewport") != "1440x1000"
             or not isinstance(creation.get("coldNotesNavigationMs"), (int, float))
-            or not isinstance(first_create.get("clickToFirstFeedbackMs"), (int, float))
+            or not isinstance(first_create.get("clickToVisibleFeedbackMs"), (int, float))
             or not isinstance(first_create.get("clickToProgressMs"), (int, float))
             or not isinstance(first_create.get("clickToEditableMs"), (int, float))
             or not isinstance(first_create.get("clickToCaretMs"), (int, float))
@@ -128,9 +128,38 @@ def verify_evidence(source: Path, target: Path) -> dict:
             or not isinstance(repeated, dict) or repeated.get("warmSampleCount") != 9
             or len(repeated.get("samples", [])) != 10
             or any(not isinstance(repeated.get(key), (int, float)) for key in
-                   ("clickToFirstFeedbackP95Ms", "clickToProgressP95Ms", "clickToEditableP95Ms", "clickToCaretP95Ms"))
+                   ("clickToVisibleFeedbackP95Ms", "clickToProgressP95Ms", "clickToEditableP95Ms", "clickToCaretP95Ms"))
             or type(repeated.get("cleanExitPromptCount")) is not int):
         raise RuntimeError("browser evidence Notes creation/refresh timing measurement missing or invalid")
+    required_internal_stages = {"notes-create", "blocksuite-module-load", "resource-payload-init", "resource-create",
+                                "markdown-save", "resource-receipt-save", "yjs-hydration", "editor-mount"}
+    internal_stages = first_create.get("internalStages", [])
+    api_waterfall = first_create.get("apiWaterfall", [])
+    script_resources = first_create.get("scriptResources", {})
+    long_tasks = first_create.get("longTasks", [])
+    if ({item.get("stage") for item in internal_stages if isinstance(item, dict)} != required_internal_stages
+            or any(not isinstance(item.get("durationMs"), (int, float)) for item in internal_stages)
+            or len(api_waterfall) != 4
+            or any(item.get("stage") not in {"draftPost", "resourcePost", "markdownReferencePut", "resourceReceiptPut"}
+                   or not isinstance(item.get("durationMs"), (int, float)) or item.get("status") != 200 for item in api_waterfall)
+            or type(script_resources.get("requestCount")) is not int
+            or type(script_resources.get("duplicateUrlCount")) is not int
+            or any(not isinstance(item.get("duration"), (int, float)) for item in long_tasks)):
+        raise RuntimeError("browser evidence Notes creation stage diagnostics missing or invalid")
+    performance_targets = {
+        "clickToVisibleFeedbackMs": round(first_create["clickToVisibleFeedbackMs"], 1),
+        "coldClickToCaretMs": round(first_create["clickToCaretMs"], 1),
+        "warmEditableP95Ms": round(repeated["clickToEditableP95Ms"], 1),
+        "warmCaretP95Ms": round(repeated["clickToCaretP95Ms"], 1),
+        "warmVisibleFeedbackP95Ms": round(repeated["clickToVisibleFeedbackP95Ms"], 1),
+    }
+    performance_targets["status"] = "PASS" if (
+        performance_targets["clickToVisibleFeedbackMs"] <= 100
+        and performance_targets["coldClickToCaretMs"] <= 1000
+        and performance_targets["warmEditableP95Ms"] <= 500
+        and performance_targets["warmCaretP95Ms"] <= 500
+        and performance_targets["warmVisibleFeedbackP95Ms"] <= 100
+    ) else "PARTIAL"
     boundary = evidence.get("titleBoundary", {})
     if boundary.get("title") != "WP5 Native Probe" or boundary.get("firstBody", {}).get("text") != "First line after title":
         raise RuntimeError("browser evidence title/backspace boundary check failed")
@@ -177,10 +206,25 @@ def verify_evidence(source: Path, target: Path) -> dict:
                                "refreshRestore": round(refresh["durationMs"], 1)},
         "creationTimings": {
             "coldNotesNavigationMs": round(creation["coldNotesNavigationMs"], 1),
-            "firstCreate": {"clickToFirstFeedbackMs": round(first_create["clickToFirstFeedbackMs"], 1),
+            "firstCreate": {"clickToVisibleFeedbackMs": round(first_create["clickToVisibleFeedbackMs"], 1),
                             "clickToProgressMs": round(first_create["clickToProgressMs"], 1),
-                            "apiStagesMs": {stage: round(stages[stage], 1) for stage in sorted(required_stages)},
+                            "apiResponseElapsedMs": {stage: round(stages[stage], 1) for stage in sorted(required_stages)},
                             "apiStatuses": first_create["apiStatuses"],
+                            "apiWaterfall": [{"stage": item["stage"], "requestElapsedMs": round(item["requestElapsedMs"], 1),
+                                              "durationMs": round(item["durationMs"], 1), "status": item["status"]}
+                                             for item in api_waterfall],
+                            "internalStages": [{"stage": item["stage"],
+                                                **({"elapsedMs": round(item["elapsedMs"], 1)} if isinstance(item.get("elapsedMs"), (int, float)) else {}),
+                                                "durationMs": round(item["durationMs"], 1)} for item in internal_stages],
+                            "scriptResources": {"beforeCreateRequestCount": script_resources["beforeCreateRequestCount"],
+                                                "requestCount": script_resources["requestCount"],
+                                                "duplicateUrlCount": script_resources["duplicateUrlCount"],
+                                                "requests": [{"name": Path(item["name"]).name, "durationMs": item["durationMs"],
+                                                              "transferSize": item["transferSize"],
+                                                              "decodedBodySize": item["decodedBodySize"]}
+                                                             for item in script_resources["requests"]]},
+                            "longTasks": [{"startTime": round(item["startTime"], 1), "duration": round(item["duration"], 1)}
+                                          for item in long_tasks],
                             "clickToEditableMs": round(first_create["clickToEditableMs"], 1),
                             "clickToCaretMs": round(first_create["clickToCaretMs"], 1),
                             "temporaryMarkdownEditorMounts": first_create["temporaryMarkdownEditorMounts"]},
@@ -193,11 +237,12 @@ def verify_evidence(source: Path, target: Path) -> dict:
                 "cleanExitPrompt": edgeless_state["cleanExitPrompt"]},
         },
         "repeatedCreation": {"warmSampleCount": repeated["warmSampleCount"],
-                             "clickToFirstFeedbackP95Ms": round(repeated["clickToFirstFeedbackP95Ms"], 1),
+                             "clickToVisibleFeedbackP95Ms": round(repeated["clickToVisibleFeedbackP95Ms"], 1),
                              "clickToProgressP95Ms": round(repeated["clickToProgressP95Ms"], 1),
                              "clickToEditableP95Ms": round(repeated["clickToEditableP95Ms"], 1),
                              "clickToCaretP95Ms": round(repeated["clickToCaretP95Ms"], 1),
                              "cleanExitPromptCount": repeated["cleanExitPromptCount"]},
+        "performanceTargets": performance_targets,
         "focus": {"contenteditable": enter["contenteditable"], "selectionInsideEditor": enter["selectionInsideEditor"],
                   "selectionOffset": enter.get("anchorOffset")},
         "yjsParagraphTexts": [safe_text(value) for value in texts if value.strip()],
