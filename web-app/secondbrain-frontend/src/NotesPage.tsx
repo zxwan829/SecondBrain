@@ -101,6 +101,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [creatingVisual, setCreatingVisual] = useState(false);
   const [creatingBlockSuiteResource, setCreatingBlockSuiteResource] = useState(false);
   const [creatingRichPageDraft, setCreatingRichPageDraft] = useState(false);
+  const [blockSuiteEditorModuleStatus, setBlockSuiteEditorModuleStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [pendingBlockSuiteReference, setPendingBlockSuiteReference] = useState<{ note: Note; resource: BlockSuiteResource } | null>(null);
   const [blockSuiteResource, setBlockSuiteResource] = useState<BlockSuiteResource | null>(null);
   const [resourceDirty, setResourceDirty] = useState(false);
@@ -236,7 +237,13 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     // Notes is the editor entry point. Start the code-split editor download as
     // soon as the route mounts so a direct create click does not pay its cold
     // module transfer and parse cost.
-    void loadBlockSuiteResourceEditorModule().catch(() => undefined);
+    let mounted = true;
+    void loadBlockSuiteResourceEditorModule().then(() => {
+      if (mounted) setBlockSuiteEditorModuleStatus('ready');
+    }).catch(() => {
+      if (mounted) setBlockSuiteEditorModuleStatus('error');
+    });
+    return () => { mounted = false; };
   }, []);
   useEffect(() => {
     onRegisterNavigationGuard?.(canNavigateAway);
@@ -560,12 +567,17 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setCreatingRichPageDraft(true);
     setLoading(true); setMessage('');
     try {
+      if (blockSuiteEditorModuleStatus === 'error') setBlockSuiteEditorModuleStatus('loading');
       const moduleLoadStartedAt = performance.now();
       const editorModulePromise = loadBlockSuiteResourceEditorModule().then(module => {
+        setBlockSuiteEditorModuleStatus('ready');
         const durationMs = performance.now() - moduleLoadStartedAt;
         reportRichPageCreateStage('blocksuite-module-load', openedAt, durationMs);
         return { module };
-      }).catch(error => ({ error }));
+      }).catch(error => {
+        setBlockSuiteEditorModuleStatus('error');
+        return { error };
+      });
       const draftCreateStartedAt = performance.now();
       const created = await notesApi.create('# 新建笔记\n\n');
       reportRichPageCreateStage('notes-create', openedAt, performance.now() - draftCreateStartedAt);
@@ -1006,11 +1018,13 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         : blockSuiteResourceOpen.current ? requestResourceExit(() => { void openTrash(); }) : void openTrash()}
         disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
         {!trashView && <><button type="button" className="notes-primary-create"
-          onPointerEnter={() => { void loadBlockSuiteResourceEditorModule().catch(() => undefined); }}
-          onFocus={() => { void loadBlockSuiteResourceEditorModule().catch(() => undefined); }}
+          onPointerEnter={() => { void loadBlockSuiteResourceEditorModule().then(() => setBlockSuiteEditorModuleStatus('ready')).catch(() => setBlockSuiteEditorModuleStatus('error')); }}
+          onFocus={() => { void loadBlockSuiteResourceEditorModule().then(() => setBlockSuiteEditorModuleStatus('ready')).catch(() => setBlockSuiteEditorModuleStatus('error')); }}
           onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createRichPageDraft(); }) : void createRichPageDraft()}
-          disabled={loading || creatingBlockSuiteResource}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
+          disabled={loading || creatingBlockSuiteResource || (!blockSuiteResourceOpen.current && blockSuiteEditorModuleStatus === 'loading')}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
       </div></header>
+    {!trashView && blockSuiteEditorModuleStatus === 'loading' && <p role="status">正在准备富文本编辑器，完成后即可新建笔记…</p>}
+    {!trashView && blockSuiteEditorModuleStatus === 'error' && <p role="status">富文本编辑器加载失败；点击“新建笔记”将重试，或使用“更多新建”创建 Markdown 草稿。</p>}
     {trashView ? <section className="notes-trash" aria-label="回收站">
       <h2>回收站</h2>
       <p>笔记保留在原目录信息中，可恢复到原位置；恢复时不会覆盖已存在的文件，共享附件不会被删除。此处不提供永久删除。</p>

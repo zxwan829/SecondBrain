@@ -93,10 +93,25 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await page.addInitScript(() => {
     const scope = window as Window & {
       __wp5ReadyEvents?: unknown[]; __wp5CreateStages?: unknown[]; __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }>;
+      __wp5EditorWarmupObserved?: boolean;
     };
     scope.__wp5ReadyEvents = [];
     scope.__wp5CreateStages = [];
     scope.__wp5CreateLongTasks = [];
+    scope.__wp5EditorWarmupObserved = false;
+    const observeEditorWarmup = () => {
+      const create = document.querySelector<HTMLButtonElement>('.notes-primary-create');
+      const status = [...document.querySelectorAll('[role="status"]')].some(node =>
+        node.textContent?.includes('正在准备富文本编辑器，完成后即可新建笔记…'));
+      if (create?.disabled && status) {
+        scope.__wp5EditorWarmupObserved = true;
+        warmupObserver.disconnect();
+      }
+    };
+    const warmupObserver = new MutationObserver(observeEditorWarmup);
+    warmupObserver.observe(document, { subtree: true, childList: true, characterData: true,
+      attributes: true, attributeFilter: ['disabled'] });
+    observeEditorWarmup();
     window.addEventListener('sb:blocksuite-editor-ready', event =>
       scope.__wp5ReadyEvents?.push((event as CustomEvent).detail));
     window.addEventListener('sb:notes-create-stage', event => scope.__wp5CreateStages?.push((event as CustomEvent).detail));
@@ -115,8 +130,12 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const notesNavigationStarted = Date.now();
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
-  await expect(page.getByRole('button', { name: '新建笔记', exact: true })).toBeVisible();
-  const coldNotesNavigationMs = Date.now() - notesNavigationStarted;
+  const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+  await expect(createButton).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __wp5EditorWarmupObserved?: boolean }).__wp5EditorWarmupObserved))).toBe(true);
+  await expect(createButton).toBeEnabled({ timeout: 30_000 });
+  await expect(page.getByRole('status').filter({ hasText: '富文本编辑器加载失败' })).toHaveCount(0);
+  const coldNotesEditorReadyNavigationMs = Date.now() - notesNavigationStarted;
 
   const createStageEvents: { stage: string; elapsedMs: number; durationMs: number | null; status: number }[] = [];
   const createApiWaterfall: { stage: string; requestElapsedMs: number; durationMs: number | null; status: number }[] = [];
@@ -164,8 +183,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await armCreateFeedbackProbe(page);
   const createPerfStartedAt = await page.evaluate(() => performance.now());
   createStartedAt = Date.now();
-  await page.getByRole('button', { name: '新建笔记', exact: true }).click();
-  const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+  await createButton.click();
   await expect(createButton).toBeDisabled();
   const clickToVisibleFeedbackMs = await readCreateFeedbackMs(page);
   const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
@@ -446,7 +464,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     await expect(editor).toBeVisible({ timeout: 30_000 });
   }
   const createTimings = {
-    coldNotesNavigationMs,
+    coldNotesEditorReadyNavigationMs,
     firstCreate: {
       clickToVisibleFeedbackMs,
       apiStages: Object.fromEntries(['draftPost', 'resourcePost', 'markdownReferencePut', 'resourceReceiptPut'].map(stage => [stage,
