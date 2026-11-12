@@ -806,6 +806,29 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
     (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
     (window as Window & { __wp5StageEvents?: Array<Record<string, number | string>> }).__wp5StageEvents = [];
     (window as Window & { __wp5LongTasks?: Array<{ startTime: number; duration: number }> }).__wp5LongTasks = [];
+    (window as Window & { __wp5ApiCalls?: Array<{ method: string; stage: string; atMs: number; durationMs: number; status: number }> }).__wp5ApiCalls = [];
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      const rawUrl = input instanceof Request ? input.url : String(input);
+      const path = new URL(rawUrl, location.href).pathname;
+      const stage = method === 'POST' && path === '/api/notes' ? 'draftPost'
+        : method === 'POST' && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(path) ? 'resourcePost'
+        : method === 'PUT' && /\/api\/notes\/drafts\/[^/]+$/.test(path) ? 'markdownReferencePut'
+        : method === 'PUT' && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources\/[^/]+$/.test(path) ? 'resourceReceiptPut'
+        : '';
+      const atMs = performance.now();
+      try {
+        const response = await originalFetch(input, init);
+        if (stage) (window as Window & { __wp5ApiCalls?: Array<{ method: string; stage: string; atMs: number; durationMs: number; status: number }> }).__wp5ApiCalls?.push(
+          { method, stage, atMs, durationMs: performance.now() - atMs, status: response.status });
+        return response;
+      } catch (error) {
+        if (stage) (window as Window & { __wp5ApiCalls?: Array<{ method: string; stage: string; atMs: number; durationMs: number; status: number }> }).__wp5ApiCalls?.push(
+          { method, stage, atMs, durationMs: performance.now() - atMs, status: 0 });
+        throw error;
+      }
+    };
     window.addEventListener('sb:blocksuite-editor-ready', event =>
       (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail));
     window.addEventListener('sb:notes-create-stage', event => {
@@ -835,7 +858,8 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   for (let index = 0; index < 10; index += 1) {
     const readyCount = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.length ?? 0);
     const timingStart = await page.evaluate(() => ({ at: performance.now(), stageCount: (window as Window & { __wp5StageEvents?: unknown[] }).__wp5StageEvents?.length ?? 0,
-      longTaskCount: (window as Window & { __wp5LongTasks?: unknown[] }).__wp5LongTasks?.length ?? 0 }));
+      longTaskCount: (window as Window & { __wp5LongTasks?: unknown[] }).__wp5LongTasks?.length ?? 0,
+      apiCount: (window as Window & { __wp5ApiCalls?: unknown[] }).__wp5ApiCalls?.length ?? 0 }));
     const draftResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/notes', { timeout: 20_000 });
     const resourceResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
@@ -873,17 +897,8 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
     const diagnostics = await page.evaluate(start => {
       const stages = (window as Window & { __wp5StageEvents?: Array<Record<string, number | string>> }).__wp5StageEvents?.slice(start.stageCount) ?? [];
       const longTasks = (window as Window & { __wp5LongTasks?: Array<{ startTime: number; duration: number }> }).__wp5LongTasks?.slice(start.longTaskCount) ?? [];
-      const apiStage = (url: string) => {
-        const path = new URL(url).pathname;
-        if (path === '/api/notes') return 'draftPost';
-        if (/\/blocksuite\/resources$/.test(path)) return 'resourcePost';
-        if (/\/api\/notes\/drafts\/[^/]+$/.test(path)) return 'markdownReferencePut';
-        if (/\/blocksuite\/resources\/[^/]+$/.test(path)) return 'resourceReceiptPut';
-        return '';
-      };
-      const api = performance.getEntriesByType('resource').filter(entry => entry.startTime >= start.at)
-        .map(entry => ({ entry, stage: apiStage(entry.name) })).filter(value => value.stage)
-        .map(({ entry, stage }) => ({ stage, startTimeMs: entry.startTime - start.at, durationMs: entry.duration }));
+      const api = (window as Window & { __wp5ApiCalls?: Array<{ method: string; stage: string; atMs: number; durationMs: number; status: number }> }).__wp5ApiCalls?.slice(start.apiCount)
+        .map(({ method, stage, atMs, durationMs, status }) => ({ method, stage, startTimeMs: atMs - start.at, durationMs, status })) ?? [];
       return { stages, api, longTasks };
     }, timingStart);
     measurements.push({ clickToVisibleFeedbackMs, clickToInputReadyMs: ready!.durationMs, cleanExitPrompt, ...diagnostics });
