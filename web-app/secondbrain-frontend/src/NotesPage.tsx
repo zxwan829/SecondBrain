@@ -1070,7 +1070,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
         {!trashView && <><button type="button" className="notes-primary-create"
           onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createRichPageDraft(); }) : void createRichPageDraft()}
-          disabled={loading || creatingBlockSuiteResource}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
+          disabled={loading || creatingBlockSuiteResource}>{creatingRichPageDraft ? '正在创建…' : '新建笔记'}</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
       </div></header>
     {trashView ? <section className="notes-trash" aria-label="回收站">
       <h2>回收站</h2>
