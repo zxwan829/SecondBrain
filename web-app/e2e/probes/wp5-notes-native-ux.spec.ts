@@ -194,16 +194,27 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const firstCreateInternalStages = await page.evaluate(() => (window as Window & { __wp5CreateStages?: Array<Record<string, unknown>> }).__wp5CreateStages ?? []);
   const firstCreateScriptResources = await page.evaluate(start => {
     const entries = performance.getEntriesByType('resource').filter(entry => entry.name.endsWith('.js'));
+    const initiatedBeforeCreate = entries.filter(entry => entry.startTime < start);
     const duringCreate = entries.filter(entry => entry.startTime >= start && entry.startTime <= performance.now());
-    return { beforeCreateRequestCount: entries.filter(entry => entry.startTime < start).length,
-      requestCount: duringCreate.length, duplicateUrlCount: duringCreate.length - new Set(duringCreate.map(entry => entry.name)).size,
+    const allCreateWindowResources = [...initiatedBeforeCreate, ...duringCreate];
+    return { initiatedBeforeCreateCount: initiatedBeforeCreate.length,
+      completedBeforeCreateCount: initiatedBeforeCreate.filter(entry => entry.responseEnd <= start).length,
+      inFlightAtCreateStartCount: initiatedBeforeCreate.filter(entry => entry.responseEnd > start).length,
+      initiatedBeforeCreate: initiatedBeforeCreate.map(entry => ({ name: new URL(entry.name).pathname.split('/').pop(),
+        startTimeMs: Math.round(entry.startTime), responseEndMs: Math.round(entry.responseEnd), durationMs: Math.round(entry.duration),
+        transferSize: entry.transferSize, decodedBodySize: entry.decodedBodySize })),
+      requestCount: duringCreate.length,
+      duplicateUrlCount: allCreateWindowResources.length - new Set(allCreateWindowResources.map(entry => entry.name)).size,
       requests: duringCreate.map(entry => ({
         name: new URL(entry.name).pathname.split('/').pop(), durationMs: Math.round(entry.duration),
         transferSize: entry.transferSize, decodedBodySize: entry.decodedBodySize,
       })) };
   }, createPerfStartedAt);
-  const firstCreateLongTasks = await page.evaluate(start => (window as Window & { __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }> }).__wp5CreateLongTasks
-    ?.filter(entry => entry.startTime >= start) ?? [], createPerfStartedAt);
+  const createLongTaskTimings = await page.evaluate(start => {
+    const events = (window as Window & { __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }> }).__wp5CreateLongTasks ?? [];
+    return { initiatedBeforeCreate: events.filter(entry => entry.startTime < start),
+      initiatedDuringCreate: events.filter(entry => entry.startTime >= start) };
+  }, createPerfStartedAt);
   await expect(page.locator('.notes-properties')).toHaveCount(0);
 
   const paragraphs = editor.locator('.blocksuite-resource-host .affine-page-viewport affine-paragraph');
@@ -444,7 +455,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
       apiWaterfall: createApiWaterfall,
       internalStages: firstCreateInternalStages,
       scriptResources: firstCreateScriptResources,
-      longTasks: firstCreateLongTasks,
+      longTasksStartedBeforeCreate: createLongTaskTimings.initiatedBeforeCreate,
+      longTasksStartedDuringCreate: createLongTaskTimings.initiatedDuringCreate,
       clickToInputReadyMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
       realCaretInputVerified: true,
       temporaryMarkdownEditorMounts,

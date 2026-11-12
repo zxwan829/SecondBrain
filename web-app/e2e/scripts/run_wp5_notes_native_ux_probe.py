@@ -138,10 +138,14 @@ def verify_evidence(source: Path, target: Path) -> dict:
     internal_stages = first_create.get("internalStages", [])
     api_waterfall = first_create.get("apiWaterfall", [])
     script_resources = first_create.get("scriptResources", {})
-    long_tasks = first_create.get("longTasks", [])
+    pre_create_long_tasks = first_create.get("longTasksStartedBeforeCreate", [])
+    long_tasks = first_create.get("longTasksStartedDuringCreate", [])
     valid_nonnegative_number = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1_000_000
     valid_byte_count = lambda value: isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100_000_000
     valid_asset_name = lambda value: isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,120}\.js", value) is not None
+    valid_resource_entry = lambda item: isinstance(item, dict) and valid_asset_name(item.get("name")) \
+        and valid_nonnegative_number(item.get("durationMs")) \
+        and all(valid_byte_count(item.get(key)) for key in ("transferSize", "decodedBodySize"))
     api_statuses = first_create.get("apiStatuses", [])
     if (not isinstance(internal_stages, list) or len(internal_stages) != len(required_internal_stages)
             or {item.get("stage") for item in internal_stages if isinstance(item, dict)} != required_internal_stages
@@ -156,13 +160,21 @@ def verify_evidence(source: Path, target: Path) -> dict:
             or any(type(status) is not int or status != 200 for status in api_statuses)
             or not isinstance(script_resources, dict)
             or any(type(script_resources.get(key)) is not int or script_resources[key] < 0
-                   for key in ("beforeCreateRequestCount", "requestCount", "duplicateUrlCount"))
-            or script_resources.get("duplicateUrlCount", 0) > script_resources.get("requestCount", 0)
+                   for key in ("initiatedBeforeCreateCount", "completedBeforeCreateCount", "inFlightAtCreateStartCount",
+                               "requestCount", "duplicateUrlCount"))
+            or script_resources.get("duplicateUrlCount", 0) > script_resources.get("initiatedBeforeCreateCount", 0)
+                + script_resources.get("requestCount", 0)
+            or script_resources.get("completedBeforeCreateCount", 0) + script_resources.get("inFlightAtCreateStartCount", 0)
+                != script_resources.get("initiatedBeforeCreateCount", -1)
+            or not isinstance(script_resources.get("initiatedBeforeCreate"), list)
+            or len(script_resources["initiatedBeforeCreate"]) != script_resources["initiatedBeforeCreateCount"]
+            or any(not valid_resource_entry(item) or not valid_nonnegative_number(item.get("startTimeMs"))
+                   or not valid_nonnegative_number(item.get("responseEndMs")) for item in script_resources["initiatedBeforeCreate"])
             or not isinstance(script_resources.get("requests"), list)
-            or any(not isinstance(item, dict) or not valid_asset_name(item.get("name"))
-                   or not valid_nonnegative_number(item.get("durationMs"))
-                   or any(not valid_byte_count(item.get(key)) for key in ("transferSize", "decodedBodySize"))
-                   for item in script_resources.get("requests", []))
+            or any(not valid_resource_entry(item) for item in script_resources.get("requests", []))
+            or not isinstance(pre_create_long_tasks, list)
+            or any(not isinstance(item, dict) or not valid_nonnegative_number(item.get("startTime"))
+                   or not valid_nonnegative_number(item.get("duration")) for item in pre_create_long_tasks)
             or not isinstance(long_tasks, list)
             or any(not isinstance(item, dict) or not valid_nonnegative_number(item.get("startTime"))
                    or not valid_nonnegative_number(item.get("duration")) for item in long_tasks)):
@@ -237,14 +249,25 @@ def verify_evidence(source: Path, target: Path) -> dict:
                             "internalStages": [{"stage": item["stage"],
                                                 **({"elapsedMs": round(item["elapsedMs"], 1)} if isinstance(item.get("elapsedMs"), (int, float)) else {}),
                                                 "durationMs": round(item["durationMs"], 1)} for item in internal_stages],
-                            "scriptResources": {"beforeCreateRequestCount": script_resources["beforeCreateRequestCount"],
+                            "scriptResources": {"initiatedBeforeCreateCount": script_resources["initiatedBeforeCreateCount"],
+                                                "completedBeforeCreateCount": script_resources["completedBeforeCreateCount"],
+                                                "inFlightAtCreateStartCount": script_resources["inFlightAtCreateStartCount"],
+                                                "initiatedBeforeCreate": [{"name": Path(item["name"]).name,
+                                                                           "startTimeMs": item["startTimeMs"],
+                                                                           "responseEndMs": item["responseEndMs"],
+                                                                           "durationMs": item["durationMs"],
+                                                                  "transferSize": item["transferSize"],
+                                                                  "decodedBodySize": item["decodedBodySize"]}
+                                                                 for item in script_resources["initiatedBeforeCreate"]],
                                                 "requestCount": script_resources["requestCount"],
                                                 "duplicateUrlCount": script_resources["duplicateUrlCount"],
                                                 "requests": [{"name": Path(item["name"]).name, "durationMs": item["durationMs"],
                                                               "transferSize": item["transferSize"],
                                                               "decodedBodySize": item["decodedBodySize"]}
                                                              for item in script_resources["requests"]]},
-                            "longTasks": [{"startTime": round(item["startTime"], 1), "duration": round(item["duration"], 1)}
+                            "longTasksStartedBeforeCreate": [{"startTime": round(item["startTime"], 1), "duration": round(item["duration"], 1)}
+                                                    for item in pre_create_long_tasks],
+                            "longTasksStartedDuringCreate": [{"startTime": round(item["startTime"], 1), "duration": round(item["duration"], 1)}
                                           for item in long_tasks],
                             "clickToInputReadyMs": round(first_create["clickToInputReadyMs"], 1),
                             "realCaretInputVerified": first_create["realCaretInputVerified"],

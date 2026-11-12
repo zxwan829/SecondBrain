@@ -233,6 +233,12 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     }).catch(() => setMessage('Notes 尚未配置，或当前登录会话无效。'));
   }, []);
   useEffect(() => {
+    // Notes is the editor entry point. Start the code-split editor download as
+    // soon as the route mounts so a direct create click does not pay its cold
+    // module transfer and parse cost.
+    void loadBlockSuiteResourceEditorModule().catch(() => undefined);
+  }, []);
+  useEffect(() => {
     onRegisterNavigationGuard?.(canNavigateAway);
     return () => onRegisterNavigationGuard?.(null);
   }, [canNavigateAway, onRegisterNavigationGuard]);
@@ -470,18 +476,27 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     } catch { /* save() retains the unsaved Markdown and reports the failure. */ }
   };
 
-  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind, newDraft?: Note, createStartedAt?: number) => {
+  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind, newDraft?: Note, createPreparation?: {
+    startedAt: number; editorModulePromise: Promise<{ module: BlockSuiteResourceEditorModule } | { error: unknown }>;
+  }) => {
     const target = newDraft ?? noteRef.current;
     if (!target || target.read_only || projectionPending.current || (!newDraft && state !== '已保存') || creatingBlockSuiteResource || blockSuiteResource) return;
     const revision = viewRevision.current;
     pendingSaves.current += 1;
     setCreatingBlockSuiteResource(true);
-    setMessage(`正在创建独立 BlockSuite ${kind === 'database' ? 'Database' : 'Edgeless'} 资源…`);
+    setMessage(kind === 'rich-page' ? '正在准备富文本资源…'
+      : `正在创建独立 BlockSuite ${kind === 'database' ? 'Database' : 'Edgeless'} 资源…`);
     let resource: BlockSuiteResource | null = null;
     try {
-      const moduleStartedAt = performance.now();
-      const editorModule = await loadBlockSuiteResourceEditorModule();
-      if (createStartedAt !== undefined) reportRichPageCreateStage('blocksuite-module-load', createStartedAt, performance.now() - moduleStartedAt);
+      let editorModule: BlockSuiteResourceEditorModule;
+      if (createPreparation) {
+        const loaded = await createPreparation.editorModulePromise;
+        if ('error' in loaded) throw loaded.error;
+        editorModule = loaded.module;
+      } else {
+        editorModule = await loadBlockSuiteResourceEditorModule();
+      }
+      const createStartedAt = createPreparation?.startedAt;
       const payloadStartedAt = performance.now();
       const { createBlockSuiteResourcePayload } = editorModule;
       const payload = createBlockSuiteResourcePayload(kind);
@@ -545,13 +560,19 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setCreatingRichPageDraft(true);
     setLoading(true); setMessage('');
     try {
+      const moduleLoadStartedAt = performance.now();
+      const editorModulePromise = loadBlockSuiteResourceEditorModule().then(module => {
+        const durationMs = performance.now() - moduleLoadStartedAt;
+        reportRichPageCreateStage('blocksuite-module-load', openedAt, durationMs);
+        return { module };
+      }).catch(error => ({ error }));
       const draftCreateStartedAt = performance.now();
       const created = await notesApi.create('# 新建笔记\n\n');
       reportRichPageCreateStage('notes-create', openedAt, performance.now() - draftCreateStartedAt);
       if (viewRevision.current !== revision) return;
       setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('blocksuite');
       try { sessionStorage.setItem('sb-notes-selection', JSON.stringify({ collection: created.collection, path: created.path })); } catch { /* selection persistence is best-effort */ }
-      await attachBlockSuiteResource('rich-page', created, openedAt);
+      await attachBlockSuiteResource('rich-page', created, { startedAt: openedAt, editorModulePromise });
       void refresh('drafts');
     } catch { if (viewRevision.current === revision) setMessage('新建笔记未完成；已有笔记未改变。'); }
     finally {
