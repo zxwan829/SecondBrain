@@ -567,7 +567,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         // Core now owns a complete, referenced resource. Leave it reopenable
         // from Markdown instead of presenting a broken editor when the view
         // chunk failed to load.
-        setEditorMode('markdown');
+        setEditorMode('source');
         setMessage('富文本资源与正文引用已保存；编辑器加载失败，请刷新后重新打开。');
         return;
       }
