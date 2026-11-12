@@ -804,8 +804,21 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.addInitScript(() => {
     (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
+    (window as Window & { __wp5StageEvents?: Array<Record<string, number | string>> }).__wp5StageEvents = [];
+    (window as Window & { __wp5LongTasks?: Array<{ startTime: number; duration: number }> }).__wp5LongTasks = [];
     window.addEventListener('sb:blocksuite-editor-ready', event =>
       (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail));
+    window.addEventListener('sb:notes-create-stage', event => {
+      const detail = (event as CustomEvent).detail as Record<string, number | string>;
+      (window as Window & { __wp5StageEvents?: Array<Record<string, number | string>> }).__wp5StageEvents?.push({ ...detail, atMs: performance.now() });
+    });
+    if ('PerformanceObserver' in window) {
+      try {
+        new PerformanceObserver(list => (window as Window & { __wp5LongTasks?: Array<{ startTime: number; duration: number }> }).__wp5LongTasks?.push(
+          ...list.getEntries().map(entry => ({ startTime: entry.startTime, duration: entry.duration }))))
+          .observe({ type: 'longtask', buffered: true });
+      } catch { /* Long Task API is optional; Chromium supports it in this probe. */ }
+    }
   });
   await page.goto('/chat/blank');
   const password = (await readFile(process.env.SB_E2E_PASSWORD_FILE!, 'utf8')).trim();
@@ -815,10 +828,14 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page.locator('.notes-primary-create')).toBeVisible();
 
-  const measurements: { clickToVisibleFeedbackMs: number; clickToInputReadyMs: number; cleanExitPrompt: boolean }[] = [];
+  const measurements: { clickToVisibleFeedbackMs: number; clickToInputReadyMs: number; cleanExitPrompt: boolean;
+    stages: Array<Record<string, number | string>>; api: Array<{ stage: string; startTimeMs: number; durationMs: number }>;
+    longTasks: Array<{ startTime: number; duration: number }> }[] = [];
   const editor = page.locator('.blocksuite-resource-inline');
   for (let index = 0; index < 10; index += 1) {
     const readyCount = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.length ?? 0);
+    const timingStart = await page.evaluate(() => ({ at: performance.now(), stageCount: (window as Window & { __wp5StageEvents?: unknown[] }).__wp5StageEvents?.length ?? 0,
+      longTaskCount: (window as Window & { __wp5LongTasks?: unknown[] }).__wp5LongTasks?.length ?? 0 }));
     const draftResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
       && new URL(response.url()).pathname === '/api/notes', { timeout: 20_000 });
     const resourceResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
@@ -853,7 +870,23 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
     const cleanExitPrompt = await exitPrompt.isVisible().catch(() => false);
     if (cleanExitPrompt) await exitPrompt.getByRole('button', { name: '放弃本次修改' }).click();
     await expect(editor).toHaveCount(0);
-    measurements.push({ clickToVisibleFeedbackMs, clickToInputReadyMs: ready!.durationMs, cleanExitPrompt });
+    const diagnostics = await page.evaluate(start => {
+      const stages = (window as Window & { __wp5StageEvents?: Array<Record<string, number | string>> }).__wp5StageEvents?.slice(start.stageCount) ?? [];
+      const longTasks = (window as Window & { __wp5LongTasks?: Array<{ startTime: number; duration: number }> }).__wp5LongTasks?.slice(start.longTaskCount) ?? [];
+      const apiStage = (url: string) => {
+        const path = new URL(url).pathname;
+        if (path === '/api/notes') return 'draftPost';
+        if (/\/blocksuite\/resources$/.test(path)) return 'resourcePost';
+        if (/\/api\/notes\/drafts\/[^/]+$/.test(path)) return 'markdownReferencePut';
+        if (/\/blocksuite\/resources\/[^/]+$/.test(path)) return 'resourceReceiptPut';
+        return '';
+      };
+      const api = performance.getEntriesByType('resource').filter(entry => entry.startTime >= start.at)
+        .map(entry => ({ entry, stage: apiStage(entry.name) })).filter(value => value.stage)
+        .map(({ entry, stage }) => ({ stage, startTimeMs: entry.startTime - start.at, durationMs: entry.duration }));
+      return { stages, api, longTasks };
+    }, timingStart);
+    measurements.push({ clickToVisibleFeedbackMs, clickToInputReadyMs: ready!.durationMs, cleanExitPrompt, ...diagnostics });
     await expect(page.locator('.notes-primary-create')).toBeEnabled();
   }
 
