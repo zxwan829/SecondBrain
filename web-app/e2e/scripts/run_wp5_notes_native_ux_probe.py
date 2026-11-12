@@ -133,7 +133,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
                    ("clickToVisibleFeedbackP95Ms", "clickToInputReadyP95Ms"))
             or type(repeated.get("cleanExitPromptCount")) is not int):
         raise RuntimeError("browser evidence Notes creation/refresh timing measurement missing or invalid")
-    required_internal_stages = {"notes-create", "blocksuite-module-load", "resource-payload-init", "resource-create",
+    required_internal_stages = {"notes-create", "blocksuite-payload-module-load", "blocksuite-module-load", "resource-payload-init", "resource-create",
                                 "markdown-save", "resource-receipt-save", "yjs-hydration", "editor-mount"}
     internal_stages = first_create.get("internalStages", [])
     api_waterfall = first_create.get("apiWaterfall", [])
