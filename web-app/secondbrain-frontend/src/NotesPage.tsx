@@ -26,6 +26,24 @@ function reportRichPageCreateStage(stage: string, startedAt: number, durationMs:
   } }));
 }
 
+function waitForRichPageFeedbackPaint() {
+  return new Promise<void>((resolve) => {
+    if (document.visibilityState !== 'visible') { resolve(); return; }
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(fallback);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      resolve();
+    };
+    const onVisibilityChange = () => { if (document.visibilityState !== 'visible') finish(); };
+    const fallback = window.setTimeout(finish, 100);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    requestAnimationFrame(() => requestAnimationFrame(finish));
+  });
+}
+
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
 const blockSuiteBlobKeyPattern = /^[A-Za-z0-9_-]{43}=$/;
@@ -101,7 +119,6 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
   const [creatingVisual, setCreatingVisual] = useState(false);
   const [creatingBlockSuiteResource, setCreatingBlockSuiteResource] = useState(false);
   const [creatingRichPageDraft, setCreatingRichPageDraft] = useState(false);
-  const [blockSuiteEditorModuleStatus, setBlockSuiteEditorModuleStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [pendingBlockSuiteReference, setPendingBlockSuiteReference] = useState<{ note: Note; resource: BlockSuiteResource } | null>(null);
   const [blockSuiteResource, setBlockSuiteResource] = useState<BlockSuiteResource | null>(null);
   const [resourceDirty, setResourceDirty] = useState(false);
@@ -232,18 +249,6 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     void notesApi.collections().then(({ collections: value }) => {
       setCollections(value); if (value.length) setCollection(value[0].id);
     }).catch(() => setMessage('Notes 尚未配置，或当前登录会话无效。'));
-  }, []);
-  useEffect(() => {
-    // Notes is the editor entry point. Start the code-split editor download as
-    // soon as the route mounts so a direct create click does not pay its cold
-    // module transfer and parse cost.
-    let mounted = true;
-    void loadBlockSuiteResourceEditorModule().then(() => {
-      if (mounted) setBlockSuiteEditorModuleStatus('ready');
-    }).catch(() => {
-      if (mounted) setBlockSuiteEditorModuleStatus('error');
-    });
-    return () => { mounted = false; };
   }, []);
   useEffect(() => {
     onRegisterNavigationGuard?.(canNavigateAway);
@@ -567,21 +572,26 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setCreatingRichPageDraft(true);
     setLoading(true); setMessage('');
     try {
-      if (blockSuiteEditorModuleStatus === 'error') setBlockSuiteEditorModuleStatus('loading');
-      const moduleLoadStartedAt = performance.now();
-      const editorModulePromise = loadBlockSuiteResourceEditorModule().then(module => {
-        setBlockSuiteEditorModuleStatus('ready');
-        const durationMs = performance.now() - moduleLoadStartedAt;
-        reportRichPageCreateStage('blocksuite-module-load', openedAt, durationMs);
-        return { module };
-      }).catch(error => {
-        setBlockSuiteEditorModuleStatus('error');
-        return { error };
-      });
       const draftCreateStartedAt = performance.now();
-      const created = await notesApi.create('# 新建笔记\n\n');
+      const draftPromise = notesApi.create('# 新建笔记\n\n').then(note => ({ note })).catch(error => ({ error }));
+      let draftCreateAborted = false;
+      const editorModulePromise = (async () => {
+        // Let React paint the pending state before evaluating the large
+        // code-split editor module, which can occupy the main thread on cold load.
+        await waitForRichPageFeedbackPaint();
+        if (draftCreateAborted || viewRevision.current !== revision) return { error: new Error('Draft creation was superseded.') };
+        const moduleLoadStartedAt = performance.now();
+        try {
+          const module = await loadBlockSuiteResourceEditorModule();
+          reportRichPageCreateStage('blocksuite-module-load', openedAt, performance.now() - moduleLoadStartedAt);
+          return { module };
+        } catch (error) { return { error }; }
+      })();
+      const draftResult = await draftPromise;
+      if ('error' in draftResult) { draftCreateAborted = true; throw draftResult.error; }
+      const created = draftResult.note;
       reportRichPageCreateStage('notes-create', openedAt, performance.now() - draftCreateStartedAt);
-      if (viewRevision.current !== revision) return;
+      if (viewRevision.current !== revision) { draftCreateAborted = true; return; }
       setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('blocksuite');
       try { sessionStorage.setItem('sb-notes-selection', JSON.stringify({ collection: created.collection, path: created.path })); } catch { /* selection persistence is best-effort */ }
       await attachBlockSuiteResource('rich-page', created, { startedAt: openedAt, editorModulePromise });
@@ -1018,13 +1028,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
         : blockSuiteResourceOpen.current ? requestResourceExit(() => { void openTrash(); }) : void openTrash()}
         disabled={trashLoading}>{trashView ? '返回笔记' : '回收站'}</button>
         {!trashView && <><button type="button" className="notes-primary-create"
-          onPointerEnter={() => { void loadBlockSuiteResourceEditorModule().then(() => setBlockSuiteEditorModuleStatus('ready')).catch(() => setBlockSuiteEditorModuleStatus('error')); }}
-          onFocus={() => { void loadBlockSuiteResourceEditorModule().then(() => setBlockSuiteEditorModuleStatus('ready')).catch(() => setBlockSuiteEditorModuleStatus('error')); }}
           onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createRichPageDraft(); }) : void createRichPageDraft()}
-          disabled={loading || creatingBlockSuiteResource || (!blockSuiteResourceOpen.current && blockSuiteEditorModuleStatus === 'loading')}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
+          disabled={loading || creatingBlockSuiteResource}>新建笔记</button><details className="notes-create-more"><summary>更多新建</summary><button type="button" onClick={() => blockSuiteResourceOpen.current ? requestResourceExit(() => { void createDraft(); }) : void createDraft()} disabled={loading}>新建 Markdown 草稿</button></details></>}
       </div></header>
-    {!trashView && blockSuiteEditorModuleStatus === 'loading' && <p role="status">正在准备富文本编辑器，完成后即可新建笔记…</p>}
-    {!trashView && blockSuiteEditorModuleStatus === 'error' && <p role="status">富文本编辑器加载失败；点击“新建笔记”将重试，或使用“更多新建”创建 Markdown 草稿。</p>}
     {trashView ? <section className="notes-trash" aria-label="回收站">
       <h2>回收站</h2>
       <p>笔记保留在原目录信息中，可恢复到原位置；恢复时不会覆盖已存在的文件，共享附件不会被删除。此处不提供永久删除。</p>

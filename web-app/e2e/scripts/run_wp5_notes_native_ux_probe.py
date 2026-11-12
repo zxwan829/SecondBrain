@@ -110,7 +110,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
     required_stages = {"draftPost", "resourcePost", "markdownReferencePut", "resourceReceiptPut"}
     stages = first_create.get("apiStages", {}) if isinstance(first_create, dict) else {}
     if (not isinstance(creation, dict) or creation.get("viewport") != "1440x1000"
-            or not isinstance(creation.get("coldNotesEditorReadyNavigationMs"), (int, float))
+            or not isinstance(creation.get("coldNotesNavigationMs"), (int, float))
             or not isinstance(first_create.get("clickToVisibleFeedbackMs"), (int, float))
             or not isinstance(first_create.get("clickToInputReadyMs"), (int, float))
             or first_create.get("realCaretInputVerified") is not True
@@ -239,7 +239,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
                                "samePageReopen": round(warm["durationMs"], 1),
                                "refreshRestore": round(refresh["durationMs"], 1)},
         "creationTimings": {
-            "coldNotesEditorReadyNavigationMs": round(creation["coldNotesEditorReadyNavigationMs"], 1),
+            "coldNotesNavigationMs": round(creation["coldNotesNavigationMs"], 1),
             "firstCreate": {"clickToVisibleFeedbackMs": round(first_create["clickToVisibleFeedbackMs"], 1),
                             "apiResponseElapsedMs": {stage: round(stages[stage], 1) for stage in sorted(required_stages)},
                             "apiStatuses": first_create["apiStatuses"],
