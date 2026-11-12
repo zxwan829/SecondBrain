@@ -169,8 +169,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await createButton.click();
   await expect(createButton).toBeDisabled();
   const clickToVisibleFeedbackMs = await readCreateFeedbackMs(page);
-  const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
-  await expect(progressStatus).toBeVisible();
+  expect(clickToVisibleFeedbackMs).toBeLessThan(100);
   const [richNoteResponse, resourceResponse] = await Promise.all([richNoteCreate, richRefCreate]);
   expect(richNoteResponse.status()).toBe(200);
   const createdNote = await richNoteResponse.json() as { collection: string; path: string };
