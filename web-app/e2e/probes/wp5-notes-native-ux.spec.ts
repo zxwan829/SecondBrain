@@ -91,7 +91,11 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
 
   const createStageEvents: { stage: string; elapsedMs: number; durationMs: number | null; status: number }[] = [];
   const createApiWaterfall: { stage: string; requestElapsedMs: number; durationMs: number | null; status: number }[] = [];
+  const apiRequestStartedAt = new Map<import('@playwright/test').Request, number>();
   const createStartedAt = Date.now();
+  const recordNotesRequestStart = (request: import('@playwright/test').Request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/notes')) apiRequestStartedAt.set(request, Date.now());
+  };
   const recordCreateResponse = (response: import('@playwright/test').Response) => {
     const request = response.request();
     const path = new URL(response.url()).pathname;
@@ -101,13 +105,15 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     else if (request.method() === 'PUT' && /\/blocksuite\/resources\/[0-9a-f]{32}$/.test(path)) stage = 'resourceReceiptPut';
     else if (request.method() === 'PUT' && /\/api\/notes\/drafts\/[^/]+$/.test(path)) stage = 'markdownReferencePut';
     if (stage) {
-      const timing = request.timing();
-      const durationMs = timing.responseEnd >= 0 ? timing.responseEnd : null;
+      const requestStartedAt = apiRequestStartedAt.get(request);
+      const requestElapsedMs = requestStartedAt === undefined ? null : requestStartedAt - createStartedAt;
+      const durationMs = requestStartedAt === undefined ? null : Date.now() - requestStartedAt;
       const elapsedMs = Date.now() - createStartedAt;
       createStageEvents.push({ stage, elapsedMs, durationMs, status: response.status() });
-      createApiWaterfall.push({ stage, requestElapsedMs: Math.max(0, elapsedMs - (durationMs ?? 0)), durationMs, status: response.status() });
+      createApiWaterfall.push({ stage, requestElapsedMs: Math.max(0, requestElapsedMs ?? 0), durationMs, status: response.status() });
     }
   };
+  page.on('request', recordNotesRequestStart);
   page.on('response', recordCreateResponse);
   const richNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
     && new URL(response.url()).pathname === '/api/notes');
@@ -179,6 +185,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const openMetrics = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: Array<Record<string, unknown>> }).__wp5ReadyEvents ?? []);
   expect(openMetrics.length).toBeGreaterThan(0);
   const firstOpenSetup = openMetrics.at(-1);
+  page.off('request', recordNotesRequestStart);
+  page.off('response', recordCreateResponse);
   const firstCreateInternalStages = await page.evaluate(() => (window as Window & { __wp5CreateStages?: Array<Record<string, unknown>> }).__wp5CreateStages ?? []);
   const firstCreateScriptResources = await page.evaluate(() => {
     const start = new Set((window as Window & { __wp5ScriptResourceStart?: string[] }).__wp5ScriptResourceStart ?? []);
@@ -421,7 +429,6 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     await page.locator('.notes-sidebar li button').filter({ hasText: 'WP5 Native Probe' }).last().click();
     await expect(editor).toBeVisible({ timeout: 30_000 });
   }
-  page.off('response', recordCreateResponse);
   const createTimings = {
     coldNotesNavigationMs,
     firstCreate: {
