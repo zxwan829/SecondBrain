@@ -12,13 +12,23 @@ async function armCreateFeedbackProbe(page: Page) {
     scope.__wp5FeedbackClickAt = null;
     button.addEventListener('click', () => {
       scope.__wp5FeedbackClickAt = performance.now();
+      const hasVisibleFeedback = () => {
+        const visible = (element: Element) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) > 0;
+        };
+        return (button.textContent?.includes('正在创建') && visible(button))
+          || [...document.querySelectorAll('[role="status"]')].some(status => visible(status) && status.textContent?.includes('正在创建'));
+      };
       const observer = new MutationObserver(() => {
-        if ((button as HTMLButtonElement).disabled || document.querySelector('[role="status"]')?.textContent?.includes('正在创建笔记')) {
+        if (hasVisibleFeedback()) {
           observer.disconnect();
           requestAnimationFrame(() => requestAnimationFrame(() => { scope.__wp5FeedbackAt = performance.now(); }));
         }
       });
-      observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled'] });
+      observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true,
+        attributeFilter: ['class', 'disabled', 'style'] });
     }, { once: true });
   });
 }
@@ -115,7 +125,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const notesNavigationStarted = Date.now();
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page).toHaveURL(/\/notes(?:\?.*)?$/);
-  const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
+  const createButton = page.locator('.notes-primary-create');
   await expect(createButton).toBeVisible();
   await expect(createButton).toBeEnabled({ timeout: 30_000 });
   const coldNotesNavigationMs = Date.now() - notesNavigationStarted;
@@ -169,8 +179,7 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await createButton.click();
   await expect(createButton).toBeDisabled();
   const clickToVisibleFeedbackMs = await readCreateFeedbackMs(page);
-  const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
-  await expect(progressStatus).toBeVisible();
+  expect(clickToVisibleFeedbackMs).toBeLessThan(100);
   const [richNoteResponse, resourceResponse] = await Promise.all([richNoteCreate, richRefCreate]);
   expect(richNoteResponse.status()).toBe(200);
   const createdNote = await richNoteResponse.json() as { collection: string; path: string };
