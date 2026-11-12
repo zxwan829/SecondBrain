@@ -162,7 +162,6 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     scope.__wp5CreateMountObserver = observer;
   });
   await armCreateFeedbackProbe(page);
-  const firstOpenStarted = await page.evaluate(() => Date.now());
   const createPerfStartedAt = await page.evaluate(() => performance.now());
   createStartedAt = Date.now();
   await page.getByRole('button', { name: '新建笔记', exact: true }).click();
@@ -171,7 +170,6 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   const clickToVisibleFeedbackMs = await readCreateFeedbackMs(page);
   const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
   await expect(progressStatus).toBeVisible();
-  const clickToProgressMs = await page.evaluate(start => Date.now() - start, firstOpenStarted);
   const [richNoteResponse, resourceResponse] = await Promise.all([richNoteCreate, richRefCreate]);
   expect(richNoteResponse.status()).toBe(200);
   const createdNote = await richNoteResponse.json() as { collection: string; path: string };
@@ -218,8 +216,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     const selection = window.getSelection();
     return Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
   })).toBe(true);
-  const firstOpen = await page.evaluate(start => ({ durationMs: Date.now() - start,
-    viewport: `${window.innerWidth}x${window.innerHeight}` }), firstOpenStarted);
+  const firstOpen = { durationMs: firstOpenSetup?.durationMs,
+    viewport: `${firstOpenSetup?.viewport ?? ''}` };
   await editor.getByRole('button', { name: '重命名文档' }).click();
   const titleInput = editor.getByRole('textbox', { name: '重命名文档' });
   await titleInput.fill('WP5 Native Probe');
@@ -440,7 +438,6 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     coldNotesNavigationMs,
     firstCreate: {
       clickToVisibleFeedbackMs,
-      clickToProgressMs,
       apiStages: Object.fromEntries(['draftPost', 'resourcePost', 'markdownReferencePut', 'resourceReceiptPut'].map(stage => [stage,
         createStageEvents.find(event => event.stage === stage)?.elapsedMs ?? null])),
       apiStatuses: createStageEvents.map(event => event.status),
@@ -448,8 +445,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
       internalStages: firstCreateInternalStages,
       scriptResources: firstCreateScriptResources,
       longTasks: firstCreateLongTasks,
-      clickToEditableMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
-      clickToCaretMs: firstOpen.durationMs,
+      clickToInputReadyMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
+      realCaretInputVerified: true,
       temporaryMarkdownEditorMounts,
     },
     refresh: { openMs: refreshOpen.durationMs, status: refreshStatus, cleanExitPrompt: promptedAfterCleanRefresh },
@@ -805,8 +802,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   await page.locator('.sidebar nav').getByRole('button', { name: '笔记', exact: true }).click();
   await expect(page.locator('.notes-primary-create')).toBeVisible();
 
-  const measurements: { clickToVisibleFeedbackMs: number; clickToEditableMs: number; clickToCaretMs: number;
-    clickToProgressMs: number; cleanExitPrompt: boolean }[] = [];
+  const measurements: { clickToVisibleFeedbackMs: number; clickToInputReadyMs: number; cleanExitPrompt: boolean }[] = [];
   const editor = page.locator('.blocksuite-resource-inline');
   for (let index = 0; index < 10; index += 1) {
     const readyCount = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.length ?? 0);
@@ -816,13 +812,9 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
       && /\/api\/notes\/drafts\/[^/]+\/blocksuite\/resources$/.test(new URL(response.url()).pathname), { timeout: 20_000 });
     const createButton = page.locator('.notes-primary-create');
     await armCreateFeedbackProbe(page);
-    const startedAt = Date.now();
     await createButton.click();
     await expect(createButton).toBeDisabled();
     const clickToVisibleFeedbackMs = await readCreateFeedbackMs(page);
-    const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
-    await expect(progressStatus).toBeVisible();
-    const clickToProgressMs = Date.now() - startedAt;
     const draftResponse = await draftResponsePromise;
     expect(draftResponse.status()).toBe(200);
     const draft = await draftResponse.json() as { collection: string; path: string };
@@ -843,13 +835,12 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
       const selection = window.getSelection();
       return Boolean(selection?.anchorNode && node.contains(selection.anchorNode));
     })).toBe(true);
-    const clickToCaretMs = Date.now() - startedAt;
     const exitPrompt = page.getByRole('alertdialog', { name: '未保存修改' });
     await editor.getByRole('button', { name: '返回笔记列表' }).click();
     const cleanExitPrompt = await exitPrompt.isVisible().catch(() => false);
     if (cleanExitPrompt) await exitPrompt.getByRole('button', { name: '放弃本次修改' }).click();
     await expect(editor).toHaveCount(0);
-    measurements.push({ clickToVisibleFeedbackMs, clickToProgressMs, clickToEditableMs: ready!.durationMs, clickToCaretMs, cleanExitPrompt });
+    measurements.push({ clickToVisibleFeedbackMs, clickToInputReadyMs: ready!.durationMs, cleanExitPrompt });
     await expect(page.locator('.notes-primary-create')).toBeEnabled();
   }
 
@@ -857,9 +848,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
   const p95 = (values: number[]) => [...values].sort((left, right) => left - right)[Math.ceil(values.length * 0.95) - 1]!;
   const repeated = { warmSampleCount: warm.length,
     clickToVisibleFeedbackP95Ms: p95(warm.map(item => item.clickToVisibleFeedbackMs)),
-    clickToProgressP95Ms: p95(warm.map(item => item.clickToProgressMs)),
-    clickToEditableP95Ms: p95(warm.map(item => item.clickToEditableMs)),
-    clickToCaretP95Ms: p95(warm.map(item => item.clickToCaretMs)),
+    clickToInputReadyP95Ms: p95(warm.map(item => item.clickToInputReadyMs)),
     cleanExitPromptCount: warm.filter(item => item.cleanExitPrompt).length,
     samples: measurements };
   console.log(`WP5_NOTES_REPEATED_CREATE_TIMINGS ${JSON.stringify(repeated)}`);

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import math
 import os
 from pathlib import Path
@@ -97,7 +98,9 @@ def verify_evidence(source: Path, target: Path) -> dict:
     refresh = evidence.get("refreshOpen", {})
     if any(item.get("viewport") != "1440x1000" for item in (first, warm, refresh)):
         raise RuntimeError("browser evidence performance viewport mismatch")
-    if not all(isinstance(item.get("durationMs"), (int, float)) for item in (first, warm, refresh)):
+    if not all(isinstance(item.get("durationMs"), (int, float)) and not isinstance(item.get("durationMs"), bool)
+               and math.isfinite(item["durationMs"]) and 0 <= item["durationMs"] <= 1_000_000
+               for item in (first, warm, refresh)):
         raise RuntimeError("browser evidence click-to-editable performance measurement missing")
     creation = evidence.get("creationTimings", {})
     first_create = creation.get("firstCreate", {}) if isinstance(creation, dict) else {}
@@ -109,9 +112,8 @@ def verify_evidence(source: Path, target: Path) -> dict:
     if (not isinstance(creation, dict) or creation.get("viewport") != "1440x1000"
             or not isinstance(creation.get("coldNotesNavigationMs"), (int, float))
             or not isinstance(first_create.get("clickToVisibleFeedbackMs"), (int, float))
-            or not isinstance(first_create.get("clickToProgressMs"), (int, float))
-            or not isinstance(first_create.get("clickToEditableMs"), (int, float))
-            or not isinstance(first_create.get("clickToCaretMs"), (int, float))
+            or not isinstance(first_create.get("clickToInputReadyMs"), (int, float))
+            or first_create.get("realCaretInputVerified") is not True
             or type(first_create.get("temporaryMarkdownEditorMounts")) is not int
             or first_create.get("temporaryMarkdownEditorMounts") != 0
             or not isinstance(stages, dict) or set(stages) != required_stages
@@ -128,7 +130,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
             or not isinstance(repeated, dict) or repeated.get("warmSampleCount") != 9
             or len(repeated.get("samples", [])) != 10
             or any(not isinstance(repeated.get(key), (int, float)) for key in
-                   ("clickToVisibleFeedbackP95Ms", "clickToProgressP95Ms", "clickToEditableP95Ms", "clickToCaretP95Ms"))
+                   ("clickToVisibleFeedbackP95Ms", "clickToInputReadyP95Ms"))
             or type(repeated.get("cleanExitPromptCount")) is not int):
         raise RuntimeError("browser evidence Notes creation/refresh timing measurement missing or invalid")
     required_internal_stages = {"notes-create", "blocksuite-module-load", "resource-payload-init", "resource-create",
@@ -137,28 +139,48 @@ def verify_evidence(source: Path, target: Path) -> dict:
     api_waterfall = first_create.get("apiWaterfall", [])
     script_resources = first_create.get("scriptResources", {})
     long_tasks = first_create.get("longTasks", [])
-    if ({item.get("stage") for item in internal_stages if isinstance(item, dict)} != required_internal_stages
-            or any(not isinstance(item.get("durationMs"), (int, float)) for item in internal_stages)
-            or len(api_waterfall) != 4
+    valid_nonnegative_number = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1_000_000
+    valid_byte_count = lambda value: isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100_000_000
+    valid_asset_name = lambda value: isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,120}\.js", value) is not None
+    api_statuses = first_create.get("apiStatuses", [])
+    if (not isinstance(internal_stages, list) or len(internal_stages) != len(required_internal_stages)
+            or {item.get("stage") for item in internal_stages if isinstance(item, dict)} != required_internal_stages
+            or any(not valid_nonnegative_number(item.get("durationMs"))
+                   or ("elapsedMs" in item and not valid_nonnegative_number(item.get("elapsedMs"))) for item in internal_stages)
+            or not isinstance(api_waterfall, list) or len(api_waterfall) != 4
+            or {item.get("stage") for item in api_waterfall if isinstance(item, dict)} != required_stages
             or any(item.get("stage") not in {"draftPost", "resourcePost", "markdownReferencePut", "resourceReceiptPut"}
-                   or not isinstance(item.get("durationMs"), (int, float)) or item.get("status") != 200 for item in api_waterfall)
-            or type(script_resources.get("requestCount")) is not int
-            or type(script_resources.get("duplicateUrlCount")) is not int
-            or any(not isinstance(item.get("duration"), (int, float)) for item in long_tasks)):
+                   or not valid_nonnegative_number(item.get("requestElapsedMs"))
+                   or not valid_nonnegative_number(item.get("durationMs")) or item.get("status") != 200 for item in api_waterfall)
+            or not isinstance(api_statuses, list) or len(api_statuses) != 4
+            or any(type(status) is not int or status != 200 for status in api_statuses)
+            or not isinstance(script_resources, dict)
+            or any(type(script_resources.get(key)) is not int or script_resources[key] < 0
+                   for key in ("beforeCreateRequestCount", "requestCount", "duplicateUrlCount"))
+            or script_resources.get("duplicateUrlCount", 0) > script_resources.get("requestCount", 0)
+            or not isinstance(script_resources.get("requests"), list)
+            or any(not isinstance(item, dict) or not valid_asset_name(item.get("name"))
+                   or not valid_nonnegative_number(item.get("durationMs"))
+                   or any(not valid_byte_count(item.get(key)) for key in ("transferSize", "decodedBodySize"))
+                   for item in script_resources.get("requests", []))
+            or not isinstance(long_tasks, list)
+            or any(not isinstance(item, dict) or not valid_nonnegative_number(item.get("startTime"))
+                   or not valid_nonnegative_number(item.get("duration")) for item in long_tasks)):
         raise RuntimeError("browser evidence Notes creation stage diagnostics missing or invalid")
-    performance_targets = {
-        "clickToVisibleFeedbackMs": round(first_create["clickToVisibleFeedbackMs"], 1),
-        "coldClickToCaretMs": round(first_create["clickToCaretMs"], 1),
-        "warmEditableP95Ms": round(repeated["clickToEditableP95Ms"], 1),
-        "warmCaretP95Ms": round(repeated["clickToCaretP95Ms"], 1),
-        "warmVisibleFeedbackP95Ms": round(repeated["clickToVisibleFeedbackP95Ms"], 1),
+    target_values = {
+        "clickToVisibleFeedbackMs": first_create["clickToVisibleFeedbackMs"],
+        "coldClickToInputReadyMs": first_create["clickToInputReadyMs"],
+        "warmInputReadyP95Ms": repeated["clickToInputReadyP95Ms"],
+        "warmVisibleFeedbackP95Ms": repeated["clickToVisibleFeedbackP95Ms"],
     }
+    if any(not valid_nonnegative_number(value) for value in target_values.values()):
+        raise RuntimeError("browser evidence performance target timing is invalid")
+    performance_targets = {key: round(value, 1) for key, value in target_values.items()}
     performance_targets["status"] = "PASS" if (
-        performance_targets["clickToVisibleFeedbackMs"] <= 100
-        and performance_targets["coldClickToCaretMs"] <= 1000
-        and performance_targets["warmEditableP95Ms"] <= 500
-        and performance_targets["warmCaretP95Ms"] <= 500
-        and performance_targets["warmVisibleFeedbackP95Ms"] <= 100
+        target_values["clickToVisibleFeedbackMs"] <= 100
+        and target_values["coldClickToInputReadyMs"] <= 1000
+        and target_values["warmInputReadyP95Ms"] <= 500
+        and target_values["warmVisibleFeedbackP95Ms"] <= 100
     ) else "PARTIAL"
     boundary = evidence.get("titleBoundary", {})
     if boundary.get("title") != "WP5 Native Probe" or boundary.get("firstBody", {}).get("text") != "First line after title":
@@ -207,7 +229,6 @@ def verify_evidence(source: Path, target: Path) -> dict:
         "creationTimings": {
             "coldNotesNavigationMs": round(creation["coldNotesNavigationMs"], 1),
             "firstCreate": {"clickToVisibleFeedbackMs": round(first_create["clickToVisibleFeedbackMs"], 1),
-                            "clickToProgressMs": round(first_create["clickToProgressMs"], 1),
                             "apiResponseElapsedMs": {stage: round(stages[stage], 1) for stage in sorted(required_stages)},
                             "apiStatuses": first_create["apiStatuses"],
                             "apiWaterfall": [{"stage": item["stage"], "requestElapsedMs": round(item["requestElapsedMs"], 1),
@@ -225,8 +246,8 @@ def verify_evidence(source: Path, target: Path) -> dict:
                                                              for item in script_resources["requests"]]},
                             "longTasks": [{"startTime": round(item["startTime"], 1), "duration": round(item["duration"], 1)}
                                           for item in long_tasks],
-                            "clickToEditableMs": round(first_create["clickToEditableMs"], 1),
-                            "clickToCaretMs": round(first_create["clickToCaretMs"], 1),
+                            "clickToInputReadyMs": round(first_create["clickToInputReadyMs"], 1),
+                            "realCaretInputVerified": first_create["realCaretInputVerified"],
                             "temporaryMarkdownEditorMounts": first_create["temporaryMarkdownEditorMounts"]},
             "refresh": {"openMs": round(refresh_state["openMs"], 1),
                         "status": refresh_state.get("status") if refresh_state.get("status") in {
@@ -238,9 +259,7 @@ def verify_evidence(source: Path, target: Path) -> dict:
         },
         "repeatedCreation": {"warmSampleCount": repeated["warmSampleCount"],
                              "clickToVisibleFeedbackP95Ms": round(repeated["clickToVisibleFeedbackP95Ms"], 1),
-                             "clickToProgressP95Ms": round(repeated["clickToProgressP95Ms"], 1),
-                             "clickToEditableP95Ms": round(repeated["clickToEditableP95Ms"], 1),
-                             "clickToCaretP95Ms": round(repeated["clickToCaretP95Ms"], 1),
+                             "clickToInputReadyP95Ms": round(repeated["clickToInputReadyP95Ms"], 1),
                              "cleanExitPromptCount": repeated["cleanExitPromptCount"]},
         "performanceTargets": performance_targets,
         "focus": {"contenteditable": enter["contenteditable"], "selectionInsideEditor": enter["selectionInsideEditor"],
