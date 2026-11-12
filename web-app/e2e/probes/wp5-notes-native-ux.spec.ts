@@ -855,7 +855,7 @@ test('WP5 Notes: warmed repeated rich-page creation latency', async ({ page }) =
     stages: Array<Record<string, number | string>>; api: Array<{ stage: string; startTimeMs: number; durationMs: number }>;
     longTasks: Array<{ startTime: number; duration: number }> }[] = [];
   const editor = page.locator('.blocksuite-resource-inline');
-  for (let index = 0; index < 10; index += 1) {
+  for (let index = 0; index < 21; index += 1) {
     const readyCount = await page.evaluate(() => (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.length ?? 0);
     const timingStart = await page.evaluate(() => ({ at: performance.now(), stageCount: (window as Window & { __wp5StageEvents?: unknown[] }).__wp5StageEvents?.length ?? 0,
       longTaskCount: (window as Window & { __wp5LongTasks?: unknown[] }).__wp5LongTasks?.length ?? 0,

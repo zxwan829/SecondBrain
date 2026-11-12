@@ -127,8 +127,8 @@ def verify_evidence(source: Path, target: Path) -> dict:
             or not isinstance(edgeless_state.get("status"), str)
             or edgeless_state.get("cleanExitPrompt") is not False
             or edgeless_state.get("status") == "有未保存的资源修改"
-            or not isinstance(repeated, dict) or repeated.get("warmSampleCount") != 9
-            or len(repeated.get("samples", [])) != 10
+            or not isinstance(repeated, dict) or repeated.get("warmSampleCount") != 20
+            or len(repeated.get("samples", [])) != 21
             or any(not isinstance(repeated.get(key), (int, float)) for key in
                    ("clickToVisibleFeedbackP95Ms", "clickToInputReadyP95Ms"))
             or type(repeated.get("cleanExitPromptCount")) is not int):
