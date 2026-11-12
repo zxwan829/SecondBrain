@@ -30,17 +30,21 @@ function waitForRichPageFeedbackPaint() {
   return new Promise<void>((resolve) => {
     if (document.visibilityState !== 'visible') { resolve(); return; }
     let finished = false;
+    let frameId = 0;
+    let frameTask = 0;
     const finish = () => {
       if (finished) return;
       finished = true;
       window.clearTimeout(fallback);
+      window.clearTimeout(frameTask);
+      window.cancelAnimationFrame(frameId);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       resolve();
     };
     const onVisibilityChange = () => { if (document.visibilityState !== 'visible') finish(); };
     const fallback = window.setTimeout(finish, 100);
     document.addEventListener('visibilitychange', onVisibilityChange);
-    requestAnimationFrame(() => requestAnimationFrame(finish));
+    frameId = requestAnimationFrame(() => { frameTask = window.setTimeout(finish, 0); });
   });
 }
 
