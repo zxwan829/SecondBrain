@@ -62,9 +62,21 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.addInitScript(() => {
-    (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents = [];
+    const scope = window as Window & {
+      __wp5ReadyEvents?: unknown[]; __wp5CreateStages?: unknown[]; __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }>;
+    };
+    scope.__wp5ReadyEvents = [];
+    scope.__wp5CreateStages = [];
+    scope.__wp5CreateLongTasks = [];
     window.addEventListener('sb:blocksuite-editor-ready', event =>
-      (window as Window & { __wp5ReadyEvents?: unknown[] }).__wp5ReadyEvents?.push((event as CustomEvent).detail));
+      scope.__wp5ReadyEvents?.push((event as CustomEvent).detail));
+    window.addEventListener('sb:notes-create-stage', event => scope.__wp5CreateStages?.push((event as CustomEvent).detail));
+    window.addEventListener('sb:blocksuite-editor-stage', event => scope.__wp5CreateStages?.push((event as CustomEvent).detail));
+    if (PerformanceObserver.supportedEntryTypes.includes('longtask')) {
+      const observer = new PerformanceObserver(records => scope.__wp5CreateLongTasks?.push(...records.getEntries()
+        .map(entry => ({ startTime: entry.startTime, duration: entry.duration }))));
+      observer.observe({ type: 'longtask' });
+    }
   });
   await page.goto('/chat/blank');
   const password = (await readFile(process.env.SB_E2E_PASSWORD_FILE!, 'utf8')).trim();
@@ -77,7 +89,8 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
   await expect(page.getByRole('button', { name: '新建笔记', exact: true })).toBeVisible();
   const coldNotesNavigationMs = Date.now() - notesNavigationStarted;
 
-  const createStageEvents: { stage: string; elapsedMs: number; status: number }[] = [];
+  const createStageEvents: { stage: string; elapsedMs: number; durationMs: number | null; status: number }[] = [];
+  const createApiWaterfall: { stage: string; requestElapsedMs: number; durationMs: number | null; status: number }[] = [];
   const createStartedAt = Date.now();
   const recordCreateResponse = (response: import('@playwright/test').Response) => {
     const request = response.request();
@@ -87,7 +100,13 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     else if (request.method() === 'POST' && /\/blocksuite\/resources$/.test(path)) stage = 'resourcePost';
     else if (request.method() === 'PUT' && /\/blocksuite\/resources\/[0-9a-f]{32}$/.test(path)) stage = 'resourceReceiptPut';
     else if (request.method() === 'PUT' && /\/api\/notes\/drafts\/[^/]+$/.test(path)) stage = 'markdownReferencePut';
-    if (stage) createStageEvents.push({ stage, elapsedMs: Date.now() - createStartedAt, status: response.status() });
+    if (stage) {
+      const timing = request.timing();
+      const durationMs = timing.responseEnd >= 0 ? timing.responseEnd : null;
+      const elapsedMs = Date.now() - createStartedAt;
+      createStageEvents.push({ stage, elapsedMs, durationMs, status: response.status() });
+      createApiWaterfall.push({ stage, requestElapsedMs: Math.max(0, elapsedMs - (durationMs ?? 0)), durationMs, status: response.status() });
+    }
   };
   page.on('response', recordCreateResponse);
   const richNoteCreate = page.waitForResponse(response => response.request().method() === 'POST'
@@ -106,12 +125,38 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     });
     observer.observe(document.body, { childList: true, subtree: true });
     scope.__wp5CreateMountObserver = observer;
+    (window as Window & { __wp5ScriptResourceStart?: string[] }).__wp5ScriptResourceStart = performance.getEntriesByType('resource')
+      .filter(entry => entry.name.endsWith('.js')).map(entry => entry.name);
+  });
+  await page.evaluate(() => {
+    const button = document.querySelector<HTMLButtonElement>('.notes-primary-create');
+    if (!button) throw new Error('Missing Notes create button for feedback timing');
+    const scope = window as Window & { __wp5FeedbackAt?: number | null; __wp5FeedbackClickAt?: number | null };
+    scope.__wp5FeedbackAt = null;
+    button.addEventListener('click', () => {
+      scope.__wp5FeedbackClickAt = performance.now();
+      const observer = new MutationObserver(() => {
+        if (button.disabled || document.querySelector('[role="status"]')?.textContent?.includes('正在创建笔记')) {
+          scope.__wp5FeedbackAt = performance.now();
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled'] });
+    }, { once: true });
   });
   const firstOpenStarted = await page.evaluate(() => Date.now());
+  const createPerfStartedAt = await page.evaluate(() => performance.now());
   await page.getByRole('button', { name: '新建笔记', exact: true }).click();
   const createButton = page.getByRole('button', { name: '新建笔记', exact: true });
   await expect(createButton).toBeDisabled();
   const clickToFirstFeedbackMs = Date.now() - createStartedAt;
+  const clickToVisibleFeedbackMs = await page.evaluate(() => {
+    const scope = window as Window & { __wp5FeedbackAt?: number | null; __wp5FeedbackClickAt?: number | null };
+    return scope.__wp5FeedbackAt !== null && scope.__wp5FeedbackClickAt !== null
+      ? scope.__wp5FeedbackAt - scope.__wp5FeedbackClickAt : null;
+  });
+  expect(clickToVisibleFeedbackMs, 'create button must show a visible pending state within 100 ms').not.toBeNull();
+  expect(clickToVisibleFeedbackMs!).toBeLessThanOrEqual(100);
   const progressStatus = page.getByRole('status').filter({ hasText: '正在创建笔记并准备富文本编辑器…' });
   await expect(progressStatus).toBeVisible();
   const clickToProgressMs = await page.evaluate(start => Date.now() - start, firstOpenStarted);
@@ -369,10 +414,24 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     coldNotesNavigationMs,
     firstCreate: {
       clickToFirstFeedbackMs,
+      clickToVisibleFeedbackMs,
       clickToProgressMs,
       apiStages: Object.fromEntries(['draftPost', 'resourcePost', 'markdownReferencePut', 'resourceReceiptPut'].map(stage => [stage,
         createStageEvents.find(event => event.stage === stage)?.elapsedMs ?? null])),
       apiStatuses: createStageEvents.map(event => event.status),
+      apiWaterfall: createApiWaterfall,
+      internalStages: await page.evaluate(() => (window as Window & { __wp5CreateStages?: Array<Record<string, unknown>> }).__wp5CreateStages ?? []),
+      scriptResources: await page.evaluate(() => {
+        const start = new Set((window as Window & { __wp5ScriptResourceStart?: string[] }).__wp5ScriptResourceStart ?? []);
+        const entries = performance.getEntriesByType('resource').filter(entry => entry.name.endsWith('.js'));
+        return { requestCount: entries.length, duplicateUrlCount: entries.length - new Set(entries.map(entry => entry.name)).size,
+          newlyLoaded: entries.filter(entry => !start.has(entry.name)).map(entry => ({
+            name: new URL(entry.name).pathname.split('/').pop(), durationMs: Math.round(entry.duration),
+            transferSize: entry.transferSize, decodedBodySize: entry.decodedBodySize,
+          })) };
+      }),
+      longTasks: await page.evaluate(start => (window as Window & { __wp5CreateLongTasks?: Array<{ startTime: number; duration: number }> }).__wp5CreateLongTasks
+        ?.filter(entry => entry.startTime >= start) ?? [], createPerfStartedAt),
       clickToEditableMs: typeof firstOpenSetup?.durationMs === 'number' ? firstOpenSetup.durationMs : null,
       clickToCaretMs: firstOpen.durationMs,
       temporaryMarkdownEditorMounts,
@@ -380,6 +439,12 @@ test('WP5 native Notes: create, Enter, save, switch, reopen and refresh', async 
     refresh: { openMs: refreshOpen.durationMs, status: refreshStatus, cleanExitPrompt: promptedAfterCleanRefresh },
     viewport: '1440x1000',
   };
+  const measuredStages = (createTimings.firstCreate.internalStages as Array<{ stage?: string }>).map(stage => stage.stage);
+  for (const stage of ['notes-create', 'blocksuite-module-load', 'resource-payload-init', 'resource-create',
+    'markdown-save', 'resource-receipt-save', 'yjs-hydration', 'editor-mount']) {
+    expect(measuredStages, `missing Notes creation stage timing: ${stage}`).toContain(stage);
+  }
+  expect(createTimings.firstCreate.apiWaterfall).toHaveLength(4);
   console.log(`WP5_NOTES_CREATE_TIMINGS ${JSON.stringify(createTimings)}`);
 
   // Remove temporary interaction markers before capturing a user-facing

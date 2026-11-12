@@ -19,6 +19,13 @@ const loadBlockSuiteResourceEditorModule = () => {
   return blockSuiteResourceEditorModulePromise;
 };
 
+function reportRichPageCreateStage(stage: string, startedAt: number, durationMs: number) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('sb:notes-create-stage', { detail: {
+    stage, elapsedMs: performance.now() - startedAt, durationMs,
+  } }));
+}
+
 type State = '未保存' | '保存中…' | '已保存' | '保存失败' | '版本冲突';
 const noteKey = (value: Note) => `${value.collection}:${value.path}`;
 const blockSuiteBlobKeyPattern = /^[A-Za-z0-9_-]{43}=$/;
@@ -303,7 +310,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     void open(saved.path, notesMountedAt.current);
   }, [collections, collection]);
 
-  const save = useCallback((target: Note, body: string, revision: number, sequence: number): Promise<Note | null> => {
+  const save = useCallback((target: Note, body: string, revision: number, sequence: number, createMetric?: { startedAt: number }): Promise<Note | null> => {
     const key = noteKey(target);
     pendingSaves.current += 1;
     setState('保存中…');
@@ -317,7 +324,9 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       // always advances that ETag before a later queued body is sent.
       const current = noteRef.current;
       const basis = current && noteKey(current) === key ? current : target;
+      const saveStartedAt = performance.now();
       const saved = await notesApi.save(basis, body);
+      if (createMetric) reportRichPageCreateStage('markdown-save', createMetric.startedAt, performance.now() - saveStartedAt);
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== key) return null;
       noteRef.current = saved;
       savedContent.current = saved.content;
@@ -461,7 +470,7 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     } catch { /* save() retains the unsaved Markdown and reports the failure. */ }
   };
 
-  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind, newDraft?: Note) => {
+  const attachBlockSuiteResource = async (kind: BlockSuiteResourceKind, newDraft?: Note, createStartedAt?: number) => {
     const target = newDraft ?? noteRef.current;
     if (!target || target.read_only || projectionPending.current || (!newDraft && state !== '已保存') || creatingBlockSuiteResource || blockSuiteResource) return;
     const revision = viewRevision.current;
@@ -470,9 +479,16 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setMessage(`正在创建独立 BlockSuite ${kind === 'database' ? 'Database' : 'Edgeless'} 资源…`);
     let resource: BlockSuiteResource | null = null;
     try {
-      const { createBlockSuiteResourcePayload } = await loadBlockSuiteResourceEditorModule();
+      const moduleStartedAt = performance.now();
+      const editorModule = await loadBlockSuiteResourceEditorModule();
+      if (createStartedAt !== undefined) reportRichPageCreateStage('blocksuite-module-load', createStartedAt, performance.now() - moduleStartedAt);
+      const payloadStartedAt = performance.now();
+      const { createBlockSuiteResourcePayload } = editorModule;
       const payload = createBlockSuiteResourcePayload(kind);
+      if (createStartedAt !== undefined) reportRichPageCreateStage('resource-payload-init', createStartedAt, performance.now() - payloadStartedAt);
+      const resourceCreateStartedAt = performance.now();
       const created = await notesApi.createBlockSuiteResource(target, payload);
+      if (createStartedAt !== undefined) reportRichPageCreateStage('resource-create', createStartedAt, performance.now() - resourceCreateStartedAt);
       const versionedTarget = { ...target, artifactSetEtag: created.artifact_set_etag };
       if (noteRef.current && noteKey(noteRef.current) === noteKey(target)) { noteRef.current = versionedTarget; setNote(versionedTarget); }
       resource = { ...payload, resourceId: created.resource_id, etag: created.etag, note_etag: created.note_etag, artifact_set_etag: created.artifact_set_etag, filename: created.filename };
@@ -486,14 +502,17 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
       setContent(nextContent);
       setState('未保存');
       const sequence = ++editSequence.current;
-      const saved = await save(versionedTarget, nextContent, revision, sequence);
+      const saved = await save(versionedTarget, nextContent, revision, sequence,
+        createStartedAt === undefined ? undefined : { startedAt: createStartedAt });
       if (!saved) throw new Error('笔记已切换，资源已创建但 Markdown 引用尚未保存；请返回原笔记重试。');
       if (viewRevision.current !== revision || !noteRef.current || noteKey(noteRef.current) !== noteKey(target)) {
         throw new Error('资源已创建，但引用保存结果未应用到当前笔记。');
       }
       if (kind === 'rich-page') {
         const bound = { ...payload, resourceId: resource.resourceId, snapshot: bindRichPageSnapshot(payload.snapshot, saved.etag) };
+        const receiptStartedAt = performance.now();
         const receipt = await notesApi.saveBlockSuiteResource(saved, resource, bound);
+        if (createStartedAt !== undefined) reportRichPageCreateStage('resource-receipt-save', createStartedAt, performance.now() - receiptStartedAt);
         resource = { ...resource, ...bound, etag: receipt.etag, note_etag: receipt.note_etag, artifact_set_etag: receipt.artifact_set_etag };
         const currentNote = { ...saved, artifactSetEtag: receipt.artifact_set_etag };
         noteRef.current = currentNote; setNote(currentNote);
@@ -526,11 +545,13 @@ export function NotesPage({ onRegisterNavigationGuard, onOpenInboxSource }: { on
     setCreatingRichPageDraft(true);
     setLoading(true); setMessage('');
     try {
+      const draftCreateStartedAt = performance.now();
       const created = await notesApi.create('# 新建笔记\n\n');
+      reportRichPageCreateStage('notes-create', openedAt, performance.now() - draftCreateStartedAt);
       if (viewRevision.current !== revision) return;
       setCollection('drafts'); setCurrent(created, created.content); setState('已保存'); setEditorMode('blocksuite');
       try { sessionStorage.setItem('sb-notes-selection', JSON.stringify({ collection: created.collection, path: created.path })); } catch { /* selection persistence is best-effort */ }
-      await attachBlockSuiteResource('rich-page', created);
+      await attachBlockSuiteResource('rich-page', created, openedAt);
       void refresh('drafts');
     } catch { if (viewRevision.current === revision) setMessage('新建笔记未完成；已有笔记未改变。'); }
     finally {
