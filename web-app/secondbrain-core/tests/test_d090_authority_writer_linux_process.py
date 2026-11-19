@@ -66,11 +66,32 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
             assert _readline(authority, timeout=20) == "PUBLISHED"
             # Provision read-only access to the disposable published snapshot.
             published = knowledge / "synthetic-note.md"
-            os.chown(published, roles.writer_uid, roles.authority_gid)
-            os.chown(knowledge, roles.writer_uid, roles.authority_gid)
-            knowledge.chmod(0o750)
+            published.chmod(0o444)
+            knowledge.chmod(0o755)
             base.chmod(0o755)
+            source_socket = base / "source.sock"
+            # The Authority binds inside a private subdirectory and the harness
+            # passes through a read-only rendezvous directory for the lab.
+            source_dir = base / "readback"
+            source_dir.mkdir(mode=0o755)
+            os.chown(source_dir, roles.authority_uid, roles.authority_gid)
+            source_socket = source_dir / source_socket.name
             (ledger / "readback-ready").touch()
+            assert _readline(authority, timeout=20) == "SOURCE_READY"
+            source_socket.chmod(0o666)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as outsider:
+                outsider.settimeout(5)
+                outsider.connect(str(source_socket))
+                assert outsider.recv(1) == b""
+            core_harness = (
+                "import runpy, sys; "
+                "runpy.run_path(sys.argv[1])['_exercise_core_readback'](*sys.argv[2:])"
+            )
+            core = _spawn([sys.executable, "-c", core_harness, str(test_module),
+                str(knowledge), str(source_socket), str(ledger), ",".join(map(str, values))],
+                roles.core_uid, roles.core_gid, module_root)
+            stdout, stderr = core.communicate(timeout=20)
+            assert core.returncode == 0, (stdout, stderr)
             stdout, stderr = authority.communicate(timeout=30)
             assert authority.returncode == 0, (stdout, stderr)
             assert writer.wait(timeout=5) == 0
@@ -83,11 +104,59 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
             writer.communicate(timeout=5)
 
 
+def _exercise_core_readback(knowledge, source_socket, ledger, role_values):
+    import hashlib
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from secondbrain_core.modules.app_auth import AppSessionAuth
+    from secondbrain_core.modules.d090_provenance import UnixSourceClient
+    from secondbrain_core.modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
+
+    roles = d090.D090RoleIds(*map(int, role_values.split(",")))
+    for name in ("authority.sqlite3", "test-private.pem", "password"):
+        with pytest.raises(PermissionError):
+            (Path(ledger) / name).read_bytes()
+    origin = "https://core.test"
+    with tempfile.TemporaryDirectory() as directory:
+        password = Path(directory) / "password"
+        password.touch(mode=0o600)
+        password.write_text("synthetic-core-login")
+        auth = AppSessionAuth(str(password), [origin])
+        app = FastAPI()
+        resolver = UnixSourceClient(source_socket, roles.authority_uid, roles.authority_gid,
+                                    "operation-1", "synthetic-note.md")
+        store = KnowledgeReadStore(knowledge, resolver)
+        app.include_router(create_knowledge_read_router(auth, store))
+        from fastapi import Request
+
+        # TestClient uses a dedicated Core login and never receives Authority cookies.
+        token_request = Request({"type": "http", "scheme": "https", "method": "POST",
+            "headers": [(b"host", b"core.test"), (b"origin", origin.encode())], "path": "/"})
+        token = auth.login(token_request, password.read_text())
+        with TestClient(app, base_url=origin, cookies={auth.COOKIE_NAME: token}) as client:
+            result = client.get("/api/knowledge/search", params={"q": "wp61d090provenance"})
+            assert result.status_code == 200, result.text
+            row, = result.json()["items"]
+            path = f"/api/knowledge/items/{row['id']}/source"
+            response = client.get(path)
+            assert response.status_code == 200, response.text
+            assert response.json()["provenance_status"] == "verified"
+            assert response.json()["source"]["raw"]["ref"]
+            resolver.operation_id = "wrong-operation"
+            assert client.get(path).json()["source"] is None
+            resolver.operation_id = "operation-1"
+            forged = b"synthetic forged target"
+            assert resolver.verify("synthetic-note.md", forged, hashlib.sha256(forged).hexdigest()) is None
+            assert client.get(path).json()["source"] is None
+            resolver.path += ".unavailable"
+            assert client.get(path).json()["source"] is None
+
+
 def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, role_values):
     import hashlib
     from secondbrain_core.modules.capture import CaptureService
     from secondbrain_core.modules.d090_provenance import (
-        CapturedCommitSource, capture_source_revision, verify_committed_source,
+        CapturedCommitSource, capture_source_revision, serve_source_request, verify_committed_source,
     )
     from secondbrain_core.modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
 
@@ -180,6 +249,21 @@ def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, rol
                                                    *candidate, **source_refs)
             assert not verify_committed_source(authority, "operation-1", "synthetic-target",
                 content, review, raw, **{**source_refs, "raw_ref": "different.md"})
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.bind(str(Path(ledger).parent / "readback/source.sock"))
+                server.listen(4)
+                server.settimeout(15)
+                print("SOURCE_READY", flush=True)
+                for index in range(5):
+                    if index == 4:
+                        raw_path.write_bytes(raw + b"readback drift")
+                    conn, _ = server.accept()
+                    with conn:
+                        if index == 0:
+                            with pytest.raises(d090.D090Rejected, match="peer_rejected"):
+                                serve_source_request(conn, roles.core_uid, roles.core_gid, resolver, knowledge)
+                        else:
+                            serve_source_request(conn, roles.core_uid, roles.core_gid, resolver, knowledge)
         finally:
             pass
 

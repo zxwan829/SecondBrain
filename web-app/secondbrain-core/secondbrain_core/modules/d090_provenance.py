@@ -3,11 +3,54 @@
 import base64
 import hashlib
 import json
+import socket
 from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 
-from .d090_authority_writer import _canonical
+from .d090_authority_writer import _canonical, authority_peer_before_body
+
+
+def _read_message(conn):
+    with conn.makefile("rb") as stream:
+        line = stream.readline(2049)
+    if len(line) > 2048 or not line.endswith(b"\n"):
+        raise ValueError("invalid source message framing")
+    return json.loads(line)
+
+
+def serve_source_request(conn, core_uid, core_gid, resolver, knowledge_root):
+    """Answer only for the locally configured capture and published target."""
+    conn.settimeout(2)
+    authority_peer_before_body(conn, core_uid, core_gid)
+    request = _read_message(conn)
+    result = None
+    if (isinstance(request, dict) and set(request) == {"operation_id", "sha256"}
+            and request["operation_id"] == resolver.operation_id):
+        content = resolver._read(knowledge_root, resolver.filename)
+        result = resolver.verify(resolver.filename, content, request["sha256"])
+    conn.sendall(_canonical(result) + b"\n")
+
+
+class UnixSourceClient:
+    def __init__(self, path, authority_uid, authority_gid, operation_id, filename):
+        self.path = path
+        self.peer = authority_uid, authority_gid
+        self.operation_id = operation_id
+        self.filename = filename
+
+    def verify(self, relative, content, digest):
+        if relative != self.filename or hashlib.sha256(content).hexdigest() != digest:
+            return None
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+            conn.settimeout(2)
+            conn.connect(self.path)
+            authority_peer_before_body(conn, *self.peer)
+            conn.sendall(_canonical({"operation_id": self.operation_id, "sha256": digest}) + b"\n")
+            result = _read_message(conn)
+        if isinstance(result, dict) and result.get("request_id") == self.operation_id:
+            return result
+        return None
 
 
 class CapturedCommitSource:
