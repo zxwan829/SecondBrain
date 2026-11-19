@@ -48,11 +48,11 @@ def create_lab_app(auth, authority_factory, candidate, *, read_source=None):
             raise HTTPException(403, "Preview binding mismatch")
         if read_source is not None:
             try:
-                review, raw = read_source()
+                review, source_revision = read_source()
             except OSError as exc:
                 raise HTTPException(409, "Approved source unavailable") from exc
             if (hashlib.sha256(review).hexdigest() != fields["source_sha256"]
-                    or hashlib.sha256(raw).hexdigest() != fields["source_revision"]):
+                    or source_revision != fields["source_revision"]):
                 raise HTTPException(409, "Approved source changed")
         from .d090_authority_writer import D090Rejected, HumanProofUnavailable
 

@@ -32,7 +32,7 @@ HELPER = Path(__file__).with_name("d090_linux_process_helper.py")
 def test_committed_capture_source_detects_raw_review_and_target_drift():
     import hashlib
     from secondbrain_core.modules.capture import CaptureService
-    from secondbrain_core.modules.d090_provenance import verify_committed_source
+    from secondbrain_core.modules.d090_provenance import capture_source_revision, verify_committed_source
     from secondbrain_core.modules.knowledge_read import KnowledgeReadStore
 
     with tempfile.TemporaryDirectory(prefix="d090-capture-") as directory:
@@ -46,6 +46,8 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
         completed = capture.get(item["capture_id"])
         review = (root / "review" / completed["review_path"]).read_bytes()
         raw_path = root / "raw" / completed["raw_path"]
+        source_refs = dict(capture_id=item["capture_id"], review_ref=completed["review_path"],
+                           raw_ref=completed["raw_path"])
         signer = d090.Ed25519GrantSigner("lab-source", Ed25519PrivateKey.generate())
         roles = d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103)
         writer = d090.StrictCreateOnlyWriter(
@@ -70,11 +72,12 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
                 authorities.append(authority)
                 return authority
             fields = dict(approval_id="approval-1", operation_id="operation-1",
-                          source_revision=hashlib.sha256(raw).hexdigest(),
+                          source_revision=capture_source_revision(*source_refs.values(), raw),
                           source_sha256=hashlib.sha256(review).hexdigest(), target_id="target-1")
             review_file = root / "review" / completed["review_path"]
             app = create_lab_app(auth, factory, dict(fields, approved_bytes=review),
-                                 read_source=lambda: (review_file.read_bytes(), raw_path.read_bytes()))
+                                 read_source=lambda: (review_file.read_bytes(),
+                                     capture_source_revision(*source_refs.values(), raw_path.read_bytes())))
             with TestClient(app, base_url=origin, headers={"Origin": origin}) as browser:
                 assert browser.post("/login", json={"password": password.read_text()}).status_code == 200
                 preview = browser.post("/preview").json()
@@ -97,7 +100,7 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
                     if relative == "linked.md" and verify_committed_source(
                         authority, "operation-1", "target-1", content,
                         (root / "review" / completed["review_path"]).read_bytes(),
-                        raw_path.read_bytes(),
+                        raw_path.read_bytes(), **source_refs,
                     ):
                         return {"kind": "review", "ref": completed["review_path"],
                                 "sha256": fields["source_sha256"], "request_id": "operation-1"}
@@ -110,10 +113,13 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
             assert resolved["source"]["ref"] == completed["review_path"]
             content = (root / "knowledge/linked.md").read_bytes()
             assert verify_committed_source(authority, "operation-1", "target-1",
-                                           content, review, raw_path.read_bytes())
+                                           content, review, raw_path.read_bytes(), **source_refs)
             for candidate in ((content+b"x", review, raw), (content, review+b"x", raw),
                               (content, review, raw+b"x")):
-                assert not verify_committed_source(authority, "operation-1", "target-1", *candidate)
+                assert not verify_committed_source(authority, "operation-1", "target-1",
+                                                   *candidate, **source_refs)
+            assert not verify_committed_source(authority, "operation-1", "target-1",
+                content, review, raw, **{**source_refs, "raw_ref": "different.md"})
         finally:
             writer.close()
 
