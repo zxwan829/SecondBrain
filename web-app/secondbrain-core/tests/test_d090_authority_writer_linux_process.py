@@ -38,7 +38,12 @@ def test_approval_entry_separates_core_and_authority_uids():
         private = root / "authority"
         private.mkdir(mode=0o700)
         os.chown(private, uid + 1, gid + 1)
-        test_path = Path(__file__).with_name("test_d090_browser_confirmation.py")
+        module_root = root / "role_modules"
+        module_root.mkdir(mode=0o755)
+        shutil.copytree(Path(__file__).parents[1] / "secondbrain_core",
+                        module_root / "secondbrain_core")
+        test_path = module_root / "test_d090_browser_confirmation.py"
+        shutil.copyfile(Path(__file__).with_name(test_path.name), test_path)
         code = '''
 import runpy, sys
 from pathlib import Path
@@ -64,7 +69,7 @@ for relative in ("password", "signing.key", "ledger/authority.sqlite3"):
             ([sys.executable, "-c", probe, str(private)], uid, gid),
         )
         for command, child_uid, child_gid in commands:
-            process = _spawn(command, child_uid, child_gid, Path(__file__).resolve().parents[1])
+            process = _spawn(command, child_uid, child_gid, module_root)
             stdout, stderr = process.communicate(timeout=30)
             assert process.returncode == 0, (stdout, stderr)
 
