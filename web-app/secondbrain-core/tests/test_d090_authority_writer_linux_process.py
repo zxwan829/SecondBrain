@@ -101,6 +101,16 @@ for relative in ("password", "signing.key", "ledger/authority.sqlite3"):
             port = int(_readline(server))
             attack = probe + '''
 import urllib.request, urllib.error, json
+login = urllib.request.Request("http://127.0.0.1:"+sys.argv[2]+"/login",
+    data=json.dumps({"password":"synthetic-core-only-password"}).encode(),
+    headers={"Host":"authority.test","Origin":"http://authority.test",
+             "Content-Type":"application/json"})
+try:
+    urllib.request.urlopen(login, timeout=5)
+except urllib.error.HTTPError as exc:
+    assert exc.code == 401
+else:
+    raise AssertionError("Core credentials authenticated to Authority")
 for cookie in ("", "sb_app_session=forged"):
     req = urllib.request.Request("http://127.0.0.1:"+sys.argv[2]+"/confirm",
         data=json.dumps({"intent":"promote_exact_preview","binding":{}}).encode(),

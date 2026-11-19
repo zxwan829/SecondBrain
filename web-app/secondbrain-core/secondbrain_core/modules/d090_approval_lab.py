@@ -18,6 +18,12 @@ def create_lab_app(auth, authority_factory, candidate):
                "content_sha256": hashlib.sha256(content).hexdigest()}
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
+    @app.middleware("http")
+    async def prevent_framing(request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        return response
+
     @app.post("/login")
     def login(request: Request, response: Response, body: dict):
         token = auth.login(request, body.get("password"))

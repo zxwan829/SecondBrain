@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,11 +35,12 @@ try {
   browser = await chromium.launch(process.env.D090_EDGE ? { channel: 'msedge' } : {});
   const context = await browser.newContext();
   const approval = await context.newPage();
-  await approval.goto(authorityOrigin);
-  const login = await approval.evaluate(() => fetch('/login', {
+  const entry = await approval.goto(authorityOrigin);
+  assert.equal(entry.headers()['content-security-policy'], "frame-ancestors 'none'");
+  const login = await approval.evaluate(password => fetch('/login', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: 'synthetic-password' }),
-  }).then(response => response.status));
+    body: JSON.stringify({ password }),
+  }).then(response => response.status), await readFile(join(root, 'password'), 'utf8'));
   assert.equal(login, 200);
   const cookies = await context.cookies(authorityOrigin);
   assert.equal(cookies.length, 1);
@@ -64,6 +65,14 @@ try {
     document.body.append(iframe);
   }), authorityOrigin);
   assert.equal(denial, true);
+  assert.equal(await approval.evaluate(async () => {
+    const preview = await fetch('/preview', { method: 'POST' }).then(response => response.json());
+    const confirmation = await fetch('/confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intent: 'promote_exact_preview', binding: preview.binding }),
+    });
+    return (await confirmation.json()).status;
+  }), 'issued');
   assert.ok(coreCookies.every(cookie => cookie === ''));
   console.log('Chromium verified host-only approval cookie and cross-origin DOM isolation');
 } finally {

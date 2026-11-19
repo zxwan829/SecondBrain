@@ -1,8 +1,6 @@
-import json
 import os
+import secrets
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 
@@ -17,7 +15,7 @@ def main():
     import uvicorn
     root = Path(sys.argv[1])
     os.umask(0o077)
-    (root / "password").write_text("synthetic-password")
+    (root / "password").write_text(secrets.token_urlsafe(32))
     key = Ed25519PrivateKey.generate()
     (root / "signing.key").write_bytes(key.private_bytes_raw())
     (root / "ledger").mkdir()
