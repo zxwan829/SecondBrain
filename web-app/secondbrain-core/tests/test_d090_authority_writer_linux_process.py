@@ -69,6 +69,7 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
             os.chown(published, roles.writer_uid, roles.authority_gid)
             os.chown(knowledge, roles.writer_uid, roles.authority_gid)
             knowledge.chmod(0o750)
+            base.chmod(0o755)
             (ledger / "readback-ready").touch()
             stdout, stderr = authority.communicate(timeout=30)
             assert authority.returncode == 0, (stdout, stderr)
