@@ -128,10 +128,8 @@ class Ed25519GrantSigner:
 class D090Authority:
     """Persistent single-use grant ledger with commit/revoke serialization.
 
-    `proof_verifier` must validate a real trusted approval proof. No such source
-    is implemented yet. A test-only verifier is accepted only when the caller
-    separately enables `allow_synthetic_proof`; this module is not production
-    wired and the flag is not read from an HTTP request or environment variable.
+    Browser confirmation must be owned by the Authority process. The separate
+    synthetic verifier is available only to the explicitly enabled test mode.
     """
 
     def __init__(
@@ -141,6 +139,7 @@ class D090Authority:
         writer_publish: Callable[[dict, bytes], dict],
         *,
         role_ids: D090RoleIds,
+        browser_confirmation=None,
         synthetic_proof_verifier: object | None = None,
         allow_synthetic_proof: bool = False,
         allow_synthetic_identities: bool = False,
@@ -152,6 +151,9 @@ class D090Authority:
         self.signer = signer
         self.writer_publish = writer_publish
         self.role_ids = role_ids
+        if browser_confirmation is not None and (synthetic_proof_verifier is not None or allow_synthetic_proof):
+            raise ValueError("browser and synthetic proof modes are exclusive")
+        self.browser_confirmation = browser_confirmation
         if synthetic_proof_verifier is not None and getattr(synthetic_proof_verifier, "test_only", False) is not True:
             raise HumanProofUnavailable("non_test_proof_provider_not_implemented")
         self.synthetic_proof_verifier = synthetic_proof_verifier
@@ -216,7 +218,9 @@ class D090Authority:
         expires_at: int,
         nonce: str,
     ) -> dict:
-        if self.synthetic_proof_verifier is None or not self.allow_synthetic_proof:
+        if self.browser_confirmation is None and (
+            self.synthetic_proof_verifier is None or not self.allow_synthetic_proof
+        ):
             raise HumanProofUnavailable("trusted_human_proof_unavailable")
         if (not isinstance(approved_bytes, bytes) or not approved_bytes
                 or len(approved_bytes) > MAX_OUTPUT_BYTES):
@@ -230,12 +234,6 @@ class D090Authority:
             "content_sha256": hashlib.sha256(approved_bytes).hexdigest(),
             "content_length": len(approved_bytes),
         }
-        try:
-            proof_valid = self.synthetic_proof_verifier.verify(proof, proof_binding)
-        except Exception as exc:
-            raise HumanProofUnavailable("trusted_human_proof_rejected") from exc
-        if not proof_valid:
-            raise HumanProofUnavailable("trusted_human_proof_rejected")
         if (not all(_valid_id(v) for v in (approval_id, operation_id, source_revision, target_id, nonce))
                 or not isinstance(source_sha256, str) or not _SHA256.fullmatch(source_sha256)):
             raise D090Rejected("invalid_approval_binding")
@@ -246,6 +244,15 @@ class D090Authority:
         now = int(time.time())
         if isinstance(expires_at, bool) or not isinstance(expires_at, int) or expires_at <= now or expires_at - now > MAX_GRANT_TTL_SECONDS:
             raise D090Rejected("grant_expired_or_unbounded")
+        try:
+            if self.browser_confirmation is not None:
+                self.browser_confirmation.consume(proof, {
+                    **proof_binding, "nonce": nonce, "expires_at": expires_at,
+                })
+            elif not self.synthetic_proof_verifier.verify(proof, proof_binding):
+                raise HumanProofUnavailable("trusted_human_proof_rejected")
+        except Exception as exc:
+            raise HumanProofUnavailable("trusted_human_proof_rejected") from exc
         grant = {
             "protocol": PROTOCOL, "key_id": self.signer.key_id,
             "approval_id": approval_id, "operation_id": operation_id,

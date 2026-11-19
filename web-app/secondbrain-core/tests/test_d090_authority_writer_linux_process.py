@@ -29,6 +29,46 @@ pytestmark = pytest.mark.skipif(
 HELPER = Path(__file__).with_name("d090_linux_process_helper.py")
 
 
+def test_approval_entry_separates_core_and_authority_uids():
+    uid = _unused_block(31001, 3, pwd.getpwuid)
+    gid = _unused_block(31101, 3, grp.getgrgid)
+    with tempfile.TemporaryDirectory(prefix="d090-approval-") as directory:
+        root = Path(directory)
+        root.chmod(0o711)
+        private = root / "authority"
+        private.mkdir(mode=0o700)
+        os.chown(private, uid + 1, gid + 1)
+        test_path = Path(__file__).with_name("test_d090_browser_confirmation.py")
+        code = '''
+import runpy, sys
+from pathlib import Path
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+root = Path(sys.argv[2])
+key = root / "signing.key"
+key.touch(mode=0o600)
+key.write_bytes(Ed25519PrivateKey.generate().private_bytes_raw())
+runpy.run_path(sys.argv[1])["_exercise_lab_entry"](root, key, True)
+'''
+        probe = '''
+import sys
+from pathlib import Path
+for relative in ("password", "signing.key", "ledger/authority.sqlite3"):
+    try:
+        (Path(sys.argv[1]) / relative).read_bytes()
+    except PermissionError:
+        continue
+    raise AssertionError("Core could read Authority material")
+'''
+        commands = (
+            ([sys.executable, "-c", code, str(test_path), str(private)], uid + 1, gid + 1),
+            ([sys.executable, "-c", probe, str(private)], uid, gid),
+        )
+        for command, child_uid, child_gid in commands:
+            process = _spawn(command, child_uid, child_gid, Path(__file__).resolve().parents[1])
+            stdout, stderr = process.communicate(timeout=30)
+            assert process.returncode == 0, (stdout, stderr)
+
+
 def _unused_block(start: int, count: int, lookup) -> int:
     for base in range(start, start + 5000):
         all_unused = True
