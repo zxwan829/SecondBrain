@@ -116,6 +116,8 @@ def _exercise_core_readback(knowledge, source_socket, ledger, role_values):
     for name in ("authority.sqlite3", "test-private.pem", "password"):
         with pytest.raises(PermissionError):
             (Path(ledger) / name).read_bytes()
+        with pytest.raises(PermissionError):
+            (Path(ledger) / name).open("r+b")
     origin = "https://core.test"
     with tempfile.TemporaryDirectory() as directory:
         password = Path(directory) / "password"
@@ -182,9 +184,10 @@ def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, rol
             from secondbrain_core.modules.app_auth import AppSessionAuth
             from secondbrain_core.modules.d090_approval_lab import create_lab_app
 
-            password = root / "password"
+            import secrets
+            password = Path(ledger) / "password"
             password.touch(mode=0o600)
-            password.write_text("synthetic-d090-capture-password")
+            password.write_text(secrets.token_urlsafe(32))
             origin = "https://authority.test"
             auth = AppSessionAuth(str(password), [origin])
             authorities = []
