@@ -140,6 +140,45 @@ class B1bPromoteAppFactoryTests(unittest.TestCase):
                                             json={"preview_id": preview_id,
                                                   "confirm_intent": "promote_exact_preview"})
 
+    def test_capture_promote_search_resolves_original_raw_through_verified_review(self):
+        from secondbrain_core.modules.capture import CaptureService
+
+        capture = CaptureService(self.raw, self.review, self.state)
+        original = b"# WP61 provenance fixture\n\nwp61rawdigestbridge\n"
+        item = capture.accept_text(original.decode("utf-8"))
+        capture.process(item, original)
+        completed = capture.get(item["capture_id"])
+        review_path = completed["review_path"]
+        review = (self.review / review_path).read_bytes()
+        review_sha = hashlib.sha256(review).hexdigest()
+        self.assertEqual(self.unlock().status_code, 200)
+        response = self.client.post("/api/promote/review/preview", headers=self.headers, json={
+            "review_path": review_path,
+            "review_sha256": review_sha,
+            "target_filename": "wp61-provenance.md",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        preview = response.json()
+        confirmation = self.confirm(preview["preview_id"])
+        self.assertEqual(confirmation.status_code, 200, confirmation.text)
+        self.assertEqual((self.knowledge / "wp61-provenance.md").read_bytes(),
+                         preview["projected_markdown"].encode("utf-8"))
+        search = self.client.get("/api/knowledge/search?q=wp61rawdigestbridge", headers=self.headers)
+        self.assertEqual(search.status_code, 200, search.text)
+        row, = search.json()["items"]
+        result = self.client.get(f"/api/knowledge/items/{row['id']}/source", headers=self.headers)
+        self.assertEqual(result.status_code, 200, result.text)
+        source = result.json()["source"]
+        self.assertEqual(source["ref"], review_path)
+        self.assertEqual(source["sha256"], review_sha)
+        self.assertEqual(source["request_id"], preview["request_id"])
+        verified_review = (self.review / source["ref"]).read_bytes()
+        self.assertEqual(verified_review, review)
+        raw_link = f"/knowledge-assets/00-Inbox/{completed['raw_path']}"
+        self.assertEqual(completed["original_asset"], raw_link)
+        self.assertIn(raw_link.encode("utf-8"), verified_review)
+        self.assertEqual((self.raw / completed["raw_path"]).read_bytes(), original)
+
     def test_preview_is_exact_read_only_and_old_approve_fails_closed(self):
         wrong_unlock_field = self.client.post("/api/promote/auth/unlock", headers=self.headers,
                                               json={"password": self.unlock_secret.read_text()})
