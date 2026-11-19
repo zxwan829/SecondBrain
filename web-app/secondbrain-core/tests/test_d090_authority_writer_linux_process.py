@@ -29,6 +29,60 @@ pytestmark = pytest.mark.skipif(
 HELPER = Path(__file__).with_name("d090_linux_process_helper.py")
 
 
+def test_committed_capture_source_detects_raw_review_and_target_drift():
+    import hashlib
+    from secondbrain_core.modules.capture import CaptureService
+    from secondbrain_core.modules.d090_provenance import verify_committed_source
+    from secondbrain_core.modules.knowledge_read import KnowledgeReadStore
+
+    with tempfile.TemporaryDirectory(prefix="d090-capture-") as directory:
+        root = Path(directory)
+        for name in ("raw", "review", "capture", "knowledge", "ledger"):
+            (root / name).mkdir(mode=0o700)
+        capture = CaptureService(root / "raw", root / "review", root / "capture")
+        raw = b"# D090 linked capture\n\nwp61d090provenance\n"
+        item = capture.accept_text(raw.decode())
+        capture.process(item, raw)
+        completed = capture.get(item["capture_id"])
+        review = (root / "review" / completed["review_path"]).read_bytes()
+        raw_path = root / "raw" / completed["raw_path"]
+        signer = d090.Ed25519GrantSigner("lab-source", Ed25519PrivateKey.generate())
+        roles = d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103)
+        writer = d090.StrictCreateOnlyWriter(
+            str(root / "knowledge"), signer.public_key, signer.key_id,
+            {"target-1": "linked.md"}, roles, allow_synthetic_identities=True)
+        try:
+            class FixtureProof:
+                test_only = True
+
+                def verify(self, proof, binding):
+                    return proof == binding
+
+            authority = d090.D090Authority(
+                str(root / "ledger"), signer, writer.publish, role_ids=roles,
+                synthetic_proof_verifier=FixtureProof(), allow_synthetic_proof=True,
+                allow_synthetic_identities=True)
+            fields = dict(approval_id="approval-1", operation_id="operation-1",
+                          source_revision=hashlib.sha256(raw).hexdigest(),
+                          source_sha256=hashlib.sha256(review).hexdigest(), target_id="target-1")
+            proof = dict(fields, content_sha256=hashlib.sha256(review).hexdigest(),
+                         content_length=len(review))
+            import time
+            grant = authority.issue_grant(proof=proof, **fields, approved_bytes=review,
+                                          expires_at=int(time.time()) + 60, nonce="nonce-1")
+            assert authority.commit(grant, review)["status"] == "published"
+            knowledge = KnowledgeReadStore(str(root / "knowledge"))
+            assert len(knowledge.search("wp61d090provenance", 10)["items"]) == 1
+            content = (root / "knowledge/linked.md").read_bytes()
+            assert verify_committed_source(authority, "operation-1", "target-1",
+                                           content, review, raw_path.read_bytes())
+            for candidate in ((content+b"x", review, raw), (content, review+b"x", raw),
+                              (content, review, raw+b"x")):
+                assert not verify_committed_source(authority, "operation-1", "target-1", *candidate)
+        finally:
+            writer.close()
+
+
 def test_writer_kernel_denies_changes_to_published_target():
     with tempfile.TemporaryDirectory(prefix="d090-writer-policy-") as directory:
         root = Path(directory)
