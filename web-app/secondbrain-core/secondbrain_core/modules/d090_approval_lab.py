@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from .d090_browser_confirmation import BrowserConfirmation
 
 
-def create_lab_app(auth, authority_factory, candidate):
+def create_lab_app(auth, authority_factory, candidate, *, publish=False):
     confirmation = BrowserConfirmation(auth)
     authority = authority_factory(confirmation)
     fields = {key: candidate[key] for key in (
@@ -55,6 +55,8 @@ def create_lab_app(auth, authority_factory, candidate):
             )
         except (D090Rejected, HumanProofUnavailable) as exc:
             raise HTTPException(403, "Approval rejected") from exc
+        if publish:
+            return authority.commit(grant, content)
         return {"operation_id": grant["operation_id"], "status": "issued"}
 
     return app

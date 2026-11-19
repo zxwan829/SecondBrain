@@ -52,27 +52,50 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
             str(root / "knowledge"), signer.public_key, signer.key_id,
             {"target-1": "linked.md"}, roles, allow_synthetic_identities=True)
         try:
-            class FixtureProof:
-                test_only = True
+            from fastapi.testclient import TestClient
+            from secondbrain_core.modules.app_auth import AppSessionAuth
+            from secondbrain_core.modules.d090_approval_lab import create_lab_app
 
-                def verify(self, proof, binding):
-                    return proof == binding
+            password = root / "password"
+            password.touch(mode=0o600)
+            password.write_text("synthetic-d090-capture-password")
+            origin = "https://authority.test"
+            auth = AppSessionAuth(str(password), [origin])
+            authorities = []
 
-            authority = d090.D090Authority(
-                str(root / "ledger"), signer, writer.publish, role_ids=roles,
-                synthetic_proof_verifier=FixtureProof(), allow_synthetic_proof=True,
-                allow_synthetic_identities=True)
+            def factory(confirmation):
+                authority = d090.D090Authority(
+                    str(root / "ledger"), signer, writer.publish, role_ids=roles,
+                    browser_confirmation=confirmation, allow_synthetic_identities=True)
+                authorities.append(authority)
+                return authority
             fields = dict(approval_id="approval-1", operation_id="operation-1",
                           source_revision=hashlib.sha256(raw).hexdigest(),
                           source_sha256=hashlib.sha256(review).hexdigest(), target_id="target-1")
-            proof = dict(fields, content_sha256=hashlib.sha256(review).hexdigest(),
-                         content_length=len(review))
-            import time
-            grant = authority.issue_grant(proof=proof, **fields, approved_bytes=review,
-                                          expires_at=int(time.time()) + 60, nonce="nonce-1")
-            assert authority.commit(grant, review)["status"] == "published"
-            knowledge = KnowledgeReadStore(str(root / "knowledge"))
-            assert len(knowledge.search("wp61d090provenance", 10)["items"]) == 1
+            app = create_lab_app(auth, factory, dict(fields, approved_bytes=review), publish=True)
+            with TestClient(app, base_url=origin, headers={"Origin": origin}) as browser:
+                assert browser.post("/login", json={"password": password.read_text()}).status_code == 200
+                preview = browser.post("/preview").json()
+                response = browser.post("/confirm", json={
+                    "intent": "promote_exact_preview", "binding": preview["binding"],
+                })
+                assert response.status_code == 200, response.text
+                assert response.json()["status"] == "published"
+            authority, = authorities
+            class PinnedSource:
+                def verify(self, relative, content, digest):
+                    if relative == "linked.md" and verify_committed_source(
+                        authority, "operation-1", "target-1", content,
+                        (root / "review" / completed["review_path"]).read_bytes(),
+                        raw_path.read_bytes(),
+                    ):
+                        return {"kind": "review", "ref": completed["review_path"],
+                                "sha256": fields["source_sha256"], "request_id": "operation-1"}
+                    return None
+
+            knowledge = KnowledgeReadStore(str(root / "knowledge"), PinnedSource())
+            row, = knowledge.search("wp61d090provenance", 10)["items"]
+            assert knowledge.source(row["id"])["ref"] == completed["review_path"]
             content = (root / "knowledge/linked.md").read_bytes()
             assert verify_committed_source(authority, "operation-1", "target-1",
                                            content, review, raw_path.read_bytes())
