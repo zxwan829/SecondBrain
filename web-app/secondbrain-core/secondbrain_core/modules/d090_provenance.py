@@ -3,10 +3,58 @@
 import base64
 import hashlib
 import json
+from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 
 from .d090_authority_writer import _canonical
+
+
+class CapturedCommitSource:
+    """Resolve one known Authority operation through the existing Capture store."""
+
+    def __init__(self, authority, capture, *, operation_id, capture_id, target_id, filename):
+        self.authority = authority
+        self.capture = capture
+        self.operation_id = operation_id
+        self.capture_id = capture_id
+        self.target_id = target_id
+        self.filename = filename
+
+    def verify(self, relative, content, digest):
+        if relative != self.filename or hashlib.sha256(content).hexdigest() != digest:
+            return None
+        record = self.capture.get(self.capture_id)
+        if not record or record.get("status") != "completed":
+            return None
+        review_ref, raw_ref = record.get("review_path"), record.get("raw_path")
+        if any(not isinstance(ref, str) or ref in {"", ".", ".."} or Path(ref).name != ref
+               for ref in (review_ref, raw_ref)):
+            return None
+        review = self._read(self.capture.review_root, review_ref)
+        raw = self._read(self.capture.raw_root, raw_ref)
+        if verify_committed_source(
+            self.authority, self.operation_id, self.target_id, content, review, raw,
+            capture_id=self.capture_id, review_ref=review_ref, raw_ref=raw_ref,
+        ):
+            return {"kind": "review", "ref": review_ref,
+                    "sha256": hashlib.sha256(review).hexdigest(),
+                    "request_id": self.operation_id,
+                    "raw": {"ref": raw_ref, "sha256": hashlib.sha256(raw).hexdigest()}}
+        return None
+
+    @staticmethod
+    def _read(root, ref):
+        import os
+        import stat
+        fd = os.open(Path(root) / ref, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise OSError("source is not a regular file")
+            payload = stream.read(8 * 1024 * 1024 + 1)
+            if len(payload) > 8 * 1024 * 1024:
+                raise OSError("source exceeds readback limit")
+            return payload
 
 
 def capture_source_revision(capture_id, review_ref, raw_ref, raw):

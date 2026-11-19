@@ -39,6 +39,9 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
         helper = base / HELPER.name
         shutil.copyfile(HELPER, helper)
         shutil.copytree(Path(__file__).parents[1] / "secondbrain_core", base / "secondbrain_core")
+        (base / "secondbrain_core").chmod(0o755)
+        for path in (base / "secondbrain_core").rglob("*"):
+            path.chmod(0o755 if path.is_dir() else 0o644)
         writer = _spawn(_command("writer", roles, socket_path, helper,
             knowledge_root=knowledge, public_key=public_key), roles.writer_uid, roles.writer_gid, base)
         try:
@@ -75,8 +78,10 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
 def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, role_values):
     import hashlib
     from secondbrain_core.modules.capture import CaptureService
-    from secondbrain_core.modules.d090_provenance import capture_source_revision, verify_committed_source
-    from secondbrain_core.modules.knowledge_read import KnowledgeReadStore
+    from secondbrain_core.modules.d090_provenance import (
+        CapturedCommitSource, capture_source_revision, verify_committed_source,
+    )
+    from secondbrain_core.modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
 
     roles = d090.D090RoleIds(*map(int, role_values.split(",")))
     with tempfile.TemporaryDirectory(prefix="d090-capture-", dir=ledger) as directory:
@@ -141,22 +146,23 @@ def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, rol
                 assert time.monotonic() < deadline, "readback fixture was not provisioned"
                 time.sleep(0.02)
             authority, = authorities
-            class PinnedSource:
-                def verify(self, relative, content, digest):
-                    if relative == "synthetic-note.md" and verify_committed_source(
-                        authority, "operation-1", "synthetic-target", content,
-                        (root / "review" / completed["review_path"]).read_bytes(),
-                        raw_path.read_bytes(), **source_refs,
-                    ):
-                        return {"kind": "review", "ref": completed["review_path"],
-                                "sha256": fields["source_sha256"], "request_id": "operation-1"}
-                    return None
-
-            knowledge_store = KnowledgeReadStore(knowledge, PinnedSource())
-            row, = knowledge_store.search("wp61d090provenance", 10)["items"]
-            resolved = knowledge_store.source(row["id"])
+            resolver = CapturedCommitSource(authority, capture, operation_id="operation-1",
+                capture_id=item["capture_id"], target_id="synthetic-target", filename="synthetic-note.md")
+            knowledge_store = KnowledgeReadStore(knowledge, resolver)
+            app.include_router(create_knowledge_read_router(auth, knowledge_store))
+            with TestClient(app, base_url=origin, headers={"Origin": origin}) as reader:
+                assert reader.post("/login", json={"password": password.read_text()}).status_code == 200
+                result = reader.get("/api/knowledge/search", params={"q": "wp61d090provenance"})
+                assert result.status_code == 200, result.text
+                row, = result.json()["items"]
+                result = reader.get(f"/api/knowledge/items/{row['id']}/source")
+                assert result.status_code == 200, result.text
+                resolved = result.json()
             assert resolved["provenance_status"] == "verified"
             assert resolved["source"]["ref"] == completed["review_path"]
+            assert resolved["source"]["raw"] == {
+                "ref": completed["raw_path"], "sha256": hashlib.sha256(raw).hexdigest(),
+            }
             content = (Path(knowledge) / "synthetic-note.md").read_bytes()
             assert verify_committed_source(authority, "operation-1", "synthetic-target",
                                            content, review, raw_path.read_bytes(), **source_refs)
