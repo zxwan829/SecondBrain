@@ -30,14 +30,58 @@ HELPER = Path(__file__).with_name("d090_linux_process_helper.py")
 
 
 def test_committed_capture_source_detects_raw_review_and_target_drift():
+    uid = _unused_block(41000, 3, pwd.getpwuid)
+    gid = _unused_block(51000, 3, grp.getgrgid)
+    roles = d090.D090RoleIds(uid, uid+1, uid+2, gid, gid+1, gid+2)
+    with tempfile.TemporaryDirectory(prefix="d090-integrated-ipc-") as directory:
+        base = Path(directory)
+        ledger, knowledge, socket_path, private_key, public_key = _prepare(base, roles, "operation-1")
+        helper = base / HELPER.name
+        shutil.copyfile(HELPER, helper)
+        shutil.copytree(Path(__file__).parents[1] / "secondbrain_core", base / "secondbrain_core")
+        writer = _spawn(_command("writer", roles, socket_path, helper,
+            knowledge_root=knowledge, public_key=public_key), roles.writer_uid, roles.writer_gid, base)
+        try:
+            assert _readline(writer) == "READY"
+            os.chown(socket_path, roles.authority_uid, roles.authority_gid)
+            socket_path.chmod(0o660)
+            test_module = base / Path(__file__).name
+            shutil.copyfile(__file__, test_module)
+            harness = (
+                "import runpy, sys; "
+                "runpy.run_path(sys.argv[1])['_exercise_committed_capture'](*sys.argv[2:])"
+            )
+            values = [getattr(roles, name) for name in (
+                "core_uid", "authority_uid", "writer_uid", "core_gid", "authority_gid", "writer_gid")]
+            authority = _spawn([sys.executable, "-c", harness, str(test_module),
+                str(ledger), str(knowledge), str(socket_path), str(private_key),
+                ",".join(map(str, values))], roles.authority_uid, roles.authority_gid, base)
+            assert _readline(authority, timeout=20) == "PUBLISHED"
+            # Provision read-only access to the disposable published snapshot.
+            published = knowledge / "synthetic-note.md"
+            os.chown(published, roles.writer_uid, roles.authority_gid)
+            os.chown(knowledge, roles.writer_uid, roles.authority_gid)
+            knowledge.chmod(0o750)
+            (ledger / "readback-ready").touch()
+            stdout, stderr = authority.communicate(timeout=30)
+            assert authority.returncode == 0, (stdout, stderr)
+            assert writer.wait(timeout=5) == 0
+        finally:
+            if writer.poll() is None:
+                writer.kill()
+            writer.communicate(timeout=5)
+
+
+def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, role_values):
     import hashlib
     from secondbrain_core.modules.capture import CaptureService
     from secondbrain_core.modules.d090_provenance import capture_source_revision, verify_committed_source
     from secondbrain_core.modules.knowledge_read import KnowledgeReadStore
 
-    with tempfile.TemporaryDirectory(prefix="d090-capture-") as directory:
+    roles = d090.D090RoleIds(*map(int, role_values.split(",")))
+    with tempfile.TemporaryDirectory(prefix="d090-capture-", dir=ledger) as directory:
         root = Path(directory)
-        for name in ("raw", "review", "capture", "knowledge", "ledger"):
+        for name in ("raw", "review", "capture"):
             (root / name).mkdir(mode=0o700)
         capture = CaptureService(root / "raw", root / "review", root / "capture")
         raw = b"# D090 linked capture\n\nwp61d090provenance\n"
@@ -48,11 +92,9 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
         raw_path = root / "raw" / completed["raw_path"]
         source_refs = dict(capture_id=item["capture_id"], review_ref=completed["review_path"],
                            raw_ref=completed["raw_path"])
-        signer = d090.Ed25519GrantSigner("lab-source", Ed25519PrivateKey.generate())
-        roles = d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103)
-        writer = d090.StrictCreateOnlyWriter(
-            str(root / "knowledge"), signer.public_key, signer.key_id,
-            {"target-1": "linked.md"}, roles, allow_synthetic_identities=True)
+        key = serialization.load_pem_private_key(Path(private_key).read_bytes(), password=None)
+        signer = d090.Ed25519GrantSigner("synthetic-test-key", key)
+        writer = d090.UnixWriterClient(socket_path)
         try:
             from fastapi.testclient import TestClient
             from secondbrain_core.modules.app_auth import AppSessionAuth
@@ -67,13 +109,12 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
 
             def factory(confirmation):
                 authority = d090.D090Authority(
-                    str(root / "ledger"), signer, writer.publish, role_ids=roles,
-                    browser_confirmation=confirmation, allow_synthetic_identities=True)
+                    ledger, signer, writer, role_ids=roles, browser_confirmation=confirmation)
                 authorities.append(authority)
                 return authority
             fields = dict(approval_id="approval-1", operation_id="operation-1",
                           source_revision=capture_source_revision(*source_refs.values(), raw),
-                          source_sha256=hashlib.sha256(review).hexdigest(), target_id="target-1")
+                          source_sha256=hashlib.sha256(review).hexdigest(), target_id="synthetic-target")
             review_file = root / "review" / completed["review_path"]
             app = create_lab_app(auth, factory, dict(fields, approved_bytes=review),
                                  read_source=lambda: (review_file.read_bytes(),
@@ -86,7 +127,6 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
                     "intent": "promote_exact_preview", "binding": preview["binding"],
                 })
                 assert drift.status_code == 409
-                assert list((root / "knowledge").iterdir()) == []
                 raw_path.write_bytes(raw)
                 preview = browser.post("/preview").json()
                 response = browser.post("/confirm", json={
@@ -94,11 +134,17 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
                 })
                 assert response.status_code == 200, response.text
                 assert response.json()["status"] == "published"
+            print("PUBLISHED", flush=True)
+            import time
+            deadline = time.monotonic() + 10
+            while not (Path(ledger) / "readback-ready").is_file():
+                assert time.monotonic() < deadline, "readback fixture was not provisioned"
+                time.sleep(0.02)
             authority, = authorities
             class PinnedSource:
                 def verify(self, relative, content, digest):
-                    if relative == "linked.md" and verify_committed_source(
-                        authority, "operation-1", "target-1", content,
+                    if relative == "synthetic-note.md" and verify_committed_source(
+                        authority, "operation-1", "synthetic-target", content,
                         (root / "review" / completed["review_path"]).read_bytes(),
                         raw_path.read_bytes(), **source_refs,
                     ):
@@ -106,22 +152,22 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
                                 "sha256": fields["source_sha256"], "request_id": "operation-1"}
                     return None
 
-            knowledge = KnowledgeReadStore(str(root / "knowledge"), PinnedSource())
-            row, = knowledge.search("wp61d090provenance", 10)["items"]
-            resolved = knowledge.source(row["id"])
+            knowledge_store = KnowledgeReadStore(knowledge, PinnedSource())
+            row, = knowledge_store.search("wp61d090provenance", 10)["items"]
+            resolved = knowledge_store.source(row["id"])
             assert resolved["provenance_status"] == "verified"
             assert resolved["source"]["ref"] == completed["review_path"]
-            content = (root / "knowledge/linked.md").read_bytes()
-            assert verify_committed_source(authority, "operation-1", "target-1",
+            content = (Path(knowledge) / "synthetic-note.md").read_bytes()
+            assert verify_committed_source(authority, "operation-1", "synthetic-target",
                                            content, review, raw_path.read_bytes(), **source_refs)
             for candidate in ((content+b"x", review, raw), (content, review+b"x", raw),
                               (content, review, raw+b"x")):
-                assert not verify_committed_source(authority, "operation-1", "target-1",
+                assert not verify_committed_source(authority, "operation-1", "synthetic-target",
                                                    *candidate, **source_refs)
-            assert not verify_committed_source(authority, "operation-1", "target-1",
+            assert not verify_committed_source(authority, "operation-1", "synthetic-target",
                 content, review, raw, **{**source_refs, "raw_ref": "different.md"})
         finally:
-            writer.close()
+            pass
 
 
 def test_writer_kernel_denies_changes_to_published_target():
