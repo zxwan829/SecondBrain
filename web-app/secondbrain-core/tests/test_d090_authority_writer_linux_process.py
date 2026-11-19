@@ -95,7 +95,9 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
 
             knowledge = KnowledgeReadStore(str(root / "knowledge"), PinnedSource())
             row, = knowledge.search("wp61d090provenance", 10)["items"]
-            assert knowledge.source(row["id"])["ref"] == completed["review_path"]
+            resolved = knowledge.source(row["id"])
+            assert resolved["provenance_status"] == "verified"
+            assert resolved["source"]["ref"] == completed["review_path"]
             content = (root / "knowledge/linked.md").read_bytes()
             assert verify_committed_source(authority, "operation-1", "target-1",
                                            content, review, raw_path.read_bytes())
