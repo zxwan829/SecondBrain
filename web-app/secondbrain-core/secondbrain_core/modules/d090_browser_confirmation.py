@@ -23,7 +23,7 @@ class BrowserConfirmation:
     def prepare(self, request, binding):
         session = self._session(request)
         now = int(time.time())
-        nonce = secrets.token_urlsafe(32)
+        nonce = "n-" + secrets.token_urlsafe(32)
         with self._lock:
             self._pending = {key: entry for key, entry in self._pending.items()
                              if entry[1]["expires_at"] > now}
