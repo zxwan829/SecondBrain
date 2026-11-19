@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from .d090_browser_confirmation import BrowserConfirmation
 
 
-def create_lab_app(auth, authority_factory, candidate, *, publish=False):
+def create_lab_app(auth, authority_factory, candidate, *, read_source=None):
     confirmation = BrowserConfirmation(auth)
     authority = authority_factory(confirmation)
     fields = {key: candidate[key] for key in (
@@ -46,6 +46,14 @@ def create_lab_app(auth, authority_factory, candidate, *, publish=False):
         exact = body.get("binding")
         if not isinstance(exact, dict) or any(exact.get(key) != value for key, value in binding.items()):
             raise HTTPException(403, "Preview binding mismatch")
+        if read_source is not None:
+            try:
+                review, raw = read_source()
+            except OSError as exc:
+                raise HTTPException(409, "Approved source unavailable") from exc
+            if (hashlib.sha256(review).hexdigest() != fields["source_sha256"]
+                    or hashlib.sha256(raw).hexdigest() != fields["source_revision"]):
+                raise HTTPException(409, "Approved source changed")
         from .d090_authority_writer import D090Rejected, HumanProofUnavailable
 
         try:
@@ -55,7 +63,7 @@ def create_lab_app(auth, authority_factory, candidate, *, publish=False):
             )
         except (D090Rejected, HumanProofUnavailable) as exc:
             raise HTTPException(403, "Approval rejected") from exc
-        if publish:
+        if read_source is not None:
             return authority.commit(grant, content)
         return {"operation_id": grant["operation_id"], "status": "issued"}
 

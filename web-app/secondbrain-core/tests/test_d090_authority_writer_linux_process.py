@@ -72,9 +72,19 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
             fields = dict(approval_id="approval-1", operation_id="operation-1",
                           source_revision=hashlib.sha256(raw).hexdigest(),
                           source_sha256=hashlib.sha256(review).hexdigest(), target_id="target-1")
-            app = create_lab_app(auth, factory, dict(fields, approved_bytes=review), publish=True)
+            review_file = root / "review" / completed["review_path"]
+            app = create_lab_app(auth, factory, dict(fields, approved_bytes=review),
+                                 read_source=lambda: (review_file.read_bytes(), raw_path.read_bytes()))
             with TestClient(app, base_url=origin, headers={"Origin": origin}) as browser:
                 assert browser.post("/login", json={"password": password.read_text()}).status_code == 200
+                preview = browser.post("/preview").json()
+                raw_path.write_bytes(raw + b"changed")
+                drift = browser.post("/confirm", json={
+                    "intent": "promote_exact_preview", "binding": preview["binding"],
+                })
+                assert drift.status_code == 409
+                assert list((root / "knowledge").iterdir()) == []
+                raw_path.write_bytes(raw)
                 preview = browser.post("/preview").json()
                 response = browser.post("/confirm", json={
                     "intent": "promote_exact_preview", "binding": preview["binding"],
