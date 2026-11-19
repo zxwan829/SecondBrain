@@ -72,6 +72,36 @@ for relative in ("password", "signing.key", "ledger/authority.sqlite3"):
             process = _spawn(command, child_uid, child_gid, module_root)
             stdout, stderr = process.communicate(timeout=30)
             assert process.returncode == 0, (stdout, stderr)
+        shutil.rmtree(private / "ledger")
+        (private / "password").unlink()
+        helper = module_root / "d090_http_probe.py"
+        shutil.copyfile(Path(__file__).with_name(helper.name), helper)
+        server = _spawn([sys.executable, str(helper), str(private)], uid+1, gid+1, module_root)
+        try:
+            port = int(_readline(server))
+            attack = probe + '''
+import urllib.request, urllib.error, json
+for cookie in ("", "sb_app_session=forged"):
+    req = urllib.request.Request("http://127.0.0.1:"+sys.argv[2]+"/confirm",
+        data=json.dumps({"intent":"promote_exact_preview","binding":{}}).encode(),
+        headers={"Host":"authority.test","Origin":"http://authority.test",
+                 "Content-Type":"application/json","Cookie":cookie})
+    try:
+        urllib.request.urlopen(req, timeout=5)
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 401
+    else:
+        raise AssertionError("forged confirmation accepted")
+'''
+            core = _spawn([sys.executable, "-c", attack, str(private), str(port)], uid, gid, module_root)
+            stdout, stderr = core.communicate(timeout=15)
+            assert core.returncode == 0, (stdout, stderr)
+            import sqlite3
+            with sqlite3.connect(private / "ledger/authority.sqlite3") as db:
+                assert db.execute("SELECT count(*) FROM grants").fetchone() == (0,)
+        finally:
+            server.terminate()
+            server.communicate(timeout=10)
 
 
 def _unused_block(start: int, count: int, lookup) -> int:
