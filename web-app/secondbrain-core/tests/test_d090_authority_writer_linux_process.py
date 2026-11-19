@@ -38,12 +38,16 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
         ledger, knowledge, socket_path, private_key, public_key = _prepare(base, roles, "operation-1")
         helper = base / HELPER.name
         shutil.copyfile(HELPER, helper)
-        shutil.copytree(Path(__file__).parents[1] / "secondbrain_core", base / "secondbrain_core")
-        (base / "secondbrain_core").chmod(0o755)
-        for path in (base / "secondbrain_core").rglob("*"):
+        module_root = base / "role_modules"
+        module_root.mkdir(mode=0o755)
+        package = module_root / "secondbrain_core"
+        shutil.copytree(Path(__file__).parents[1] / "secondbrain_core", package)
+        package.chmod(0o755)
+        for path in package.rglob("*"):
             path.chmod(0o755 if path.is_dir() else 0o644)
         writer = _spawn(_command("writer", roles, socket_path, helper,
-            knowledge_root=knowledge, public_key=public_key), roles.writer_uid, roles.writer_gid, base)
+            knowledge_root=knowledge, public_key=public_key), roles.writer_uid, roles.writer_gid, module_root)
+        authority = None
         try:
             assert _readline(writer) == "READY"
             os.chown(socket_path, roles.authority_uid, roles.authority_gid)
@@ -58,7 +62,7 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
                 "core_uid", "authority_uid", "writer_uid", "core_gid", "authority_gid", "writer_gid")]
             authority = _spawn([sys.executable, "-c", harness, str(test_module),
                 str(ledger), str(knowledge), str(socket_path), str(private_key),
-                ",".join(map(str, values))], roles.authority_uid, roles.authority_gid, base)
+                ",".join(map(str, values))], roles.authority_uid, roles.authority_gid, module_root)
             assert _readline(authority, timeout=20) == "PUBLISHED"
             # Provision read-only access to the disposable published snapshot.
             published = knowledge / "synthetic-note.md"
@@ -70,6 +74,9 @@ def test_committed_capture_source_detects_raw_review_and_target_drift():
             assert authority.returncode == 0, (stdout, stderr)
             assert writer.wait(timeout=5) == 0
         finally:
+            if authority is not None and authority.poll() is None:
+                authority.kill()
+                authority.communicate(timeout=5)
             if writer.poll() is None:
                 writer.kill()
             writer.communicate(timeout=5)
