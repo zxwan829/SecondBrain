@@ -111,7 +111,7 @@ function Proposal({ id, title, reason, impact, preview, value, decision, decisio
   </article>;
 }
 
-export type SingleInboxSource = { collection: 'drafts'; path: string };
+export type SingleInboxSource = { kind: 'notes'; collection: 'drafts'; path: string } | { kind: 'capture'; captureId: string };
 
 export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = import.meta.env.DEV, notesOnly = false, singleSourceMode = false, singleSource = null }: { locale: Locale; onReview: (reviewPath: string) => void; showSyntheticCaptureDemo?: boolean; notesOnly?: boolean; singleSourceMode?: boolean; singleSource?: SingleInboxSource | null }) {
   const en = locale === 'en';
@@ -160,10 +160,19 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     proposalReadControllers.current.clear();
   }, []);
 
-  const matchesSingleSource = useCallback((record: PersistedProposal, item: UnifiedInboxItem) =>
-    record.source_kind === 'notes' && record.source_id === `${item.collection}:${item.sourcePath}`
-    && record.collection === item.collection && record.path === item.sourcePath,
+  const matchesSingleSource = useCallback((record: PersistedProposal, item: UnifiedInboxItem) => item.source === 'capture'
+    ? record.source_kind === 'capture' && record.source_id === item.captureId
+    : record.source_kind === 'notes' && record.source_id === `${item.collection}:${item.sourcePath}`
+      && record.collection === item.collection && record.path === item.sourcePath,
   []);
+  const matchesSingleSourcePreview = useCallback((preview: ExecutionPreview, record: PersistedProposal, item: UnifiedInboxItem) => {
+    const sourceKind = item.source === 'capture' ? 'capture' : 'notes';
+    const sourceRef = item.source === 'capture' ? item.captureId : item.sourcePath;
+    return preview.proposal_id === record.proposal_id && preview.source_summary?.source_kind === sourceKind
+      && preview.source_summary?.source_ref === sourceRef && preview.source_summary?.source_version === record.source_version
+      && (record.kind === 'journal' ? preview.target_action === 'journal.append'
+        : item.source === 'notes' && record.kind === 'review' && preview.target_action === 'capture.write');
+  }, []);
   const blockSourceBinding = (item: UnifiedInboxItem, message: string) => {
     setSourceBindingBlocked((current) => ({ ...current, [item.id]: true }));
     setProposalRecords((current) => ({ ...current, [item.id]: [] }));
@@ -180,7 +189,43 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     if (showLoading) setLoading(true);
     setCaptureError(''); setNotesError('');
     if (singleSourceMode) {
-      if (!singleSource || singleSource.collection !== 'drafts' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(singleSource.path)) {
+      if (!singleSource) {
+        setNotes([]);
+        setNotesError(en ? 'A valid Draft source is required. No Inbox sources were loaded.' : '必须提供有效的 Draft 来源；未加载任何收件箱来源。');
+        setLoading(false);
+        if (activeLoadController.current === controller) activeLoadController.current = null;
+        return;
+      }
+      if (singleSource.kind === 'capture') {
+        if (!/^[0-9a-f]{32}$/.test(singleSource.captureId)) {
+          setCaptures([]); setNotes([]); setCaptureError(en ? 'A valid Capture ID is required.' : '必须提供有效的 Capture ID。'); setLoading(false);
+          if (activeLoadController.current === controller) activeLoadController.current = null;
+          return;
+        }
+        try {
+          const response = await fetch(`/api/capture/${encodeURIComponent(singleSource.captureId)}`, { credentials: 'same-origin', signal: controller.signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const capture = await response.json() as CaptureItem;
+          if (!isCurrent()) return;
+          if (capture.capture_id !== singleSource.captureId || capture.status !== 'completed' || typeof capture.content_preview !== 'string') {
+            setCaptures([]); setNotes([]);
+            setCaptureError(en ? 'This exact Capture is not complete or has no readable text; no proposal was loaded.' : '此 Capture 尚未处理完成或没有可读文本；未加载任何提案。');
+            return;
+          }
+          setNotes([]);
+          setCaptures([capture]);
+        } catch {
+          if (!isCurrent()) return;
+          setCaptures([]); setNotes([]);
+          setCaptureError(en ? 'The selected Capture could not be read under the current Core session.' : '当前 Core 会话无法读取所选 Capture。');
+        } finally {
+          if (isCurrent()) setLoading(false);
+          if (activeLoadController.current === controller) activeLoadController.current = null;
+        }
+        return;
+      }
+      if (singleSource.kind !== 'notes' || singleSource.collection !== 'drafts'
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(singleSource.path)) {
         setNotes([]);
         setNotesError(en ? 'A valid Draft source is required. No Inbox sources were loaded.' : '必须提供有效的 Draft 来源；未加载任何收件箱来源。');
         setLoading(false);
@@ -250,7 +295,8 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     }
     setLoading(false);
     if (activeLoadController.current === controller) activeLoadController.current = null;
-  }, [en, notesOnly, singleSourceMode, singleSource?.collection, singleSource?.path]);
+  }, [en, notesOnly, singleSourceMode, singleSource?.kind, singleSource?.kind === 'notes' ? singleSource.collection : null,
+    singleSource?.kind === 'notes' ? singleSource.path : null, singleSource?.kind === 'capture' ? singleSource.captureId : null]);
 
   useEffect(() => {
     void load(true);
@@ -480,9 +526,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       await refreshProposals(item).catch(() => undefined);
       throw new Error(en ? `Preview unavailable (HTTP ${previewResponse.status}); reload and review again.` : `预览不可用（HTTP ${previewResponse.status}），请刷新并重新核对。`);
     }
-    if (singleSourceMode && (preview.proposal_id !== record.proposal_id || preview.source_summary?.source_kind !== 'notes'
-      || preview.source_summary?.source_ref !== item.sourcePath || preview.source_summary?.source_version !== record.source_version
-      || (record.kind === 'journal' ? preview.target_action !== 'journal.append' : record.kind === 'review' ? preview.target_action !== 'capture.write' : true))) {
+    if (singleSourceMode && !matchesSingleSourcePreview(preview as ExecutionPreview, record, item)) {
       blockSourceBinding(item, en ? 'The target preview is not bound to the selected source; controls are locked.' : '目标预览未绑定到所选来源；已锁定本来源操作。');
       throw new Error(en ? 'The target preview is not bound to the selected source.' : '目标预览未绑定到所选来源。');
     }
@@ -510,9 +554,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
       throw new Error(en ? `Preview unavailable (HTTP ${response.status}); reload and review again.` : `预览不可用（HTTP ${response.status}），请刷新并重新核对。`);
     }
     const item = items.find((candidate) => proposalRecords[candidate.id]?.some((row) => row.proposal_id === record.proposal_id));
-    if (singleSourceMode && (!item || preview.proposal_id !== record.proposal_id || preview.source_summary?.source_kind !== 'notes'
-      || preview.source_summary?.source_ref !== item.sourcePath || preview.source_summary?.source_version !== record.source_version
-      || (record.kind === 'journal' ? preview.target_action !== 'journal.append' : record.kind === 'review' ? preview.target_action !== 'capture.write' : true))) {
+    if (singleSourceMode && (!item || !matchesSingleSourcePreview(preview as ExecutionPreview, record, item))) {
       if (item) blockSourceBinding(item, en ? 'The target preview is not bound to the selected source; controls are locked.' : '目标预览未绑定到所选来源；已锁定本来源操作。');
       throw new Error(en ? 'The target preview is not bound to the selected source.' : '目标预览未绑定到所选来源。');
     }
@@ -541,14 +583,18 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
     return map[key] || fallback;
   };
 
-  return <section className={notesOnly || singleSourceMode ? 'unified-notes-inbox' : 'capture-page unified-inbox-page'} aria-labelledby="unified-inbox-title">
+  return <section className={notesOnly ? 'unified-notes-inbox' : 'capture-page unified-inbox-page'} aria-labelledby="unified-inbox-title">
     {!notesOnly && <header className="capture-page-header"><div><p className="eyebrow">SECONDBRAIN <span>/</span> {singleSourceMode ? 'INBOX / SOURCE' : 'INBOX'}</p><h1 id="unified-inbox-title">{singleSourceMode ? (en ? 'Single-source Inbox review' : '单来源 Inbox 审批') : text('inbox', '统一收件箱')}</h1><p className="workspace-subtitle">{singleSourceMode
-        ? singleSource ? `${en ? 'Only this Draft is in scope' : '当前范围仅限此 Draft'}：${singleSource.collection}/${singleSource.path}` : (en ? 'Missing or invalid Draft source; no source was loaded.' : 'Draft 来源缺失或无效；未加载任何来源。')
+        ? singleSource?.kind === 'notes' ? `${en ? 'Only this Draft is in scope' : '当前范围仅限此 Draft'}：${singleSource.collection}/${singleSource.path}`
+          : singleSource?.kind === 'capture' ? `${en ? 'Only this Capture is in scope' : '当前范围仅限此 Capture'}：${singleSource.captureId}`
+            : (en ? 'Missing or invalid Draft source; no source was loaded.' : 'Draft 来源缺失或无效；未加载任何收件箱来源。')
         : text('subtitle', '')}</p>{!singleSourceMode && <p className="unified-inbox-boundary">{text('local', '')}</p>}</div>
       {!singleSourceMode && showSyntheticCaptureDemo && <button type="button" className="capture-secondary" onClick={addSyntheticCapture}>{en ? 'Add synthetic Capture' : '添加合成 Capture 示例'}</button>}
     </header>}
     {notesOnly && <div className="unified-inbox-subheader"><h2 id="unified-inbox-title">{en ? 'Notes drafts' : '笔记草稿'}</h2>{showSyntheticCaptureDemo && <button type="button" className="capture-secondary" onClick={addSyntheticCapture}>{en ? 'Add synthetic Capture' : '添加合成 Capture 示例'}</button>}</div>}
-    {singleSourceMode && <p className="unified-mock-boundary">{en ? 'This isolated route never loads the full Inbox or lists Notes/Capture sources.' : '此隔离页面不会加载全量 Inbox，也不会枚举 Notes 或 Capture 来源。'}</p>}
+    {singleSourceMode && <p className="unified-mock-boundary">{singleSource?.kind === 'capture'
+      ? (en ? 'This page reads only the selected Capture. Journal approval and target confirmation are separate from Inbox capture consent.' : '此页仅读取选中的 Capture；Journal 审批和目标确认与 Inbox 收录同意相互独立。')
+      : (en ? 'This isolated route never loads the full Inbox or lists Notes/Capture sources.' : '此隔离页面不会加载全量 Inbox，也不会枚举 Notes 或 Capture 来源。')}</p>}
     {!singleSourceMode && <form className="unified-note-create" onSubmit={(event) => void createNote(event)}>
       <h2>{text('createTitle', '')}</h2>
       <label>{en ? 'Title' : '标题'}<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={160} required /></label>
@@ -569,6 +615,8 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
           { kind: 'knowledge', title: en ? 'Knowledge Review submission' : '知识 Review 提交', reason: en ? 'Would create a new Raw/Capture copy; a provenance-bound Review endpoint is not available in this slice.' : '若提交会新增 Raw/Capture 副本；本切片没有可保留原始来源关联的 Review 接口。', impact: en ? 'No Raw, Review, or Knowledge file is written or promoted; the original stays in its source.' : '不写入 Raw、Review 或 Knowledge 文件，也不执行 Promote；原件留在原位置。', value: values.knowledge ?? classification.knowledgeReview, preview: item.sourceRef, textarea: true },
           { kind: 'project', title: en ? 'Project association' : '项目关联', reason: en ? 'Use a source link/metadata reference; project-link persistence is not available in this slice.' : '按规范应使用来源链接/元数据引用；本切片暂无项目关联持久化接口。', impact: en ? 'No project file is moved or edited; only an in-page pending decision is recorded.' : '不移动或编辑项目文件；仅记录本页待执行审批状态。', value: values.project ?? classification.projectAssociation, preview: item.sourceRef, textarea: false },
         ] : [];
+        const visibleSuggestions = singleSourceMode && singleSource?.kind === 'capture'
+          ? suggestions.filter((suggestion) => suggestion.kind === 'journal') : suggestions;
         return <article className="inbox-item unified-inbox-item" key={item.id} data-source={item.source}>
           <div className="inbox-item-main"><span className="inbox-type">{item.source === 'capture' ? 'CAPTURE' : 'NOTES'}</span><div><h2>{item.title}</h2><p>{item.sourceRef} · {item.sourcePath}</p></div>{item.status && <span className={`capture-status status-${item.status}`}>{item.status}</span>}</div>
           {item.content && <pre className="inbox-preview">{item.content.slice(0, 700)}</pre>}
@@ -578,7 +626,7 @@ export function UnifiedInboxPage({ locale, onReview, showSyntheticCaptureDemo = 
           {!classification ? <button type="button" className="unified-suggest-button" disabled={Boolean(sourceBindingBlocked[item.id])} onClick={() => suggestSafely(item)}>{text('ai', '')}</button> : <div className="unified-suggestion-list" aria-label={en ? 'Suggestions for human approval' : '待人工逐项审批的建议'}>
             <p className="unified-mock-boundary">{en ? 'Deterministic local Mock only. Suggestions and human decisions are persisted by Core; approval never executes a target action.' : '仅确定性本地 Mock。建议和人工决定由 Core 持久化；审批不会执行目标动作。'}</p>
             <button type="button" className="unified-suggest-button" disabled={Boolean(sourceBindingBlocked[item.id])} onClick={() => suggestSafely(item)}>{en ? 'Regenerate Mock suggestions (preserve manual corrections)' : '重新生成 Mock 建议（保留手动修正）'}</button>
-            {suggestions.map((suggestion) => <Proposal key={suggestion.kind} id={suggestion.kind} title={suggestion.title} reason={suggestion.reason} impact={suggestion.impact} preview={suggestion.preview} value={suggestion.value} en={en} saving={savingEdits[item.id]} editError={proposalErrors[item.id]} decision={decisionsFor(suggestion.kind)} decisionRequired={suggestion.kind !== 'classification'}
+            {visibleSuggestions.map((suggestion) => <Proposal key={suggestion.kind} id={suggestion.kind} title={suggestion.title} reason={suggestion.reason} impact={suggestion.impact} preview={suggestion.preview} value={suggestion.value} en={en} saving={savingEdits[item.id]} editError={proposalErrors[item.id]} decision={decisionsFor(suggestion.kind)} decisionRequired={suggestion.kind !== 'classification'}
               classificationOptions={suggestion.kind === 'classification' ? { type: values.type ?? classification.type, types: classification.allowedTypes || [], tags: (values.tags ?? classification.tags.join(', ')).split(/,\s*/).filter((tag) => (classification.allowedTags || []).includes(tag)), tagOptions: classification.allowedTags || [], unknownTags: classification.unknownTagCandidates, onTypeChange: (value) => editSafely(item, 'type', value), onTagsChange: (tags) => editSafely(item, 'tags', tags.join(', ')) } : undefined}
               execution={['journal', 'knowledge', 'project'].includes(suggestion.kind) ? (() => { const kind = suggestion.kind === 'knowledge' ? 'review' : suggestion.kind; const record = proposalRecords[item.id]?.find((candidate) => candidate.kind === kind); if (!record || record.status !== 'approved_recorded') return undefined; const execution = record.execution || { status: record.target_execution_status }; const preview = executionPreviews[record.proposal_id]; const previewTarget = preview?.target || execution.target; const sourceSummary = preview?.source_summary || execution.source_summary; return { status: execution.status, kind, target: previewTarget, sourceSummary, targetUri: execution.target_uri, error: execution.error_code, onPrepare: () => prepareProposal(record), onExecute: (target: ExecutionPreview['target']) => executeProposal(item, record, target) }; })() : undefined}
               onChange={(value) => editSafely(item, suggestion.kind, value)} onApprove={() => decideSafely(item, suggestion.kind, 'approved_recorded')} onReject={() => decideSafely(item, suggestion.kind, 'rejected')} />)}

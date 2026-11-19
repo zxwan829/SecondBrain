@@ -1,5 +1,7 @@
 """SecondBrain Core HTTP application factory."""
+import json
 import os
+import time
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -10,12 +12,16 @@ from starlette.staticfiles import StaticFiles
 from .modules.app_auth import AppSessionAuth
 from .modules.auto_organize import OrganizerControlStore, create_auto_organize_router
 from .modules.capture import CaptureService, create_capture_router, create_inbox_entry_router
+from .modules.channel_identity import WeixinHmacIdentityProvider
+from .modules.weixin_config import load_weixin_inbox_config
+from .modules.trusted_channel_adapter import create_trusted_channel_router
 from .modules.capture_suggestion_binding import TrustedCaptureSuggestionBindingAuthority
 from .modules.hermes_api import HermesAPI
 from .modules.multimodal_capture import MultimodalCaptureProcessors
 from .modules.personal_memory import PersonalMemoryStore, create_personal_memory_router
 from .modules.personal_learning import PersonalLearningPipeline
 from .modules.chat_activity import ChatActivityStore, create_chat_activity_router
+from .modules.chat_knowledge import ChatKnowledgeCitationStore
 from .modules.journal import JournalStore, create_journal_router
 from .modules.journal_source_options import (
     JournalSourceOptionsService,
@@ -23,22 +29,31 @@ from .modules.journal_source_options import (
 )
 from .modules.tasks import TaskStore, create_task_router
 from .modules.projects_activity_read import create_projects_activity_router
+from .modules.review_promote.activity_read import (
+    PromoteAuditActivityReadStore,
+    ReviewActivityReadStore,
+)
 from .modules.daily_brief_agent_health import create_daily_brief_agent_health_router
 from .modules.projects_source_read import ProjectsSourceReadStore
 from .modules.daily_brief_store import DailyBriefRecordReadStore
 from .modules.daily_brief_import import DailyBriefAuditStore, DailyBriefImportStore
 from .modules.calendar_read import create_calendar_read_router
+from .modules.planning import PlanningCandidateService, PlanningCandidateStore, create_planning_router
 from .modules.notes import configured_notes_store, create_notes_router
+from .modules.notes_trash import NotesTrashStore, create_notes_trash_router
 from .modules.knowledge_read import KnowledgeReadStore, create_knowledge_read_router
 from .modules.vocabulary import VocabularyStore, create_vocabulary_router
 from .modules.inbox_proposals import InboxProposalStore, InboxProposalSources, create_inbox_proposal_router
 from .modules.organizer_engine import OrganizerRunner
+from .modules.chat_cost_gate import ChatCostGate
 from .modules.review_promote.http import create_core_router
 from .modules.review_promote.service import PromoteService
 from .modules.review_promote.core_auth import CorePromoteAuth
 from .modules.review_promote.provenance import PromoteProvenanceVerifier
 from .modules.review_promote.subprocess_worker_client import SubprocessPromoteWorker
 from .modules.web_app import create_web_app_router
+from .modules.context_preview import create_context_preview_router
+from .modules.companion_suggestions import CompanionSuggestionStore, create_companion_suggestions_router
 
 
 def create_app():
@@ -104,12 +119,14 @@ def create_app():
     organizer = OrganizerRunner(approval_root, review_root, hermes,
                                 model=organizer_controls.load_model(),
                                 scheduler_enabled=organizer_options["scheduler_enabled"])
+    chat_cost_gate = ChatCostGate.from_environment(organizer.state)
     capture = CaptureService(os.environ["SB_CAPTURE_RAW_ROOT"], review_root, approval_root,
                              processors=MultimodalCaptureProcessors(hermes))
     notes_store = configured_notes_store(
         os.environ.get("SB_NOTES_DRAFTS_ROOT", "").strip(),
         os.environ.get("SB_NOTES_AUTHORIZED_ROOTS", ""),
     )
+    notes_trash_store = NotesTrashStore(notes_store, os.environ.get("SB_NOTES_TRASH_ROOT", "").strip())
     inbox_proposals = InboxProposalStore(Path(approval_root) / "inbox-proposals")
     inbox_proposal_sources = InboxProposalSources(capture, notes_store)
     vocabulary_store = VocabularyStore(approval_root)
@@ -132,32 +149,78 @@ def create_app():
             learning = PersonalLearningPipeline(memory_store)
 
     chat_activity_store = ChatActivityStore(Path(approval_root) / "chat-activity")
+    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,
+                                           operations_root=promote_operations_path)
+    knowledge_read_store = KnowledgeReadStore(knowledge_root, provenance_verifier=provenance)
+    chat_knowledge_citation_store = ChatKnowledgeCitationStore(
+        Path(approval_root) / "chat-knowledge-citations", knowledge_read_store)
     journal_root = os.environ.get("SB_JOURNAL_ROOT", "").strip()
     journal_store = JournalStore(journal_root) if journal_root else None
     task_root = os.environ.get("SB_TASK_ROOT", "").strip()
     task_store = TaskStore(task_root) if task_root else None
     projects_root = os.environ.get("SB_PROJECTS_INDEX_ROOT", "").strip()
     projects_store = ProjectsSourceReadStore(projects_root or None)
+    companion_projects_store = ProjectsSourceReadStore(
+        projects_root or None, max_entries=50, max_file_bytes=64 * 1024,
+        max_total_bytes=2 * 1024 * 1024,
+    )
+    companion_store = CompanionSuggestionStore(Path(approval_root) / "companion-suggestions")
     daily_brief_root = os.environ.get("SB_DAILY_BRIEF_STORE_ROOT", "").strip()
     daily_brief_store = DailyBriefRecordReadStore(daily_brief_root or None)
     daily_brief_import_store = DailyBriefImportStore(daily_brief_root or None)
     daily_brief_audit_store = DailyBriefAuditStore(os.path.join(approval_root, "daily-brief-audit.jsonl"))
+    promote_activity_store = PromoteAuditActivityReadStore(audit_path)
+    planning_candidate_store = PlanningCandidateStore(approval_root)
+    planning_candidate_service = PlanningCandidateService(
+        auth, hermes, task_store, projects_store, journal_store, planning_candidate_store,
+    )
 
     app = FastAPI(title="SecondBrain Core", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.chat_activity_store = chat_activity_store
+    app.state.app_auth = auth
+    app.state.capture_service = capture
+    app.state.personal_memory_store = memory_store
+    app.state.knowledge_read_store = knowledge_read_store
+    app.state.task_store = task_store
+    app.state.projects_source_store = projects_store
+    app.state.companion_suggestion_store = companion_store
+    app.state.notes_trash_store = notes_trash_store
+    app.state.daily_brief_audit_store = daily_brief_audit_store
+    app.state.chat_knowledge_citation_store = chat_knowledge_citation_store
+    app.state.planning_candidate_store = planning_candidate_store
+    app.state.planning_candidate_service = planning_candidate_service
     # No trusted Hermes source adapter or Core consent ledger is configured.
     # Keep the internal candidate fail-closed and expose no HTTP route.
     app.state.capture_suggestion_binding_authority = TrustedCaptureSuggestionBindingAuthority()
     journal_source_options = JournalSourceOptionsService(journal_store, auth)
     app.state.journal_source_options_service = journal_source_options
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
-    app.include_router(create_web_app_router(auth, hermes, service, review_root, knowledge_root,
-                                             organizer, personal_learning=learning))
+    app.include_router(create_web_app_router(
+        auth, hermes, service, review_root, knowledge_root, organizer,
+        personal_learning=learning, knowledge_store=knowledge_read_store,
+        citation_store=chat_knowledge_citation_store, chat_cost_gate=chat_cost_gate,
+    ))
+    app.include_router(create_context_preview_router(
+        auth, hermes, memory_store, knowledge_read_store,
+    ))
+    app.include_router(create_companion_suggestions_router(
+        auth, companion_store, task_store, companion_projects_store,
+    ))
     app.include_router(create_auto_organize_router(auth, organizer, organizer_controls))
     app.include_router(create_capture_router(auth, capture))
     app.include_router(create_inbox_entry_router(
         auth, capture, inbox_proposals, inbox_proposal_sources, vocabulary_store,
     ))
+    weixin_enabled = os.environ.get("SB_WEIXIN_INBOX_ENABLED", "false").strip().lower()
+    if weixin_enabled not in {"true", "false"}:
+        raise RuntimeError("SB_WEIXIN_INBOX_ENABLED must be true or false")
+    if weixin_enabled == "true":
+        try:
+            weixin_secret, weixin_senders = load_weixin_inbox_config()
+            weixin_identity = WeixinHmacIdentityProvider(weixin_secret, weixin_senders)
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Weixin Inbox configuration is invalid: {exc}") from exc
+        app.include_router(create_trusted_channel_router(capture, weixin_identity))
     # Journal/Task business records are authoritative and the activity index is
     # repairable under the private Core state root; Hermes has no state mount.
     app.include_router(create_chat_activity_router(auth, hermes, chat_activity_store,
@@ -166,6 +229,9 @@ def create_app():
     app.include_router(create_task_router(auth, task_store, hermes, chat_activity_store))
     app.include_router(create_projects_activity_router(
         auth, journal_store, task_store, projects_store=projects_store, notes_store=notes_store,
+        daily_brief_audit_store=daily_brief_audit_store, memory_store=memory_store,
+        capture_service=capture, review_store=ReviewActivityReadStore(review_root),
+        promote_activity_store=promote_activity_store,
     ))
     app.include_router(create_daily_brief_agent_health_router(
         auth, hermes, brief_store=daily_brief_store, projects_store=projects_store,
@@ -174,11 +240,11 @@ def create_app():
     ))
     app.include_router(create_journal_source_options_router(journal_source_options))
     app.include_router(create_calendar_read_router(auth, journal_store, task_store))
-    app.include_router(create_notes_router(auth, notes_store))
-    provenance = PromoteProvenanceVerifier(review_root, approvals_path, audit_path,
-                                           operations_root=promote_operations_path)
+    app.include_router(create_planning_router(planning_candidate_service))
+    app.include_router(create_notes_trash_router(auth, notes_store, notes_trash_store))
+    app.include_router(create_notes_router(auth, notes_store, vocabulary_store))
     app.include_router(create_knowledge_read_router(
-        auth, KnowledgeReadStore(knowledge_root, provenance_verifier=provenance)))
+        auth, knowledge_read_store))
     app.include_router(create_vocabulary_router(auth, vocabulary_store))
     app.include_router(create_inbox_proposal_router(
         auth, inbox_proposals, inbox_proposal_sources, vocabulary_store,
@@ -197,18 +263,59 @@ def create_app():
 
     @app.middleware("http")
     async def security_headers(request, call_next):
-        response = await call_next(request)
-        if (request.url.path in {
+        probe_marker = os.environ.get("SB_E2E_WP5_AUTOSAVE_MARKER", "")
+        probe_path = os.environ.get("SB_E2E_WP5_AUTOSAVE_LOG", "")
+        is_wp5_autosave_probe = bool(
+            probe_marker and probe_path
+            and request.method == "PUT"
+            and request.url.path.startswith("/api/notes/drafts/")
+            and request.query_params.get("wp5_probe") == probe_marker
+        )
+
+        def record_wp5_probe(event, status=None):
+            if not is_wp5_autosave_probe:
+                return
+            row = {"marker": probe_marker, "at_ms": int(time.time() * 1000), "event": event}
+            if status is not None:
+                row["status"] = int(status)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                descriptor = os.open(probe_path, flags, 0o600)
+                try:
+                    info = os.fstat(descriptor)
+                    if info.st_size < 2048 and info.st_uid == os.geteuid() and not info.st_mode & 0o077:
+                        os.write(descriptor, (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8"))
+                finally:
+                    os.close(descriptor)
+            except OSError:
+                # Test-only evidence must never change the request result.
+                return
+
+        record_wp5_probe("core-request-received")
+        try:
+            response = await call_next(request)
+        except Exception:
+            record_wp5_probe("core-handler-error")
+            raise
+        record_wp5_probe("core-response", response.status_code)
+        # Core API payloads are owner-scoped or authentication/authorization
+        # decisions. Default them to non-cacheable, including error responses
+        # returned before route handlers can attach response headers. Existing
+        # route-specific directives (for example SSE no-transform) are kept.
+        if request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "private, no-store")
+        if (request.url.path.startswith("/api/daily-brief") or request.url.path in {
                 "/api/promote/auth/unlock", "/api/promote/auth/lock",
                 "/api/promote/review/preview", "/api/promote/review/confirm",
-                "/api/daily-brief/source-options/journal",
         } or request.url.path.startswith("/api/promote/operations/")):
+            response.headers["Cache-Control"] = "private, no-store"
+        if request.url.path.endswith("/knowledge-citations"):
             response.headers["Cache-Control"] = "private, no-store"
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Content-Security-Policy",
-                                    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                                    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
                                     "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'")
         return response
 

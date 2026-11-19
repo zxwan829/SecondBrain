@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-10-20
+updated: 2026-11-09
 status: current
 type: decision-log
 ---
@@ -457,3 +457,36 @@ Organizer 首次纳入会话目前以当时的消息数和尾部 ID 建基线，
 **冻结范围：** `GET /api/daily-brief/source-options/journal?date=YYYY-MM-DD&limit=N`。要求规范日期、limit 默认 20 且范围 1–50；校验可信 Origin、App Session、`daily_brief.read` 与 `journal.read`。响应仅包含 `status/items/freshness`，每项仅含 `kind/id/date/version`；不得返回正文、路径、Session、异常细节。只读同日记录，按稳定行 ID 排序并执行 1 MiB 单日字节、5000 行/日及 2 MiB 请求预算，超限 fail closed。
 
 **状态：** D089 合同已由 PR #128 固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b` 合并至 main（merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）；Core 正式只读路由已注册。B 报告 Core 全量和 localhost HTTP 验证通过，A 留有对最终 HEAD 的独立验收记录。该状态仅代表源码合并及本地合成证据，不代表部署、真实 Journal/Vault 访问或用户验收；实施状态见 `00-CURRENT.md`，证据见 `Progress-Log.md`。此 ID 取代 #97/#128 历史评论中误用的 D087 标签，不影响 D087 渠道架构决定。
+
+
+## D091 — 2026-10-24 统一 Codex 主 Agent 协作（APPROVED GOVERNANCE DECISION）
+
+**决定：** SecondBrain 从原先需要用户在 A/B 两个 Codex 会话间人工转发任务的双线协作，调整为**一个 Codex 主 Agent 统一调度**。Web 与 Core 保留为专业工作角色，不再是需要用户分别启动的固定会话；主 Agent 在现有执行环境允许时委派隔离子 Agent，无法委派时由主 Agent 在隔离 worktree 中按依赖顺序执行。主 Agent 持续读取 GitHub 既有 Issue/PR 与 CURRENT、自主分配/联调/协调复审/验证/满足门禁后合并已授权的普通 PR，并领取下一工作包。ChatGPT 负责重大架构、安全合同与阶段验收，不再逐项充当普通 PR 的复审依赖或 A/B 消息中转；未参与实现的 Review 子 Agent 可独立审查普通 PR，但不能替代 GitHub 必需审批；用户负责最终目标和需专门授权的行动。
+
+**替代范围：** 本决定取代旧治理描述中的“两条聊天线人工协调、各自等待用户重新发令”流程。V1-Delivery-Plan 的 A/B 分工表和历史 Issue 记录保留用于技术所有权、任务依赖和审计，不代表仍需要两个独立 Codex 对话。现行执行规则以 `AGENTS.md` → `Agent-Rules.md` 为准，阶段状态以 `00-CURRENT.md` 为准。
+
+**安全与能力边界：** 一个主 Agent 不构成独立复审：实现者不能自证独立审查；普通 PR 仍需既有复审、测试和 GitHub 门禁，敏感安全变更仍需专门授权。NAS/真实 Vault、生产部署、Private、外部渠道、付费调用、不可逆删除、Writer/Promote 和 D090/OS Gate 沿用现有禁止/审批边界。**单会话内部连续执行不等于跨会话无人值守**；持久调度器及长期凭据、预算、停止机制需以后单独设计授权，不得把本决定写成已部署自动调度服务。
+
+## D092 — 2026-11-07 rich-page 原生富文档持久化（APPROVED ARCHITECTURE DECISION）
+
+**授权依据：** 用户明确批准 Issue #46 的 rich-page 方案，要求完整继承固定归档 `BlockSuite-Editor@b25a75d9a3c474614c79f24ac5396c317e02bf8f` 的全部字体、样式、交互及 22 个补丁，不得用功能降级绕过无损保存。
+
+**数据合同：** 新增 `rich-page` 原生资源，沿用现有 note-scoped BlockSuite v1 资源协议、Yjs 全状态、完整 Snapshot 和同笔记不可变 Blob；富 Page 的完整格式由原生资源保存，Markdown 保留稳定相对引用和可读内容投影。普通 Markdown 笔记仍以其原文件为权威，不自动转换、迁移或改写既有笔记。创建富 Page 必须由明确的用户操作产生新 Draft/新资源；若未来提供既有笔记创建副本入口，也必须显式操作且保留原件。
+
+**保存与冲突：** 原生资源和可读投影复用现有 Note/资源/附件集合 ETag、权限、同笔记锁与原子文件操作；任何外部 Markdown 或资源版本变化均拒绝自动覆盖，保留远端数据和本地未保存 Yjs/Snapshot/Blob 副本。若资源已确认保存而后续 Markdown 投影写入冲突，原生资源不得回退或静默覆盖 Markdown，须显示未完成/冲突并允许显式下载、重新预览及处理双方内容；不暗中合并。稳定资源引用不得因投影导出失败丢失。
+
+**资源治理与发布：** 不另建存储体系，rich-page 纳入既有每笔记资源/Blob 配额、历史闭包容量/保留、摘要校验、恢复及 Trash 一致性。归档 Mock backend、演示种子、迁移或清缓存行为不接入生产资料。全部归档差异逐项保留映射与验证结果；单一最终候选通过独立审查、安全检查及真实 Chromium 全量相关交互、保存/重开/冲突/恢复后，才按既有授权完成 NAS App-only 切换。其他 NAS 服务、Hermes、Private、Writer/Promote、微信及 WP6/VNext 边界不变。
+
+**状态边界：** 本条批准实施合同，不表示已实现、测试、部署或用户验收；实时进度和唯一 NEXT 由 CURRENT 记录。
+
+## D093 — 2026-11-09 用户直达入库、AI 受控入库与知识可追溯检索（APPROVED PRODUCT / ARCHITECTURE DIRECTION）
+
+**决定：** 正式 Knowledge 按可信发起方及用户具体授权分流，不按文件格式、YAML frontmatter、客户端或 Agent 自报的“用户创建/用户导入/AI 生成”文字决定权限。用户在可信身份与 Core 会话下主动创建/编辑笔记、上传文件、选择正式归档目标即构成本次写入授权，走专用受限用户写接口，无需重复 Review；AI/Agent 自主生成、总结、整理、修改并拟写入正式库的内容仍走 Raw → Review → 精确预览/差异 → 用户批准 → Core 受控 Promote。用户明确审阅 AI 成稿与准确目标并确认保存，可只确认一次，同时记录 AI 起草与对应 Run/Task。普通 Chat 的 D086 收录先入 Inbox 规则不变。
+
+**安全与数据：** 用户通道与 Agent/自动化工具通道必须在 Core 以真实认证来源及操作意图区分；只相信服务端会话/可信渠道绑定，验证目标路径、权限、来源/内容哈希、版本、并发/幂等及审计，严禁因此给予 Hermes、通用 Notes API 或 Vault 递归 RW。既有 Promoter/Writer/操作系统隔离门槛不降低。Capture Raw 原件不可变；用户自己的工作笔记允许安全版本更新，不能被 AI 悄悄覆盖。机器提取/OCR/STT 和可重建索引只是原资料的派生物，无需审核；AI 衍生摘要/标签/分类要改变正式资料或元数据时遵守确认规则；AI 被拒候选留记录但不入正式库。Private 保持排除。
+
+**可读与检索：** Markdown/TXT/代码直接作为 AI 可读正文；富文档、PDF、图片、网页、音频保留原件并以稳定 ID、源版本/哈希、附件引用关联机器可读文本或索引，不强制每个原件另造一个实体 Markdown，也不另建正式知识权威。Hermes 必须实际接收受限、低信任的知识正文而非仅有引用元数据，并对答案所用证据提供可打开的精确文件/版本/位置引用；资料内容不能被提升为 system 指令。解析失败仍以文件名、来源、日期可检索，标记未解析/失败/未支持；修改/改名/删除/撤权/恢复使派生索引更新或失效。关键词优先，语义检索须经真实漏召回 benchmark 和成本评估后另行选择。
+
+**分期及替代：** WP5 部署收口的唯一 NEXT 保持不变。未来 WP6/#78 保留 AI Review→Promote→Knowledge 的安全闭环，补最小用户可信直达 Markdown/笔记、Hermes 正文采用与引用回源。**WP6 完成不取消** 后续 V1 已有 P4-1/P4-3/P4-5/P2-4 义务：BlockSuite 投影保留标题/列表层级、表格、含语言代码块、图片引用；Database/Kanban/Canvas 给结构化可读摘要与原生链接；建立标题、列表、表格、代码、图片五类内容的导出→重新导入差异基准；已批准多格式的可检索、失败状态和索引生命周期。V1 MUST 仍为 Markdown/TXT、URL、PDF、图片和音频；Office、视频、压缩包、Embedding/向量索引继续为 V1 后候选。D007 和既有“一律先 Review/Promote”仅在用户可信主动入库场景被本决定修订，D086、D078、D092 其余约束继续有效。
+
+**状态：** 用户批准产品及架构规则，不代表代码已实现、WP6 已启动、生产 Writer/Promote 已开启、NAS/ACL/真实 Vault 有新授权，亦不代表测试、部署或用户验收通过。实现状态与唯一 NEXT 以 00-CURRENT.md 为准。

@@ -1,9 +1,10 @@
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sha } from '@blocksuite/global/utils';
 
-vi.mock('./MarkdownEditor', () => ({
-  MarkdownEditor: ({ value, onChange, disabled, onOpenVisualAsset }: { value: string; onChange: (value: string) => void; disabled: boolean; onOpenVisualAsset?: (filename: string) => void }) => <>
+vi.mock('./BlockSuiteMarkdownEditor', () => ({
+  BlockSuiteMarkdownEditor: ({ value, onChange, disabled, onOpenVisualAsset }: { value: string; onChange: (value: string) => void; disabled: boolean; onOpenVisualAsset?: (filename: string) => void }) => <>
     <textarea aria-label="合成 Markdown 编辑器" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
     {value.match(/[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json/)?.[0] && <button onClick={() => onOpenVisualAsset?.(value.match(/[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json/)![0])}>打开图形附件</button>}
   </>,
@@ -20,11 +21,52 @@ vi.mock('./VisualAssetDialog', () => ({
     </section>;
   },
 }));
+vi.mock('./BlockSuiteResourceEditor', () => ({
+  createBlockSuiteResourcePayload: (resourceKind: string) => ({ schemaVersion: 1, resourceKind,
+    docId: '00000000-0000-4000-8000-000000000002', updateB64: 'AQ==', snapshot: { schemaVersion: 1 } }),
+  BlockSuiteResourceEditor: () => <div role="dialog" aria-label="合成 BlockSuite 资源编辑器" />,
+}));
 
 import { NotesPage } from './NotesPage';
 
+async function createMarkdownDraft() {
+  fireEvent.click(await screen.findByText('更多新建'));
+  fireEvent.click(await screen.findByRole('button', { name: '新建 Markdown 草稿' }));
+}
+
 describe('NotesPage', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it('opens frontmatter notes in BlockSuite while preserving the complete Markdown source', async () => {
+    const note = { collection: 'drafts', path: '中文笔记.md', content: '---\ntags: [合成]\ncustom: 保留\n---\n\n# 正文\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/notes') return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: note.path, title: '中文笔记' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${encodeURIComponent(note.path)}`) return new Response(JSON.stringify(note), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '中文笔记' }));
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    expect(editor.value).toBe(note.content);
+    expect(screen.queryByRole('button', { name: '切回旧版编辑器' })).toBeNull();
+  });
+
+  it('opens supported notes directly in BlockSuite by default', async () => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000002', content: '# Direct BlockSuite\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === '/api/notes') return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path: note.path, title: 'Direct BlockSuite' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${note.path}`) return new Response(JSON.stringify(note), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Direct BlockSuite' }));
+    expect(await screen.findByLabelText('合成 Markdown 编辑器')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '切回旧版编辑器' })).toBeNull();
+  });
 
   it('opens single-source Inbox for the selected Draft only after the unsaved-navigation guard passes', async () => {
     const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Selected Draft\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
@@ -62,13 +104,75 @@ describe('NotesPage', () => {
 
     render(<NotesPage />);
     await screen.findByRole('heading', { name: '笔记' });
-    fireEvent.click(screen.getByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: '# Still here\n\nUnsaved content.' } });
     await screen.findByText('未保存');
     await screen.findByText('保存失败', {}, { timeout: 3000 });
     expect(editor.value).toContain('Unsaved content.');
   });
+
+  it('keeps unsaved Markdown and reports a version conflict when autosave returns 412', async () => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (init?.method === 'PUT') return new Response(JSON.stringify({ detail: 'revision changed' }), { status: 412 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+
+    render(<NotesPage />);
+    await createMarkdownDraft();
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: '# Keep this edit\n\nConflict content.' } });
+    expect(await screen.findByText('版本冲突', {}, { timeout: 3000 })).toBeTruthy();
+    expect(screen.getByText('文件已在其他位置修改。当前输入仍保留；请复制未保存内容后重新载入再合并。')).toBeTruthy();
+    expect(editor.value).toContain('Conflict content.');
+  });
+
+  it.each([false, true])('keeps a 412 conflict and blocks pending autosaves (already queued: %s)', async (queueSecondSave) => {
+    const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    let resolvePut: ((response: Response) => void) | undefined;
+    let putCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(note), { status: 200 });
+      if (init?.method === 'PUT') {
+        putCount += 1;
+        return putCount === 1
+          ? new Promise<Response>((resolve) => { resolvePut = resolve; })
+          : new Response(JSON.stringify({ detail: 'revision changed' }), { status: 412 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+
+    render(<NotesPage />);
+    await createMarkdownDraft();
+    const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
+    vi.useFakeTimers();
+    fireEvent.change(editor, { target: { value: '# First projection\n' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    expect(resolvePut).toBeTypeOf('function');
+
+    fireEvent.change(editor, { target: { value: '# Latest editor content\n' } });
+    if (queueSecondSave) await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    await act(async () => {
+      resolvePut!(new Response(JSON.stringify({ detail: 'revision changed' }), { status: 412 }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    if (!queueSecondSave) await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+
+    expect(screen.getByText('版本冲突')).toBeTruthy();
+    expect(screen.getByText('文件已在其他位置修改。当前输入仍保留；请复制未保存内容后重新载入再合并。')).toBeTruthy();
+    expect(editor.value).toBe('# Latest editor content\n');
+    expect(putCount).toBe(1);
+    vi.useRealTimers();
+  });
+
   it('serializes overlapping autosaves with the newest confirmed ETag', async () => {
     const note = { collection: 'drafts', path: '00000000-0000-4000-8000-000000000001', content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
     const pending: ((response: Response) => void)[] = [];
@@ -85,7 +189,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     vi.useFakeTimers();
     fireEvent.change(editor, { target: { value: '# First edit\n' } });
@@ -114,7 +218,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     const { unmount } = render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     vi.useFakeTimers();
     fireEvent.change(editor, { target: { value: '# First edit\n' } });
@@ -148,7 +252,7 @@ describe('NotesPage', () => {
     });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: '# Unsaved\n' } });
     fireEvent.change(document.getElementById('notes-collection')!, { target: { value: 'personal' } });
@@ -167,7 +271,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
     await screen.findByRole('region', { name: '历史版本预览' });
@@ -187,7 +291,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
     expect(await screen.findByText('暂无可恢复版本。')).toBeTruthy();
@@ -211,7 +315,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     fireEvent.click(screen.getByRole('button', { name: '查看可恢复版本' }));
     expect(await screen.findByText(expected as string)).toBeTruthy();
@@ -285,7 +389,7 @@ describe('NotesPage', () => {
     });
 
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     fireEvent.click(await screen.findByRole('button', { name: button }));
     await screen.findByRole('dialog', { name: '合成图形编辑器' });
     expect(await screen.findByRole('button', { name: '打开图形附件' })).toBeTruthy();
@@ -317,7 +421,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     fireEvent.click(await screen.findByRole('button', { name: '插入思维导图' }));
     const source = await screen.findByLabelText('合成图形源') as HTMLTextAreaElement;
     fireEvent.change(source, { target: { value: '{"data":{"text":"pending graph"},"children":[]}' } });
@@ -345,7 +449,7 @@ describe('NotesPage', () => {
       throw new Error(`Unexpected request ${url}`);
     });
     render(<NotesPage />);
-    fireEvent.click(await screen.findByRole('button', { name: '新建 Draft' }));
+    await createMarkdownDraft();
     fireEvent.click(await screen.findByRole('button', { name: '插入思维导图' }));
     const editor = await screen.findByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement;
     await screen.findByText(/图形源文件已创建，但 Markdown 引用未确认保存；正文保留在编辑区。/);
@@ -358,6 +462,246 @@ describe('NotesPage', () => {
       expect(screen.getByText('版本冲突')).toBeTruthy();
       expect(screen.queryByRole('button', { name: '重试保存图形引用' })).toBeNull();
     }
+  });
+
+  it('explicitly rebases a newly created BlockSuite reference after a Markdown 412', async () => {
+    const path = '00000000-0000-4000-8000-000000000001';
+    const initial = { collection: 'drafts', path, content: '# Initial\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    const latest = { ...initial, content: '# Initial\n\nRemote concurrent edit.\n', etag: 'c'.repeat(64) };
+    const resourceId = '11111111111111111111111111111111';
+    let putCount = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes' && init?.method === 'POST') return new Response(JSON.stringify(initial), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/resources` && init?.method === 'POST') {
+        return new Response(JSON.stringify({ resource_id: resourceId, resource_kind: 'database',
+          doc_id: '00000000-0000-4000-8000-000000000002', filename: `${resourceId}.blocksuite.json`,
+          reference: `[BlockSuite resource](attachments/${resourceId}.blocksuite.json)`, etag: 'b'.repeat(64), note_etag: initial.etag, artifact_set_etag: 'e'.repeat(64) }), { status: 201 });
+      }
+      if (url === `/api/notes/drafts/${path}` && init?.method === 'PUT') {
+        putCount += 1;
+        if (putCount === 1) return new Response(JSON.stringify({ detail: 'revision changed' }), { status: 412 });
+        expect(new Headers(init.headers).get('If-Match')).toBe(`"${latest.etag}"`);
+        const content = JSON.parse(String(init.body)).content;
+        expect(content).toContain('Remote concurrent edit.');
+        expect(content).toContain(`${resourceId}.blocksuite.json`);
+        return new Response(JSON.stringify({ ...latest, content, etag: 'd'.repeat(64) }), { status: 200 });
+      }
+      if (url === `/api/notes/drafts/${path}` && !init?.method) return new Response(JSON.stringify(latest), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots`) return new Response(JSON.stringify({ note_etag: latest.etag, artifact_set_etag: 'e'.repeat(64), snapshots: [] }), { status: 200 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+
+    render(<NotesPage />);
+    await createMarkdownDraft();
+    fireEvent.click(await screen.findByRole('button', { name: '新建 BlockSuite Database' }));
+    await screen.findByText('版本冲突');
+    const retry = await screen.findByRole('button', { name: '读取最新笔记并追加 BlockSuite 资源引用' });
+    fireEvent.click(retry);
+    await screen.findByRole('dialog', { name: '合成 BlockSuite 资源编辑器' });
+    expect(putCount).toBe(2);
+  });
+
+  it('previews a BlockSuite closure and restores only after explicit confirmation with both current ETags', async () => {
+    const path = '00000000-0000-4000-8000-000000000001';
+    const resourceId = '11111111111111111111111111111111';
+    const targetResourceId = '22222222222222222222222222222222';
+    const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const blobKey = await sha(imageBytes.slice().buffer as ArrayBuffer);
+    const digestRaw = atob(blobKey.replace(/-/g, '+').replace(/_/g, '/'));
+    const blobHex = [...digestRaw].map((char) => char.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    let imageBinary = ''; for (const byte of imageBytes) imageBinary += String.fromCharCode(byte);
+    const currentEtag = 'a'.repeat(64); const currentSet = 'b'.repeat(64);
+    const targetEtag = 'c'.repeat(64); const targetSet = 'd'.repeat(64);
+    const currentNote = { collection: 'drafts', path, content: `# Current\n\n[BlockSuite resource](attachments/${resourceId}.blocksuite.json)\n`, etag: currentEtag, read_only: false, safety_reasons: [] };
+    const targetNote = { ...currentNote, content: `# Previous snapshot\n\n[BlockSuite resource](attachments/${targetResourceId}.blocksuite.json)\n`, etag: targetEtag };
+    const entry = { snapshot_id: 'f'.repeat(64), note_sha256: targetEtag, artifact_set_etag: targetSet,
+      created_at: '2026-11-05T10:00:00Z', artifact_count: 1, artifact_bytes: 512 };
+    let restored = false;
+    let restoreHeaders: Headers | undefined;
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path, title: 'Current' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}` && !init?.method) return new Response(JSON.stringify(restored ? targetNote : currentNote), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots`) return new Response(JSON.stringify({
+        note_etag: restored ? targetEtag : currentEtag, artifact_set_etag: restored ? targetSet : currentSet, snapshots: [entry],
+      }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots/${entry.snapshot_id}`) return new Response(JSON.stringify({
+        snapshot_id: entry.snapshot_id, note: { content: targetNote.content, etag: targetEtag }, artifact_set_etag: targetSet,
+        artifacts: [{ kind: 'resource', id: targetResourceId, etag: 'e'.repeat(64), resource: {
+          schemaVersion: 1, resourceId: targetResourceId, resourceKind: 'database', docId: 'target-doc', updateB64: 'AQ==', snapshot: { blocks: 2, sourceId: blobKey },
+        } }, { kind: 'blob', id: blobKey, etag: blobHex, content_type: 'image/png', size_bytes: imageBytes.byteLength, data_base64: btoa(imageBinary) }],
+      }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/resources/${resourceId}` && !restored) return new Response(JSON.stringify({
+        schemaVersion: 1, resourceId, resourceKind: 'database', docId: 'current-doc', updateB64: 'AQ==', snapshot: {},
+        etag: '9'.repeat(64), note_etag: currentEtag, artifact_set_etag: currentSet, filename: `${resourceId}.blocksuite.json`,
+      }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/resources/${targetResourceId}` && restored) return new Response(JSON.stringify({
+        schemaVersion: 1, resourceId: targetResourceId, resourceKind: 'database', docId: 'target-doc', updateB64: 'AQ==', snapshot: { blocks: 2, sourceId: blobKey },
+        etag: 'e'.repeat(64), note_etag: targetEtag, artifact_set_etag: targetSet, filename: `${targetResourceId}.blocksuite.json`,
+      }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/blobs/${encodeURIComponent(blobKey)}` && restored) return new Response(imageBytes, { status: 200, headers: {
+        ETag: `"${blobHex}"`, 'X-Note-ETag': `"${targetEtag}"`, 'X-Artifact-Set-ETag': `"${targetSet}"`, 'Content-Type': 'image/png',
+      } });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots/${entry.snapshot_id}/restore` && init?.method === 'POST') {
+        restoreHeaders = new Headers(init.headers);
+        restored = true;
+        return new Response(JSON.stringify({ snapshot_id: entry.snapshot_id, note_etag: targetEtag, artifact_set_etag: targetSet, restored: true, duplicate: false }), { status: 200 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Current' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看可恢复版本' }));
+    fireEvent.click(await screen.findByRole('button', { name: '选择并预览' }));
+    expect((await screen.findByText(/# Previous snapshot/, { selector: 'pre' })).textContent).toContain('# Previous snapshot');
+    expect(screen.getByText(/database · target-doc/)).toBeTruthy();
+    expect(confirm).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: '确认恢复此 BlockSuite 快照' }));
+    await screen.findByText('BlockSuite 快照已恢复，并重新验证了正文与引用资源。');
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining(`image/png · ${imageBytes.byteLength} bytes · ${blobHex}`));
+    expect(restoreHeaders?.get('If-Match')).toBe(`"${currentEtag}"`);
+    expect(restoreHeaders?.get('If-Artifact-Set-Match')).toBe(`"${currentSet}"`);
+    expect((screen.getByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement).value).toContain('# Previous snapshot');
+  });
+
+  it('keeps a complete local Markdown/resource/Blob copy when snapshot restore returns 412', async () => {
+    const path = '00000000-0000-4000-8000-000000000003';
+    const currentResourceId = '33333333333333333333333333333333';
+    const targetResourceId = '44444444444444444444444444444444';
+    const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const blobKey = await sha(imageBytes.slice().buffer as ArrayBuffer);
+    const digestRaw = atob(blobKey.replace(/-/g, '+').replace(/_/g, '/'));
+    const blobHex = [...digestRaw].map((char) => char.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    let imageBinary = ''; for (const byte of imageBytes) imageBinary += String.fromCharCode(byte);
+    const currentEtag = 'a'.repeat(64); const currentSet = 'b'.repeat(64);
+    const targetEtag = 'c'.repeat(64); const targetSet = 'd'.repeat(64);
+    const note = { collection: 'drafts', path, content: `# Current note\n\n[BlockSuite resource](attachments/${currentResourceId}.blocksuite.json)\n`, etag: currentEtag, read_only: false, safety_reasons: [] };
+    const entry = { snapshot_id: 'f'.repeat(64), note_sha256: targetEtag, artifact_set_etag: targetSet,
+      created_at: '2026-11-05T10:00:00Z', artifact_count: 1, artifact_bytes: 256 };
+    let restoreHeaders: Headers | undefined;
+    let downloaded: Blob | undefined;
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => { downloaded = blob as Blob; return 'blob:recovery'; });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'drafts', kind: 'drafts' }] }), { status: 200 });
+      if (url === '/api/notes/drafts') return new Response(JSON.stringify({ items: [{ path, title: 'Current with image' }] }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}` && !init?.method) return new Response(JSON.stringify(note), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots`) return new Response(JSON.stringify({ note_etag: currentEtag, artifact_set_etag: currentSet, snapshots: [entry] }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots/${entry.snapshot_id}`) return new Response(JSON.stringify({
+        snapshot_id: entry.snapshot_id, note: { content: `# Older\n\n[BlockSuite resource](attachments/${targetResourceId}.blocksuite.json)\n`, etag: targetEtag }, artifact_set_etag: targetSet,
+        artifacts: [{ kind: 'resource', id: targetResourceId, etag: 'e'.repeat(64), resource: {
+          schemaVersion: 1, resourceId: targetResourceId, resourceKind: 'database', docId: 'older-doc', updateB64: 'AQ==', snapshot: {},
+        } }],
+      }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/resources/${currentResourceId}`) return new Response(JSON.stringify({
+        schemaVersion: 1, resourceId: currentResourceId, resourceKind: 'edgeless-canvas', docId: 'current-doc', updateB64: 'AQ==', snapshot: { sourceId: blobKey },
+        etag: '9'.repeat(64), note_etag: currentEtag, artifact_set_etag: currentSet, filename: `${currentResourceId}.blocksuite.json`,
+      }), { status: 200 });
+      if (url === `/api/notes/drafts/${path}/blocksuite/blobs/${encodeURIComponent(blobKey)}`) return new Response(imageBytes, { status: 200, headers: {
+        ETag: `"${blobHex}"`, 'X-Note-ETag': `"${currentEtag}"`, 'X-Artifact-Set-ETag': `"${currentSet}"`, 'Content-Type': 'image/png',
+      } });
+      if (url === `/api/notes/drafts/${path}/blocksuite/snapshots/${entry.snapshot_id}/restore` && init?.method === 'POST') {
+        restoreHeaders = new Headers(init.headers);
+        return new Response(JSON.stringify({ detail: 'Current closure changed' }), { status: 412 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Current with image' }));
+    fireEvent.click(await screen.findByRole('button', { name: '查看可恢复版本' }));
+    fireEvent.click(await screen.findByRole('button', { name: '选择并预览' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认恢复此 BlockSuite 快照' }));
+    expect(await screen.findByText(/恢复未执行（HTTP 412）/)).toBeTruthy();
+    expect(restoreHeaders?.get('If-Match')).toBe(`"${currentEtag}"`);
+    expect(restoreHeaders?.get('If-Artifact-Set-Match')).toBe(`"${currentSet}"`);
+    fireEvent.click(screen.getByRole('button', { name: '下载恢复前的正文、资源与图片副本' }));
+    const backup = JSON.parse(await downloaded!.text());
+    expect(backup.captureComplete).toBe(true);
+    expect(backup.note.content).toContain('# Current note');
+    expect(backup.resources).toHaveLength(1);
+    expect(backup.blobs[0]).toMatchObject({ id: blobKey, content_type: 'image/png', bytes: imageBytes.byteLength, base64: btoa(imageBinary) });
+    expect((screen.getByLabelText('合成 Markdown 编辑器') as HTMLTextAreaElement).value).toContain('# Current note');
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires confirmation before soft deletion and sends the current SHA with an idempotency key', async () => {
+    const note = { collection: 'projects', path: 'synthetic.md', content: '# Synthetic\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    const deletes: RequestInit[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'projects', kind: 'authorized' }] }), { status: 200 });
+      if (url === '/api/notes/projects') return new Response(JSON.stringify({ items: [{ path: note.path, title: 'Synthetic' }] }), { status: 200 });
+      if (url === '/api/notes/projects/synthetic.md') return new Response(JSON.stringify(note), { status: 200 });
+      if (url.startsWith('/api/notes/trash/projects/synthetic.md') && init?.method === 'DELETE') {
+        deletes.push(init);
+        return new Response(JSON.stringify({ status: 'trashed', trash_id: 'b'.repeat(32) }), { status: 201 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Synthetic' }));
+    fireEvent.click(await screen.findByRole('button', { name: '移到回收站' }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(deletes).toHaveLength(0);
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: '移到回收站' }));
+    await screen.findByText('笔记已移到回收站，可在回收站恢复；共享附件未删除。');
+    expect(deletes).toHaveLength(1);
+    expect(new Headers(deletes[0].headers).get('If-Match')).toBe(`"${note.etag}"`);
+    expect(new Headers(deletes[0].headers).get('Idempotency-Key')).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(screen.getByText('选择笔记或新建 Draft')).toBeTruthy();
+  });
+
+  it('reports an unconfigured Trash root honestly and keeps the note untouched', async () => {
+    const note = { collection: 'projects', path: 'synthetic.md', content: '# Synthetic\n', etag: 'a'.repeat(64), read_only: false, safety_reasons: [] };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'projects', kind: 'authorized' }] }), { status: 200 });
+      if (url === '/api/notes/projects') return new Response(JSON.stringify({ items: [{ path: note.path, title: 'Synthetic' }] }), { status: 200 });
+      if (url === '/api/notes/projects/synthetic.md') return new Response(JSON.stringify(note), { status: 200 });
+      if (url === '/api/notes/trash?limit=50&offset=0') return new Response(JSON.stringify({ detail: 'Notes Trash is not configured' }), { status: 501 });
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Synthetic' }));
+    fireEvent.click(screen.getByRole('button', { name: '回收站' }));
+    expect(await screen.findByText('回收站尚未配置。笔记未被删除；请先配置隔离的 Trash 存储位置。')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '返回笔记' })).toBeTruthy();
+  });
+
+  it('keeps a conflicted Trash item and refuses to overwrite its original path', async () => {
+    const item = { trash_id: 'b'.repeat(32), collection: 'projects', path: 'synthetic.md', sha256: 'a'.repeat(64), size_bytes: 10, trashed_at: '2026-10-24T00:00:00Z', status: 'trashed', duplicate: false, recovery_reason: null };
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let restoreCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/notes' && !init?.method) return new Response(JSON.stringify({ collections: [{ id: 'projects', kind: 'authorized' }] }), { status: 200 });
+      if (url === '/api/notes/projects') return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (url === '/api/notes/trash?limit=50&offset=0') return new Response(JSON.stringify({ status: 'real', items: [item], pagination: { limit: 50, offset: 0, has_more: false } }), { status: 200 });
+      if (url === `/api/notes/trash/${item.trash_id}/restore` && init?.method === 'POST') {
+        restoreCalls += 1;
+        return new Response(JSON.stringify({ detail: 'Restore target already exists' }), { status: 409 });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<NotesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: '回收站' }));
+    fireEvent.click(await screen.findByRole('button', { name: '恢复到原目录' }));
+    expect(await screen.findByText('恢复目标已存在，未覆盖任何文件。请先处理同名目标后再重试。')).toBeTruthy();
+    expect(screen.getByText('synthetic.md')).toBeTruthy();
+    expect(restoreCalls).toBe(1);
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('拒绝覆盖'));
   });
 
 });

@@ -64,7 +64,7 @@ function submit(buttonLabel = '发送') {
 }
 
 describe('D086 explicit Journal intent to Inbox', () => {
-  it.each(['记一下：原文', '记下来 原文', '写日记：原文', '记录一下，原文', '保存这段话：原文', '写到日记里：原文'])
+  it.each(['记一下：原文', '记下来 原文', '写日记：原文', '记录一下，原文', '保存这段话：原文', '写到日记里：原文', '请帮我记一下：原文', '麻烦帮我记录到日记里，原文'])
   ('recognizes frozen explicit Journal phrase %s', (text) => {
     expect(isExplicitJournalIntent(text)).toBe(true);
   });

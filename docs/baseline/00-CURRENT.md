@@ -1,239 +1,169 @@
 ---
 created: 2026-09-30
-updated: 2026-10-20
+updated: 2026-11-09
 status: current
 source: GitHub SecondBrain Monorepo
 ---
-# SecondBrain — 当前交付基线（V1 + Personal Intelligence）
+# SecondBrain — 当前项目状态
 
-> 本文件只维护最新完成定义、原 V1 完整 MUST 矩阵、新批准的智能伙伴核心能力状态、NOW/BLOCKED/DEFERRED 与文档导航。**2026-10-16 D077 已确定新产品最高目标：自然联想、持续个人学习、主动规划；详见 `Decision-Log.md` D077 / `Architecture.md`。** 稳定架构见 `Architecture.md`；正式取舍见 `Decision-Log.md`；运行环境见 `Environment-Baseline.md`；历史证据见 `Progress-Log.md`。
+> 本文件是项目唯一进度入口。它记录可核验的主线、运行快照、验收状态、当前下一步和少量核心任务；历史过程见 `Progress-Log.md`，稳定架构见 `Architecture.md`，批准的决定见 `Decision-Log.md`，最后一次运行快照见 `Environment-Baseline.md`。未实时复核的运行状态一律标为 UNKNOWN。
 
-## 2026-10-20 最新阶段裁定与 NEXT（Issue #76/#96/#97）
+## 当前快照
 
-- **最新应用源码主线：** `87671644356e01d58ec2780d0c45bd11f4c3edfe`。之后 PR #131（main merge `18fac18f89ce3275d9d693bd89f57cdb83083a96`）仅合并治理文档，不改应用源码。Daily Brief 来源校验 #123、Core 测试路径可移植性 #124、人工内容持久化 #125 均已合并；D089 Journal source-options Core 路由 PR #128 亦已合并（固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b`，merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）。B 报告 Core 全量 420 tests + 28 subtests 与正式 localhost HTTP 验证通过；A 对固定 HEAD 的独立验收记录了真实 `create_app()` + Uvicorn 正式路由定向测试 1 passed，未报告 P0/P1。源码合并与本地合成证据不代表部署、真实 Journal/Vault 访问或用户业务验收。#125 保存的是用户明确提交的人工撰写内容，并在读取时重新验证 Task/Project/Journal 来源；不代表 AI 自动生成、定时调度或生产数据闭环。
-- **Projects / Activity / Daily Brief 基础接线：** #107/#108/#111/#114/#116/#119/#120 已合并。当前 Projects 的显式 registry 与状态仅有合成/受限来源证据，尚未连接真实业务项目并完成用户验收；Brief Core 来源验证与人工文本保存已合并，`approved_import` 仍返回 501；用户明确触发的 AI 编写属于批准的产品方向但尚未实现，后台自动生成/调度尚未获批。
-- **Daily Brief UI #126：** Draft。固定 HEAD 已通过 source/hash、幂等、POST→GET、冲突与错误响应的隔离 HTTP 验证；Edge 启动 SIGABRT、Chromium 启动 SIGTRAP，真实点击和三视口浏览器验收 **BLOCKED_ENV / NOT RUN**，不得重复消耗主线时间做同环境诊断。
-- **A 线 Web #127/#129：** Draft；独立源码审查通过，定向及全量 Web 测试、typecheck/build 报告通过；真实浏览器验收仍受上述环境阻断。
-- **A 线 D086 Chat→Inbox #130：** Draft、Web-only；明确 Journal 意图将原文提交统一 Inbox，不直接写 Journal、不创建 Hermes Run。PR 报告 Web 283 tests、typecheck/build 及合成 Core HTTP 回归通过；真实浏览器未运行且尚未合并，main 当前路径未改变。
-- **B 线 Core #128 / D089：** 已合并至 main（固定 HEAD `203f586a24acd8132620b180e9d1a76a3751a72b`，merge `87671644356e01d58ec2780d0c45bd11f4c3edfe`）。真实 Core 路由 `GET /api/daily-brief/source-options/journal` 已注册；B 报告 420 Core tests + 28 subtests 和本地正式 HTTP 验证通过，A 对最终固定 HEAD 留有独立验收记录。尚未部署或对真实 Journal/Vault 做业务验收。
-- **其他未完成切片：** #106 Restricted Writer 仅为合成候选，OS 身份/ACL/mount/peer 隔离未验证；#101 仅为合成可信渠道适配器，未连接微信/飞书。均保持 Draft，不视为生产能力。
-- **总体交付：** 原 V1 MUST 和 D077 Companion MVP 均 **NOT DONE**。源码合并、隔离合成测试、NAS 部署、真实业务数据、生产安全准入和用户验收分层记录。最新环境事实仍仅由 `Environment-Baseline.md` 的 2026-10-19 快照代表，本轮未重新核验生产。
-- **10 月 22 日目标风险：** “形成基本 V1 业务闭环，可接受小型修补”目前 **AT RISK**。核心存储切片已进入 main，但 Web 真实点击、真实数据/用户业务验收及正式 Knowledge Promote 闭环仍缺证据；不能把源码合并等同目标达成。
-- **唯一 NEXT：** A 继续 #130 及不依赖崩溃浏览器环境的 Web 切片；Daily Brief UI 后续按已合并 D089 Core 合同推进，真实浏览器验收仍受环境阻断。B 在 #97 授权内继续与 #128 不重叠的 Core 合成任务（如 #106 Writer 候选、#101 合成渠道适配器）；不重复实现 D089。各切片分别提交 readiness，再由 PMO 裁定集成。不得部署、读取/写入真实 Vault、启用 Promote、调用付费模型或接入真实渠道，除非另行明确授权。
+- **最新应用代码与生产版本（2026-11-09）：** GitHub main 为 PR #325 squash merge `f67c379a79aec78a11c6fc298fd059a92954d020`；此前 PR #324 CSP 修复已包含。生产 App-only 部署 Image ID `sha256:08ed5a6c8095bce7b84576bd95499f788781f573738aad0ffbaa49fd519c10ce`，revision label 与 main SHA 一致、running/healthy。Live Compose SHA-256 `36782e00227b6f978950a21b57629ad357ac1c670daa468a8da6ee9cbfdccf19`，只修改 App image 行；Hermes 未切换。部署与生产专项证据见 Environment-Baseline。
+- **总体：** V1 尚未完成。GitHub main 的代码/文档状态不代表生产部署、真实数据验证或用户验收。
+- **最近生产安全复核（2026-11-09 部署后）：** App health 返回 status=ok、promote_enabled=false、hermes_configured=true；Weixin 开关未设置，Knowledge RO、Private 未挂载、Secrets RO。App UID/GID 1026:100、只读 rootfs、no-new-privileges、loopback 127.0.0.1:9120→8000。Hermes 与部署前 ID、镜像、StartedAt、RestartCount 相同。
+- **开发阶段：** PR #319/#324/#325 工程验证通过并合并，PR #325 已 App-only 部署。生产合成 AX03 Blob/Canvas/真实 412 fork 闭环通过；PR #325 的 AX01/AX02 合成 Draft 验证保存、刷新重开、干净退出无误报，以及真实未保存标题/Yjs 修改的离开保护和取消保留。Edgeless 假 Dirty 根因及修复、性能数据见 Issue #46；生产缺失资源负例仍 NOT RUN。整体 `ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PASS / USER_UAT_PENDING`；Notes/左侧列表视觉体验仍未获用户验收，不得写 `USER_UAT_PASS`。
+- **PR #274 工程验收与部署：** Daily Brief 合成旅程的 Journal 请求断言按页面阶段记录基线；完整 Gate [Actions #41967914277](https://github.com/zxwan829/SecondBrain/actions/runs/41967914277) PASS、独立审查 PASS。PR #274 固定 merge commit `268ccae7255c1e2f4fea057d9630d40d7dcca704` 已于 2026-11-05 部署，生产健康和安全门禁通过。工程 Gate 与部署验证都不替代新版 Chat UI 用户验收。
+- **PR #277 App-only 部署与生产合成 UAT：** 固定 merge SHA `7272b7388d9453a4abe212e6aa8d528e7e0dcd82` 已部署，App running/healthy；Compose 仅 App image 变化，Hermes、挂载及权限不变。生产合成 UAT 部分通过：Notes Draft 新建、编辑、保存、刷新重开及精确 API 回读通过；Journal 空白合成日期新增两条不同幂等键记录，刷新后两条按序回读。相同幂等键重放仍 NOT RUN，故整项 UAT 尚未通过。详情见 `Environment-Baseline.md`。
+- **本阶段状态：** PARTIAL / LIMITED_CHAT_UAT_PASS / CHAT_UI_DEPLOYED / CHAT_UI_ENGINEERING_GATE_PASS / USER_WAIVED_NOT_RUN / WP5_MARKDOWN_INTEGRATION_ENGINEERING_PASS / WP5_FINAL_FIXES_ENGINEERING_PASS / WP5_PR325_MERGED / WP5_DEPLOYED / WP5_PRODUCTION_TEST_PASS / WP5_USER_UAT_PENDING / PR277_DEPLOYED_AND_VERIFIED / NOTES_JOURNAL_PRODUCTION_SYNTHETIC_UAT_PARTIAL / UAT_SCOPE_DEVIATION_ACCEPTED。生产 Blob 412 fork、Notes Dirty/刷新与保存专项通过；缺失资源负例 NOT RUN，用户最终体验仍待验收。WP6 未启动。
 
-## 2026-10-20 主线源码进展与分层门禁（历史快照；被本文件顶部后续裁定更新）
+## 能力状态
 
-- **本阶段最新 main 源码：** 合并安全门禁 PR [#105](https://github.com/zxwan829/SecondBrain/pull/105) `d42e3ce7fb652e77d2b1526dd9031bcbb64468e4`、Web Projects/Activity PR [#107](https://github.com/zxwan829/SecondBrain/pull/107) `525d05870fe31592fdbd6553d485381a5b17e713`、Daily Brief/Agent Health PR [#108](https://github.com/zxwan829/SecondBrain/pull/108) `054b989e3cea1a5b1422dfc5ad53a3436caa6c02`、Home/Calendar PR [#111](https://github.com/zxwan829/SecondBrain/pull/111) `1720e2649dc1b8c96acb44f372b055988625e32e`。#108 堆叠 #107、#111 堆叠 #108，逐项更新 base 并核验剩余文件后合并；此前 #98/#102/#99 亦已合入（参见 #76）。
-- **安全门禁：SOURCE MERGED / CODE-LEVEL FAIL-CLOSED（非生产安全准入）。** Core 生产 `create_app()` 对 `SB_PROMOTE_ENABLED=true` 的 `inline` 与同 UID `subprocess` 均拒绝启动；成功 Promote 仅在 tests 内显式组装合成路由。A Codex 报告定向 59 passed/19 subtests + Web BFF 25 passed、语法及 diff-check PASS；A ChatGPT 审查源码增量，未独立重跑。旧 Draft #100/#103 的等效安全变更已通过 #105 合并，旧 Draft 不再单独重复合入；**独立 OS UID/ACL/mount/peer 身份隔离仍未实现或实测，生产 Promote 不可启用**。
-- **V1 Web 页面源码：LOCAL_CANDIDATE / MERGED，不等于可用业务功能。** Projects、Activity、Daily Brief、Agent Health 与 Calendar 已有只读页面及禁读正文/会话、可信空态/拒绝、不被动跨模块请求的前端合成用例；A Codex 报告 #107 39、#108 43、#111 45 定向测试通过，typecheck/build/diff-check PASS，构建大 chunk 警告未解，依赖审计 2 low + 2 moderate 尚未处置。**对应 Core 只读接口已由集成 PR #114 合入 main**；隔离合成 Core HTTP 与真实 Edge 视口测试通过，但生产/用户业务验收 NOT RUN。Brief 不生成内容；没有后端时页面只能显示 BACKEND_NOT_IMPLEMENTED 或显式开发 fixture。
-- **Core 接口合成集成 #114 已合入：** 固定 HEAD `5d622ccd4d40ed86954579bbed91ce081d3ca260`，merge `d7ca99504f8f34c60b40b1350a6bfed2471d5f26`，等效整合 #109（Projects/Activity）、#110（Brief/Agent Health）、#112（Home/Calendar）；重复 `tasks.py` 2MiB 读取预算/`list_for_projection()` **只保留一份**。原 #109/#110/#112 以 SUPERSEDED 关闭，未独立 merge。独立代码/证据审查 PASS，Codex 本地 Core 组合 51 + Auth/Promote 36 = 87 pytest PASS、Web 48 Vitest PASS，typecheck/build/diff-check PASS；GitHub 无可见自动 CI 检查，不宣称 CI PASS。真实 loopback Core HTTP + Edge 1440×1000、820×1180、390×667 三视口共 18 页访问、认证 401/Origin 403、模块精准请求隔离和无横向溢出有合成证据。Projects `not_configured`、Daily Brief `not_configured` = **NOT BUSINESS CLOSED**；Activity `partial`、Agent Health `not_configured`、Calendar `ok`（2 条合成元数据）、Home `ok` 仅代表合成行为。平板 Home P2 已由 #116 源码修复（本地三视口 PASS）；大 chunk 与 npm audit 2 low/2 moderate 未解决。真实数据、生产部署、用户业务验收 NOT RUN。
-- **此前本地 HTTP 合成证据保留：** #96 中真实 Edge + 临时 Core HTTP 的 Proposal History 200 → 显式确认 → Inbox POST 202 → exact GET 200 通过，Chat Run/SSE 是 synthetic stub；不等于可信 Hermes 或生产业务验收。
-- **未合并/未授权：** B3 真正受限 Writer、OS UID/ACL/mount/peer credentials，Draft #101 真实外部渠道可信接入，以及 NAS/Compose 部署、真实 Vault/Private、付费模型与生产 Promote。#100/#103 仍 Draft，不因 #105 合并而可直接开启写入。生产现状不变。
-- **历史 NEXT（已由文件顶部 2026-10-20 新阶段 NEXT 取代）：** Projects 与 Daily Brief 的可信源设计及跨端收口。OS Writer 安全运行、生产部署与真实用户验收仍需单独授权。**已合并源码 ≠ 已部署 ≠ 业务已可用 ≠ 生产安全准入。**
+原 V1 MUST/SHOULD 与 D077 Companion 产品合同继续以[Web App V1 业务规格](business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture 业务规格](business-specs/Universal-Capture-Business-Spec.md)、`Decision-Log.md` D077 为准。本矩阵只汇总 main、最近有日期的生产证据和用户验收，不缩减正式范围。D086 合成来源授权/Consent 候选不等于微信渠道；微信输入渠道按 P4-2 / D087 单独记录。
 
-## 1. V1 完成定义与当前状态
-
-**原 V1 业务交付门槛（保留、不缩水）：** 用户能在受支持入口完成原始内容采集、生成 Review、查看并明确批准/暂缓、由 Core 安全写入 Knowledge、再检索和使用知识；Web App V1 MUST 页面使用可信真实数据，具备基本跨设备可用性、Private 隔离和恢复能力。代码或单项页面验收不能替代完整闭环。
-
-**新的 Companion MVP 门槛（D077，已批准、尚未整体实现/验收）：** 日常 Chat 无检索提示地关联长期个人记忆与可信知识；获准对话低风险学习、跨 Session 召回与纠正；精确事实回源；自然语言 Journal、简单 Task、Capture 与主动建议。原 V1 MUST 保持不变。D080 两次 GLM-4.5-Air Run 中，首轮自动学习写入通过，跨 Session 自然召回失败；D082 的情境保留修复已进入最新 main，但生产重新验证仍未完成，详见 Issue #28/#30。
-
-**V1 总体状态：NOT DONE；M1 于 2026-10-18 有限验收结项，M2 P1 App-only 部署于 2026-10-19 完成。** 用户已接受 [M1 总控 #66](https://github.com/zxwan829/SecondBrain/issues/66) 的 **LIMITED ACCEPTED / WITH EXPLICIT EXCLUSIONS**，Issue #66 已 CLOSED。PR #89 与 PR #88 已合入该固定 main；按 [M2 部署授权 #90](https://github.com/zxwan829/SecondBrain/issues/90)，固定 main `443991061ea446686b54bfb9e8b2d980183f1338` 的 App 候选已部署：Image ID `sha256:e55b0e9c65433a208df0f66a68ec2f91e2341b163108e5d09030ac4a7b343f47`，App-only HEALTH PASS；Promote 保持 OFF、Knowledge RO、Private 未挂载，Hermes/Guard 未变。生产业务验收 NOT RUN，用户体验验收尚未开展；仅 App 健康与匿名只读 Smoke 通过。M1 的生产同键重放 NOT RUN、完整 Network 审计 UNKNOWN、旧全量 Inbox BLOCKED、D086 共享词库写入 BLOCKED、C2c-2 OUT OF M1；D084 历史根因 UNKNOWN。M1 有限验收和本次运行健康检查均不代表 V1 正式 Knowledge Promote、真实模型记忆、微信输入或完整 Web App MUST 验收通过。M2 源码/部署事实不意味着 B3 或 Promote 获准。
-
-**Hermes 运行状态更新（2026-10-19，Issue #76）：** 已确认前 Hermes `172.18.0.2` 静态地址与 App 占用地址冲突，按批准范围仅移除 Hermes 的 Compose `ipv4_address` 并完成 Hermes-only 重建；Hermes 使用原镜像并恢复运行，动态 IP 与 App 不同，API health GET 200、Dashboard 返回登录重定向。App、Vaultwarden、其他容器、Promote OFF、Knowledge RO、Private 未挂载及挂载边界保持。完整运行证据见 `Environment-Baseline.md` 最新快照和 `Progress-Log.md`；此次未进行业务验收，此后下一步已由文件顶部 2026-10-20 NEXT 更新。
-
-### 当前工作分层状态（不能互相替代）
-
-| 工作 | 代码审查 | 本地/合成验证 | 已合并位置 | NAS 部署 | 真实模型/浏览器验收 |
-|---|---|---|---|---|---|
-| D084 后续：Chat 内 Journal/Task 会话活动留痕（Issue #44） | PR #49、#61 已完成独立复审并合并 | PR #49 定向验证及 PR #61 的 8 项 Chat 合成回归、typecheck/build、diff-check 通过（复用审查证据）；本次 M2 部署未重跑业务验收 | PR #49 与 PR #61 已合入 main | 当前 M2 App 镜像基于 `44399106`；Health、只读路由/静态资源及匿名 API 鉴权 PASS | 业务操作卡与会话恢复本轮 NOT RUN；全量网络审计 UNKNOWN、HTTP 端点并发未测、历史根因 UNKNOWN |
-| D082 个人记忆情境保留修复 | PR #32 已审；随 PR #45 合入 main | `test_personal_learning.py` 17 项通过；此前 D080 真实召回失败不可由源码/Mock 抵消 | PR #45 merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa` 的 App 基线保留该修复 | 现行生产 App 为 M2 P1 镜像（包含此修复）；真实模型召回仍未验收 | 生产真实召回复验未完成；浏览器验收未完成 |
-| D081 Journal、D082 Chat Journal、D083 Task | PR #31/#34/#36 各自代码审查通过 | 统一本地合成验证：Core 80 项、相关前端 46 项通过；typecheck/build 通过 | PR #45 已合入 main（merge `c8a2b348f9e5ae4e17663b9d8e0403c5da227efa`） | PR #49 是历史 App 部署；M2 P1 当前 App 包含这些功能，Journal/Task 业务验收未完成 | 登录态合成验收未完成；未调用真实模型 |
-| PR #37 普通 Chat 文件写入单次审批 | ChatGPT 二次代码审查通过；原 PR 仍 open | 集成分支 Guard 22 项、Core 审批/BFF、前端审批与 Capture 验证通过；见本轮统一验证证据 | PR #45 已合入 main，包含 PR #37 两项已审提交；原 PR #37 仍独立 open，勿重复合并 | D084 基础 App 包含已合入代码；生产 Hermes API Run 审批链路未完成端到端核验 | 用户验收与真实模型验收未完成 |
-
-本轮以实时 GitHub main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 为基线；与 `dev/parallel-v1-next-20261017` 在 `d7a48fe` 分叉后，main 独有 6 个提交（含 D082 记忆修复及后续治理文档），并行分支独有 3 个功能切片提交。集成分支保留 main 历史并合入 3 个切片；`personal_learning.py` 与其回归测试相对 main 未改动。唯一源码冲突为 `App.tsx` 的 Journal/Task 与通用 Run 审批解析器导入，已人工合并；CURRENT 文档冲突保留 main 文本并在本轮校准。代码审查、定向测试、分支合入、main 合入、NAS 部署、真实模型运行与用户验收分别记录；任一层通过都不自动代表后一层通过。
-
-## D084：统一功能集成已部署（基础范围的限定合成验收通过）
-
-本轮从 GitHub 实时 main `a8019ab1bc453c3c42e6ecf82ccfacdd97bde583` 建立独立集成分支，合入 Journal / Chat Journal / Task 切片并移植已审 PR #37 文件写入审批提交；保留 D082 个人记忆修复。按[集成与统一测试计划](D084-Integration-and-Validation-Plan.md)完成 Core 80 项、Hermes Guard 22 项、前端相关 46 项本地合成验证，前端 typecheck/build 通过。`Environment-Baseline.md` 未改动：本轮无 NAS 新运行证据。
-
-**PR #49 历史部署与首次登录态验收（2026-10-17；此后已由 PR #61 指定镜像替换）：** PR #49 于 2026-10-17 合入 main（merge `fa2ad4126b5e9acb6983fdae8445a4fb0ebdda79`）。按 Issue #44 评论 #6233322671 的一次授权，仅部署 App：使用 `web-app/Dockerfile.app` 与对应 `web-app` 构建上下文，镜像 `secondbrain-app:pr49-fa2ad412-full` / Image ID `sha256:1c7ed4cb953951eb2ab8691516651d170171305af6172326174e64f4115dd6ca`；120 秒健康门槛通过。隔离无网络 ASGI 检查和生产只读 HTTP smoke 均验证 `/chat 200 text/html`、2 个静态资源 200、匿名 Chat API 401 JSON。Hermes/Guard 容器与镜像未变化。具体运行快照、Compose 哈希、回滚点和未通过的业务验收项见 `Environment-Baseline.md`。**2026-10-17 登录态合成验收与最小源码诊断：** 在生产 App 的空白 Chat Session 通过显式 Journal/Task 路径各写入一条合成记录（标记 `D084-SYNTH-20261017-7KQ4`）；两张操作卡首次显示成功，首次刷新后曾恢复（上述项保留 PASS）。之后 UI 标题显示“会话 1”；返回 UI 标题“会话 3”时活动卡未显示，与刷新结果不一致（会话切换恢复 FAIL / INCONSISTENT）。这些标题不等于 Hermes Session ID；当时未记录 create 响应 ID、sessions 列表 ID、当前选择 ID 或 activities 请求路径/响应 ID，故实际生产根因 **UNKNOWN**，不得按标题推断。
-源码核验：前端新建会话从 `POST /api/chat/sessions` 取 `session_id`，用它更新 selected ref/state 和 localStorage；切换时 `selectSession(id)` 清空可见活动，并对 `/api/chat/sessions/{id}/messages`、`/activities` 发请求。异步响应还经过请求序号与当前 selected ID 双重检查，活动再按 `activity.session_id === requestedSessionId` 过滤。Core 将 Hermes 返回的 `id`/ `session_id` 归一化为 `session_id`；活动路由先校验该 Hermes Session 存在，再按同一 ID 汇总 Journal、Task 和投影记录。源码路径在 API 按约定返回稳定 ID 时是 session-scoped 的，尚无证据能解释生产观察中的 ID/数据不一致。
-最新 main `18c91f78ec692ad0a522f3b7b3ba12d80bdb115c` 的隔离本地合成验证：临时 Vitest 用不透明 ID `hermes-synth-A/B/C` 检查创建选择、活动 URL ID、切换隔离、返回恢复和 remount/刷新恢复，**1 passed**；Core `pytest tests/test_web_app_bff.py -k session_activity`，**3 passed, 22 deselected**（TestClient 有一条 Starlette/httpx 弃用警告）。这证明正常 ID 契约下的本地路径与 Core session scope 可通过，不证明此前生产实际使用的 ID，也没有复现根因。生产业务既有记录状态继续保留：跨会话恢复 FAIL / INCONSISTENT；幂等重试、审计核验 BLOCKED；合成资产保留，未访问生产接口/私人正文、未写生产数据或调用模型。
-最新 main `c958d2c7337f890acad1ef00d04c27fe500e1585` 的定向故障注入发现两个 UI 状态边界：1）localStorage 中的 `secondbrain.chat.session` 不在 Hermes sessions 列表时，初始化会跳过默认选择并显示空会话；2）新建 Session 请求等待期间若用户切换到 B，稍后返回的创建响应会覆盖该更新选择。已在本 PR 分支修复：无效持久 ID 回退到列表中真实 Hermes `session_id` 并更新 localStorage；新建/分支会话异步完成时仅当用户选择意图未变化才切换。另验证 activities 响应 `session_id` 与请求 ID 不匹配时会被过滤；A 请求延迟到用户切换 B 后返回时，不会覆盖 B。该本地缺陷覆盖相应合成状态与竞态，但没有证明它就是先前生产观察的根因；生产 create/list/selected/activities ID 仍未记录，因此生产根因保持 **UNKNOWN**。既有验收状态不变：首次卡片及首次刷新 PASS；会话切换恢复 FAIL / INCONSISTENT；幂等重试、审计核验 BLOCKED；无生产访问/写入/重试、无模型调用、合成资产保留。
-**PR #61 合并及部署前只读快照（2026-10-18T01:50:41Z）：** PR #61 已复审并合入 main（merge `b3c8fe08ea04e1f20ccadcf70e393bf80a30672c`），实现本地确认的 stale Session ID 回退和创建/分叉选择竞态保护；此快照时尚未部署。该时点只读核验确认 NAS 仍运行 PR #49 App 镜像 `secondbrain-app:pr49-fa2ad412-full` / `sha256:1c7ed4cb…11dd6ca`（healthy，RestartCount 0）和 Hermes v0.22.2 Guard 镜像 `secondbrain-hermes:v0.22.2-failclosed-84d1cbaf` / `sha256:b99b1762…5357e9a`（running，RestartCount 0）；PR #61 修复在当时尚未进入生产 App。Edge 当前标签清单没有 SecondBrain App 页面；当时没有打开 `/chat`、恢复或查看私人 Session，也没有按所有会话读取 Hermes 列表或宽泛日志。因此 Hermes create/list、selected/localStorage、activities 请求/响应 ID 与状态时间均无法关联到先前异常，生产根因仍 **UNKNOWN**；历史验收保持首次卡片/首次刷新 PASS、会话切换恢复 FAIL / INCONSISTENT、幂等重试与审计 BLOCKED。完整只读快照与证据缺口见 `Environment-Baseline.md`。
-**2026-10-18 PR #61 部署结果：** 部署指定候选 `secondbrain-app:d084-pr61-4a58393-full`（Image ID `sha256:e63ab1611b2a30ffd9dd2a9cb901066fa6b2da2e7e85c9c1c9d72dbabac0e4ab`），未重建。候选基于 `4a58393`；当前 main 已前进至 `3080506` 并包含之后合入的 D085-C2b 变更，该候选不包含这些后续变更。App 在 120 秒内 healthy；Hermes/Guard 身份不变。浏览器登录后自动恢复了既有 Session，不能安全地用于空白合成验收，因此没有创建 Session、写 Journal/Task、重试或读取会话内容；相关验收保持 BLOCKED，生产根因 UNKNOWN。没有回滚，因为健康、路由及鉴权检查均通过且未观察到 App 异常。详细快照见 `Environment-Baseline.md`。
-
-**2026-10-18 前一 M1 App-only 部署（当时现行；后由 473948dd 替换）：** 按用户授权，将固定源码 `74d698dc97dd9df423664141b80fd8003fbca534` 的已验证候选 `secondbrain-app:m1-74d698dc-notes`（Image ID `sha256:4adcf9cfe3f6257c733efa911455ca02653783ba763f9e2f512f4d3582694ce1`）切换为现行 App。App 在约 31 秒内 healthy，RestartCount 0；`/health`、`/chat/blank`、入口 JS/CSS、Notes chunk 均 200，匿名 Chat API 为 401 JSON。仅改动 Compose 的 App image 和两项 Notes 配置；Compose SHA 从 `9c0932c04d6984cd2e491738d51eb6235d7182ccfca8146678fc18cdabe6097d` 变为 `5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80`。Notes Drafts 仅在现有 Core-state RW 挂载内创建空目录，owner/mode `1026:100 / 0700`；授权根为空对象，Promote 仍关闭。Hermes/Guard 容器、镜像、启动时间及重启计数不变，挂载边界未扩大。部署前 Compose 精确快照及 SHA/位置见 Environment-Baseline。未执行业务验收、生产 Session/Journal/Task 写入或模型调用；D084 生产根因和原验收未决项保持 UNKNOWN / 未验收。
-
-**2026-10-18 PR #72 合并后 M1 App-only 部署（现已由 M2 P1 镜像替换）：** 固定源码 `473948dd2e9b3d448b71eeba56a1474454883353` 按 `web-app/Dockerfile.app`、`VITE_ENABLE_NOTES=true` 构建并部署；新候选及运行镜像 `secondbrain-app:m1-473948dd-notes` / `sha256:70f8277f4d29c2bf8e50d3f7d135f034f04a90b421928d9836515d79a7143b3d`。部署前 App 是 `m1-74d698dc-notes` / `sha256:4adcf9cfe3f6257c733efa911455ca02653783ba763f9e2f512f4d3582694ce1`；仅修改 Compose 中 App 镜像引用。Compose SHA 从 `5c12fda28f3e5e9cd001d238515bd6599adaf5e502686f5d30fcbcb4a8c72f80` 变为 `5d15c9ac51d4bd9f3cd682ef60e4e97d77b5d7e212ae73d0bf5e3126aad0da8d`。App 在 39 秒内 healthy，RestartCount 0，运行用户 `1026:100`；`/health`、`/chat/blank`、`/inbox/source`、入口 JS/CSS/Notes chunk 与匿名 Chat API 分别按预期返回 200/HTML、200 与 401/JSON。Hermes 容器、镜像、启动时间和重启计数不变；Core-state/Notes、Review、Capture Raw、Knowledge 的现有挂载边界及 Promote=false 未变。精确回滚快照已保存并校验；无回滚。部署当时未做生产业务验收、未调用模型或读取业务正文；后续 B1 单来源闭环结果及剩余风险见下方当前状态与 Issue #66。详细部署证据见 `Environment-Baseline.md`。
-
-**2026-10-18 安全空白入口实现（PR #65，已合并并随 M1 镜像部署；生产业务验收未完成）：** 基于 main `d781541785bbc20c64c3f4f676a1b9d1bd431e06` 新增 `/chat/blank`。空白模式不读取/覆盖普通 `secondbrain.chat.session`，不读取 `secondbrain.chat.activeRun` / `activeSession`，初始不请求 Hermes Session 列表、消息、活动或 Run；仅在用户点击创建后使用创建响应 ID，并在独立的 tab `sessionStorage` allowlist 内刷新/切换。普通 Chat 原有恢复行为保留。Mock 定向测试 51 项、typecheck、build、diff-check 通过。该实现仅限制前端请求，不提供服务端账户或 Session 隔离；PR #65 合并时未访问生产数据或创建 Session，且未调用模型；其代码已随 M1 镜像部署。D084 上一 M1 镜像的受控合成结果按上文记录保留；本次 473948dd 新镜像上的 B1 单来源生产闭环有限 PASS：5 条 Proposal，Journal 与 Review 各成功执行 1 次，Project 提案拒绝，刷新恢复 PASS。生产同键幂等重放 NOT RUN，完整 Network 审计 UNKNOWN，旧全量 Inbox UI BLOCKED，D086 共享词库后续写入 BLOCKED，C2c-2 OUT OF M1。历史生产根因仍 UNKNOWN。
-
-**历史 NEXT（2026-10-19，已由文件顶部 2026-10-20 NEXT 取代）：** M2 P1 App-only 部署已取得独立 **DEPLOYED / HEALTH PASS** 复审结论，**业务/用户验收仍未运行**。A 主线按 [M2 总控 #76](https://github.com/zxwan829/SecondBrain/issues/76) 制定下一阶段两项只读、零业务写入的验收计划：① 核对 Review、Knowledge、Capture Raw 宿主 `0700` 与容器 bind 根目录 `0777` 的权限视图差异及实际访问边界（原因 UNKNOWN，先只读，不修改 ACL/权限）；② 设计不自动恢复私人 Chat Session、无需读取业务正文的登录态浏览器页面/网络验收，明确哪些测试需要用户单独批准。完成方案和安全门槛后再申请相应执行授权；**不得**因本次部署健康而启用 B3/Promote、Knowledge RW、读取真实 Vault/Private、创建生产记录或调用模型。部署快照见 `Environment-Baseline.md`，历史和本轮证据见 `Progress-Log.md`；M1 LIMITED ACCEPTED ≠ V1 DONE。
-
-**M1 双线总控与集成状态（[Issue #66](https://github.com/zxwan829/SecondBrain/issues/66)）：** C2c-2 已裁定延期至 M2；M1 范围为 D084（含 `/chat/blank`）+ D085-C2a/C2b/C2c-1 + D086。集成准入冻结源码为 `83b60ec38da34ae49294cebf02f403016362a622`；经 A 主线批准的最小 Notes Docker 构建契约修复后，正式部署源码为 `74d698dc97dd9df423664141b80fd8003fbca534`；PR #72 后的 M1 生产源码为 `473948dd2e9b3d448b71eeba56a1474454883353`；2026-10-19 M2 P1 当前生产构建固定于 `443991061ea446686b54bfb9e8b2d980183f1338`。冻结源码本地集成准入：前端定向合成测试 86 项、Core 跨模块定向测试 97 项、typecheck 和 build 通过；project 执行保持 HTTP 501，Promote 默认关闭。**本地源码准入 PASS；M1 `473948dd` 部署 HEALTH PASS 后已被 M2 `44399106` App-only 镜像替换，当前 M2 HEALTH PASS；B1 单来源生产闭环有限 PASS；同键幂等重放 NOT RUN、Network 审计 UNKNOWN、旧 Inbox 与 D086 共享词库写入 BLOCKED、C2c-2 OUT OF M1；M1 用户已接受有限验收并结项（#66 CLOSED），M2 本次只授权 App 部署，业务验收仍 NOT RUN。** A 线负责准入、冻结、兼容审查、部署/回滚统筹与验收；B 线负责独立切片及汇合报告，不得自行部署 NAS。本轮不改变 D084 历史根因 UNKNOWN 与未验收项。本项不新增 NEXT，以本文件顶部 2026-10-20 唯一 NEXT 为准。
-
-### D085-C2a 统一 Inbox 与人工逐项审批演示（已合并并随 M1 部署；生产业务验收未完成）
-
-PR #54 已在 ChatGPT 二次独立复审后合入 main（merge `4a0a9a73b1765cd1236bba5974eb24dd69ca8232`），状态为 **MERGED / DEPLOYED WITH M1 / NOT PERSISTENT APPROVAL / BUSINESS ACCEPTANCE NOT RUN**。合入版本保留 Capture Inbox 预览、下载、`partial_success` 重试、错误/状态、刷新和 Organizer 入口，并在同页加入 Notes Drafts 与确定性 Mock 建议；演示候选与已知词条分开，状态词不作为标签，页面模拟同意不持久化或执行。PR #57 已合入 `main`（merge `1c73b0f3449725815443c22ba503104df0cb8eff`），加入人工类型/移除标签修正保护和明确模拟审批边界，并随 M1 镜像部署；这些页面模拟批准不持久化、不执行目标操作。来源安全审批持久化由下方 C2b 单独实现。页面模拟批准不构成真实 Vault、付费模型或其他生产操作授权；当前下一步以本文件顶部 2026-10-20 唯一 NEXT 为准。
-
-### D086 标签与类型中心（Issue #55；已合并并随 M1 部署，真实 Vault 与业务验收未完成）
-
-PR #58 经 ChatGPT 两轮独立复审、消除 Core 名称唯一性和锁文件安全阻断后，已同步 main 并正式合入 main（merge `e1eafb5613793fa23f5be98afc6a4ca62959da97`）。新增 Core 私有类型/标签/同义词词库与独立 `/vocabulary` 管理页，初始化五种类型、标签为空；显式确认、revision/If-Match、跨进程锁、原子写入、审计与停用保留历史引用。规范标签与 alias 双向 NFC+casefold 唯一性；catalog 与审计共用 2 MB 上限，写满时 507 fail-closed，不截断或自动归档，后续须另行设计审计扩容。Codex Core 定向 11 项、早前前端 3 项及 typecheck/build 通过，未由 ChatGPT 重跑。**MERGED / DEPLOYED WITH M1 / NOT REAL-VAULT-VALIDATED**。D086 共享词库属于全局状态，后续生产词库写入保持 **BLOCKED**；保留既有合成标签及 revision，不再新增或回滚。本切片未扫描真实 Vault、未改写 Markdown，不代表完整自动分类或元数据回写功能。本次部署不代表真实 Vault 盘点或笔记内容处理已获授权；当前下一步以本文件顶部 2026-10-20 唯一 NEXT 为准。
-
-### D085-C1 Notes 主应用导航接入（PR #50 已合并并随 M1 部署；功能验收未完成）
-
-PR #50 已合入 main（merge `12af0aa3417a76f0b787cb82c40e00d577b9e20f`），实现 Notes 路由与导航；相关实现随 M1 镜像部署。Notes 通过 `/notes` 路由接入桌面/移动侧栏；`VITE_ENABLE_NOTES` 默认关闭，显式开启仍要求 Core `notes.read` 预检成功，Notes 读写继续由 Core 权限门禁控制。NotesPage 懒加载；跨页面导航保留未保存保护。Markdown 正文为权威来源，图形 JSON 附件仅由 SecondBrain 编辑，不扩张 Obsidian 原生兼容承诺。本轮前端定向回归 63 项、typecheck 与 build 通过；部署后仅确认 Notes JS chunk 可访问，未做 Notes 登录态/业务验收；未访问真实笔记或启动 D085-C2。当前下一步以本文件顶部 2026-10-20 唯一 NEXT 为准。
-
-### 新批准的产品规则：D086 对话收录与标签类型管理
-
-`Decision-Log.md` D086 与 [`业务规范.md`](业务规范.md) 已确认：普通 Chat 保持自然对话，Hermes 可有节制地询问是否收录；用户明确收录或同意后，Core 先将原文存入统一 Inbox，日记意图也须经 Inbox 和用户确认后再写 Journal。Hermes 可在授权范围回顾并主动建议，主动/被动调用分开设每日及每月估算金额额度；类型/标签集中管理代码已由 PR #58 合入 main 并随 M1 镜像部署；尚未对真实 Vault 盘点或应用元数据。类型最多 10 种，既有有效标签可自动应用。**D086 的 inbox-first Chat 路径尚未进入 main 或验收**；PR [#130](https://github.com/zxwan829/SecondBrain/pull/130) 是 Web-only Draft 候选，将明确 Journal 意图改送统一 Inbox，不直接创建 Journal。当前 main 现有 Chat 显式 Journal 直写路径未改变，待 PR 审查、合并及后续业务验收。Issue #55 不授权读取真实 Vault、改写历史文件、启动付费模型或生产变更。当前下一步以本文件顶部 2026-10-20 唯一 NEXT 为准。
-
-### 并行开发状态：D085-C2b 来源绑定建议与审批留痕
-
-PR #59 已合入 main `3080506b053d3876d292d9199049fd12e3247b88`，实现来源绑定 Mock 建议、审批/拒绝审计、幂等重试和版本冲突保护。B1 单来源生产闭环中，5 条来源绑定 Proposal 刷新后恢复；Project 提案拒绝 PASS。来源审阅边界之外的旧全量 Inbox 仍 BLOCKED；本结论不代表真实 Vault 验收。当前下一步以本文件顶部 2026-10-20 唯一 NEXT 为准。
-
-### D085-C2c-1 审批后 Journal / Review 受控执行（PR #63 已合并并随 M1 App 部署；B1 有限生产验收 PASS）
-
-PR #63 已合并至 main，Merge Commit `d781541785bbc20c64c3f4f676a1b9d1bd431e06`；其代码随 M1 App 镜像部署。B1 有限生产验收中，Journal 与 Review 各经人工审批、精确预览和明确确认成功执行一次；刷新后状态恢复 PASS。生产同键幂等重放 **NOT RUN**，不得将单次执行推断为端点重放通过。实现将审批留痕与目标执行分开，执行前重新预览目标正文，核验来源/词库版本并明确确认；Journal 复用专用 JournalStore 幂等追加，Review 复用 CaptureService 的 Raw→Review 流程及可恢复执行键，均不调用 Promote 或新增 Knowledge 写入路径。PR #63 的本地合成故障恢复覆盖目标落盘后进程退出重启；并发覆盖同 proposal 两个请求；Core/Capture 定向测试 38 项、Inbox 前端 7 项、typecheck/build/diff-check 通过，Review 首次响应与 duplicate 响应明确区分。项目关联仅为元数据候选，仍标记 **NOT IMPLEMENTED** 且不可执行；C2c-2 已延期至 M2。完整浏览器 Network 审计 UNKNOWN；旧全量 Inbox UI 仍 BLOCKED。真实 Vault、NAS 生产操作及付费模型调用仍须各自授权。当前下一步以本文件顶部 2026-10-20 唯一 NEXT 为准。
-
-### 未结 Issue 与接续边界（2026-10-17 审计）
-
-- **#28 — D080-B 真实模型验证：** 2/5 Run 已执行，跨 Session 自然召回失败；剩余 Run 未执行，已有授权不可被解释为此次自动重跑许可。统一真实测试时再确认模型、次数、预算和范围。
-- **#30 — D082 记忆召回与文件写入副作用：** main 已包含本地验证的记忆提取修复和通过 PR #45 集成的文件写入审批代码，均未生产复验/部署。两项不得混为已解决。
-- **#14 — D077/D078 历史安全与运行阶段：** 已按阶段目标 completed 关闭；遗留真实验收在 #28/#30 继续追踪。
-- **#27 — D080-B0 模型/预算预检：** 已按阶段目标 completed 关闭；原核价证据可复用，不自动重新查询密钥或发起模型请求。
-- **PR #37：** 已完成第二次代码审计，其已审提交通过 PR #45 集成合入 main；原 PR 仍 OPEN，不得再单独重复合入。
-
-## D077 产品体验验收契约（批准的目标；真实效果尚未验收）
-
-下列规则从原独立产品方向归并到 CURRENT，作为 Companion MVP 与 V1 业务收口的可重复验收项，不改变当前已部署/合成测试/用户验收之间的状态区别：
-
-| 能力 | 验收动作与通过条件 |
-|---|---|
-| 无检索提示的联想 | 用户只自然谈论相关问题，Agent 能使用确有来源的历史偏好/项目/知识，不要求用户明确说“搜索”；数字、日期、版本须回源 |
-| 跨会话的个人记忆 | 新 Session 在相关时主动使用之前明示的当前偏好；不相关时不强行提起，模型推断不冒充用户事实 |
-| 纠正与失效 | 用户修正或撤销记忆后，后续 Session 不再把旧值当现行，历史修订与原始来源可核验；重复学习不得无限增加条目 |
-| 日记与碎碎念 | 明确“记一下/写日记”时先由 Core 保留原文、时间及来源至统一 Inbox；用户确认后才写 Journal；普通闲聊不误生成 Inbox/Journal |
-| 待办与提醒 | 自然语言创建/查看/修改/完成真实待办，存储状态一致；通知是否实际送达单独验证 |
-| 多格式 Capture | Raw 原件不覆盖，Review 可核验并可解释关联；未经明确批准不 Promote，外部文件中的推断不能当用户事实 |
-| 自主 Skill 学习 | 重复反馈可产生可复用经验；重要 Skill 修改经审核，不允许通用 file 绕过 |
-| 主动建议与规划 | 依据真实目标/项目/时间线提出来源可查的建议，支持关闭/节流，不能假称已经执行 |
-| 安全与经济性 | Private 无访问、Knowledge 无直接写入、可恢复、可审计；调用延迟与预算有明确记录，估算不冒充结算 |
-
-**产品路线（目标优先级，不是立即施工授权）：** 在已部署 D077/D078 基础上，后续按独立授权完成合成浏览器 Chat/Run/SSE 与跨会话纠错，再经模型/费用/数据范围确认进行有限真实体验；之后补齐自然语言 Journal/Task、微信多格式 Capture、Promote、Projects/Brief/Activity、跨端使用和主动建议。逻辑记忆 L1–L4 的技术细节遵循 `Architecture.md`，不预建四套物理存储；是否引入索引或其他技术只依据效果与成本证据。**实际阶段次序与批准范围以上方唯一 NEXT 为准；当前等待 M2 部署独立复审。**
-
-## 2. V1 交付与验收总矩阵（回答“还缺什么”的唯一总清单）
-
-**当前总体状态仍为 NOT DONE。** 下列旧 V1 MUST 保留原有验收事实；新增 Companion 能力在 Section 2.D 单独追踪。批准目标不等于实施/部署。
-
-状态说明：`ACCEPTED` 已有真实用户验收；`PROD-PARTIAL` 生产部分功能可用；`DEV-TESTED` 仅代码/隔离测试；`NOT CONNECTED` 未接入真实数据；`NOT DONE` 尚无完整生产闭环；`UNKNOWN` 未取得足够证据。**此表须逐项覆盖正式规格的 MUST；若以后更改范围，先同步此表，再实施。**
-
-### A. Agent、技能与知识工作流
-
-| V1 项目 | 要求 / 验收要点 | 当前状态 | 仍需完成 |
+| 模块 | main 代码 / 集成 | 最近有证据的生产状态 | 用户验收 / 阻断 |
 |---|---|---|---|
-| Hermes Agent / Chat | SecondBrain 自有 Chat 使用 Hermes 会话、Skills、工具及 Agent 能力，业务数据不绑 Agent 内存 | NAS-DEPLOYED：Hermes v0.22.2；App/Core 经 BFF 使用 Sessions/Run/SSE；本次 4 个合成 Run 均通过 | 真实模型行为与用户浏览器验收仍待完成；完整 V1 业务模块仍待接入 |
-| Daily Capture | 低摩擦保存日常素材；不得把内容自动提升成正式 Knowledge | PROD-PARTIAL | 对照 Skill 的正式触发和行为做必要回归 |
-| Knowledge Retrieval | 从批准的目录读取/搜索已存在的正式知识 | ACCEPTED：V0 已生产验收 | 仅在真实效果问题出现时优化，不强行接 RAG |
-| Universal Capture：文本/Markdown/TXT | 保存 Raw、建立 Review、元数据与路径真实落盘、不自动 Promote | PROD-PARTIAL：Hermes 文本 Raw→Review 已验收；D075 App 63013 文本真实 Raw/Review 与 Inbox/Review API 验证通过 | 用户浏览器验收；微信端到端仍未接入 |
-| Universal Capture：URL/Web | 保留原 URL/时间，安全抓取/提取，再形成 Review | PROD-PARTIAL：63013 真实抓取 `example.com`；Raw URL/采集时间与 SHA-256 保持不变，Review 保存提取文本 | 多站点与失败恢复的生产覆盖仍有限；用户浏览器验收 |
-| Universal Capture：PDF | 保存 PDF 原件、提取正文、生成 Review | PROD-PARTIAL：D076-A.1 200 DPI 自适应已部署；独立 Canary 的合成扫描 PDF OCR 实测命中对照文字，可读 PDF 仍走 pypdf；用户反馈真实扫描件乱码/漏字；用户已接受桌面 Review 布局/滚动/排序 | 用户对照原件验收真实 OCR 质量；手机布局待验收；扩大真实 PDF 覆盖 |
-| Universal Capture：图片/截图 | 保存图片、必要识别、生成 Review | PROD-PARTIAL：D076-A.1 Review/状态体验已部署；独立 Canary 中文/中英合成图片 OCR 命中对照文字；缺少视觉描述时仍为 partial | 用户浏览器复验 Review 阅读与图片 OCR；AI 视觉描述处理器 |
-| Universal Capture：语音/音频 | 保存音频、转写、生成 Review | PROD-PARTIAL：63013 音频 Raw 状态持久化；D076 已适配 Hermes v0.21.5 STT 接口、限长和显式关闭开关；当前 Hermes 容器没有可验证的 STT 后端，未真实转写 | 授权并配置已验证处理器后，完成真实样本与成本验证 |
-| **微信输入渠道** | **正式 UC v1.1 已明确：微信是 V1 的采集输入渠道，汇入同一 Raw→Review 流程** | **NOT DONE / 生产接入未验证** | 决定当前 Hermes 支持的可维护微信接入方式，验证真实消息端到端；聊天/各附件在微信端的细则尚未在正式规格冻结 |
-| Web App 输入渠道 | Web App 也汇入同一 Universal Capture 流程，不另建写入系统 | PROD-PARTIAL：Commit `55977c8` 的统一 Composer 已部署至 63013，Inbox 与首页快速收录共用现有 Capture API；认证 API smoke 通过 | 用户验收拖放、粘贴、IME、成功清空/失败保留及手机选择；音频处理器和微信渠道 |
-| Review 读取 | Web App 统一会话下展示列表/详情、来源和内容 | ACCEPTED：现有 D071 Dashboard v0.2.4；独立 App 63013 HTTPS 浏览器已显示 8 条真实 Review 与详情 | 独立 App 用户最终验收；补齐正式审批状态/动作部署 |
-| Organizer 自动整理（D076） | 设置页管理 SiliconFlow/已验证模型、服务端 API Key、软预算状态、模型和 Scheduler 开关及计划；执行仍产出 Review 草稿并记录 usage/预算/游标 | PROD-DEPLOYED：`b34319a` App-only 部署，模型/Scheduler/Promote 关闭、Knowledge RO、Private 未挂载。浏览器验收发现 Mock 检查缺少可见反馈；`c619f56` 起的本地 UI 修复新增 loading/成功/错误反馈、三组响应式布局和唯一模型只读展示；本地交互测试 3 passed、typecheck/build 通过 | 此修复尚未部署；部署后待用户验收设置页交互与布局及既有 Chat/Inbox/Review。真实用户数据出站及 Scheduler 启用仍须另行批准；软预算非供应商硬上限 |
-| Human Approval / Promote | 用户确认、版本哈希校验、Core 受控写入、暂缓、审计、恢复 | **分层状态：** B1 单来源 Proposal 持久审批及 Journal/Review 执行有限生产 PASS；**正式 Knowledge Promote 仍关闭**（`SB_PROMOTE_ENABLED=false`、Knowledge RO），其审批→写入→回源全链路未通过 | 优先在 M2 规划受控 Review→Knowledge Promote 最小权限闭环；与 B1 的 Journal/Review 执行权限严格分离 |
-| Knowledge 生命周期 | 正式资料不覆盖、可追溯；保留 Raw/Review，支持检索 | PROD-PARTIAL | 完成 Promote→Knowledge→Dashboard 搜索/查看真实闭环 |
-| Journal | 用户原文留存；支持专用受控新增/按日期追加，不允许普通 Agent 覆写 | D081/D082 已经 PR #45 合入并随 M1 App 部署；D084 旧 M1 镜像上的受控 Journal 合成 PASS，新 M1 镜像上的 B1 审批→Journal 专用执行 1 次有限 PASS | D086 新规范要求先收录 Inbox、确认后写 Journal，尚未完整实现/验收；不得把旧显式直写等同新顺序；Web App V1 快捷录入原属 SHOULD |
+| App Shell / 登录与路由 | main 有 Shell、鉴权与路由实现 | HTTPS `/health`、`/`、`/login`、`/notes` 为 200；匿名 session、Tasks、Capture summary、Knowledge search、Promote API 均为 401；用户已在 2026-11-04 登录并完成部分真实页面操作 | 本轮有限登录旅程通过；未覆盖所有模块/路由，完整跨页体验仍待验收 |
+| Home | main 有 Home 页面与部分聚合 | HTTPS `/` 返回 200；未认证浏览器不执行 App 内容聚合 | 动态 Home 完整聚合未验收；首次从 `/` 登录会读取聚合数据，体验时可直接打开目标模块 |
+| Chat / Hermes / D077 | main 包含 PR #269/#274 Chat UI；PR #32 已修复情境偏好截断；合成 Core JSONL→相关性选择→Hermes `/v1/runs` 请求传递通过；D077 Companion 仅部分实现 | App revision `7272b738`；本轮沿现有 Core→Hermes 完成 6 次合成真实模型 Run；详见本节与 Progress Log | #30 真实模型行为观察为 PARTIAL：无关问题未提及偏好、纠正后回答使用新值、撤销后未复述偏好，初始自然召回缺颜色；因未记录逐 Run 注入上下文，目标记忆因果归属 UNKNOWN；冲突处理未运行。人工视觉 UAT `USER_WAIVED / NOT RUN` |
+| Today / Calendar / Journal / Task | main 有页面/API 的部分实现；显式 Task API 与持久化实现存在 | 用户于 2026-11-04 实测 Task 创建、完成及恢复；PR #277 Journal 生产合成日写入两条不同 key 的记录并刷新/API 回读通过 | Notes/Journal 合成 UAT 部分通过；生产同 key replay NOT RUN，真实数据/用户验收未通过；完整 Calendar 未验收 |
+| Capture：文本 / Markdown / TXT | main 有 Raw→Review 路径及文本入口；`/inbox` 使用显式 Capture/Notes scope | 用户已用合成内容验证文本 Capture→Inbox→Review 保存、回读、关联及刷新持久化；Linux Chromium Inbox capture/retry/source-protection 三视口通过；#269 未改该旅程代码 | 仅限上述文本 Capture 旅程；附件、URL 和 Promote 未验收/不在本次操作范围 |
+| Capture：URL / Web | main 有抓取与 Review 路径 | 本轮未提交 URL 或读取 Raw/Review 数据 | 多站点、失败恢复和用户流程仍未完整验收 |
+| Capture：PDF / 图片 / 音频 | main 有 PDF/OCR 与图片处理的部分实现；音频处理未闭环 | 本次未处理生产附件；生产质量 UNKNOWN | 合成 OCR 不等于真实文件验收；STT 后端/真实样本仍阻断 |
+| 微信输入渠道（P4-2 / D087） | main 有渠道相关来源；D086 合成 Authority/Consent PR 不等同微信渠道实现 | 插件文件存在但 `not enabled`，Core 微信开关为 false；未扫码/收发消息 | **未接入、未用户验收**；真实渠道另行授权 |
+| Review / Approval | main 有 Review 与受控审批部分实现 | 匿名 Promote API 为 401；本次未登录查看或执行审批 | 用户登录后可检查授权范围内 Review；端到端 Approval→Knowledge 未完成，生产 Promote 关闭 |
+| Knowledge / Notes / 标签 | main 有只读检索、Notes 与词库；PR #242 已合入（#55 完成） | Notes Draft 合成记录在生产通过新建、保存、刷新重开与 API 回读；WP5 Dirty/离开保护专项通过；授权集合仅 Drafts，Knowledge 集合负向请求返回 404；未访问 Vault/Knowledge 正文 | 仅 Notes Draft 合成路径 PASS；整体 Notes/左侧列表视觉体验仍待用户验收；真实 Vault collection/笔记写入未运行，Knowledge 用户验收待完成 |
+| Projects | main 有读接口与页面的部分实现 | 未核验项目数据旅程 | 真实来源完整性和用户验收 UNKNOWN |
+| Daily Brief | main 有读接口与页面的部分实现 | 未执行简报数据或模型旅程 | 真实生成、数据来源及用户验收 UNKNOWN |
+| Activity / Agent Health | main 有部分 Activity 与健康状态实现；来源覆盖不完整 | 未做登录态或业务数据核验 | 来源范围、状态准确性和用户验收未完成 |
+| 响应式 / 多端 / Obsidian 同步 | main 有响应式样式 | Linux Chromium 合成旅程在 1440×1000、820×1180、390×844 通过；精确 768px 未运行；同步未复测 | 真机/当前用户浏览器体验与 Mac↔NAS 双向同步未验收 |
+| Security / Writer / Promote / Private | main 有 fail-closed 与受控写入相关代码；D090 Writer 候选未合入 | Promote=false、App Knowledge RO、Private 未挂载；Hermes safe root 三个捕获目录；`SB_WEIXIN_INBOX_ENABLED` 未设置 | 跨进程/OS 隔离及正式 Promote 未验收；不在本轮开启 |
 
-### B. Web App / Personal OS（按正式 V1 Business Spec 逐项枚举）
+## 2026-11-04 首轮用户 UAT 与 Chat 安全核验收口
 
-| 正式 V1 MUST | 当前状态 | 仍需交付 / 验收 |
+- 用户登录实测：Task 创建/完成/恢复、Capture 文本原文保存→Inbox→Review 持久化、Knowledge 搜索/阅读、Journal 2026-10-18 历史正文、Chat 历史会话读取均有页面证据；本项只代表相应有限旅程，不代表整个 V1 功能通过。
+- Notes 历史版本可预览但未执行恢复；回收站界面可打开，Trash 根未配置；Projects 与 Daily Brief 缺可信数据源/配置。笔记保存与 Journal 追加在隔离合成环境的 Core/API/浏览器工程验证结果见本轮 PR；这不代表生产写入授权或真实数据验收。旧 V1 UI 问题统一追踪于 #260；VNext 保持冻结，尚未启动开发。
+- **Chat 实际核验纠错（2026-11-04）：** 此前把模块级字符串常量 `PRE_TOOL_CALL_HOOK_UNAVAILABLE` 错误地要求出现在 `_pre_tool_block` 函数体内，误判生产 Hermes 镜像缺失 fail-closed 补丁。随后由 Codex 直接核验生产容器，确认执行文件 SHA-256 为 `b600d5bf028e5500c04b8a899f49882769e52a110fe1b633d624454a94d92c40`，与固定源码应用补丁后的完整执行文件一致，且异常分支引用阻断常量。**正式撤回缺补丁结论，不因该误报重建生产 Hermes；本次未部署或回滚。**
+- **#269 合并、部署与用户验收边界：** PR [#269](https://github.com/zxwan829/SecondBrain/pull/269) merge commit `d06e3f3bde2cf8ee260992644c2ae5d67aeef362`；三视口 Linux Chromium Gate [Actions #41785664124](https://github.com/zxwan829/SecondBrain/actions/runs/41785664124) PASS；精确 SHA 构建 [Actions #41788688422](https://github.com/zxwan829/SecondBrain/actions/runs/41788688422) SUCCESS。App image ID `sha256:250437fc8b57642770347d6de73d86e791ffd8aaebdaba399170bc5018fe2270`，`linux/amd64`。原始 artifact `13301449533` / digest `sha256:e6040f9c7262b8477169ef0e5fd8a1a1e7959d1b2857e423dd33c0cae7a89b9c`；NAS App-only 包 SHA-256 `49905f26e9fc7780a1a58be693f7d1558b989421291ffcfa417a3856674e684a`。App-only 部署与健康/安全检查通过；新版 UI 的用户实际体验仍 NOT RUN。
+- **Chat 安全与基础 UAT：** 此前的插件活动 Hook/策略探针、真实 Hermes AIAgent API Run 审批/拒绝/Skills 集成测试、App→Hermes health 与真实模型普通文本回复/刷新恢复均已有通过记录；此前“缺少 fail-closed 补丁”判断已正式撤回。上述有限证据不代表跨会话记忆、完整 Companion 或所有工具场景验收。
+
+## 近期执行规划（2026-11-06 PMO 更新）
+
+**目标与排程说明：在收口已部署成果的同时，优先证明“跨会话记住、纠正并有效帮助用户”，减少重复审批和 Hermes 长期维护成本，再完成全部 V1。** 本节记录原定工作顺序及当前状态；不表示所有条目都已启动，实际 NEXT 以唯一 NEXT 段为准；[V1 交付规划](V1-Delivery-Plan.md)保留 P1—P6 全量分解与验收标准。下列八个工作包是原 P1—P6 的执行重排（明确编辑器及 Knowledge 闭环的接续包），不是新增产品阶段，不缩减 V1 范围；旧 A/B 波次和 #76/#96/#97 不再作为任务启动入口。VNext 继续冻结。
+
+| 顺序 / 对应原阶段 | 目标与拆解 | 汇合条件与当前状态 |
 |---|---|---|
-| Global App Shell / 导航 / 鉴权 / 路由 | PROD-PARTIAL：FE-4 视觉接受（旧宿主） | 独立 Web App 承接既定 Shell、路由与登录；保留 FE-4 视觉 |
-| Home / Dynamic Home | PROD-PARTIAL | 聚合真实 Today/Calendar/Review/Agent/Capture/Projects/Brief/Knowledge，DEMO 与 REAL 清晰区分 |
-| Chat | PROD-PARTIAL：独立 SecondBrain Web App/Core BFF 已部署；D084 在前一 M1 镜像的操作卡、Session 页面隔离与刷新恢复有限合成 PASS | 最新镜像 D084 业务未重跑；真实模型跨 Session 记忆、完整 Run/SSE、长期浏览器体验仍未验收，历史异常根因 UNKNOWN |
-| Today / Calendar | PROD-PARTIAL：Today 真实空态 | Calendar 聚合真实数据（可按 V1 规格只读/部分能力） |
-| Inbox | PROD-PARTIAL：统一 Capture 已部署；`/inbox/source` 在精确 B1 Draft 下 Proposal/审批/执行/刷新有限 PASS；**旧 `/inbox` 全量读取入口 BLOCKED**（#74） | 安全的来源选择/请求隔离、正式多来源摘要契约、手机及真实资料体验仍未验收；音频与微信渠道待完成 |
-| Review / Approval | PROD-PARTIAL：历史只读已验收；B1 单来源持久审批、明确执行与刷新恢复有限生产 PASS | 完整旧 Inbox/Review 聚合入口需安全范围收敛（#74）；正式 Knowledge Promote 未启用、未验收 |
-| Projects | 源码已合并（#107/#114/#119/#120）；真实项目 registry/业务来源未验收 | 连接并核验获准真实项目来源、Task/Notes 权威关联与用户体验 |
-| Knowledge | PROD-PARTIAL：有最近知识数据 | 检索、标签、日期、类型、项目关系等 V1 规定能力 |
-| Daily Brief | #123 来源验证及 #125 人工内容持久化已合并；#126 UI Draft，浏览器验收 BLOCKED_ENV | 完成用户明确触发的 Brief 流程与用户验收；AI 撰写、approved_import 和后台调度仍未实现，其中无用户触发调度不属于首阶段范围 |
-| Activity | 页面/API 源码已合并（#107/#114）；当前仅有合成状态证据 | 核验真实业务活动源和用户可理解的完整活动视图 |
-| Agent Health / 状态 | 页面/API 源码已合并（#108/#114）；真实运行态与用户验收未复核 | 接入可信运行状态并验收失败/不可用语义 |
-| 模块注册 / Home 与 Calendar 聚合 | UNKNOWN / 未完成验收 | 导航模块注册、页面契约、Home widget 扩展；模拟未来模块无需重构 Shell |
-| Responsive / Desktop/iPad/Mobile | PROD-PARTIAL：Mac/PC 和 iPhone 视觉接受 | iPad 基本可用、iPhone Safari 功能回归、跨设备真实操作 |
-| Private exclusion / Human Approval | PARTIAL：Private 无挂载、Knowledge 主挂载 RO 已验证；仍需真实业务权限及审批验收 | 运行时写入边界、API 拒绝、审核与失败回滚验收 |
+| 1. 现有成果收口（P1、P4、P5） | 接续已部署 #277；准备 Notes Draft 创建/编辑/重开与 Journal 追加/回读的有限旅程，明确数据位置、失败恢复、与 Obsidian 的关系；授权后执行业务 UAT 并定向修补 | #277 已部署且运行门禁通过；真实业务 UAT 待单独授权。JSONL 持久化不等于 Obsidian 同步；不重复部署已完成版本 |
+| 2. Hermes 补丁盘点与复用（P2、P5） | 对固定上游版本列出源码补丁、插件、配置及 Core 适配器；逐项记录用途、必要性、上游扩展替代方式、升级验证方法，分类为保留/可迁出/可删除/待验证；以合成数据评估原生记忆接口能否服务现有受控链路 | 交付可追溯到源码/版本的清单与最小建议；未检查的能力标 UNKNOWN。必要安全补丁保留，不以升级整个 Hermes 为前置；盘点结论不自动授权删除补丁或更换记忆权威来源 |
+| 3. 跨会话记忆闭环（P2-1～4） | 接续 #30，沿保存→检索选择→上下文传递→模型采用定位故障；优先最小修复，核验自然召回、纠正、撤销、无关请求及事实回源；只对已证明的缺口比较 Hermes 原生能力或检索改进 | 隔离链路与真实模型证据分开；真实新会话能用正确记忆、纠正后采用新值、撤销后不再使用、无关时不过度召回，才通过对应业务验收。JSONL 写入和 Stub 回答不代替实际效果 |
+| 4. 自然对话与日常记录（P1-2/3、P3） | 梳理 Chat 收录、Journal、Task 的实际确认次数、保存回执和重试；遵循 D086 的 Chat→Inbox 来源记录。D093 的用户本人明确 Knowledge 目的操作可走未来窄接口，不改变普通 Chat 收录语义 | Core 统一处理；Agent 产出进入正式 Knowledge 仍须 D093 精确批准；不把 Chat 收录自动当作用户指定正式 Knowledge。用户清楚知道保存了什么、在哪里、是否成功；未获授权不改已部署权限 |
+| 5. BlockSuite 编辑器接续（P4-3/5，#46） | 八项 Notes UX、PR #319/AX03 Blob 412 fork 与 PR #325 新建性能/Dirty 修复均已合并 | ENGINEERING_PASS / MERGED / DEPLOYED / PRODUCTION_TEST_PASS / USER_UAT_PENDING：main/生产源码 `f67c379a`，App Image ID 已核验。生产 AX03 Blob/Canvas 真实 412 fork、AX01/AX02 保存/刷新/Dirty 保护通过；Linux Chromium 性能和恢复 Gate 通过。生产缺失资源负例 NOT RUN；整体 Notes/左侧列表视觉仍待用户体验确认；WP6 仍 HOLD |
+| 6. Knowledge 最小可信闭环（P1-4/5、P2-1/4、P5，#78） | **D093 已批准未来范围**：6.1 复用 Review/Approval/Promote 完成 AI 候选安全入库与同 Raw 回源；6.2 用户本人可信显式创建/导入 Markdown/笔记通过窄 Core 接口直达正式库、无需重复 Review；6.3 将受限已授权 Knowledge 正文真正送入 Hermes Run，验证实际使用、准确引用、无证据不编造与撤权/版本失效。不得以引用元数据当模型已读取正文 | **NOT STARTED / HOLD**；D093 为规划批准，不代表开工、代码、合成 UAT 或生产部署。保留现行 Promote=false、Knowledge RO、用户 Vault 未授权；WP5 收口后仍需用户明确阶段切换，安全和付费调用另按专项权限执行 |
+| 7. 记忆驱动的日常价值（P2-5、P3） | 复用 Task/Project/Journal、Daily Brief、预算与反馈能力；补来源可信的回顾、建议和受控业务动作；Daily Brief 范围为 Task/Project 加 Journal 回顾 | 来源可回查，建议与实际执行区分；主动/被动额度、频次、拒绝与恢复按既有合同验证；真实模型/费用/数据处理仍依对应授权 |
+| 8. 剩余 V1 与完整验收（后续计划） | 依据 V1-Delivery-Plan 中 **D093 WP6 后续不可省略 Gate** 补 BlockSuite Markdown 标题/列表/表格/语言代码/图片及资源摘要、五类往返，V1 已批准多格式提取/索引状态/引用回源与文件生命周期；同时补微信、Calendar/项目、Activity、多端/同步等既有 MUST；Office/视频/压缩包/语义检索非 V1 新增硬性范围 | 未启动的事项保持未完成，只有后续阶段经批准才能开工；**不得因 #78 关闭就标 BlockSuite 投影、各格式索引或往返测试 DONE**。每项证据按实施/合并/部署/UAT 分开；VNext 仍冻结 |
 
-**Web App V1 SHOULD，单独跟踪、不自动阻断 MUST DONE：** Quick Capture、Journal quick entry、badges、notifications、session continuation、keyboard shortcuts、contextual actions、Agent 状态动画。具体完成情况需在对应业务施工时核实。
 
-### C. 生产运行与工程验收
+**2026-11-09 D093 规划批准，但非阶段切换：** 用户确认“本人明确创建/上传/归档到正式 Knowledge 无须重复审核；AI/Agent 自主生成与改写须预览/差异批准；机器派生文本和索引无需审核”。决定见 Decision-Log D093，统一业务细则见 业务规范、Universal-Capture 规格；工作包 6 的最新验收以 Issue #78 为准。**WP6 完成后的遗留验收被正式锁定在 V1-Delivery-Plan 的 D093 小节**：BlockSuite 完整结构 Markdown 投影、Database/Kanban/Canvas 可读摘要和原生引用、五类内容导出/重导差异基准、V1 多格式解析与可查状态、索引生命周期和准确引用；这不是让 WP6 无限扩张。现行生产的文件/权限/功能状态均未变化，WP5 仍是唯一 NEXT；WP6 不自动启动。
 
-| 事项 | 当前状态 | V1 收口要求 |
+**并行与汇合：** 工作包 4 / #287 与工作包 5 首批工程集成均已合并收口；工作包 3 继续保持有限真实模型 PARTIAL，不追加 Run。#78 / 工作包 6 为历史规划中的后续候选，但当前状态为 `NOT STARTED / HOLD`，不得自动接续；仅由用户明确切换阶段后启动。此后工作包 7、8 也未启动。
+
+**备份恢复贯穿执行（P5/P6）：** 先核对已有文档和配置定义，列清个人记忆、Journal、Task、Notes、Inbox 原件及必要元数据的权威位置，区分不可重建数据与可重建索引；核实备份覆盖、保留与恢复证据，缺证标 UNKNOWN。准备隔离恢复演练与校验步骤；真实 NAS/业务数据读取、备份配置和恢复操作按对应授权执行。Compose 回滚不等于业务数据备份，不为此预建新备份平台。
+
+**技术取舍：** 固定 Hermes 版本是可复现措施；业务定制优先配置、插件和窄适配器。现有必要安全补丁未经替代验证不得移除。Core JSONL 继续作为个人记忆权威；原生记忆的评估不等于启用第二套权威存储。先定位记忆链路失败，再决定是否需要关键词/向量混合检索；不把新数据库或 Runtime 重写当默认前置。
+
+### 编辑器、Obsidian 与搜索：已批准合同及工程状态
+
+用户最新 PMO 裁定将 BlockSuite 定为 Notes 唯一目标编辑器，替代此前“可选编辑视图/旧 Tiptap 回退”的规划；本轮不验证旧编辑器。普通 Markdown 仍是正文唯一权威；复杂 Database/Edgeless 必须使用独立、受控且可恢复的资源文件及稳定 Markdown 引用。PR #294 只交付 Markdown Page 的临时投影与 Core Notes 保存，PR #298 已解决 Zod GHSA 依赖风险；这两项均不足以证明复杂资源持久化完整，也不构成部署许可。实际 Obsidian/Vault 同步、付费模型和 VNext 不在本包范围。
+
+| 领域 | 框架建议与拆解 | 准入 / 汇合条件 |
 |---|---|---|
-| Hermes Knowledge 直接写风险 | MITIGATED / DEPLOYED：Hermes Knowledge RW 子挂载已移除，仅 `/secondbrain` RO；safe root 限于三个已核验捕获目录。普通文件工具及终端写探针均被拒；Daily/Universal Capture 与 Dashboard Review 回归通过 | 保持该权限边界；跟进重建后的原生 Chat 重连异常；不以 Hermes Knowledge RW 作为回退 |
-| Core 写权限与审批认证 | 分层 PASS：App 登录/Origin/Core 授权门禁已部署；B1 单来源审批执行有限生产 PASS；正式 Promote 仍关闭、Knowledge RO、Private 无挂载 | 真正的 Core Promote 权限/拒绝/版本/幂等、回滚、用户审批到正式 Knowledge 全链路须另行授权验证 |
-| Private | 已有禁止挂载/访问的设计与生产静态证据 | 生产与 API 验证拒绝，不读取 Private 内容 |
-| 多端与数据同步 | PARTIAL | 核实 Web App 桌面/iPad/手机主要动作及 Obsidian Mac↔NAS 文件实际双向传播 |
-| 生产部署、恢复、安全收尾 | PARTIAL | 真实运行检查、变更快照和回退，收口开发期 unrestricted sudoers；验收与文档 Git 收口 |
+| Obsidian 与正文权威 | Vault Markdown 继续作为笔记正文权威；Core-state Draft/Journal 的现状如实标注，先明确与 Inbox/`50-Journal` 的映射再谈同步。支持中文文件名、相对附件、YAML 属性、wiki links、嵌入及未知块的保留策略；脑图/画板源文件通过 Markdown 相对链接关联 | 用代表性合成笔记验证打开→编辑→保存→Obsidian 重开及外部修改→App 重读。验证并发版本冲突、附件引用和失败恢复；不能安全往返的内容只读或源码回退，不静默损坏 |
+| BlockSuite 适配 | 对照上述样本检查现有试验成果；若采用，优先让它作为 Core Notes 接口之上的编辑视图。结构化快照只可作为有版本绑定、可失效的辅助表示，不能与 Markdown 各自独立修改、互相覆盖 | 如核心内容只能由 BlockSuite 专有结构保存，且不能满足 Markdown/Obsidian 无损要求，停止正式替换提案，提出范围取舍供用户确认。不能以“能导出 Markdown”证明双向兼容；正式选型/迁移须获用户体验批准 |
+| 全局检索 | 先盘点复用现有 Knowledge、Notes、Task、Journal、Memory 和 Session 读取能力，设计统一查询/结果合同：来源类型、稳定引用、版本/哈希、标题、受限摘要、位置和可回源链接。保持各数据源权威独立，通过 Core 聚合，必要索引为可重建派生数据 | 先用标题/全文/属性/标签和范围过滤验证基线；逐源接入，不一次遍历所有库。仅索引获授权范围，Private 排除，撤权后及时失效；已建索引或缓存不授予读取权，返回结果与打开来源均重新验权 |
+| AI 搜索与分析 | Hermes 调用 Core 受控检索，取得少量相关证据，按需回源后回答；知识正文作为低信任资料传递，不能升级为系统指令。自然记忆联想和用户显式全局搜索可复用检索适配，但触发、范围与预算分别控制 | 用同一批相关/无关/冲突/过期/撤权样本比较效果、时延和费用；答案需对应具体来源版本，证据不足说明缺口。不得让模型直接扫描全 Vault；分析结果默认是回答/候选，不自动写 Knowledge |
+| 语义检索演进 | 先判断问题出在检索还是上下文传递，再基于代表查询评估关键词+向量/重排。若需要 embedding，沿用版本化来源引用，记录模型/切块版本及失效重建方式 | 数据出站和费用先明确；新依赖、服务或数据副本需论证，不默认新增数据库。索引陈旧、来源删除或权限变化时过滤并回源校验，不返回旧敏感正文 |
 
-### D. 新批准的 Personal Intelligence / Companion MVP（D077；按能力分项跟踪，整体未验收）
+**工作包 5 的五步拆解与汇合（统一记录于 #46，不新建权威文档；首批非生产工程部分已由 PR #294 完成）：**
 
-| 新增核心能力 | 当前证据/状态 | 最小成功验收 |
-|---|---|---|
-| 无提示主动关联 | NOT VERIFIED：旧 Knowledge Retrieval V0 已 ACCEPTED，但仅证明可用搜索/读取；不能证明自动联想 | 不说“搜索知识库”，自然对话能正确使用相关长期记忆；精确事实自动回源 |
-| Personal Memory Core（Phase 1-A） | NAS-DEPLOYED；独立 `0700` 根目录、追加式 JSONL 来源/修订记录、纠正与失效过滤；真实路径权限核验通过；本次合成记录已清理 | PR #4 已合并；NAS image `secondbrain-app:d077-b6e30f3`；真实数据与用户验收仍待完成 |
-| 自主个人记忆学习（Phase 1-B） | NAS 合成闭环通过：Core 自动保存来源关联、跨 Session 召回、用户纠正和纠正后召回；Hermes v0.22.2 实际模型请求经 Stub 观测到注入上下文。Stub 不评价真实模型的自然学习/回答质量；没有付费模型或真实数据出站 | PR #6 已合并；本次运行证据见 Progress-Log；真实模型质量、用户浏览器体验及长时间使用仍待验收 |
-| 分层记忆、时间/冲突管理 | TARGET DESIGN：逻辑 L1–L4 已批准为路线，物理存储和 Provider/Adapter 未冻结 | 关键偏好、当前项目、关键经历和完整证据按需关联，能识别过期/推断/冲突 |
-| 碎碎念与 Journal 自然语言记录 | D086 已取代 D064 对话直写顺序；现有显式直写代码已合入/部署，但新入口规则 NOT IMPLEMENTED，业务浏览器验收未完成 | 明确“记一下”先经 Core Inbox 保存原话，再经用户确认由专用 Journal API 新增/按日追加；普通闲聊不意外收录或写日记 |
-| 自然语言待办/日程 | D083 Task Core/API、Today 与 Chat 显式命令已随 PR #45 集成至 main 并随 M1 部署；D084 在前一 M1 镜像的 Task 受控合成 PASS；提醒送达 **NOT IMPLEMENTED** | 最新镜像真实多端/日程聚合与长期使用未验收；提醒通知须单独实现及实际送达测试，不以 Task CRUD 冒充提醒 |
-| 文件收录→理解→记忆关联 | Capture 有 PROD-PARTIAL，OCR/STT、Review→Promote 缺口仍在 | 保留原件、正确提炼候选/关联，不擅自提升第三方断言为用户事实 |
-| 主动建议与规划 | NOT DONE：现有 Home/Projects/Activity 聚合仍不完整 | 根据真实目标/事件给出可解释、可关闭/节流的建议，不擅自执行 |
-| 自主 Skills 学习 | NOT VERIFIED：原有 Skill 产出及审核流程不等于自动学习闭环已验收 | 重复反馈产生可复用经验；核心/高风险 Skills 仍走隔离与审批 |
+> 以下保留原批准范围与验收合同，不代表本轮所有条款均通过：Core/合成浏览器工程闭环已完成；真实 Vault/Obsidian 同步、生产发布和用户体验仍为 NOT RUN。任何后续工作包均以唯一 NEXT 和用户明确的阶段切换为准。
 
-**D077 / D078 部署状态（2026-10-17）：** D077 Core 的既有 Stub 合成证据保留；本次未写记忆或创建生产 Session/Run，记忆目录仍为 `1026:100 / 0700` 且 0 文件。PR #18 已合并至 main（`84d1cbaf…80895e5`）。已在 NAS 从固定 Hermes v0.22.2 官方 digest `sha256:a11574…c1bf05` 构建并部署一文件 fail-closed overlay：`secondbrain-hermes:v0.22.2-failclosed-84d1cbaf`，Image ID `sha256:b99b1762…5357e9a`；镜像标签记录源码 Commit `d923a5eb…1040a8` 与补丁 SHA `b5381848…55b0`。Hermes API health 200、Dashboard 9119 可达；启动早期 API 尚未监听，持续观察后恢复健康，未再次重启或回滚（RestartCount 0）。Plugin Doctor 注册 D078 guard 的 1 个 hook。API toolset `file,skills,vision`（不含 Terminal），Skills 写入审核 true、审批 manual。隔离无模型运行拒绝敏感 Session 路径、允许合成业务文件和 Skills 只读调用、dispatcher 异常 fail-closed；无模型调用、无 Session 写入。Private 无挂载、Knowledge 主目录 RO（既有 Capture 专用 Inbox RW 例外不变）、Promote false，D077 Memory 目录 0 文件且元数据未变。实际生产 Run/真实用户体验仍未验收。
+1. **复用与差距核对：** 定位归档试验的固定版本、源文件和已有证据，对照现有 Notes/附件接口及代表性 Markdown 样本列出缺口；不得要求用户重新寻找已保存材料，也不把试验通过当正式集成通过。此步只读准备可与 #287 并行。
+2. **兼容方案与体验集中确认：** 给出可运行的既有预览、明确的支持矩阵与最小 diff/接线计划，确认普通正文 Markdown 权威、属性/未知语法保留、图形源文件及附件关联、外部修改冲突和回退。若 BlockSuite 特性必须以专有快照为权威，应说明损失并提出具体产品取舍；不能暗中另建正文 SoT。用户一次确认正式选型及非生产实施范围后，主 Agent 在该范围连续执行，不逐函数请示；准备不足时只补真实缺口，不做无限选型。
+3. **Core 接线与持久闭环：** 复用 Notes/附件 API，完成创建/编辑/自动保存/失败保留/版本冲突/关闭重开；只补有证据的接口缺口，不顺手重写存储、Hermes、全局 UI 或调度系统。合成根里先跑通一条完整链路，再扩支持内容。
+4. **Obsidian、搜索与 AI 兼容汇合：** 用中文路径、YAML、wiki links/嵌入、相对附件、未知块与脑图/画板代表样本验证受支持内容往返；不支持项只读/源码回退且原文不丢。保存后的正文/属性通过既有 Core 检索适配可查并回到同一来源版本；图形按支持矩阵提供文本投影或明确不可检索，不默认为已支持。AI 仅通过现有授权检索取证，合成接口测试不调用付费模型；此步只要求 Notes 数据合同可接入，不以全源搜索平台完成为前置。
+5. **工程验收与候选交付：** 相关定向测试、独立 Review、授权范围内 Linux Chromium 保存/重开及必要视口旅程，普通 PR 按现行门禁处理。交付支持矩阵、可体验候选和回退说明；实际 Obsidian 双向同步、NAS 发布与最终用户验收分别记录并取得对应授权。正常开发问题包内解决，只有确实无法满足 Markdown 权威或新增数据/权限边界才升级 PMO。
 
-**工作准则：** Hermes v0.22.2 patched overlay 为当前运行镜像；Core JSONL 是个人记忆权威存储，外部 Hermes Memory Provider 未启用。API Terminal 必须保持关闭。已部署 fail-closed 补丁并通过本地隔离容器的运行断言；生产验证只覆盖健康、插件注册/配置与无模型文件/Skills/异常 Hook 调用，不代表真实模型或真实个人数据体验验收。
+**接续原则（历史排程以当前授权为准）：** #287 后的工作包 5 已通过 PR #294 收口。工作包 6（#78）虽然是原排程后续项，但目前明确保持 `NOT STARTED / HOLD`，不自动接续；工作包 7 及之后同样未启动。全局检索、Obsidian/Vault 同步或生产发布均不能被解释为本轮已授权。
 
-## 3. NOW / BLOCKED / DEFERRED、依赖和阻断
+### 工作包 6：#78 最小可信 Knowledge 闭环与验收（D093 2026-11-09 增补）
 
-| 顺序 | 当前要解决的业务问题 | 完成判定 | 当前制约 |
-|---|---|---|---|
-| **Phase 1-A（已部署）** | **可纠正、可撤销、可溯源的 Personal Memory Core** | 独立 Core state 子目录、追加式 JSONL、来源与修订历史；NAS 合成验证通过，测试记录已清理 | 用户浏览器验收与后续真实使用仍待完成 |
-| **D078（NAS Stage 1 已部署，未完成用户验收）** | **保留 Hermes 原生 Agent 能力，同时以审批/路径守卫控制高风险操作** | Hermes v0.22.2 fail-closed overlay 已部署；API toolset `file,skills,vision`、Terminal 关闭；Skills 写入审核 true、manual approval；Plugin Doctor 注册 1 hook。隔离无模型 Run 验证敏感路径拒绝、正常业务文件/Skills 只读调用和 dispatcher 异常阻断。API 健康 200、Dashboard 可达。 | NAS 未执行生产 Run；真实模型行为与浏览器用户验收仍待完成。Private 未挂载、Knowledge 主树只读且既有 Capture inbox RW 挂载不变、Promote OFF。 |
-| **Phase 1-B（已部署；合成运行验证）** | **受控提炼与 Chat 召回集成** | PR #6 已合并至 main；Core Linux 回归 154 passed、2 subtests passed（Run 38857429530）；Hermes v0.22.2 + Core + 确定性本地 Stub 四步闭环通过 | 真实模型的学习与回答质量、真实会话及用户验收仍待完成 |
-| P0 | 独立 Web App 首阶段：Home、内置 Chat、Review、同源 Core/BFF 和单次 App 登录 | 最近核验生产 App `secondbrain-app:m1-473948dd-notes` / 源码 `473948dd`，healthy；Hermes v0.22.2 Guard 不变；M1 用户有限验收结项，尚非完整 V1 | 真实模型和浏览器记忆体验未验收；生产真实 Run/SSE 未执行；设置页、Composer、手机 Review、真实 PDF OCR 仍有既有缺口，Promote 关闭、Knowledge RO |
-| P1 | Universal Capture Web 入口 + 多类型 | D076-A.1 + Unified Capture 已部署：合成中文图片/200 DPI 扫描 PDF OCR 的隔离真实验证通过；可读 PDF Fast Path、Raw/Review 哈希验证通过；Promote 和 STT 保持关闭 | 用户复验真实扫描 PDF 质量及 Composer 页面交互；AI 图像描述、Hermes STT 后端和微信端到端仍未完成。DSM GUI 项目缓存独立跟踪、不阻塞业务开发 |
-| P1 | Web App 真实业务模块 | 所有正式 MUST 页面接获准真实数据或明确真实空态，不能以 DEMO 代替 | Projects、Daily Brief UI、Activity 等源码已部分接线；真实数据、浏览器和用户验收仍缺，#126 受环境阻断 |
-| P2 | V1 端到端回归与安全收口 | Capture→Approval→Knowledge→Retrieval；权限拒绝、回滚、同步与设备体验均有证据 | 以上依赖完成后集中执行 |
+**D093 已批准范围：** 6.1 AI/Agent Review→受控 Promote→Knowledge→来源回读（下列第 1–5 项既有安全条款全部保留）；6.2 用户本人明确目标的受信 Markdown/笔记直达、Core 版本/身份/权限/幂等与旧 Promote 隔离；6.3 Hermes Run 中真实使用已授权且限长正文、回答引文绑定精确来源版本、无证据/撤权负例。三段分别报告合成/真实模型/OS/生产/UAT，不能用 metadata-only 引用冒充 AI 已读原文。完整 Gate 以 Issue #78 为准。
 
-**依赖矩阵说明：** 本表描述能力交付依赖，不取代 Section 1 的唯一 NEXT。Issue #14 保留 D078 阶段证据；API Terminal 保持关闭。
+**产品规划位置（当前 HOLD）：** #287 → 已完成的 BlockSuite 首批闭环 → #78 → 回顾与建议。用户要求本轮不启动 #78；以下内容只是未来工作包规格，不能启动实施。测试根若未来获批仍应验证同一正式业务链路，不另建审批平台或第二知识库；任何生产 Writer/Promote/Knowledge 写入继续需要独立授权。
 
-**不要把阻断项变成无限研究：** 权限和认证须够安全且有证据；其他问题遵循 FAST-EXEC，优先复用现有能力，不提前建设企业级体系。
+1. **盘点并复用：** 在 #78 列出当前 main 的 Core/Web Promote 实现、历史合成检索回源证据及 #106/D090 等未合并候选的有效增量；标明已实现/未合并/待验证。#89/#88 已合并是历史事实，不得复活旧 A/B 审批流程或从零再造 Writer。
+2. **最小测试目标：** 使用本地/隔离环境的独立合成 Knowledge 根，Raw、Review、状态和目标根明确分开；仅允许受控 Writer 在该根新增批准文件，不覆盖/删除既有文件，不扩大普通 Hermes 或 Core 通用工具写权。沿用现行 Authority/Writer 信任合同；已有批准合同无法直接适用时只提交具体差异和最低必要取舍，不无限重设计。
+3. **一条真实合成旅程：** 合成原件→真实 Review→用户精确预览/批准→Core 校验来源/版本/权限→实际写入批准文件→通过同一 Knowledge 检索接口找到→回源同一 Raw/Review。不能用直接写文件脚本、跳过批准、Mock Writer 成功或仅写暂存文件来称 Promote 已完成。
+4. **必要负例与恢复：** 同键同载荷不重复写；同键冲突、来源漂移、撤销/缺批准、越界路径和已存在目标均拒绝；中断后不丢原件、不虚报成功，能按既有合同恢复或明确人工恢复。复用已有测试，只补真实缺口；OS 隔离证据与 API 合成结果分别记录，不用应用判断代替 OS 强制限制。
+5. **汇合与启用决定：** 固定候选的独立安全复审、相关定向/API/检索回源及获准浏览器旅程证据汇总在 #78；完成合成闭环后给出最小部署目录、权限、影响和恢复方案供用户决定。实际 Vault/部署环境写入、Writer/Promote 启用及信任拓扑变更仍单独授权；未部署则保持 NOT DEPLOYED，不把测试根交付称为正式知识库已可用。
 
-### DEFERRED：不属于当前 V1 完成门槛
+**验证自动化：** 优先复用现有测试、health 与检查命令，必要时仅加薄的统一自检入口，输出版本、健康、开关、目标范围与旅程结果及证据引用；不输出 Secret/正文，不自行部署或扫描其他目录。先服务本包必要验收，不预建通用测试平台。脚本报告可观测事实；阶段接受、范围取舍和用户体验不能由脚本自动判定。CURRENT 保留简要结论/NEXT，详细运行证据留 Issue/Progress Log。
 
-- OpenClaw：**用户已明确不再考虑**，不作为候选 Runtime 或接入前置方案（历史决策需标记被最新选择取代）。
-- DOC/DOCX、PPT/PPTX、XLS/XLSX、视频、任意二进制、复杂知识图谱、语义去重、向量数据库/RAG、强制关联发现：UC 规格 DEFERRED。
-- Books/People/Finance/Travel/Health 等扩展业务页、原生移动 App、完整独立管理后台：Web App 规格 DEFERRED。
-- 公网直接开放、客户外网配置和商业发行包：当前阶段延期；但本人 V2 的 DSM HTTPS 兼容必须在 V1 内验收。
-- WorkBuddy、n8n 等曾讨论的生态工具：**在本次已核对的 V1 正式规格中未发现其 MUST 约束**；不得擅自标为已取消或已纳入，未来如用户确认范围再更新总矩阵。
-- Jev/Jev-Mem、世界模型、独立记忆 SaaS、重型向量/知识图谱：D077 明确暂缓，除非真实测试指出必要性；不作为 NEXT-0 的默认施工清单。
+### ChatGPT 与 Codex 的任务发布要求
 
-## 4. 文档导航
+ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交付规划及对应正式规格；优先核查已有实现与 Hermes 扩展能力。ChatGPT 负责目标、验收及重要取舍，Codex 主 Agent 按现有授权自主拆解、实施、集成和接续工作包，普通 PR 审核按 Agent-Rules 执行。
 
-| 内容 | 权威位置 |
-|---|---|
-| 最高产品目标、双闭环原则及当前验收路线 | `Decision-Log.md` D077（批准方向）与本文（当前验收/NEXT） |
-| 笔记、对话收录、标签与类型业务规则 | [业务规范](业务规范.md)；正式取舍见 `Decision-Log.md` D086 |
-| V1 业务范围与 MUST/SHOULD/DEFERRED 契约 | [Web App V1 业务规格](business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture 业务规格](business-specs/Universal-Capture-Business-Spec.md) |
-| 稳定架构、模块关系、数据流与信任边界 | `Architecture.md` |
-| 正式决定、理由及替代关系 | `Decision-Log.md` |
-| 微信/飞书渠道、Daily Brief 范围与 Journal 来源选项合同 | `Decision-Log.md` D087-D089、`Architecture.md`、本文 |
-| 最近已核验的 NAS 运行快照、权限、端口与恢复入口 | `Environment-Baseline.md` |
-| D084 多切片集成顺序、统一合成验收矩阵及真实验证前置门槛 | [集成与统一测试计划](D084-Integration-and-Validation-Plan.md) |
-| 历史实施、测试、部署、用户验收与失败复盘 | `Progress-Log.md` |
-| SecondBrain 特有执行与安全规则 | `Agent-Rules.md` |
+每个长任务明确：用户能力目标、现有基础与实际缺口、可自主推进的范围、依赖/文件所有权、可观察的验收与失败条件、需要另行授权的动作，以及完成后的接续工作。普通调试和必要修复不逐项请示；重大规格冲突、信任/权限拓扑变化、不可逆操作或生产/真实数据/费用授权缺失才升级相应裁定。证据留在现有业务 Issue/PR，当前状态和下一步回写本文件，不新增权威文档或恢复人工 A/B 转发模式。
+
+## 唯一 NEXT
+
+**已完成的有限真实 Chat UAT（2026-11-04）：** 用户在正式 Web 新建会话并发送普通问题，获得真实回答，Run 完成且刷新后问答保留。该验收发生在 `d06e3f3b` 旧 UI 上；新版 UI 的工程浏览器 Gate 已 PASS，但人工视觉 UAT 为 `USER_WAIVED / NOT RUN`，不得记为 `USER_UAT_PASS`。#30 跨会话有限真实模型 UAT 于 2026-11-05 部分通过（6 Runs），细节与限制见下；Companion、冲突处理及其他未验收功能仍 NOT RUN。Promote/Writer/Weixin 保持关闭。
+
+**阶段收口（工作包 3 / Issue #30）：** PMO 已于 2026-11-06 [正式裁定](https://github.com/zxwan829/SecondBrain/issues/30#issuecomment-6663061801)接受本轮为 `PARTIAL / LIMITED_REAL_MODEL_UAT`，不宣称完整 PASS 或用户验收。实际使用 6/10 次付费 Run：首次自然召回用了方框但遗漏蓝色，无关问题未受偏好干扰，纠正后新会话使用新标记，撤销后不再复述失效偏好。合成记忆有 create→correct→revoked 事件链，最终状态 revoked；逐 Run 注入上下文及因果归属 UNKNOWN，冲突处理 NOT RUN，实际 token usage、账户账单及费用 UNKNOWN。剩余 4 次不结转；PR #285/#286 已合并，#30 缺口继续保留。
+
+**工作包 4 / Issue #287：** 隔离工程目标完成。PR [#289](https://github.com/zxwan829/SecondBrain/pull/289) 已合并（merge `deab530b13ee755609a9375ee22449913ef1ed4a`），完成 Chat→Inbox 原文回执、Capture→Journal 独立审批/目标预览/append 入口及 Task 创建；Gate [Actions #42076994861](https://github.com/zxwan829/SecondBrain/actions/runs/42076994861) PASS。PR [#291](https://github.com/zxwan829/SecondBrain/pull/291) 已合并（merge `814c04b7abb343620014da65d83c9f1b075b4141`），补齐今天未完成 Task 查询、精确标题完成、截止日期更新及会话绑定幂等活动恢复；定向 Core 55 passed、前端 96 passed、typecheck/build 通过，独立 Review PASS，Gate [Actions #42080651081](https://github.com/zxwan829/SecondBrain/actions/runs/42080651081) 对固定 SHA `d4b0ee62a354499ae51f0d89b21d0362a0df3c79` PASS。命令路由只接受明确的消息开头表达，真实模型自然理解未验证。真实模型、NAS/Obsidian 同步、生产写入和用户业务 UAT 均 `NOT RUN`；PR #277 Notes/Journal 生产合成 UAT 仍 `PARTIAL`，同 key replay `NOT RUN`。本轮没有生产修改、付费模型调用或真实 Vault 访问；Promote/Writer/Weixin 保持关闭，VNext 保持 FROZEN。
+
+**工作包 5 / #46 当前技术与选型状态：** [PR #294](https://github.com/zxwan829/SecondBrain/pull/294) 提供 Markdown 兼容子集的 BlockSuite Page 临时投影、Core Notes Markdown/ETag 保存与 412 防覆盖；此前 Gate [Actions #42201007416](https://github.com/zxwan829/SecondBrain/actions/runs/42201007416) 仅覆盖 #294 固定 SHA。用户 2026-11-06 裁定 **BlockSuite 为唯一目标编辑器**，不复测旧编辑器；完整决定见 [#46 PMO 裁定](https://github.com/zxwan829/SecondBrain/issues/46#issuecomment-6683702417)。PR #298 已合并（merge `fd787a61624ccaed5007a17a633828a414a3d74f`）：锁定 Zod 4.6.6，提供仅针对 BlockSuite 0.22.4 的幂等兼容补丁，修复 GHSA-mrhx-c7xc-m3w5；Node 22 Linux Chromium [Actions #42211592024](https://github.com/zxwan829/SecondBrain/actions/runs/42211592024) 与独立安全审查通过。审计为 0 High/Critical、41 Low、9 Moderate，剩余项不是本次 Zod GHSA。PR #300 已合并（merge `373966094fa1b966a4c19cbddfed6acae35f2d38`），Notes 默认使用 BlockSuite；不支持安全往返的内容显示只读原文/下载。定向前端 92 项、typecheck/build 通过；精确 SHA `cf955399fcf2986c25b7409a8d2ba9b6eabe37fd` 的 [Actions #42213922424](https://github.com/zxwan829/SecondBrain/actions/runs/42213922424) PASS，含真实 Chromium 默认打开、表格单元格编辑保存和重开、412/恢复与 trace 脱敏。PR #302 已合并（merge `e3a399f2951593344cddb6588d53a6ec247f6339`），提供 note-scoped 独立资源 JSON/Yjs 状态 API：固定 v1 schema、随机资源 ID、资源与笔记双 ETag、同笔记锁、O_NOFOLLOW/dirfd/原子写、每笔记 64 项/64 MiB 配额和请求字节/负载限制；27 项 Notes 定向测试通过，Node 22 Linux Core 完整 suite [Actions #42216452853](https://github.com/zxwan829/SecondBrain/actions/runs/42216452853) PASS，独立审查此 API 切片通过。后续资源 UI/闭包恢复已由 #305/#306 补齐并通过下述工程门禁；不代表完整归档 UX 或部署准入。
+
+**安全与发布现状（2026-11-09）：** PR #325 固定 merge SHA `f67c379a79aec78a11c6fc298fd059a92954d020`，独立 Review、定向 Linux Chromium Gate [#42628962450](https://github.com/zxwan829/SecondBrain/actions/runs/42628962450) 与 candidate workflow [#42629598577](https://github.com/zxwan829/SecondBrain/actions/runs/42629598577) 均 PASS。已 App-only 部署，Image ID `sha256:08ed5a6c8095bce7b84576bd95499f788781f573738aad0ffbaa49fd519c10ce`、容器 healthy；Hermes 与安全边界保持不变。生产 AX03 Blob/Canvas/真实 412 fork 与 AX01/AX02 性能/Dirty/刷新合成验证通过；缺失资源负例仍 `NOT RUN`。WP5 为 `PRODUCTION_TEST_PASS / USER_UAT_PENDING`，视觉体验仍待用户验收。
+
+**唯一 NEXT（工作包 5 用户体验验收）：** 工程、部署、生产 Blob/Canvas/412 恢复及 Notes 性能/Dirty 专项均已通过；请用户最终体验确认新建反馈、保存/刷新状态与整体 Notes 体验。左侧列表/视觉反馈仍未接受，不能将该意见记为通过；收到用户明确确认前保持 `USER_UAT_PENDING`，不得写 `USER_UAT_PASS`。WP6 保持 `NOT STARTED / HOLD`，VNext `FROZEN`。
+
+2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
+
+## 核心任务队列
+
+以下是未完成事项索引，不按编号代表执行优先级；调度以“近期执行规划”和“唯一 NEXT”为准。
+
+1. [#261 Knowledge 文件夹与标签筛选](https://github.com/zxwan829/SecondBrain/issues/261) — 仅隔离开发；候选分支的 CI 未通过，Chromium Gate 未运行，尚无 PR；不得合入或接触真实 Vault。
+2. [#74 Inbox 请求范围隔离风险](https://github.com/zxwan829/SecondBrain/issues/74) — 范围隔离修复 PR #79 已合入，包含于当前生产 App revision `7272b7388d9453a4abe212e6aa8d528e7e0dcd82`；Linux 合成浏览器通过，未登录读取生产 Inbox；Issue 保持开放至用户验收。
+3. [#75 M1 幂等重放与浏览器请求证据](https://github.com/zxwan829/SecondBrain/issues/75) — 历史生产证据缺口尚未重新核验；任何生产复测需单独授权。
+4. [#30 跨会话记忆召回故障](https://github.com/zxwan829/SecondBrain/issues/30) — 合成真实模型 UAT 部分通过；初始偏好自然召回遗漏颜色、冲突场景未测，详见本轮记录。
+5. [#78 Review→Promote 安全闭环](https://github.com/zxwan829/SecondBrain/issues/78) — 工作包 6，`NOT STARTED / HOLD`，待用户明确阶段切换；Writer/Promote/Knowledge 生产写入未开启。
+6. [#46 Markdown 可视化编辑器](https://github.com/zxwan829/SecondBrain/issues/46) — PR #313/#316/#319/#324/#325 已合并，当前 main `f67c379a` 与生产 App image 对应；Blob/Canvas/412 与 Notes 性能/Dirty 生产合成验收通过。生产缺失资源负例 `NOT RUN`；用户体验、尤其左侧列表/整体视觉仍待用户本人确认。
+7. [#260 VNext 工作台产品基线与隔离原型](https://github.com/zxwan829/SecondBrain/issues/260) — 产品讨论/原型冻结入口；不表示批准整站替换或生产切换。
+
+## 本轮资产处置
+
+- **保留在 main：** 已合并成果；#55 的标签/类型能力已由 PR #242 merge commit `c3c2c6d81c87c14b2450890fa8e68b7262d58129` 交付。
+- **远端冻结：** VNext commit `45bf5f7d...` 保存在 `codex/vnext-workbench-20261103`，无 PR、无合并、无用户验收。旧集成快照已原 SHA 归档到 `codex/frozen/a-b-real-http-issue96-20261020` (`9ddd8acb...`)、`codex/frozen/issue83-integration-candidate-20261018` (`7380ab22...`) 和 `codex/frozen/issue86-gate2-retest-20261019` (`19fe5f97...`)；均无 PR、未合并。Web 合成集成另保存在既有分支 `codex/a-web-synthetic-integration-20261020` (`098f4bfa...`)。#261 与 Writer/D086/D090 候选按各 Issue/PR 原 SHA 保留，不作 main 交付。
+- **本地归档且不纳入主线：** Puck、BlockSuite 编辑器试验及恢复材料保存在独立目录/bundle；它们不进入 SecondBrain main。编辑器比较 Issue #255–#259 关闭为未计划/重复项，未来若重新选择以 #46/#260 为唯一入口。未删除这些本地材料。
+- **已清理弃用远端引用：** PR #213/#204/#161/#9/#8 的 head SHA 与 GitHub PR 记录逐一核对后，删除对应的 5 个远端分支引用；PR 均为 closed/not merged，审查 diff、提交 SHA 与历史仍留在 GitHub。未删除任何冻结候选分支。
+- **正式 Clone 未跟踪内容：** `MINDMAP-DRAG-INVESTIGATION.md`、`docs/SecondBrain_Codex_UX_References_20261026/`、`typescript`、`{{.Destination}}` 原样保留；不在本次提交中。
+
+## 主要风险与验收边界
+
+- GitHub main、生产代码和用户验收分开记录：PR #277 固定源码 SHA `7272b738` 已部署并通过运行门禁；生产合成 Notes/Journal UAT 为 `PARTIAL`（Journal 同 key replay NOT RUN），真实业务数据与用户 UAT 仍 `NOT RUN`。本轮另发生可访问性快照显示既有业务摘要/列表标题的读取范围偏差，详情见本阶段状态和环境记录。#269/#274 工程浏览器 Gate PASS，用户明确放弃旧版 Chat UI 人工视觉验收，状态 `USER_WAIVED / NOT RUN`。PR #279 与本轮状态记录只更新文档，不改变生产 App image。
+- #261 远端隔离分支的 CI 失败（Actions #41334785303 有 4 项旧/待核断言失败）；尚无 PR，Chromium Gate 未运行，不能合并。
+- #74 的安全范围修复已合并并部署，剩余用户验收未完成；#30 首次自然召回仅部分遵循且冲突场景未测；#78 生产审批边界仍未解除。
+- D084 历史浏览器业务验收仍无新证据（旧宽范围 Issue #44 已按未计划关闭，不是验收完成）。
+- 新版 Chat UI 用户视觉验收、真实 Vault/Private 检查、OS 权限和安全架构变更均未执行；Chat UI 人工验收 `USER_WAIVED / NOT RUN`。#269 部署于 2026-11-04 完成，#274 App-only 更新于 2026-11-05 完成。Notes/Journal 隔离测试不构成生产写入或真实业务数据验收。
+
+## 导航
+
+- V1 范围与业务契约：[Web App V1](business-specs/SecondBrain-Web-App-V1-Business-Spec.md)、[Universal Capture](business-specs/Universal-Capture-Business-Spec.md)
+- V1 全量分解与验收：[V1-Delivery-Plan.md](V1-Delivery-Plan.md)；当前工作顺序与唯一 NEXT 以本文件为准
+- 稳定架构：`Architecture.md`；正式取舍：`Decision-Log.md`
+- 最近已核验运行证据：`Environment-Baseline.md`；历史证据：`Progress-Log.md`
+- 执行与安全边界：`Agent-Rules.md`、仓库根目录 `AGENTS.md`

@@ -6,19 +6,22 @@ type Locale = 'zh-CN' | 'en';
 type SourceRef = { kind: 'task' | 'project' | 'journal'; id: string; version: string };
 type SourceChoice = { key: string; label: string; ref: SourceRef; sourceDate?: string };
 type WriteReceipt = { status: 'created' | 'duplicate'; brief_id: string; date: string; timezone: 'Asia/Shanghai'; record_version: string; operation_id: string };
-type ManualBriefRequest = {
-  mode: 'manual_generate'; date: string; timezone: 'Asia/Shanghai'; idempotency_key: string;
+type BriefRequestBase = {
+  date: string; timezone: 'Asia/Shanghai';
   categories: string[]; summary: string; source_refs: SourceRef[]; approved: true;
 };
-type StoredPending = { body: ManualBriefRequest; receipt: WriteReceipt | null };
+type ManualBriefRequest = BriefRequestBase & { mode: 'manual_generate'; idempotency_key: string };
+type ApprovedImportRequest = BriefRequestBase & { mode: 'approved_import'; import_ref: { kind: 'existing_brief'; id: string; version: string } };
+type BriefRequest = ManualBriefRequest | ApprovedImportRequest;
+type ImportOption = { kind: 'existing_brief'; id: string; date: string; timezone: 'Asia/Shanghai'; version: string };
+type StoredPending = { body: BriefRequest; idempotency_key: string; receipt: WriteReceipt | null };
 type Phase = 'idle' | 'loading-sources' | 'editing' | 'confirming' | 'submitting' | 'unknown' | 'resolving-unknown' | 'unknown-date-blocked' | 'unknown-date-match' | 'done';
 type ReadbackState = 'pending' | 'verified' | 'matched-content-unconfirmed' | 'unavailable' | 'stale' | 'empty' | 'mismatch';
-const TASK_SOURCE_VERSION_FIELDS = ['id', 'title', 'due_date', 'status', 'created_at', 'updated_at', 'source'] as const;
 const PENDING_STORAGE_KEY = 'secondbrain.dailyBrief.pending.v1';
 
 const text = {
   'zh-CN': {
-    start: '手动准备简报', cancel: '取消', loading: '正在读取可核验的任务与项目…',
+    start: '手动准备简报', importUnavailable: '已批准简报导入暂不可用；可选择来源与目标日期查看副本，Core 未接通时不会报告保存成功。', importStart: '从旧简报导入', sourceDate: '来源简报日期', targetDate: '目标简报日期', targetDateUnsupported: '目标日期无效或与来源日期相同；没有提交导入。', loadImport: '读取该日简报', importing: '正在按选定日期读取简报…', importPreview: '原样复制到选定目标日期', importConfirm: '确认导入并创建', importUnavailableCore: 'Core 尚未启用已批准简报导入；没有创建新简报。', importLoadFailed: '无法安全核验该日期的简报；没有提交导入。', importEmpty: '该日期没有可导入的简报。', cancel: '取消', loading: '正在读取可核验的任务与项目…',
     title: '手动创建每日简报', sourceHeading: '选择本次简报来源', journalNote: 'Journal 仅返回 Core 核验过的来源元数据，不读取正文。点击“加载 Journal 来源”后才会发起只读请求。',
     summary: '简报正文（由你编写并确认）', summaryPlaceholder: '仅填写基于下方已选来源的内容；不会调用模型。',
     categories: '分类（逗号分隔）', categoriesPlaceholder: '今日任务', prepare: '预览并确认',
@@ -39,7 +42,7 @@ const text = {
     storageUnavailable: '浏览器当前标签页不能安全暂存未知请求，因此未发送任何保存请求。',
   },
   en: {
-    start: 'Prepare a brief manually', cancel: 'Cancel', loading: 'Loading verifiable Tasks and Projects…',
+    start: 'Prepare a brief manually', importUnavailable: 'Approved brief import is not available yet. Select a source and target date to preview; Core will not report a save until import is supported.', importStart: 'Import a previous brief', sourceDate: 'Source brief date', targetDate: 'Target brief date', targetDateUnsupported: 'The target date is invalid or matches the source date; nothing was submitted.', loadImport: 'Read that date', importing: 'Reading the selected date…', importPreview: 'Copy unchanged into the selected target date', importConfirm: 'Confirm import and create', importUnavailableCore: 'Core has not enabled approved brief import; no new brief was created.', importLoadFailed: 'The brief for this date could not be verified safely; nothing was submitted.', importEmpty: 'There is no brief to import for that date.', cancel: 'Cancel', loading: 'Loading verifiable Tasks and Projects…',
     title: 'Create a daily brief manually', sourceHeading: 'Select sources for this brief', journalNote: 'Journal returns only Core-verified source metadata, not entry text. The read-only request runs only when you select “Load Journal sources.”',
     summary: 'Brief text (written and confirmed by you)', summaryPlaceholder: 'Use only the selected sources. No model is called.',
     categories: 'Categories (comma-separated)', categoriesPlaceholder: 'Today’s tasks', prepare: 'Review and confirm',
@@ -82,38 +85,15 @@ function isCalendarDate(value: unknown): value is string {
   return day >= 1 && day <= days[month - 1];
 }
 
-function isCoreTaskTimestamp(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
-  if (!match || !isCalendarDate(match[1])) return false;
-  const hour = Number(match[2]); const minute = Number(match[3]); const second = Number(match[4]);
-  const offsetHour = match[8] ? Number(match[8]) : 0; const offsetMinute = match[9] ? Number(match[9]) : 0;
-  return hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59
-    && Number.isFinite(Date.parse(value));
-}
-
-async function taskReference(task: Record<string, unknown>): Promise<SourceRef | null> {
-  if (typeof task.source !== 'string') throw new Error('task_source_unverifiable');
-  if (task.source !== 'web_app_explicit_task') return null;
-  if (TASK_SOURCE_VERSION_FIELDS.some((key) => !Object.hasOwn(task, key))
+function taskReference(task: Record<string, unknown>): SourceRef | null {
+  if (task.source !== 'web_app_explicit_task' || typeof task.title !== 'string' || !task.title.trim()) return null;
+  const sourceRef = task.source_ref;
+  if (!isRecord(sourceRef) || Object.keys(sourceRef).length !== 2
+    || !Object.hasOwn(sourceRef, 'id') || !Object.hasOwn(sourceRef, 'version')
     || typeof task.id !== 'string' || !/^[0-9a-f]{32}$/.test(task.id)
-    || typeof task.title !== 'string' || !task.title.trim()
-    || (task.due_date !== null && !isCalendarDate(task.due_date))
-    || (task.status !== 'open' && task.status !== 'completed')
-    || !isCoreTaskTimestamp(task.created_at) || !isCoreTaskTimestamp(task.updated_at)) {
-    throw new Error('task_source_unverifiable');
-  }
-  const titleBytes = new TextEncoder().encode(task.title);
-  if (titleBytes.length > 4096 || new TextDecoder('utf-8', { fatal: true }).decode(titleBytes) !== task.title) {
-    throw new Error('task_source_unverifiable');
-  }
-  // Match Python json.dumps(..., ensure_ascii=False, sort_keys=True, separators=(',', ':')).
-  const canonical = JSON.stringify(Object.fromEntries([...TASK_SOURCE_VERSION_FIELDS].sort().map((key) => [key, task[key]])));
-  const canonicalBytes = new TextEncoder().encode(canonical);
-  if (new TextDecoder('utf-8', { fatal: true }).decode(canonicalBytes) !== canonical) throw new Error('task_source_unverifiable');
-  const digest = await crypto.subtle.digest('SHA-256', canonicalBytes);
-  const version = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-  return { kind: 'task', id: task.id, version };
+    || sourceRef.id !== task.id || !/^[0-9a-f]{32}$/.test(String(sourceRef.id))
+    || typeof sourceRef.version !== 'string' || !/^[a-f0-9]{64}$/.test(sourceRef.version)) return null;
+  return { kind: 'task', id: sourceRef.id, version: sourceRef.version };
 }
 
 function parseReceipt(value: unknown, expectedDate: string): WriteReceipt | null {
@@ -127,6 +107,31 @@ function parseReceipt(value: unknown, expectedDate: string): WriteReceipt | null
   return value as WriteReceipt;
 }
 
+function parseImportOption(value: unknown, requestedDate: string): ImportOption | null {
+  if (!isRecord(value) || Object.keys(value).length !== 5
+    || !['kind', 'id', 'date', 'timezone', 'version'].every((key) => Object.hasOwn(value, key))
+    || value.kind !== 'existing_brief' || value.date !== requestedDate || value.timezone !== 'Asia/Shanghai'
+    || typeof value.id !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.id)
+    || !value.id.startsWith(`${requestedDate}:`)
+    || typeof value.version !== 'string' || !/^[a-f0-9]{64}$/.test(value.version)) return null;
+  return value as unknown as ImportOption;
+}
+
+function parseImportOptions(value: unknown, requestedDate: string): { status: 'real' | 'empty'; item: ImportOption | null } | null {
+  if (!isRecord(value) || !['status', 'items', 'freshness'].every((key) => Object.hasOwn(value, key))
+    || Object.keys(value).some((key) => !['status', 'items', 'freshness'].includes(key))
+    || !['real', 'empty'].includes(String(value.status)) || !Array.isArray(value.items) || value.items.length > 1
+    || !isRecord(value.freshness) || Object.keys(value.freshness).some((key) => key !== 'checked_at')
+    || typeof value.freshness.checked_at !== 'string' || !Number.isFinite(Date.parse(value.freshness.checked_at))) return null;
+  if (value.status === 'real') {
+    if (value.items.length !== 1) return null;
+    const item = parseImportOption(value.items[0], requestedDate);
+    return item ? { status: 'real', item } : null;
+  }
+  if (value.items.length !== 0) return null;
+  return { status: 'empty', item: null };
+}
+
 function isSourceRef(value: unknown): value is SourceRef {
   return isRecord(value) && Object.keys(value).length === 3
     && ['kind', 'id', 'version'].every((key) => Object.hasOwn(value, key))
@@ -135,19 +140,25 @@ function isSourceRef(value: unknown): value is SourceRef {
     && typeof value.version === 'string' && /^[a-f0-9]{64}$/.test(value.version);
 }
 
-function parseManualRequest(value: unknown): ManualBriefRequest | null {
-  const keys = ['mode', 'date', 'timezone', 'idempotency_key', 'categories', 'summary', 'source_refs', 'approved'];
-  if (!isRecord(value) || Object.keys(value).length !== keys.length || !keys.every((key) => Object.hasOwn(value, key))
-    || value.mode !== 'manual_generate' || !isCalendarDate(value.date) || value.timezone !== 'Asia/Shanghai'
-    || typeof value.idempotency_key !== 'string' || !/^ui-[A-Za-z0-9-]{16,128}$/.test(value.idempotency_key)
+function parsePendingRequest(value: unknown): BriefRequest | null {
+  const baseKeys = ['mode', 'date', 'timezone', 'categories', 'summary', 'source_refs', 'approved'];
+  const isImport = value && isRecord(value) && value.mode === 'approved_import';
+  const expectedKeys = isImport ? [...baseKeys, 'import_ref'] : [...baseKeys, 'idempotency_key'];
+  if (!isRecord(value) || Object.keys(value).length !== expectedKeys.length || !expectedKeys.every((key) => Object.hasOwn(value, key))
+    || !['manual_generate', 'approved_import'].includes(String(value.mode)) || !isCalendarDate(value.date) || value.timezone !== 'Asia/Shanghai'
+    || (!isImport && (typeof value.idempotency_key !== 'string' || !/^ui-[A-Za-z0-9-]{16,128}$/.test(String(value.idempotency_key))))
     || !Array.isArray(value.categories) || value.categories.length > 30
     || !value.categories.every((item) => typeof item === 'string' && item.trim().length > 0 && item.length <= 80)
     || typeof value.summary !== 'string' || !value.summary.trim() || value.summary.length > 20000
     || !Array.isArray(value.source_refs) || value.source_refs.length < 1 || value.source_refs.length > 50
     || !value.source_refs.every(isSourceRef) || value.approved !== true) return null;
+  if (value.mode === 'approved_import' && (!isRecord(value.import_ref) || Object.keys(value.import_ref).length !== 3
+    || value.import_ref.kind !== 'existing_brief' || typeof value.import_ref.id !== 'string'
+    || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.import_ref.id)
+    || typeof value.import_ref.version !== 'string' || !/^[a-f0-9]{64}$/.test(value.import_ref.version))) return null;
   const refs = value.source_refs as SourceRef[];
   if (new Set(refs.map((ref) => `${ref.kind}:${ref.id}`)).size !== refs.length) return null;
-  return value as unknown as ManualBriefRequest;
+  return value as unknown as BriefRequest;
 }
 
 function readPending(): StoredPending | null {
@@ -155,16 +166,30 @@ function readPending(): StoredPending | null {
     const raw = window.sessionStorage.getItem(PENDING_STORAGE_KEY);
     if (!raw) return null;
     const value: unknown = JSON.parse(raw);
-    if (!isRecord(value) || Object.keys(value).length !== 2 || !Object.hasOwn(value, 'body') || !Object.hasOwn(value, 'receipt')) return null;
-    const body = parseManualRequest(value.body);
+    if (!isRecord(value) || !Object.hasOwn(value, 'body') || !Object.hasOwn(value, 'receipt')) return null;
+    const legacyKey = isRecord(value.body) && typeof value.body.idempotency_key === 'string'
+      ? value.body.idempotency_key : null;
+    const legacyImportBody = legacyKey && isRecord(value.body) && value.body.mode === 'approved_import'
+      ? Object.fromEntries(Object.entries(value.body).filter(([key]) => key !== 'idempotency_key'))
+      : null;
+    const body = parsePendingRequest(value.body) ?? (legacyImportBody ? parsePendingRequest(legacyImportBody) : null);
     const receipt = value.receipt === null ? null : parseReceipt(value.receipt, body?.date ?? '');
-    return body && (value.receipt === null || receipt) ? { body, receipt } : null;
+    if (!body || (value.receipt !== null && !receipt)) return null;
+    // Preserve pending requests written by the earlier UI shape, including an
+    // approved_import key embedded in its body, so an unknown POST stays replayable.
+    const idempotencyKey = Object.hasOwn(value, 'idempotency_key') && typeof value.idempotency_key === 'string'
+      ? value.idempotency_key : legacyKey;
+    if (!idempotencyKey || !/^ui-[A-Za-z0-9-]{16,128}$/.test(idempotencyKey)) return null;
+    if (body.mode === 'manual_generate' && body.idempotency_key !== idempotencyKey) return null;
+    if (body.mode === 'approved_import' && legacyKey && !Object.hasOwn(value, 'idempotency_key'))
+      return { body, idempotency_key: idempotencyKey, receipt: receipt ?? null };
+    return { body, idempotency_key: idempotencyKey, receipt: receipt ?? null };
   } catch { return null; }
 }
 
-function savePending(body: ManualBriefRequest, receipt: WriteReceipt | null): boolean {
+function savePending(body: BriefRequest, idempotencyKey: string, receipt: WriteReceipt | null): boolean {
   try {
-    window.sessionStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify({ body, receipt }));
+    window.sessionStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify({ body, idempotency_key: idempotencyKey, receipt }));
     return true;
   } catch { return false; }
 }
@@ -173,7 +198,7 @@ function clearPending() {
   try { window.sessionStorage.removeItem(PENDING_STORAGE_KEY); } catch { /* storage cleanup is best effort */ }
 }
 
-function matchesContent(record: DailyBriefRecord, body: ManualBriefRequest): boolean {
+function matchesContent(record: DailyBriefRecord, body: BriefRequest): boolean {
   return record.date === body.date && record.timezone === body.timezone
     && record.generation_status === 'generated'
     && record.summary === body.summary
@@ -181,7 +206,7 @@ function matchesContent(record: DailyBriefRecord, body: ManualBriefRequest): boo
     && JSON.stringify(record.source_refs) === JSON.stringify(body.source_refs);
 }
 
-function matchesRequest(record: DailyBriefRecord, body: ManualBriefRequest, receipt: WriteReceipt): boolean {
+function matchesRequest(record: DailyBriefRecord, body: BriefRequest, receipt: WriteReceipt): boolean {
   return matchesContent(record, body) && record.brief_id === receipt.brief_id;
 }
 
@@ -198,7 +223,7 @@ async function loadSources(): Promise<SourceChoice[]> {
   const tasks: SourceChoice[] = [];
   for (const item of taskPayload.tasks) {
     if (!isRecord(item)) throw new Error('source_read_failed');
-    const ref = await taskReference(item);
+    const ref = taskReference(item);
     if (ref) tasks.push({ key: `${ref.kind}:${ref.id}`, label: item.title as string, ref });
   }
   const projectChoices = projects.items.map((project: ProjectRecord) => ({
@@ -220,13 +245,20 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
   const [categories, setCategories] = useState('');
   const [error, setError] = useState('');
   const [receipt, setReceipt] = useState<WriteReceipt | null>(restored?.receipt ?? null);
-  const [savedRequest, setSavedRequest] = useState<ManualBriefRequest | null>(restored?.body ?? null);
+  const [savedRequest, setSavedRequest] = useState<BriefRequest | null>(restored?.body ?? null);
+  const [savedIdempotencyKey, setSavedIdempotencyKey] = useState<string | null>(restored?.idempotency_key ?? null);
   const [readbackState, setReadbackState] = useState<ReadbackState | null>(restored?.receipt ? 'pending' : null);
   const submitting = useRef(false);
   const mounted = useRef(true);
   const readbackController = useRef<AbortController | null>(null);
   const getBusinessDate = () => shanghaiDate(dateNow());
   const [businessDate, setBusinessDate] = useState(() => getBusinessDate());
+  const [targetDate, setTargetDate] = useState(() => getBusinessDate());
+  const [importDate, setImportDate] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
+  const [importOption, setImportOption] = useState<ImportOption | null>(null);
+  const [importRecord, setImportRecord] = useState<DailyBriefRecord | null>(null);
+  const [importError, setImportError] = useState('');
 
   useEffect(() => {
     mounted.current = true;
@@ -236,10 +268,55 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     };
   }, []);
 
-  function invalidateRequest() { setSavedRequest(null); setReceipt(null); setReadbackState(null); clearPending(); }
+  function invalidateRequest() { setSavedRequest(null); setSavedIdempotencyKey(null); setReceipt(null); setReadbackState(null); clearPending(); }
+
+  async function loadApprovedImport() {
+    setImportError(''); setImportOption(null); setImportRecord(null);
+    if (!isCalendarDate(importDate) || !isCalendarDate(targetDate) || importDate === targetDate) { setImportError(copy.importLoadFailed); return; }
+    setImportLoading(true);
+    try {
+      const selectorParams = new URLSearchParams({ date: importDate, limit: '1' });
+      const selectorResponse = await fetch(`/api/daily-brief/source-options/brief?${selectorParams}`, {
+        credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' },
+      });
+      if (!selectorResponse.ok) throw new Error('brief_selector_unavailable');
+      const parsedOptions = parseImportOptions(await selectorResponse.json(), importDate);
+      if (!parsedOptions) throw new Error('invalid_brief_selector');
+      if (parsedOptions.status === 'empty') { setImportError(copy.importEmpty); return; }
+      const option = parsedOptions.item;
+      if (!option) throw new Error('missing_brief_option');
+      const detailParams = new URLSearchParams({ date: option.date, timezone: option.timezone });
+      const detailResponse = await fetch(`/api/daily-brief?${detailParams}`, {
+        credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' },
+      });
+      if (!detailResponse.ok) throw new Error('brief_detail_unavailable');
+      const details = parseDailyBriefResponse(await detailResponse.json(), option.date, option.timezone);
+      const record = details?.status === 'real' ? details.items[0] : null;
+      if (!record || record.generation_status !== 'generated' || option.id !== `${record.date}:${record.brief_id}`
+        || record.source_refs.length < 1 || record.source_refs.some((ref) => !isSourceRef(ref))) throw new Error('brief_detail_mismatch');
+      setImportOption(option); setImportRecord(record);
+    } catch {
+      setImportError(copy.importLoadFailed);
+    } finally { setImportLoading(false); }
+  }
+
+  function confirmApprovedImport() {
+    if (!importOption || !importRecord) { setImportError(copy.importLoadFailed); return; }
+    if (!isCalendarDate(targetDate) || importOption.date === targetDate) { setImportError(copy.targetDateUnsupported); return; }
+    setImportError('');
+    const body: ApprovedImportRequest = {
+      mode: 'approved_import', date: targetDate, timezone: 'Asia/Shanghai',
+      categories: [...importRecord.categories], summary: importRecord.summary,
+      source_refs: importRecord.source_refs.map((ref) => ({ kind: ref.kind, id: ref.id, version: ref.version })) as SourceRef[],
+      approved: true, import_ref: { kind: 'existing_brief', id: importOption.id, version: importOption.version },
+    };
+    const idempotencyKey = `ui-${crypto.randomUUID()}`;
+    if (!savePending(body, idempotencyKey, null)) { setImportError(copy.storageUnavailable); return; }
+    setSavedRequest(body); setSavedIdempotencyKey(idempotencyKey); setBusinessDate(targetDate); setError(''); setPhase('confirming');
+  }
 
   async function begin() {
-    setPhase('loading-sources'); setError(''); setReceipt(null); setReadbackState(null); setSelected([]); setBusinessDate(getBusinessDate()); clearPending(); setSavedRequest(null);
+    setPhase('loading-sources'); setError(''); setReceipt(null); setReadbackState(null); setSelected([]); setBusinessDate(getBusinessDate()); clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null);
     try { const values = await loadSources(); if (mounted.current) { setSources(values); setPhase('editing'); } }
     catch { if (mounted.current) { setSources([]); setError(copy.loadFailed); setPhase('idle'); } }
   }
@@ -282,7 +359,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     setError(''); setPhase('confirming');
   }
 
-  async function requestCurrentRead(body: ManualBriefRequest, expectedReceipt: WriteReceipt | null): Promise<ReadbackState> {
+  async function requestCurrentRead(body: BriefRequest, expectedReceipt: WriteReceipt | null): Promise<ReadbackState> {
     readbackController.current?.abort();
     const controller = new AbortController();
     readbackController.current = controller;
@@ -302,7 +379,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     } catch { return 'unavailable'; }
   }
 
-  async function verifyReceipt(body: ManualBriefRequest, value: WriteReceipt) {
+  async function verifyReceipt(body: BriefRequest, value: WriteReceipt) {
     if (mounted.current) setReadbackState('pending');
     const result = await requestCurrentRead(body, value);
     if (!mounted.current) return;
@@ -311,7 +388,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     onSaved();
   }
 
-  async function checkUnknownOriginalDate(body: ManualBriefRequest) {
+  async function checkUnknownOriginalDate(body: BriefRequest) {
     if (mounted.current) setPhase('resolving-unknown');
     const result = await requestCurrentRead(body, null);
     if (!mounted.current) return;
@@ -326,7 +403,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
   async function submit() {
     if (submitting.current) return;
     const existing = savedRequest;
-    if (existing && getBusinessDate() !== existing.date) {
+    if (existing?.mode === 'manual_generate' && getBusinessDate() !== existing.date) {
       await checkUnknownOriginalDate(existing);
       return;
     }
@@ -337,28 +414,47 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
     if (!existing && selectedSources.some((source) => source.ref.kind === 'journal' && source.sourceDate !== businessDate)) {
       clearJournalChoices(); invalidateRequest(); setError(copy.journalDateChanged); setPhase('editing'); return;
     }
-    const key = existing?.idempotency_key ?? `ui-${crypto.randomUUID()}`;
+    const key = existing ? savedIdempotencyKey : `ui-${crypto.randomUUID()}`;
+    if (!key) { setError(copy.storageUnavailable); setPhase('unknown'); return; }
     const body = existing ?? {
       mode: 'manual_generate' as const, date: businessDate, timezone: 'Asia/Shanghai' as const, idempotency_key: key,
       categories: categories.split(',').map((item) => item.trim()).filter(Boolean),
       summary, source_refs: selectedSources.map((source) => source.ref), approved: true as const,
     };
-    if (!existing && !savePending(body, null)) { setError(copy.storageUnavailable); setPhase('editing'); return; }
+    if (!existing && !savePending(body, key, null)) { setError(copy.storageUnavailable); setPhase('editing'); return; }
     submitting.current = true;
-    setSavedRequest(body); setPhase('submitting'); setError('');
+    setSavedRequest(body); setSavedIdempotencyKey(key); setPhase('submitting'); setError('');
     try {
+      const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json' };
+      if (body.mode === 'approved_import') headers['Idempotency-Key'] = key;
       const response = await fetch('/api/daily-brief', {
-        method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        method: 'POST', credentials: 'same-origin', headers,
         body: JSON.stringify(body),
       });
       if (response.status === 401 || response.status === 403) {
-        clearPending(); setSavedRequest(null); setError(copy.auth); setPhase('editing'); return;
+        clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null); setError(copy.auth); setPhase(body.mode === 'approved_import' ? 'idle' : 'editing'); return;
+      }
+      if (response.status === 400 || response.status === 422) {
+        if (body.mode === 'approved_import') {
+          clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null); setImportOption(null); setImportRecord(null);
+          setError(copy.invalidRequest); setPhase('idle'); return;
+        }
       }
       if (response.status === 409) {
-        clearPending(); setSavedRequest(null); setError(copy.conflict); setPhase('editing'); onSaved(); return;
+        clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null);
+        if (body.mode === 'approved_import') {
+          setError(''); setImportOption(null); setImportRecord(null); setImportError(copy.conflict); setPhase('idle');
+        } else { setError(copy.conflict); setPhase('editing'); }
+        onSaved(); return;
       }
       if (response.status === 422) {
-        clearPending(); setSavedRequest(null); clearJournalChoices(); setError(copy.invalidRequest); setPhase('editing'); return;
+        clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null); clearJournalChoices(); setError(copy.invalidRequest);
+        if (body.mode === 'approved_import') { setImportOption(null); setImportRecord(null); setPhase('idle'); }
+        else setPhase('editing');
+        return;
+      }
+      if (response.status === 501 && body.mode === 'approved_import') {
+        clearPending(); setSavedRequest(null); setSavedIdempotencyKey(null); setError(copy.importUnavailableCore); setPhase('idle'); return;
       }
       if (!response.ok) { setError(response.status === 503 ? copy.unavailable : copy.unknown); setPhase('unknown'); return; }
       const parsed = parseReceipt(await response.json(), body.date);
@@ -366,7 +462,7 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
         setError(copy.unknown); setPhase('unknown'); return;
       }
       setReceipt(parsed); setReadbackState('pending'); setPhase('done');
-      savePending(body, parsed);
+      savePending(body, key, parsed);
       onSaved();
       void verifyReceipt(body, parsed);
     } catch {
@@ -389,6 +485,28 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
 
   return <section className="daily-brief-approval" aria-label={copy.title}>
     {phase === 'idle' && <button type="button" onClick={() => void begin()}>{copy.start}</button>}
+    {phase === 'idle' && <p role="note">{copy.importUnavailable}</p>}
+    {phase === 'idle' && <div>
+      <h3>{copy.importStart}</h3>
+      <label>{copy.sourceDate}<input type="date" value={importDate} max={getBusinessDate()} disabled={importLoading} onChange={(event) => {
+        setImportDate(event.target.value); setImportOption(null); setImportRecord(null); setImportError('');
+      }} /></label>
+      <label>{copy.targetDate}<input type="date" value={targetDate} disabled={importLoading} onChange={(event) => {
+        setTargetDate(event.target.value); setImportOption(null); setImportRecord(null); setImportError('');
+      }} /></label>
+      <button type="button" onClick={() => void loadApprovedImport()} disabled={importLoading || !importDate}>{importLoading ? copy.importing : copy.loadImport}</button>
+      {importLoading && <p role="status">{copy.importing}</p>}
+      {importError && <p role="alert">{importError}</p>}
+      {importRecord && importOption && <>
+        <h4>{copy.importPreview}</h4>
+        <p>来源：{importRecord.date} · {importRecord.brief_id}</p>
+        <p>目标：{targetDate}</p>
+        <p>{importRecord.categories.join(' · ')}</p>
+        <pre>{importRecord.summary}</pre>
+        <ul>{importRecord.source_refs.map((ref) => <li key={`${ref.kind}:${ref.id}`}>{ref.kind} · {ref.id}</li>)}</ul>
+        <button type="button" onClick={confirmApprovedImport}>{copy.importConfirm}</button>
+      </>}
+    </div>}
     {phase === 'loading-sources' && <p role="status">{copy.loading}</p>}
     {phase !== 'idle' && phase !== 'loading-sources' && phase !== 'done' && <>
       <h2>{copy.title}</h2>
@@ -409,11 +527,12 @@ export function DailyBriefApproval({ locale, onSaved, dateNow = () => new Date()
         <button type="button" onClick={confirmDraft}>{copy.prepare}</button>
       </>}
       {phase === 'confirming' && <>
-        <h3>{copy.confirmationTitle}</h3><p>{copy.confirmationBody}</p>
+        <h3>{savedRequest?.mode === 'approved_import' ? copy.importConfirm : copy.confirmationTitle}</h3><p>{copy.confirmationBody}</p>
         <p>业务日期：{businessDate}</p>
-        <p><strong>{summary}</strong></p>
-        <p>{selected.map((key) => sources.find((source) => source.key === key)?.label).filter(Boolean).join(' · ')}</p>
-        <button type="button" onClick={() => void submit()}>{copy.confirm}</button>
+        <p><strong>{savedRequest?.summary ?? summary}</strong></p>
+        <p>{savedRequest?.categories.join(' · ') ?? selected.map((key) => sources.find((source) => source.key === key)?.label).filter(Boolean).join(' · ')}</p>
+        <p>{savedRequest?.source_refs.map((ref) => `${ref.kind} · ${ref.id}`).join(' · ')}</p>
+        <button type="button" onClick={() => void submit()}>{savedRequest?.mode === 'approved_import' ? copy.importConfirm : copy.confirm}</button>
       </>}
       {phase === 'submitting' && <p role="status">{copy.submitting}</p>}
       {phase === 'unknown' && <><p role="alert">{error || copy.unknown}</p><button type="button" onClick={() => void submit()}>{copy.retry}</button></>}

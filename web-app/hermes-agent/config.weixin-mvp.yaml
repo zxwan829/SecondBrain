@@ -1,0 +1,5 @@
+# Candidate profile fragment only. Merge into a synthetic Hermes v0.22.2
+# profile after installing the fixed image; preserve all existing settings.
+plugins:
+  enabled:
+    - secondbrain-weixin-inbox

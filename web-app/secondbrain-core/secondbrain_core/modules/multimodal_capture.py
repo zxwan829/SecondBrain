@@ -54,6 +54,8 @@ class MultimodalCaptureProcessors:
         with self._ocr_lock:
             try:
                 with Image.open(io.BytesIO(image_bytes)) as image:
+                    if getattr(image, "n_frames", 1) > 1:
+                        raise ValueError("Animated image OCR is unsupported; upload a still image to process OCR.")
                     if image.width * image.height > MAX_IMAGE_PIXELS:
                         raise ValueError("Image exceeds the 12 megapixel OCR limit")
                     if image.width > 10000 or image.height > 10000:

@@ -1,0 +1,63 @@
+name: D090 Linux process boundary
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "web-app/secondbrain-core/secondbrain_core/modules/d090_authority_writer.py"
+      - "web-app/secondbrain-core/tests/d090_linux_process_helper.py"
+      - "web-app/secondbrain-core/tests/test_d090_authority_writer_linux_process.py"
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character commit SHA to test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  process-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Select the exact candidate SHA
+        id: candidate
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          INPUT_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          if [ -n "$PR_HEAD_SHA" ]; then
+            candidate_sha="$PR_HEAD_SHA"
+          else
+            candidate_sha="$INPUT_SHA"
+          fi
+          if ! [[ "$candidate_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Candidate must be an exact lowercase 40-character commit SHA" >&2
+            exit 2
+          fi
+          echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+      - name: Check out the exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.candidate.outputs.sha }}
+          persist-credentials: false
+      - name: Verify candidate SHA
+        env:
+          EXPECTED_SHA: ${{ steps.candidate.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated Core test dependencies
+        working-directory: web-app/secondbrain-core
+        run: python -m pip install -e ".[test,writer]"
+      - name: Exercise D090 Authority and Writer as separate Linux identities
+        working-directory: web-app/secondbrain-core
+        run: |
+          python_bin="$(command -v python)"
+          sudo env PYTHONPATH="${PYTHONPATH:-}" "$python_bin" -m pytest -q -p no:cacheprovider \
+            tests/test_d090_authority_writer_linux_process.py
+      - name: Check patch whitespace
+        run: git diff --check

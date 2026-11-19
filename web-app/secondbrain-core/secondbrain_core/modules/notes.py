@@ -1,10 +1,15 @@
 """Narrow Core-owned Notes API for explicitly configured Markdown roots."""
+from __future__ import annotations
+import csv
+import base64
+import binascii
 import hashlib
 import fcntl
 import json
 import os
 import re
 import stat
+import unicodedata
 import uuid
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -12,30 +17,268 @@ from pathlib import Path, PurePosixPath
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File
 from PIL import Image, UnidentifiedImageError
 
-_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}\.md$", re.I)
+_SAFE_NAME = re.compile(r"^[^\W_][\w. -]{0,119}\.md$", re.I | re.UNICODE)
 _IMAGE_TYPES = {".png": b"\x89PNG\r\n\x1a\n", ".jpg": b"\xff\xd8\xff", ".gif": b"GIF8", ".webp": b"RIFF"}
 MAX_MARKDOWN_BYTES = 1_000_000
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_VISUAL_BYTES = 10 * 1024 * 1024
 _VISUAL_FILENAME = re.compile(r"^[0-9a-f]{32}\.(?:mindmap|excalidraw)\.json$")
 _VISUAL_KINDS = {"mindmap", "excalidraw"}
+_BLOCKSUITE_RESOURCE_ID = re.compile(r"^[0-9a-f]{32}$")
+_BLOCKSUITE_DOC_ID = re.compile(r"^[A-Za-z0-9_-]{1,96}$")
+_BLOCKSUITE_RESOURCE_FILENAME = re.compile(r"^[0-9a-f]{32}\.blocksuite\.json$")
+_BLOCKSUITE_RESOURCE_KINDS = {"database", "edgeless-canvas", "rich-page"}
+MAX_BLOCKSUITE_RESOURCE_BYTES = 10 * 1024 * 1024
+MAX_BLOCKSUITE_RESOURCES_PER_NOTE = 64
+MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE = 64 * 1024 * 1024
+MAX_BLOCKSUITE_UPDATE_BYTES = 7 * 1024 * 1024
+MAX_BLOCKSUITE_SNAPSHOT_BYTES = 2 * 1024 * 1024
+MAX_BLOCKSUITE_SNAPSHOT_NODES = 50_000
+MAX_BLOCKSUITE_SNAPSHOT_DEPTH = 64
+MAX_BLOCKSUITE_REQUEST_BYTES = MAX_BLOCKSUITE_RESOURCE_BYTES + 64 * 1024
+MAX_BLOCKSUITE_BLOB_BYTES = MAX_IMAGE_BYTES
+_BLOCKSUITE_BLOB_FILENAME = re.compile(r"^[A-Za-z0-9_-]{43}=$")
+_BLOCKSUITE_BLOB_DISK_FILENAME = re.compile(r"^[0-9a-f]{64}\.blocksuite-blob$")
+_BLOCKSUITE_BLOB_TYPES = {"PNG": "image/png", "JPEG": "image/jpeg", "GIF": "image/gif", "WEBP": "image/webp"}
+_BLOCKSUITE_RESOURCE_REFERENCE = re.compile(r"\]\(attachments/([0-9a-f]{32}\.blocksuite\.json)\)")
+_MARKDOWN_FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _blocksuite_resource_references(markdown):
+    """Return active Markdown resource links, excluding literal code examples."""
+    lines = []
+    fence_char = None
+    fence_size = 0
+    for line in markdown.splitlines():
+        if fence_char is not None:
+            if re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_size},}}\s*$", line):
+                fence_char = None
+                fence_size = 0
+            continue
+        opening = _MARKDOWN_FENCE_OPEN.match(line)
+        if opening:
+            fence = opening.group(1)
+            fence_char, fence_size = fence[0], len(fence)
+            continue
+        lines.append(line)
+    text = "\n".join(lines)
+    visible = []
+    index = 0
+    while index < len(text):
+        if text[index] != "`":
+            visible.append(text[index])
+            index += 1
+            continue
+        end = index + 1
+        while end < len(text) and text[end] == "`":
+            end += 1
+        delimiter_size = end - index
+        search = end
+        closing = None
+        while search < len(text):
+            candidate = text.find("`", search)
+            if candidate < 0:
+                break
+            run_end = candidate + 1
+            while run_end < len(text) and text[run_end] == "`":
+                run_end += 1
+            if run_end - candidate == delimiter_size:
+                closing = run_end
+                break
+            search = run_end
+        if closing is None:
+            visible.append(text[index:end])
+            index = end
+        else:
+            index = closing
+    return set(_BLOCKSUITE_RESOURCE_REFERENCE.findall("".join(visible)))
+
+
+async def _read_bounded_json_request(request: Request, max_bytes: int):
+    """Read a JSON request incrementally so schema limits also bound input memory."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(status_code=413, detail="BlockSuite resource request is too large")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length") from exc
+    raw = bytearray()
+    async for chunk in request.stream():
+        if len(raw) + len(chunk) > max_bytes:
+            raise HTTPException(status_code=413, detail="BlockSuite resource request is too large")
+        raw.extend(chunk)
+    try:
+        return json.loads(raw)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="BlockSuite resource request must be valid JSON") from exc
+
+
+async def _read_bounded_body(request: Request, max_bytes: int):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(status_code=413, detail="BlockSuite blob is too large")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length") from exc
+    raw = bytearray()
+    async for chunk in request.stream():
+        if len(raw) + len(chunk) > max_bytes:
+            raise HTTPException(status_code=413, detail="BlockSuite blob is too large")
+        raw.extend(chunk)
+    return bytes(raw)
+
+
+def _frontmatter_prefix(content: str):
+    """Return an exact leading YAML frontmatter prefix, if present."""
+    offset = 1 if content.startswith("\ufeff") else 0
+    normalized = content[offset:]
+    if not normalized.startswith(("---\n", "---\r\n")):
+        return ""
+    match = re.match(r"^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)", normalized)
+    return content[:offset + match.end()] if match else None
 
 
 def markdown_safety(content: str) -> list[str]:
-    """Return constructs that the basic editor cannot safely round-trip."""
+    """Return body constructs that the rich-text editor cannot safely round-trip.
+
+    Frontmatter is an opaque prefix owned by Notes. Editors may edit the Markdown
+    body only when they return that prefix byte-for-byte unchanged.
+    """
     reasons = []
-    if content.lstrip("\ufeff").startswith("---\n") or content.lstrip("\ufeff").startswith("---\r\n"):
-        reasons.append("frontmatter")
+    body = content
+    prefix = _frontmatter_prefix(content)
+    if prefix is not None and prefix:
+        body = content[len(prefix):]
+    elif prefix is None:
+        reasons.append("incomplete frontmatter")
     checks = {
-        "wiki links": r"!?\[\[[^\]]+\]\]", "callouts": r"^\s*>\s*\[![-\w]+\]",
+        "wiki links": r"!?\[\[[^\]]+\]\]", "callouts": r"^(?:[ \t]*>[ \t]*)+\[![-\w]+\]",
         "block IDs": r"\^[-\w]+\s*$", "reference links": r"^\s*\[[^\]]+\]:",
         "footnotes": r"\[\^[^\]]+\]", "HTML blocks": r"<\s*/?\s*[A-Za-z][^>]*>",
         "Obsidian comments": r"%%.*?%%",
     }
     for label, pattern in checks.items():
-        if re.search(pattern, content, re.M | re.S if label == "Obsidian comments" else re.M):
+        if re.search(pattern, body, re.M | re.S if label == "Obsidian comments" else re.M):
             reasons.append(label)
     return reasons
+
+
+def _note_properties(content: str) -> tuple[str | None, list[str]]:
+    """Read the two managed properties from a deliberately small YAML subset."""
+    lines = content.removeprefix("\ufeff").splitlines()
+    if not lines or lines[0] != "---":
+        return None, []
+    try:
+        end = lines.index("---", 1)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Note frontmatter is incomplete") from exc
+    type_lines = [index for index, line in enumerate(lines[1:end], 1) if line.startswith("类型:")]
+    tag_lines = [index for index, line in enumerate(lines[1:end], 1) if line.startswith("tags:")]
+    if len(type_lines) > 1 or len(tag_lines) > 1:
+        raise HTTPException(status_code=422, detail="Managed note properties contain duplicate keys")
+
+    def scalar(raw):
+        value = raw.strip()
+        if not value:
+            return ""
+        if value.startswith('"'):
+            try:
+                parsed = json.loads(value)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="Managed note property is not supported") from exc
+            if not isinstance(parsed, str):
+                raise HTTPException(status_code=422, detail="Managed note property is not a string")
+            return parsed
+        if value.startswith("'") and value.endswith("'") and len(value) >= 2:
+            return value[1:-1].replace("''", "'")
+        if (value in {"|", ">", "|-", "|+", ">-", ">+"}
+                or value.startswith(("&", "*", "!", "{", "["))
+                or any(mark in value for mark in ("\n", "\r", " #", ": "))):
+            raise HTTPException(status_code=422, detail="Managed note property is not supported")
+        return value
+
+    selected_type = scalar(lines[type_lines[0]].split(":", 1)[1]) if type_lines else ""
+    if type_lines and type_lines[0] + 1 < end and lines[type_lines[0] + 1].startswith((" ", "\t")):
+        raise HTTPException(status_code=422, detail="Multiline type values are not supported")
+    tags: list[str] = []
+    if tag_lines:
+        index = tag_lines[0]
+        raw = lines[index].split(":", 1)[1].strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except ValueError:
+                if not (raw.startswith("[") and raw.endswith("]")):
+                    raise HTTPException(status_code=422, detail="Managed tags must be a YAML string list")
+                try:
+                    parsed = next(csv.reader([raw[1:-1]], skipinitialspace=True))
+                    parsed = [scalar(item) for item in parsed if item.strip()]
+                except (csv.Error, StopIteration) as exc:
+                    raise HTTPException(status_code=422, detail="Managed tags must be a YAML string list") from exc
+            if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+                raise HTTPException(status_code=422, detail="Managed tags must be a string list")
+            tags = parsed
+        else:
+            cursor = index + 1
+            while cursor < end and lines[cursor].startswith("  - "):
+                tags.append(scalar(lines[cursor][4:]))
+                cursor += 1
+            if cursor < end and lines[cursor].startswith(" "):
+                raise HTTPException(status_code=422, detail="Managed tags use unsupported YAML syntax")
+    return selected_type or None, tags
+
+
+def _replace_note_properties(content: str, note_type: str, tags: list[str]) -> str:
+    """Replace only top-level 类型/tags lines, preserving all other bytes and body."""
+    newline = "\r\n" if "\r\n" in content else "\n"
+    bom = "\ufeff" if content.startswith("\ufeff") else ""
+    source = content[len(bom):]
+    lines = source.splitlines(keepends=True)
+    bare = lambda line: line.removesuffix("\r\n").removesuffix("\n").removesuffix("\r")
+    has_frontmatter = bool(lines and bare(lines[0]) == "---")
+    if has_frontmatter:
+        end = next((index for index, line in enumerate(lines[1:], 1) if bare(line) == "---"), None)
+        if end is None:
+            raise HTTPException(status_code=422, detail="Note frontmatter is incomplete")
+        _note_properties(content)
+        body = "".join(lines[end + 1:])
+        header = lines[1:end]
+        closing_line = lines[end]
+    else:
+        body, header = source, []
+        closing_line = "---" + newline
+
+    kept: list[str] = []
+    skip_tag_items = False
+    found_type = found_tags = False
+    for line in header:
+        value = bare(line)
+        if value.startswith("类型:"):
+            if not found_type:
+                kept.append("类型: " + json.dumps(note_type, ensure_ascii=False) + newline)
+                found_type = True
+            skip_tag_items = False
+            continue
+        if value.startswith("tags:"):
+            if not found_tags:
+                kept.append("tags: " + json.dumps(tags, ensure_ascii=False) + newline)
+                found_tags = True
+            skip_tag_items = not value.split(":", 1)[1].strip()
+            continue
+        if skip_tag_items and (value.startswith("  - ") or not value.strip()):
+            continue
+        skip_tag_items = False
+        kept.append(line)
+    if not found_type:
+        kept.append("类型: " + json.dumps(note_type, ensure_ascii=False) + newline)
+    if not found_tags:
+        kept.append("tags: " + json.dumps(tags, ensure_ascii=False) + newline)
+
+    if has_frontmatter:
+        return bom + "---" + newline + "".join(kept) + closing_line + body
+    return bom + "---" + newline + "".join(kept) + closing_line + body
 
 
 class NotesStore:
@@ -56,6 +299,334 @@ class NotesStore:
             for right_name, right in resolved[index + 1:]:
                 if left == right or left in right.parents or right in left.parents:
                     raise ValueError("Notes roots must not overlap")
+        self._blocksuite_history = None
+
+    def _history_store(self):
+        if self._blocksuite_history is None:
+            from .blocksuite_history import BlockSuiteHistoryStore
+            self._blocksuite_history = BlockSuiteHistoryStore(self)
+        return self._blocksuite_history
+
+    def _blocksuite_artifacts_at(self, directory_fd):
+        try:
+            attachments_fd = self._open_attachments_directory(directory_fd)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return []
+            raise
+        try:
+            artifacts = []
+            for filename in os.listdir(attachments_fd):
+                if _BLOCKSUITE_RESOURCE_FILENAME.fullmatch(filename):
+                    resource_id = filename.split(".", 1)[0]
+                    _body, raw, etag = self._read_blocksuite_resource_at(attachments_fd, resource_id)
+                    artifacts.append({"kind": "resource", "id": resource_id, "sha256": etag,
+                                      "data": raw, "filename": filename, "content_type": "application/json"})
+                elif _BLOCKSUITE_BLOB_DISK_FILENAME.fullmatch(filename):
+                    digest = filename.split(".", 1)[0]
+                    blob_id = base64.urlsafe_b64encode(bytes.fromhex(digest)).decode("ascii")
+                    raw, content_type, etag = self._read_blocksuite_blob_at(attachments_fd, blob_id)
+                    artifacts.append({"kind": "blob", "id": blob_id, "sha256": etag,
+                                      "data": raw, "filename": filename, "content_type": content_type})
+            if (len(artifacts) > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or sum(len(item["data"]) for item in artifacts) > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=409, detail="BlockSuite artifact closure exceeds note limits")
+            return sorted(artifacts, key=lambda item: (item["kind"], item["id"]))
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="BlockSuite artifact inventory is unavailable") from exc
+        finally:
+            os.close(attachments_fd)
+
+    @staticmethod
+    def _artifact_set_etag(artifacts):
+        inventory = [{"kind": item["kind"], "id": item["id"], "sha256": item["sha256"],
+                      "bytes": len(item["data"]), "content_type": item.get("content_type", "application/json")}
+                     for item in artifacts]
+        inventory.sort(key=lambda item: (item["kind"], item["id"]))
+        raw = json.dumps(inventory, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    def _check_artifact_set_etag(self, artifacts, expected, *, required_when_nonempty=True):
+        actual = self._artifact_set_etag(artifacts)
+        if not expected:
+            if required_when_nonempty and artifacts:
+                raise HTTPException(status_code=428, detail="If-Artifact-Set-Match is required for this note")
+            return actual
+        if expected.strip('"') != actual:
+            raise HTTPException(status_code=412, detail="BlockSuite artifact set changed; reload before saving")
+        return actual
+
+    def _snapshot_current_locked(self, collection, relative, directory_fd, note_content, artifacts=None):
+        artifacts = artifacts if artifacts is not None else self._blocksuite_artifacts_at(directory_fd)
+        self._validate_blocksuite_reference_closure(note_content, artifacts)
+        summary = self._history_store().snapshot_locked(collection, relative, directory_fd, note_content, artifacts)
+        return summary, artifacts
+
+    @staticmethod
+    def _validate_blocksuite_reference_closure(note_content, artifacts):
+        expected = {item["id"] + ".blocksuite.json" for item in artifacts if item["kind"] == "resource"}
+        if not _blocksuite_resource_references(note_content).issubset(expected):
+            raise HTTPException(status_code=409, detail="Note references a missing BlockSuite resource")
+
+    def list_blocksuite_snapshots(self, collection, relative):
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory, missing_status=404)
+        lock_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_SH)
+            content = self._read_at(directory_fd, path.name)
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
+            snapshots = self._history_store().list_snapshots_locked(collection, relative, directory_fd)
+            return {"note_etag": self._digest(content), "artifact_set_etag": self._artifact_set_etag(artifacts),
+                    "snapshots": snapshots}
+        finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    def read_blocksuite_snapshot(self, collection, relative, snapshot_id):
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory, missing_status=404)
+        lock_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_SH)
+            self._read_at(directory_fd, path.name)
+            manifest, note_bytes, raw_artifacts = self._history_store().read_snapshot_locked(
+                collection, relative, directory_fd, snapshot_id)
+            try:
+                note_content = note_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise HTTPException(status_code=503, detail="BlockSuite snapshot Markdown is invalid UTF-8") from exc
+            self._validate(note_content)
+            artifact_rows = []
+            for item in manifest["artifacts"]:
+                raw = raw_artifacts[item["id"]]
+                if item["kind"] == "resource":
+                    try:
+                        body = json.loads(raw.decode("utf-8"))
+                    except (UnicodeError, ValueError) as exc:
+                        raise HTTPException(status_code=503, detail="BlockSuite snapshot resource is invalid") from exc
+                    if self._validate_blocksuite_resource(item["id"], body) != raw:
+                        raise HTTPException(status_code=503, detail="BlockSuite snapshot resource is not canonical")
+                    artifact_rows.append({"kind": "resource", "id": item["id"], "etag": item["sha256"],
+                                          "resource": body})
+                else:
+                    if self._validate_blocksuite_blob(raw, item["content_type"]) != item["content_type"]:
+                        raise HTTPException(status_code=503, detail="BlockSuite snapshot blob is invalid")
+                    artifact_rows.append({"kind": "blob", "id": item["id"], "etag": item["sha256"],
+                                          "content_type": item["content_type"], "size_bytes": len(raw),
+                                          "data_base64": base64.b64encode(raw).decode("ascii")})
+            expected = {item["id"] + ".blocksuite.json" for item in artifact_rows
+                        if item["kind"] == "resource"}
+            if not _blocksuite_resource_references(note_content).issubset(expected):
+                raise HTTPException(status_code=503, detail="BlockSuite snapshot Markdown has a broken resource reference")
+            return {"snapshot_id": snapshot_id, "note": {"content": note_content,
+                    "etag": manifest["note_sha256"]}, "artifact_set_etag": manifest["artifact_set_etag"],
+                    "artifacts": artifact_rows}
+        finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    def restore_blocksuite_snapshot(self, collection, relative, snapshot_id, expected_note, expected_artifacts):
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory, missing_status=404)
+        lock_fd = attachments_fd = snapshots_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            history = self._history_store()
+            snapshots_fd = history._open_snapshot_directory(directory_fd, collection, relative, create=True)
+            journal = history._read_restore_journal(snapshots_fd)
+            current = self._read_at(directory_fd, path.name)
+            current_note_etag = self._digest(current)
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
+            current_artifact_etag = self._artifact_set_etag(artifacts)
+            if journal is not None and journal["snapshot_id"] != snapshot_id:
+                if journal["state"] != "complete":
+                    raise HTTPException(status_code=409, detail="A different BlockSuite restore is already in progress")
+                if (not expected_note or expected_note.strip('"') != current_note_etag
+                        or not expected_artifacts or expected_artifacts.strip('"') != current_artifact_etag):
+                    raise HTTPException(status_code=412, detail="Note or artifacts changed after the previous restore")
+                journal = None
+            was_resuming = journal is not None
+            if journal is not None:
+                if (journal["snapshot_id"] != snapshot_id
+                        or not expected_note or expected_note.strip('"') != journal["source_note_etag"]
+                        or not expected_artifacts or expected_artifacts.strip('"') != journal["source_artifact_set_etag"]):
+                    raise HTTPException(status_code=412, detail="Restore request does not match its journal")
+            elif (not expected_note or expected_note.strip('"') != current_note_etag
+                  or not expected_artifacts or expected_artifacts.strip('"') != current_artifact_etag):
+                raise HTTPException(status_code=412, detail="Note or BlockSuite artifacts changed; reload before restoring")
+
+            manifest, note_bytes, raw_artifacts = history.read_snapshot_locked(
+                collection, relative, directory_fd, snapshot_id)
+            try:
+                target_note = note_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise HTTPException(status_code=409, detail="BlockSuite snapshot Markdown is invalid UTF-8") from exc
+            self._validate(target_note)
+            target_artifacts = {}
+            for row in manifest["artifacts"]:
+                raw = raw_artifacts[row["id"]]
+                if row["kind"] == "resource":
+                    try:
+                        body = json.loads(raw.decode("utf-8"))
+                    except (UnicodeError, ValueError) as exc:
+                        raise HTTPException(status_code=409, detail="BlockSuite snapshot resource is invalid") from exc
+                    if self._validate_blocksuite_resource(row["id"], body) != raw:
+                        raise HTTPException(status_code=409, detail="BlockSuite snapshot resource is not canonical")
+                else:
+                    if self._blocksuite_blob_digest(row["id"]) != row["sha256"]:
+                        raise HTTPException(status_code=409, detail="BlockSuite snapshot blob ID does not match its digest")
+                    if self._validate_blocksuite_blob(raw, row["content_type"]) != row["content_type"]:
+                        raise HTTPException(status_code=409, detail="BlockSuite snapshot blob is invalid")
+                target_artifacts[(row["kind"], row["id"])] = (raw, row["sha256"], row["content_type"])
+            target_resource_ids = {resource_id for kind, resource_id in target_artifacts if kind == "resource"}
+            if not set(_BLOCKSUITE_RESOURCE_REFERENCE.findall(target_note)).issubset(
+                    {resource_id + ".blocksuite.json" for resource_id in target_resource_ids}):
+                raise HTTPException(status_code=409, detail="BlockSuite snapshot Markdown has a broken resource reference")
+
+            source_rows = [{"kind": item["kind"], "id": item["id"], "sha256": item["sha256"],
+                            "bytes": len(item["data"]), "content_type": item["content_type"]}
+                           for item in artifacts]
+            source_rows.sort(key=lambda item: (item["kind"], item["id"]))
+            if journal is None:
+                history.snapshot_locked(collection, relative, directory_fd, current, artifacts,
+                                        preserve_ids={snapshot_id})
+                journal = {"schema": 1, "snapshot_id": snapshot_id,
+                           "source_note_etag": current_note_etag,
+                           "source_artifact_set_etag": current_artifact_etag,
+                           "target_note_sha256": manifest["note_sha256"],
+                           "target_artifact_set_etag": manifest["artifact_set_etag"],
+                           "source_artifacts": source_rows, "state": "writing"}
+                history.write_restore_journal(snapshots_fd, journal)
+            else:
+                immutable_match = (journal["target_note_sha256"] == manifest["note_sha256"]
+                                   and journal["target_artifact_set_etag"] == manifest["artifact_set_etag"])
+                if not immutable_match:
+                    raise HTTPException(status_code=409, detail="BlockSuite restore journal does not match current state")
+
+            source_by_key = {(item["kind"], item["id"]): item for item in journal["source_artifacts"]}
+            target_by_key = {key: (digest, len(raw), content_type)
+                             for key, (raw, digest, content_type) in target_artifacts.items()}
+            current_by_key = {(item["kind"], item["id"]): item for item in artifacts}
+            allowed_keys = set(source_by_key) | set(target_by_key)
+            if set(current_by_key) - allowed_keys:
+                raise HTTPException(status_code=409, detail="An untracked BlockSuite resource occupies the restore scope")
+            missing_source = set(source_by_key) - set(current_by_key)
+            if missing_source and (journal["state"] not in {"writing", "complete"}
+                                   or missing_source & set(target_by_key)):
+                raise HTTPException(status_code=409, detail="A BlockSuite resource disappeared during restore")
+            for key, item in current_by_key.items():
+                if (item["sha256"] != source_by_key.get(key, {}).get("sha256")
+                        and item["sha256"] != target_by_key.get(key, (None,))[0]):
+                    raise HTTPException(status_code=409, detail="A BlockSuite resource changed during restore")
+            source_note_hash = journal["source_note_etag"]
+            if current_note_etag not in {source_note_hash, manifest["note_sha256"]}:
+                raise HTTPException(status_code=409, detail="Markdown changed during BlockSuite restore")
+
+            if journal["state"] == "complete":
+                if (current_note_etag != manifest["note_sha256"] or set(current_by_key) != set(target_by_key)
+                        or any(current_by_key[key]["sha256"] != value[0] for key, value in target_by_key.items())):
+                    raise HTTPException(status_code=409, detail="Completed BlockSuite restore no longer matches its result")
+                return {"snapshot_id": snapshot_id, "note_etag": current_note_etag,
+                        "artifact_set_etag": current_artifact_etag, "restored": True, "duplicate": True}
+
+            if target_artifacts or artifacts:
+                attachments_fd = self._open_attachments_directory(directory_fd, create=bool(target_artifacts))
+            existing_count, existing_bytes = (self._blocksuite_resource_usage(attachments_fd)
+                                              if attachments_fd is not None else (0, 0))
+            removals = [(key, item) for key, item in source_by_key.items()
+                        if key not in target_by_key and key in current_by_key]
+            next_count = existing_count - len(removals)
+            next_bytes = existing_bytes - sum(item["bytes"] for _key, item in removals)
+            for key, (raw, digest, _content_type) in target_artifacts.items():
+                old = current_by_key.get(key)
+                if old is not None and old["sha256"] == digest:
+                    continue
+                next_bytes += len(raw) - (len(old["data"]) if old is not None else 0)
+                if old is None:
+                    next_count += 1
+            if next_count > MAX_BLOCKSUITE_RESOURCES_PER_NOTE or next_bytes > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE:
+                raise HTTPException(status_code=413, detail="Restored BlockSuite artifacts exceed note limits")
+
+            # Resources first, then blobs, all before the Markdown references are changed.
+            for kind in ("resource", "blob"):
+                for (artifact_kind, artifact_id), (raw, digest, _content_type) in target_artifacts.items():
+                    if artifact_kind != kind:
+                        continue
+                    current_item = current_by_key.get((kind, artifact_id))
+                    if current_item is not None and current_item["sha256"] == digest:
+                        continue
+                    if current_item is not None:
+                        try:
+                            if kind == "resource":
+                                _current_body, _current_raw, observed_digest = self._read_blocksuite_resource_at(
+                                    attachments_fd, artifact_id)
+                            else:
+                                _current_raw, _current_type, observed_digest = self._read_blocksuite_blob_at(
+                                    attachments_fd, artifact_id)
+                        except HTTPException as exc:
+                            raise HTTPException(status_code=409, detail="BlockSuite restore target changed") from exc
+                        if observed_digest not in {source_by_key.get((kind, artifact_id), {}).get("sha256"), digest}:
+                            raise HTTPException(status_code=409, detail="BlockSuite restore target changed")
+                    filename = (f"{artifact_id}.blocksuite.json" if kind == "resource"
+                                else f"{digest}.blocksuite-blob")
+                    self._atomic_write(directory / "attachments" / filename, raw,
+                                       exclusive=current_item is None, directory_fd=attachments_fd)
+            for key, item in removals:
+                kind, artifact_id = key
+                if kind == "resource":
+                    _body, raw, digest = self._read_blocksuite_resource_at(attachments_fd, artifact_id)
+                else:
+                    raw, _mime, digest = self._read_blocksuite_blob_at(attachments_fd, artifact_id)
+                if digest != item["sha256"] or len(raw) != item["bytes"]:
+                    raise HTTPException(status_code=409, detail="A source BlockSuite artifact changed during restore")
+                filename = (f"{artifact_id}.blocksuite.json" if kind == "resource"
+                            else f"{digest}.blocksuite-blob")
+                os.unlink(filename, dir_fd=attachments_fd)
+                os.fsync(attachments_fd)
+            # Write the Markdown only after all target resources are present and verified.
+            for (kind, artifact_id), (_raw, digest, content_type) in target_artifacts.items():
+                if kind == "resource":
+                    _body, _raw, actual_digest = self._read_blocksuite_resource_at(attachments_fd, artifact_id)
+                    actual_type = "application/json"
+                else:
+                    _raw, actual_type, actual_digest = self._read_blocksuite_blob_at(attachments_fd, artifact_id)
+                if actual_digest != digest or actual_type != content_type:
+                    raise HTTPException(status_code=503, detail="Restored BlockSuite artifact failed verification")
+            restored_artifacts = self._blocksuite_artifacts_at(directory_fd)
+            restored_by_key = {(item["kind"], item["id"]): item["sha256"] for item in restored_artifacts}
+            if restored_by_key != {key: value[0] for key, value in target_by_key.items()}:
+                raise HTTPException(status_code=409, detail="Restored BlockSuite artifact set does not match the snapshot")
+            if self._digest(current) != manifest["note_sha256"]:
+                self._atomic_write(path, note_bytes, directory_fd=directory_fd)
+            journal["state"] = "complete"
+            history.write_restore_journal(snapshots_fd, journal)
+            restored_etag = self._artifact_set_etag(restored_artifacts)
+            return {"snapshot_id": snapshot_id, "note_etag": manifest["note_sha256"],
+                    "artifact_set_etag": restored_etag, "restored": True,
+                    "duplicate": bool(was_resuming and current_note_etag == manifest["note_sha256"])}
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if snapshots_fd is not None:
+                os.close(snapshots_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
 
     def _root(self, collection):
         root = self.roots.get(collection)
@@ -78,6 +649,8 @@ class NotesStore:
             raise HTTPException(status_code=400, detail="Invalid note path")
         parsed = PurePosixPath(value)
         if parsed.is_absolute() or any(part in {".", ".."} for part in parsed.parts) or not _SAFE_NAME.fullmatch(parsed.name):
+            raise HTTPException(status_code=400, detail="Invalid note path")
+        if any(unicodedata.category(char).startswith("C") for char in parsed.name):
             raise HTTPException(status_code=400, detail="Invalid note path")
         return parsed
 
@@ -183,6 +756,7 @@ class NotesStore:
             os.mkdir(".history", mode=0o700, dir_fd=directory_fd)
         except FileExistsError:
             pass
+        os.fsync(directory_fd)
         root_fd = os.open(".history", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                           | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
         if namespace is None:
@@ -198,6 +772,7 @@ class NotesStore:
                 os.mkdir(namespace, mode=0o700, dir_fd=root_fd)
             except FileExistsError:
                 pass
+            os.fsync(root_fd)
             history_fd = os.open(namespace, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
                                  | getattr(os, "O_NOFOLLOW", 0), dir_fd=root_fd)
             try:
@@ -252,19 +827,41 @@ class NotesStore:
                 os.close(root_fd)
 
     def read(self, collection, relative):
-        path, _ = self._path(collection, relative)
-        content = self._read(path)
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory, missing_status=404)
+        lock_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_SH)
+            content = self._read_at(directory_fd, path.name)
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
+        finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
         return {"collection": collection, "path": relative, "content": content,
                 "etag": self._digest(content), "read_only": bool(markdown_safety(content)),
-                "safety_reasons": markdown_safety(content)}
+                "safety_reasons": markdown_safety(content),
+                "artifact_set_etag": self._artifact_set_etag(artifacts)}
 
     def read_source_draft(self, draft_id, *, max_bytes=MAX_MARKDOWN_BYTES):
         """Resolve a NotesStore-issued Draft UUID without scanning collections."""
         path, directory = self._path("drafts", draft_id)
         directory_fd = self._open_directory(directory, missing_status=404)
+        lock_fd = None
         try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_SH)
             content = self._read_at(directory_fd, path.name, max_bytes=max_bytes)
         finally:
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
             os.close(directory_fd)
         encoded = content.encode("utf-8")
         return {"etag": self._digest(content), "size_bytes": len(encoded)}
@@ -311,7 +908,8 @@ class NotesStore:
         path, directory = self._path("drafts", note_id, create=True)
         self._atomic_write(path, content.encode("utf-8"), exclusive=True)
         return {"collection": "drafts", "path": note_id, "content": content, "etag": self._digest(content),
-                "read_only": False, "safety_reasons": []}
+                "read_only": False, "safety_reasons": [],
+                "artifact_set_etag": self._artifact_set_etag([])}
 
     @staticmethod
     def _validate(content):
@@ -359,19 +957,19 @@ class NotesStore:
             if owned_fd:
                 os.close(directory_fd)
 
-    def update(self, collection, relative, content, expected):
+    def update(self, collection, relative, content, expected, *, metadata_only=False, expected_artifacts=None):
         if collection not in self.roots:
             raise HTTPException(status_code=404, detail="Notes collection not found")
         self._validate(content)
-        if markdown_safety(content):
+        if markdown_safety(content) and not metadata_only:
             raise HTTPException(status_code=422, detail="This Markdown contains unsupported syntax and cannot be saved through the rich-text editor")
         path, directory = self._path(collection, relative, create=collection == "drafts")
         directory_fd = self._open_directory(directory)
         try:
-            lock_fd = os.open(directory / ".notes.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        except OSError as exc:
+            lock_fd = self._open_note_lock(directory_fd)
+        except HTTPException:
             os.close(directory_fd)
-            raise HTTPException(status_code=403, detail="Note lock could not be opened safely") from exc
+            raise
         history_fd = None
         try:
             lock_info = os.fstat(lock_fd)
@@ -383,8 +981,36 @@ class NotesStore:
             current_etag = self._digest(current)
             if not expected or expected.strip('"') != current_etag:
                 raise HTTPException(status_code=412, detail="Note changed; reload before saving")
-            if markdown_safety(current):
+            if not metadata_only and _frontmatter_prefix(content) != _frontmatter_prefix(current):
+                raise HTTPException(status_code=422, detail="Markdown editors must preserve the existing frontmatter exactly")
+            if markdown_safety(current) and not metadata_only:
                 raise HTTPException(status_code=422, detail="This Markdown contains unsupported syntax and is read-only")
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
+            if not metadata_only:
+                self._check_artifact_set_etag(artifacts, expected_artifacts)
+                self._validate_blocksuite_reference_closure(content, artifacts)
+            new_note_etag = self._digest(content)
+            rebound_resources = []
+            if metadata_only:
+                for artifact in artifacts:
+                    if artifact["kind"] != "resource":
+                        continue
+                    try:
+                        resource = json.loads(artifact["data"])
+                    except (TypeError, ValueError, UnicodeDecodeError) as exc:
+                        raise HTTPException(status_code=409, detail="BlockSuite resource cannot be rebound safely") from exc
+                    if resource.get("resourceKind") != "rich-page":
+                        continue
+                    snapshot = resource.get("snapshot")
+                    receipt = snapshot.get("secondbrainRichPage") if isinstance(snapshot, dict) else None
+                    if (not isinstance(receipt, dict) or receipt.get("schemaVersion") != 1
+                            or receipt.get("markdownSha256") != current_etag):
+                        raise HTTPException(status_code=412, detail="Rich Page binding is stale; reload and reconcile before editing properties")
+                    rebound = {**resource, "snapshot": {**snapshot,
+                        "secondbrainRichPage": {**receipt, "markdownSha256": new_note_etag}}}
+                    raw = self._validate_blocksuite_resource(artifact["id"], rebound)
+                    rebound_resources.append((artifact["filename"], artifact["data"], raw))
+            self._snapshot_current_locked(collection, relative, directory_fd, current, artifacts)
             namespace = self._history_namespace(collection, relative)
             history_fd = self._open_history_directory_for_update(directory_fd, namespace)
             previous_name = f"{current_etag}.md"
@@ -399,7 +1025,29 @@ class NotesStore:
             else:
                 if previous != current:
                     raise HTTPException(status_code=409, detail="History entry is not safe to replace")
-            self._atomic_write(path, content.encode("utf-8"), directory_fd=directory_fd)
+            if rebound_resources:
+                attachments_fd = self._open_attachments_directory(directory_fd)
+                try:
+                    try:
+                        for filename, _old_raw, rebound_raw in rebound_resources:
+                            self._atomic_write(directory / "attachments" / filename, rebound_raw,
+                                               directory_fd=attachments_fd)
+                        self._atomic_write(path, content.encode("utf-8"), directory_fd=directory_fd)
+                    except Exception:
+                        try:
+                            for filename, old_raw, _rebound_raw in rebound_resources:
+                                self._atomic_write(directory / "attachments" / filename, old_raw,
+                                                   directory_fd=attachments_fd)
+                            self._atomic_write(path, current.encode("utf-8"), directory_fd=directory_fd)
+                        except Exception as rollback_error:
+                            raise HTTPException(status_code=503,
+                                detail="Property update failed; a verified BlockSuite snapshot is retained for recovery") from rollback_error
+                        raise
+                finally:
+                    os.close(attachments_fd)
+            else:
+                self._atomic_write(path, content.encode("utf-8"), directory_fd=directory_fd)
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
         finally:
             if history_fd is not None:
                 os.close(history_fd)
@@ -409,7 +1057,16 @@ class NotesStore:
                 os.close(lock_fd)
                 os.close(directory_fd)
         return {"collection": collection, "path": relative, "content": content, "etag": self._digest(content),
-                "read_only": False, "safety_reasons": []}
+                "read_only": bool(markdown_safety(content)), "safety_reasons": markdown_safety(content),
+                "artifact_set_etag": self._artifact_set_etag(artifacts)}
+
+    def update_properties(self, collection, relative, note_type, tags, expected):
+        """Update only managed frontmatter keys using Notes' existing CAS/history path."""
+        current = self.read(collection, relative)
+        if not expected or expected.strip('"') != current["etag"]:
+            raise HTTPException(status_code=412, detail="Note changed; reload before saving properties")
+        replacement = _replace_note_properties(current["content"], note_type, tags)
+        return self.update(collection, relative, replacement, expected, metadata_only=True)
 
     def history(self, collection, relative):
         path, directory = self._path(collection, relative)
@@ -521,6 +1178,451 @@ class NotesStore:
             finally:
                 os.close(folder_fd)
         finally:
+            os.close(directory_fd)
+
+    @staticmethod
+    def _validate_blocksuite_resource(resource_id, body):
+        """Validate one bounded, versioned BlockSuite Yjs resource envelope."""
+        if not isinstance(resource_id, str) or not _BLOCKSUITE_RESOURCE_ID.fullmatch(resource_id):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite resource id")
+        if not isinstance(body, dict) or set(body) != {
+                "schemaVersion", "resourceId", "resourceKind", "docId", "updateB64", "snapshot"}:
+            raise HTTPException(status_code=422, detail="BlockSuite resource schema is invalid")
+        if (body.get("schemaVersion") != 1 or body.get("resourceId") != resource_id
+                or body.get("resourceKind") not in _BLOCKSUITE_RESOURCE_KINDS):
+            raise HTTPException(status_code=422, detail="BlockSuite resource version or identity is invalid")
+        doc_id = body.get("docId")
+        encoded = body.get("updateB64")
+        if not isinstance(doc_id, str) or not _BLOCKSUITE_DOC_ID.fullmatch(doc_id):
+            raise HTTPException(status_code=422, detail="BlockSuite document id is invalid")
+        if not isinstance(encoded, str) or not encoded or len(encoded) > ((MAX_BLOCKSUITE_UPDATE_BYTES + 2) // 3) * 4:
+            raise HTTPException(status_code=413, detail="BlockSuite document update is too large")
+        try:
+            update = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(status_code=422, detail="BlockSuite document update is not valid Base64") from exc
+        if not update or len(update) > MAX_BLOCKSUITE_UPDATE_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite document update is too large")
+        snapshot = body.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise HTTPException(status_code=422, detail="BlockSuite snapshot must be an object")
+        pending = [(snapshot, 0)]
+        nodes = 0
+        while pending:
+            value, depth = pending.pop()
+            nodes += 1
+            if nodes > MAX_BLOCKSUITE_SNAPSHOT_NODES or depth > MAX_BLOCKSUITE_SNAPSHOT_DEPTH:
+                raise HTTPException(status_code=422, detail="BlockSuite snapshot exceeds structural limits")
+            if isinstance(value, dict):
+                pending.extend((child, depth + 1) for child in value.values())
+            elif isinstance(value, list):
+                pending.extend((child, depth + 1) for child in value)
+            elif isinstance(value, str):
+                try:
+                    string_size = len(value.encode("utf-8"))
+                except UnicodeEncodeError as exc:
+                    raise HTTPException(status_code=422, detail="BlockSuite snapshot string is invalid Unicode") from exc
+                if string_size > 100_000:
+                    raise HTTPException(status_code=422, detail="BlockSuite snapshot string is too long")
+            elif value is not None and not isinstance(value, (str, int, float, bool)):
+                raise HTTPException(status_code=422, detail="BlockSuite snapshot contains unsupported values")
+        try:
+            snapshot_bytes = json.dumps(snapshot, ensure_ascii=False, allow_nan=False,
+                                        separators=(",", ":")).encode("utf-8")
+            resource_bytes = json.dumps(body, ensure_ascii=False, allow_nan=False,
+                                        separators=(",", ":")).encode("utf-8")
+        except (TypeError, ValueError, UnicodeEncodeError) as exc:
+            raise HTTPException(status_code=422, detail="BlockSuite resource JSON is invalid") from exc
+        if len(snapshot_bytes) > MAX_BLOCKSUITE_SNAPSHOT_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite snapshot is too large")
+        if len(resource_bytes) > MAX_BLOCKSUITE_RESOURCE_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite resource is too large")
+        return resource_bytes
+
+    @staticmethod
+    def _open_note_lock(directory_fd):
+        try:
+            os.stat(".notes.lock", dir_fd=directory_fd, follow_symlinks=False)
+            lock_existed = True
+        except FileNotFoundError:
+            lock_existed = False
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Note lock could not be inspected safely") from exc
+        try:
+            lock_fd = os.open(".notes.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                              0o600, dir_fd=directory_fd)
+        except FileNotFoundError as first_error:
+            # On macOS/APFS, a concurrent O_CREAT on the same dirfd can
+            # transiently report ENOENT even though the first creator has
+            # already installed the regular lock. Re-open that existing file
+            # without O_CREAT only after a no-follow dirfd stat proves it exists.
+            try:
+                info = os.stat(".notes.lock", dir_fd=directory_fd, follow_symlinks=False)
+                if not stat.S_ISREG(info.st_mode):
+                    raise HTTPException(status_code=403, detail="Note lock permissions are unsafe")
+                lock_fd = os.open(".notes.lock", os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                                  dir_fd=directory_fd)
+            except OSError as exc:
+                raise HTTPException(status_code=403, detail="Note lock could not be opened safely") from first_error
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Note lock could not be opened safely") from exc
+        info = os.fstat(lock_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077 or info.st_nlink != 1):
+            os.close(lock_fd)
+            raise HTTPException(status_code=403, detail="Note lock permissions are unsafe")
+        if not lock_existed:
+            os.fsync(directory_fd)
+        return lock_fd
+
+    @staticmethod
+    def _open_attachments_directory(directory_fd, *, create=False):
+        if create:
+            try:
+                os.mkdir("attachments", mode=0o700, dir_fd=directory_fd)
+            except FileExistsError:
+                pass
+            os.fsync(directory_fd)
+        try:
+            attachments_fd = os.open("attachments", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                     | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Note resource directory not found")
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Note resource directory is unsafe") from exc
+        info = os.fstat(attachments_fd)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            os.close(attachments_fd)
+            raise HTTPException(status_code=403, detail="Note resource directory permissions are unsafe")
+        return attachments_fd
+
+    def _read_blocksuite_resource_at(self, attachments_fd, resource_id):
+        filename = f"{resource_id}.blocksuite.json"
+        if not _BLOCKSUITE_RESOURCE_FILENAME.fullmatch(filename):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite resource filename")
+        try:
+            fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=attachments_fd)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="BlockSuite resource not found")
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="BlockSuite resource could not be opened safely") from exc
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077 or info.st_nlink != 1):
+                raise HTTPException(status_code=403, detail="BlockSuite resource file permissions are unsafe")
+            if info.st_size > MAX_BLOCKSUITE_RESOURCE_BYTES:
+                raise HTTPException(status_code=413, detail="BlockSuite resource file is too large")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                raw = stream.read(MAX_BLOCKSUITE_RESOURCE_BYTES + 1)
+        finally:
+            os.close(fd)
+        if len(raw) > MAX_BLOCKSUITE_RESOURCE_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite resource file is too large")
+        try:
+            body = json.loads(raw)
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="BlockSuite resource file is invalid JSON") from exc
+        canonical = self._validate_blocksuite_resource(resource_id, body)
+        if canonical != raw:
+            raise HTTPException(status_code=409, detail="BlockSuite resource file is not canonical")
+        return body, raw, hashlib.sha256(raw).hexdigest()
+
+    @staticmethod
+    def _blocksuite_blob_digest(blob_id):
+        if not _BLOCKSUITE_BLOB_FILENAME.fullmatch(blob_id or ""):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite blob id")
+        try:
+            decoded = base64.b64decode(blob_id.encode("ascii"), altchars=b"-_", validate=True)
+        except (UnicodeError, binascii.Error) as exc:
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite blob id") from exc
+        if len(decoded) != 32 or base64.urlsafe_b64encode(decoded).decode("ascii") != blob_id:
+            raise HTTPException(status_code=400, detail="Noncanonical BlockSuite blob id")
+        return decoded.hex()
+
+    @staticmethod
+    def _validate_blocksuite_blob(data, expected_content_type=None):
+        if not isinstance(data, bytes) or not data or len(data) > MAX_BLOCKSUITE_BLOB_BYTES:
+            raise HTTPException(status_code=413, detail="BlockSuite blob size is not supported")
+        try:
+            with Image.open(BytesIO(data)) as image:
+                content_type = _BLOCKSUITE_BLOB_TYPES.get(image.format)
+                if (content_type is None or image.width <= 0 or image.height <= 0
+                        or image.width * image.height > 40_000_000
+                        or (expected_content_type and expected_content_type.split(";", 1)[0].strip().lower()
+                            != content_type)):
+                    raise HTTPException(status_code=415, detail="BlockSuite image format or dimensions are unsupported")
+                image.verify()
+                return content_type
+        except HTTPException:
+            raise
+        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
+            raise HTTPException(status_code=415, detail="BlockSuite image data is invalid") from exc
+
+    def _read_blocksuite_blob_at(self, attachments_fd, blob_id):
+        digest = self._blocksuite_blob_digest(blob_id)
+        filename = f"{digest}.blocksuite-blob"
+        try:
+            fd = os.open(filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_NONBLOCK", 0), dir_fd=attachments_fd)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="BlockSuite blob not found")
+        except OSError as exc:
+            raise HTTPException(status_code=409, detail="BlockSuite blob path is unsafe") from exc
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077
+                    or info.st_nlink != 1 or info.st_size <= 0 or info.st_size > MAX_BLOCKSUITE_BLOB_BYTES):
+                raise HTTPException(status_code=409, detail="BlockSuite blob file is unsafe")
+            raw_buffer = bytearray()
+            while len(raw_buffer) <= MAX_BLOCKSUITE_BLOB_BYTES:
+                chunk = os.read(fd, min(65536, MAX_BLOCKSUITE_BLOB_BYTES + 1 - len(raw_buffer)))
+                if not chunk:
+                    break
+                raw_buffer.extend(chunk)
+            raw = bytes(raw_buffer)
+            after = os.fstat(fd)
+            if ((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                    != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                    or len(raw) != info.st_size or hashlib.sha256(raw).hexdigest() != digest):
+                raise HTTPException(status_code=409, detail="BlockSuite blob digest verification failed")
+            content_type = self._validate_blocksuite_blob(raw)
+            return raw, content_type, digest
+        finally:
+            os.close(fd)
+
+    def _blocksuite_resource_usage(self, attachments_fd):
+        count = total_bytes = 0
+        try:
+            names = os.listdir(attachments_fd)
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="Note resource directory could not be listed safely") from exc
+        for name in names:
+            if _BLOCKSUITE_RESOURCE_FILENAME.fullmatch(name):
+                try:
+                    info = os.stat(name, dir_fd=attachments_fd, follow_symlinks=False)
+                except OSError as exc:
+                    raise HTTPException(status_code=403, detail="BlockSuite resource could not be inspected safely") from exc
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077
+                        or info.st_nlink != 1 or info.st_size > MAX_BLOCKSUITE_RESOURCE_BYTES):
+                    raise HTTPException(status_code=403, detail="BlockSuite resource file permissions or size are unsafe")
+                count += 1
+                total_bytes += info.st_size
+            elif _BLOCKSUITE_BLOB_DISK_FILENAME.fullmatch(name):
+                digest = name.split(".", 1)[0]
+                blob_id = base64.urlsafe_b64encode(bytes.fromhex(digest)).decode("ascii")
+                raw, _content_type, _etag = self._read_blocksuite_blob_at(attachments_fd, blob_id)
+                count += 1
+                total_bytes += len(raw)
+        if count > MAX_BLOCKSUITE_RESOURCES_PER_NOTE or total_bytes > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE:
+            raise HTTPException(status_code=409, detail="Existing BlockSuite resources exceed configured note limits")
+        return count, total_bytes
+
+    def create_blocksuite_resource(self, collection, relative, body, expected_note, expected_artifacts=None):
+        path, directory = self._path(collection, relative)
+        resource_id = uuid.uuid4().hex
+        create_fields = {"schemaVersion", "resourceKind", "docId", "updateB64", "snapshot"}
+        if not isinstance(body, dict) or set(body) != create_fields:
+            raise HTTPException(status_code=422, detail="BlockSuite resource creation schema is invalid")
+        body = {**body, "resourceId": resource_id}
+        raw = self._validate_blocksuite_resource(resource_id, body)
+        directory_fd = self._open_directory(directory)
+        lock_fd = attachments_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current = self._read_at(directory_fd, path.name)
+            note_etag = self._digest(current)
+            if not expected_note or expected_note.strip('"') != note_etag:
+                raise HTTPException(status_code=412, detail="Note changed; reload before creating a resource")
+            attachments_fd = self._open_attachments_directory(directory_fd, create=True)
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
+            self._check_artifact_set_etag(artifacts, expected_artifacts)
+            resource_count, resource_bytes = self._blocksuite_resource_usage(attachments_fd)
+            if (resource_count + 1 > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or resource_bytes + len(raw) > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=413, detail="BlockSuite resources exceed per-note storage limits")
+            self._snapshot_current_locked(collection, relative, directory_fd, current, artifacts)
+            filename = f"{resource_id}.blocksuite.json"
+            self._atomic_write(directory / "attachments" / filename, raw, exclusive=True,
+                               directory_fd=attachments_fd)
+            etag = hashlib.sha256(raw).hexdigest()
+            artifact_set_etag = self._artifact_set_etag(self._blocksuite_artifacts_at(directory_fd))
+            return {"resource_id": resource_id, "resource_kind": body["resourceKind"], "doc_id": body["docId"],
+                    "filename": filename, "reference": f"[BlockSuite resource](attachments/{filename})",
+                    "etag": etag, "note_etag": note_etag, "artifact_set_etag": artifact_set_etag}
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="BlockSuite resource path could not be opened safely") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    def read_blocksuite_resource(self, collection, relative, resource_id):
+        if not _BLOCKSUITE_RESOURCE_ID.fullmatch(resource_id or ""):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite resource id")
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory, missing_status=404)
+        attachments_fd = lock_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_SH)
+            note = self._read_at(directory_fd, path.name)
+            attachments_fd = self._open_attachments_directory(directory_fd)
+            body, _raw, etag = self._read_blocksuite_resource_at(attachments_fd, resource_id)
+            artifact_set_etag = self._artifact_set_etag(self._blocksuite_artifacts_at(directory_fd))
+            return {**body, "etag": etag, "note_etag": self._digest(note),
+                    "artifact_set_etag": artifact_set_etag,
+                    "filename": f"{resource_id}.blocksuite.json"}
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    def update_blocksuite_resource(self, collection, relative, resource_id, body, expected_note,
+                                   expected_resource, expected_artifacts=None):
+        if not _BLOCKSUITE_RESOURCE_ID.fullmatch(resource_id or ""):
+            raise HTTPException(status_code=400, detail="Invalid BlockSuite resource id")
+        raw = self._validate_blocksuite_resource(resource_id, body)
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory)
+        lock_fd = attachments_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current = self._read_at(directory_fd, path.name)
+            note_etag = self._digest(current)
+            if not expected_note or expected_note.strip('"') != note_etag:
+                raise HTTPException(status_code=412, detail="Note changed; reload before saving a resource")
+            attachments_fd = self._open_attachments_directory(directory_fd)
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
+            self._check_artifact_set_etag(artifacts, expected_artifacts)
+            old_body, _old_raw, current_resource_etag = self._read_blocksuite_resource_at(attachments_fd, resource_id)
+            if not expected_resource or expected_resource.strip('"') != current_resource_etag:
+                raise HTTPException(status_code=412, detail="BlockSuite resource changed; reload before saving")
+            if (body["resourceKind"] != old_body["resourceKind"]
+                    or body["docId"] != old_body["docId"]):
+                raise HTTPException(status_code=409, detail="BlockSuite resource identity is immutable")
+            resource_count, resource_bytes = self._blocksuite_resource_usage(attachments_fd)
+            if (resource_count > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or resource_bytes - len(_old_raw) + len(raw) > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=413, detail="BlockSuite resources exceed per-note storage limits")
+            self._snapshot_current_locked(collection, relative, directory_fd, current, artifacts)
+            filename = f"{resource_id}.blocksuite.json"
+            self._atomic_write(directory / "attachments" / filename, raw, directory_fd=attachments_fd)
+            etag = hashlib.sha256(raw).hexdigest()
+            artifact_set_etag = self._artifact_set_etag(self._blocksuite_artifacts_at(directory_fd))
+            return {"resource_id": resource_id, "resource_kind": body["resourceKind"], "doc_id": body["docId"],
+                    "filename": filename, "etag": etag, "note_etag": note_etag,
+                    "artifact_set_etag": artifact_set_etag}
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="BlockSuite resource path could not be opened safely") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    def read_blocksuite_blob(self, collection, relative, blob_id):
+        digest = self._blocksuite_blob_digest(blob_id)
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory, missing_status=404)
+        lock_fd = attachments_fd = None
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_SH)
+            note = self._read_at(directory_fd, path.name)
+            attachments_fd = self._open_attachments_directory(directory_fd)
+            raw, content_type, etag = self._read_blocksuite_blob_at(attachments_fd, blob_id)
+            artifact_set_etag = self._artifact_set_etag(self._blocksuite_artifacts_at(directory_fd))
+            if etag != digest:
+                raise HTTPException(status_code=409, detail="BlockSuite blob digest changed")
+            return {"blob_id": blob_id, "data": raw, "content_type": content_type,
+                    "etag": etag, "note_etag": self._digest(note),
+                    "artifact_set_etag": artifact_set_etag, "size_bytes": len(raw)}
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+            os.close(directory_fd)
+
+    def put_blocksuite_blob(self, collection, relative, blob_id, data, content_type,
+                            expected_note, expected_artifacts):
+        digest = self._blocksuite_blob_digest(blob_id)
+        validated_type = self._validate_blocksuite_blob(data, content_type)
+        actual_digest = hashlib.sha256(data).hexdigest()
+        if digest != actual_digest:
+            raise HTTPException(status_code=422, detail="BlockSuite blob id does not match content SHA-256")
+        path, directory = self._path(collection, relative)
+        directory_fd = self._open_directory(directory)
+        lock_fd = attachments_fd = None
+        created = False
+        try:
+            lock_fd = self._open_note_lock(directory_fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            current = self._read_at(directory_fd, path.name)
+            note_etag = self._digest(current)
+            if not expected_note or expected_note.strip('"') != note_etag:
+                raise HTTPException(status_code=412, detail="Note changed; reload before uploading a blob")
+            attachments_fd = self._open_attachments_directory(directory_fd, create=True)
+            artifacts = self._blocksuite_artifacts_at(directory_fd)
+            self._check_artifact_set_etag(artifacts, expected_artifacts)
+            previous = next((item for item in artifacts if item["kind"] == "blob" and item["id"] == blob_id), None)
+            if previous is not None:
+                if previous["data"] != data or previous["content_type"] != validated_type:
+                    raise HTTPException(status_code=409, detail="BlockSuite blob key is already bound to different content")
+                artifact_set_etag = self._artifact_set_etag(artifacts)
+                return {"blob_id": blob_id, "etag": digest, "note_etag": note_etag,
+                        "artifact_set_etag": artifact_set_etag, "content_type": validated_type,
+                        "size_bytes": len(data), "created": False}
+            count, total_bytes = self._blocksuite_resource_usage(attachments_fd)
+            if (count + 1 > MAX_BLOCKSUITE_RESOURCES_PER_NOTE
+                    or total_bytes + len(data) > MAX_BLOCKSUITE_RESOURCES_TOTAL_BYTES_PER_NOTE):
+                raise HTTPException(status_code=413, detail="BlockSuite artifact closure exceeds per-note limits")
+            self._snapshot_current_locked(collection, relative, directory_fd, current, artifacts)
+            filename = f"{digest}.blocksuite-blob"
+            try:
+                self._atomic_write(directory / "attachments" / filename, data, exclusive=True,
+                                   directory_fd=attachments_fd)
+                created = True
+            except HTTPException as exc:
+                if exc.status_code != 409:
+                    raise
+                _existing, existing_type, existing_digest = self._read_blocksuite_blob_at(attachments_fd, blob_id)
+                if _existing != data or existing_type != validated_type or existing_digest != digest:
+                    raise HTTPException(status_code=409, detail="BlockSuite blob path is occupied") from exc
+            artifact_set_etag = self._artifact_set_etag(self._blocksuite_artifacts_at(directory_fd))
+            return {"blob_id": blob_id, "etag": digest, "note_etag": note_etag,
+                    "artifact_set_etag": artifact_set_etag, "content_type": validated_type,
+                    "size_bytes": len(data), "created": created}
+        except OSError as exc:
+            raise HTTPException(status_code=403, detail="BlockSuite blob path could not be opened safely") from exc
+        finally:
+            if attachments_fd is not None:
+                os.close(attachments_fd)
+            if lock_fd is not None:
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
             os.close(directory_fd)
 
     @staticmethod
@@ -700,7 +1802,7 @@ def configured_notes_store(drafts_root, authorized_roots_json=""):
         raise RuntimeError("SB_NOTES_AUTHORIZED_ROOTS must be a JSON object of named explicit paths")
 
 
-def create_notes_router(auth, store):
+def create_notes_router(auth, store, vocabulary_store=None):
     router = APIRouter(prefix="/api/notes")
 
     def require(request, action):
@@ -708,11 +1810,110 @@ def create_notes_router(auth, store):
         if store is None:
             raise HTTPException(status_code=503, detail="Notes is not configured")
 
+    @router.post("/{collection}/{relative:path}/blocksuite/resources")
+    async def create_blocksuite_resource(request: Request, response: Response, collection: str,
+                                         relative: str):
+        require(request, "write")
+        body = await _read_bounded_json_request(request, MAX_BLOCKSUITE_REQUEST_BYTES)
+        result = store.create_blocksuite_resource(collection, relative, body,
+                                                  request.headers.get("if-match", ""),
+                                                  request.headers.get("if-artifact-set-match"))
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
+        return result
+
+    @router.get("/{collection}/{relative:path}/blocksuite/resources/{resource_id}")
+    def read_blocksuite_resource(request: Request, response: Response, collection: str,
+                                 relative: str, resource_id: str):
+        require(request, "read")
+        result = store.read_blocksuite_resource(collection, relative, resource_id)
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return result
+
+    @router.get("/{collection}/{relative:path}/blocksuite/snapshots")
+    def list_blocksuite_snapshots(request: Request, response: Response, collection: str, relative: str):
+        require(request, "read")
+        result = store.list_blocksuite_snapshots(collection, relative)
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
+        return result
+
+    @router.get("/{collection}/{relative:path}/blocksuite/snapshots/{snapshot_id}")
+    def read_blocksuite_snapshot(request: Request, response: Response, collection: str, relative: str,
+                                 snapshot_id: str):
+        require(request, "read")
+        result = store.read_blocksuite_snapshot(collection, relative, snapshot_id)
+        response.headers["ETag"] = f'"{result["snapshot_id"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note"]["etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
+        response.headers["Cache-Control"] = "private, no-store"
+        return result
+
+    @router.post("/{collection}/{relative:path}/blocksuite/snapshots/{snapshot_id}/restore")
+    def restore_blocksuite_snapshot(request: Request, response: Response, collection: str, relative: str,
+                                    snapshot_id: str):
+        require(request, "write")
+        result = store.restore_blocksuite_snapshot(collection, relative, snapshot_id,
+                                                   request.headers.get("if-match", ""),
+                                                   request.headers.get("if-artifact-set-match", ""))
+        response.headers["ETag"] = f'"{result["snapshot_id"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
+        return result
+
+    @router.put("/{collection}/{relative:path}/blocksuite/resources/{resource_id}")
+    async def update_blocksuite_resource(request: Request, response: Response, collection: str,
+                                         relative: str, resource_id: str):
+        require(request, "write")
+        body = await _read_bounded_json_request(request, MAX_BLOCKSUITE_REQUEST_BYTES)
+        result = store.update_blocksuite_resource(collection, relative, resource_id, body,
+                                                  request.headers.get("if-match", ""),
+                                                  request.headers.get("if-resource-match", ""),
+                                                  request.headers.get("if-artifact-set-match"))
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
+        return result
+
+    @router.put("/{collection}/{relative:path}/blocksuite/blobs/{blob_id}")
+    async def put_blocksuite_blob(request: Request, response: Response, collection: str, relative: str,
+                                  blob_id: str):
+        require(request, "write")
+        content_type = request.headers.get("content-type", "")
+        if not content_type:
+            raise HTTPException(status_code=415, detail="BlockSuite blob Content-Type is required")
+        data = await _read_bounded_body(request, MAX_BLOCKSUITE_BLOB_BYTES)
+        result = store.put_blocksuite_blob(collection, relative, blob_id, data, content_type,
+                                           request.headers.get("if-match", ""),
+                                           request.headers.get("if-artifact-set-match", ""))
+        response.status_code = 201 if result.pop("created") else 200
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Note-ETag"] = f'"{result["note_etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return result
+
+    @router.get("/{collection}/{relative:path}/blocksuite/blobs/{blob_id}", response_class=Response)
+    def get_blocksuite_blob(request: Request, collection: str, relative: str, blob_id: str):
+        require(request, "read")
+        result = store.read_blocksuite_blob(collection, relative, blob_id)
+        return Response(content=result["data"], media_type=result["content_type"], headers={
+            "ETag": f'"{result["etag"]}"', "X-Note-ETag": f'"{result["note_etag"]}"',
+            "X-Artifact-Set-ETag": f'"{result["artifact_set_etag"]}"',
+            "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
     @router.post("")
     def create(request: Request, response: Response, body: dict):
         require(request, "create")
         result = store.create(body.get("content"))
         response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
         return result
 
     @router.get("")
@@ -770,18 +1971,55 @@ def create_notes_router(auth, store):
         return Response(content=data, media_type=media_type,
                          headers=headers)
 
+    @router.get("/{collection}/{relative:path}/properties")
+    def read_properties(request: Request, response: Response, collection: str, relative: str):
+        require(request, "read")
+        result = store.read(collection, relative)
+        note_type, tags = _note_properties(result["content"])
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        return {"type": note_type or "", "tags": tags, "etag": result["etag"]}
+
     @router.get("/{collection}/{relative:path}")
     def read(request: Request, response: Response, collection: str, relative: str):
         require(request, "read")
         result = store.read(collection, relative)
         response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
+        return result
+
+    @router.put("/{collection}/{relative:path}/properties")
+    def update_properties(request: Request, response: Response, collection: str, relative: str, body: dict):
+        require(request, "write")
+        if vocabulary_store is None:
+            raise HTTPException(status_code=503, detail="Vocabulary is not configured")
+        if body.get("confirmed") is not True:
+            raise HTTPException(status_code=400, detail="Explicit property confirmation is required")
+        note_type = body.get("type")
+        tags = body.get("tags")
+        if not isinstance(note_type, str) or not isinstance(tags, list) or len(tags) > 30:
+            raise HTTPException(status_code=422, detail="Type and tags are invalid")
+        if any(not isinstance(tag, str) for tag in tags) or len(set(tags)) != len(tags):
+            raise HTTPException(status_code=422, detail="Tags must be unique strings")
+        catalog = vocabulary_store.read()
+        active_types = {item["name"] for item in catalog["types"] if item["enabled"]}
+        active_tags = {item["name"] for item in catalog["tags"] if item["enabled"]}
+        current_type, current_tags = _note_properties(store.read(collection, relative)["content"])
+        if ((note_type not in active_types and note_type != current_type)
+                or any(tag not in active_tags and tag not in current_tags for tag in tags)):
+            raise HTTPException(status_code=409, detail="Properties must use active Core vocabulary values")
+        result = store.update_properties(collection, relative, note_type, tags,
+                                         request.headers.get("if-match", ""))
+        response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
         return result
 
     @router.put("/{collection}/{relative:path}")
     def update(request: Request, response: Response, collection: str, relative: str, body: dict):
         require(request, "write")
-        result = store.update(collection, relative, body.get("content"), request.headers.get("if-match", ""))
+        result = store.update(collection, relative, body.get("content"), request.headers.get("if-match", ""),
+                              expected_artifacts=request.headers.get("if-artifact-set-match"))
         response.headers["ETag"] = f'"{result["etag"]}"'
+        response.headers["X-Artifact-Set-ETag"] = f'"{result["artifact_set_etag"]}"'
         return result
 
     return router

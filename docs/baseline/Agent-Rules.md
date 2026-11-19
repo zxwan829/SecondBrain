@@ -1,6 +1,6 @@
 ---
 created: 2026-09-28
-updated: 2026-10-20
+updated: 2026-11-03
 status: current
 type: agent-rules
 ---
@@ -23,15 +23,18 @@ type: agent-rules
 - **写入不受此阅读优化限制：** 正式决策变化仍更新 Decision-Log，关键阶段成果/问题/验收证据仍更新 Progress-Log；用户要求全面历史审计时可按需完整阅读。
 - **时间累积型 Log（本项目具体执行规则）：** 遵循 `Codex-Governance/AGENTS.md` 的跨项目默认：凡以时间为主轴持续新增记录的 Log，最新记录置前，历史记录向后；不将 CURRENT、Architecture、业务规格或按 D 编号管理的 `Decision-Log.md` 混作这类日志。SecondBrain 的 `Progress-Log.md` 必须将每条新增 `##` 章节插在文档开头说明之后、原最新记录之前；不得追加到文末、重复阶段记录或重排历史。提交前核验章节位置和时间顺序。`Progress-Log.md` 首页只保留格式提示，项目 `AGENTS.md` 已引用本规则文件，不重复复制。`Environment-Baseline.md` 的已核验快照按自身既有结构维护；若将来新增独立的时间累积型运行日志，则遵循通用默认或在此明确例外。
 
-## GitHub Issue 驱动的唯一协作流程（SecondBrain 中大型任务）
+## 统一 Codex 主 Agent 与 GitHub 任务驱动协作（2026-10-24 起唯一现行模式）
 
-**本节为现行唯一分工，取代此前关于“Codex 在 Issue/PR 汇报”“ChatGPT 读取结果”等未区分责任的旧表述。** Issue 是任务、执行证据与验收结果的主记录；PR 是代码变更和独立代码审查的主记录。不得在两个地方重复张贴完整报告。
+**本节替代此前“ChatGPT 逐项派发、A/B 各自独立聊天会话、用户手动转达反馈”模式。** 旧 A/B Issue、PR、复审记录及历史快照保留作证据；其“用户负责转发/分别唤醒 A/B”流程不再具规范效力。对任务边界与权限的既有安全限制仍有效。
 
-1. **ChatGPT 负责规划与发布：** 在 SecondBrain GitHub 新建 Issue，或更新仍在进行的既有 Issue，明确目标、业务需求、技术边界、授权状态、验收条件、交付物与 NEXT。优先沿用已有 Issue，不将每个阶段机械拆分成新 Issue。
-2. **Codex 负责执行事实与原始证据：** 开始前阅读 Issue 的最新有效正文、评论及关联 PR/基线，在已获授权的范围内实施、测试、提交代码和创建 PR；完成后在**Issue 评论**汇报实现内容、Commit/PR 链接、测试与部署原始证据、风险、阻塞及待解决事项。PR 描述只概述变更及链接证据，避免复制一整份执行报告。Codex 可以说明“开发完成/测试通过/已部署”，但不能独立宣称“用户最终验收通过”或自行关闭 Issue。
-3. **ChatGPT 负责独立复审和收口：** 读取 Codex 在 Issue 留下的执行事实及实际 PR 代码差异；将代码审核意见留在**PR**，再将任务验收结论、未达标项、授权边界及下一步决定记录到**Issue**。达到约定验收标准后，由 ChatGPT 负责关闭 Issue；未经用户明确许可不代替用户认定尚未体验的真实产品功能已验收。
-4. **客户端简短交接，但必须持续告知用户：** 具体任务指令、技术证据与详细验收条件统一留在 GitHub，客户端交接可简短为「读取 SecondBrain Issue #N 的最新任务及授权，按范围执行」。**Codex 在客户端仍须提供有意义的过程与结果汇报**：开始时说明本轮目标与计划；执行时间较长或发生关键进展/阻塞时及时简要更新；完成时汇报完成事项、测试/部署状态、风险和下一步，并附 Issue/PR 链接。ChatGPT 在客户端说明复审结论、未通过事项与下一步。客户端不复制 Issue 全文或长日志，也不能仅回复链接而不说明结果。无法读取 Issue 必须报告，不凭简短口令猜测任务；被新决定替代的旧评论不得照单全收。
-5. **权限与例外：** Issue/PR 或 ChatGPT 的审核不自动扩大用户许可；PR 合并、NAS/生产变更、模型费用、凭据及私人数据使用按各自授权执行。小修复、临时排障、纯解释咨询可不建 Issue，亦无需频繁更新治理文档。该分工**仅适用于 SecondBrain**，不推广到 Codex-Governance 中央规则。
+1. **唯一主执行负责人：** 用户一次确定 V1 目标和授权后，一个 Codex 主 Agent 负责读取 `AGENTS.md`、`00-CURRENT.md`、其中列出的当前开放核心 Issue 与关联 PR 的最新有效事实；自主选择已批准工作包、辨认依赖、分配、验证、集成、按门禁合并普通 PR、归档证据，再领取下一项。#96/#97 及其旧 A/B 长任务记录只作为历史证据；#76 是本次一次性收口执行单，在 PR #262 合并且 main 核验后关闭，此后只作历史证据。上述记录均不作为默认任务入口。用户无需在 A/B 会话间复制指令。
+2. **Web/Core 是工作角色而非两个必须分别启动的会话：** 主 Agent 可在当前环境支持时委派 Web、Core、独立 Review 子 Agent，分别使用隔离 worktree/明确文件所有权；不支持子 Agent 时由同一主执行器按依赖顺序处理，不能假称已经并行。原则上主 Agent 是唯一 main 合并协调者；旧 A/B 窗口不再自主同时改写主干。
+3. **独立审查不得自证：** 代码实现者（含主 Agent 自己实施的代码）不得将自身复核称为独立 Review。普通 PR 可由未参与该实现的 Review 子 Agent 独立审查；主 Agent 汇总审查结果、增量验证和 GitHub 门禁后再决定是否合并。子 Agent 的审查记录不替代 GitHub 明确要求的审批、状态检查或分支保护。涉及授权、安全、文件删除/恢复、Writer/Promote 等敏感变更必须执行相应安全审查和专门授权。GitHub 不允许作者自审时不得换身份绕过；记录真实阻断并推进其他独立工作。
+4. **ChatGPT/用户的定位：** ChatGPT 负责重大架构、业务范围、重要安全合同与重大阶段验收；不是日常任务启动器，也无需逐项复审普通 PR。Review 子 Agent 可执行普通变更的独立源码审查，但安全敏感事项仍需相应独立安全复审，且任何子 Agent 都不能替代 GitHub 必需审批。用户保留业务方向、生产与真实数据/渠道、收费调用、不可逆操作及需单独许可的安全敏感变更的批准权；未经体验不得宣布用户验收通过。
+5. **GitHub 协作记录：** Issue 为跨子任务的统一队列与证据记录，PR 为代码审查和合并记录。主 Agent 在当前工作对应的开放 Issue/PR 中清晰标记 owner、依赖、固定 HEAD、实现/已测试/已合并/未验收、阻断和 NEXT；项目全局状态只更新 `00-CURRENT.md`。#96/#97 已关闭，#76 是本次一次性收口执行单并将在收口后关闭；三者均不作为日常任务入口。避免重复整篇粘贴、重复建立治理文档或每个小错误开新 Issue。仅重大事项或外部权限阻断才回报用户等待决定，其余可执行工作继续推进。
+6. **执行连续性与真实能力：** 一次启动后在当前 Codex 任务实际可运行期间持续领取下一包；没有子 Agent、调度器、凭据或持久执行环境时不得声称跨会话自动唤醒、无人值守永久运行。以后若建设常驻调度器，必须先另行审批运行位置、认证、预算、并发、停止开关及恢复机制；当前协作决策不自动授权部署它。
+7. **合并与验收：** 普通低风险 PR 依据用户已有批量合并授权，由唯一主 Agent 在独立审查、必要定向/组合测试和 GitHub 检查/保护满足后自行合并；不得强推、跳过保护或把空 CI 状态当作无门禁证据。合并 ≠ NAS 部署 ≠ 真实数据验证 ≠ 用户最终验收。复用无运行代码变化的有效证据，增量变化只补必要测试。
+8. **安全边界持续不变：** NAS/生产、Private/真实 Vault、个人数据出站、真实渠道、费用、不可逆删除、生产 Writer/Promote、D090 与 OS Gate 仍依原授权。普通集成授权不自动扩大这些权限。
 
 ## 并行切片与集中集成验收（D084）
 
@@ -40,11 +43,17 @@ type: agent-rules
 - 跨模块接口、共享 BFF/UI 和安全门禁完成集成后，按一份统一计划集中运行必要的合成回归。对已由未变代码覆盖且无共享接口影响的测试不重复执行；前置条件缺失的依赖场景应标记 BLOCKED，不得伪报 PASS。
 - 集成合成验证完成后，如下一步涉及 NAS、生产配置/权限、真实模型、真实个人数据出站或用户浏览器验收，应停止并取得与该操作相匹配的明确授权。`main` PR 合并与生产操作仍遵循各自审批流程。
 
+## Web 浏览器自动化环境
+
+- Web Playwright 三视口端到端验收的正式运行环境为 GitHub-hosted Ubuntu 24.04 + Playwright Chromium，通过 `.github/workflows/a-web-playwright-synthetic.yml` 执行。该 workflow 为手动触发；触发前须固定目标 SHA 并取得对应运行授权，执行时 checkout `github.sha` 并验证实际 `HEAD` 完全一致。
+- macOS 工作站只运行组件/DOM 测试、Core + Vite localhost HTTP 合成联调、typecheck 与 build；不在 macOS 上启动 Playwright 浏览器，不继续排查已知 Edge SIGABRT/Chromium SIGTRAP。不得借用个人浏览器 Profile 或修改系统权限来绕过。
+- 本地组件和 HTTP 测试通过不替代 Linux 浏览器验收；Linux 浏览器 Gate 通过也不替代生产、真实数据或用户验收。报告必须区分浏览器未启动、视口旅程未运行和实际页面断言失败。
+
 ## SecondBrain 数据与安全边界
 
 - Private (`/volume1/SecBR/Private`) 默认不挂载、不扫描、不读取、不索引、不摘要、不记录日志。
-- Universal Capture 保留 Raw 原件并按 Raw → Processing → Review 工作；成功状态须由实际文件、哈希和元数据核验，失败保留原件。Capture/Organizer 不自动 Promote。
-- 正式 Knowledge 只能由受控 Core Promote Worker 在用户明确批准后写入；普通 Hermes Agent、通用文件工具、模型输出和前端自报身份均无权授权写入。
+- Universal Capture 保留 Raw 原件并按 Raw → Processing → Review 服务 Agent/自动候选；成功状态核对文件、哈希及元数据，失败保留原件。Capture/Organizer 不自动 Promote。D093 对**可信用户本人明确指定正式 Knowledge 目标**批准未来独立的 Core 受限直达通道，不把 Agent 候选伪装成用户动作。
+- **当前已部署生产：**正式 Knowledge 仍是 RO、Promote=false，现有 API 不得绕过。**D093 已批准的目标规则：**AI/Agent 自主入库只经受控 Core Review/Promote + 精确用户批准；用户亲自在可信 App/渠道明确选择目标和操作后，可经受限 Core 专用用户写接口免重复 Review。新增通道必须区分服务端真实身份/动作，校验版本、路径、冲突、审计及 OS 隔离；不得因产品批准扩大 Hermes 通用文件工具、Notes API 或 Vault 的 RW，生产 Writer/ACL 仍需专项审查和授权。
 - 以最近 Environment 快照为准：Hermes 对 Knowledge 只读，`HERMES_WRITE_SAFE_ROOT` 限于三个捕获目录；App Core Knowledge 为只读、`SB_PROMOTE_ENABLED=false`，Private 未挂载。上述是最后记录的已核验状态，不是本轮实时复测结论；生产变更前必须重新验证。
 - 普通 Capture/Organizer 写入不得扩展到 SecondBrain 根目录、Knowledge 或 Private。Journal 只可按正式规格以专用新增/追加边界开放，不授予普通 Agent 通用写权。
 - 对话中的明确收录和日记碎片按 `业务规范.md`、D086 先由 Core 保存原文至统一 Inbox；转成 Journal、正式 Knowledge 或回写文件分别遵守专用审批边界。既有直写代码或历史决策不构成新流程已上线的证据。

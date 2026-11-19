@@ -43,16 +43,17 @@ def _valid_source_reference(reference):
             and _SHA256.fullmatch(reference["version"]) is not None)
 
 
-def _parse_generated_at(value, zone, requested_day):
+def _parse_generated_at(value):
     if not isinstance(value, str) or len(value) > 64 or not _RFC3339.fullmatch(value):
         return False
     try:
         instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return False
-    if instant.tzinfo is None or instant.utcoffset() is None:
-        return False
-    return instant.astimezone(zone).date().isoformat() == requested_day
+    # `date` identifies the Brief's subject day; `generated_at` records when
+    # the record was created. An explicitly approved import may create a new
+    # record for a user-selected past or future subject day.
+    return instant.tzinfo is not None and instant.utcoffset() is not None
 
 
 def _validate_record(record, day, timezone_name, zone, max_source_refs):
@@ -63,7 +64,7 @@ def _validate_record(record, day, timezone_name, zone, max_source_refs):
             or record.get("date") != day or record.get("timezone") != timezone_name
             or not isinstance(record.get("generation_status"), str)
             or record["generation_status"] not in _GENERATION_STATUSES
-            or not _parse_generated_at(record.get("generated_at"), zone, day)):
+            or not _parse_generated_at(record.get("generated_at"))):
         return False
     summary = record.get("summary")
     if not isinstance(summary, str) or len(summary) > 20000:
@@ -119,7 +120,8 @@ class DailyBriefRecordReadStore:
             remaining -= len(chunk)
         return b"".join(chunks)
 
-    def read(self, day, timezone_name, source_verifier: Callable[[dict], bool] | None = None):
+    def read(self, day, timezone_name, source_verifier: Callable[[dict], bool] | None = None,
+             source_permission_preflight: Callable[[list[dict]], None] | None = None):
         if not self.configured:
             return DailyBriefRecordSnapshot(False, False, False, None, None, "unverified")
         if not self.root:
@@ -175,6 +177,10 @@ class DailyBriefRecordReadStore:
         if not _validate_record(record, day, timezone_name, zone, self.max_source_refs):
             return DailyBriefRecordSnapshot(True, False, True, None, None, "unverified", "failed")
         refs = record["source_refs"]
+        if source_permission_preflight is not None and refs:
+            # The route can authorize every referenced source kind before the
+            # first source store read, avoiding partial reads on mixed ACLs.
+            source_permission_preflight(refs)
         if source_verifier is None:
             source_status = "unverified"
         else:

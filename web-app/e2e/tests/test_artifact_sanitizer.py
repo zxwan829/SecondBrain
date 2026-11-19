@@ -17,6 +17,11 @@ SPEC = importlib.util.spec_from_file_location("run_synthetic_ci", SCRIPT)
 module = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(module)
+PROBE_SCRIPT = E2E / "scripts" / "run_wp5_notes_native_ux_probe.py"
+PROBE_SPEC = importlib.util.spec_from_file_location("wp5_native_probe", PROBE_SCRIPT)
+probe_module = importlib.util.module_from_spec(PROBE_SPEC)
+assert PROBE_SPEC and PROBE_SPEC.loader
+PROBE_SPEC.loader.exec_module(probe_module)
 
 
 def _screenshot_dir(viewport: str) -> str:
@@ -60,8 +65,9 @@ def _seed_raw_reports(raw: Path, secret: str = "synthetic-only-passphrase", *, d
     diagnostic_dir = raw / "test-results" / _screenshot_dir(diagnostic_viewport)
     diagnostic_dir.mkdir(parents=True)
     (diagnostic_dir / "failure-summary.json").write_text(json.dumps({
-        "schema_version": 1, "viewport": diagnostic_viewport,
+        "schema_version": 2, "viewport": diagnostic_viewport,
         "stage": "viewport_layout", "code": "assertion_failed",
+        "assertion_id": "activity_get_status_200", "activity_get_statuses": [200],
     }))
     _write_junit(raw, {diagnostic_viewport}, secret=secret)
     (raw / "local-http-request-metadata.json").write_text(json.dumps([{
@@ -129,18 +135,25 @@ def test_workflow_uploads_only_exact_sanitized_directory_and_is_manual_read_only
     assert "permissions:\n  contents: read" in workflow
     assert "contents: write" not in workflow and "secrets." not in workflow
     assert "runs-on: ubuntu-24.04" in workflow and "persist-credentials: false" in workflow
+    assert "ref: ${{ github.sha }}" in workflow
+    assert "EXPECTED_SHA: ${{ github.sha }}" in workflow
+    assert 'actual_sha="$(git rev-parse HEAD)"' in workflow
+    assert 'test "$actual_sha" = "$EXPECTED_SHA"' in workflow
     assert "path: web-app/e2e/artifacts-sanitized/" in workflow
     assert "path: web-app/e2e/artifacts-sanitized/${{ github.run_id }}-${{ github.run_attempt }}/" in workflow
     assert "path: web-app/e2e/artifacts/" not in workflow
     assert "path: web-app/e2e/artifacts-raw/" not in workflow
+    assert "wp5_conflict_only:" in workflow
+    assert "--wp5-conflict-only" in workflow and "WP5_CONFLICT_ONLY" in workflow
     assert "if: always()" in workflow and "if-no-files-found: ignore" in workflow
     assert "steps.synthetic.outputs.artifacts_verified == 'true'" in workflow
     assert 'prefix=".artifacts-verified-"' in runner
     assert "os.replace(staging_root, publish_root)" in runner
     assert "SB_E2E_RAW_ARTIFACTS" in runner and "artifacts-sanitized" in runner
     assert "SB_E2E_RAW_ARTIFACTS" in config and "artifacts-raw" in config
-    assert runner.index("wait_for_test_process(test_process)") < runner.index("publish_verified_reports(raw_artifacts, publish_root, password_path)")
-    assert runner.index("publish_verified_reports(raw_artifacts, publish_root, password_path)") < runner.rindex("mark_verified_artifact_output()")
+    publish_call = "publish_verified_reports(raw_artifacts, publish_root, password_path, expected_failure_viewports)"
+    assert runner.index("wait_for_test_process(test_process)") < runner.index(publish_call)
+    assert runner.index(publish_call) < runner.rindex("mark_verified_artifact_output()")
 
 
 def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
@@ -149,7 +162,7 @@ def test_screenshot_source_is_fixed_local_synthetic_chromium_fixture():
     config = (E2E / "playwright.config.ts").read_text()
     browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
     assert "runs-on: ubuntu-24.04" in workflow
-    assert "npx playwright install --with-deps chromium" in workflow
+    assert "npx playwright install chromium" in workflow
     assert "screenshot: 'only-on-failure'" in config
     assert "serviceWorkers: 'block'" in config
     assert "ALLOW_FAILURE_SCREENSHOT_PUBLICATION = (" in runner
@@ -187,43 +200,375 @@ def test_exact_playwright_truncated_output_directory_is_allowlisted(viewport, tm
     assert module.count_allowlisted_failure_screenshots(raw) == 1
 
 
+
+def test_wp5_autosave_probe_timeline_accepts_only_bounded_safe_events():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_conflict",
+        "code": "timeout", "assertion_id": "notes_blocksuite_conflict_rejected",
+        "activity_get_statuses": [200],
+        "wp5_autosave_events": [
+            {"marker": "wp5-conflict-queue", "at_ms": 1000, "event": "notes-queue-unsaved"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1001, "event": "notes-save-timer-fired"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1002, "event": "browser-put-request"},
+            {"marker": "wp5-conflict-queue", "at_ms": 1003, "event": "core-response", "status": 412},
+        ],
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    invalid = {**diagnostic, "wp5_autosave_events": [
+        {"marker": "wrong-marker", "at_ms": 1000, "event": "browser-put-request"},
+    ]}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([invalid])
+    over_bound = {**diagnostic, "wp5_autosave_events": [
+        {"marker": "wp5-conflict-queue", "at_ms": index, "event": "browser-put-request"}
+        for index in range(65)
+    ]}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([over_bound])
+
+
+def test_wp5_canvas_save_diagnostic_is_finite_and_sanitized():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+        "assertion_id": "wp5_resource_checkpoint_010", "activity_get_statuses": [],
+        "wp5_canvas_save": {
+            "checkpoint": "saved_status", "status": "previous_dirty", "close_enabled": False,
+            "readback_status": 200, "snapshot_matches_readback": False,
+            "live_text_bounds": [[120, 360, 320, 128]], "saved_text_bounds": [[120, 360, 320, 120]],
+            "layout_samples": [[128, 128, 130, 128, 20, 20, 18, 1, 1, 1, 1]],
+        },
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    invalid = {**diagnostic, "wp5_canvas_save": {**diagnostic["wp5_canvas_save"], "status": "private note body"}}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([invalid])
+    over_bound = {**diagnostic, "wp5_canvas_save": {**diagnostic["wp5_canvas_save"],
+        "live_text_bounds": [[120, 360, 320, 1e10]]}}
+    with pytest.raises(RuntimeError):
+        module._validate_failure_diagnostics([over_bound])
+
+
+def test_wp5_canvas_open_failure_evidence_is_bounded_and_explicit_fail(tmp_path):
+    source = tmp_path / "canvas-open-failure.json"
+    target = tmp_path / "sanitized-canvas-open-failure.json"
+    source.write_text(json.dumps({
+        "result": "FAIL", "scope": "independent synthetic canvas-open repro", "viewport": "1440x1000",
+        "canvasOpenState": {"galleryExpanded": True, "canvasCardCount": 1, "openButtonCount": 1,
+                             "openButtonsEnabled": 1, "resourceDialogVisible": False, "nestedEditorVisible": False},
+    }))
+    safe = probe_module.verify_canvas_open_failure_evidence(source, target)
+    assert safe["result"] == "FAIL"
+    assert json.loads(target.read_text()) == safe
+    invalid = json.loads(source.read_text())
+    invalid["canvasOpenState"]["openButtonsEnabled"] = 1000
+    source.write_text(json.dumps(invalid))
+    with pytest.raises(RuntimeError, match="canvas open failure evidence rejected"):
+        probe_module.verify_canvas_open_failure_evidence(source, target)
+
+
+def test_wp5_canvas_open_pass_and_failure_artifacts_are_uploaded():
+    workflow = (E2E.parents[1] / ".github" / "workflows" / "wp5-notes-native-ux-probe.yml").read_text()
+    for artifact in ("wp5-notes-native-canvas-open-1440x1000.png",
+                     "wp5-notes-native-canvas-open-evidence.json",
+                     "wp5-notes-native-canvas-open-failure-1440x1000.png",
+                     "wp5-notes-native-canvas-open-failure-evidence.json"):
+        assert artifact in workflow
+
+
 @pytest.mark.parametrize("entry", [
-    {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "details": "secret"},
-    {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error"},
-    {"viewport": "desktop-1440x1000", "stage": "login", "code": "raw exception: token=secret"},
-    {"viewport": "not-a-viewport", "stage": "login", "code": "timeout"},
+    {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "details": "secret", "notes_collection_statuses": []},
+    {"viewport": "desktop-1440x1000", "stage": "arbitrary text", "code": "test_error", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
+    {"viewport": "desktop-1440x1000", "stage": "login", "code": "raw exception: token=secret", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
+    {"viewport": "not-a-viewport", "stage": "login", "code": "timeout", "assertion_id": "activity_get_status_200", "activity_get_statuses": [200], "notes_collection_statuses": []},
 ])
 def test_failure_diagnostic_unknown_or_sensitive_values_fail_closed(entry):
     with pytest.raises(RuntimeError):
         module._validate_failure_diagnostics([entry])
 
 
+def test_failure_diagnostic_accepts_action_revocation_stage():
+    diagnostic = {"viewport": "mobile-390x844", "stage": "permission_revocation", "code": "assertion_failed",
+                  "assertion_id": "activity_get_status_200", "activity_get_statuses": [200, 403], "notes_collection_statuses": []}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+
+
+def test_failure_diagnostic_can_include_bounded_notes_collection_statuses():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_navigation", "code": "assertion_failed",
+                  "assertion_id": "notes_collections", "activity_get_statuses": [200, 403],
+                  "notes_collection_statuses": [403]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_collection_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_note_item_read_failure():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_reopen", "code": "assertion_failed",
+                  "assertion_id": "notes_readback", "activity_get_statuses": [200],
+                  "notes_item_read_statuses": [403], "notes_readback_failure": "note_file_permissions_unsafe"}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_item_read_statuses"] = [600]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_notes_write_statuses():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_blocksuite_conflict",
+                  "code": "timeout", "assertion_id": "notes_blocksuite_conflict_rejected",
+                  "activity_get_statuses": [200], "notes_write_statuses": [200, 412, None]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_write_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["notes_item_read_statuses"] = [403]
+    diagnostic["notes_readback_failure"] = "raw error text"
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_notes_seed_status():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_frontmatter_seed", "code": "assertion_failed",
+                  "assertion_id": "notes_frontmatter_seed", "activity_get_statuses": [200],
+                  "notes_seed_status": 412}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_seed_status"] = True
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["notes_seed_status"] = 600
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_blocksuite_runtime_state():
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+                  "assertion_id": "notes_blocksuite_simple_open", "activity_get_statuses": [200],
+                  "notes_ui_state": "fallback_message", "page_error_names": ["TypeError"],
+                  "page_error_categories": ["nullish_property_access"],
+                  "page_error_sources": ["blocksuite_module"], "blocksuite_module_statuses": [200, 504],
+                  "page_error_summaries": ["Error: Cannot read properties of undefined (<quoted>)"]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["notes_ui_state"] = "raw browser text"
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["notes_ui_state"] = "fallback_message"
+    diagnostic["page_error_names"] = ["Error: private payload"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["page_error_names"] = ["TypeError"]
+    diagnostic["page_error_categories"] = ["raw browser message"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["page_error_categories"] = ["nullish_property_access"]
+    diagnostic["page_error_sources"] = ["/Users/private/path.tsx"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["page_error_sources"] = ["blocksuite_module"]
+    diagnostic["blocksuite_module_statuses"] = ["GET /secret"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["blocksuite_module_statuses"] = [200, 504]
+    diagnostic["page_error_summaries"] = ["/Users/person/private.txt"]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_sanitized_wp5_step_and_resource_statuses():
+    diagnostic = {
+        "viewport": "desktop-1440x1000", "stage": "notes_blocksuite_open", "code": "timeout",
+        "assertion_id": "wp5_resource_content_visible", "activity_get_statuses": [200],
+        "wp5_step": "rich_page_first_save",
+        "blocksuite_request_statuses": [
+            {"endpoint": "resource", "method": "POST", "status": 200},
+            {"endpoint": "blob", "method": "PUT", "status": 201},
+        ],
+    }
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["wp5_step"] = "GET /api/notes/private"
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+    diagnostic["wp5_step"] = "rich_page_first_save"
+    diagnostic["blocksuite_request_statuses"] = [
+        {"endpoint": "resource", "method": "PUT", "status": 700},
+    ]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_can_include_bounded_daily_brief_get_statuses():
+    diagnostic = {"viewport": "mobile-390x844", "stage": "daily_brief_read", "code": "timeout",
+                  "assertion_id": "daily_brief_saved_readback", "activity_get_statuses": [200, 403],
+                  "daily_brief_get_statuses": [200, 200]}
+    assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+    diagnostic["daily_brief_get_statuses"] = [True]
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_failure_diagnostic_accepts_fixed_navigation_and_layout_ids():
+    stages_and_assertions = [
+        ("post_revocation_navigation", "home_after_revocation"),
+        ("agent_health", "home_after_agent_health"),
+        ("today", "today_heading"),
+        ("journal", "home_after_journal"),
+        ("calendar", "calendar_heading"),
+        ("permission_revocation", "activity_revocation_denial"),
+        ("permission_revocation", "activity_revocation_empty"),
+        ("permission_revocation", "activity_revocation_status_403"),
+        ("calendar", "calendar_api_requests"),
+        ("viewport_layout", "layout_no_horizontal_overflow"),
+        ("viewport_layout", "home_api_response"),
+        ("viewport_layout", "projects_navigation"),
+        ("viewport_layout", "projects_api_response"),
+        ("agent_health", "agent_health_navigation"),
+        ("agent_health", "agent_health_api_response"),
+        ("today", "today_navigation"),
+        ("today", "today_api_response"),
+        ("journal", "journal_navigation"),
+        ("journal", "journal_api_response"),
+        ("journal", "journal_append"),
+        ("journal", "journal_saved_readback"),
+        ("journal", "journal_refresh_readback"),
+        ("calendar", "calendar_navigation"),
+        ("calendar", "calendar_api_response"),
+        ("viewport_layout", "layout_home"),
+        ("viewport_layout", "layout_projects"),
+        ("viewport_layout", "layout_activity"),
+        ("agent_health", "layout_agent_health"),
+        ("today", "layout_today"),
+        ("journal", "layout_journal"),
+        ("calendar", "layout_calendar"),
+    ]
+    for stage, assertion_id in stages_and_assertions:
+        diagnostic = {"viewport": "mobile-390x844", "stage": stage, "code": "assertion_failed",
+                      "assertion_id": assertion_id, "activity_get_statuses": [200, 403], "notes_collection_statuses": []}
+        assert module._validate_failure_diagnostics([diagnostic]) == [diagnostic]
+
+
+@pytest.mark.parametrize("statuses", [[True], ["200"], [99], [600], [200, 200, 200, 200, 200]])
+def test_failure_diagnostic_rejects_non_http_or_unbounded_activity_statuses(statuses):
+    diagnostic = {"viewport": "desktop-1440x1000", "stage": "viewport_layout",
+                  "code": "assertion_failed", "assertion_id": "activity_get_status_200",
+                  "activity_get_statuses": statuses, "notes_collection_statuses": []}
+    with pytest.raises(RuntimeError, match="value rejected"):
+        module._validate_failure_diagnostics([diagnostic])
+
+
+def test_browser_activity_assertion_waits_for_core_response_and_uses_fixed_diagnostic_ids():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "page.waitForResponse((response) =>" in browser_spec
+    assert "expect(activityResponse?.status(), 'activity_get_http_200').toBe(200)" in browser_spec
+    assert "&& request.path === '/api/activity' && request.status === 200)).toBe(true);" not in browser_spec
+    assert "activity_get_statuses: observed?.activityReadStatuses ?? []" in browser_spec
+    assert "home_after_revocation" in browser_spec
+    assert "layout_no_horizontal_overflow" in browser_spec
+    assert "setActivityReadRevoked(false)" in browser_spec
+    assert "activity_revocation_status_403" in browser_spec
+
+
+def test_browser_navigation_waits_for_page_apis_and_uses_unambiguous_mobile_safe_locators():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "await expectSuccessfulGet(homeResponsePromise, observed, 'home_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(projectsResponsePromise, observed, 'projects_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(agentHealthResponsePromise, observed, 'agent_health_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(todayResponsePromise, observed, 'today_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(journalResponsePromise, observed, 'journal_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(calendarResponsePromise, observed, 'calendar_api_response')" in browser_spec
+    assert "await expectSuccessfulGet(collectionsResponsePromise, observed, 'notes_collections')" in browser_spec
+    assert "notes_collection_statuses: observed?.notesCollectionReadStatuses ?? []" in browser_spec
+    assert "daily_brief_get_statuses: observed?.dailyBriefReadStatuses ?? []" in browser_spec
+    assert "daily_brief_saved_readback" in browser_spec
+    assert "getByRole('heading', { level: 1, name: 'Agent 状态', exact: true })" in browser_spec
+    assert "await expect(menu).toHaveAttribute('aria-expanded', 'true')" in browser_spec
+    assert "page.locator('.sidebar nav').getByRole('button', { name: '今日', exact: true })" in browser_spec
+    assert "document.documentElement.scrollWidth" in browser_spec
+    assert "document.body.scrollWidth" in browser_spec
+    assert "expectNoHorizontalOverflow(page, observed, viewport, 'layout_calendar')" in browser_spec
+
+
+def test_browser_fixture_allowlists_only_exact_synthetic_notes_routes():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "const notesPath = params.size === 0" in browser_spec
+    assert "url.pathname === '/api/notes'" in browser_spec
+    assert "url.pathname === '/api/notes/drafts'" in browser_spec
+    assert "^\\/api\\/notes\\/drafts\\/[0-9a-f]{8}" in browser_spec
+    assert "url.pathname.startsWith('/api/notes')" not in browser_spec
+
+
+def test_browser_fixture_allows_only_explicit_journal_read_and_append_routes():
+    browser_spec = (E2E / "tests" / "inbox-browser.spec.ts").read_text()
+    assert "const journalPath = route.request().method() === 'GET'" in browser_spec
+    assert "const journalAppendPath = route.request().method() === 'POST' && url.pathname === '/api/journal/entries'" in browser_spec
+    assert "!journalPath && !journalAppendPath" in browser_spec
+    assert "url.pathname.startsWith('/api/journal')" not in browser_spec
+    assert "journal_refresh_readback" in browser_spec
+
+
 def test_failure_diagnostic_duplicate_viewports_and_excess_count_fail_closed():
-    entry = {"viewport": "desktop-1440x1000", "stage": "login", "code": "timeout"}
+    entry = {"viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+             "assertion_id": "test_setup", "activity_get_statuses": [], "notes_collection_statuses": []}
     with pytest.raises(RuntimeError, match="value rejected"):
         module._validate_failure_diagnostics([entry, entry.copy()])
     with pytest.raises(RuntimeError, match="schema rejected"):
         module._validate_failure_diagnostics([entry, entry, entry, entry])
 
 
-def test_failure_diagnostics_require_one_fixed_enum_record_per_failed_testcase(tmp_path):
+def test_missing_fixed_viewport_diagnostic_fails_closed(tmp_path):
     raw = tmp_path / "raw"
     raw.mkdir()
     _write_junit(raw, {"desktop-1440x1000", "tablet-820x1180"})
     result_dir = raw / "test-results" / _screenshot_dir("desktop-1440x1000")
     result_dir.mkdir(parents=True)
     (result_dir / "failure-summary.json").write_text(json.dumps({
-        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
+        "schema_version": 2, "viewport": "desktop-1440x1000", "stage": "first_submit", "code": "timeout",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
     }))
-    with pytest.raises(RuntimeError, match="do not match failed testcase viewports"):
+    with pytest.raises(RuntimeError, match="do not cover every failed testcase viewport"):
         module._collect_failure_diagnostics(raw)
+
+
+def test_normal_failed_testcase_without_diagnostic_is_not_misclassified_as_setup(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_junit(raw, {"tablet-820x1180"})
+    with pytest.raises(RuntimeError, match="do not cover every failed testcase viewport"):
+        module._collect_failure_diagnostics(raw)
+
+
+def test_explicit_setup_diagnostic_is_retained_for_its_failed_viewport(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    _write_junit(raw, {"mobile-390x844"})
+    result_dir = raw / "test-results" / _screenshot_dir("mobile-390x844")
+    result_dir.mkdir(parents=True)
+    (result_dir / "failure-summary.json").write_text(json.dumps({
+        "schema_version": 2, "viewport": "mobile-390x844", "stage": "test_setup", "code": "test_error",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
+    }))
+    assert module._collect_failure_diagnostics(raw) == [{
+        "viewport": "mobile-390x844", "stage": "test_setup", "code": "test_error",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
+    }]
+
+
+def test_failed_run_without_explicit_viewport_diagnostic_withholds_report(tmp_path):
+    raw, published = tmp_path / "raw", tmp_path / "artifacts-sanitized"
+    raw.mkdir(mode=0o700)
+    _write_junit(raw, set(module.FAILURE_JUNIT_TESTCASE_VIEWPORTS.values()))
+    (raw / "run-summary.json").write_text(json.dumps({"result": "FAIL", "exit_code": 1}))
+    secret = _write_secret(tmp_path / "password")
+
+    with pytest.raises(RuntimeError, match="report validation failed; artifact upload withheld"):
+        module.publish_verified_reports(raw, published, secret)
+
+    assert not any(published.rglob("*"))
 
 
 def _write_failure_diagnostic(raw: Path, viewport: str) -> None:
     result_dir = raw / "test-results" / _screenshot_dir(viewport)
     result_dir.mkdir(parents=True, exist_ok=True)
     (result_dir / "failure-summary.json").write_text(json.dumps({
-        "schema_version": 1, "viewport": viewport, "stage": "viewport_layout", "code": "assertion_failed",
+        "schema_version": 2, "viewport": viewport, "stage": "viewport_layout", "code": "assertion_failed",
+        "assertion_id": "activity_get_status_200", "activity_get_statuses": [200],
     }))
 
 
@@ -304,8 +649,10 @@ def test_exact_desktop_and_tablet_failures_accept_matching_diagnostics(tmp_path)
     for viewport in failures:
         _write_failure_diagnostic(raw, viewport)
     assert module._collect_failure_diagnostics(raw) == [
-        {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed"},
-        {"viewport": "tablet-820x1180", "stage": "viewport_layout", "code": "assertion_failed"},
+        {"viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed",
+         "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
+        {"viewport": "tablet-820x1180", "stage": "viewport_layout", "code": "assertion_failed",
+         "assertion_id": "activity_get_status_200", "activity_get_statuses": [200]},
     ]
 
 
@@ -330,8 +677,9 @@ def test_failure_diagnostic_malicious_source_payload_is_withheld(tmp_path):
     _seed_raw_reports(raw)
     summary = raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "failure-summary.json"
     summary.write_text(json.dumps({
-        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "login",
-        "code": "test_error", "message": "SYNTHETIC_AUTH_SECRET",
+        "schema_version": 2, "viewport": "desktop-1440x1000", "stage": "login",
+        "code": "test_error", "assertion_id": "test_setup", "activity_get_statuses": [],
+        "message": "SYNTHETIC_AUTH_SECRET",
     }))
     with pytest.raises(RuntimeError, match="upload withheld"):
         module.publish_verified_reports(raw, published, secret)
@@ -347,7 +695,8 @@ def test_failure_diagnostic_symlink_is_withheld(tmp_path, monkeypatch):
     diagnostics = raw / "test-results" / _screenshot_dir("desktop-1440x1000") / "failure-summary.json"
     outside = tmp_path / "outside.json"
     outside.write_text(json.dumps({
-        "schema_version": 1, "viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+        "schema_version": 2, "viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
     }))
     diagnostics.unlink()
     diagnostics.symlink_to(outside)
@@ -364,6 +713,7 @@ def test_failure_diagnostic_boolean_schema_version_is_rejected(tmp_path):
     result_dir.mkdir(parents=True)
     (result_dir / "failure-summary.json").write_text(json.dumps({
         "schema_version": True, "viewport": "desktop-1440x1000", "stage": "login", "code": "timeout",
+        "assertion_id": "test_setup", "activity_get_statuses": [],
     }))
     with pytest.raises(RuntimeError, match="source schema rejected"):
         module._collect_failure_diagnostics(raw)
@@ -384,6 +734,7 @@ def test_allowlisted_publish_redacts_reports_and_omits_html_unknown_images_and_f
     }
     assert json.loads((published / "failure-diagnostics.json").read_text()) == [{
         "viewport": "desktop-1440x1000", "stage": "viewport_layout", "code": "assertion_failed",
+        "assertion_id": "activity_get_status_200", "activity_get_statuses": [200],
     }]
     content = "\n".join(path.read_text(errors="ignore") for path in published.rglob("*") if path.is_file() and not zipfile.is_zipfile(path))
     with zipfile.ZipFile(published / "test-results/capture/trace.zip") as archive:
@@ -434,6 +785,7 @@ def test_run_summary_reports_journal_sources_separately_from_mutations(tmp_path)
         "journal_mutated_files": 0,
         "brief_files": 0,
         "brief_file_set_verified": False,
+        "notes_files": 1,
         "authorization_header": "SYNTHETIC_SECRET",
     }))
 
@@ -446,6 +798,7 @@ def test_run_summary_reports_journal_sources_separately_from_mutations(tmp_path)
         "journal_mutated_files": 0,
         "brief_files": 0,
         "brief_file_set_verified": False,
+        "notes_files": 1,
     }
 
 
@@ -456,7 +809,18 @@ def test_daily_brief_file_set_assertion_rejects_unexpected_files_and_symlinks(tm
     (brief_root / "2026-10-21.json").write_text("synthetic")
     (brief_root / f".op-{operation_hash}.json").write_text("synthetic")
     (brief_root / f".op-lock-{operation_hash}").touch()
-    assert module._assert_exact_brief_file_set(brief_root, "2026-10-21.json") == 3
+    (brief_root / ".date-lock-2026-10-21").touch()
+    assert module._assert_exact_brief_file_set(brief_root, "2026-10-21.json") == 4
+
+    (brief_root / ".date-lock-2026-10-21").unlink()
+    with pytest.raises(RuntimeError, match="file set mismatch"):
+        module._assert_exact_brief_file_set(brief_root, "2026-10-21.json")
+    (brief_root / ".date-lock-2026-10-21").touch()
+
+    (brief_root / ".pending-2026-10-21.json").write_text("synthetic")
+    with pytest.raises(RuntimeError, match="file set mismatch"):
+        module._assert_exact_brief_file_set(brief_root, "2026-10-21.json")
+    (brief_root / ".pending-2026-10-21.json").unlink()
 
     (brief_root / "unexpected.json").write_text("synthetic")
     with pytest.raises(RuntimeError, match="file set mismatch"):

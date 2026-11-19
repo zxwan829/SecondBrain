@@ -10,7 +10,7 @@ type: architecture
 ## 1. 稳定架构边界
 
 - **产品总目标：** SecondBrain 是随用户互动长期成长、无需用户下达搜索指令就能自然联想相关记忆和知识、在适当时机主动思考和规划的个人智能伙伴；不以“保存文件、手动检索成功”作为产品充分完成条件。
-- **双闭环：** Personal Learning Loop 可在授权范围自动学习低风险个人记忆；Knowledge Integrity Loop 仍要求 Raw/Review、用户明确批准才能 Promote。两者互通但绝不混淆；“普通 Chat 不自动 Capture”不禁止受控记忆学习。
+- **双闭环（D093 修订目标）：** 个人低风险记忆学习按既有 Core 边界；AI/Agent 自主知识候选继续 Raw/Review→用户精确批准→Core Promote；用户本人经可信入口明确选定目标，可由受限 Core 直达正式 Knowledge，不重复审核。普通 Chat 收录仍按 D086 先进入 Inbox。
 - SecondBrain 文件是业务数据的权威源；Hermes 提供 Agent Runtime、Chat、Session、Skills 与工具执行能力。SecondBrain 不复制 Agent Runtime 或建立第二份正式知识库。
 - 产品入口是独立 SecondBrain Web App。Hermes Dashboard 可以作为既有入口保留，但不是 App 的宿主依赖。
 - 部署单元为两个核心服务：SecondBrain App（React/Vite 静态前端 + Core/BFF/API）与 Hermes Runtime。Core 保持模块化单体；不为业务模块增加独立容器、数据库、通用网关或插件平台。
@@ -34,7 +34,7 @@ type: architecture
 
 - 前端导航和页面路由可扩展；Shell、登录和通用导航不与 Chat 或 Review 页面绑定。
 - Core 业务按模块划分服务和 API，通过清晰接口共享一个进程与部署单元。单用户身份由统一 action-policy 接口校验，不提前实现复杂 RBAC。
-- Knowledge Promote 与普通业务写入分离。进入正式 Knowledge 必须人工审核；Memo、Calendar、新闻订阅等未来业务按各自授权的 Core API 执行 CRUD，不统一进入 Promote。
+- Knowledge Promote 与用户主动写入分离：AI/Agent 自主正式知识写入经 Review/Promote；用户经服务端校验的明确创建、上传、归档可走受限本人写入通道。现行生产仍 Knowledge RO、Promote=false；文档批准不等于权限已开放。
 - Hermes 负责对话、Agent 执行、原生 Session/Skills 与经验证的学习/回忆能力；SecondBrain Core 负责业务状态、Capture 生命周期、审批记录、Organizer 配置/游标/作业、受控 Review 草稿及目标中的长期个人记忆业务接口。不要重新实现 Hermes Agent Runtime。
 - **个人记忆与知识分权：** SecondBrain 持久、可导出和可纠错的个人记忆可以自动更新，但只能使用收窄的 Core 记忆操作边界；Hermes 自有记忆不是正式知识或长期个人资料的唯一 SoT。当前采用 Core JSONL 权威存储，BFF 提供受控记忆召回/学习适配；Hermes 外部原生 Memory Provider 关闭。未来替换机制需独立论证，不能把候选写成现行架构。
 
@@ -42,7 +42,7 @@ type: architecture
 
 用户入口为 Web App/Core；微信和飞书优先复用 Hermes 原生 Gateway/渠道入口进入同一 Agent Runtime，再调用共用 Core 业务接口。真实平台兼容、身份与同意绑定仍需核验（D087）。普通 Chat 可由 Hermes 主动询问是否收录；用户明确收录或同意建议后，Core 先将原文保存到统一业务 Inbox，再经授权转为 Journal、正式 Knowledge 或其他目标。普通闲聊不自动形成 Inbox/Journal/正式 Knowledge，但获准的低风险偏好与经验可进入可纠正的 Personal Memory。明确 Task 意图走其独立业务授权；具体规则见 `业务规范.md`。
 
-**双闭环**：Personal Learning Loop 在授权范围由 Core 建立带来源、时间、推断标记、版本、纠错/撤销的个人记忆；Knowledge Integrity Loop 仍为 Raw → Review → 用户明确批准 → Core Promote → 正式 Knowledge，不把外部材料摘要和模型推断当成用户事实。
+**双闭环（D093 修订）：** Personal Learning Loop 在授权范围更新可纠正低风险个人记忆；Agent/AI 候选由 Raw→Review→精确批准→Core Promote 写正式知识，用户明确选择目的地的本人操作可经 Core 认证、目标和版本校验直达。客户端/Agent 自报身份不能替代可信授权；D086 自然聊天 Inbox 原文路径继续有效。
 
 **四层逻辑记忆（不是四套数据库）：** L1 稳定身份/偏好/长期目标；L2 项目、关系、当前任务与近期话题；L3 关键事件、日记、决策、纠正和经验；L4 原始证据、Raw/Review、Journal/Projects/正式 Knowledge。相关上下文按需装载，精确日期、金额、版本和冲突必须回源核验，不将推断强写成已证实事实。当前持久个人记忆权威是 Core JSONL；Hermes 的原生 Session/Skills 与缓存不可成为另一个业务 SoT。
 
@@ -60,7 +60,7 @@ type: architecture
 
 用户明确选择收录或同意 Hermes 的收录建议 → App/Core Capture API → 独占保存 Raw 原件与来源元数据至统一业务 Inbox → 处理/提取 → 以可核验关系创建 Review。Raw 是不可覆盖的原始证据；失败时保留 Raw 和可恢复状态。Capture 不直接写 Knowledge。
 
-Inbox 中持久化的 `approved_recorded` 只代表人工审批历史，不触发目标动作。D085-C2c-1 的 Journal 与 Review 执行由 Core 在再次核验当前来源/词库版本、目标动作权限和用户看到的精确目标预览后，等待独立执行确认；Journal 仍由专用 JournalStore 追加，Review 仍经 CaptureService 保留 Raw 并创建 Review。两者均绑定稳定操作键与执行审计，重放只恢复同一目标。项目关联只保存为元数据候选，当前不可执行；Knowledge 仍只通过既有 Review/Promote 审批流写入。
+Inbox 中持久化的 approved_recorded 仅代表人工审批历史，不触发动作。D085-C2c-1 的 Journal 与 Review 仍须 Core 重新核验来源、目标、操作权限、版本、幂等及执行确认，分别复用专用 Store/Capture。这一规则针对 Chat/Agent 候选，不阻止 D093 未来用户本人显式保存到正式知识库的窄通道；现网仍禁止正式 Knowledge 写入。
 
 ### 3.3 Review 与 Promote
 
@@ -82,13 +82,21 @@ Review 从 SecondBrain 文件和 Core 审核状态读取。用户明确批准后
 
 主动规划使用授权的项目、日程、待办、历史经验与近期知识，输出带来源、可去重/节流/关闭的**建议**。建议不等于执行；外发、权限修改、删除和生产操作仍需对应授权。优先复用现有 Hermes 和 Core 的调度/状态能力，不预建新 Agent、第二调度系统或新容器。
 
+
+### 3.6 D093 文档权威、AI 可读文本与受控检索（已批准方向，未实现完整链路）
+
+- **资料与版本：** Capture Raw 原件不可变；用户自己的工作笔记允许经版本和冲突保护更新。Markdown/TXT/代码直接提供文本；其他类型保留原件并将派生 Markdown/纯文本与稳定文档 ID、hash、来源、原件版本、附件引用绑定。BlockSuite 的完整 Yjs/JSON、数据库/看板、画布、Blob 保持原生权威；不以可读摘要覆盖原件，不另造第二份正式知识库。纯 Markdown 不必额外生成同内容文件。
+- **索引及状态：** Core 对获准范围提供关键词/内容检索、稳定回源；改名、更新、删除、恢复、撤权都应更新或失效派生表示。无法提取时仍可通过文件名、来源和日期发现，并区分解析中/已索引/失败未解析/未支持。Private 永不索引；索引不是获得访问授权的凭据。
+- **Hermes 真正采用正文：** Run 必须获得有限长度、按权限/版本核验的低信任正文证据，不是只保存引用记录；不得将文档内容提升为 system 指令或 Agent 命令。答案引用必须回到对应文件与精确版本，页码、行列、时间戳只在可证实时展示；证据不足或已撤权不得伪称已引用。先用现有 Markdown 检索完成真实问答；语义检索、Embedding/向量数据库待召回质量和成本评估决定。
+- **后续不得遗漏：** WP6/#78 只完成受控 AI Promote、本人 Markdown/笔记最小直达、Hermes 正文+引用闭环。后续既有 V1 P4-1/P4-3/P4-5/P2-4 必须验证 BlockSuite 投影的标题/列表/普通表格/代码语言/图片引用，Database/Kanban/Canvas 的可读结构化摘要+原生资源引用，五类合成内容导出→重新导入差异基准，已批准格式提取、解析状态与索引生命周期；Office/视频/压缩包和 Embedding 仍属 V1 之后。独立授权前不得修改 NAS、生产挂载/ACL、真实 Vault、Writer/Promote。
+
 ## 4. 数据分区与信任边界
 
 | 区域/能力 | 允许边界 | 禁止边界 |
 |---|---|---|
 | `00-Inbox` / KnowledgeAssets Inbox | 按 Capture/授权流程接收原件 | 用派生内容覆盖原件；从失败推断可删除 |
 | `10-Review` | Core 创建待审核草稿；App 展示来源和审核状态 | AI/Agent 自动 Promote；覆盖人工编辑或审核文件 |
-| `20-Knowledge` | 仅受控 Core Promote Worker 在用户批准后写入 | Hermes 普通 Agent、通用文件工具、未授权业务模块写入 |
+| `20-Knowledge` | 目标：可信用户本人明确目标的专用受限 Core 写入，或 Agent 候选经精确批准后的受控 Core Promote Writer | 普通 Hermes/Notes 工具、前端自报身份、无界递归 RW；生产当前仍 RO |
 | `40-Memory`（目标） | 在用户授权范围，受控自动学习低风险偏好/经历；记录来源、时间、推断标记、修改/撤销历史 | 以模型猜测覆盖正式项目状态；无边界的文件写入；把 Hermes session 当唯一持久记忆 |
 | `50-Journal` | Core 经 `SB_JOURNAL_ROOT` 专用 RW 根按日期新增/追加原文；需要 `journal.append` | 普通 Agent 未授权改写、删除既有内容；Hermes 不直接取得此存储权限 |
 | Task state | Core 经独立 `SB_TASK_ROOT` 读取/创建/更新持久任务；需要 `task.read` / `task.write` | Hermes 通用文件工具或 Journal API 不得越权访问；缺少专用根时不落盘 |

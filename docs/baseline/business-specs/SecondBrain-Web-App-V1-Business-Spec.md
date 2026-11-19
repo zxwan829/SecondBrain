@@ -8,6 +8,8 @@ product: SecondBrain Web App / Personal OS
 
 # SecondBrain Web App / Personal OS V1 Business Specification
 
+> **D093 Knowledge 分流补充（2026-11-09，已批准产品方向、未实施）：** Web App 必须允许可信用户本人明确目标的笔记新建、Markdown/文件导入及正常编辑通过受限 Core 通道保存正式知识，无须重复 Review；AI/Agent 自主生成或修改正式知识必须经精确预览/差异、用户批准与受控 Promote。Hermes 应基于实际被传入的有界知识正文回答并提供准确版本引用，而不是只有 citation 元数据。WP6 最小验收及后续 BlockSuite 结构投影/五类往返/多格式索引验收分别固定在 #78 与 V1-Delivery-Plan D093 条款；现网 Writer/Knowledge RO/Promote 状态不因本条改变。
+
 > **D077 补充（2026-10-16）：** 本文件的原 Web App V1 MUST/SHOULD/DEFERRED 均保留；用户明确批准的新最高目标及 Companion MVP 见 `Decision-Log.md` D077（目标与批准决策）、`Architecture.md`（稳定设计）及 `00-CURRENT.md`（MVP 验收和 NEXT）。从此 Web App 不只是漂亮的仪表盘/搜索页面，而是持续了解用户的 AI 伙伴交互入口。新智能能力的实际状态仍以 `00-CURRENT.md` 为准。
 
 ## 1. Product definition

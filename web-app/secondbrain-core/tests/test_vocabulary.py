@@ -119,6 +119,36 @@ class VocabularyStoreTests(unittest.TestCase):
         self.assertEqual(full.exception.status_code, 409)
         self.assertEqual(len(state["types"]), 10)
 
+    def test_type_confirmation_and_deactivation_preserve_catalog_history(self):
+        state = self.store.read()
+        with self.assertRaises(HTTPException) as unconfirmed_add:
+            self.store.add_type("合成类别", state["revision"], False)
+        self.assertEqual(unconfirmed_add.exception.status_code, 400)
+
+        state = self.store.add_type("合成类别", state["revision"], True)
+        added = next(item for item in state["types"] if item["name"] == "合成类别")
+        with self.assertRaises(HTTPException) as unconfirmed_disable:
+            self.store.set_type_enabled(added["id"], False, state["revision"], False)
+        self.assertEqual(unconfirmed_disable.exception.status_code, 400)
+
+        state = self.store.set_type_enabled(added["id"], False, state["revision"], True)
+        retained = next(item for item in state["types"] if item["id"] == added["id"])
+        self.assertEqual(retained["name"], "合成类别")
+        self.assertFalse(retained["enabled"])
+        self.assertEqual(state["revision"], 2)
+        self.assertEqual([event["operation"] for event in state["audit"]],
+                         ["type.add", "type.set_enabled"])
+
+    def test_automatic_metadata_uses_only_enabled_vocabulary_values(self):
+        metadata = apply_automatic_metadata(
+            NoteVocabularyOverrides("手动保留类型", False, ()),
+            "停用类型",
+            ["停用标签", "有效标签", "未入库标签"],
+            ["有效类型"],
+            ["有效标签"],
+        )
+        self.assertEqual(metadata, {"类型": "手动保留类型", "tags": ["有效标签"]})
+
     def test_two_writers_using_same_revision_only_commit_once(self):
         second_store = VocabularyStore(self.root)
 

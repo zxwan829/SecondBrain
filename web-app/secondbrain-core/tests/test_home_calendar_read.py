@@ -31,7 +31,9 @@ def make_auth(tmp_path):
     os.chmod(password_file, 0o600)
     auth = AppSessionAuth(str(password_file), ["https://app.test"])
     token = "synthetic-app-session"
-    auth._sessions[hashlib.sha256(token.encode()).hexdigest()] = time.time() + 600
+    session_id = hashlib.sha256(token.encode()).hexdigest()
+    auth._sessions[session_id] = time.time() + 600
+    auth._session_actions[session_id] = set(auth.SUPPORTED_ACTIONS)
     return auth, token
 
 

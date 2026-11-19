@@ -1,0 +1,136 @@
+diff --git a/gateway/platforms/weixin.py b/gateway/platforms/weixin.py
+index 59710ed2..6b049eda 100644
+--- a/gateway/platforms/weixin.py
++++ b/gateway/platforms/weixin.py
+@@ -347 +347,11 @@ async def _upload_ciphertext(session: aiohttp.ClientSession, *, ciphertext: byte
+-async def _download_bytes(session: aiohttp.ClientSession, *, url: str, timeout_seconds: float = 60.0) -> bytes:
++MAX_INBOUND_MEDIA_BYTES = 128 * 1024 * 1024
++_MEDIA_DOWNLOAD_CHUNK_BYTES = 64 * 1024
++
++
++async def _download_bytes(
++    session: aiohttp.ClientSession, *, url: str, timeout_seconds: float = 60.0,
++    max_bytes: int = MAX_INBOUND_MEDIA_BYTES,
++) -> bytes:
++    if max_bytes < 0:
++        raise ValueError("max_bytes must be non-negative")
++
+@@ -351 +361,16 @@ async def _download_bytes(session: aiohttp.ClientSession, *, url: str, timeout_s
+-            return await response.read()
++            content_length = response.headers.get("Content-Length")
++            if content_length is not None:
++                if not isinstance(content_length, str) or re.fullmatch(r"[0-9]+", content_length) is None:
++                    raise ValueError("Weixin media has an invalid Content-Length")
++                declared_length = int(content_length)
++                if declared_length < 0 or declared_length > max_bytes:
++                    raise ValueError("Weixin media exceeds the configured download limit")
++
++            chunks: list[bytes] = []
++            total = 0
++            async for chunk in response.content.iter_chunked(_MEDIA_DOWNLOAD_CHUNK_BYTES):
++                total += len(chunk)
++                if total > max_bytes:
++                    raise ValueError("Weixin media exceeds the configured download limit")
++                chunks.append(chunk)
++            return b"".join(chunks)
+diff --git a/tests/gateway/test_weixin.py b/tests/gateway/test_weixin.py
+index b8a8c459..22864ae7 100644
+--- a/tests/gateway/test_weixin.py
++++ b/tests/gateway/test_weixin.py
+@@ -126,0 +127,96 @@ class TestWeixinConfig:
++class TestWeixinBoundedDownload:
++    class _Stream:
++        def __init__(self, chunks):
++            self.chunks = chunks
++            self.read_count = 0
++
++        async def iter_chunked(self, _size):
++            for chunk in self.chunks:
++                self.read_count += 1
++                yield chunk
++
++    class _Response:
++        def __init__(self, chunks, headers=None):
++            self.content = TestWeixinBoundedDownload._Stream(chunks)
++            self.headers = headers or {}
++
++        async def __aenter__(self):
++            return self
++
++        async def __aexit__(self, *_args):
++            return False
++
++        def raise_for_status(self):
++            return None
++
++    def _session(self, chunks, headers=None):
++        session = Mock()
++        session.get.return_value = self._Response(chunks, headers)
++        return session
++
++    @pytest.mark.asyncio
++    async def test_download_accepts_stream_at_limit(self):
++        data = await weixin._download_bytes(
++            self._session([b"ab", b"cd"], {"Content-Length": "4"}),
++            url="https://example.invalid/file", max_bytes=4,
++        )
++
++        assert data == b"abcd"
++
++    @pytest.mark.asyncio
++    async def test_download_rejects_declared_oversize_before_reading(self):
++        response = self._Response([b"must-not-read"], {"Content-Length": "5"})
++        session = Mock()
++        session.get.return_value = response
++
++        with pytest.raises(ValueError, match="configured download limit"):
++            await weixin._download_bytes(session, url="https://example.invalid/file", max_bytes=4)
++        assert response.content.read_count == 0
++
++    @pytest.mark.asyncio
++    async def test_download_rejects_streamed_oversize_without_content_length(self):
++        response = self._Response([b"abc", b"de", b"not-read"])
++        session = Mock()
++        session.get.return_value = response
++        with pytest.raises(ValueError, match="configured download limit"):
++            await weixin._download_bytes(session, url="https://example.invalid/file", max_bytes=4)
++        assert response.content.read_count == 2
++
++    @pytest.mark.asyncio
++    async def test_download_rejects_underreported_content_length(self):
++        with pytest.raises(ValueError, match="configured download limit"):
++            await weixin._download_bytes(
++                self._session([b"abc", b"de"], {"Content-Length": "1"}),
++                url="https://example.invalid/file", max_bytes=4,
++            )
++
++    @pytest.mark.asyncio
++    @pytest.mark.parametrize("content_length", ["+4", "1_0", "-1", "٤"])
++    async def test_download_rejects_non_ascii_decimal_content_length(self, content_length):
++        with pytest.raises(ValueError, match="invalid Content-Length"):
++            await weixin._download_bytes(
++                self._session([], {"Content-Length": content_length}),
++                url="https://example.invalid/file", max_bytes=4,
++            )
++
++    @pytest.mark.asyncio
++    async def test_oversize_inbound_media_is_not_cached(self, monkeypatch):
++        adapter = _make_adapter()
++        adapter._poll_session = self._session([b"abc", b"de"])
++        adapter._cdn_base_url = "https://ilinkai.weixin.qq.com"
++        cache = AsyncMock()
++        monkeypatch.setattr(weixin, "cache_document_from_bytes_async", cache)
++        async def _bounded_download(session, **kwargs):
++            return await weixin._download_bytes(session, url=kwargs["url"], max_bytes=4)
++
++        monkeypatch.setattr(weixin, "_download_and_decrypt_media", _bounded_download)
++        spec = weixin._INBOUND_MEDIA[weixin.ITEM_FILE]
++
++        path, _mime = await adapter._download_media(
++            {"file_item": {"media": {"encrypt_query_param": "synthetic"}}}, spec,
++        )
++
++        assert path is None
++        cache.assert_not_awaited()
++
++

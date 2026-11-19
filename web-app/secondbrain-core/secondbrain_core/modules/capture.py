@@ -12,6 +12,8 @@ import os
 import re
 import socket
 import stat
+import subprocess
+import sys
 import threading
 import unicodedata
 import uuid
@@ -21,15 +23,24 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, UploadFile
-from pypdf import PdfReader
-from .channel_identity import authenticated_web_identity
+from .pdf_text_extraction import extract_pdf_text_bounded as _extract_pdf_text_bounded
+from .channel_identity import authenticated_web_identity, validate_trusted_identity
 
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_TEXT_CHARS = 200_000
 MAX_CAPTURE_STATE_BYTES = 1024 * 1024
+MAX_ACTIVITY_CAPTURE_STATE_FILES = 500
+MAX_ACTIVITY_CAPTURE_BYTES = 2 * 1024 * 1024
 MAX_DISPLAY_FILENAME_CHARS = 255
 MAX_WEB_BYTES = 5 * 1024 * 1024
+MAX_WEB_EXTRACT_CHARS = 500_000
+MAX_WEB_EXTRACT_PARTS = 20_000
+MAX_PDF_EXTRACTED_TEXT_CHARS = 1_000_000
+PDF_TEXT_WORKER_TIMEOUT_SECONDS = 15
+PDF_TEXT_WORKER_OUTPUT_BYTES = 8 * 1024 * 1024
+PDF_TEXT_WORKER_WAIT_SECONDS = 2
+_PDF_TEXT_WORKER_SLOT = threading.BoundedSemaphore(1)
 MAX_REDIRECTS = 4
 ALLOWED_SUFFIXES = {".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg",
                     ".webp", ".gif", ".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac"}
@@ -54,6 +65,54 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _extract_pdf_text_in_limited_worker(raw):
+    worker = Path(__file__).with_name("pdf_text_worker.py")
+    core_root = Path(__file__).resolve().parents[2]
+    if not _PDF_TEXT_WORKER_SLOT.acquire(timeout=PDF_TEXT_WORKER_WAIT_SECONDS):
+        raise ValueError("PDF processing capacity is busy; the original upload was retained")
+    try:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(worker)], input=raw, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                timeout=PDF_TEXT_WORKER_TIMEOUT_SECONDS, check=False, close_fds=True,
+                start_new_session=True,
+                cwd=core_root,
+                env={"PATH": os.defpath, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"},
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("PDF parsing exceeded its safe processing time limit") from exc
+    finally:
+        _PDF_TEXT_WORKER_SLOT.release()
+    if result.returncode != 0 or len(result.stdout) > PDF_TEXT_WORKER_OUTPUT_BYTES:
+        raise ValueError("PDF parsing exceeded its safe resource limits")
+    try:
+        value = json.loads(result.stdout.decode("utf-8"))
+    except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("PDF parsing returned an invalid bounded result") from exc
+    if not isinstance(value, dict) or not isinstance(value.get("status"), str):
+        raise ValueError("PDF parsing returned an invalid bounded result")
+    status = value["status"]
+    if status == "encrypted":
+        raise ValueError("Encrypted PDFs are not supported")
+    if status == "page_limit":
+        raise ValueError("PDF exceeds the 500 page limit")
+    if status != "ok":
+        raise ValueError("PDF parsing exceeded its safe resource limits")
+    if (set(value) != {"status", "page_count", "text", "truncated", "page_sizes", "metadata_title"}
+            or type(value.get("page_count")) is not int or not 0 <= value["page_count"] <= 500
+            or not isinstance(value.get("text"), str) or len(value["text"]) > MAX_PDF_EXTRACTED_TEXT_CHARS
+            or type(value.get("truncated")) is not bool or not isinstance(value.get("page_sizes"), list)
+            or len(value["page_sizes"]) not in {0, value["page_count"]}
+            or (value.get("metadata_title") is not None and not isinstance(value["metadata_title"], str))):
+        raise ValueError("PDF parsing returned an invalid bounded result")
+    for size in value["page_sizes"]:
+        if (not isinstance(size, list) or len(size) != 2
+                or any(type(dimension) not in {float, int} or not 0 < dimension < 1_000_000
+                       for dimension in size)):
+            raise ValueError("PDF page dimensions could not be verified")
+    return value
 
 
 def _safe_name(name, suffix):
@@ -123,9 +182,31 @@ class _TextExtractor(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts = []
+        self.part_chars = 0
+        self.truncated = False
         self.skip = 0
         self.title = []
+        self.title_chars = 0
         self.in_title = False
+
+    def _append(self, text):
+        if not text or self.truncated:
+            return
+        if len(self.parts) >= MAX_WEB_EXTRACT_PARTS:
+            self.truncated = True
+            return
+        remaining = MAX_WEB_EXTRACT_CHARS - self.part_chars
+        if remaining <= 0:
+            self.truncated = True
+            return
+        if len(text) > remaining:
+            text = text[:remaining]
+            self.truncated = True
+        self.parts.append(text)
+        self.part_chars += len(text)
+
+    def extracted_text(self):
+        return "\n".join(line.strip() for line in "".join(self.parts).splitlines() if line.strip())
 
     def handle_starttag(self, tag, attrs):
         if tag in self.BLOCKED:
@@ -133,7 +214,7 @@ class _TextExtractor(HTMLParser):
         if tag == "title":
             self.in_title = True
         if tag in {"p", "div", "br", "li", "h1", "h2", "h3", "article", "section"}:
-            self.parts.append("\n")
+            self._append("\n")
 
     def handle_endtag(self, tag):
         if tag in self.BLOCKED and self.skip:
@@ -142,10 +223,13 @@ class _TextExtractor(HTMLParser):
             self.in_title = False
 
     def handle_data(self, data):
-        if self.in_title:
-            self.title.append(data.strip())
+        if self.in_title and self.title_chars < 300:
+            part = data.strip()[:300 - self.title_chars]
+            if part:
+                self.title.append(part)
+                self.title_chars += len(part)
         if not self.skip and data.strip():
-            self.parts.append(data.strip())
+            self._append(data.strip())
 
 
 def _resolve_public_url(url):
@@ -364,6 +448,93 @@ class CaptureService:
         result.sort(key=lambda item: (item["captured_at"] or "", item["capture_id"] or ""), reverse=True)
         return result[:limit]
 
+    def read_activity_events(self):
+        """Read a stable, bounded projection of authoritative Capture state.
+
+        This is deliberately separate from ``list``: Activity reads must not
+        repair interrupted Capture work or touch Raw/Review artifacts. A
+        directory beyond the fixed file budget is reported incomplete without
+        selecting an arbitrary subset as if it were a stable history.
+        """
+        root_fd = None
+        try:
+            root_fd = os.open(self.state_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                              | getattr(os, "O_NOFOLLOW", 0))
+            root_before = os.fstat(root_fd)
+            if (not stat.S_ISDIR(root_before.st_mode) or root_before.st_uid != os.geteuid()
+                    or root_before.st_mode & 0o077
+                    or (root_before.st_dev, root_before.st_ino) != self._state_root_identity):
+                return [], False
+
+            names = []
+            with os.scandir(os.dup(root_fd)) as entries:
+                for entry in entries:
+                    if re.fullmatch(r"[0-9a-f]{32}\.json", entry.name):
+                        if len(names) >= MAX_ACTIVITY_CAPTURE_STATE_FILES:
+                            return [], False
+                        names.append(entry.name)
+            names.sort()
+
+            total_bytes = 0
+            events = []
+            complete = True
+            for name in names:
+                fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+                try:
+                    before = os.fstat(fd)
+                    if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                            or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                            or before.st_size < 0 or before.st_size > MAX_CAPTURE_STATE_BYTES
+                            or total_bytes + before.st_size > MAX_ACTIVITY_CAPTURE_BYTES):
+                        return [], False
+                    chunks, size = [], 0
+                    while size <= before.st_size:
+                        chunk = os.read(fd, min(65536, before.st_size + 1 - size))
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                        size += len(chunk)
+                    after = os.fstat(fd)
+                    if (size != before.st_size
+                            or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                                before.st_ctime_ns)
+                            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+                                after.st_ctime_ns)):
+                        return [], False
+                    total_bytes += size
+                finally:
+                    os.close(fd)
+
+                try:
+                    value = json.loads(b"".join(chunks).decode("utf-8"))
+                except (UnicodeError, json.JSONDecodeError, RecursionError):
+                    complete = False
+                    continue
+                capture_id = value.get("capture_id") if isinstance(value, dict) else None
+                source_type = value.get("source_type") if isinstance(value, dict) else None
+                status = value.get("status") if isinstance(value, dict) else None
+                captured_at = value.get("captured_at") if isinstance(value, dict) else None
+                if (capture_id != name[:-5] or not isinstance(source_type, str)
+                        or source_type not in SUMMARY_SOURCE_TYPES or not isinstance(status, str)
+                        or status not in SUMMARY_STATUSES or not isinstance(captured_at, str)
+                        or len(captured_at) > 64):
+                    complete = False
+                    continue
+                events.append({"capture_id": capture_id, "captured_at": captured_at,
+                               "status": status})
+
+            root_after = os.fstat(root_fd)
+            if ((root_before.st_dev, root_before.st_ino, root_before.st_mtime_ns, root_before.st_ctime_ns)
+                    != (root_after.st_dev, root_after.st_ino, root_after.st_mtime_ns, root_after.st_ctime_ns)):
+                return [], False
+            return events, complete
+        except OSError:
+            return [], False
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
+
     def get(self, capture_id):
         path = self._state_path(capture_id)
         state = self._read_state(path)
@@ -543,12 +714,10 @@ class CaptureService:
                             precommit_validator=None):
         """Persist one explicit, channel-scoped Inbox event with durable idempotency.
 
-        This first adapter accepts authenticated Web actions only. Caller-supplied
-        event IDs are idempotency keys, never caller identity or consent evidence.
+        Caller-supplied event IDs are idempotency keys, never caller identity or
+        consent evidence. Non-Web callers must arrive through a trusted Core adapter.
         """
-        if (getattr(identity, "channel", None) != "web" or
-                getattr(identity, "authentication", None) != "app_session_action"):
-            raise HTTPException(501, "This Inbox channel has no trusted Core adapter")
+        identity = validate_trusted_identity(identity)
         source_channel = identity.channel
         if (not isinstance(source_event_id, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", source_event_id)
                 or not isinstance(intent, str)
@@ -570,16 +739,29 @@ class CaptureService:
             raise HTTPException(400, "Inbox event time must include a timezone") from exc
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
             raise HTTPException(400, "Text must contain 1-200000 characters")
-        capture_id = hashlib.sha256(
-            ("secondbrain-inbox-event\0" + source_channel + "\0" + source_event_id).encode("utf-8")
-        ).hexdigest()[:32]
+        identity_scope = {"adapter_id": identity.adapter_id, "tenant": identity.tenant,
+                          "principal": consent_subject}
+        if source_channel != "web":
+            identity_scope["consent_evidence_id"] = identity.consent_evidence_id
+        namespace = (source_channel + "\0" + source_event_id if source_channel == "web" else
+                     source_channel + "\0" + identity.adapter_id + "\0" + identity.tenant + "\0" +
+                     consent_subject + "\0" + source_event_id)
+        capture_id = hashlib.sha256(("secondbrain-inbox-event\0" + namespace).encode("utf-8")).hexdigest()[:32]
         event_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        request_digest = hashlib.sha256(json.dumps(
-            {"source_channel": source_channel, "source_event_id": source_event_id,
-             "occurred_at": occurred.isoformat(), "intent": intent,
+        digest_payload = {"source_channel": source_channel, "source_event_id": source_event_id,
+             "intent": intent,
              "original_text_sha256": event_digest,
              "approved_proposal": approved_proposal,
-             "attachment_refs": verified_attachments},
+             "attachment_refs": verified_attachments}
+        # Native channel retries may arrive later than the original delivery.
+        # Their transport occurrence timestamp is not part of the event identity;
+        # keep the first accepted timestamp in state, but hash stable event data.
+        if source_channel == "web":
+            digest_payload["occurred_at"] = occurred.isoformat()
+        if source_channel != "web":
+            digest_payload["identity_scope"] = identity_scope
+        request_digest = hashlib.sha256(json.dumps(
+            digest_payload,
             sort_keys=True, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
         lock_path = self.state_root / (".inbox-event-" + capture_id + ".lock")
@@ -598,6 +780,8 @@ class CaptureService:
             if existing:
                 if (existing.get("source_channel") != source_channel
                         or existing.get("source_event_id") != source_event_id
+                        or existing.get("identity_scope", {"adapter_id": "web", "tenant": "default",
+                                                            "principal": existing.get("consent_evidence", {}).get("subject")}) != identity_scope
                         or existing.get("intent") != intent
                         or existing.get("original_text_sha256") != event_digest
                         or existing.get("approved_proposal") != approved_proposal
@@ -622,9 +806,16 @@ class CaptureService:
             if precommit_validator is not None:
                 precommit_validator()
             server_time = _now()
-            evidence = {"kind": "authenticated_app_approved_proposal" if approved_proposal else
-                        "authenticated_app_explicit_action", "subject": consent_subject,
+            is_adapter = identity.authentication == "trusted_adapter_v1"
+            evidence = {"kind": ("trusted_adapter_approved_proposal" if approved_proposal else
+                                 "trusted_adapter_explicit_action") if is_adapter else
+                        ("authenticated_app_approved_proposal" if approved_proposal else
+                         "authenticated_app_explicit_action"), "subject": consent_subject,
                         "recorded_at": server_time}
+            if is_adapter:
+                evidence.update({"adapter_id": identity.adapter_id, "channel": source_channel,
+                                 "tenant": identity.tenant,
+                                 "consent_evidence_id": identity.consent_evidence_id})
             if approved_proposal:
                 evidence.update({"proposal_id": approved_proposal["proposal_id"],
                                  "proposal_version": approved_proposal["version"],
@@ -634,6 +825,7 @@ class CaptureService:
                 context="explicit channel event; consent recorded by Core",
                 capture_id=capture_id, exact_raw_name=True,
                 extra_state={"source_channel": source_channel, "source_event_id": source_event_id,
+                             "identity_scope": identity_scope,
                              "occurred_at": occurred.isoformat(), "intent": intent,
                              "original_text_sha256": event_digest,
                              "source_event_request_sha256": request_digest,
@@ -817,32 +1009,49 @@ class CaptureService:
                     parser = _TextExtractor()
                     parser.feed(body)
                     title = " ".join(" ".join(parser.title).split()) or final_url
-                    extracted = "\n".join(line.strip() for line in "".join(parser.parts).splitlines() if line.strip())
+                    extracted = parser.extracted_text()
+                    truncated = parser.truncated
                 else:
                     title, extracted = final_url, body
+                    truncated = len(extracted) > MAX_WEB_EXTRACT_CHARS
                 if not extracted.strip():
                     raise ValueError("No readable page text was extracted")
                 state["title"] = title[:300]
-                content = extracted[:500_000]
+                content = extracted[:MAX_WEB_EXTRACT_CHARS]
+                if truncated or len(extracted) > MAX_WEB_EXTRACT_CHARS:
+                    content += "\n\n[Content truncated at the safe extraction limit.]"
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "Web content exceeded the safe extraction limit; the original URL was retained.",
+                    }
                 state["derived_source_url"] = final_url
             elif input_type == "pdf":
-                reader = PdfReader(__import__("io").BytesIO(raw), strict=True)
-                if reader.is_encrypted:
-                    raise ValueError("Encrypted PDFs are not supported")
-                if len(reader.pages) > 500:
-                    raise ValueError("PDF exceeds the 500 page limit")
-                content = "\n\n".join((page.extract_text() or "") for page in reader.pages).strip()
+                parsed = _extract_pdf_text_in_limited_worker(raw)
+                content, truncated = parsed["text"], parsed["truncated"]
                 if not content:
-                    page_sizes = [(page.mediabox.width, page.mediabox.height) for page in reader.pages]
-                    content = self.processors.ocr_pdf(raw, len(reader.pages), page_sizes)
+                    content = self.processors.ocr_pdf(raw, parsed["page_count"], parsed["page_sizes"])
                     state["processor"] = {"name": "tesseract", "kind": "pdf_ocr",
-                                          "pages": len(reader.pages), "languages": "chi_sim+eng"}
-                if reader.metadata and reader.metadata.title:
-                    document_title = str(reader.metadata.title).strip()
+                                          "pages": parsed["page_count"], "languages": "chi_sim+eng"}
+                if parsed["metadata_title"]:
+                    document_title = parsed["metadata_title"]
                     if document_title:
                         state["document_title"] = document_title[:300]
-                if len(content) > 1_000_000:
-                    content = content[:1_000_000]
+                if truncated:
+                    content = content[:MAX_PDF_EXTRACTED_TEXT_CHARS] + (
+                        "\n\n[PDF text extraction stopped at the 1,000,000-character "
+                        "safety limit. The original PDF is retained; extracted text is incomplete.]\n")
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "PDF text extraction reached the 1,000,000-character limit; extracted text is incomplete.",
+                    }
+                elif len(content) > MAX_PDF_EXTRACTED_TEXT_CHARS:
+                    content = content[:MAX_PDF_EXTRACTED_TEXT_CHARS] + (
+                        "\n\n[PDF OCR text was truncated at the 1,000,000-character "
+                        "safety limit. The original PDF is retained; extracted text is incomplete.]\n")
+                    state["partial_error"] = {
+                        "code": "processing_failed",
+                        "message": "PDF OCR reached the 1,000,000-character limit; extracted text is incomplete.",
+                    }
             elif input_type in {"png", "jpg", "jpeg", "webp", "gif"}:
                 recognized = self.processors.ocr_image(raw)
                 state["processor"] = {"name": "tesseract", "kind": "image_ocr",
@@ -866,6 +1075,14 @@ class CaptureService:
                     content = decoded
                 else:
                     content = decoded.strip()
+                    if input_type in {"txt", "text", "md", "markdown"} and len(content) > MAX_TEXT_CHARS:
+                        content = (content[:MAX_TEXT_CHARS]
+                                   + "\n\n[Content truncated at the 200,000-character safety limit. "
+                                     "The original file is retained.]\n")
+                        state["partial_error"] = {
+                            "code": "processing_failed",
+                            "message": "Text extraction reached the 200,000-character limit; the original file was retained.",
+                        }
                 if source_type != "inbox_proposal_review" and input_type in {"txt", "text"}:
                     first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
                     if first_line:
@@ -881,7 +1098,8 @@ class CaptureService:
             state.update(status="partial_success", error={"code": "processor_unavailable", "message": str(exc)}, updated_at=_now())
         except Exception as exc:
             state.pop("partial_error", None)
-            state.update(status="partial_success", error={"code": "processing_failed", "message": str(exc)[:500]}, updated_at=_now())
+            message = exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, str) else str(exc)
+            state.update(status="partial_success", error={"code": "processing_failed", "message": message[:500]}, updated_at=_now())
         self._write_state(state)
 
     def _verify_artifacts(self, state):

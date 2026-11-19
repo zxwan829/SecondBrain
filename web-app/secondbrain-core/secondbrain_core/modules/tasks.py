@@ -18,6 +18,7 @@ from .chat_activity import task_activity
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_TITLE_BYTES = 4096
 _MAX_PROJECTION_BYTES = 2 * 1024 * 1024
+_MAX_TASK_UPDATE_IDEMPOTENCY_KEYS = 4096
 _TASK_SOURCE_VERSION_FIELDS = ("id", "title", "due_date", "status", "created_at", "updated_at", "source")
 
 
@@ -86,73 +87,189 @@ class TaskStore:
                 or info.st_mode & 0o077 or not os.access(path, os.W_OK)):
             raise ValueError("Task root must be a private writable directory owned by the Core UID")
         self.root = path
+        self.root_identity = (info.st_dev, info.st_ino)
         self.path = path / "tasks.json"
         self.lock_path = path / ".tasks.lock"
 
-    def _lock(self):
-        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    def _open_root(self):
+        try:
+            fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                         | getattr(os, "O_NOFOLLOW", 0))
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Task storage is unavailable") from exc
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077
+                or (info.st_dev, info.st_ino) != self.root_identity):
+            os.close(fd)
+            raise HTTPException(status_code=503, detail="Task storage is unavailable")
+        return fd
+
+    def _lock(self):
+        root_fd = self._open_root()
+        try:
+            try:
+                fd = os.open(self.lock_path.name, os.O_CREAT | os.O_EXCL | os.O_RDWR
+                             | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=root_fd)
+            except FileExistsError:
+                fd = os.open(self.lock_path.name, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                             dir_fd=root_fd)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="Task lock file could not be opened safely") from exc
+        finally:
+            os.close(root_fd)
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
             os.close(fd)
             raise HTTPException(status_code=500, detail="Task lock file is not private")
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            os.close(fd)
+            raise HTTPException(status_code=500, detail="Task lock could not be acquired safely") from exc
         return fd
 
     def _read_unlocked(self, max_bytes=None):
+        root_fd = self._open_root()
+        fd = None
         try:
-            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        except FileNotFoundError:
-            return {"tasks": [], "idempotency": {}}
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail="Task data file could not be opened safely") from exc
-        try:
+            try:
+                fd = os.open(self.path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+            except FileNotFoundError:
+                return {"tasks": [], "idempotency": {}}
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail="Task data file could not be opened safely") from exc
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_mode & 0o077 or info.st_nlink != 1):
                 raise HTTPException(status_code=500, detail="Task data file is not private")
             if max_bytes is not None and info.st_size > max_bytes:
                 raise HTTPException(status_code=503, detail="Task projection exceeds read budget")
-            with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as stream:
-                data = json.load(stream)
+            read_limit = max_bytes if max_bytes is not None else info.st_size
+            chunks, total = [], 0
+            while True:
+                chunk = os.read(fd, min(65536, read_limit + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > read_limit:
+                    if max_bytes is not None:
+                        raise HTTPException(status_code=503, detail="Task projection exceeds read budget")
+                    raise HTTPException(status_code=503, detail="Task data changed while being read")
+            if total != info.st_size:
+                raise HTTPException(status_code=503, detail="Task data changed while being read")
+            try:
+                data = json.loads(b"".join(chunks).decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+                raise HTTPException(status_code=500, detail="Task data is invalid") from exc
             if not isinstance(data, dict) or not isinstance(data.get("tasks"), list) or not isinstance(data.get("idempotency"), dict):
                 raise ValueError("invalid Task store")
             return data
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        except HTTPException:
+            raise
+        except (OSError, ValueError) as exc:
             raise HTTPException(status_code=500, detail="Task data is invalid") from exc
         finally:
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
+            os.close(root_fd)
 
-    def _write_unlocked(self, data):
-        temporary = self.root / f".tasks-{uuid.uuid4().hex}.tmp"
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(temporary, flags, 0o600)
+    def _restore_unlocked(self, root_fd, data):
+        """Restore the pre-commit snapshot in the already-pinned Task root."""
+        temporary = f".tasks-restore-{uuid.uuid4().hex}.tmp"
+        fd = None
         try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=root_fd)
             with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as stream:
                 json.dump(data, stream, ensure_ascii=False, separators=(",", ":"))
                 stream.write("\n")
                 stream.flush()
                 os.fsync(fd)
-            os.replace(temporary, self.path)
-            root_fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+            os.replace(temporary, self.path.name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+            os.fsync(root_fd)
+        finally:
+            if fd is not None:
+                os.close(fd)
             try:
-                os.fsync(root_fd)
-            finally:
-                os.close(root_fd)
+                os.unlink(temporary, dir_fd=root_fd)
+            except FileNotFoundError:
+                pass
+
+    def _write_unlocked(self, data, rollback):
+        temporary = f".tasks-{uuid.uuid4().hex}.tmp"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        root_fd = self._open_root()
+        fd = None
+        committed = False
+        try:
+            fd = os.open(temporary, flags, 0o600, dir_fd=root_fd)
+            with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as stream:
+                json.dump(data, stream, ensure_ascii=False, separators=(",", ":"))
+                stream.write("\n")
+                stream.flush()
+                os.fsync(fd)
+            check_fd = self._open_root()
+            os.close(check_fd)
+            os.replace(temporary, self.path.name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+            committed = True
+            os.fsync(root_fd)
+            # The pinned FD can now refer to a displaced directory. If the
+            # configured path changed during the replace, roll back there before
+            # reporting failure so the replacement root never misses a success.
+            check_fd = self._open_root()
+            os.close(check_fd)
+        except HTTPException as exc:
+            if committed:
+                try:
+                    rollback()
+                    self._restore_unlocked(root_fd, data)
+                except OSError as rollback_exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Task write outcome requires recovery; restore the initialized Task root and retry",
+                    ) from rollback_exc
+                raise HTTPException(status_code=503, detail="Task write was rolled back because storage changed") from exc
+            try:
+                os.unlink(temporary, dir_fd=root_fd)
+            except OSError:
+                pass
+            raise
         except OSError as exc:
+            if committed:
+                try:
+                    rollback()
+                    self._restore_unlocked(root_fd, data)
+                except OSError as rollback_exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Task write outcome requires recovery; reload Task state before retrying",
+                    ) from rollback_exc
+                raise HTTPException(status_code=503, detail="Task write was rolled back after storage sync failure") from exc
             try:
-                temporary.unlink(missing_ok=True)
+                os.unlink(temporary, dir_fd=root_fd)
             except OSError:
                 pass
             raise HTTPException(status_code=500, detail="Task update failed safely") from exc
         finally:
-            os.close(fd)
+            if fd is not None:
+                os.close(fd)
+            os.close(root_fd)
 
     def _with_lock(self, operation):
         fd = self._lock()
         try:
             data = self._read_unlocked()
-            result, changed = operation(data)
+            outcome = operation(data)
+            result, changed = outcome[:2]
+            rollback = outcome[2] if len(outcome) == 3 else None
             if changed:
-                self._write_unlocked(data)
+                if rollback is None:
+                    raise RuntimeError("Task mutation must define rollback state")
+                self._write_unlocked(data, rollback)
             return result
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -181,7 +298,8 @@ class TaskStore:
         def operation(data):
             prior = data["idempotency"].get(key_hash)
             if prior:
-                if prior["fingerprint"] != fingerprint:
+                if (prior.get("operation") not in {None, "task.create"}
+                        or prior["fingerprint"] != fingerprint):
                     raise HTTPException(status_code=409, detail="Idempotency-Key was already used with different Task content")
                 task = next((item for item in data["tasks"] if item["id"] == prior["task_id"]), None)
                 if task is None:
@@ -196,8 +314,13 @@ class TaskStore:
                     "operation_id": idempotency_key, "session_id": session_id,
                     "history": [{"at": stamp, "event": "created", "changes": {"title": title.strip(), "due_date": due_date, "status": "open"}}]}
             data["tasks"].append(task)
-            data["idempotency"][key_hash] = {"fingerprint": fingerprint, "task_id": task["id"]}
-            return {"status": "created", "task": task}, True
+            data["idempotency"][key_hash] = {
+                "operation": "task.create", "fingerprint": fingerprint, "task_id": task["id"],
+            }
+            def rollback():
+                data["tasks"].remove(task)
+                data["idempotency"].pop(key_hash, None)
+            return {"status": "created", "task": task}, True, rollback
 
         return self._with_lock(operation)
 
@@ -205,6 +328,13 @@ class TaskStore:
         def operation(data):
             items = [task_activity(task, session_id) for task in data["tasks"]
                      if task.get("session_id") == session_id and task.get("operation_id")]
+            for record in data["idempotency"].values():
+                if (not isinstance(record, dict) or record.get("operation") != "task.update"
+                        or record.get("session_id") != session_id or not isinstance(record.get("activity_task"), dict)):
+                    continue
+                items.append(task_activity({**record["activity_task"],
+                    "operation_id": record.get("operation_id"),
+                    "original_command": record.get("original_command", "")}, session_id))
             return [item for item in items if item], False
         return self._with_lock(operation)
 
@@ -221,6 +351,57 @@ class TaskStore:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
+    def list_for_projection_read_only(self):
+        """Read a stable projection without creating or opening the Task lock file."""
+        root_fd = self._open_root()
+        fd = None
+        try:
+            try:
+                fd = os.open(self.path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                             | getattr(os, "O_NONBLOCK", 0), dir_fd=root_fd)
+            except FileNotFoundError:
+                # Confirm the configured path still names the pinned root before
+                # returning an empty projection.
+                check_fd = self._open_root()
+                os.close(check_fd)
+                return {"tasks": []}
+            except OSError as exc:
+                raise HTTPException(status_code=503, detail="Task projection unavailable") from exc
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                    or before.st_mode & 0o077 or before.st_size < 0
+                    or before.st_nlink != 1 or before.st_size > _MAX_PROJECTION_BYTES):
+                raise HTTPException(status_code=503, detail="Task projection unavailable")
+            payload = bytearray()
+            while len(payload) <= _MAX_PROJECTION_BYTES:
+                chunk = os.read(fd, min(65536, _MAX_PROJECTION_BYTES + 1 - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            after = os.fstat(fd)
+            identity = lambda info: (info.st_dev, info.st_ino, info.st_size,
+                                     info.st_mtime_ns, info.st_ctime_ns)
+            if (len(payload) != before.st_size or len(payload) > _MAX_PROJECTION_BYTES
+                    or identity(after) != identity(before)):
+                raise HTTPException(status_code=503, detail="Task projection changed during read")
+            check_fd = self._open_root()
+            os.close(check_fd)
+            try:
+                data = json.loads(payload.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                raise HTTPException(status_code=503, detail="Task projection unavailable") from exc
+            if (not isinstance(data, dict) or not isinstance(data.get("tasks"), list)
+                    or not isinstance(data.get("idempotency"), dict)):
+                raise HTTPException(status_code=503, detail="Task projection unavailable")
+            items = list(data["tasks"])
+            items.sort(key=lambda item: (item.get("due_date") or "9999-12-31",
+                                         item.get("created_at", ""), item.get("id", "")))
+            return {"tasks": items}
+        finally:
+            if fd is not None:
+                os.close(fd)
+            os.close(root_fd)
+
     def list(self, status="open", due_date=None):
         if status not in {"open", "completed", "all"}:
             raise HTTPException(status_code=400, detail="status must be open, completed, or all")
@@ -235,7 +416,7 @@ class TaskStore:
 
         return self._with_lock(operation)
 
-    def update(self, task_id, body):
+    def update(self, task_id, body, idempotency_key=None, session_id=None, original_command=None):
         if not isinstance(body, dict) or not body:
             raise HTTPException(status_code=400, detail="Task changes are required")
         expected = body.get("expected_updated_at")
@@ -255,14 +436,59 @@ class TaskStore:
             changes["due_date"] = _valid_date(changes["due_date"])
         if "status" in changes and changes["status"] not in {"open", "completed"}:
             raise HTTPException(status_code=400, detail="Task status must be open or completed")
+        if session_id is not None:
+            if not isinstance(session_id, str) or not session_id:
+                raise HTTPException(status_code=400, detail="A valid Chat Session is required")
+            if (not isinstance(original_command, str) or not original_command.strip()
+                    or len(original_command.encode("utf-8")) > 16_384):
+                raise HTTPException(status_code=400, detail="The original Chat command is invalid")
+        key_hash = self._key_hash(idempotency_key) if idempotency_key is not None else None
+        fingerprint = None
+        if key_hash is not None:
+            fingerprint_payload = {
+                "operation": "task.update", "task_id": task_id,
+                "expected_updated_at": expected, "changes": changes,
+            }
+            # Preserve the existing non-Chat Task API fingerprint so an
+            # outstanding generic Task retry remains replayable after upgrade.
+            if session_id is not None:
+                fingerprint_payload.update(session_id=session_id, original_command=original_command)
+            fingerprint = hashlib.sha256(json.dumps(fingerprint_payload, sort_keys=True, ensure_ascii=False,
+                                                    separators=(",", ":")).encode("utf-8")).hexdigest()
 
         def operation(data):
+            if key_hash is not None:
+                prior = data["idempotency"].get(key_hash)
+                if prior is not None:
+                    if (prior.get("operation") != "task.update"
+                            or prior.get("fingerprint") != fingerprint
+                            or prior.get("task_id") != task_id):
+                        raise HTTPException(status_code=409, detail="Idempotency-Key was already used differently")
+                    replay_task = next((item for item in data["tasks"] if item["id"] == task_id), None)
+                    if (replay_task is None
+                            or replay_task.get("updated_at") != prior.get("result_updated_at")):
+                        raise HTTPException(status_code=409, detail="Task changed after the keyed update; reload before retrying")
+                    replay = {"task": replay_task}
+                    if session_id is not None:
+                        replay["operation"] = prior
+                    return replay, False
+
             task = next((item for item in data["tasks"] if item["id"] == task_id), None)
             if task is None:
                 raise HTTPException(status_code=404, detail="Task not found")
             if task["updated_at"] != expected:
                 raise HTTPException(status_code=409, detail="Task changed since it was loaded; reload before editing")
+            if key_hash is not None:
+                update_key_count = sum(
+                    1 for item in data["idempotency"].values()
+                    if isinstance(item, dict) and item.get("operation") == "task.update"
+                )
+                if update_key_count >= _MAX_TASK_UPDATE_IDEMPOTENCY_KEYS:
+                    raise HTTPException(status_code=503, detail="Task retry ledger is full")
             previous = {key: task.get(key) for key in changes}
+            previous_updated_at = task["updated_at"]
+            previous_history_length = len(task.get("history", []))
+            had_history = "history" in task
             task.update(changes)
             stamp = _now()
             prior_stamp = datetime.fromisoformat(task["updated_at"])
@@ -272,7 +498,30 @@ class TaskStore:
             task.setdefault("history", []).append({"at": stamp, "event": "updated", "changes": {
                 key: {"from": previous[key], "to": task[key]} for key in changes if previous[key] != task[key]
             }})
-            return {"task": task}, True
+            if key_hash is not None:
+                data["idempotency"][key_hash] = {
+                    "operation": "task.update", "fingerprint": fingerprint,
+                    "task_id": task_id, "result_updated_at": stamp,
+                    "operation_id": idempotency_key, "session_id": session_id,
+                    "original_command": original_command,
+                    "activity_task": {key: task.get(key) for key in ("id", "title", "due_date", "status", "created_at", "updated_at")},
+                }
+            previous_values = {key: previous[key] for key in changes}
+
+            def rollback():
+                task.update(previous_values)
+                task["updated_at"] = previous_updated_at
+                if had_history:
+                    del task["history"][previous_history_length:]
+                else:
+                    task.pop("history", None)
+                if key_hash is not None:
+                    data["idempotency"].pop(key_hash, None)
+
+            result = {"task": task}
+            if key_hash is not None and session_id is not None:
+                result["operation"] = data["idempotency"][key_hash]
+            return result, True, rollback
 
         return self._with_lock(operation)
 
@@ -288,7 +537,12 @@ def create_task_router(auth, store, hermes=None, activity_store=None):
     def list_tasks(request: Request, status: str = "open", due_date: str | None = None):
         auth.require_action(request, "task.read")
         configured()
-        return store.list(status, due_date)
+        result = store.list(status, due_date)
+        for task in result["tasks"]:
+            version = task_source_version(task)
+            if version is not None:
+                task["source_ref"] = {"id": task["id"], "version": version}
+        return result
 
     @router.post("")
     async def create_task(request: Request, body: dict):
@@ -326,11 +580,37 @@ def create_task_router(auth, store, hermes=None, activity_store=None):
         return result
 
     @router.patch("/{task_id}")
-    def update_task(request: Request, task_id: str, body: dict):
+    async def update_task(request: Request, task_id: str, body: dict):
         auth.require_action(request, "task.write")
         configured()
         if not re.fullmatch(r"[0-9a-f]{32}", task_id):
             raise HTTPException(status_code=404, detail="Task not found")
-        return store.update(task_id, body)
+        session_id = body.get("session_id")
+        original_command = body.get("original_command")
+        if session_id is not None:
+            if not isinstance(session_id, str) or not session_id or hermes is None:
+                raise HTTPException(status_code=400, detail="A valid Chat Session is required")
+            if not isinstance(original_command, str) or not original_command.strip():
+                raise HTTPException(status_code=400, detail="The original Chat command is required")
+            await hermes.get_session(session_id)
+        result = store.update(task_id, body, idempotency_key=request.headers.get("idempotency-key"),
+                              session_id=session_id, original_command=original_command)
+        key = request.headers.get("idempotency-key", "")
+        operation = result.pop("operation", {}) if session_id else {}
+        if session_id and activity_store is not None and key:
+            activity_task = operation.get("activity_task") or result["task"]
+            event = task_activity({**activity_task, "operation_id": operation.get("operation_id", key),
+                                   "original_command": operation.get("original_command", original_command),
+                                   "created_at": operation.get("result_updated_at", activity_task.get("updated_at", _now()))},
+                                  operation.get("session_id", session_id))
+            if event:
+                try:
+                    activity_store.upsert(event)
+                except HTTPException:
+                    # The idempotent Task ledger remains authoritative; the
+                    # activity API can rebuild this projection on the next read.
+                    pass
+                result["activity"] = event
+        return result
 
     return router

@@ -1,4 +1,4 @@
-"""Authenticated read-only Projects and explicit Journal/Task Activity views."""
+"""Authenticated read-only Projects and explicit source-backed Activity views."""
 import hashlib
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -17,6 +17,10 @@ _MAX_OFFSET = 100_000
 _DEFAULT_JOURNAL_LOOKBACK_DAYS = 365
 _PROJECTS_MAX_LIMIT = 50
 _PROJECTS_MAX_OFFSET = 5000
+_ACTIVITY_JOURNAL_MAX_BYTES = 2 * 1024 * 1024
+_ACTIVITY_JOURNAL_MAX_BYTES_PER_DAY = 1024 * 1024
+_ACTIVITY_JOURNAL_MAX_ROWS = 10_000
+_ACTIVITY_JOURNAL_MAX_ROWS_PER_DAY = 5000
 
 
 def _checked_at():
@@ -103,13 +107,45 @@ def _within_window(stamp, start, end, zone):
 
 def _journal_rows(store, start, end, zone):
     if store is None:
-        return []
-    rows = []
+        return [], True
+    rows, bytes_read, rows_read, complete = [], 0, 0, True
     days = (date.fromordinal(start.toordinal() + offset).isoformat()
             for offset in range((end - start).days + 1))
     for day in days:
-        data = store.read(day)
-        for record in data["entries"]:
+        remaining = _ACTIVITY_JOURNAL_MAX_BYTES - bytes_read
+        remaining_rows = _ACTIVITY_JOURNAL_MAX_ROWS - rows_read
+        if remaining <= 0 or remaining_rows <= 0:
+            complete = False
+            break
+        try:
+            snapshot = store.read_source_day(
+                day,
+                max_bytes=min(_ACTIVITY_JOURNAL_MAX_BYTES_PER_DAY, remaining),
+                max_entries=min(_ACTIVITY_JOURNAL_MAX_ROWS_PER_DAY, remaining_rows),
+            )
+        except Exception:
+            complete = False
+            break
+        if not isinstance(snapshot, dict) or not snapshot.get("available"):
+            complete = False
+            break
+        day_bytes = snapshot.get("bytes_read")
+        entries = snapshot.get("entries")
+        if (not isinstance(day_bytes, int) or isinstance(day_bytes, bool) or day_bytes < 0
+                or day_bytes > min(_ACTIVITY_JOURNAL_MAX_BYTES_PER_DAY, remaining)
+                or not isinstance(entries, dict)):
+            complete = False
+            break
+        bytes_read += day_bytes
+        if len(entries) > remaining_rows:
+            complete = False
+            entries = dict(list(entries.items())[:remaining_rows])
+        rows_read += len(entries)
+        for item in entries.values():
+            if not isinstance(item, dict) or not isinstance(item.get("record"), dict):
+                complete = False
+                continue
+            record = item["record"]
             operation_id = record.get("operation_id")
             session_id = record.get("session_id")
             if not isinstance(operation_id, str) or not operation_id or not isinstance(session_id, str) or not session_id:
@@ -124,39 +160,281 @@ def _journal_rows(store, start, end, zone):
                 "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
                 "journal_date": record.get("date") if isinstance(record.get("date"), str) else day,
             })
-    return rows
+    return rows, not complete
 
 
 def _task_rows(store, start, end, zone):
     if store is None:
-        return []
+        return [], False
     rows = []
-    for task in store.list_for_projection()["tasks"]:
+    complete = True
+    # Activity is a read-only projection. Do not create the TaskStore lock
+    # file merely to read its bounded, race-checked snapshot.
+    for task in store.list_for_projection_read_only()["tasks"]:
+        if not isinstance(task, dict):
+            complete = False
+            continue
         operation_id = task.get("operation_id")
-        session_id = task.get("session_id")
-        if not isinstance(operation_id, str) or not operation_id or not isinstance(session_id, str) or not session_id:
+        task_id = task.get("id")
+        if (not isinstance(operation_id, str) or not operation_id
+                or not isinstance(task_id, str) or not re.fullmatch(r"[0-9a-f]{32}", task_id)):
+            complete = False
             continue
         occurred = _occurred_at(task.get("created_at"), zone)
+        if occurred is not None and _within_window(occurred, start, end, zone):
+            row = {
+                "activity_id": _opaque_id("task", operation_id, task_id),
+                "kind": "task",
+                "status": "succeeded",
+                "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            }
+            due_date = task.get("due_date")
+            if isinstance(due_date, str) and _DATE.fullmatch(due_date):
+                row["task_due_date"] = due_date
+            task_status = task.get("status")
+            if task_status in {"open", "completed"}:
+                row["task_status"] = task_status
+            rows.append(row)
+
+        history = task.get("history")
+        if not isinstance(history, list) or not history:
+            complete = False
+            continue
+        created_event = history[0]
+        created_at = _occurred_at(task.get("created_at"), zone)
+        created_history_at = (_occurred_at(created_event.get("at"), zone)
+                              if isinstance(created_event, dict) else None)
+        if (not isinstance(created_event, dict) or created_event.get("event") != "created"
+                or created_at is None or created_history_at != created_at):
+            complete = False
+            continue
+        previous_at = created_history_at
+        for index, event in enumerate(history[1:], start=1):
+            changes = event.get("changes") if isinstance(event, dict) else None
+            valid_changes = (isinstance(changes, dict) and bool(changes)
+                             and set(changes) <= {"title", "due_date", "status"}
+                             and all(isinstance(change, dict) and set(change) == {"from", "to"}
+                                     and change["from"] != change["to"]
+                                     for change in changes.values()))
+            if (not isinstance(event, dict) or event.get("event") != "updated" or not valid_changes):
+                complete = False
+                continue
+            updated_at = _occurred_at(event.get("at"), zone)
+            if updated_at is None or updated_at <= previous_at:
+                complete = False
+                continue
+            previous_at = updated_at
+            if _within_window(updated_at, start, end, zone):
+                rows.append({
+                    "activity_id": _opaque_id("task_update", task_id, f"{index}:{event['at']}"),
+                    "kind": "task",
+                    "status": "updated",
+                    "occurred_at": updated_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                })
+        current_updated_at = _occurred_at(task.get("updated_at"), zone)
+        if current_updated_at is None or current_updated_at != previous_at:
+            complete = False
+    return rows, complete
+
+
+def _project_rows(store, start, end, zone):
+    """Project update events derived only from the explicit, bounded index.
+
+    The source document SHA is the event revision. The route deliberately
+    returns neither project title/body nor filesystem location.
+    """
+    if store is None:
+        return [], False
+    try:
+        snapshot = store.read_snapshot()
+    except Exception:
+        return [], True
+    if not snapshot.available:
+        return [], True
+    rows = []
+    for source in snapshot.documents:
+        document = source.document
+        occurred = _occurred_at(document.get("updated_at"), zone)
         if occurred is None or not _within_window(occurred, start, end, zone):
             continue
-        row = {
-            "activity_id": _opaque_id("task", operation_id, task.get("id") or operation_id),
-            "kind": "task",
-            "status": "succeeded",
+        rows.append({
+            "activity_id": _opaque_id("project", source.sha256, source.project_id),
+            "kind": "project",
+            "status": "updated",
             "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
-        }
-        due_date = task.get("due_date")
-        if isinstance(due_date, str) and _DATE.fullmatch(due_date):
-            row["task_due_date"] = due_date
-        task_status = task.get("status")
-        if task_status in {"open", "completed"}:
-            row["task_status"] = task_status
-        rows.append(row)
-    return rows
+            "project_id": source.project_id,
+            "project_status": document["status"],
+        })
+    return rows, not snapshot.complete
+
+
+def _daily_brief_rows(store, start, end, zone):
+    """Project only verified successful Brief audit receipts into Activity."""
+    if store is None:
+        return [], False
+    try:
+        events, complete = store.read_activity_events()
+    except Exception:
+        return [], True
+    rows = []
+    for event in events:
+        occurred = _occurred_at(event.get("recorded_at"), zone)
+        if occurred is None or not _within_window(occurred, start, end, zone):
+            continue
+        rows.append({
+            "activity_id": _opaque_id("daily_brief", event["request_id"], event["brief_id"]),
+            "kind": "daily_brief",
+            "status": "created",
+            "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            "daily_brief_date": event["date"],
+        })
+    return rows, not complete
+
+
+def _personal_memory_rows(store, start, end, zone):
+    """Project only operation type/time from the bounded Personal Memory log."""
+    if store is None:
+        return [], False
+    try:
+        events = store.read_activity_events()
+    except Exception:
+        return [], True
+    rows = []
+    complete = isinstance(events, list)
+    if not complete:
+        return [], True
+    status_by_operation = {
+        "create": "created", "correct": "corrected",
+        "revoked": "revoked", "expired": "expired",
+    }
+    for event in events:
+        if not isinstance(event, dict):
+            complete = False
+            continue
+        event_id, operation = event.get("event_id"), event.get("operation")
+        occurred = _occurred_at(event.get("recorded_at"), zone)
+        if (not isinstance(event_id, str) or not event_id or len(event_id) > 128
+                or operation not in status_by_operation or occurred is None):
+            complete = False
+            continue
+        if _within_window(occurred, start, end, zone):
+            rows.append({
+                "activity_id": _opaque_id("personal_memory", event_id, event_id),
+                "kind": "personal_memory",
+                "status": status_by_operation[operation],
+                "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            })
+    return rows, not complete
+
+
+def _capture_rows(store, start, end, zone):
+    """Project only stable Capture intake state, never source or Review content."""
+    if store is None:
+        return [], False
+    try:
+        events, complete = store.read_activity_events()
+    except Exception:
+        return [], True
+    if not isinstance(events, list):
+        return [], True
+    rows = []
+    for event in events:
+        if not isinstance(event, dict):
+            complete = False
+            continue
+        capture_id = event.get("capture_id")
+        status = event.get("status")
+        occurred = _occurred_at(event.get("captured_at"), zone)
+        if (not isinstance(capture_id, str) or not re.fullmatch(r"[0-9a-f]{32}", capture_id)
+                or not isinstance(status, str)
+                or status not in {"pending", "prepared", "processing", "completed", "partial_success", "failed"}
+                or occurred is None):
+            complete = False
+            continue
+        if _within_window(occurred, start, end, zone):
+            rows.append({
+                "activity_id": _opaque_id("capture", capture_id, capture_id),
+                "kind": "capture",
+                "status": status,
+                "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            })
+    return rows, not complete
+
+
+def _review_rows(store, start, end, zone):
+    """Project only bounded Review state metadata; bodies and paths stay private."""
+    if store is None:
+        return [], False
+    try:
+        events, complete = store.read(start, end, zone)
+    except Exception:
+        return [], True
+    if not isinstance(events, list):
+        return [], True
+    rows = []
+    complete = bool(complete)
+    allowed_statuses = {"pending", "deferred", "approved", "promoting", "promoted", "failed"}
+    for event in events:
+        if (not isinstance(event, dict)
+                or set(event) != {"activity_id", "kind", "status", "occurred_at"}
+                or not isinstance(event.get("activity_id"), str)
+                or not re.fullmatch(r"[0-9a-f]{32}", event["activity_id"])
+                or event.get("kind") != "review"
+                or event.get("status") not in allowed_statuses):
+            complete = False
+            continue
+        occurred = _occurred_at(event.get("occurred_at"), zone)
+        if occurred is None or not _within_window(occurred, start, end, zone):
+            complete = False
+            continue
+        rows.append({
+            "activity_id": event["activity_id"],
+            "kind": "review",
+            "status": event["status"],
+            "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        })
+    return rows, not complete
+
+
+def _promote_rows(store, start, end, zone):
+    """Use the existing bounded Core audit projection for successful Promote events."""
+    if store is None:
+        return [], False
+    try:
+        events, complete = store.read()
+    except Exception:
+        return [], True
+    if not isinstance(events, list):
+        return [], True
+    rows = []
+    complete = bool(complete)
+    for event in events:
+        if (not isinstance(event, dict)
+                or set(event) != {"activity_id", "kind", "status", "occurred_at"}
+                or not isinstance(event.get("activity_id"), str)
+                or not re.fullmatch(r"[0-9a-f]{32}", event["activity_id"])
+                or event.get("kind") != "promote"
+                or event.get("status") != "promoted"):
+            complete = False
+            continue
+        occurred = _occurred_at(event.get("occurred_at"), zone)
+        if occurred is None:
+            complete = False
+            continue
+        if _within_window(occurred, start, end, zone):
+            rows.append({
+                "activity_id": event["activity_id"],
+                "kind": "promote",
+                "status": "promoted",
+                "occurred_at": occurred.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            })
+    return rows, not complete
 
 
 def create_projects_activity_router(auth, journal_store=None, task_store=None,
-                                    projects_store=None, notes_store=None):
+                                    projects_store=None, notes_store=None,
+                                    daily_brief_audit_store=None, memory_store=None,
+                                    capture_service=None, review_store=None, promote_activity_store=None):
     router = APIRouter(prefix="/api")
     projects_store = projects_store or ProjectsSourceReadStore(None)
 
@@ -230,7 +508,19 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
             end = datetime.now(zone).date()
             start = end - timedelta(days=_DEFAULT_JOURNAL_LOOKBACK_DAYS - 1)
 
-        configured = [name for name, store in (("journal", journal_store), ("tasks", task_store)) if store is not None]
+        candidates = [
+            ("journal", journal_store, "journal.read"),
+            ("tasks", task_store, "task.read"),
+            ("projects", projects_store if projects_store.configured else None, "projects.read"),
+            ("daily_brief", daily_brief_audit_store if daily_brief_audit_store is not None
+             and daily_brief_audit_store.configured else None,
+             "daily_brief.read"),
+            ("personal_memory", memory_store, "personal_memory.read"),
+            ("capture", capture_service, "inbox.read"),
+            ("review", review_store, "review.read"),
+            ("promote", promote_activity_store, "promote.read"),
+        ]
+        configured = [(name, store, action) for name, store, action in candidates if store is not None]
         if not configured:
             return {
                 "status": "unavailable", "items": [],
@@ -238,22 +528,67 @@ def create_projects_activity_router(auth, journal_store=None, task_store=None,
                 "source": [], "freshness": {"checked_at": datetime.now(timezone.utc).isoformat()},
             }
 
-        rows = _journal_rows(journal_store, start, end, zone)
-        task_read_failed = False
-        try:
-            rows.extend(_task_rows(task_store, start, end, zone))
-        except HTTPException:
-            # Task projection has a fixed byte budget. Keep other available
-            # sources, but never imply a complete Activity result on overflow.
-            task_read_failed = True
+        # Authorize every configured source before its first read. A denied
+        # source is omitted and makes the response partial; it is never probed.
+        authorized, denied = [], False
+        for name, store, action in configured:
+            try:
+                auth.require_action(request, action)
+            except HTTPException as exc:
+                if exc.status_code != 403:
+                    raise
+                denied = True
+                continue
+            authorized.append((name, store))
+
+        rows = []
+        read_failed = denied
+        for name, store in authorized:
+            if name == "journal":
+                journal_rows, incomplete = _journal_rows(store, start, end, zone)
+                rows.extend(journal_rows)
+                read_failed = read_failed or incomplete
+            elif name == "tasks":
+                try:
+                    task_rows, complete = _task_rows(store, start, end, zone)
+                    rows.extend(task_rows)
+                    read_failed = read_failed or not complete
+                except HTTPException:
+                    # Task projection has a fixed byte budget. Keep other
+                    # available sources but never imply completeness.
+                    read_failed = True
+            elif name == "projects":
+                project_rows, partial = _project_rows(store, start, end, zone)
+                rows.extend(project_rows)
+                read_failed = read_failed or partial
+            elif name == "daily_brief":
+                brief_rows, partial = _daily_brief_rows(store, start, end, zone)
+                rows.extend(brief_rows)
+                read_failed = read_failed or partial
+            elif name == "personal_memory":
+                memory_rows, partial = _personal_memory_rows(store, start, end, zone)
+                rows.extend(memory_rows)
+                read_failed = read_failed or partial
+            elif name == "capture":
+                capture_rows, partial = _capture_rows(store, start, end, zone)
+                rows.extend(capture_rows)
+                read_failed = read_failed or partial
+            elif name == "review":
+                review_rows, partial = _review_rows(store, start, end, zone)
+                rows.extend(review_rows)
+                read_failed = read_failed or partial
+            elif name == "promote":
+                promote_rows, partial = _promote_rows(store, start, end, zone)
+                rows.extend(promote_rows)
+                read_failed = read_failed or partial
         rows.sort(key=lambda row: (row["occurred_at"], row["activity_id"]), reverse=True)
         page_rows = rows[offset:offset + limit]
-        missing_source = len(configured) < 2
+        missing_source = len(authorized) < len(configured) or len(authorized) < 2
         return {
-            "status": "partial" if missing_source or default_window or task_read_failed else ("ok" if rows else "empty"),
+            "status": "partial" if missing_source or default_window or read_failed else ("ok" if rows else "empty"),
             "items": page_rows,
             "pagination": {"limit": limit, "offset": offset, "has_more": offset + limit < len(rows)},
-            "source": configured,
+            "source": [name for name, _store in authorized],
             "freshness": {"checked_at": datetime.now(timezone.utc).isoformat()},
         }
 

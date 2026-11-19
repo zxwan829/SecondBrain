@@ -21,11 +21,11 @@ function timestamp(value: unknown): value is string {
 }
 
 function safeReviewPath(value: unknown): value is string {
-  if (typeof value !== 'string' || !value.startsWith('10-Review/') || value.length > 1024
+  if (typeof value !== 'string' || value.length > 1024
     || /[\\\u0000-\u001f\u007f?#]/.test(value)) return false;
   const parts = value.split('/');
-  return parts.length > 1 && parts[0] === '10-Review'
-    && parts.slice(1).every((part) => Boolean(part) && part !== '.' && part !== '..');
+  return parts.length > 0 && value.toLowerCase().endsWith('.md')
+    && parts.every((part) => Boolean(part) && part !== '.' && part !== '..');
 }
 
 /** Parse only the exact Core GET projection. The linked route never loads Raw text. */

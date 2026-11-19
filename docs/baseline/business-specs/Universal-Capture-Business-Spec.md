@@ -7,7 +7,7 @@
 
 ## 1. Purpose
 
-Universal Capture accepts processable external or user-provided content, preserves a Raw asset, creates a Review candidate, and waits for Human Approval before Promote. It never writes formal Knowledge, auto-Promotes, or deletes original evidence.
+Universal Capture protects original sources and applies different Knowledge entry gates: Agent/automatic content proceeds through Raw → Review → Human Approval → controlled Promote; a trusted user explicitly creating/importing into a chosen formal Knowledge target may use a separate limited Core user-write interface without repeat Review. D093 defines the approved future contract, not current production permissions.
 
 ## 2. V1 Supported Inputs
 
@@ -55,7 +55,7 @@ V1 provides SAFE RETRY, not strict transactional idempotency. Retries never over
 
 ## 12. Human Approval
 
-Raw plus Review requires no Human Approval because it is low-risk staging. Review to Knowledge and Promote require Human Approval. Delete, overwrite, and permission changes require explicit approval.
+Raw plus Review staging requires no Human Approval. **Agent/autonomous Review → Knowledge Promote requires explicit user approval**; a trusted user's specific create/upload/archive action authorizes only that limited destination write, subject to Core identity, target, conflict, audit and version checks. Delete, overwrite, permission changes and AI edits to existing formal Knowledge still require specific authorization and diff/version protection.
 
 ## 13. V1 MUST
 
@@ -67,10 +67,19 @@ Lightweight tags and explicit/simple relationships or Wikilinks. Their failure m
 
 ## 15. V1.1 Scope Expansion — 2026-10-10
 
-URL/Web, PDF, Image/Screenshot, and Audio/Voice moved from DEFERRED to V1 MUST. They enter one lifecycle: Input → Detect Type → Preserve Raw → deterministic Extract/Fetch/OCR/Transcribe → Normalize → Universal Capture → Review → Human Approval → Knowledge. Text Fast Path remains unchanged; non-text may add deterministic processing. Extraction failure preserves Raw and returns PARTIAL SUCCESS. WeChat and Web App are V1 input channels that converge into this single pipeline; production integration remains separately unverified.
+URL/Web, PDF, Image/Screenshot, and Audio/Voice moved from DEFERRED to V1 MUST. Agent-generated candidates retain the lifecycle Input → Detect Type → Preserve Raw → deterministic Extract/Fetch/OCR/Transcribe → Normalize → Universal Capture → Review → Human Approval → Knowledge. A trusted user explicitly selecting formal Knowledge may preserve the source and use a separate Core direct-write path without waiting for AI metadata suggestions. Text Fast Path remains unchanged; non-text may add deterministic processing. Extraction failure preserves Raw and returns PARTIAL SUCCESS. WeChat and Web App are V1 input channels that converge into this single pipeline; production integration remains separately unverified.
 
 Required normalized representation may include title, source_type, captured_at, original_asset, source URL, extracted_text/transcript, capture_context, metadata, tags, and processing_status, reusing the existing Review schema. Security requirements include Private exclusion, controlled writes, SSRF protection for URL fetch, confined parser temporary files, and no path escape from KnowledgeAssets.
 
 ## 16. Deferred / Post-V1
 
 Office documents (DOC/DOCX, PPT/PPTX, XLS/XLSX), video, generic binary attachment ingestion, semantic deduplication, embeddings, RAG, Vector DB, QMD semantic capture, automatic knowledge graph, mandatory related-note discovery, complex automatic tagging, and transactional multi-file rollback. URL/Web, PDF, Image/Screenshot, and Audio/Voice are V1 MUST per Section 15, not deferred.
+
+
+## 17. D093 user-direct Knowledge and AI-controlled changes (2026-11-09 APPROVED, NOT IMPLEMENTED)
+
+- **Separate trusted actions:** Core must validate the actual authenticated user's explicit target/action, or a trustworthy channel identity and consent binding. Client fields, Markdown frontmatter and Agent claims never serve as approval credentials. Keep narrow scoped Writer capabilities, path/Host/Origin checks, ETag/hash, replay/idempotency, conflict handling and audits. Do not grant Hermes generic Knowledge RW or entire-Vault RW.
+- **Different entry semantics:** User-authored and explicitly imported notes/documents become eligible for formal Knowledge without an extra Review. Agent-generated content, autonomous summaries proposed for Knowledge, and AI changes to formal documents remain candidates until user review. A user explicitly accepting a final AI draft and exact save target needs only one confirmation, with AI/Run provenance retained. Rejected AI candidates remain auditable outside formal Knowledge. User edits are versioned; immutable Raw sources are never overwritten.
+- **Derived data not another AI knowledge write:** Markdown/TXT may serve directly as AI-readable text. For PDF/web/image/audio/BlockSuite, retain original plus separately version-bound readable extraction as needed. OCR/transcription, deterministic extraction and rebuildable indexes do not themselves need Human Approval. AI-created suggestions affecting formal labels/metadata require the existing relevant user confirmation.
+- **Failure and provenance:** Record stable source identity, hash/version, trusted operator/action, origin kind (user-authored, user-imported, AI-drafted) and AI originating Run/task. Parsing status must be queryable (indexed, processing, failed/unparsed, unsupported); a failed document remains discoverable by filename, source and date. Updated, renamed, deleted, restored and revoked documents cannot leave stale queryable content.
+- **Stage gates:** WP6/#78 proves minimal user Markdown/notes direct entry, existing Agent Review/Promote and Hermes body-grounded references. Later V1 P4/P2 gates retain BlockSuite structured Markdown projection and five-part round-trip, existing V1 input extraction, statuses, source/index lifecycle. Office documents, video, archives and embeddings/vector databases remain deferred from V1 MUST and are not WP6 prerequisites.

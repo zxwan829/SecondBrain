@@ -1,0 +1,20 @@
+{
+  "audit_event": {
+    "event_type": "daily_brief_import",
+    "request_id": "synthetic-request-id",
+    "brief_id": "synthetic-brief-id",
+    "date": "2026-10-23",
+    "timezone": "Asia/Shanghai",
+    "source_kind_counts": {"task": 1},
+    "outcome": "created",
+    "recorded_at": "2026-10-23T08:00:00Z",
+    "actor": "synthetic-actor-hash"
+  },
+  "activity_item": {
+    "activity_id": "0094028f8a3e0eb9c06828399483892f",
+    "kind": "daily_brief",
+    "status": "created",
+    "occurred_at": "2026-10-23T08:00:00.000000Z",
+    "daily_brief_date": "2026-10-23"
+  }
+}

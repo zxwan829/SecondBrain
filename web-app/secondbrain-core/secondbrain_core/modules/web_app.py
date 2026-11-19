@@ -1,5 +1,6 @@
 """Browser-facing App auth, Home aggregation, and Hermes BFF routes."""
 import hashlib
+import asyncio
 import json
 import os
 import stat
@@ -13,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from .app_auth import AppSessionAuth
 from .hermes_api import HermesAPI
 from .run_approvals import RunApprovalRegistry
+from .chat_knowledge import RECALL_TIMEOUT_SECONDS, recall_query
 
 
 _HOME_SCAN_ENTRY_LIMIT = 500
@@ -165,9 +167,11 @@ def _knowledge_items(knowledge_root, limit=8):
 
 
 def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, review_root, knowledge_root,
-                          organizer=None, personal_learning=None):
+                          organizer=None, personal_learning=None, knowledge_store=None,
+                          citation_store=None, chat_cost_gate=None):
     router = APIRouter(prefix="/api")
     run_approvals = RunApprovalRegistry()
+    citation_fallback = {}
 
     @router.post("/auth/login")
     def login(request: Request, response: Response, body: dict):
@@ -179,6 +183,15 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
     def session(request: Request):
         auth.require_action(request, "auth.session")
         return {"status": "authenticated", "subject": "owner"}
+
+    @router.patch("/auth/session/actions")
+    def set_session_action(request: Request, body: dict):
+        auth.require_action(request, "auth.session")
+        if not isinstance(body, dict) or set(body) != {"action", "granted"}:
+            raise HTTPException(status_code=400, detail="Invalid session action request")
+        granted = auth.set_session_action(request, body["action"], body["granted"])
+        return {"status": "updated", "action": body["action"], "granted": granted,
+                "scope": "current_session"}
 
     @router.post("/auth/logout")
     def logout(request: Request, response: Response):
@@ -305,6 +318,22 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
             await organizer.baseline_session(hermes._safe_id(session_id))
         safe_session_id = hermes._safe_id(session_id)
         run_body = {"input": text, "session_id": safe_session_id}
+        recall = {"items": [], "status": "unavailable"}
+        recall_auth = True
+        try:
+            # Check read permission before any Knowledge filesystem operation.
+            auth.require_action(request, "knowledge.read")
+        except HTTPException:
+            recall_auth = False
+        if recall_auth and knowledge_store is not None and citation_store is not None:
+            query = recall_query(text)
+            if query:
+                try:
+                    recall = await asyncio.wait_for(
+                        asyncio.to_thread(knowledge_store.chat_recall, query),
+                        timeout=RECALL_TIMEOUT_SECONDS)
+                except (asyncio.TimeoutError, HTTPException, OSError, ValueError):
+                    recall = {"items": [], "status": "unavailable"}
         watermark = None
         if personal_learning:
             try:
@@ -314,12 +343,55 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
             except Exception:
                 watermark = None
             instructions = personal_learning.instructions_for(text)
-            if instructions:
-                # Hermes v0.21.5 /v1/runs accepts `instructions` as an
-                # ephemeral system prompt; user input remains byte-for-byte intact.
-                run_body["instructions"] = instructions
-        result = await hermes.start_run(run_body, key)
+        else:
+            instructions = ""
+        if instructions:
+            # Personal Learning's existing gated behavior is unchanged. Knowledge
+            # excerpts are never sent through Hermes' system-level instructions.
+            run_body["instructions"] = instructions
+        cost_reservation = None
+        if chat_cost_gate is not None:
+            # The live Hermes contract must attest enforcement before any
+            # reservation or paid Run is admitted. Missing/unknown capability
+            # fails closed; legacy behavior remains unchanged while disabled.
+            capabilities = await hermes.capabilities()
+            chat_cost_gate.require_hermes_envelope(capabilities)
+            run_body = chat_cost_gate.bind_envelope(run_body)
+            cost_reservation = chat_cost_gate.reserve(
+                owner=owner, session_id=safe_session_id, idempotency_key=key,
+                run_body=run_body, request_class="passive",
+            )
+            chat_cost_gate.require_replay_window(cost_reservation)
+        try:
+            result = await hermes.start_run(run_body, key)
+        except asyncio.CancelledError:
+            if chat_cost_gate is not None and cost_reservation is not None:
+                chat_cost_gate.mark_reservation_unknown(cost_reservation["reservation_id"])
+            raise
+        except Exception:
+            if chat_cost_gate is not None and cost_reservation is not None:
+                chat_cost_gate.mark_reservation_unknown(cost_reservation["reservation_id"])
+            # A failed transport may have reached Hermes; keep the reservation
+            # and never auto-retry. An explicit identical idempotency replay is
+            # the only path that can reconcile a run at Hermes.
+            raise
+        if chat_cost_gate is not None and cost_reservation is not None:
+            chat_cost_gate.attach_run(cost_reservation["reservation_id"], result["run_id"])
         run_approvals.register_run(hermes._safe_id(result["run_id"]), safe_session_id, owner)
+        if citation_store is not None:
+            try:
+                bound = citation_store.bind(hermes._safe_id(result["run_id"]), safe_session_id, text, recall)
+                if bound is None:
+                    citation_fallback[result["run_id"]] = safe_session_id
+                else:
+                    citation_fallback.pop(result["run_id"], None)
+            except Exception:
+                # Citations are a best-effort read-only enhancement. A failed
+                # ledger write never turns a successful Hermes Run into a false
+                # HTTP failure; no client-supplied citation is ever substituted.
+                citation_fallback[result["run_id"]] = safe_session_id
+            while len(citation_fallback) > 1000:
+                citation_fallback.pop(next(iter(citation_fallback)))
         if personal_learning:
             personal_learning.register_run(result["run_id"], safe_session_id, text, watermark)
         return result
@@ -327,38 +399,114 @@ def create_web_app_router(auth: AppSessionAuth, hermes: HermesAPI, service, revi
     @router.get("/chat/runs/{run_id}/events")
     async def run_events(request: Request, run_id: str):
         owner = auth.require_action(request, "chat.read")
+        # Chat history remains readable after Knowledge access is revoked, but
+        # the citation ledger and source verifier must not be consulted then.
+        try:
+            auth.require_action(request, "knowledge.read")
+            knowledge_read_allowed = True
+        except HTTPException:
+            knowledge_read_allowed = False
         safe_run_id = hermes._safe_id(run_id)
-        chunks = await hermes.stream_run(run_id)
+        try:
+            chunks = await hermes.stream_run(run_id)
+        except Exception:
+            if chat_cost_gate is not None:
+                chat_cost_gate.mark_unknown(safe_run_id)
+            raise
 
         async def events():
-            async for chunk in chunks:
-                outgoing = chunk
-                payload = _sse_payload(chunk)
-                if payload and payload.get("event") == "approval.request":
-                    card = run_approvals.bind_event(safe_run_id, owner, payload)
-                    if card:
-                        outgoing = _sse_frame(card)
-                    else:
-                        request_id = payload.get("request_id")
-                        if isinstance(request_id, str) and request_id:
-                            try:
-                                await hermes.resolve_run_approval(safe_run_id, request_id, "deny")
-                            except HTTPException:
-                                pass  # Native approval timeout is also fail-closed.
-                        outgoing = _sse_frame({"event": "approval.blocked", "failure_code": "approval_event_invalid"})
-                if personal_learning and personal_learning.is_success_event(chunk):
+            cost_terminal_seen = False
+            if citation_store is not None:
+                registered_session = run_approvals.session_for_run(safe_run_id, owner)
+                current_knowledge_access = knowledge_read_allowed
+                if current_knowledge_access:
+                    # Recheck at the point of citation access as stream setup
+                    # may yield while a grant is being revoked.
                     try:
-                        await personal_learning.complete_run(hermes._safe_id(run_id), hermes)
+                        auth.require_action(request, "knowledge.read")
+                    except HTTPException:
+                        current_knowledge_access = False
+                if not current_knowledge_access and registered_session:
+                    # Preserve the ordinary Chat stream while returning no
+                    # previously authorized Knowledge metadata after revocation.
+                    citation_event = {"event": "knowledge.citations", "version": 1,
+                                      "run_id": safe_run_id, "session_id": registered_session,
+                                      "status": "unavailable", "citations": []}
+                elif citation_fallback.get(safe_run_id) == registered_session and registered_session:
+                    citation_event = {"event": "knowledge.citations", "version": 1,
+                                      "run_id": safe_run_id, "session_id": registered_session,
+                                      "status": "unavailable", "citations": []}
+                else:
+                    try:
+                        citation_event = await asyncio.to_thread(citation_store.read_for_run, safe_run_id)
                     except Exception:
-                        # Learning is best-effort and must not break a completed Chat run.
-                        pass
-                elif personal_learning and personal_learning.is_discard_event(chunk):
-                    personal_learning.discard_run(hermes._safe_id(run_id))
-                yield outgoing
+                        citation_event = None
+                if (citation_event is not None and registered_session
+                        and citation_event.get("session_id") == registered_session):
+                    yield _sse_event_frame("knowledge.citations", citation_event)
+            try:
+                async for chunk in chunks:
+                    outgoing = chunk
+                    payload = _sse_payload(chunk)
+                    if chat_cost_gate is not None and payload:
+                        event_name = payload.get("event")
+                        if event_name in {"run.completed", "run.failed", "run.cancelled", "run.interrupted"}:
+                            cost_terminal_seen = True
+                            if event_name == "run.completed":
+                                if not chat_cost_gate.settle_completed(safe_run_id, payload):
+                                    chat_cost_gate.mark_unknown(safe_run_id)
+                            else:
+                                # Non-success terminals are never trusted usage
+                                # receipts, even when they include token numbers.
+                                chat_cost_gate.mark_unknown(safe_run_id)
+                    if payload and payload.get("event") == "approval.request":
+                        card = run_approvals.bind_event(safe_run_id, owner, payload)
+                        if card:
+                            outgoing = _sse_frame(card)
+                        else:
+                            request_id = payload.get("request_id")
+                            if isinstance(request_id, str) and request_id:
+                                try:
+                                    await hermes.resolve_run_approval(safe_run_id, request_id, "deny")
+                                except HTTPException:
+                                    pass  # Native approval timeout is also fail-closed.
+                            outgoing = _sse_frame({"event": "approval.blocked", "failure_code": "approval_event_invalid"})
+                    if personal_learning and personal_learning.is_success_event(chunk):
+                        try:
+                            await personal_learning.complete_run(hermes._safe_id(run_id), hermes)
+                        except Exception:
+                            # Learning is best-effort and must not break a completed Chat run.
+                            pass
+                    elif personal_learning and personal_learning.is_discard_event(chunk):
+                        personal_learning.discard_run(hermes._safe_id(run_id))
+                    yield outgoing
+            finally:
+                if chat_cost_gate is not None:
+                    chat_cost_gate.finish_stream(safe_run_id, cost_terminal_seen)
 
         return StreamingResponse(events(), media_type="text/event-stream", headers={
-            "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
+            "Cache-Control": "private, no-store, no-transform", "X-Accel-Buffering": "no",
         })
+
+    @router.get("/chat/sessions/{session_id}/runs/{run_id}/knowledge-citations")
+    async def knowledge_citations(request: Request, session_id: str, run_id: str, response: Response):
+        auth.require_action(request, "chat.read")
+        # Check current Knowledge permission before any session, ledger, or
+        # source-version read. The app middleware adds no-store to errors too.
+        auth.require_action(request, "knowledge.read")
+        safe_session_id = hermes._safe_id(session_id)
+        safe_run_id = hermes._safe_id(run_id)
+        await hermes.get_session(safe_session_id)
+        if citation_store is None:
+            raise HTTPException(status_code=404, detail="Chat citations not found")
+        if citation_fallback.get(safe_run_id) == safe_session_id:
+            result = {"event": "knowledge.citations", "version": 1,
+                      "run_id": safe_run_id, "session_id": safe_session_id,
+                      "status": "unavailable", "citations": []}
+        else:
+            result = await asyncio.to_thread(citation_store.read_for_session, safe_session_id, safe_run_id)
+        response.headers["Cache-Control"] = "private, no-store"
+        return result
 
     @router.post("/chat/sessions/{session_id}/runs/{run_id}/approval")
     async def resolve_run_approval(request: Request, session_id: str, run_id: str, body: dict):
@@ -427,3 +575,8 @@ def _sse_payload(chunk):
 
 def _sse_frame(payload):
     return ("data: " + json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n\n").encode("utf-8")
+
+
+def _sse_event_frame(event_name, payload):
+    return ("event: " + event_name + "\ndata: " +
+            json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n\n").encode("utf-8")

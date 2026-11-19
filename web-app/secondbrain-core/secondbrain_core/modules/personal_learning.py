@@ -11,7 +11,7 @@ import hashlib
 import re
 from typing import Any, Protocol
 
-from .personal_memory import PersonalMemoryStore
+from .personal_memory import MemoryConflictError, PersonalMemoryStore
 
 
 _WORD = re.compile(r"[A-Za-z0-9]+|[\u3400-\u9fff]+")
@@ -306,9 +306,18 @@ class PersonalLearningPipeline:
                     continue
                 if previous.get("source_ref") == source_ref and previous.get("operation") == "correct":
                     continue
-                self.store.correct(memory_id, content={"text": text.strip()}, source_type="user_message",
-                                  source_ref=source_ref, fact_kind="user_stated")
-                written += 1
+                try:
+                    self.store.correct(
+                        memory_id, content={"text": text.strip()}, source_type="user_message",
+                        source_ref=source_ref, fact_kind="user_stated",
+                        expected_revision=previous["revision"],
+                        idempotency_key=("learn-correct-" + hashlib.sha256(
+                            (source_ref + ":" + memory_id + ":" + text.strip().casefold()).encode()).hexdigest()),
+                    )
+                    written += 1
+                except MemoryConflictError:
+                    # A concurrent correction wins; learning remains best-effort.
+                    continue
             elif operation == "create":
                 if text.strip().casefold() in active_texts:
                     continue

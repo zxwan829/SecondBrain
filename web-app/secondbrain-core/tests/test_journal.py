@@ -4,8 +4,10 @@ import unittest
 from pathlib import Path
 
 from fastapi import HTTPException
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 
-from secondbrain_core.modules.journal import JournalStore
+from secondbrain_core.modules.journal import JournalStore, create_journal_router
 
 
 class JournalStoreTests(unittest.TestCase):
@@ -73,6 +75,50 @@ class JournalStoreTests(unittest.TestCase):
         rows = [row for path in self.root.glob("????-??-??.jsonl") for row in self.store.read(path.stem)["entries"]]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["operation_id"], "midnight-retry")
+
+    def test_authenticated_journal_route_append_retry_and_readback_preserve_existing_entry(self):
+        class SessionAuth:
+            def require_action(self, request: Request, action: str):
+                if (request.cookies.get("session") != "owner"
+                        or action not in {"journal.read", "journal.append"}):
+                    raise HTTPException(status_code=401, detail="App session required")
+
+        app = FastAPI()
+        app.include_router(create_journal_router(SessionAuth(), self.store))
+        client = TestClient(app)
+        day = "2026-10-17"
+        original = self.store.append(day, "记一下：已有合成日记", "seed-original")
+        url = "/api/journal/entries"
+        headers = {"Idempotency-Key": "browser-operation-1"}
+        payload = {"date": day, "text": "写日记：新合成追加"}
+
+        denied = client.post(url, json=payload, headers=headers)
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(len(self.store.read(day)["entries"]), 1)
+        ordinary_chat = client.post(url, json={"date": day, "text": "普通聊天内容"},
+                                    headers={"Idempotency-Key": "ordinary-chat"},
+                                    cookies={"session": "owner"})
+        self.assertEqual(ordinary_chat.status_code, 422)
+        self.assertEqual(len(self.store.read(day)["entries"]), 1)
+
+        created = client.post(url, json=payload, headers=headers, cookies={"session": "owner"})
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["status"], "created")
+        replay = client.post(url, json=payload, headers=headers, cookies={"session": "owner"})
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(replay.json()["status"], "duplicate")
+        readback = client.get(f"/api/journal/{day}", cookies={"session": "owner"})
+        self.assertEqual(readback.status_code, 200)
+        rows = readback.json()["entries"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0], original["entry"])
+        self.assertEqual(rows[1]["original_text"], payload["text"])
+        self.assertEqual(rows[1]["operation_id"], headers["Idempotency-Key"])
+
+        conflicting_replay = client.post(url, json={"date": day, "text": "记一下：不同内容"},
+                                         headers=headers, cookies={"session": "owner"})
+        self.assertEqual(conflicting_replay.status_code, 409)
+        self.assertEqual(len(self.store.read(day)["entries"]), 2)
 
 
 if __name__ == "__main__":

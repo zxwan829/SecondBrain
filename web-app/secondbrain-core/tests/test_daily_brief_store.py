@@ -137,14 +137,17 @@ def test_daily_brief_rejects_unknown_or_malformed_record_fields(tmp_path, field,
     assert snapshot.source_verification == "unverified"
 
 
-def test_daily_brief_requires_matching_date_timezone_and_timezone_local_generation_day(tmp_path):
+def test_daily_brief_requires_matching_date_timezone_but_allows_later_import_time(tmp_path):
     root = make_root(tmp_path)
     write_record(root, timezone="UTC")
     store = DailyBriefRecordReadStore(str(root))
     assert store.read(DAY, ZONE).available is False
 
-    write_record(root, generated_at="2026-10-20T00:30:00+14:00")
-    assert store.read(DAY, ZONE).available is False
+    write_record(root, generated_at="2026-10-23T10:30:00+08:00")
+    later_creation = store.read(DAY, ZONE)
+    assert later_creation.available is True
+    assert later_creation.record["date"] == DAY
+    assert later_creation.record["generated_at"] == "2026-10-23T10:30:00+08:00"
 
 
 def test_daily_brief_requires_single_link_private_bounded_record_and_reference_count(tmp_path):
