@@ -29,6 +29,26 @@ pytestmark = pytest.mark.skipif(
 HELPER = Path(__file__).with_name("d090_linux_process_helper.py")
 
 
+def test_writer_kernel_denies_changes_to_published_target():
+    with tempfile.TemporaryDirectory(prefix="d090-writer-policy-") as directory:
+        root = Path(directory)
+        for path in (root / "publish", root / "protected"):
+            path.mkdir(mode=0o700)
+        sentinel = root / "protected/sentinel.txt"
+        sentinel.write_text("synthetic protected sentinel")
+        for path in (root, root / "publish", root / "protected", sentinel):
+            os.chown(path, 31003, 31103)
+        helper = Path(__file__).with_name("d090_seccomp_writer_process_helper.py")
+        result = subprocess.run([sys.executable, str(helper), str(root)],
+            env={**os.environ, "SB_D090_SECCOMP_WRITER": "synthetic-only",
+                 "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+            capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert "PASS exact_writer_publish=1" in result.stdout
+        assert (root / "publish/approved.md").read_bytes() == b"# synthetic approved bytes\n"
+        assert sentinel.read_text() == "synthetic protected sentinel"
+
+
 def test_approval_entry_separates_core_and_authority_uids():
     uid = _unused_block(31001, 3, pwd.getpwuid)
     gid = _unused_block(31101, 3, grp.getgrgid)

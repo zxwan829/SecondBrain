@@ -424,7 +424,7 @@ class StrictCreateOnlyWriter:
         fd = -1
         publish_attempted = False
         try:
-            fd = os.open(".", os.O_WRONLY | tmpfile | getattr(os, "O_CLOEXEC", 0), 0o640, dir_fd=self.root_fd)
+            fd = os.open(".", os.O_WRONLY | tmpfile | getattr(os, "O_CLOEXEC", 0), 0o440, dir_fd=self.root_fd)
             _write_all(fd, content)
             os.fsync(fd)
             # link() is an atomic no-replace operation: EEXIST leaves old bytes untouched.
