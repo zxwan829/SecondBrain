@@ -178,7 +178,7 @@ def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, rol
                            raw_ref=completed["raw_path"])
         key = serialization.load_pem_private_key(Path(private_key).read_bytes(), password=None)
         signer = d090.Ed25519GrantSigner("synthetic-test-key", key)
-        writer = d090.UnixWriterClient(socket_path)
+        writer = d090.UnixWriterClient(socket_path, writer_uid=roles.writer_uid, writer_gid=roles.writer_gid)
         try:
             from fastapi.testclient import TestClient
             from secondbrain_core.modules.app_auth import AppSessionAuth

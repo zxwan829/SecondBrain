@@ -81,7 +81,7 @@ def authority(args):
     roles = role_ids(args)
     private = serialization.load_pem_private_key(Path(args.private_key).read_bytes(), password=None)
     signer = d090.Ed25519GrantSigner("synthetic-test-key", private)
-    client = d090.UnixWriterClient(args.socket_path, timeout_seconds=3)
+    client = d090.UnixWriterClient(args.socket_path, writer_uid=roles.writer_uid, writer_gid=roles.writer_gid, timeout_seconds=3)
     core = d090.D090Authority(
         args.ledger_root, signer, client, role_ids=roles,
         synthetic_proof_verifier=SyntheticProof(), allow_synthetic_proof=True,

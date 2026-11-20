@@ -479,10 +479,14 @@ def authority_peer_before_body(conn: socket.socket, expected_uid: int, expected_
 class UnixWriterClient:
     """Authority-side bounded client for a pre-provisioned pathname socket."""
 
-    def __init__(self, socket_path: str, *, timeout_seconds: float = 2.0):
+    def __init__(self, socket_path: str, *, writer_uid: int, writer_gid: int, timeout_seconds: float = 2.0):
+        if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in (writer_uid, writer_gid)):
+            raise ValueError("invalid_writer_identity")
         if not isinstance(socket_path, str) or not os.path.isabs(socket_path) or len(socket_path.encode()) >= 104:
             raise ValueError("invalid_writer_socket_path")
         self.socket_path = socket_path
+        self.writer_uid = writer_uid
+        self.writer_gid = writer_gid
         self.timeout_seconds = timeout_seconds
 
     def __call__(self, grant: dict, content: bytes) -> dict:
@@ -498,6 +502,7 @@ class UnixWriterClient:
         conn.settimeout(self.timeout_seconds)
         try:
             conn.connect(self.socket_path)
+            authority_peer_before_body(conn, self.writer_uid, self.writer_gid)
             conn.sendall(request)
             response = bytearray()
             while len(response) <= 4096:
