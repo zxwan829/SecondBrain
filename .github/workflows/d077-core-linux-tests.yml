@@ -19,7 +19,7 @@ jobs:
           python-version: "3.12"
       - name: Install Core test dependencies
         working-directory: web-app/secondbrain-core
-        run: python -m pip install -e ".[test]"
+        run: python -m pip install -e ".[test,writer]"
       - name: Verify Personal Memory tests on native Linux temp directories
         working-directory: web-app/secondbrain-core
         run: python -m pytest -q tests/test_personal_memory.py
