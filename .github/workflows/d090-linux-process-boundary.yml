@@ -5,6 +5,13 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "web-app/secondbrain-core/secondbrain_core/modules/d090_authority_writer.py"
+      - "web-app/secondbrain-core/secondbrain_core/modules/d090_approval_lab.py"
+      - "web-app/secondbrain-core/secondbrain_core/modules/d090_browser_confirmation.py"
+      - "web-app/secondbrain-core/secondbrain_core/modules/d090_provenance.py"
+      - "web-app/secondbrain-core/tests/d090_http_probe.py"
+      - "web-app/secondbrain-core/tests/d090_landlock_process_helper.py"
+      - "web-app/secondbrain-core/tests/d090_seccomp_writer_process_helper.py"
+      - "web-app/secondbrain-core/tests/test_d090_browser_confirmation.py"
       - "web-app/secondbrain-core/tests/d090_linux_process_helper.py"
       - "web-app/secondbrain-core/tests/test_d090_authority_writer_linux_process.py"
   workflow_dispatch:
