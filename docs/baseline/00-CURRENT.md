@@ -1,6 +1,6 @@
 ---
 created: 2026-09-30
-updated: 2026-11-09
+updated: 2026-11-20
 status: current
 source: GitHub SecondBrain Monorepo
 ---
@@ -9,6 +9,8 @@ source: GitHub SecondBrain Monorepo
 > 本文件是项目唯一进度入口。它记录可核验的主线、运行快照、验收状态、当前下一步和少量核心任务；历史过程见 `Progress-Log.md`，稳定架构见 `Architecture.md`，批准的决定见 `Decision-Log.md`，最后一次运行快照见 `Environment-Baseline.md`。未实时复核的运行状态一律标为 UNKNOWN。
 
 ## 当前快照
+
+- **2026-11-20 阶段状态：** WP6-6.1 隔离工程验收通过，[PR #329](https://github.com/zxwan829/SecondBrain/pull/329) 已合并，应用源码 merge SHA `0c8191816d8ef5fedc4f80a6f7a09b6f4a0ca996`。生产部署和生产安全验收未完成，生产权限拓扑及多写入者来源竞态待验收。真实 Vault、生产 Writer/Promote 未授权。WP5 用户验收延期并保持 `USER_UAT_PENDING`，6.2、6.3 未启动。独立安全审查及 Gate 证据见 [Issue #78](https://github.com/zxwan829/SecondBrain/issues/78#issuecomment-7043781500)。
 
 - **最新应用代码与生产版本（2026-11-09）：** GitHub main 为 PR #325 squash merge `f67c379a79aec78a11c6fc298fd059a92954d020`；此前 PR #324 CSP 修复已包含。生产 App-only 部署 Image ID `sha256:08ed5a6c8095bce7b84576bd95499f788781f573738aad0ffbaa49fd519c10ce`，revision label 与 main SHA 一致、running/healthy。Live Compose SHA-256 `36782e00227b6f978950a21b57629ad357ac1c670daa468a8da6ee9cbfdccf19`，只修改 App image 行；Hermes 未切换。部署与生产专项证据见 Environment-Baseline。
 - **总体：** V1 尚未完成。GitHub main 的代码/文档状态不代表生产部署、真实数据验证或用户验收。
@@ -128,7 +130,7 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 **安全与发布现状（2026-11-09）：** PR #325 固定 merge SHA `f67c379a79aec78a11c6fc298fd059a92954d020`，独立 Review、定向 Linux Chromium Gate [#42628962450](https://github.com/zxwan829/SecondBrain/actions/runs/42628962450) 与 candidate workflow [#42629598577](https://github.com/zxwan829/SecondBrain/actions/runs/42629598577) 均 PASS。已 App-only 部署，Image ID `sha256:08ed5a6c8095bce7b84576bd95499f788781f573738aad0ffbaa49fd519c10ce`、容器 healthy；Hermes 与安全边界保持不变。生产 AX03 Blob/Canvas/真实 412 fork 与 AX01/AX02 性能/Dirty/刷新合成验证通过；缺失资源负例仍 `NOT RUN`。WP5 为 `PRODUCTION_TEST_PASS / USER_UAT_PENDING`，视觉体验仍待用户验收。
 
-**唯一 NEXT（工作包 5 用户体验验收）：** 工程、部署、生产 Blob/Canvas/412 恢复及 Notes 性能/Dirty 专项均已通过；请用户最终体验确认新建反馈、保存/刷新状态与整体 Notes 体验。左侧列表/视觉反馈仍未接受，不能将该意见记为通过；收到用户明确确认前保持 `USER_UAT_PENDING`，不得写 `USER_UAT_PASS`。WP6 保持 `NOT STARTED / HOLD`，VNext `FROZEN`。
+**唯一 NEXT（WP6-6.1 后续裁定）：** 隔离工程已合并，等待用户决定生产权限拓扑、来源并发安全验证与部署的专项范围；当前不启动 6.2、6.3。WP5 人工体验验收延期并保持 `USER_UAT_PENDING`，VNext `FROZEN`。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 
