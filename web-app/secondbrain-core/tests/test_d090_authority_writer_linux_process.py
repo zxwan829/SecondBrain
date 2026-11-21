@@ -178,7 +178,7 @@ def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, rol
                            raw_ref=completed["raw_path"])
         key = serialization.load_pem_private_key(Path(private_key).read_bytes(), password=None)
         signer = d090.Ed25519GrantSigner("synthetic-test-key", key)
-        writer = d090.UnixWriterClient(socket_path)
+        writer = d090.UnixWriterClient(socket_path, writer_uid=roles.writer_uid, writer_gid=roles.writer_gid)
         try:
             from fastapi.testclient import TestClient
             from secondbrain_core.modules.app_auth import AppSessionAuth
@@ -199,7 +199,7 @@ def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, rol
                 return authority
             fields = dict(approval_id="approval-1", operation_id="operation-1",
                           source_revision=capture_source_revision(*source_refs.values(), raw),
-                          source_sha256=hashlib.sha256(review).hexdigest(), target_id="synthetic-target")
+                          source_sha256=hashlib.sha256(review).hexdigest(), target_id="synthetic-target", target_filename="synthetic-note.md", target_scope="knowledge-test")
             review_file = root / "review" / completed["review_path"]
             app = create_lab_app(auth, factory, dict(fields, approved_bytes=review),
                                  read_source=lambda: (review_file.read_bytes(),

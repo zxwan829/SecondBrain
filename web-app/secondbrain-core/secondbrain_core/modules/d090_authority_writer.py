@@ -34,11 +34,11 @@ from .restricted_knowledge_writer import MAX_OUTPUT_BYTES, _SHA256, _TARGET, _wr
 
 MAX_FRAME_BYTES = 1_500_000
 MAX_GRANT_TTL_SECONDS = 600
-PROTOCOL = "d090.writer-grant.v1"
+PROTOCOL = "d090.writer-grant.v2"
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _GRANT_KEYS = {
     "protocol", "key_id", "approval_id", "operation_id", "source_revision",
-    "source_sha256", "content_sha256", "content_length", "target_id",
+    "source_sha256", "content_sha256", "content_length", "target_id", "target_filename", "target_scope",
     "create_only", "expires_at", "nonce", "audience",
 }
 
@@ -215,6 +215,8 @@ class D090Authority:
         source_sha256: str,
         approved_bytes: bytes,
         target_id: str,
+        target_filename: str,
+        target_scope: str,
         expires_at: int,
         nonce: str,
     ) -> dict:
@@ -231,11 +233,14 @@ class D090Authority:
             "source_revision": source_revision,
             "source_sha256": source_sha256,
             "target_id": target_id,
+            "target_filename": target_filename,
+            "target_scope": target_scope,
             "content_sha256": hashlib.sha256(approved_bytes).hexdigest(),
             "content_length": len(approved_bytes),
         }
-        if (not all(_valid_id(v) for v in (approval_id, operation_id, source_revision, target_id, nonce))
-                or not isinstance(source_sha256, str) or not _SHA256.fullmatch(source_sha256)):
+        if (not all(_valid_id(v) for v in (approval_id, operation_id, source_revision, target_id, target_scope, nonce))
+                or not isinstance(source_sha256, str) or not _SHA256.fullmatch(source_sha256)
+                or not isinstance(target_filename, str) or not _TARGET.fullmatch(target_filename)):
             raise D090Rejected("invalid_approval_binding")
         try:
             approved_bytes.decode("utf-8", "strict")
@@ -259,7 +264,7 @@ class D090Authority:
             "source_revision": source_revision, "source_sha256": source_sha256,
             "content_sha256": hashlib.sha256(approved_bytes).hexdigest(),
             "content_length": len(approved_bytes), "target_id": target_id,
-            "create_only": True, "expires_at": expires_at, "nonce": nonce,
+            "target_filename": target_filename, "target_scope": target_scope, "create_only": True, "expires_at": expires_at, "nonce": nonce,
             "audience": "secondbrain-knowledge-writer",
         }
         signature = self.signer.sign(grant)
@@ -380,14 +385,27 @@ class StrictCreateOnlyWriter:
 
     def __init__(self, target_root: str, public_key: Ed25519PublicKey, key_id: str,
                  target_map: Mapping[str, str], role_ids: D090RoleIds,
-                 *, allow_synthetic_identities: bool = False):
+                 *, target_scope: str, allow_synthetic_identities: bool = False, readonly_gid: int | None = None):
         role_ids.validate()
         _assert_process_identity(role_ids.writer_uid, role_ids.writer_gid, allow_synthetic_identities)
-        self.root = _check_root(target_root)
+        if readonly_gid is None:
+            self.root = _check_root(target_root)
+        else:
+            if isinstance(readonly_gid, bool) or not isinstance(readonly_gid, int) or readonly_gid < 0:
+                raise D090Rejected("writer_readonly_gid_invalid")
+            self.root = os.path.abspath(target_root)
+            info = os.stat(self.root, follow_symlinks=False)
+            # setgid makes each new 0440 inode inherit the dedicated RO group.
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_gid != readonly_gid or stat.S_IMODE(info.st_mode) != 0o2750):
+                raise D090Rejected("writer_root_unsafe")
         self.root_fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
         self.public_key = public_key
         self.key_id = key_id
         self.target_map = dict(target_map)
+        if not _valid_id(target_scope):
+            raise D090Rejected("writer_target_scope_invalid")
+        self.target_scope = target_scope
         self.role_ids = role_ids
 
     def close(self):
@@ -408,6 +426,8 @@ class StrictCreateOnlyWriter:
         digest = hashlib.sha256(content).hexdigest()
         expiry = grant.get("expires_at")
         if (not isinstance(filename, str) or not _TARGET.fullmatch(filename)
+                or grant.get("target_filename") != filename
+                or grant.get("target_scope") != self.target_scope
                 or grant.get("audience") != "secondbrain-knowledge-writer"
                 or grant.get("create_only") is not True or isinstance(expiry, bool)
                 or not isinstance(expiry, int) or expiry <= int(time.time())
@@ -450,6 +470,9 @@ class StrictCreateOnlyWriter:
             conn, self.role_ids.authority_uid, self.role_ids.authority_gid,
         )
         request = receive_bounded_json_without_fds(conn)
+        self.handle_request(conn, request)
+
+    def handle_request(self, conn, request):
         if set(request) != {"grant", "content_base64"} or not isinstance(request.get("grant"), dict):
             raise D090Rejected("ipc_invalid_request")
         encoded = request.get("content_base64")
@@ -479,11 +502,37 @@ def authority_peer_before_body(conn: socket.socket, expected_uid: int, expected_
 class UnixWriterClient:
     """Authority-side bounded client for a pre-provisioned pathname socket."""
 
-    def __init__(self, socket_path: str, *, timeout_seconds: float = 2.0):
+    def __init__(self, socket_path: str, *, writer_uid: int, writer_gid: int, timeout_seconds: float = 2.0):
+        if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in (writer_uid, writer_gid)):
+            raise ValueError("invalid_writer_identity")
         if not isinstance(socket_path, str) or not os.path.isabs(socket_path) or len(socket_path.encode()) >= 104:
             raise ValueError("invalid_writer_socket_path")
         self.socket_path = socket_path
+        self.writer_uid = writer_uid
+        self.writer_gid = writer_gid
         self.timeout_seconds = timeout_seconds
+
+    def ready(self) -> bool:
+        """Challenge the Writer UID; combine with independently verified confinement."""
+        import secrets
+        challenge = secrets.token_hex(16)
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | getattr(socket, "SOCK_CLOEXEC", 0))
+        conn.settimeout(self.timeout_seconds)
+        try:
+            conn.connect(self.socket_path)
+            authority_peer_before_body(conn, self.writer_uid, self.writer_gid)
+            conn.sendall(_canonical({"health_nonce": challenge}) + b"\n")
+            data = bytearray()
+            while len(data) <= 256 and not data.endswith(b"\n"):
+                part = conn.recv(257 - len(data))
+                if not part:
+                    return False
+                data.extend(part)
+            return bytes(data) == _canonical({"health_nonce": challenge, "status": "ready"}) + b"\n"
+        except (OSError, D090Rejected):
+            return False
+        finally:
+            conn.close()
 
     def __call__(self, grant: dict, content: bytes) -> dict:
         request = _canonical({
@@ -498,6 +547,7 @@ class UnixWriterClient:
         conn.settimeout(self.timeout_seconds)
         try:
             conn.connect(self.socket_path)
+            authority_peer_before_body(conn, self.writer_uid, self.writer_gid)
             conn.sendall(request)
             response = bytearray()
             while len(response) <= 4096:

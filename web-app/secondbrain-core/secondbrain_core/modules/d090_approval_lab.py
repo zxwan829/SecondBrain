@@ -11,7 +11,7 @@ def create_lab_app(auth, authority_factory, candidate, *, read_source=None):
     confirmation = BrowserConfirmation(auth)
     authority = authority_factory(confirmation)
     fields = {key: candidate[key] for key in (
-        "approval_id", "operation_id", "source_revision", "source_sha256", "target_id",
+        "approval_id", "operation_id", "source_revision", "source_sha256", "target_id", "target_filename", "target_scope",
     )}
     content = bytes(candidate["approved_bytes"])
     binding = {**fields, "content_length": len(content),

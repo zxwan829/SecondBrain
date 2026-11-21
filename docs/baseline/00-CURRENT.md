@@ -130,7 +130,7 @@ ChatGPT 先读本文件的快照、近期规划与唯一 NEXT，再按需读交�
 
 **安全与发布现状（2026-11-09）：** PR #325 固定 merge SHA `f67c379a79aec78a11c6fc298fd059a92954d020`，独立 Review、定向 Linux Chromium Gate [#42628962450](https://github.com/zxwan829/SecondBrain/actions/runs/42628962450) 与 candidate workflow [#42629598577](https://github.com/zxwan829/SecondBrain/actions/runs/42629598577) 均 PASS。已 App-only 部署，Image ID `sha256:08ed5a6c8095bce7b84576bd95499f788781f573738aad0ffbaa49fd519c10ce`、容器 healthy；Hermes 与安全边界保持不变。生产 AX03 Blob/Canvas/真实 412 fork 与 AX01/AX02 性能/Dirty/刷新合成验证通过；缺失资源负例仍 `NOT RUN`。WP5 为 `PRODUCTION_TEST_PASS / USER_UAT_PENDING`，视觉体验仍待用户验收。
 
-**唯一 NEXT（WP6-6.1 后续裁定）：** 隔离工程已合并，等待用户决定生产权限拓扑、来源并发安全验证与部署的专项范围；当前不启动 6.2、6.3。WP5 人工体验验收延期并保持 `USER_UAT_PENDING`，VNext `FROZEN`。
+**唯一 NEXT（WP6-6.1 生产接入准备）：** 用户 2026-11-21 批准 Authority 保护的不可变历史来源快照合同，以及隔离实现、Linux 验证、服务接线和生产配置候选；详见 #78。继续 Draft #331，完成来源并发、长期 Writer 内核隔离及接线的独立审查和 Gate。生产部署、ACL/Secrets 和真实数据写入仍须单独授权；当前不启动 6.2、6.3。WP5 保持 `USER_UAT_PENDING`，VNext `FROZEN`。
 
 2026-11-04 定向集成证据：固定 Hermes `d923a5eb`（含已有 fail-closed 补丁），真实 AIAgent + API Run/dispatcher/Guard/审批路由，仅替换模型响应，3 passed（12.13s）。未批准时文件不存在；deny 后 Run completed 且文件不存在；once 后合成文件内容正确；Skills 路径以 `skills_write_gate` 拒绝且无文件。独立 Reviewer 确认本轮断言满足有限 UAT 门槛。测试是隔离执行链验证，生产未修改、无付费模型调用。复现脚本见 `web-app/hermes-agent/tests/real_agent_api_approval_probe.py`；详细记录见 Progress Log。
 

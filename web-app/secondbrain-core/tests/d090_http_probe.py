@@ -32,7 +32,7 @@ def main():
             browser_confirmation=confirmation)
     app = create_lab_app(auth, factory, dict(approval_id="approval-1",
         operation_id="operation-1", source_revision="revision-1", source_sha256="a"*64,
-        target_id="target-1", approved_bytes=b"synthetic"))
+        target_id="target-1", target_filename="approved.md", target_scope="knowledge-test", approved_bytes=b"synthetic"))
     sock.listen()
     @app.on_event("startup")
     def ready():

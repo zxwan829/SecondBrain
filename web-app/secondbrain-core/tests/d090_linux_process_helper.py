@@ -53,7 +53,7 @@ def writer(args):
     public = serialization.load_pem_public_key(Path(args.public_key).read_bytes())
     instance = d090.StrictCreateOnlyWriter(
         args.knowledge_root, public, "synthetic-test-key",
-        {"synthetic-target": "synthetic-note.md"}, roles,
+        {"synthetic-target": "synthetic-note.md"}, roles, target_scope="knowledge-test",
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -81,7 +81,7 @@ def authority(args):
     roles = role_ids(args)
     private = serialization.load_pem_private_key(Path(args.private_key).read_bytes(), password=None)
     signer = d090.Ed25519GrantSigner("synthetic-test-key", private)
-    client = d090.UnixWriterClient(args.socket_path, timeout_seconds=3)
+    client = d090.UnixWriterClient(args.socket_path, writer_uid=roles.writer_uid, writer_gid=roles.writer_gid, timeout_seconds=3)
     core = d090.D090Authority(
         args.ledger_root, signer, client, role_ids=roles,
         synthetic_proof_verifier=SyntheticProof(), allow_synthetic_proof=True,
@@ -90,14 +90,14 @@ def authority(args):
     binding = {
         "approval_id": "synthetic-approval", "operation_id": args.operation_id,
         "source_revision": "synthetic-rev-1", "source_sha256": SOURCE_SHA,
-        "target_id": "synthetic-target", "content_sha256": digest,
+        "target_id": "synthetic-target", "target_filename": "synthetic-note.md", "target_scope": "knowledge-test", "content_sha256": digest,
         "content_length": len(CONTENT),
     }
     grant = core.issue_grant(
         proof=binding, approval_id=binding["approval_id"],
         operation_id=args.operation_id, source_revision=binding["source_revision"],
         source_sha256=SOURCE_SHA, approved_bytes=CONTENT,
-        target_id=binding["target_id"], expires_at=int(time.time()) + 120,
+        target_id=binding["target_id"], target_filename=binding["target_filename"], target_scope=binding["target_scope"], expires_at=int(time.time()) + 120,
         nonce="synthetic-nonce",
     )
     if args.expect_recovery:
