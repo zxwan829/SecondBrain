@@ -19,7 +19,8 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from .d090_authority_writer import D090Rejected, D090RoleIds, StrictCreateOnlyWriter
+from .d090_authority_writer import (D090Rejected, D090RoleIds, StrictCreateOnlyWriter,
+    _canonical, authority_peer_before_body, receive_bounded_json_without_fds)
 
 _LIBC = ctypes.CDLL(None, use_errno=True)
 _PR_SET_NO_NEW_PRIVS = 38
@@ -182,7 +183,15 @@ def serve(config):
             with conn:
                 conn.settimeout(3)
                 try:
-                    writer.handle_connection(conn)
+                    authority_peer_before_body(conn, writer.role_ids.authority_uid, writer.role_ids.authority_gid)
+                    request = receive_bounded_json_without_fds(conn)
+                    nonce = request.get('health_nonce')
+                    if set(request) == {'health_nonce'} and isinstance(nonce, str) and len(nonce) == 32 and all(c in '0123456789abcdef' for c in nonce):
+                        # This branch can only execute after initialize has returned
+                        # with Landlock and seccomp installed, in the real serve loop.
+                        conn.sendall(_canonical({'health_nonce': nonce, 'status': 'ready'}) + b'\n')
+                    else:
+                        writer.handle_request(conn, request)
                 except (D090Rejected, ValueError, OSError):
                     # No exception detail or content is returned to callers.
                     continue

@@ -98,6 +98,40 @@ def test_confined_daemon_handles_multiple_writes_and_blocks_mutation(isolated_di
             file = root / (n + '.md')
             assert file.read_bytes() == ('approved-' + n).encode()
             assert file.stat().st_gid == read_gid and file.stat().st_mode & 0o777 == 0o440
+        # Start the actual service loop, not the initialize-only diagnostic
+        # probe. Its readiness response must only be available to Authority.
+        config['socket_path'] = str(sockdir / 'writer-service.sock')
+        config_path.write_text(json.dumps(config))
+        service = subprocess.Popen([sys.executable, '-m', 'secondbrain_core.modules.d090_writer_service', str(config_path)],
+                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                 preexec_fn=lambda: _drop(writer_uid, writer_gid, [authority_gid, read_gid]))
+        try:
+            ready_code = """import sys, time
+from secondbrain_core.modules.d090_authority_writer import UnixWriterClient
+c=UnixWriterClient(sys.argv[1],writer_uid=int(sys.argv[2]),writer_gid=int(sys.argv[3]),timeout_seconds=0.25)
+for _ in range(100):
+ if c.ready(): break
+ time.sleep(0.05)
+else: raise RuntimeError('real service never became ready')
+"""
+            ready = subprocess.run([sys.executable, '-c', ready_code, config['socket_path'], str(writer_uid), str(writer_gid)],
+                capture_output=True, text=True, timeout=10, env=env,
+                preexec_fn=lambda: (os.setgroups([]), os.setgid(authority_gid), os.setuid(authority_uid)))
+            assert ready.returncode == 0, (ready.stdout, ready.stderr)
+            denied_code = """import sys
+from secondbrain_core.modules.d090_authority_writer import UnixWriterClient
+c=UnixWriterClient(sys.argv[1],writer_uid=int(sys.argv[2]),writer_gid=int(sys.argv[3]),timeout_seconds=1)
+assert not c.ready()
+"""
+            denied = subprocess.run([sys.executable, '-c', denied_code, config['socket_path'], str(writer_uid), str(writer_gid)],
+                capture_output=True, text=True, timeout=10, env=env,
+                preexec_fn=lambda: (os.setgroups([authority_gid]), os.setgid(core_gid), os.setuid(core_uid)))
+            assert denied.returncode == 0, (denied.stdout, denied.stderr)
+            assert service.poll() is None
+        finally:
+            if service.poll() is None:
+                service.kill()
+            service.communicate(timeout=5)
     finally:
         if daemon.poll() is None:
             daemon.kill(); daemon.communicate(timeout=5)

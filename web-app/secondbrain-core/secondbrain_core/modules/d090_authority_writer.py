@@ -460,6 +460,9 @@ class StrictCreateOnlyWriter:
             conn, self.role_ids.authority_uid, self.role_ids.authority_gid,
         )
         request = receive_bounded_json_without_fds(conn)
+        self.handle_request(conn, request)
+
+    def handle_request(self, conn, request):
         if set(request) != {"grant", "content_base64"} or not isinstance(request.get("grant"), dict):
             raise D090Rejected("ipc_invalid_request")
         encoded = request.get("content_base64")
@@ -498,6 +501,28 @@ class UnixWriterClient:
         self.writer_uid = writer_uid
         self.writer_gid = writer_gid
         self.timeout_seconds = timeout_seconds
+
+    def ready(self) -> bool:
+        """Challenge the Writer UID; combine with independently verified confinement."""
+        import secrets
+        challenge = secrets.token_hex(16)
+        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | getattr(socket, "SOCK_CLOEXEC", 0))
+        conn.settimeout(self.timeout_seconds)
+        try:
+            conn.connect(self.socket_path)
+            authority_peer_before_body(conn, self.writer_uid, self.writer_gid)
+            conn.sendall(_canonical({"health_nonce": challenge}) + b"\n")
+            data = bytearray()
+            while len(data) <= 256 and not data.endswith(b"\n"):
+                part = conn.recv(257 - len(data))
+                if not part:
+                    return False
+                data.extend(part)
+            return bytes(data) == _canonical({"health_nonce": challenge, "status": "ready"}) + b"\n"
+        except (OSError, D090Rejected):
+            return False
+        finally:
+            conn.close()
 
     def __call__(self, grant: dict, content: bytes) -> dict:
         request = _canonical({
