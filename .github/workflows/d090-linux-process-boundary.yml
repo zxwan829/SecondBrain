@@ -15,6 +15,11 @@ on:
       - "web-app/secondbrain-core/tests/d090_linux_process_helper.py"
       - "web-app/secondbrain-core/tests/test_d090_authority_writer_linux_process.py"
       - "web-app/secondbrain-core/tests/test_d090_service_ipc.py"
+      - "web-app/secondbrain-core/secondbrain_core/modules/d090_snapshots.py"
+      - "web-app/secondbrain-core/secondbrain_core/modules/d090_writer_service.py"
+      - "web-app/secondbrain-core/tests/test_d090_snapshots.py"
+      - "web-app/secondbrain-core/tests/test_d090_writer_daemon_linux.py"
+      - "web-app/secondbrain-core/tests/d090_writer_daemon_probe.py"
   workflow_dispatch:
     inputs:
       candidate_sha:
@@ -66,6 +71,6 @@ jobs:
         run: |
           python_bin="$(command -v python)"
           sudo env PYTHONPATH="${PYTHONPATH:-}" "$python_bin" -m pytest -q -p no:cacheprovider \
-            tests/test_d090_authority_writer_linux_process.py tests/test_d090_service_ipc.py
+            tests/test_d090_authority_writer_linux_process.py tests/test_d090_service_ipc.py tests/test_d090_snapshots.py tests/test_d090_writer_daemon_linux.py
       - name: Check patch whitespace
         run: git diff --check

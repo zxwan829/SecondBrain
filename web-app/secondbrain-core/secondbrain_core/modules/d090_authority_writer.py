@@ -380,10 +380,20 @@ class StrictCreateOnlyWriter:
 
     def __init__(self, target_root: str, public_key: Ed25519PublicKey, key_id: str,
                  target_map: Mapping[str, str], role_ids: D090RoleIds,
-                 *, allow_synthetic_identities: bool = False):
+                 *, allow_synthetic_identities: bool = False, readonly_gid: int | None = None):
         role_ids.validate()
         _assert_process_identity(role_ids.writer_uid, role_ids.writer_gid, allow_synthetic_identities)
-        self.root = _check_root(target_root)
+        if readonly_gid is None:
+            self.root = _check_root(target_root)
+        else:
+            if isinstance(readonly_gid, bool) or not isinstance(readonly_gid, int) or readonly_gid < 0:
+                raise D090Rejected("writer_readonly_gid_invalid")
+            self.root = os.path.abspath(target_root)
+            info = os.stat(self.root, follow_symlinks=False)
+            # setgid makes each new 0440 inode inherit the dedicated RO group.
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_gid != readonly_gid or stat.S_IMODE(info.st_mode) != 0o2750):
+                raise D090Rejected("writer_root_unsafe")
         self.root_fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
         self.public_key = public_key
         self.key_id = key_id
