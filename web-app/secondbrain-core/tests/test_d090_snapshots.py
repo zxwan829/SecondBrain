@@ -95,3 +95,11 @@ def test_noncooperating_writer_exposes_guard_contract_gap(tmp_path, monkeypatch)
     assert calls == [b'approved output']
     assert store.provenance(snap, operation_id='operation-1', target_id='target-1',
         content=calls[0])['current_source'] == 'drift'
+
+def test_provenance_reports_unavailable_current_source(tmp_path):
+    capture, state, authority, store, snap = fixture(tmp_path, receipt)
+    assert confirm(store, snap)['status'] == 'published'
+    (capture.raw_root / state['raw_path']).unlink()
+    source = store.provenance(snap, operation_id='operation-1', target_id='target-1', content=b'approved output')
+    assert source['historical_snapshot'] == 'verified'
+    assert source['current_source'] == 'unavailable'

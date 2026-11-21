@@ -46,7 +46,9 @@ def test_confined_daemon_handles_multiple_writes_and_blocks_mutation(isolated_di
     core_uid, authority_uid, writer_uid = uid, uid + 1, uid + 2
     core_gid, authority_gid, writer_gid, read_gid = gid, gid + 1, gid + 2, gid + 3
     tmp_path.chmod(0o711)
-    pkg = tmp_path / 'secondbrain_core'
+    module_root = tmp_path / 'role_modules'
+    module_root.mkdir(mode=0o755)
+    pkg = module_root / 'secondbrain_core'
     shutil.copytree(Path(__file__).parents[1] / 'secondbrain_core', pkg)
     for path in [pkg, *pkg.rglob('*')]: path.chmod(0o755 if path.is_dir() else 0o644)
     root = tmp_path / 'knowledge'
@@ -65,7 +67,7 @@ def test_confined_daemon_handles_multiple_writes_and_blocks_mutation(isolated_di
               'socket_path': str(sockdir / 'writer.sock'), 'socket_gid': authority_gid}
     config_path = tmp_path / 'config.json'; config_path.write_text(json.dumps(config)); config_path.chmod(0o644)
     helper = tmp_path / 'daemon.py'; shutil.copyfile(Path(__file__).with_name('d090_writer_daemon_probe.py'), helper); helper.chmod(0o644)
-    env = dict(os.environ, PYTHONPATH=str(tmp_path))
+    env = dict(os.environ, PYTHONPATH=str(module_root))
     daemon = subprocess.Popen([sys.executable, str(helper), str(config_path)], stdin=subprocess.DEVNULL,
              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
              preexec_fn=lambda: _drop(writer_uid, writer_gid, [authority_gid, read_gid]))
