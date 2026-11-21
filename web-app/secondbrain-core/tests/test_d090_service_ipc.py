@@ -71,3 +71,23 @@ def test_writer_rejects_socket_inherited_as_standard_input():
     finally:
         parent.close()
         child.close()
+
+@pytest.mark.skipif(not os.path.isdir('/proc/self/fd'), reason='requires Linux procfs')
+def test_writer_rejects_non_null_character_device_and_extra_fd():
+    import subprocess
+    import sys
+    code = ('from secondbrain_core.modules.d090_writer_service import _check_fds; '
+            '_check_fds({0, 1, 2})')
+    with open('/dev/zero', 'rb') as device:
+        result = subprocess.run([sys.executable, '-c', code], stdin=device,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        assert result.returncode != 0 and b'writer_unsafe_standard_fd' in result.stderr
+    extra_read, extra_write = os.pipe()
+    try:
+        result = subprocess.run([sys.executable, '-c', code], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                pass_fds=(extra_write,), timeout=10)
+        assert result.returncode != 0 and b'writer_unexpected_inherited_fd' in result.stderr
+    finally:
+        os.close(extra_read)
+        os.close(extra_write)

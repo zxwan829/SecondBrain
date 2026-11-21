@@ -85,3 +85,15 @@ def test_registration_metadata_tampering_is_rejected(registry, field):
         db.close()
     with pytest.raises(D090Rejected, match='registration_corrupt'):
         registry.read(first['capture_id'])
+
+def test_valid_registration_manifest_and_signature_cannot_be_swapped(registry):
+    first = registry.register(b'same bytes', authenticated_subject='owner')
+    second = registry.register(b'same bytes', authenticated_subject='another-owner')
+    db = registry.authority._connect()
+    try:
+        manifest, signature = db.execute('SELECT manifest,signature FROM trusted_sources WHERE capture_id=?', (second['capture_id'],)).fetchone()
+        db.execute('UPDATE trusted_sources SET manifest=?,signature=? WHERE capture_id=?', (manifest, signature, first['capture_id']))
+    finally:
+        db.close()
+    with pytest.raises(D090Rejected, match='registration_corrupt'):
+        registry.read(first['capture_id'])
