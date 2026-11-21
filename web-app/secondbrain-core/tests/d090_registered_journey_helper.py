@@ -46,12 +46,12 @@ class CaptureReadOnly:
     raw_root = base / 'core-raw'
     review_root = base / 'core-review'
     def get(self, capture_id):
-        return json.loads((base / 'core-state' / (capture_id + '.json')).read_text())
+        return json.loads((base / 'core-state' / 'captures' / (capture_id + '.json')).read_text())
 capture = CaptureReadOnly()
 # This no-op guard is deliberately an integration fixture; it does not prove
 # pre-confirmation protection against a noncooperating source writer.
 snapshots = CaptureSnapshots(authority, capture, trusted_source_verifier=registry.verify,
-                             source_guard=lambda _: contextlib.nullcontext())
+                             source_guard=lambda _: contextlib.nullcontext(), registration_resolver=registry.read)
 def build(capture_id, target_id, content):
     return snapshots.seal(capture_id=capture_id, approval_id='approval-1', operation_id='operation-1',
                           target_id=target_id, approved_bytes=content.encode())

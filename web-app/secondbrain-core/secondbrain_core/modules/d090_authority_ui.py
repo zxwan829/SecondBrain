@@ -23,7 +23,7 @@ node('register').onclick = async () => { try {
 } catch(e) { status(e.message); } };
 node('preview').onclick = async () => { preview=null; node('agree').checked=false; node('confirm').disabled=true;
   try { preview=await post('/candidates', {capture_id:node('capture').value,target_id:node('target').value,content:node('content').value});
-    node('metadata').textContent='来源: '+preview.capture_id+' / '+preview.raw_ref+' / '+preview.raw_sha256+'；Review: '+preview.review_ref+' / '+preview.review_sha256+'；目标: '+preview.target_id;
+    node('metadata').textContent='来源: '+preview.capture_id+' / '+preview.raw_ref+' / '+preview.raw_sha256+'；Review: '+preview.review_ref+' / '+preview.review_sha256+'；目标: '+preview.target_id+'；快照版本: '+preview.snapshot_id+'；正文 SHA-256: '+preview.binding.content_sha256+'；批准: '+preview.binding.approval_id+'；操作: '+preview.binding.operation_id;
     node('result').textContent=preview.content; status('请核对完整预览');
   } catch(e) { node('metadata').textContent=''; node('result').textContent=''; status(e.message); }
 };

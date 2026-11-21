@@ -11,6 +11,7 @@ from secondbrain_core.modules.d090_authority_service import create_authority_app
 from secondbrain_core.modules.d090_authority_writer import D090Authority, D090RoleIds, Ed25519GrantSigner
 from secondbrain_core.modules.d090_browser_confirmation import BrowserConfirmation
 from secondbrain_core.modules.d090_snapshots import CaptureSnapshots
+from secondbrain_core.modules.d090_registration import TrustedSourceRegistry
 
 
 def test_authority_session_preview_exact_confirmation_and_recovery(tmp_path):
@@ -23,8 +24,6 @@ def test_authority_session_preview_exact_confirmation_and_recovery(tmp_path):
     auth = AppSessionAuth(str(secret), [origin])
     confirmation = BrowserConfirmation(auth)
     capture = CaptureService(tmp_path / 'raw', tmp_path / 'review', tmp_path / 'state')
-    item = capture.accept_text('synthetic raw')
-    capture.process(item, b'synthetic raw')
     records = []
     def publish(grant, content):
         records.append(content)
@@ -32,22 +31,22 @@ def test_authority_session_preview_exact_confirmation_and_recovery(tmp_path):
     authority = D090Authority(str(tmp_path / 'ledger'), Ed25519GrantSigner('key', Ed25519PrivateKey.generate()),
         publish, role_ids=D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103),
         browser_confirmation=confirmation, allow_synthetic_identities=True)
-    # Test-only fake provider, not evidence of source authenticity.
-    snapshots = CaptureSnapshots(authority, capture, trusted_source_verifier=lambda *_: True,
-                                  source_guard=lambda _: contextlib.nullcontext())
-    class Registry:
-        def register(self, raw, *, authenticated_subject):
-            assert authenticated_subject == 'owner'
-            return {'capture_id': 'registered-1', 'length': len(raw)}
+    registry = TrustedSourceRegistry(authority)
+    item = registry.register(b'synthetic raw', authenticated_subject='owner')
+    captured = capture.accept_file(item['raw_ref'], b'synthetic raw', capture_id=item['capture_id'],
+        extra_state={'review_path_hint': item['review_ref']}, exact_raw_name=True)
+    capture.process(captured, b'synthetic raw')
+    snapshots = CaptureSnapshots(authority, capture, trusted_source_verifier=registry.verify,
+        registration_resolver=registry.read, source_guard=lambda _: contextlib.nullcontext())
     def builder(capture_id, target_id, content):
         return snapshots.seal(capture_id=capture_id, approval_id='approval-1', operation_id='operation-1',
                               target_id=target_id, approved_bytes=content.encode())
     ready = [False]
     with pytest.raises(ValueError, match='hostname_must_be_independent'):
-        create_authority_app(auth, authority, snapshots, Registry(), builder, lambda: True, core_origin='https://authority.example:8443')
+        create_authority_app(auth, authority, snapshots, registry, builder, lambda: True, core_origin='https://authority.example:8443')
     with pytest.raises(ValueError, match='https_origin_required'):
-        create_authority_app(auth, authority, snapshots, Registry(), builder, lambda: True, core_origin='http://core.example')
-    app = create_authority_app(auth, authority, snapshots, Registry(), builder, lambda: ready[0], core_origin='https://core.example')
+        create_authority_app(auth, authority, snapshots, registry, builder, lambda: True, core_origin='http://core.example')
+    app = create_authority_app(auth, authority, snapshots, registry, builder, lambda: ready[0], core_origin='https://core.example')
     with TestClient(app, base_url=origin, headers={'Origin': origin}) as c:
         assert c.get('/', headers={'Host': 'core.example'}).status_code == 400
         page = c.get('/')
@@ -59,7 +58,7 @@ def test_authority_session_preview_exact_confirmation_and_recovery(tmp_path):
         assert c.post('/sources', json={'intent': 'register_source', 'raw_base64': 'YQ=='}).status_code == 401
         assert c.post('/login', json={'password': 'synthetic-secret-password'}).status_code == 200
         r = c.post('/sources', json={'intent': 'register_source', 'raw_base64': base64.b64encode(b'raw').decode()})
-        assert r.json()['capture_id'] == 'registered-1'
+        assert len(r.json()['capture_id']) == 32
         assert c.post('/sources', headers={'Origin': 'https://core.example'}, json={'intent': 'register_source', 'raw_base64': 'YQ=='}).status_code == 403
         candidate = c.post('/candidates', json={'capture_id': item['capture_id'], 'target_id': 'target-1', 'content': 'approved output'})
         assert candidate.status_code == 200, candidate.text

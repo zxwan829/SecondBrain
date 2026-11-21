@@ -29,14 +29,20 @@ def _ref(value):
 class CaptureSnapshots:
     """Persist and authenticate exactly one Capture revision per snapshot ID."""
 
-    def __init__(self, authority, capture, *, trusted_source_verifier, source_guard):
+    def __init__(self, authority, capture, *, trusted_source_verifier, source_guard, registration_resolver):
         # These are mandatory integration contracts, not assurances from Core.
         # A production provider must independently authenticate Capture records
         # and enforce the guard against every source writer, including open FDs.
-        if not callable(trusted_source_verifier) or not callable(source_guard):
+        from .d090_registration import TrustedSourceRegistry
+        registry = getattr(registration_resolver, '__self__', None)
+        if (not callable(source_guard) or not isinstance(registry, TrustedSourceRegistry)
+                or registry.authority is not authority
+                or trusted_source_verifier != registry.verify
+                or registration_resolver != registry.read):
             raise D090Rejected('trusted_source_provider_required')
         self.authority, self.capture = authority, capture
         self.trusted_source_verifier, self.source_guard = trusted_source_verifier, source_guard
+        self.registration_resolver = registration_resolver
         db = authority._connect()
         try:
             db.execute('CREATE TABLE IF NOT EXISTS capture_snapshots (id TEXT PRIMARY KEY, payload BLOB NOT NULL)')
@@ -66,10 +72,33 @@ class CaptureSnapshots:
             raise D090Rejected('snapshot_source_invalid')
         if self.trusted_source_verifier(capture_id, record, raw, review) is not True:
             raise D090Rejected('snapshot_source_untrusted')
-        return {'capture_id': capture_id, 'review_ref': review_ref, 'raw_ref': raw_ref,
+        registration = self._registration(capture_id)
+        if (registration['raw_ref'] != raw_ref or registration['review_ref'] != review_ref
+                or registration['raw_sha256'] != _digest(raw)):
+            raise D090Rejected('snapshot_source_untrusted')
+        return {'capture_id': capture_id, 'source_identity': registration['source_identity'],
+                'source_version': registration['source_version'],
+                'registration_sha256': _digest(_canonical(registration)),
+                'review_ref': review_ref, 'raw_ref': raw_ref,
                 'review_sha256': _digest(review), 'raw_sha256': _digest(raw),
                 'review': base64.b64encode(review).decode('ascii'),
                 'raw': base64.b64encode(raw).decode('ascii')}
+
+    def _registration(self, capture_id):
+        try:
+            manifest, raw = self.registration_resolver(capture_id)
+            if (not isinstance(manifest, dict) or manifest.get('capture_id') != capture_id
+                    or manifest.get('source_channel') != 'authority-user-upload'
+                    or not _valid_id(manifest.get('source_identity'))
+                    or not isinstance(raw, bytes) or not raw
+                    or manifest.get('raw_sha256') != _digest(raw)
+                    or not isinstance(manifest.get('source_version'), str)
+                    or len(manifest['source_version']) != 64
+                    or any(c not in '0123456789abcdef' for c in manifest['source_version'])):
+                raise ValueError('registration')
+            return manifest
+        except (D090Rejected, ValueError, TypeError, KeyError) as exc:
+            raise D090Rejected('snapshot_registration_untrusted') from exc
 
     def seal(self, *, capture_id, approval_id, operation_id, target_id, approved_bytes):
         if not all(_valid_id(v) for v in (approval_id, operation_id, target_id)):
@@ -111,7 +140,7 @@ class CaptureSnapshots:
             raise D090Rejected('snapshot_missing_or_corrupt')
         try:
             snapshot = json.loads(row[0])
-            if _canonical(snapshot) != row[0] or set(snapshot) != {'schema', 'capture_id', 'review_ref', 'raw_ref', 'review_sha256', 'raw_sha256', 'review', 'raw', 'approval_id', 'operation_id', 'target_id', 'content_sha256', 'content'}:
+            if _canonical(snapshot) != row[0] or set(snapshot) != {'schema', 'capture_id', 'review_ref', 'raw_ref', 'review_sha256', 'raw_sha256', 'review', 'raw', 'approval_id', 'operation_id', 'target_id', 'content_sha256', 'content', 'source_identity', 'source_version', 'registration_sha256'}:
                 raise ValueError('schema')
             if snapshot['schema'] != 'd090-capture-snapshot-v1':
                 raise ValueError('schema')
@@ -123,6 +152,14 @@ class CaptureSnapshots:
                 raise ValueError('identity')
         except (ValueError, TypeError, KeyError) as exc:
             raise D090Rejected('snapshot_missing_or_corrupt') from exc
+        registration = self._registration(snapshot['capture_id'])
+        if (snapshot['source_identity'] != registration['source_identity']
+                or snapshot['source_version'] != registration['source_version']
+                or snapshot['registration_sha256'] != _digest(_canonical(registration))
+                or snapshot['raw_ref'] != registration['raw_ref']
+                or snapshot['review_ref'] != registration['review_ref']
+                or snapshot['raw_sha256'] != registration['raw_sha256']):
+            raise D090Rejected('snapshot_registration_untrusted')
         return snapshot
 
     def binding(self, snapshot_id):
@@ -182,6 +219,8 @@ class CaptureSnapshots:
             current = {'snapshot_source_unavailable': 'unavailable',
                        'snapshot_source_invalid': 'drift'}.get(str(exc), 'unverified')
         return {'historical_snapshot': 'verified', 'current_source': current,
-                'snapshot_id': snapshot_id, 'capture_id': s['capture_id'], 'review_ref': s['review_ref'],
+                'snapshot_id': snapshot_id, 'capture_id': s['capture_id'],
+                'source_identity': s['source_identity'], 'source_version': s['source_version'],
+                'registration_sha256': s['registration_sha256'], 'review_ref': s['review_ref'],
                 'review_sha256': s['review_sha256'], 'raw_ref': s['raw_ref'], 'raw_sha256': s['raw_sha256'],
                 'request_id': operation_id}

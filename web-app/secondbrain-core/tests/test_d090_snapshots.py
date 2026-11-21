@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from secondbrain_core.modules.capture import CaptureService
 from secondbrain_core.modules.d090_authority_writer import D090Authority, D090Rejected, D090RoleIds, Ed25519GrantSigner
 from secondbrain_core.modules.d090_snapshots import CaptureSnapshots
+from secondbrain_core.modules.d090_registration import TrustedSourceRegistry
 
 class Proof:
     test_only = True
@@ -17,16 +18,19 @@ def fixture(tmp_path, publish):
     for name in ('raw', 'review', 'state', 'ledger'):
         (tmp_path / name).mkdir(mode=0o700)
     capture = CaptureService(tmp_path / 'raw', tmp_path / 'review', tmp_path / 'state')
-    item = capture.accept_text('synthetic original')
-    capture.process(item, b'synthetic original')
-    state = capture.get(item['capture_id'])
     authority = D090Authority(str(tmp_path / 'ledger'),
         Ed25519GrantSigner('key', Ed25519PrivateKey.generate()), publish,
         role_ids=D090RoleIds(31001,31002,31003,31101,31102,31103),
         synthetic_proof_verifier=Proof(), allow_synthetic_proof=True, allow_synthetic_identities=True)
+    registry = TrustedSourceRegistry(authority)
+    item = registry.register(b'synthetic original', authenticated_subject='owner')
+    state = capture.accept_file(item['raw_ref'], b'synthetic original', capture_id=item['capture_id'],
+                                extra_state={'review_path_hint': item['review_ref']}, exact_raw_name=True)
+    capture.process(state, b'synthetic original')
+    state = capture.get(item['capture_id'])
     # Test fixture only: a no-op guard is not a production writer boundary.
-    store = CaptureSnapshots(authority, capture, trusted_source_verifier=lambda *_: True,
-                             source_guard=lambda _: contextlib.nullcontext())
+    store = CaptureSnapshots(authority, capture, trusted_source_verifier=registry.verify,
+                             source_guard=lambda _: contextlib.nullcontext(), registration_resolver=registry.read)
     snapshot = store.seal(capture_id=item['capture_id'], approval_id='approval-1',
         operation_id='operation-1', target_id='target-1', approved_bytes=b'approved output')
     return capture, state, authority, store, snapshot
@@ -103,3 +107,24 @@ def test_provenance_reports_unavailable_current_source(tmp_path):
     source = store.provenance(snap, operation_id='operation-1', target_id='target-1', content=b'approved output')
     assert source['historical_snapshot'] == 'verified'
     assert source['current_source'] == 'unavailable'
+
+
+def test_snapshot_binds_registered_identity_and_version(tmp_path):
+    capture, state, authority, store, snap = fixture(tmp_path, receipt)
+    snapshot = store.load(snap)
+    assert snapshot['source_identity'] == 'owner'
+    assert len(snapshot['source_version']) == 64
+    assert len(snapshot['registration_sha256']) == 64
+    db = authority._connect()
+    try:
+        db.execute('UPDATE trusted_sources SET raw=? WHERE capture_id=?', (b'forged', state['capture_id']))
+    finally:
+        db.close()
+    with pytest.raises(D090Rejected, match='snapshot_registration_untrusted'):
+        store.load(snap)
+
+def test_snapshot_requires_registered_source_provider(tmp_path):
+    capture, state, authority, store, snap = fixture(tmp_path, receipt)
+    with pytest.raises(D090Rejected, match='trusted_source_provider_required'):
+        CaptureSnapshots(authority, capture, trusted_source_verifier=lambda *_: True,
+                         source_guard=lambda _: contextlib.nullcontext(), registration_resolver=None)
