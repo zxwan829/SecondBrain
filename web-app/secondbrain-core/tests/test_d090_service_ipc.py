@@ -55,3 +55,19 @@ def test_client_accepts_matching_writer_peer(tmp_path):
         assert b'"content_base64":"Y29udGVudA=="' in received[0]
     finally:
         listener.close()
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="requires Linux procfs")
+def test_writer_rejects_socket_inherited_as_standard_input():
+    import subprocess
+    import sys
+    parent, child = socket.socketpair()
+    try:
+        code = ('from secondbrain_core.modules.d090_writer_service import _check_fds; '
+                '_check_fds({0, 1, 2})')
+        result = subprocess.run([sys.executable, '-c', code], stdin=child,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        assert result.returncode != 0
+        assert b'writer_unsafe_standard_fd' in result.stderr
+    finally:
+        parent.close()
+        child.close()

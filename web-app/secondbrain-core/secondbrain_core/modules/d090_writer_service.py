@@ -119,8 +119,10 @@ def _check_fds(expected):
             raise
         if fd not in expected:
             raise RuntimeError('writer_unexpected_inherited_fd')
-        if fd < 3 and not (stat.S_ISFIFO(info.st_mode) or stat.S_ISCHR(info.st_mode)):
-            raise RuntimeError('writer_unsafe_standard_fd')
+        if fd < 3:
+            is_null = stat.S_ISCHR(info.st_mode) and info.st_rdev == os.makedev(1, 3)
+            if not (stat.S_ISFIFO(info.st_mode) or is_null):
+                raise RuntimeError('writer_unsafe_standard_fd')
 
 def _bind(path, socket_gid):
     parent = Path(path).parent

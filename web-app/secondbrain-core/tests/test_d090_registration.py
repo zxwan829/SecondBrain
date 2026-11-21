@@ -62,3 +62,26 @@ def test_rejects_invalid_registration(registry):
             registry.register(data, authenticated_subject=subject)
     with pytest.raises(D090Rejected, match='registration_missing'):
         registry.read('0' * 32)
+
+@pytest.mark.parametrize('field', ['source_identity', 'source_version', 'signature', 'manifest_swap'])
+def test_registration_metadata_tampering_is_rejected(registry, field):
+    first = registry.register(b'first synthetic source', authenticated_subject='owner')
+    second = registry.register(b'second synthetic source', authenticated_subject='owner')
+    db = registry.authority._connect()
+    try:
+        manifest, signature = db.execute('SELECT manifest,signature FROM trusted_sources WHERE capture_id=?', (first['capture_id'],)).fetchone()
+        if field == 'signature':
+            signature = db.execute('SELECT signature FROM trusted_sources WHERE capture_id=?', (second['capture_id'],)).fetchone()[0]
+        elif field == 'manifest_swap':
+            manifest = db.execute('SELECT manifest FROM trusted_sources WHERE capture_id=?', (second['capture_id'],)).fetchone()[0]
+        else:
+            import json
+            from secondbrain_core.modules.d090_authority_writer import _canonical
+            decoded = json.loads(manifest)
+            decoded[field] = 'impostor' if field == 'source_identity' else '0' * 64
+            manifest = _canonical(decoded)
+        db.execute('UPDATE trusted_sources SET manifest=?,signature=? WHERE capture_id=?', (manifest, signature, first['capture_id']))
+    finally:
+        db.close()
+    with pytest.raises(D090Rejected, match='registration_corrupt'):
+        registry.read(first['capture_id'])
