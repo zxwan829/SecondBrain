@@ -42,13 +42,13 @@ def issue(core, content=CONTENT, operation="operation-1", expires_at=None):
     expires_at = expires_at or int(time.time()) + 120
     proof = {
         "approval_id": "approval-1", "operation_id": operation, "source_revision": "rev-7",
-        "source_sha256": SOURCE_SHA, "target_id": "target-1",
+        "source_sha256": SOURCE_SHA, "target_id": "target-1", "target_filename": "approved.md", "target_scope": "knowledge-test",
         "content_sha256": hashlib.sha256(content).hexdigest(), "content_length": len(content),
     }
     return core.issue_grant(
         proof=proof, approval_id="approval-1", operation_id=operation,
         source_revision="rev-7", source_sha256=SOURCE_SHA, approved_bytes=content,
-        target_id="target-1", expires_at=expires_at, nonce="nonce-1",
+        target_id="target-1", target_filename="approved.md", target_scope="knowledge-test", expires_at=expires_at, nonce="nonce-1",
     )
 
 
@@ -288,7 +288,7 @@ def test_writer_binds_peer_to_configured_authority_before_body_and_cannot_be_ove
     role_ids = d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103)
     writer = d090.StrictCreateOnlyWriter(
         str(root), signer.public_key, signer.key_id, {"target-1": "approved.md"},
-        role_ids, allow_synthetic_identities=True,
+        role_ids, target_scope="knowledge-test", allow_synthetic_identities=True,
     )
 
     class Connection:
@@ -348,13 +348,13 @@ def test_strict_writer_fails_closed_without_otmpfile_instead_of_fallback(tmp_pat
         "protocol": d090.PROTOCOL, "key_id": signer.key_id, "approval_id": "approval-1",
         "operation_id": "operation-1", "source_revision": "rev-7", "source_sha256": SOURCE_SHA,
         "content_sha256": hashlib.sha256(CONTENT).hexdigest(), "content_length": len(CONTENT),
-        "target_id": "target-1", "create_only": True, "expires_at": int(time.time()) + 120,
+        "target_id": "target-1", "target_filename": "approved.md", "target_scope": "knowledge-test", "create_only": True, "expires_at": int(time.time()) + 120,
         "nonce": "nonce-1", "audience": "secondbrain-knowledge-writer",
     }
     signed = {**grant, "signature": signer.sign(grant)}
     writer = d090.StrictCreateOnlyWriter(
         str(root), signer.public_key, signer.key_id, {"target-1": "approved.md"},
-        d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103), allow_synthetic_identities=True,
+        d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103), target_scope="knowledge-test", allow_synthetic_identities=True,
     )
     monkeypatch.delattr(d090.os, "O_TMPFILE", raising=False)
     try:
@@ -376,7 +376,7 @@ def test_linux_writer_publishes_exactly_once_without_overwriting_existing_file(t
     writer = d090.StrictCreateOnlyWriter(
         str(root), signer.public_key, signer.key_id,
         {"target-1": "approved.md", "target-2": "existing.md"}, roles,
-        allow_synthetic_identities=True,
+        target_scope="knowledge-test", allow_synthetic_identities=True,
     )
 
     def signed(operation_id, target_id):
@@ -384,7 +384,7 @@ def test_linux_writer_publishes_exactly_once_without_overwriting_existing_file(t
             "protocol": d090.PROTOCOL, "key_id": signer.key_id, "approval_id": "approval-1",
             "operation_id": operation_id, "source_revision": "rev-7", "source_sha256": SOURCE_SHA,
             "content_sha256": hashlib.sha256(CONTENT).hexdigest(), "content_length": len(CONTENT),
-            "target_id": target_id, "create_only": True, "expires_at": int(time.time()) + 120,
+            "target_id": target_id, "target_filename": {"target-1": "approved.md", "target-2": "existing.md"}[target_id], "target_scope": "knowledge-test", "create_only": True, "expires_at": int(time.time()) + 120,
             "nonce": operation_id, "audience": "secondbrain-knowledge-writer",
         }
         return {**grant, "signature": signer.sign(grant)}
@@ -432,3 +432,42 @@ def test_frame_rejects_oversize_even_when_newline_is_in_same_read():
 
     with pytest.raises(d090.D090Rejected, match="ipc_frame_oversize"):
         d090.receive_bounded_json_without_fds(Connection(), limit=16)
+
+def test_writer_rejects_mapping_that_differs_from_approved_filename(tmp_path):
+    root = tmp_path / 'knowledge'
+    root.mkdir(mode=0o700)
+    signer = d090.Ed25519GrantSigner('test-key-1', Ed25519PrivateKey.generate())
+    roles = d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103)
+    writer = d090.StrictCreateOnlyWriter(str(root), signer.public_key, signer.key_id,
+        {'target-1': 'changed.md'}, roles, target_scope="knowledge-test", allow_synthetic_identities=True)
+    grant = {'protocol': d090.PROTOCOL, 'key_id': signer.key_id, 'approval_id': 'approval-1',
+        'operation_id': 'operation-1', 'source_revision': 'rev-1', 'source_sha256': SOURCE_SHA,
+        'content_sha256': hashlib.sha256(CONTENT).hexdigest(), 'content_length': len(CONTENT),
+        'target_id': 'target-1', 'target_filename': 'approved.md', 'target_scope': 'knowledge-test', 'create_only': True,
+        'expires_at': int(time.time()) + 120, 'nonce': 'nonce-1',
+        'audience': 'secondbrain-knowledge-writer'}
+    try:
+        with pytest.raises(d090.D090Rejected, match='grant_binding_mismatch'):
+            writer.publish({**grant, 'signature': signer.sign(grant)}, CONTENT)
+        assert not list(root.iterdir())
+    finally:
+        writer.close()
+
+def test_writer_rejects_legacy_grant_protocol(tmp_path):
+    root = tmp_path / 'knowledge'
+    root.mkdir(mode=0o700)
+    signer = d090.Ed25519GrantSigner('test-key-1', Ed25519PrivateKey.generate())
+    roles = d090.D090RoleIds(31001, 31002, 31003, 31101, 31102, 31103)
+    writer = d090.StrictCreateOnlyWriter(str(root), signer.public_key, signer.key_id,
+        {'target-1': 'approved.md'}, roles, target_scope="knowledge-test", allow_synthetic_identities=True)
+    grant = {'protocol': 'd090.writer-grant.v1', 'key_id': signer.key_id, 'approval_id': 'approval-1',
+        'operation_id': 'operation-1', 'source_revision': 'rev-1', 'source_sha256': SOURCE_SHA,
+        'content_sha256': hashlib.sha256(CONTENT).hexdigest(), 'content_length': len(CONTENT),
+        'target_id': 'target-1', 'target_filename': 'approved.md', 'target_scope': 'knowledge-test', 'create_only': True,
+        'expires_at': int(time.time()) + 120, 'nonce': 'nonce-1', 'audience': 'secondbrain-knowledge-writer'}
+    try:
+        with pytest.raises(d090.D090Rejected, match='invalid_grant'):
+            writer.publish({**grant, 'signature': signer.sign(grant)}, CONTENT)
+        assert not list(root.iterdir())
+    finally:
+        writer.close()

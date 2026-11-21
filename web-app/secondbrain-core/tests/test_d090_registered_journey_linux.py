@@ -90,15 +90,26 @@ for cookie in ('','sb_app_session=forged'):
                                        text=True, timeout=10,
                                        preexec_fn=lambda: _drop_identity(roles.core_uid, roles.core_gid))
                 assert child.returncode == 0, child.stderr
-            mutate(review, "p.with_suffix('.bak').write_bytes(p.read_bytes());p.write_bytes(b'drift')")
-            authority.stdin.write('DRIFTED\n'); authority.stdin.flush()
-            assert _readline(authority, timeout=20) == 'REJECTED_PRECONFIRM'
-            mutate(review, "p.write_bytes(p.with_suffix('.bak').read_bytes())")
-            authority.stdin.write('RESTORED\n'); authority.stdin.flush()
-            assert _readline(authority, timeout=20) == 'DISPATCH'
-            mutate(raw, "p.write_bytes(b'after approval drift')")
-            authority.stdin.write('CONTINUE\n'); authority.stdin.flush()
-            assert _readline(authority, timeout=20) == 'VERIFIED_HISTORY_DRIFT'
+            mutate(review, "p.write_bytes(b'drift before confirmation')")
+            # Keep a real separate Core UID writer active throughout confirmation
+            # and publication; the immutable approved snapshot must be unaffected.
+            loop = ("import sys,time; from pathlib import Path; p=Path(sys.argv[1]); "
+                    "print('WRITING',flush=True); "
+                    "exec(\"while True:\\n p.write_bytes(b'concurrent core revision')\\n time.sleep(0.002)\")")
+            concurrent = subprocess.Popen([sys.executable, '-c', loop, str(review)], env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                preexec_fn=lambda: _drop_identity(roles.core_uid, roles.core_gid))
+            try:
+                assert _readline(concurrent, timeout=10) == 'WRITING'
+                authority.stdin.write('DRIFTED\n'); authority.stdin.flush()
+                assert _readline(authority, timeout=20) == 'DISPATCH'
+                mutate(raw, "p.write_bytes(b'after approval drift')")
+                authority.stdin.write('CONTINUE\n'); authority.stdin.flush()
+                assert _readline(authority, timeout=20) == 'VERIFIED_HISTORY_DRIFT'
+                assert concurrent.poll() is None
+            finally:
+                concurrent.terminate()
+                concurrent.communicate(timeout=5)
             out, err = authority.communicate(timeout=15)
             assert authority.returncode == 0, (out, err)
             assert writer.wait(timeout=10) == 0

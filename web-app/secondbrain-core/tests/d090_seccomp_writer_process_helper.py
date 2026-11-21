@@ -124,6 +124,8 @@ def main():
         "content_sha256": __import__("hashlib").sha256(CONTENT).hexdigest(),
         "content_length": len(CONTENT),
         "target_id": "target-1",
+        "target_filename": "approved.md",
+        "target_scope": "knowledge-test",
         "create_only": True,
         "expires_at": int(__import__("time").time()) + 120,
         "nonce": "synthetic-nonce",
@@ -140,7 +142,7 @@ def main():
     writer = d090.StrictCreateOnlyWriter(
         str(target_root), signer.public_key, signer.key_id, {"target-1": "approved.md"},
         d090.D090RoleIds(31001, 31002, WRITER_UID, 31101, 31102, WRITER_GID),
-        allow_synthetic_identities=True,
+        target_scope="knowledge-test", allow_synthetic_identities=True,
     )
     extra_fds = []
     for fd in range(3, 128):

@@ -199,7 +199,7 @@ def _exercise_committed_capture(ledger, knowledge, socket_path, private_key, rol
                 return authority
             fields = dict(approval_id="approval-1", operation_id="operation-1",
                           source_revision=capture_source_revision(*source_refs.values(), raw),
-                          source_sha256=hashlib.sha256(review).hexdigest(), target_id="synthetic-target")
+                          source_sha256=hashlib.sha256(review).hexdigest(), target_id="synthetic-target", target_filename="synthetic-note.md", target_scope="knowledge-test")
             review_file = root / "review" / completed["review_path"]
             app = create_lab_app(auth, factory, dict(fields, approved_bytes=review),
                                  read_source=lambda: (review_file.read_bytes(),

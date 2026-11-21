@@ -37,10 +37,10 @@ def test_authority_session_preview_exact_confirmation_and_recovery(tmp_path):
         extra_state={'review_path_hint': item['review_ref']}, exact_raw_name=True)
     capture.process(captured, b'synthetic raw')
     snapshots = CaptureSnapshots(authority, capture, trusted_source_verifier=registry.verify,
-        registration_resolver=registry.read, source_guard=lambda _: contextlib.nullcontext())
+        registration_resolver=registry.read)
     def builder(capture_id, target_id, content):
         return snapshots.seal(capture_id=capture_id, approval_id='approval-1', operation_id='operation-1',
-                              target_id=target_id, approved_bytes=content.encode())
+                              target_id=target_id, target_filename='approved.md', target_scope='knowledge-test', approved_bytes=content.encode())
     ready = [False]
     with pytest.raises(ValueError, match='hostname_must_be_independent'):
         create_authority_app(auth, authority, snapshots, registry, builder, lambda: True, core_origin='https://authority.example:8443')

@@ -30,9 +30,9 @@ def fixture(tmp_path, publish):
     state = capture.get(item['capture_id'])
     # Test fixture only: a no-op guard is not a production writer boundary.
     store = CaptureSnapshots(authority, capture, trusted_source_verifier=registry.verify,
-                             source_guard=lambda _: contextlib.nullcontext(), registration_resolver=registry.read)
+                             registration_resolver=registry.read)
     snapshot = store.seal(capture_id=item['capture_id'], approval_id='approval-1',
-        operation_id='operation-1', target_id='target-1', approved_bytes=b'approved output')
+        operation_id='operation-1', target_id='target-1', target_filename='approved.md', target_scope='knowledge-test', approved_bytes=b'approved output')
     return capture, state, authority, store, snapshot
 
 def receipt(grant, content):
@@ -42,18 +42,16 @@ def receipt(grant, content):
 def confirm(store, snapshot):
     return store.confirm(snapshot, proof=store.binding(snapshot), nonce='nonce-1', expires_at=int(time.time()) + 120)
 
-def test_before_confirmation_drift_fails_closed(tmp_path):
-    calls = []
-    capture, state, authority, store, snap = fixture(tmp_path, lambda *args: calls.append(args))
+def test_working_copy_drift_before_confirmation_preserves_sealed_approval(tmp_path):
+    published = []
+    capture, state, authority, store, snap = fixture(tmp_path,
+        lambda grant, content: (published.append(content), receipt(grant, content))[1])
     (capture.review_root / state['review_path']).write_bytes(b'changed')
-    with pytest.raises(D090Rejected):
-        confirm(store, snap)
-    assert not calls
-    db = authority._connect()
-    try:
-        assert db.execute('select count(*) from grants').fetchone()[0] == 0
-    finally:
-        db.close()
+    assert confirm(store, snap)['status'] == 'published'
+    assert published == [b'approved output']
+    source = store.provenance(snap, operation_id='operation-1', target_id='target-1', content=published[0])
+    assert source['historical_snapshot'] == 'verified'
+    assert source['current_source'] == 'drift'
 
 def test_after_confirmation_publishes_snapshot_and_distinguishes_drift(tmp_path):
     published = []
@@ -79,26 +77,15 @@ def test_snapshot_corruption_is_not_replaced_by_live_source(tmp_path):
     with pytest.raises(D090Rejected, match='snapshot_missing_or_corrupt'):
         confirm(store, snap)
 
-def test_untrusted_capture_source_is_rejected(tmp_path):
+def test_registration_corruption_fails_closed_after_preview(tmp_path):
     capture, state, authority, store, snap = fixture(tmp_path, lambda *_: pytest.fail('writer called'))
-    store.trusted_source_verifier = lambda *_: False
-    with pytest.raises(D090Rejected, match='snapshot_source_untrusted'):
+    db = authority._connect()
+    try:
+        db.execute('UPDATE trusted_sources SET raw=? WHERE capture_id=?', (b'forged', state['capture_id']))
+    finally:
+        db.close()
+    with pytest.raises(D090Rejected, match='snapshot_registration_untrusted'):
         confirm(store, snap)
-
-def test_noncooperating_writer_exposes_guard_contract_gap(tmp_path, monkeypatch):
-    """A no-op/advisory guard cannot enforce the confirmation boundary."""
-    calls = []
-    capture, state, authority, store, snap = fixture(tmp_path,
-        lambda grant, content: (calls.append(content), receipt(grant, content))[1])
-    original = authority.issue_grant
-    def replace_before_proof(**kwargs):
-        (capture.review_root / state['review_path']).write_bytes(b'rogue writer')
-        return original(**kwargs)
-    monkeypatch.setattr(authority, 'issue_grant', replace_before_proof)
-    assert confirm(store, snap)['status'] == 'published'
-    assert calls == [b'approved output']
-    assert store.provenance(snap, operation_id='operation-1', target_id='target-1',
-        content=calls[0])['current_source'] == 'drift'
 
 def test_provenance_reports_unavailable_current_source(tmp_path):
     capture, state, authority, store, snap = fixture(tmp_path, receipt)
@@ -127,4 +114,4 @@ def test_snapshot_requires_registered_source_provider(tmp_path):
     capture, state, authority, store, snap = fixture(tmp_path, receipt)
     with pytest.raises(D090Rejected, match='trusted_source_provider_required'):
         CaptureSnapshots(authority, capture, trusted_source_verifier=lambda *_: True,
-                         source_guard=lambda _: contextlib.nullcontext(), registration_resolver=None)
+                         registration_resolver=None)

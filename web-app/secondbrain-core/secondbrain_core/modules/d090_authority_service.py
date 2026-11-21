@@ -151,7 +151,9 @@ def create_authority_app(auth, authority, snapshots, registry, candidate_builder
         return {'snapshot_id': snapshot_id, 'binding': exact, 'content': content,
                 'capture_id': snapshot['capture_id'], 'raw_ref': snapshot['raw_ref'],
                 'raw_sha256': snapshot['raw_sha256'], 'review_ref': snapshot['review_ref'],
-                'review_sha256': snapshot['review_sha256'], 'target_id': snapshot['target_id']}
+                'review_sha256': snapshot['review_sha256'], 'review_content': base64.b64decode(snapshot['review'], validate=True).decode('utf-8', 'strict'),
+                'source_identity': snapshot['source_identity'], 'source_version': snapshot['source_version'],
+                'target_id': snapshot['target_id'], 'target_filename': snapshot['target_filename'], 'target_scope': snapshot['target_scope']}
 
     @app.post('/confirm')
     async def confirm(request: Request):

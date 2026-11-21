@@ -34,11 +34,11 @@ from .restricted_knowledge_writer import MAX_OUTPUT_BYTES, _SHA256, _TARGET, _wr
 
 MAX_FRAME_BYTES = 1_500_000
 MAX_GRANT_TTL_SECONDS = 600
-PROTOCOL = "d090.writer-grant.v1"
+PROTOCOL = "d090.writer-grant.v2"
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _GRANT_KEYS = {
     "protocol", "key_id", "approval_id", "operation_id", "source_revision",
-    "source_sha256", "content_sha256", "content_length", "target_id",
+    "source_sha256", "content_sha256", "content_length", "target_id", "target_filename", "target_scope",
     "create_only", "expires_at", "nonce", "audience",
 }
 
@@ -215,6 +215,8 @@ class D090Authority:
         source_sha256: str,
         approved_bytes: bytes,
         target_id: str,
+        target_filename: str,
+        target_scope: str,
         expires_at: int,
         nonce: str,
     ) -> dict:
@@ -231,11 +233,14 @@ class D090Authority:
             "source_revision": source_revision,
             "source_sha256": source_sha256,
             "target_id": target_id,
+            "target_filename": target_filename,
+            "target_scope": target_scope,
             "content_sha256": hashlib.sha256(approved_bytes).hexdigest(),
             "content_length": len(approved_bytes),
         }
-        if (not all(_valid_id(v) for v in (approval_id, operation_id, source_revision, target_id, nonce))
-                or not isinstance(source_sha256, str) or not _SHA256.fullmatch(source_sha256)):
+        if (not all(_valid_id(v) for v in (approval_id, operation_id, source_revision, target_id, target_scope, nonce))
+                or not isinstance(source_sha256, str) or not _SHA256.fullmatch(source_sha256)
+                or not isinstance(target_filename, str) or not _TARGET.fullmatch(target_filename)):
             raise D090Rejected("invalid_approval_binding")
         try:
             approved_bytes.decode("utf-8", "strict")
@@ -259,7 +264,7 @@ class D090Authority:
             "source_revision": source_revision, "source_sha256": source_sha256,
             "content_sha256": hashlib.sha256(approved_bytes).hexdigest(),
             "content_length": len(approved_bytes), "target_id": target_id,
-            "create_only": True, "expires_at": expires_at, "nonce": nonce,
+            "target_filename": target_filename, "target_scope": target_scope, "create_only": True, "expires_at": expires_at, "nonce": nonce,
             "audience": "secondbrain-knowledge-writer",
         }
         signature = self.signer.sign(grant)
@@ -380,7 +385,7 @@ class StrictCreateOnlyWriter:
 
     def __init__(self, target_root: str, public_key: Ed25519PublicKey, key_id: str,
                  target_map: Mapping[str, str], role_ids: D090RoleIds,
-                 *, allow_synthetic_identities: bool = False, readonly_gid: int | None = None):
+                 *, target_scope: str, allow_synthetic_identities: bool = False, readonly_gid: int | None = None):
         role_ids.validate()
         _assert_process_identity(role_ids.writer_uid, role_ids.writer_gid, allow_synthetic_identities)
         if readonly_gid is None:
@@ -398,6 +403,9 @@ class StrictCreateOnlyWriter:
         self.public_key = public_key
         self.key_id = key_id
         self.target_map = dict(target_map)
+        if not _valid_id(target_scope):
+            raise D090Rejected("writer_target_scope_invalid")
+        self.target_scope = target_scope
         self.role_ids = role_ids
 
     def close(self):
@@ -418,6 +426,8 @@ class StrictCreateOnlyWriter:
         digest = hashlib.sha256(content).hexdigest()
         expiry = grant.get("expires_at")
         if (not isinstance(filename, str) or not _TARGET.fullmatch(filename)
+                or grant.get("target_filename") != filename
+                or grant.get("target_scope") != self.target_scope
                 or grant.get("audience") != "secondbrain-knowledge-writer"
                 or grant.get("create_only") is not True or isinstance(expiry, bool)
                 or not isinstance(expiry, int) or expiry <= int(time.time())

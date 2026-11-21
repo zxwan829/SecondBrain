@@ -2,8 +2,8 @@
 
 The Authority ledger is private to the Authority OS identity. Snapshots are
 stored there before preview; their digest is the signed source revision. Live
-source is checked once at confirmation, before the proof is consumed. After
-confirmation the Writer receives only the authenticated snapshot bytes.
+working copies are observed only for current-consistency reporting. The
+Writer receives only the authenticated snapshot bytes.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from .d090_authority_writer import D090Rejected, _canonical, _valid_id
+from .d090_authority_writer import D090Rejected, _canonical, _valid_id, _TARGET
 from .d090_provenance import CapturedCommitSource
 
 _MAX_BYTES = 8 * 1024 * 1024
@@ -29,19 +29,18 @@ def _ref(value):
 class CaptureSnapshots:
     """Persist and authenticate exactly one Capture revision per snapshot ID."""
 
-    def __init__(self, authority, capture, *, trusted_source_verifier, source_guard, registration_resolver):
+    def __init__(self, authority, capture, *, trusted_source_verifier, registration_resolver):
         # These are mandatory integration contracts, not assurances from Core.
-        # A production provider must independently authenticate Capture records
-        # and enforce the guard against every source writer, including open FDs.
+        # The registry independently authenticates the source registration.
         from .d090_registration import TrustedSourceRegistry
         registry = getattr(registration_resolver, '__self__', None)
-        if (not callable(source_guard) or not isinstance(registry, TrustedSourceRegistry)
+        if (not isinstance(registry, TrustedSourceRegistry)
                 or registry.authority is not authority
                 or trusted_source_verifier != registry.verify
                 or registration_resolver != registry.read):
             raise D090Rejected('trusted_source_provider_required')
         self.authority, self.capture = authority, capture
-        self.trusted_source_verifier, self.source_guard = trusted_source_verifier, source_guard
+        self.trusted_source_verifier = trusted_source_verifier
         self.registration_resolver = registration_resolver
         db = authority._connect()
         try:
@@ -100,15 +99,16 @@ class CaptureSnapshots:
         except (D090Rejected, ValueError, TypeError, KeyError) as exc:
             raise D090Rejected('snapshot_registration_untrusted') from exc
 
-    def seal(self, *, capture_id, approval_id, operation_id, target_id, approved_bytes):
-        if not all(_valid_id(v) for v in (approval_id, operation_id, target_id)):
+    def seal(self, *, capture_id, approval_id, operation_id, target_id, target_filename, target_scope, approved_bytes):
+        if not all(_valid_id(v) for v in (approval_id, operation_id, target_id, target_scope)):
             raise D090Rejected('snapshot_binding_invalid')
+        if not isinstance(target_filename, str) or not _TARGET.fullmatch(target_filename):
+            raise D090Rejected('snapshot_target_invalid')
         if not isinstance(approved_bytes, bytes) or not approved_bytes or len(approved_bytes) > _MAX_BYTES:
             raise D090Rejected('snapshot_content_invalid')
-        with self.source_guard(capture_id):
-            source = self._current(capture_id)
+        source = self._current(capture_id)
         payload = {'schema': 'd090-capture-snapshot-v1', **source, 'approval_id': approval_id,
-                   'operation_id': operation_id, 'target_id': target_id,
+                   'operation_id': operation_id, 'target_id': target_id, 'target_filename': target_filename, 'target_scope': target_scope,
                    'content_sha256': _digest(approved_bytes),
                    'content': base64.b64encode(approved_bytes).decode('ascii')}
         encoded = _canonical(payload)
@@ -140,15 +140,17 @@ class CaptureSnapshots:
             raise D090Rejected('snapshot_missing_or_corrupt')
         try:
             snapshot = json.loads(row[0])
-            if _canonical(snapshot) != row[0] or set(snapshot) != {'schema', 'capture_id', 'review_ref', 'raw_ref', 'review_sha256', 'raw_sha256', 'review', 'raw', 'approval_id', 'operation_id', 'target_id', 'content_sha256', 'content', 'source_identity', 'source_version', 'registration_sha256'}:
+            if _canonical(snapshot) != row[0] or set(snapshot) != {'schema', 'capture_id', 'review_ref', 'raw_ref', 'review_sha256', 'raw_sha256', 'review', 'raw', 'approval_id', 'operation_id', 'target_id', 'content_sha256', 'content', 'source_identity', 'source_version', 'registration_sha256', 'target_filename', 'target_scope'}:
                 raise ValueError('schema')
+            if not isinstance(snapshot['target_filename'], str) or not _TARGET.fullmatch(snapshot['target_filename']):
+                raise ValueError('target')
             if snapshot['schema'] != 'd090-capture-snapshot-v1':
                 raise ValueError('schema')
             for kind in ('raw', 'review', 'content'):
                 value = base64.b64decode(snapshot[kind], validate=True)
                 if not value or len(value) > _MAX_BYTES or _digest(value) != snapshot[kind + '_sha256']:
                     raise ValueError('digest')
-            if not all(_valid_id(snapshot[k]) for k in ('capture_id', 'approval_id', 'operation_id', 'target_id')) or not all(_ref(snapshot[k]) for k in ('raw_ref', 'review_ref')):
+            if not all(_valid_id(snapshot[k]) for k in ('capture_id', 'approval_id', 'operation_id', 'target_id', 'target_scope')) or not all(_ref(snapshot[k]) for k in ('raw_ref', 'review_ref')):
                 raise ValueError('identity')
         except (ValueError, TypeError, KeyError) as exc:
             raise D090Rejected('snapshot_missing_or_corrupt') from exc
@@ -167,22 +169,17 @@ class CaptureSnapshots:
         content = base64.b64decode(s['content'])
         return {'approval_id': s['approval_id'], 'operation_id': s['operation_id'],
                 'source_revision': snapshot_id, 'source_sha256': s['review_sha256'],
-                'target_id': s['target_id'], 'content_length': len(content),
+                'target_id': s['target_id'], 'target_filename': s['target_filename'], 'target_scope': s['target_scope'], 'content_length': len(content),
                 'content_sha256': s['content_sha256']}
 
     def confirm(self, snapshot_id, *, proof, nonce, expires_at):
         s = self.load(snapshot_id)
-        # The provider must exclude all untrusted writers until the approved
-        # grant is durable. Advisory locks alone do not meet this contract.
-        with self.source_guard(s['capture_id']):
-            live = self._current(s['capture_id'])
-            if any(live[k] != s[k] for k in live):
-                raise D090Rejected('snapshot_source_changed')
-            content = base64.b64decode(s['content'], validate=True)
-            grant = self.authority.issue_grant(
-                proof=proof, approval_id=s['approval_id'], operation_id=s['operation_id'],
-                source_revision=snapshot_id, source_sha256=s['review_sha256'],
-                target_id=s['target_id'], approved_bytes=content, nonce=nonce, expires_at=expires_at)
+        # Confirmation binds the immutable preview, not a mutable Core path.
+        content = base64.b64decode(s['content'], validate=True)
+        grant = self.authority.issue_grant(
+            proof=proof, approval_id=s['approval_id'], operation_id=s['operation_id'],
+            source_revision=snapshot_id, source_sha256=s['review_sha256'],
+            target_id=s['target_id'], target_filename=s['target_filename'], target_scope=s['target_scope'], approved_bytes=content, nonce=nonce, expires_at=expires_at)
         # Re-read after issuance: a damaged or replaced snapshot never publishes.
         verified = self.load(snapshot_id)
         if verified != s:
@@ -206,7 +203,7 @@ class CaptureSnapshots:
             self.authority.signer.public_key.verify(base64.b64decode(row[1], validate=True), _canonical(grant))
             if (grant['source_revision'] != snapshot_id or grant['source_sha256'] != s['review_sha256']
                 or grant['approval_id'] != s['approval_id'] or grant['operation_id'] != operation_id
-                or grant['target_id'] != target_id or grant['content_sha256'] != s['content_sha256']
+                or grant['target_id'] != target_id or grant['target_filename'] != s['target_filename'] or grant['target_scope'] != s['target_scope'] or grant['content_sha256'] != s['content_sha256']
                 or grant['content_length'] != len(content) or receipt['operation_id'] != operation_id
                 or receipt['content_sha256'] != s['content_sha256'] or receipt['status'] != 'published'):
                 return None

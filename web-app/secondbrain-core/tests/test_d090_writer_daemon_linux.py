@@ -63,7 +63,7 @@ def test_confined_daemon_handles_multiple_writes_and_blocks_mutation(isolated_di
     config = {'role_ids': dict(core_uid=core_uid, authority_uid=authority_uid, writer_uid=writer_uid,
                 core_gid=core_gid, authority_gid=authority_gid, writer_gid=writer_gid),
               'knowledge_root': str(root), 'knowledge_read_gid': read_gid, 'public_key_path': str(public),
-              'key_id': 'test-key', 'target_map': {'one': 'one.md', 'two': 'two.md'},
+              'key_id': 'test-key', 'target_scope': 'knowledge-test', 'target_map': {'one': 'one.md', 'two': 'two.md'},
               'socket_path': str(sockdir / 'writer.sock'), 'socket_gid': authority_gid}
     config_path = tmp_path / 'config.json'; config_path.write_text(json.dumps(config)); config_path.chmod(0o644)
     helper = tmp_path / 'daemon.py'; shutil.copyfile(Path(__file__).with_name('d090_writer_daemon_probe.py'), helper); helper.chmod(0o644)
@@ -86,7 +86,7 @@ def test_confined_daemon_handles_multiple_writes_and_blocks_mutation(isolated_di
         private = tmp_path / 'private.pem'
         private.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
         os.chown(private, authority_uid, authority_gid); private.chmod(0o600)
-        code = '''import hashlib, time, sys\nfrom cryptography.hazmat.primitives import serialization\nfrom secondbrain_core.modules.d090_authority_writer import Ed25519GrantSigner, UnixWriterClient, PROTOCOL\nkey=serialization.load_pem_private_key(open(sys.argv[2], "rb").read(),password=None)\ns=Ed25519GrantSigner("test-key",key)\nc=UnixWriterClient(sys.argv[1],writer_uid=int(sys.argv[3]),writer_gid=int(sys.argv[4]))\nfor n in ("one", "two"):\n b=("approved-"+n).encode(); g=dict(protocol=PROTOCOL,key_id="test-key",approval_id="approval-"+n,operation_id="operation-"+n,source_revision="rev-"+n,source_sha256="a"*64,content_sha256=hashlib.sha256(b).hexdigest(),content_length=len(b),target_id=n,create_only=True,expires_at=int(time.time())+120,nonce="nonce-"+n,audience="secondbrain-knowledge-writer"); r=c({**g,"signature":s.sign(g)},b); assert r["status"]=="published"\n'''
+        code = '''import hashlib, time, sys\nfrom cryptography.hazmat.primitives import serialization\nfrom secondbrain_core.modules.d090_authority_writer import Ed25519GrantSigner, UnixWriterClient, PROTOCOL\nkey=serialization.load_pem_private_key(open(sys.argv[2], "rb").read(),password=None)\ns=Ed25519GrantSigner("test-key",key)\nc=UnixWriterClient(sys.argv[1],writer_uid=int(sys.argv[3]),writer_gid=int(sys.argv[4]))\nfor n in ("one", "two"):\n b=("approved-"+n).encode(); g=dict(protocol=PROTOCOL,key_id="test-key",approval_id="approval-"+n,operation_id="operation-"+n,source_revision="rev-"+n,source_sha256="a"*64,content_sha256=hashlib.sha256(b).hexdigest(),content_length=len(b),target_id=n,target_filename=n+".md",target_scope="knowledge-test",create_only=True,expires_at=int(time.time())+120,nonce="nonce-"+n,audience="secondbrain-knowledge-writer"); r=c({**g,"signature":s.sign(g)},b); assert r["status"]=="published"\n'''
         result = subprocess.run([sys.executable, '-c', code, config['socket_path'], str(private), str(writer_uid), str(writer_gid)],
                     capture_output=True, text=True, timeout=15, env=env,
                     preexec_fn=lambda: (os.setgroups([]), os.setgid(authority_gid), os.setuid(authority_uid)))

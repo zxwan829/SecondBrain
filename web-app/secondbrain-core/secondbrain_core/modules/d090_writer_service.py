@@ -163,7 +163,7 @@ def initialize(config):
     if not isinstance(pub, Ed25519PublicKey):
         raise RuntimeError('writer_key_invalid')
     writer = StrictCreateOnlyWriter(config['knowledge_root'], pub, config['key_id'], config['target_map'], roles,
-                                    readonly_gid=config['knowledge_read_gid'])
+                                    readonly_gid=config['knowledge_read_gid'], target_scope=config['target_scope'])
     listener = _bind(config['socket_path'], config['socket_gid'])
     try:
         _check_fds({0, 1, 2, writer.root_fd, listener.fileno()})
